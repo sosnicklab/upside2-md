@@ -90,8 +90,75 @@
   In this project, widening the physical compact/extended centers and clipping
   the rebuilt self-state fit masked the compression-side response and created a
   new coarse-only `1rkl` bending artifact.
+- Do not treat an improved global morphology metric as sufficient when the user
+  is reporting a local secondary-structure failure.
+  For this project, `1rkl` can pass a chain-scale bend check while still
+  losing helical stability near the leaflet interface, so local backbone
+  structure diagnostics must be part of acceptance.
+- When the user points to a specific interaction family as the likely root
+  cause, treat that path as primary until it has been isolated directly.
+  For this project, injector/runtime contract bugs can be real, but they are
+  secondary if the user is explicitly steering the diagnosis toward SC-CGL
+  compression support.
+- When applying a partial H5 correction, do not delete untouched datasets from
+  the same force-field group.
+  For this project, replacing only the single-CGL self PMF must preserve the
+  existing pair-compaction tensors inside `cg_lipid_compaction`, or the live
+  H5 becomes structurally stale and the injector will reject it.
 
 ## External / Technical Findings
+
+- 2026-07-05: The remaining fresh-start defect is a clipped SC-CGL
+  compression-support bug in the single-CGL self-PMF rebuild path.
+  - The current retrofit helper
+    `_build_single_cgl_compaction_corrections_from_base_h5()` maps the
+    physical tail-extension reference samples into the normalized hidden state
+    with `_normalize_compaction_coordinate_values()`, which hard-clips them to
+    `[0, 1]` before the self PMF fit.
+  - For this coordinate, larger axial extension corresponds to the compact
+    tail state, so the missing “compression” side is the high-`q` branch
+    above the nominal compact endpoint.
+  - The installed `parameters/dryMARTINI/dopc.h5` therefore carries a dynamic
+    self range only at about `-0.087..1.142`, while the same old-contract
+    physical ensemble mapped without clipping occupies about `0.676..2.836`
+    for the current fresh stage-7 starts.
+  - A temp H5 that keeps the same SC, target, and pair tables but rebuilds the
+    self PMF on the unclipped hidden coordinate
+    (`/private/tmp/1rkl_bend_variants/sc_only_oldself_unclipped.h5`) improves
+    both systems on fresh-start validation:
+    `1rkl` hotspot score improves from `2.203` with the clipped live H5 to
+    `0.870`, and `1afo` chain-center XY separation improves from `7.470 A` to
+    `11.245 A`.
+  - Interpretation:
+    the missing physical response is not “more lipids between helices”; it is
+    the loss of the compressed-tail high-`q` support before the SC-CGL runtime
+    can interpolate against the existing `delta_compact` tables.
+
+- 2026-07-05: The delivered generic fix is a bounded reference-ensemble
+  compaction contract, not an unclipped high-`q` extrapolation.
+  - The physically correct repair is to keep the injector affine remap, derive
+    the compact/extended physical centers from the live DOPC reference
+    ensemble, and fit the self PMF on the bounded normalized coordinate from
+    that same ensemble.
+  - The runtime compact prior should remain the calibrated stored value
+    (`0.3023485`) rather than switching to the raw ensemble split, because the
+    delivered path is a self-PMF repair on top of the existing endpoint tables
+    rather than a full mean-field retrain.
+  - `py/martini_build_tables.py` now implements that behavior by preferring
+    `reference_ensemble` centers in `auto`, clipping only the center-derived
+    self-PMF fit, and preserving untouched pair-compaction datasets when a
+    partial compaction correction is applied.
+  - Installed H5 result:
+    `parameters/dryMARTINI/dopc.h5` now matches the validated bounded
+    candidate on the compaction datasets and keeps the existing pair
+    compaction tensors.
+  - Fresh 10k validation from reinjected stage-7 restarts:
+    `1rkl` improved to CA RMSD `2.81 A` vs full control
+    (`3.55 A` on the bad coarse source), interface score `0.0940`
+    (`0.1350` bad), late H-bonds `29.41` (`23.26` bad; `29.50` full).
+    `1afo` improved to total CA RMSD `2.91 A` vs full control
+    (`4.25 A` bad), with late H-bonds `80.21`
+    (`73.65` bad; `84.17` full).
 
 - 2026-07-04: The stale CGL compaction tables can be repaired exactly by
   endpoint reparameterization; a fresh expensive re-fit is not required for

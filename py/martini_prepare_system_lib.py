@@ -4227,20 +4227,22 @@ def inject_cg_lipid_nodes(
                 coord_min = float(comp_grp.attrs.get("self_coord_min_ang", np.min(values)))
                 coord_max = float(comp_grp.attrs.get("self_coord_max_ang", np.max(values)))
                 if (
-                    coord_min >= -1.0e-6
-                    and coord_max <= 1.0 + 1.0e-6
-                    and "reference_compact_center_ang" in comp_grp.attrs
+                    "reference_compact_center_ang" in comp_grp.attrs
                     and "reference_extended_center_ang" in comp_grp.attrs
                 ):
-                    compact = float(comp_grp.attrs["reference_compact_center_ang"])
-                    extended = float(comp_grp.attrs["reference_extended_center_ang"])
-                    denom = compact - extended
-                    if abs(denom) > 1.0e-6:
-                        values = np.clip(
-                            (values.astype(np.float64) - extended) / denom,
-                            coord_min,
-                            coord_max,
-                        ).astype(np.float32)
+                    physical_compact = float(comp_grp.attrs["reference_compact_center_ang"])
+                    physical_extended = float(comp_grp.attrs["reference_extended_center_ang"])
+                    physical_span = physical_compact - physical_extended
+                    if abs(physical_span) > 1.0e-6:
+                        runtime_compact = float(comp_grp.attrs.get("compact_state_center_ang", 1.0))
+                        runtime_extended = float(comp_grp.attrs.get("extended_state_center_ang", 0.0))
+                        runtime_span = runtime_compact - runtime_extended
+                        values = (
+                            runtime_extended
+                            + (values.astype(np.float64) - physical_extended)
+                            * (runtime_span / physical_span)
+                        )
+                        values = np.clip(values, coord_min, coord_max).astype(np.float32)
                 return values
 
             if enable_explicit_compaction_state:

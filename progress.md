@@ -3,83 +3,74 @@
 ## Current Task: Generic `1rkl` / `1afo` CGL Compaction-State Repair
 
 - Actions taken:
-  - Rechecked the `1afo` regression against the matching full-resolution
-    workflow and confirmed they start from the same packed structure.
-  - Measured the saved coarse `stage_7.0` collapse and verified the
-    full-resolution control remains stable from the same starting pack.
-  - Inspected the installed `parameters/dryMARTINI/dopc.h5` and found that the
-    original `cg_lipid_compaction/self_coeff` was zero and that the stored
-    physical compact/extended tail centers were stale.
-  - Patched `py/martini_build_tables.py` so the compaction reference centers,
-    normalized hidden-state coordinate, and self PMF can be rebuilt from the
-    stored DOPC reference ensemble, and so stale `cg_lipid_sc` and
-    `cg_lipid_target` compaction groups are detectable.
-  - Profiled the exact pair-relaxation rebuild path and confirmed it is not a
-    practical first-line repair locally:
-    a representative pair-relax evaluation costs about `0.028 s`, implying a
-    multi-hour full re-fit.
-  - Verified in `src/martini_cg_lipid.cpp` that the runtime uses a linear
-    SC/target compaction mix and a bilinear CGL-CGL compaction mix.
-  - Replaced the slow rebuild script with an exact endpoint-remap repair that
-    uses `parameters/dryMARTINI/dopc.h5.bak` as the old physical state
-    contract and analytically rewrites the stale SC/target/pair endpoint tables
-    onto the repaired physical centers already stored in the live H5.
-  - Quantified the user-reported coarse-only `1rkl` bending against the
-    matching full-resolution control with a backbone line-RMS metric and
-    reproduced the bend from the saved stage-7 start state.
-  - Ran same-start-state A/B replays that isolated the endpoint-remapped
-    pair tensor as the main new bend source, with a smaller contribution from
-    the remapped target tables.
-  - Iterated through generic H5 variants and found that the best cross-system
-    fix keeps the current SC correction, restores the old pair/target
-    compaction tables, and repairs the self PMF around the old physical
-    compaction contract from `dopc.h5.bak`.
-  - Overwrote `parameters/dryMARTINI/dopc.h5` with that delivered artifact.
-  - Reinjected the delivered tables into copies of the saved
-    `1afo.stage_7.0.up` and `1rkl.stage_7.0.up` files and ran 10,000-step
-    production continuations from those saved stage-7 restart states.
+  - Patched `py/martini_build_tables.py` so the single-CGL compaction retrofit
+    now prefers reference-ensemble physical centers in `auto`, keeps the
+    stored calibrated compact prior, and fits the self PMF on the bounded
+    center-derived hidden coordinate instead of the unstable fully-unclipped
+    stored-contract coordinate.
+  - Patched `_apply_single_cgl_compaction_corrections_to_h5()` so a partial
+    self-PMF update no longer deletes untouched pair-compaction tensors from
+    `cg_lipid_compaction`.
+  - Overwrote `parameters/dryMARTINI/dopc.h5` from the live backup with the
+    bounded reference-ensemble self-PMF correction while preserving the
+    existing pair-compaction tensors.
+  - Reinjected fresh copies of
+    `example/16.MARTINI/outputs/martini_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`
+    and
+    `example/16.MARTINI/outputs/martini_1afo_hybrid/checkpoints/1afo.stage_7.0.up`
+    from the installed H5 and confirmed the seeded compaction coordinate is
+    bounded (`q mean ~= 0.815`, `q max ~= 1.085`) instead of clamping into the
+    runaway compact basin.
+  - Ran fixed-seed 10,000-step validations from those reinjected restart
+    copies:
+    `/private/tmp/1rkl_stage7_reference_bounded_10k.up` and
+    `/private/tmp/1afo_stage7_reference_bounded_10k.up`.
+  - Measured the same acceptance diagnostics against the bad coarse sources
+    and the full-resolution controls.
 
 - Files modified:
   - `/Users/yinhan/Documents/upside2-md/py/martini_build_tables.py`
+  - `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
+  - `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5.pre_reference_ensemble_bounded_compaction_fix.bak`
   - `/Users/yinhan/Documents/upside2-md/plan.md`
   - `/Users/yinhan/Documents/upside2-md/progress.md`
-  - `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
   - `/Users/yinhan/Documents/upside2-md/findings.md`
 
 - Verification:
-  - `python -m py_compile py/martini_build_tables.py py/martini_prepare_system_lib.py py/martini_prepare_system.py`
-    succeeded under the project environment.
-  - The delivered live H5 now reports the restored old physical state contract
-    with a repaired nonzero self PMF:
-    `reference_extended_center_ang=13.381275 A`,
-    `reference_compact_center_ang=19.615337 A`,
+  - `python -m py_compile py/martini_build_tables.py`
+    succeeded under the project environment after the generator/apply-path
+    changes.
+  - Installed H5 verification:
+    `parameters/dryMARTINI/dopc.h5` now has the bounded compaction contract
+    with
+    `reference_extended_center_ang=12.13485 A`,
+    `reference_compact_center_ang=26.96317 A`,
     `compact_state_probability=0.3023485`,
-    `self_coord_min_ang=-0.0874`,
-    `self_coord_max_ang=1.1418`.
-  - `1rkl` validation:
-    the bad coarse source ends at backbone line-RMS `4.6494`, while the
-    delivered live-H5 continuation from the same saved stage-7 start ends at
-    `3.8695`; the full-resolution control ends at `3.6087`.
-  - `1afo` validation:
-    the delivered live-H5 continuation stays away from the earlier collapsed
-    state, with chain-center XY separation
-    `11.5248 -> 10.6894` across 10,000 steps.
+    `self_coord_min/max=-0.06337/1.08474`,
+    and it preserves the existing pair-compaction datasets
+    `delta_extended_extended`, `delta_extended_compact`,
+    `delta_compact_compact`.
+  - `1rkl` validation from fresh reinjected stage-7 restart:
+    CA RMSD to full-resolution improved from `3.55 A` on the bad coarse
+    source to `2.81 A`;
+    local interface score improved from `0.1350` to `0.0940`;
+    late H-bond mean improved from `23.26` to `29.41`
+    (full-resolution control `29.50`);
+    late compaction mean moved from `1.0578` to `0.9533`.
+  - `1afo` validation from fresh reinjected stage-7 restart:
+    total CA RMSD to full-resolution improved from `4.25 A` to `2.91 A`;
+    chain A RMSD improved from `2.51 A` to `1.74 A`;
+    chain B RMSD improved from `3.70 A` to `2.71 A`;
+    late H-bond mean improved from `73.65` to `80.21`
+    (full-resolution control `84.17`);
+    late compaction mean moved from `1.0622` to `0.9503`.
 
 - Failures and fixes:
-  - A remap-only repair of the initial compaction coordinate did not hold:
-    the state still relaxed back to the compact endpoint, which exposed the
-    missing self-PMF defect.
-  - Repairing only `cg_lipid_compaction` removed the hidden-state saturation
-    but did not recover `1afo` separation, which exposed the remaining stale
-    compact-vs-extended pair/SC/target correction tables.
-  - The exact representative-state pair-relaxation rebuild was too expensive
-    to use as the main delivery path, so the fix was changed to an exact
-    analytical endpoint remap inside the runtime’s existing linear/bilinear
-    state model.
-  - The analytical endpoint remap was not enough:
-    it helped `1afo`, but it also introduced a new coarse-only `1rkl`
-    bending mode because the widened physical state contract suppressed the
-    compression side assumed by the old pair/target tables.
-  - Allowing the full unclipped old-contract hidden-state range was also too
-    aggressive; it drove the compaction coordinate out to about `2.85` and
-    made the bend worse again.
+  - Fully unclipping the stored-contract hidden coordinate was not valid:
+    it reopened a runaway compact basin (`q` up to about `2.85`) and destroyed
+    the protein H-bond network even though it improved the coarse bend metric.
+  - Rebuilding from an older backup that lacked the pair-compaction tensors
+    produced a structurally stale H5 that the injector rejected.
+    The fix was to preserve the live pair-compaction payload and patch the
+    H5 apply path so a self-only update does not delete those untouched
+    datasets.

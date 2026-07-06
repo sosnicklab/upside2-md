@@ -4989,6 +4989,7 @@ def _normalize_compaction_coordinate_values(
     compaction_ang: np.ndarray,
     compact_center_ang: float,
     extended_center_ang: float,
+    clip: bool = True,
 ) -> np.ndarray:
     values = np.asarray(compaction_ang, dtype=np.float64)
     denom = float(compact_center_ang) - float(extended_center_ang)
@@ -4997,7 +4998,10 @@ def _normalize_compaction_coordinate_values(
             f"Compaction-state centers must be distinct, got "
             f"compact={compact_center_ang:.6f} A, extended={extended_center_ang:.6f} A"
         )
-    return np.clip((values - float(extended_center_ang)) / denom, 0.0, 1.0)
+    coord = (values - float(extended_center_ang)) / denom
+    if clip:
+        coord = np.clip(coord, 0.0, 1.0)
+    return coord
 
 
 def _reference_compaction_state_metadata_from_ensemble(
@@ -6063,8 +6067,8 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         "UPSIDE_CGL_COMPACTION_SELF_BINS", 12
     )
     compaction_state_source = (
-        os.environ.get("UPSIDE_CGL_COMPACTION_STATE_SOURCE", "reference_ensemble").strip().lower()
-        or "reference_ensemble"
+        os.environ.get("UPSIDE_CGL_COMPACTION_STATE_SOURCE", "auto").strip().lower()
+        or "auto"
     )
 
     with h5py.File(base_h5_path, "r") as h5:
@@ -6078,13 +6082,26 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         bead_charges = list(np.asarray(cg_grp["bead_charges"][:], dtype=np.float64))
         comp_grp = cg_grp["cg_lipid_compaction"]
         compaction_tau = float(comp_grp.attrs.get("thermostat_timescale", 5.0))
+        stored_compact_center_ang = float(comp_grp.attrs.get("reference_compact_center_ang", 0.0))
+        stored_extended_center_ang = float(comp_grp.attrs.get("reference_extended_center_ang", 0.0))
+        if stored_compact_center_ang <= stored_extended_center_ang:
+            stored_compact_center_ang, stored_extended_center_ang = (
+                stored_extended_center_ang,
+                stored_compact_center_ang,
+            )
+        stored_compact_probability = float(comp_grp.attrs.get("compact_state_probability", 0.5))
         compact_center_ang = 0.0
         extended_center_ang = 0.0
         compact_probability = 0.5
         compaction_coord_samples = None
         compaction_states = None
         compaction_state_source_used = None
-        if compaction_state_source in ("reference_ensemble", "reference", "auto"):
+        clip_compaction_state_values = False
+        if compaction_state_source in (
+            "reference_ensemble",
+            "reference",
+            "auto",
+        ):
             try:
                 compaction_states = _reference_compaction_state_metadata_from_ensemble(
                     ref_ensemble_nm,
@@ -6095,12 +6112,33 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                 compact_probability = float(compaction_states["compact_probability"])
                 compaction_coord_samples = np.asarray(compaction_states["compaction_ang"], dtype=np.float64)
                 compaction_state_source_used = f"{ref_dataset}_quantile_center_matched"
+                clip_compaction_state_values = True
             except ValueError as exc:
                 if compaction_state_source in ("reference_ensemble", "reference"):
                     raise
                 print(
                     "  Single-CGL compaction retrofit: "
                     f"falling back from {ref_dataset} center-matched states ({exc})"
+                )
+        if compaction_states is None and compaction_state_source in ("stored_contract", "stored", "base_h5_contract", "auto"):
+            if stored_compact_center_ang - stored_extended_center_ang > 1.0:
+                compaction_states = _select_compaction_state_representatives_by_center(
+                    ref_ensemble_nm,
+                    compact_center_ang=stored_compact_center_ang,
+                    extended_center_ang=stored_extended_center_ang,
+                    representative_count=compaction_representatives,
+                    compact_probability=stored_compact_probability,
+                )
+                compact_center_ang = float(stored_compact_center_ang)
+                extended_center_ang = float(stored_extended_center_ang)
+                compact_probability = float(stored_compact_probability)
+                compaction_coord_samples = _dopc_tail_extension_series_ang(ref_ensemble_nm)
+                compaction_state_source_used = f"{ref_dataset}_stored_contract_matched"
+                clip_compaction_state_values = False
+            elif compaction_state_source != "auto":
+                raise RuntimeError(
+                    "Stored-contract compaction-state repair requires valid "
+                    "reference_compact_center_ang / reference_extended_center_ang metadata"
                 )
         if compaction_states is None:
             compaction_pool_conformers = _positive_int_env(
@@ -6133,12 +6171,23 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
             compact_probability = float(compaction_states["compact_probability"])
             compaction_coord_samples = np.asarray(compaction_values_ang, dtype=np.float64)
             compaction_state_source_used = "isolated_dopc_mc_center_quantile"
+            clip_compaction_state_values = True
         if compaction_coord_samples is None:
             raise RuntimeError("Failed to determine compaction-coordinate samples for CGL metadata repair")
+        correction_compact_probability = float(compact_probability)
+        if 1.0e-6 < stored_compact_probability < 1.0 - 1.0e-6:
+            correction_compact_probability = float(stored_compact_probability)
+        # When the compact/extended centers come from the same reference
+        # ensemble, the physical compression response is already encoded in
+        # that endpoint mapping and should stay within the trained endpoint
+        # interpolation family. Only stored-contract fallback paths keep the
+        # unclipped coordinate because their centers may not bound the live
+        # ensemble.
         compaction_state_values = _normalize_compaction_coordinate_values(
             compaction_coord_samples,
             compact_center_ang=compact_center_ang,
             extended_center_ang=extended_center_ang,
+            clip=clip_compaction_state_values,
         )
         compaction_self = _fit_compaction_self_pmf(
             compaction_state_values,
@@ -6149,7 +6198,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         corrections = {
             "compact_state_center_ang": 1.0,
             "extended_state_center_ang": 0.0,
-            "compact_state_probability": compact_probability,
+            "compact_state_probability": correction_compact_probability,
             "reference_compact_center_ang": compact_center_ang,
             "reference_extended_center_ang": extended_center_ang,
             "compaction_state_source": compaction_state_source_used,
@@ -6574,6 +6623,10 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             "self_coeff",
             "pmf_centers_ang",
             "pmf_values_kj_mol",
+        ):
+            if dataset_name in comp_grp:
+                del comp_grp[dataset_name]
+        pair_payload_names = (
             "delta_extended_extended",
             "delta_extended_compact",
             "delta_compact_compact",
@@ -6582,9 +6635,11 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             "grid_compact_compact_kj_mol",
             "grid_average_kj_mol",
             "face_mask",
-        ):
-            if dataset_name in comp_grp:
-                del comp_grp[dataset_name]
+        )
+        if any(dataset_name in payload for dataset_name in pair_payload_names):
+            for dataset_name in pair_payload_names:
+                if dataset_name in comp_grp:
+                    del comp_grp[dataset_name]
         comp_grp.attrs["compact_state_center_ang"] = np.float32(corrections["compact_state_center_ang"])
         comp_grp.attrs["extended_state_center_ang"] = np.float32(corrections["extended_state_center_ang"])
         comp_grp.attrs["compact_state_probability"] = np.float32(corrections["compact_state_probability"])
