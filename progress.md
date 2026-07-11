@@ -1,5 +1,53 @@
 # Progress Log
 
+## 2026-07-11 Stage-7 Continuation, CGL Timescale, and 1rkl Orientation
+
+- Inspected the failed original `stage_7.3` checkpoints.  Both `1rkl` and
+  `1afo` exploded because CGL masses were multiplied by
+  `CG_LIPID_MASS_SCALE` on every continuation:
+  `84 -> 1.008 -> 0.012096 -> 0.000145 -> 1.74e-6`.
+- Patched `py/martini_prepare_system.py` so CGL mass scaling is idempotent:
+  the unscaled CGL mass is stored on `/input/mass`, reused on continuation,
+  and already repeatedly scaled checkpoints are rejected with a clear error.
+- Patched `example/16.MARTINI/run_sim_hybrid.sh` coarse defaults:
+  `CG_LIPID_MASS_SCALE=0.3`, `PROD_70_BURNIN_NSTEPS=0`, and
+  `STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING=0.0`.
+- Updated the active CGL-target angular table in
+  `parameters/dryMARTINI/dopc.h5` by reversing the target angular axis and
+  added matching source-generator provenance in `py/martini_build_tables.py`.
+- Root-caused the fresh `1rkl` vertical orientation: the old coarse restrained
+  stage-7 burn-in shifted the bilayer relative to the fixed protein by about
+  `3-6 A` before unrestrained production.  With the burn-in disabled, the
+  protein/bilayer depth offset remains near zero and the helix stays tilted.
+
+## Validation Outputs
+
+- Patched `1rkl` chain:
+  `example/16.MARTINI/outputs/martini_1rkl_noburnin_probe_20260711`
+  completed `stage_7.0` through `stage_7.3`.
+- Patched `1afo` continuation chain:
+  `example/16.MARTINI/outputs/martini_1afo_finalfix_cont_20260711`
+  completed `stage_7.1` through `stage_7.3` from a valid `stage_7.0`.
+- `1rkl` CA principal-axis angle to bilayer normal:
+  `35.26 -> 30.27`, `30.18 -> 33.62`, `33.55 -> 32.67`,
+  `32.62 -> 31.97` degrees across stages `7.0` to `7.3`.
+- `1rkl.stage_7.3`: finite coordinates, fixed box
+  `110.452 x 110.452 x 97.551 A`, hbond sum `33.7`, CGL mass `25.2`,
+  CGL xy step mean/p95/max `0.0367/0.0780/0.1912 A`.
+- `1afo.stage_7.3`: finite coordinates, fixed box
+  `91.292 x 91.292 x 149.907 A`, hbond sum `86.1`, CGL mass `25.2`,
+  CGL xy step mean/p95/max `0.0404/0.0849/0.1655 A`.
+- Full-lipid DOPC COM reference from local full-lipid trajectories:
+  `1rkl` `0.0340/0.0682/0.1331 A` and `1afo`
+  `0.0339/0.0679/0.1331 A` mean/p95/max per saved frame.  The patched CGL
+  clock is therefore not slow; it is slightly faster than full-lipid COM but
+  close.
+- Hard-error scans of the patched validation `.out` logs found no tracebacks,
+  fatal Python errors, runtime errors, overflows, or explosion messages.
+- Verification commands passed:
+  `python -m py_compile py/martini_build_tables.py py/martini_prepare_system.py`
+  and `bash -n example/16.MARTINI/run_sim_hybrid.sh`.
+
 ## Current Task: DOPC Tail-Compression Bug Fix
 
 - Installed and validated a corrected DOPC force-field artifact:

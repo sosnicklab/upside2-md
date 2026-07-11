@@ -13147,7 +13147,7 @@ def _build_cgl_target_table(
     target_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
     phi_values = np.linspace(0.0, 2.0 * np.pi, 4, endpoint=False)
     bead_frame_angles = _bead_frame_angles(_bead_frame_count("CGL", 1))
-    orientation_dirs = _directions_with_dot_np(target_axis, cos_theta_grid, phi_values)
+    orientation_dirs = _directions_with_dot_np(target_axis, -cos_theta_grid, phi_values)
     target_fit_smooth = 0.01
 
     target_tasks = [
@@ -13270,7 +13270,8 @@ def _build_cgl_target_table(
     target_grp.attrs["isotropic_background_source"] = "none_full_resolved_dry_martini_cgl_target_table"
     target_grp.attrs["attractive_control_source"] = "retained_full_resolved_dry_martini_cgl_target_table"
     target_grp.attrs["relaxation"] = "ensemble_rotated_geometry"
-    target_grp.attrs["angle_convention"] = "ang=n_cgl_dot_n12"
+    target_grp.attrs["angle_convention"] = "ang=-n_cgl_dot_n12"
+    target_grp.attrs["target_angular_sign_source"] = "validated_against_full_lipid_1rkl_tilt"
     target_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
     target_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
     target_grp.attrs["radial_support_source"] = "max_dopc_bead_radius_plus_dry_martini_cutoff"

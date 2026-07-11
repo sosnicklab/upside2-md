@@ -2,6 +2,27 @@
 
 ## Technical Findings
 
+- The `stage_7.3` explosions in the original coarse `1rkl` and `1afo`
+  continuations were caused by non-idempotent CGL mass scaling, not by a new
+  force-field instability.  Each continuation multiplied the already scaled
+  CGL mass again (`84 -> 1.008 -> 0.012096 -> 0.000145 -> 1.74e-6`), after
+  which the old `stage_7.3` files showed thousand-Angstrom CGL jumps, expanded
+  xy boxes, and hbond collapse.  Storing `/input/mass.attrs[cgl_unscaled_mass]`
+  and always deriving the runtime CGL mass from that unscaled value fixes the
+  continuation chain; damaged old checkpoints must be regenerated.
+- The fresh coarse `1rkl` vertical-orientation failure was a stage-7 protocol
+  defect.  The restrained coarse burn-in held the protein while the CGL bilayer
+  translated, creating a protein/bilayer depth offset of about `3-6 A` before
+  unrestrained production; the helix then rotated toward the bilayer normal.
+  Disabling the coarse restrained burn-in by default kept the depth offset near
+  zero and preserved the initial tilt through `stage_7.3`
+  (`~35 -> 32 deg`) without disabling any hybrid interactions.
+- `CG_LIPID_MASS_SCALE=0.3` gives a CGL transport clock close to local
+  full-lipid DOPC COM motion.  Local full-lipid references are about
+  `0.034/0.068/0.133 A` mean/p95/max per saved frame, while patched CGL
+  validation is about `0.037-0.041/0.078-0.088/0.17-0.20 A`.  The observed
+  coarse bilayer is therefore not slow; if anything, it is slightly faster
+  than the full-lipid COM reference.
 - Workflow `.out` failures on 2026-07-10 were post-simulation VTF extraction
   failures, not MD/force-field failures.  `1rkl`, `1afo`, `1rkl_full`, and
   `1afo_full` all completed stage-7.0 MD before `martini_extract_vtf.py` failed
@@ -116,6 +137,16 @@
 
 ## Lessons
 
+- Do not accept a coarse stage-7 workflow from hbond/box stability alone.
+  Check the protein angle relative to the bilayer normal and the protein-vs-
+  bilayer depth offset after burn-in/release; a restrained coarse burn-in can
+  create a visually obvious vertical protein even when the box and hbonds look
+  numerically stable.
+- Any workflow operation that scales a physical runtime mass must be
+  idempotent across restarts.
+  Store the unscaled source mass or another invariant provenance marker and
+  reject checkpoints whose mass history is already damaged instead of applying
+  the scale again.
 - Do not classify a workflow `.out` failure as a simulation failure until the
   log tail is checked past the final MD step.
   A failed post-processing helper can leave valid `.up` checkpoints and missing

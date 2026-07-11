@@ -1209,11 +1209,41 @@ def apply_cgl_transport_metadata(args, target_file: Path):
         if not np.any(cgl_mask):
             raise ValueError(f"{target_file} has no CGL atoms")
 
-        mass = np.asarray(h5["/input/mass"][:], dtype=np.float32)
-        base_mass = mass.copy()
-        mass[cgl_mask] = base_mass[cgl_mask] * np.float32(mass_scale)
+        mass_node = h5["/input/mass"]
+        mass = np.asarray(mass_node[:], dtype=np.float32)
+        previous_mass_scale = None
+        if "/input/thermostat_timescale" in h5:
+            tau_attrs = h5["/input/thermostat_timescale"].attrs
+            if "cgl_mass_scale" in tau_attrs:
+                previous_mass_scale = float(tau_attrs["cgl_mass_scale"])
+            elif "cg_lipid_mass_scale" in tau_attrs:
+                previous_mass_scale = float(tau_attrs["cg_lipid_mass_scale"])
+        inferred_base_mass_from_previous_scale = False
+        if "cgl_unscaled_mass" in mass_node.attrs:
+            base_cgl_mass = np.full(
+                np.count_nonzero(cgl_mask),
+                float(mass_node.attrs["cgl_unscaled_mass"]),
+                dtype=np.float32,
+            )
+        elif previous_mass_scale is not None and previous_mass_scale > 0.0:
+            base_cgl_mass = mass[cgl_mask] / np.float32(previous_mass_scale)
+            inferred_base_mass_from_previous_scale = True
+        else:
+            base_cgl_mass = mass[cgl_mask].copy()
+        if inferred_base_mass_from_previous_scale and float(np.median(base_cgl_mass)) < 10.0:
+            raise ValueError(
+                f"{target_file} has repeatedly scaled CGL masses "
+                f"(median mass={float(np.median(mass[cgl_mask])):.6g}, "
+                f"stored scale={previous_mass_scale:.6g}). "
+                "Regenerate the previous production stage with the fixed idempotent CGL mass scaling."
+            )
+        mass[cgl_mask] = base_cgl_mass * np.float32(mass_scale)
         del h5["/input/mass"]
-        h5.create_dataset("/input/mass", data=mass)
+        mass_dset = h5.create_dataset("/input/mass", data=mass)
+        if base_cgl_mass.size and np.allclose(base_cgl_mass, base_cgl_mass[0]):
+            mass_dset.attrs["cgl_unscaled_mass"] = np.float32(base_cgl_mass[0])
+        mass_dset.attrs["cgl_mass_scale"] = np.float32(mass_scale)
+        mass_dset.attrs["cgl_mass_scale_source"] = "idempotent_unscaled_cgl_mass"
 
         global_tau = float(getattr(args, "thermostat_timescale", env_float("THERMOSTAT_TIMESCALE", 5.0)))
         tau = (

@@ -14,24 +14,38 @@ Maintain the validated dryMARTINI DOPC hybrid workflow and keep the example
 - `parameters/dryMARTINI/dopc.h5` is the shared force-field artifact.  Back up
   old H5 files and overwrite this path; do not create versioned force-field H5
   names.
-- Stage-7 production removes the burn-in protein restraint, minimizes the
-  released Hamiltonian, then starts unrestrained production.
+- Coarse CGL stage-7 production should start from the handed-off/minimized
+  state without the restrained burn-in by default.  The restrained coarse
+  burn-in can translate the bilayer relative to a fixed protein and create an
+  unphysical depth offset before unrestrained production.
 - Workflow helper subprocesses must be robust to background/batch invocation
   where inherited stdio descriptors may be closed or invalid.
 
-# Current Task: `*.out` Workflow Failure
+# Current Task: Stage-7 CGL Continuation, Timescale, and 1rkl Orientation
 
-- [completed] Scan `example/16.MARTINI/*.out` logs.
-- [completed] Identify first failure: all four workflows complete stage-7.0 MD
-  and fail during VTF extraction, when `martini_extract_vtf.py` starts with
-  invalid inherited stdio and raises `Fatal Python error: init_sys_streams`.
-- [completed] Patch the workflow subprocess launcher so helper commands get
-  explicit valid stdin/stdout/stderr plumbing.
-- [completed] Re-run a representative failed workflow or extraction path under
-  redirected/background-style output.
-- [completed] Update `progress.md` and `findings.md` with the result.
+- [completed] Inspect failed `stage_7.3` outputs for `1rkl` and `1afo`.
+- [completed] Identify the explosion root cause: CGL masses were multiplied by
+  `CG_LIPID_MASS_SCALE` again on every continuation.
+- [completed] Patch continuation metadata so CGL mass scaling is idempotent and
+  already repeatedly scaled checkpoints are rejected.
+- [completed] Regenerate `stage_7.1` through `stage_7.3` from valid `stage_7.0`
+  checkpoints and verify both systems no longer explode.
+- [completed] Inspect all `example/16.MARTINI/**/*.out` logs and connect failures
+  to either invalid old checkpoints or remaining code defects.
+- [completed] Validate CGL transport timescale against full-lipid DOPC COM motion.
+- [completed] Diagnose why `1rkl` rotates toward the bilayer normal during
+  stable stage-7 production.
+- [completed] Patch the minimal orientation/release issue without disabling any
+  hybrid interactions.
+- [completed] Update the active CGL-target table convention in
+  `parameters/dryMARTINI/dopc.h5`, re-run the necessary `1rkl`/`1afo`
+  validation stages, and document the result in `progress.md` and
+  `findings.md`.
 
 # Known Errors / Blockers
 
-- No blocker.  The failure was workflow subprocess stdio handling, not
-  simulation physics or corrupted checkpoints.
+- Existing original `stage_7.1+` checkpoints in `martini_1rkl_hybrid` and
+  `martini_1afo_hybrid` are invalid because their CGL masses were already
+  repeatedly scaled.  Continue from a valid `stage_7.0` or rerun fresh.
+- No current blocker.  The patched coarse workflow keeps `1rkl` tilted through
+  `stage_7.3` and both benchmark continuations stay finite.
