@@ -1,7 +1,7 @@
 #include "deriv_engine.h"
 #include "spline.h"
 #include "box.h"
-#include "martini.h"
+#include "martini_internal.h"
 #include "random.h"
 #include "state_logger.h"
 #include <H5Apublic.h> // for H5Aexists
@@ -830,6 +830,12 @@ static inline void center_dr(
         simulation_box::minimum_image_scalar(dr[0], dr[1], dr[2], box_x, box_y, box_z);
 }
 
+static inline void refresh_hybrid_bb_proxies_for_coord(CoordNode& coord) {
+    auto state = martini_hybrid::get_state_for_coord(coord);
+    if(state && state->active)
+        martini_hybrid::refresh_bb_positions_if_active(*state, coord.output, coord.n_elem);
+}
+
 static vector<uint8_t> classify_leaflets_by_median_z(
         VecArray cg, const vector<int>& index) {
     vector<float> z_values;
@@ -1009,7 +1015,9 @@ static ImplicitCompactionField build_gap_response_compaction_field(
         float gap_response_radial_cutoff_ang,
         float gap_response_face_cos_min,
         float gap_response_fallback_ang,
-        bool gap_response_smooth_weight) {
+        bool gap_response_smooth_weight,
+        bool gap_response_is_compaction_coordinate,
+        float gap_response_no_contact_value = std::numeric_limits<float>::quiet_NaN()) {
     ImplicitCompactionField field;
     field.survival.assign(index.size(), 1.f);
     field.contact_field.assign(index.size(), 0.f);
@@ -1051,8 +1059,13 @@ static ImplicitCompactionField build_gap_response_compaction_field(
     }
     for(size_t i = 0; i < field.extended.size(); ++i) {
         float gap = gap_response_fallback_ang > 0.f ? gap_response_fallback_ang : gap_response_radial_cutoff_ang;
-        if(field.gap_weight_sum[i] > 1.0e-12f)
+        if(field.gap_weight_sum[i] > 1.0e-12f) {
             gap = gap_weighted_sum[i] / field.gap_weight_sum[i];
+        } else if(std::isfinite(gap_response_no_contact_value)) {
+            field.extended[i] = gap_response_no_contact_value;
+            field.response_slope[i] = 0.f;
+            continue;
+        }
         field.gap_coord[i] = gap;
         if(gap_response_coeff.empty() || gap_response_n_knot <= 3 || gap_response_coord_spacing_ang <= 0.f)
             continue;
@@ -1061,7 +1074,9 @@ static ImplicitCompactionField build_gap_response_compaction_field(
                 gap_response_coeff.data(),
                 coord,
                 gap_response_n_knot);
-        field.extended[i] = clamp_probability(response.x());
+        field.extended[i] = gap_response_is_compaction_coordinate
+            ? response.x()
+            : clamp_probability(response.x());
         field.response_slope[i] = response.y() / gap_response_coord_spacing_ang;
     }
     return field;
@@ -1731,6 +1746,26 @@ static inline SingleCompactionMix compute_single_compaction_mix(
     if(fabsf(denom_lo) < 1.0e-6f)
         denom_lo = (denom_lo >= 0.f) ? 1.0e-6f : -1.0e-6f;
     if(!has_compressed_state || !(compressed_state_center > compact_state_center + 1.0e-6f)) {
+        if(q <= extended_state_center) {
+            return {
+                1.f,
+                0.f,
+                0.f,
+                0.f,
+                0.f,
+                0.f,
+            };
+        }
+        if(q >= compact_state_center) {
+            return {
+                0.f,
+                1.f,
+                0.f,
+                0.f,
+                0.f,
+                0.f,
+            };
+        }
         float s = (q - extended_state_center) / denom_lo;
         return {
             1.f - s,
@@ -2107,6 +2142,8 @@ struct CGLipidPairPotential : public PotentialNode {
     float gap_response_face_cos_min;
     float gap_response_fallback_ang;
     bool gap_response_smooth_weight;
+    bool gap_response_is_compaction_coordinate;
+    float gap_response_no_contact_value;
     float cache_buffer;
     CGLBodySupport body_support;
     float cached_box_x;
@@ -2182,6 +2219,11 @@ CGLipidPairPotential::CGLipidPairPotential(hid_t grp, CoordNode& cg_pos_)
     , gap_response_face_cos_min(read_attribute<float>(grp, ".", "gap_response_face_cos_min", 0.f))
     , gap_response_fallback_ang(read_attribute<float>(grp, ".", "gap_response_fallback_ang", 0.f))
     , gap_response_smooth_weight(read_attribute<int>(grp, ".", "gap_response_smooth_weight", 0) != 0)
+    , gap_response_is_compaction_coordinate(
+            read_attribute<int>(grp, ".", "gap_response_is_compaction_coordinate", 0) != 0)
+    , gap_response_no_contact_value(read_attribute<float>(
+                grp, ".", "gap_response_no_contact_value",
+                std::numeric_limits<float>::quiet_NaN()))
     , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
     , body_support(read_cgl_body_support(grp))
     , cached_box_x(0.f)
@@ -2309,7 +2351,9 @@ ImplicitCompactionField CGLipidPairPotential::build_implicit_compaction_field(Ve
                 gap_response_radial_cutoff_ang,
                 gap_response_face_cos_min,
                 gap_response_fallback_ang,
-                gap_response_smooth_weight);
+                gap_response_smooth_weight,
+                gap_response_is_compaction_coordinate,
+                gap_response_no_contact_value);
     }
     field.leaflet_side = classify_leaflets_by_median_z(cg, index);
     field.dominant_pair.assign(index.size(), -1);
@@ -2576,10 +2620,20 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                     float sj = mean_field_compact[bi];
                     compute_compaction_weights(si, sj, w_ee, w_ec, w_cc);
                 } else {
-                    // Cross-leaflet face contact should raise the compact-state weight.
                     float qi = implicit_field.extended[ai];
                     float qj = implicit_field.extended[bi];
-                    compute_compaction_weights(qi, qj, w_ee, w_ec, w_cc);
+                    PairCompactionMix mix = compute_pair_compaction_mix(
+                            qi, qj,
+                            extended_state_center,
+                            compact_state_center,
+                            has_compressed_state,
+                            compressed_state_center);
+                    w_ee = mix.w_ee;
+                    w_ec = mix.w_ec;
+                    w_cc = mix.w_cc;
+                    w_ex = mix.w_ex;
+                    w_cx = mix.w_cx;
+                    w_xx = mix.w_xx;
                 }
 
                 QuadsplineEval e_ee = {0.f, 0.f, 0.f, 0.f};
@@ -2603,7 +2657,7 @@ void CGLipidPairPotential::compute_value(ComputeMode mode) {
                 bool ok_ex = false;
                 bool ok_cx = false;
                 bool ok_xx = false;
-                if(compaction_state && has_compressed_state) {
+                if(has_compressed_state) {
                     ok_ex = eval_full_pair_tensor(
                             delta_extended_compressed.data(), n_angular, n_radial,
                             dr, n1, n2, knot_spacing, cutoff,
@@ -2755,7 +2809,30 @@ void CGLipidPairPotential::propagate_deriv() {
             } else {
                 float qi = implicit_field.extended[ai];
                 float qj = implicit_field.extended[bi];
-                compute_compaction_weights(qi, qj, w_ee, w_ec, w_cc);
+                PairCompactionMix mix = compute_pair_compaction_mix(
+                        qi, qj,
+                        extended_state_center,
+                        compact_state_center,
+                        has_compressed_state,
+                        compressed_state_center);
+                w_ee = mix.w_ee;
+                w_ec = mix.w_ec;
+                w_cc = mix.w_cc;
+                w_ex = mix.w_ex;
+                w_cx = mix.w_cx;
+                w_xx = mix.w_xx;
+                d_w_ee_d_si = mix.dw_ee_dqi;
+                d_w_ec_d_si = mix.dw_ec_dqi;
+                d_w_cc_d_si = mix.dw_cc_dqi;
+                d_w_ex_d_qi = mix.dw_ex_dqi;
+                d_w_cx_d_qi = mix.dw_cx_dqi;
+                d_w_xx_d_qi = mix.dw_xx_dqi;
+                d_w_ee_d_sj = mix.dw_ee_dqj;
+                d_w_ec_d_sj = mix.dw_ec_dqj;
+                d_w_cc_d_sj = mix.dw_cc_dqj;
+                d_w_ex_d_qj = mix.dw_ex_dqj;
+                d_w_cx_d_qj = mix.dw_cx_dqj;
+                d_w_xx_d_qj = mix.dw_xx_dqj;
             }
 
             QuadsplineEval e_ee = {0.f, 0.f, 0.f, 0.f};
@@ -2779,7 +2856,7 @@ void CGLipidPairPotential::propagate_deriv() {
             bool ok_ex = false;
             bool ok_cx = false;
             bool ok_xx = false;
-            if(compaction_state && has_compressed_state) {
+            if(has_compressed_state) {
                 ok_ex = eval_full_pair_tensor(
                         delta_extended_compressed.data(), n_angular, n_radial,
                         dr, n1, n2, knot_spacing, cutoff,
@@ -2852,16 +2929,20 @@ void CGLipidPairPotential::propagate_deriv() {
                         + d_w_cx_d_qj * corr_cx
                         + d_w_xx_d_qj * corr_xx;
             } else if(!implicit_compaction_mean_field) {
-                float qi = implicit_field.extended[ai];
-                float qj = implicit_field.extended[bi];
-                implicit_ctrl_sens_ai = (
-                        (qj - 1.f) * corr_ee
-                        + (1.f - 2.f * qj) * corr_ec
-                        + qj * corr_cc);
-                implicit_ctrl_sens_bi = (
-                        (qi - 1.f) * corr_ee
-                        + (1.f - 2.f * qi) * corr_ec
-                        + qi * corr_cc);
+                implicit_ctrl_sens_ai =
+                        d_w_ee_d_si * corr_ee
+                        + d_w_ec_d_si * corr_ec
+                        + d_w_cc_d_si * corr_cc
+                        + d_w_ex_d_qi * corr_ex
+                        + d_w_cx_d_qi * corr_cx
+                        + d_w_xx_d_qi * corr_xx;
+                implicit_ctrl_sens_bi =
+                        d_w_ee_d_sj * corr_ee
+                        + d_w_ec_d_sj * corr_ec
+                        + d_w_cc_d_sj * corr_cc
+                        + d_w_ex_d_qj * corr_ex
+                        + d_w_cx_d_qj * corr_cx
+                        + d_w_xx_d_qj * corr_xx;
             }
         }
         if(log1p_reduced_transform) {
@@ -3483,9 +3564,11 @@ void CGLipidGapEmbeddingPotential::propagate_deriv() {
 struct CGLipidSCPotential : public PotentialNode {
     CoordNode& sc_pos;
     CoordNode& cg_pos;
+    CoordNode* compaction_state;
     vector<float> interaction_param;
     vector<float> delta_extended;
     vector<float> delta_compact;
+    vector<float> delta_compressed;
     vector<int> index1;
     vector<int> type1;
     vector<int> id1;
@@ -3515,6 +3598,8 @@ struct CGLipidSCPotential : public PotentialNode {
     float gap_response_face_cos_min;
     float gap_response_fallback_ang;
     bool gap_response_smooth_weight;
+    bool gap_response_is_compaction_coordinate;
+    float gap_response_no_contact_value;
     float cache_buffer;
     float cached_box_x;
     float cached_box_y;
@@ -3525,8 +3610,13 @@ struct CGLipidSCPotential : public PotentialNode {
     vector<CGLPairIndex> active_pairs;
     vector<CGLPairIndex> active_cg_pairs;
     vector<float> gap_response_coeff;
+    float compact_state_center;
+    float extended_state_center;
+    float compressed_state_center;
+    bool has_compressed_state;
 
     CGLipidSCPotential(hid_t grp, CoordNode& sc_pos, CoordNode& cg_pos);
+    CGLipidSCPotential(hid_t grp, const ArgList& arguments);
     void ensure_pairlist(VecArray sc, VecArray cg);
     virtual void compute_value(ComputeMode mode) override;
     virtual void propagate_deriv() override;
@@ -3545,6 +3635,7 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     : PotentialNode()
     , sc_pos(sc_pos_)
     , cg_pos(cg_pos_)
+    , compaction_state(nullptr)
     , n_type1(0)
     , n_type2(0)
     , n_param(0)
@@ -3568,11 +3659,20 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
     , gap_response_face_cos_min(read_attribute<float>(grp, ".", "gap_response_face_cos_min", 0.f))
     , gap_response_fallback_ang(read_attribute<float>(grp, ".", "gap_response_fallback_ang", 0.f))
     , gap_response_smooth_weight(read_attribute<int>(grp, ".", "gap_response_smooth_weight", 0) != 0)
+    , gap_response_is_compaction_coordinate(
+            read_attribute<int>(grp, ".", "gap_response_is_compaction_coordinate", 0) != 0)
+    , gap_response_no_contact_value(read_attribute<float>(
+                grp, ".", "gap_response_no_contact_value",
+                std::numeric_limits<float>::quiet_NaN()))
     , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
     , cached_box_x(0.f)
     , cached_box_y(0.f)
     , cached_box_z(0.f)
     , pairlist_valid(false)
+    , compact_state_center(read_attribute<float>(grp, ".", "compact_state_center_ang", 1.f))
+    , extended_state_center(read_attribute<float>(grp, ".", "extended_state_center_ang", 0.f))
+    , compressed_state_center(read_attribute<float>(grp, ".", "compressed_state_center_ang", compact_state_center))
+    , has_compressed_state(false)
 {
     check_elem_width(sc_pos, 6);
     check_elem_width(cg_pos, 6);
@@ -3598,6 +3698,12 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
         delta_extended = read_named_param_dataset_any(pi, "delta_extended", n_type1, n_type2, n_param);
         delta_compact = read_named_param_dataset_any(pi, "delta_compact", n_type1, n_type2, n_param);
         has_compaction_correction = true;
+        if(H5Lexists(pi, "delta_compressed", H5P_DEFAULT) > 0) {
+            delta_compressed = read_named_param_dataset_any(pi, "delta_compressed", n_type1, n_type2, n_param);
+            if(!(compressed_state_center > compact_state_center + 1.0e-6f))
+                throw string("cg_lipid_sc delta_compressed requires compressed_state_center_ang > compact_state_center_ang");
+            has_compressed_state = true;
+        }
         if(H5Lexists(pi, "gap_response_coeff", H5P_DEFAULT) > 0) {
             gap_response_coeff = read_float_dataset_1d(pi, "gap_response_coeff");
             if(gap_response_n_knot <= 3)
@@ -3607,11 +3713,10 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
         } else {
             implicit_compaction_gap_response = false;
         }
-        if(!implicit_compaction_gap_response)
-            throw string("cg_lipid_sc compaction correction currently requires implicit gap response metadata");
-        if(gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f)
+        if(implicit_compaction_gap_response
+                && (gap_response_coord_spacing_ang <= 0.f || gap_response_radial_cutoff_ang <= 0.f))
             throw string("cg_lipid_sc gap response requires positive coordinate spacing and radial cutoff");
-        if(gap_response_fallback_ang <= 0.f)
+        if(implicit_compaction_gap_response && gap_response_fallback_ang <= 0.f)
             gap_response_fallback_ang = gap_response_radial_cutoff_ang;
     }
     index1 = read_int_dataset(pi, "index1");
@@ -3624,6 +3729,23 @@ CGLipidSCPotential::CGLipidSCPotential(hid_t grp, CoordNode& sc_pos_, CoordNode&
         throw string("cg_lipid_sc source1 index/type/id size mismatch");
     if(index2.size() != type2.size() || index2.size() != id2.size())
         throw string("cg_lipid_sc source2 index/type/id size mismatch");
+}
+
+CGLipidSCPotential::CGLipidSCPotential(hid_t grp, const ArgList& arguments)
+    : CGLipidSCPotential(grp, *arguments.at(0), *arguments.at(1))
+{
+    if(arguments.size() == 3u) {
+        compaction_state = arguments.at(2);
+        check_elem_width(*compaction_state, 1);
+        if(compaction_state->n_elem != int(index2.size()))
+            throw string("cg_lipid_sc compaction state size must match CGL count");
+        if(!has_compaction_correction)
+            throw string("cg_lipid_sc received cgl_compaction_state but lacks compaction correction datasets");
+    } else if(arguments.size() != 2u) {
+        throw string("cg_lipid_sc expects sidechain plus compose_vector6d, optionally with cgl_compaction_state");
+    } else if(has_compaction_correction && !implicit_compaction_gap_response) {
+        throw string("cg_lipid_sc compaction correction currently requires implicit gap response metadata");
+    }
 }
 
 void CGLipidSCPotential::ensure_pairlist(VecArray sc, VecArray cg) {
@@ -3652,7 +3774,7 @@ void CGLipidSCPotential::ensure_pairlist(VecArray sc, VecArray cg) {
                 active_pairs.push_back({ai, bi});
         }
     }
-    if(has_compaction_correction) {
+    if(has_compaction_correction && !compaction_state) {
         float cg_cutoff = std::max(gap_response_radial_cutoff_ang, 0.f) + cache_buffer;
         float cg_cutoff2 = cg_cutoff * cg_cutoff;
         for(size_t ai = 0; ai < index2.size(); ++ai) {
@@ -3681,10 +3803,11 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
     }
     VecArray sc = sc_pos.output;
     VecArray cg = cg_pos.output;
+    VecArray comp = compaction_state ? compaction_state->output : VecArray();
     ensure_pairlist(sc, cg);
     float total = 0.f;
     ImplicitCompactionField implicit_field;
-    if(has_compaction_correction) {
+    if(has_compaction_correction && !compaction_state) {
         implicit_field = build_gap_response_compaction_field(
                 cg,
                 index2,
@@ -3699,9 +3822,10 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
                 gap_response_radial_cutoff_ang,
                 gap_response_face_cos_min,
                 gap_response_fallback_ang,
-                gap_response_smooth_weight);
+                gap_response_smooth_weight,
+                gap_response_is_compaction_coordinate,
+                gap_response_no_contact_value);
     }
-
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
         size_t bi = pair.second;
@@ -3722,6 +3846,7 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
             if(has_compaction_correction) {
                 QuadsplineEval e_ext = {0.f, 0.f, 0.f, 0.f};
                 QuadsplineEval e_comp = {0.f, 0.f, 0.f, 0.f};
+                QuadsplineEval e_cmpd = {0.f, 0.f, 0.f, 0.f};
                 bool ok_ext = eval_full_pair_tensor(
                         param_ptr(delta_extended, n_type2, n_param, t1, t2),
                         n_angular, n_radial,
@@ -3732,19 +3857,37 @@ void CGLipidSCPotential::compute_value(ComputeMode mode) {
                         n_angular, n_radial,
                         dr, n1, n2, knot_spacing, cutoff,
                         log1p_reduced_transform ? 0.f : taper_width, e_comp);
-                float q = implicit_field.extended[bi];
+                bool ok_cmpd = has_compressed_state && eval_full_pair_tensor(
+                        param_ptr(delta_compressed, n_type2, n_param, t1, t2),
+                        n_angular, n_radial,
+                        dr, n1, n2, knot_spacing, cutoff,
+                        log1p_reduced_transform ? 0.f : taper_width, e_cmpd);
+                float q = compaction_state
+                    ? comp(0, int(bi))
+                    : implicit_field.extended[bi];
+                SingleCompactionMix mix = compute_single_compaction_mix(
+                        q,
+                        extended_state_center,
+                        compact_state_center,
+                        has_compressed_state && ok_cmpd,
+                        compressed_state_center);
                 if(ok_ext) {
-                    float w = 1.f - q;
-                    e.value += w * e_ext.value;
-                    e.d_dr += w * e_ext.d_dr;
-                    e.d_da1 += w * e_ext.d_da1;
-                    e.d_da2 += w * e_ext.d_da2;
+                    e.value += mix.w_ext * e_ext.value;
+                    e.d_dr += mix.w_ext * e_ext.d_dr;
+                    e.d_da1 += mix.w_ext * e_ext.d_da1;
+                    e.d_da2 += mix.w_ext * e_ext.d_da2;
                 }
                 if(ok_comp) {
-                    e.value += q * e_comp.value;
-                    e.d_dr += q * e_comp.d_dr;
-                    e.d_da1 += q * e_comp.d_da1;
-                    e.d_da2 += q * e_comp.d_da2;
+                    e.value += mix.w_compact * e_comp.value;
+                    e.d_dr += mix.w_compact * e_comp.d_dr;
+                    e.d_da1 += mix.w_compact * e_comp.d_da1;
+                    e.d_da2 += mix.w_compact * e_comp.d_da2;
+                }
+                if(ok_cmpd) {
+                    e.value += mix.w_compressed * e_cmpd.value;
+                    e.d_dr += mix.w_compressed * e_cmpd.d_dr;
+                    e.d_da1 += mix.w_compressed * e_cmpd.d_da1;
+                    e.d_da2 += mix.w_compressed * e_cmpd.d_da2;
                 }
             }
             if(log1p_reduced_transform)
@@ -3762,10 +3905,11 @@ void CGLipidSCPotential::propagate_deriv() {
     VecArray sc_sens = sc_pos.sens;
     VecArray cg = cg_pos.output;
     VecArray cg_sens = cg_pos.sens;
+    VecArray comp = compaction_state ? compaction_state->output : VecArray();
+    VecArray comp_sens = compaction_state ? compaction_state->sens : VecArray();
     ensure_pairlist(sc, cg);
     ImplicitCompactionField implicit_field;
-    vector<float> implicit_q_sens(index2.size(), 0.f);
-    if(has_compaction_correction) {
+    if(has_compaction_correction && !compaction_state) {
         implicit_field = build_gap_response_compaction_field(
                 cg,
                 index2,
@@ -3780,8 +3924,13 @@ void CGLipidSCPotential::propagate_deriv() {
                 gap_response_radial_cutoff_ang,
                 gap_response_face_cos_min,
                 gap_response_fallback_ang,
-                gap_response_smooth_weight);
+                gap_response_smooth_weight,
+                gap_response_is_compaction_coordinate,
+                gap_response_no_contact_value);
     }
+    vector<float> implicit_q_sens;
+    if(has_compaction_correction && !compaction_state)
+        implicit_q_sens.assign(index2.size(), 0.f);
 
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
@@ -3805,6 +3954,7 @@ void CGLipidSCPotential::propagate_deriv() {
         if(has_compaction_correction) {
             QuadsplineEval e_ext = {0.f, 0.f, 0.f, 0.f};
             QuadsplineEval e_comp = {0.f, 0.f, 0.f, 0.f};
+            QuadsplineEval e_cmpd = {0.f, 0.f, 0.f, 0.f};
             bool ok_ext = eval_full_pair_tensor(
                     param_ptr(delta_extended, n_type2, n_param, t1, t2),
                     n_angular, n_radial,
@@ -3815,23 +3965,44 @@ void CGLipidSCPotential::propagate_deriv() {
                     n_angular, n_radial,
                     dr, n1, n2, knot_spacing, cutoff,
                     log1p_reduced_transform ? 0.f : taper_width, e_comp);
-            float q = implicit_field.extended[bi];
+            bool ok_cmpd = has_compressed_state && eval_full_pair_tensor(
+                    param_ptr(delta_compressed, n_type2, n_param, t1, t2),
+                    n_angular, n_radial,
+                    dr, n1, n2, knot_spacing, cutoff,
+                    log1p_reduced_transform ? 0.f : taper_width, e_cmpd);
+            float q = compaction_state
+                ? comp(0, int(bi))
+                : implicit_field.extended[bi];
             float corr_ext = ok_ext ? e_ext.value : 0.f;
             float corr_comp = ok_comp ? e_comp.value : 0.f;
+            float corr_cmpd = ok_cmpd ? e_cmpd.value : 0.f;
+            SingleCompactionMix mix = compute_single_compaction_mix(
+                    q,
+                    extended_state_center,
+                    compact_state_center,
+                    has_compressed_state && ok_cmpd,
+                    compressed_state_center);
             if(ok_ext) {
-                float w = 1.f - q;
-                e.value += w * e_ext.value;
-                e.d_dr += w * e_ext.d_dr;
-                e.d_da1 += w * e_ext.d_da1;
-                e.d_da2 += w * e_ext.d_da2;
+                e.value += mix.w_ext * e_ext.value;
+                e.d_dr += mix.w_ext * e_ext.d_dr;
+                e.d_da1 += mix.w_ext * e_ext.d_da1;
+                e.d_da2 += mix.w_ext * e_ext.d_da2;
             }
             if(ok_comp) {
-                e.value += q * e_comp.value;
-                e.d_dr += q * e_comp.d_dr;
-                e.d_da1 += q * e_comp.d_da1;
-                e.d_da2 += q * e_comp.d_da2;
+                e.value += mix.w_compact * e_comp.value;
+                e.d_dr += mix.w_compact * e_comp.d_dr;
+                e.d_da1 += mix.w_compact * e_comp.d_da1;
+                e.d_da2 += mix.w_compact * e_comp.d_da2;
             }
-            q_ctrl_sens = corr_comp - corr_ext;
+            if(ok_cmpd) {
+                e.value += mix.w_compressed * e_cmpd.value;
+                e.d_dr += mix.w_compressed * e_cmpd.d_dr;
+                e.d_da1 += mix.w_compressed * e_cmpd.d_da1;
+                e.d_da2 += mix.w_compressed * e_cmpd.d_da2;
+            }
+            q_ctrl_sens = mix.dw_ext_dq * corr_ext
+                + mix.dw_compact_dq * corr_comp
+                + mix.dw_compressed_dq * corr_cmpd;
         }
         if(log1p_reduced_transform)
         {
@@ -3852,10 +4023,13 @@ void CGLipidSCPotential::propagate_deriv() {
         accumulate_deriv(dr, n1, n2, e, dpos1, ddir1, dpos2, ddir2);
         add_vec6_sens(sc_sens, index1[ai], dpos1, ddir1);
         add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
-        if(has_compaction_correction)
+        if(compaction_state)
+            comp_sens(0, int(bi)) += q_ctrl_sens;
+        else if(has_compaction_correction)
             implicit_q_sens[bi] += q_ctrl_sens;
     }
-    if(has_compaction_correction)
+
+    if(has_compaction_correction && !compaction_state && implicit_compaction_gap_response) {
         propagate_gap_response_compaction_sens(
                 cg,
                 cg_sens,
@@ -3869,6 +4043,7 @@ void CGLipidSCPotential::propagate_deriv() {
                 gap_response_radial_cutoff_ang,
                 gap_response_face_cos_min,
                 gap_response_smooth_weight);
+    }
 }
 
 struct CGLipidTargetPotential : public PotentialNode {
@@ -3913,6 +4088,8 @@ struct CGLipidTargetPotential : public PotentialNode {
     float gap_response_face_cos_min;
     float gap_response_fallback_ang;
     bool gap_response_smooth_weight;
+    bool gap_response_is_compaction_coordinate;
+    float gap_response_no_contact_value;
     float cache_buffer;
     CGLBodySupport body_support;
     float cached_box_x;
@@ -3982,6 +4159,8 @@ struct CGLipidSCOneBody : public CoordNode {
     float gap_response_face_cos_min;
     float gap_response_fallback_ang;
     bool gap_response_smooth_weight;
+    bool gap_response_is_compaction_coordinate;
+    float gap_response_no_contact_value;
     float cache_buffer;
     float cached_box_x;
     float cached_box_y;
@@ -4025,6 +4204,11 @@ struct CGLipidSCOneBody : public CoordNode {
         , gap_response_face_cos_min(read_attribute<float>(grp, ".", "gap_response_face_cos_min", 0.f))
         , gap_response_fallback_ang(read_attribute<float>(grp, ".", "gap_response_fallback_ang", 0.f))
         , gap_response_smooth_weight(read_attribute<int>(grp, ".", "gap_response_smooth_weight", 0) != 0)
+        , gap_response_is_compaction_coordinate(
+                read_attribute<int>(grp, ".", "gap_response_is_compaction_coordinate", 0) != 0)
+        , gap_response_no_contact_value(read_attribute<float>(
+                    grp, ".", "gap_response_no_contact_value",
+                    std::numeric_limits<float>::quiet_NaN()))
         , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
         , cached_box_x(0.f)
         , cached_box_y(0.f)
@@ -4113,6 +4297,8 @@ struct CGLipidSCOneBody : public CoordNode {
             auto it = group_counts.find(key);
             row_group_count[i] = (it == group_counts.end() || it->second < 1) ? 1 : it->second;
         }
+        if(read_attribute<int>(grp, ".", "normalize_by_row_group", 1) == 0)
+            std::fill(row_group_count.begin(), row_group_count.end(), 1);
     }
 
     CGLipidSCOneBody(hid_t grp, const ArgList& arguments)
@@ -4210,9 +4396,10 @@ struct CGLipidSCOneBody : public CoordNode {
                     gap_response_radial_cutoff_ang,
                     gap_response_face_cos_min,
                     gap_response_fallback_ang,
-                    gap_response_smooth_weight);
+                    gap_response_smooth_weight,
+                    gap_response_is_compaction_coordinate,
+                    gap_response_no_contact_value);
         }
-
         for(const CGLPairIndex& pair : active_pairs) {
             int ai = int(pair.first);
             size_t bi = pair.second;
@@ -4250,7 +4437,7 @@ struct CGLipidSCOneBody : public CoordNode {
                             dr, n1, n2, knot_spacing, cutoff,
                             log1p_reduced_transform ? 0.f : taper_width, e_cmpd);
                     float q = compaction_state
-                        ? comp(0, index2[bi])
+                        ? comp(0, int(bi))
                         : implicit_field.extended[bi];
                     SingleCompactionMix mix = compute_single_compaction_mix(
                             q,
@@ -4297,7 +4484,6 @@ struct CGLipidSCOneBody : public CoordNode {
         VecArray comp_sens = compaction_state ? compaction_state->sens : VecArray();
         ensure_pairlist(sc, cg);
         ImplicitCompactionField implicit_field;
-        vector<float> implicit_q_sens(index2.size(), 0.f);
         if(has_compaction_correction && !compaction_state) {
             implicit_field = build_gap_response_compaction_field(
                     cg,
@@ -4313,8 +4499,13 @@ struct CGLipidSCOneBody : public CoordNode {
                     gap_response_radial_cutoff_ang,
                     gap_response_face_cos_min,
                     gap_response_fallback_ang,
-                    gap_response_smooth_weight);
+                    gap_response_smooth_weight,
+                    gap_response_is_compaction_coordinate,
+                    gap_response_no_contact_value);
         }
+        vector<float> implicit_q_sens;
+        if(has_compaction_correction && !compaction_state)
+            implicit_q_sens.assign(index2.size(), 0.f);
 
         for(const CGLPairIndex& pair : active_pairs) {
             int ai = int(pair.first);
@@ -4357,7 +4548,7 @@ struct CGLipidSCOneBody : public CoordNode {
                         dr, n1, n2, knot_spacing, cutoff,
                         log1p_reduced_transform ? 0.f : taper_width, e_cmpd);
                 float q = compaction_state
-                    ? comp(0, index2[bi])
+                    ? comp(0, int(bi))
                     : implicit_field.extended[bi];
                 float corr_ext = ok_ext ? e_ext.value : 0.f;
                 float corr_comp = ok_comp ? e_comp.value : 0.f;
@@ -4413,14 +4604,16 @@ struct CGLipidSCOneBody : public CoordNode {
                 dpos2[d] *= row_scale;
                 ddir2[d] *= row_scale;
             }
+            q_ctrl_sens *= row_scale;
             add_vec6_sens(sc_sens, ai, dpos1, ddir1);
             add_vec6_sens(cg_sens, index2[bi], dpos2, ddir2);
-            if(has_compaction_correction && compaction_state)
-                comp_sens(0, index2[bi]) += row_scale * q_ctrl_sens;
+            if(compaction_state)
+                comp_sens(0, int(bi)) += q_ctrl_sens;
             else if(has_compaction_correction)
-                implicit_q_sens[bi] += row_scale * q_ctrl_sens;
+                implicit_q_sens[bi] += q_ctrl_sens;
         }
-        if(has_compaction_correction && !compaction_state)
+
+        if(has_compaction_correction && !compaction_state && implicit_compaction_gap_response) {
             propagate_gap_response_compaction_sens(
                     cg,
                     cg_sens,
@@ -4434,6 +4627,7 @@ struct CGLipidSCOneBody : public CoordNode {
                     gap_response_radial_cutoff_ang,
                     gap_response_face_cos_min,
                     gap_response_smooth_weight);
+        }
     }
 };
 
@@ -4472,6 +4666,11 @@ CGLipidTargetPotential::CGLipidTargetPotential(
         , gap_response_face_cos_min(read_attribute<float>(grp, ".", "gap_response_face_cos_min", 0.f))
         , gap_response_fallback_ang(read_attribute<float>(grp, ".", "gap_response_fallback_ang", 0.f))
         , gap_response_smooth_weight(read_attribute<int>(grp, ".", "gap_response_smooth_weight", 0) != 0)
+        , gap_response_is_compaction_coordinate(
+                read_attribute<int>(grp, ".", "gap_response_is_compaction_coordinate", 0) != 0)
+        , gap_response_no_contact_value(read_attribute<float>(
+                    grp, ".", "gap_response_no_contact_value",
+                    std::numeric_limits<float>::quiet_NaN()))
         , cache_buffer(std::max(0.f, read_attribute<float>(grp, ".", "pairlist_buffer_ang", 1.f)))
         , body_support(read_cgl_body_support(grp))
         , cached_box_x(0.f)
@@ -4613,6 +4812,7 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
         potential = 0.f;
         return;
     }
+    refresh_hybrid_bb_proxies_for_coord(tgt_pos);
     VecArray cg = cg_pos.output;
     VecArray comp = compaction_state ? compaction_state->output : VecArray();
     VecArray tgt = tgt_pos.output;
@@ -4634,9 +4834,10 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
                 gap_response_radial_cutoff_ang,
                 gap_response_face_cos_min,
                 gap_response_fallback_ang,
-                gap_response_smooth_weight);
+                gap_response_smooth_weight,
+                gap_response_is_compaction_coordinate,
+                gap_response_no_contact_value);
     }
-
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
         size_t bi = pair.second;
@@ -4717,6 +4918,7 @@ void CGLipidTargetPotential::compute_value(ComputeMode mode) {
 }
 
 void CGLipidTargetPotential::propagate_deriv() {
+    refresh_hybrid_bb_proxies_for_coord(tgt_pos);
     VecArray cg = cg_pos.output;
     VecArray cg_sens = cg_pos.sens;
     VecArray comp = compaction_state ? compaction_state->output : VecArray();
@@ -4725,7 +4927,6 @@ void CGLipidTargetPotential::propagate_deriv() {
     VecArray tgt_sens = tgt_pos.sens;
     ensure_pairlist(cg, tgt);
     ImplicitCompactionField implicit_field;
-    vector<float> implicit_q_sens(index1.size(), 0.f);
     if(has_compaction_correction && !compaction_state) {
         implicit_field = build_gap_response_compaction_field(
                 cg,
@@ -4741,8 +4942,13 @@ void CGLipidTargetPotential::propagate_deriv() {
                 gap_response_radial_cutoff_ang,
                 gap_response_face_cos_min,
                 gap_response_fallback_ang,
-                gap_response_smooth_weight);
+                gap_response_smooth_weight,
+                gap_response_is_compaction_coordinate,
+                gap_response_no_contact_value);
     }
+    vector<float> implicit_q_sens;
+    if(has_compaction_correction && !compaction_state)
+        implicit_q_sens.assign(index1.size(), 0.f);
 
     for(const CGLPairIndex& pair : active_pairs) {
         size_t ai = pair.first;
@@ -4859,12 +5065,13 @@ void CGLipidTargetPotential::propagate_deriv() {
             tgt_sens(1, index2[bi]) += dpos[1];
             tgt_sens(2, index2[bi]) += dpos[2];
         }
-        if(has_compaction_correction && compaction_state)
+        if(compaction_state)
             comp_sens(0, int(ai)) += q_ctrl_sens;
         else if(has_compaction_correction)
             implicit_q_sens[ai] += q_ctrl_sens;
     }
-    if(has_compaction_correction && !compaction_state)
+
+    if(has_compaction_correction && !compaction_state && implicit_compaction_gap_response) {
         propagate_gap_response_compaction_sens(
                 cg,
                 cg_sens,
@@ -4878,6 +5085,7 @@ void CGLipidTargetPotential::propagate_deriv() {
                 gap_response_radial_cutoff_ang,
                 gap_response_face_cos_min,
                 gap_response_smooth_weight);
+    }
 }
 
 namespace martini_cg_lipid {
@@ -5331,6 +5539,6 @@ static RegisterNodeType<CGLipidPairPotential, -1> _reg_cg_pair("cg_lipid_pair");
 static RegisterNodeType<CGLipidDensityPotential, 1> _reg_cg_density("cg_lipid_density");
 static RegisterNodeType<CGLipidContactEmbeddingPotential, 1> _reg_cg_contact_embedding("cg_lipid_contact_embedding");
 static RegisterNodeType<CGLipidGapEmbeddingPotential, 1> _reg_cg_gap_embedding("cg_lipid_gap_embedding");
-static RegisterNodeType<CGLipidSCPotential, 2> _reg_cg_sc("cg_lipid_sc");
+static RegisterNodeType<CGLipidSCPotential, -1> _reg_cg_sc("cg_lipid_sc");
 static RegisterNodeType<CGLipidSCOneBody, -1> _reg_cg_sc_1body("cg_lipid_rotamer_sc");
 static RegisterNodeType<CGLipidTargetPotential, -1> _reg_cg_target("cg_lipid_target");

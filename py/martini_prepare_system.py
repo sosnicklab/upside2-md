@@ -729,7 +729,21 @@ def run_checked(cmd, cwd=None, log_file=None, echo=True):
         print(" ".join(str(x) for x in cmd))
     start = time.perf_counter()
     if log_file is None:
-        subprocess.run([str(x) for x in cmd], cwd=str(cwd) if cwd else None, check=True)
+        proc = subprocess.Popen(
+            [str(x) for x in cmd],
+            cwd=str(cwd) if cwd else None,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            print(line, end="")
+        rc = proc.wait()
+        if rc != 0:
+            raise subprocess.CalledProcessError(rc, [str(x) for x in cmd])
         elapsed = time.perf_counter() - start
         if echo:
             print(f"[workflow timing] command finished in {elapsed:.3f} s")
@@ -741,6 +755,7 @@ def run_checked(cmd, cwd=None, log_file=None, echo=True):
         proc = subprocess.Popen(
             [str(x) for x in cmd],
             cwd=str(cwd) if cwd else None,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -1552,6 +1567,57 @@ def promote_minimized_state_to_input(up_file: Path):
         )
         mom.attrs["restart_valid"] = np.int8(0)
 
+        if "/output/cgl_compaction" in h5 and h5["/output/cgl_compaction"].shape[0] > 0:
+            compaction_path = "/input/potential/cgl_compaction_state"
+            if compaction_path in h5:
+                compaction_grp = h5[compaction_path]
+                last_compaction = np.asarray(
+                    h5["/output/cgl_compaction"][-1, 0, :],
+                    dtype=np.float32,
+                )
+                if "value" in compaction_grp:
+                    del compaction_grp["value"]
+                compaction_grp.create_dataset("value", data=last_compaction)
+                compaction_grp.attrs["value_restart_source"] = "minimized_output/cgl_compaction[-1]"
+        if "/input/cgl_compaction_mom" in h5:
+            compaction_mom_shape = h5["/input/cgl_compaction_mom"].shape
+            del h5["/input/cgl_compaction_mom"]
+            compaction_mom = h5.create_dataset(
+                "/input/cgl_compaction_mom",
+                data=np.zeros(compaction_mom_shape, dtype=np.float32),
+            )
+            compaction_mom.attrs["restart_source"] = "zero_after_minimization"
+
+        if "/output/cgl_orientation" in h5 and h5["/output/cgl_orientation"].shape[0] > 0:
+            orientation_path = "/input/potential/cgl_orientation_state"
+            if orientation_path in h5:
+                orientation_grp = h5[orientation_path]
+                last_orientation = np.asarray(
+                    h5["/output/cgl_orientation"][-1, 0, :, :],
+                    dtype=np.float32,
+                )
+                if "direction" in orientation_grp:
+                    del orientation_grp["direction"]
+                orientation_grp.create_dataset("direction", data=last_orientation)
+                orientation_grp.attrs["direction_restart_source"] = "minimized_output/cgl_orientation[-1]"
+        if "/input/cgl_orientation_mom" in h5:
+            orientation_mom_shape = h5["/input/cgl_orientation_mom"].shape
+            del h5["/input/cgl_orientation_mom"]
+            orientation_mom = h5.create_dataset(
+                "/input/cgl_orientation_mom",
+                data=np.zeros(orientation_mom_shape, dtype=np.float32),
+            )
+            orientation_mom.attrs["restart_source"] = "zero_after_minimization"
+
+        if "/input/cgl_gle/aux_momentum" in h5:
+            aux_shape = h5["/input/cgl_gle/aux_momentum"].shape
+            del h5["/input/cgl_gle/aux_momentum"]
+            aux = h5.create_dataset(
+                "/input/cgl_gle/aux_momentum",
+                data=np.zeros(aux_shape, dtype=np.float32),
+            )
+            aux.attrs["restart_source"] = "zero_after_minimization"
+
         last_box = None
         if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
             last_box = np.asarray(h5["/output/box"][-1], dtype=float).reshape(-1)
@@ -1738,12 +1804,30 @@ def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_l
     import h5py
     with h5py.File(output_file, "r+") as h5:
         promote_cgl_restart_state(h5)
+        cgl_compaction_restart = (
+            np.asarray(h5["/input/potential/cgl_compaction_state/value"][:], dtype=np.float32)
+            if "/input/potential/cgl_compaction_state/value" in h5
+            else None
+        )
+    inject_hybrid_interface_nodes(args, output_file, "production", "production")
+    if cgl_compaction_restart is not None:
+        with h5py.File(output_file, "r+") as h5:
+            compaction_path = "/input/potential/cgl_compaction_state"
+            if compaction_path in h5:
+                compaction_grp = h5[compaction_path]
+                if "value" in compaction_grp:
+                    del compaction_grp["value"]
+                compaction_grp.create_dataset("value", data=cgl_compaction_restart)
+                compaction_grp.attrs["value_restart_source"] = (
+                    "output/cgl_compaction[-1]_after_forcefield_refresh"
+                )
     if not input_momentum_restart_valid(output_file):
         raise ValueError(
             "Production continuation requires restart-valid /output/mom in the source stage. "
             "Regenerate the previous production stage with the current workflow so momentum is recorded."
         )
     assert_hybrid_stage_active(output_file, "production", "production")
+    run_minimization_stage(args, stage_label, output_file, args.min_70_max_iter, preserve_stage=True)
     run_md_stage(args, stage_label, output_file, output_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
     extract_stage_vtf(args, stage_label, output_file, "2")
 
@@ -2173,6 +2257,11 @@ def run_stage70_handoff(args, files, source_stage: Path):
     ):
         reset_stage70_release_hybrid_transition(files["stage_70"], args)
     remove_protein_position_restraints(files["stage_70"])
+    if (
+        int(args.prod_70_burnin_nsteps) > 0
+        and float(args.stage_70_burnin_protein_restraint_spring) > 0.0
+    ):
+        run_minimization_stage(args, "7.0.release", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
     run_md_stage(
         args,
         "7.0",

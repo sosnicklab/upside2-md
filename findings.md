@@ -1,7 +1,256 @@
 # Findings
 
+## Technical Findings
+
+- Workflow `.out` failures on 2026-07-10 were post-simulation VTF extraction
+  failures, not MD/force-field failures.  `1rkl`, `1afo`, `1rkl_full`, and
+  `1afo_full` all completed stage-7.0 MD before `martini_extract_vtf.py` failed
+  at Python interpreter startup with `init_sys_streams` / `Bad file descriptor`.
+  The extractor succeeds manually on the same checkpoints, so helper
+  subprocesses must not inherit possibly-invalid stdio from background or
+  redirected workflow launches.
+- The accepted pair-base-only validation fixes the reported dryMARTINI bug.
+  The installed DOPC artifact keeps the physical pair-conditioned relaxation in
+  the base CGL-CGL spline and removes runtime pair-q overlays.  Fresh `1rkl`
+  and `1afo` workflows completed `stage_7.0`, `stage_7.1`, and `stage_7.2`
+  without CGL ejection, box runaway, or pair payload reintroduction.  Final
+  near-protein q exceeded far-field q in both systems (`1rkl.stage_7.2`
+  `0.458` vs `0.415`, `1afo.stage_7.2` `0.530` vs `0.478`), and DSSP-style
+  secondary-structure matches from `stage_7.0` start to `stage_7.2` final were
+  `0.968` for `1rkl` and `0.986` for `1afo`.
+- The residual v2 failure exposed an undersampled q self PMF.  The installed
+  `cg_lipid_compaction/pmf_values_kj_mol` had 12 bins but only 8 isolated
+  DOPC samples, producing alternating empty-bin barriers around 19 kJ/mol.
+  Final-frame q-force decomposition then showed SC-CGL and CGL-CGL terms
+  favoring compression near the protein while the one-body self term dominated
+  against it.
+- The release-minimized proxy-refresh candidate fixed the old local q sign but
+  exposed a delayed CGL-CGL runtime overlay failure.  Fresh `1rkl` and `1afo`
+  passed stage 7.0/7.1 with protein-proximal q above far-field q, then failed in
+  stage 7.2 when CGL-CGL distances collapsed into the base repulsive core.  A
+  temporary `1rkl` probe that removed only `cg_lipid_pair` runtime q deltas
+  exposed an initial potential around `1.55e6` from the saved state, proving the
+  pair-q overlay had hidden severe base-pair overlap.  The pair-relaxed base
+  spline must run without runtime pair-q tensors; hidden q remains for self and
+  SC-CGL response.
+- The corrected self-PMF contract now fits from a dense isolated DOPC sample
+  pool and records explicit provenance.  The installed `dopc.h5` has
+  `self_pmf_source=isolated_dopc_dense_tail_compression_histogram_v2`, 512
+  samples, all 12 PMF bins nonempty, a separate
+  `isolated_dopc_intramolecular_mc_samples` dataset, and passes both the
+  build-time stale check and prepare-time schema validator.
+- Broad Gaussian smoothing of the dense self-PMF is rejected.  It removed the
+  old empty-bin barriers but leaked compact-state probability into the rare
+  compressed endpoint, causing immediate short-smoke q overcompression
+  (`q>1` around 0.4-0.6).  The active v2 PMF uses dense histogram counts plus a
+  small pseudocount; the compressed endpoint penalty is about 10.5 kJ/mol.
+- The rebuilt SC-CGL compaction payload must represent source-conditioned
+  single-CGL tail relaxation, not static tail-retargeted endpoint overlap.
+  The dense-self-PMF v2 artifact still had a degenerate compressed endpoint:
+  `delta_compressed` matched `delta_compact`, so the runtime compact ->
+  compressed SC-CGL slope was zero and protein-contact CGLs stayed locally
+  under-compressed in full `1rkl` validation.
+- CGL-target q-dependence remains disabled by design.  The active base
+  CGL-target spline is still injected, but no target `delta_*` or q-grid
+  datasets are present in the installed H5 or prepared probe.
+- Short `1rkl` and `1afo` smoke workflows from the installed tail-relaxation
+  H5 passed stage 6.0 and early stage 7.0 without CGL z outliers.  This proves
+  the new SC-CGL contract is injectable and finite in both benchmark systems,
+  but it does not replace full stage-7 production and continuation validation.
+- Full endpoint-limited SC-CGL v3 validation is finite but rejected.
+  `1rkl` stage 7.0 ended with hbond start/min/mean/last50/final
+  `33.9/19.9/26.8/29.7/28.8`, final q mean/median/fraction>1
+  `0.908/0.931/0.371`, and near-protein q lower than far-field q by about
+  `0.016`.  `1afo` recovered late but still ended at `80.8` hbonds after
+  broad fluctuation.  Low-q `1rkl` CGLs are nearest mostly to N/CA/O backbone
+  atoms, not the BB-anchor particles handled by `cg_lipid_rotamer_sc`, pointing
+  to the remaining q-response defect in the target/backbone interface path.
+- The v5 target-convention retrofit fixed local q sign but failed secondary
+  structure.  `1afo` production hbonds dropped from about `88` to the high
+  `70s` by step `3400/10000`.  Real-contact target diagnostics showed the
+  q-dependent target relief was copied by atom type, so `Qa/Qd` ion targets
+  received the same hidden tail-compression deltas as backbone proxy beads.
+  Per-CGL target `dE/dq` reached about `-12 E_up`, dominated by `NA/CL` and
+  a small number of backbone proxy contacts.  The injection contract must split
+  q-active protein targets from base-only non-protein targets.
+- The completed split-target v6 injection contract fixes the ion/type leakage
+  and the old local-q sign defect, but it is not a full fix.  Fresh prepared
+  files route q-active `cg_lipid_target` only to protein-class particles and
+  put ions in base-only `cg_lipid_target_base`.  Completed `1rkl` production is
+  stable (`31.4/26.8/32.9/34.9/36.0` hbond start/min/mean/last20/final), and
+  both systems have higher q near protein than far field.  Completed `1afo`
+  still drops to `74.9` final hbonds with a `73.3` last-20 mean, so the
+  remaining failure is a protein-interface force-balance issue rather than CGL
+  local q suppression.
+- A fresh same-seed `1afo` target-q-off run keeps the base CGL-target spline
+  active and removes only protein-target q deltas.  It improves burn-in but
+  still fails late production (`90.5/69.5/83.3/75.9/76.0` hbond
+  start/min/mean/last20/final), with hbond loss spread across both helices.
+  Therefore target-q is still not accepted, but the residual bug is not solved
+  by stripping target q from the current force field.
+- Upside rewrites `/output` arrays even for zero-duration executable probes.
+  Never point `obj/upside --duration-steps 0` at a validation checkpoint; copy
+  the H5 first and run probes only on the copy.  The target-q-off `1afo`
+  checkpoint output was truncated this way, so only its logs, VTF, prepared
+  input, and already captured q/H5 diagnostics should be used.
+- `cg_lipid_target` shares the hybrid `BB` proxy coordinate with the generic
+  MARTINI runtime, but it cannot rely on `martini_potential` to refresh that
+  proxy first.  H5 node order puts `cg_lipid_target` before
+  `martini_potential`, so target evaluation can otherwise use a stale proxy
+  position and project the resulting force into the current N/CA/C/O backbone.
+  BB proxy refresh must happen inside any potential that reads those proxies.
+- Stage-7 production cannot simply zero all momenta after the burn-in protein
+  position restraint is removed.  That improved same-state `1afo`, but a fresh
+  `1rkl` workflow regressed late hbonds.  The better physical handoff is to
+  remove the restraint, minimize the released Hamiltonian, then start
+  production from that relaxed coordinate state; probes improved `1rkl`
+  late-20/final hbonds to about `34.6/35.9` while improving the `1afo` late
+  window relative to exact restart.
+- The first source-conditioned SC-CGL relaxation model was physically
+  over-broad: minimizing total SC-lipid nonbonded energy let attractive
+  head/charge contacts become q-dependent protein binding.  The v2 table
+  contract limits the SC-CGL hidden-state correction to positive tail-bead
+  overlap relief, floors positive base cells at zero energy, and leaves
+  attractive base cells unchanged.  Table inspection confirms no positive-base
+  SC-CGL cell becomes attractive after compaction.
+
 ## Lessons
 
+- Do not classify a workflow `.out` failure as a simulation failure until the
+  log tail is checked past the final MD step.
+  A failed post-processing helper can leave valid `.up` checkpoints and missing
+  derived artifacts; in that case fix the workflow plumbing and regenerate the
+  derived files instead of rerunning or changing physics.
+- A dryMARTINI hidden-state correction must not create a new attractive well
+  unless that attraction is part of the physical base interaction.
+  For SC-CGL tail compression, q may relieve repulsive tail overlap, but base
+  head/charge attraction must stay in the base spline instead of becoming a
+  q-dependent reward near the protein.
+- Do not combine a pair-relaxed CGL-CGL base spline with runtime pair-q overlay
+  tensors unless a same-state base-energy probe proves the overlay cannot hide
+  base-pair core overlaps.
+  In the current DOPC contract, the physical pair tail-relaxation correction
+  belongs in `cg_lipid_pair/interaction_param`; copying `delta_extended_*`
+  tensors into the runtime pair node double-counts the relaxation and can
+  minimize into a state that explodes when viewed by the base pair surface.
+- Do not treat a compressed hidden-state branch as valid just because the
+  dataset exists.
+  For SC-CGL, `delta_compressed` must be distinct from `delta_compact`; otherwise
+  the compact-to-compressed endpoint has no q force and real protein-facing
+  tail contacts cannot use the compressed-tail relief state.
+- Do not inject a q-dependent CGL-target correction by atom type alone when
+  protein proxy beads and non-protein particles share dry-MARTINI types.
+  `Qa/Qd` covers both backbone proxy beads and explicit ions in these prepared
+  systems; ions must keep base CGL-target physics but not receive hidden
+  lipid-tail compaction relief.
+- Do not reject a dryMARTINI hidden-state contract from an interrupted H5
+  output snapshot alone.
+  In the stopped split-target v6 attempt, the H5 output available after
+  interruption lagged behind the production log.  Exact finite differences on a
+  promoted snapshot are a better sign check than a stale near/far q snapshot.
+- Do not keep rerunning a dryMARTINI candidate after stage-6 CGL geometry
+  rejection.
+  Repeated wrapped-z CGL outliers in `1rkl` and `1afo` mean the force-field or
+  table contract is invalid before production; more seeds cannot prove the
+  protein-bending bug fixed.
+- For dryMARTINI force-field provenance, compare the injected `.up` potential
+  datasets, not just the standalone H5 artifact.
+  The old good-looking `pairrelax` prepared files injected zero CGL-CGL
+  q-overlays even though a similarly named standalone candidate contained
+  nonzero pair tensors; restoring those tensors into runtime double-counted
+  pair relaxation and reopened the bilayer gap.
+- Do not reuse SC-CGL or CGL-target endpoint deltas when the endpoint centers
+  change.
+  Provenance, reference dataset, and representative count are not enough: if
+  `reference_extended_center_ang` or `reference_compact_center_ang` differs
+  from the centers being written, q interpolation mixes tables from different
+  physical states.
+- Do not trust SC-CGL tail-compression metadata unless the endpoint delta
+  tables carry rebuild provenance.
+  The active DOPC H5 said `tail_compression` and
+  `tail_axis_retargeted_common_reference`, but `delta_extended` and
+  `delta_compact` were byte-identical to stale suspect backups.  Metadata-only
+  reuse let SC-CGL keep a gap/overlap-derived endpoint response.
+- Do not reject or accept a dryMARTINI trajectory from a short-window PCA bend
+  metric on raw CA/backbone positions alone.
+  The current `1rkl` and `1afo` source PDB traces already trigger large local
+  bend values because the CA trace winds around the helix axis and includes
+  terminal/loop structure.  Use that metric only with visual projection,
+  hydrogen-bond stability, CGL density, and comparison against the input
+  structure.
+- When forcing a clean single-CGL endpoint rebuild, support the active SC table
+  granularity.
+  The active `cg_lipid_sc` table is bead-level (`beadtype_order`), and the
+  previous non-reuse path only handled residue-level `restype_order`, so the
+  stale-reuse branch was also hiding an implementation hole.
+- Do not accept a dryMARTINI candidate just because it fixes one boundary
+  condition in the SC-CGL compression path.
+  The no-contact SC-CGL boundary condition kept the bilayer closed, but fresh
+  `1rkl` still showed late hydrogen-bond loss and CGL depletion around the
+  protein, so acceptance has to remain output-level across secondary
+  structure, helix-gap bending, and local CGL density.
+- Do not resolve a dryMARTINI regression by restoring an artifact that
+  reproduces the user's named output failures.
+  The current `example/16.MARTINI/outputs` trajectories remain the acceptance
+  surface; if those files show CGL edge bias, leaflet-gap bending, or secondary
+  structure loss, the force-field state is still failing.
+- When a one-body potential returns a normalized row energy, every derivative
+  path for that row must receive the same normalization.
+  For `cg_lipid_rotamer_sc`, the SC/CGL positional derivatives were divided by
+  `row_group_count`, but the newly restored compaction-coordinate derivative
+  was accumulated unscaled.  That makes the hidden tail-compression coordinate
+  feel a different force than the energy used by the rotamer solver.
+- Do not conflate the active base CGL-target interaction with a q-dependent
+  target-compaction overlay.
+  The base target spline must remain active, but a q-dependent target overlay
+  is not physical unless it is derived from a valid single-lipid target
+  coordinate and survives same-state A/B continuation tests.
+- Do not accept a force-field artifact or temporary replay as fixed when the
+  named example outputs still show the same failures.
+  For dryMARTINI, output-level visual artifacts in
+  `example/16.MARTINI/outputs` override H5 provenance checks, partial burn-in
+  improvements, and indirect metrics such as tail-end overlap or whole-helix
+  line RMS; validation must include local leaflet-gap bend, secondary-structure
+  stability over continuations, and CGL distribution near the protein.
+- For dryMARTINI CGL compaction, the H5 coordinate contract and runtime node
+  implementation must match.
+  A table with runtime centers but no `compaction_coordinate=tail_compression`
+  metadata is a failing hybrid state, not a valid physical correction.
+- Do not sign off a dryMARTINI hybrid fix that stabilizes the bilayer by
+  leaving a persistent gap between leaflets.
+  For DOPC, the acceptance check must include the compressed-tail correction
+  and must verify that prepared CGL-CGL and SC-CGL nodes consume
+  `cgl_compaction_state`.  CGL-target should consume q only if a valid physical
+  target-compression payload exists; otherwise the active base target spline is
+  the physical interaction.
+- When the user points to the last committed H5 as the correct physical
+  artifact, verify the active installed file byte-for-byte against `HEAD`
+  before running new simulations.
+  A locally rebuilt or partially patched H5 can preserve the right dataset
+  names while changing the physical coordinate contract.
+- Interpret H5 indices in the coordinate source space used by each potential
+  before declaring an indexing bug. `cg_lipid_pair/index`,
+  `cg_lipid_rotamer_sc/index2`, and `cg_lipid_target/index1` index rows of
+  `compose_vector6d`; only `compose_vector6d/elem_index` and
+  `input/cgl_gle/atom_index` are runtime atom indices.
+- Do not treat a temporary continuation chain as final acceptance when the user
+  is inspecting named stock example outputs.
+  For this project, the actual deliverable is regenerated, correct artifacts
+  under `example/16.MARTINI/outputs/...`; temporary replay surfaces are useful
+  diagnostics but not a substitute for those files.
+- When validating secondary-structure stability from long hybrid trajectories,
+  do not average torsion-retention metrics blindly across termini and the
+  structured protein core.
+  For this project, terminal residues can wander enough to make an all-residue
+  torsion score look alarming even while the membrane-spanning core stays
+  locked in its starting backbone state.
+- When a synthetic representative conformer will be consumed by a COM-anchored
+  runtime table, preserve that COM frame explicitly after any internal
+  deformation.
+  For this project, tail-only retargeting can change the lipid COM even if the
+  intended hidden state is only “compressed tail,” and SC/target fits will
+  silently turn that into a translated lipid unless the builder re-centers the
+  conformer before fitting.
 - Do not assign causality from a coarse packed-geometry artifact without
   checking the matching full-resolution control workflow first.
   For this project, if full-resolution and coarse runs start from the same
@@ -138,12 +387,207 @@
   no matter how many expensive pair-table tasks are rerun.
 - When a representative-state force path has a terminal compressed branch, do
   not keep extrapolating the linear mixing weights beyond that branch.
+- Do not treat a short same-state continuation as acceptance for a hidden-state
+  force-field repair.
+  For this project, the row-scaled SC-CGL derivative fix improved stage 7.1 but
+  failed in longer `1afo` stage 7.2 with a delayed pressure/potential spike and
+  hydrogen-bond collapse; acceptance needs multi-round continuation evidence.
+- Do not derive a one-body CGL compression PMF or SC-CGL state template from
+  bilayer/interface reference samples.
+  Pair overlap samples describe cross-leaflet crowding, not isolated DOPC tail
+  compression; using them in the single-CGL or SC-CGL contract encodes the
+  leaflet gap into the protein-lipid interaction and can drive the protein to
+  bend at that gap.
+- Do not treat H5 reference metadata as proof that a force-field table was
+  rebuilt from that reference.
+  The failed isolated-q candidate wrote attrs naming
+  `isolated_dopc_intramolecular_mc` but did not store that dataset or rebuild
+  the base SC-CGL spline from it, leaving the q deltas attached to an old
+  interface/full-resolution base ensemble.
+- When SC-CGL is supposed to relieve protein-facing lipid-tail compression,
+  check the local hidden-state response around the protein, not only global q.
+  The state-average no-target-q candidate kept the bilayer closed and reduced
+  global q overcompression, but protein-contact CGLs had lower q than far-field
+  CGLs, which is the wrong direction for a physical compressed-tail relief
+  coordinate.
+- Do not accept a candidate that lowers CGL q overcompression if it does so by
+  reopening the leaflet gap.
+  The stored-pair-contract plus isolated-self candidate reduced `q>1` from
+  about 0.84 to about 0.01, but expanded the measured CGL leaflet separation
+  from about 16.6 A to about 30 A in both `1afo` and `1rkl`; that is the
+  previous wrong gapped bilayer, not physical DOPC tail compression.
+
+## Technical Findings
+
+- 2026-07-09 resume audit: the installed
+  `parameters/dryMARTINI/dopc.h5` still has bead-level `cg_lipid_sc` deltas
+  labeled `direct_tail_retargeted_endpoint_rebuild_v1`, while the source now
+  expects `single_cgl_tail_relaxation_endpoint_rebuild_v1`.  The active SC
+  branch is the 29-row `beadtype_order` table, so the repair can be scoped to
+  bead-level SC-CGL relaxation deltas; CGL-target remains base-only for the
+  current candidate.
+- Current `parameters/dryMARTINI/dopc.h5` must be re-audited against the
+  generator contract before more acceptance runs.  Earlier failures came from
+  stale or mismatched `tail_compression` metadata; the latest installed file
+  has runtime compaction metadata, but the SC-CGL branch still needs proof that
+  it was rebuilt from the single-lipid tail-compression reference rather than a
+  pair-overlap/gap proxy.
+- The installed isolated-q DOPC H5 now uses isolated DOPC intramolecular MC
+  samples for `compaction_reference_dataset` and for SC-CGL representative
+  templates.  CGL-CGL still carries the explicit compressed-tail pair-overlap
+  correction; CGL-target uses the active base target table without the rejected
+  q-dependent target overlay.
+- The current installed DOPC H5 stores both
+  `isolated_dopc_intramolecular_mc` (8 representative conformers for base
+  SC-CGL and endpoint tables) and `isolated_dopc_intramolecular_mc_samples`
+  (256 conformers for the q self PMF), and `cg_lipid_sc/interaction_param`
+  was rebuilt from the isolated representative ensemble.
+- `cg_lipid_rotamer_sc` and `cg_lipid_target` already support explicit
+  `cgl_compaction_state` and the compressed branch.  The direct `cg_lipid_sc`
+  C++ node still only supports implicit gap-response mixing, so the same
+  design defect remains in that sibling SC-CGL path.
+- The stored-pair-contract isolated-self DOPC artifact is rejected.  Fresh
+  stock-path stage-7 runs under
+  `example/16.MARTINI/outputs/martini_1afo_hybrid_paircontract_s1` and
+  `example/16.MARTINI/outputs/martini_1rkl_hybrid_paircontract_s1` left large
+  leaflet separations (~30 A), depleted CGL around the protein, and retained
+  severe local helix bends near the leaflet gap.
   For this project, `compute_single_compaction_mix()` was producing negative
   compact weights and overweighted compressed tensors whenever
   `q > compressed_state_center`; the physical fix is to saturate at the
   terminal state, not to keep extending the line.
+- When fitting an implicit structural proxy, define which force family owns
+  that proxy before wiring it into every table with a matching hidden-state
+  shape.
+  For this project, compact-coordinate scaling was a useful diagnostic, but
+  the physical fix is split ownership: CGL-CGL consumes the compressed-tail
+  pair-overlap response, while SC-CGL/CGL-target require an explicit
+  single-lipid coordinate before using compaction deltas.
+- Do not reuse a pair-overlap response as a single-particle conformational
+  state.
+  For this project, the face-to-face CGL gap classifier is appropriate for
+  CGL-CGL compressed-tail relief, but feeding the same field to SC-CGL and
+  CGL-target makes protein contacts depend on CGL-CGL overlap instead of a
+  physical per-lipid tail-compression coordinate.
 
 ## External / Technical Findings
+
+- 2026-07-08: The restored compressed-tail artifact is not an accepted repair.
+  Current stock output metrics still show the user's failures:
+  `stock-1afo.stage_7.0` has CGL edge/center `1.422` and near-protein/bulk
+  `0.342`, while `stock-1rkl.stage_7.0` has edge/center `1.300` and
+  near-protein/bulk `0.547`.  The restored state must remain a failing
+  baseline until regenerated outputs prove otherwise.
+  - Target-base continuation:
+    removing the q-dependent target overlay improved CGL uniformity and avoided
+    the previous singularity, but `1afo` still accumulated leaflet-interface
+    bending in stage 7.1.  This is a partial isolation, not a fix.
+  - SC-CGL derivative probe:
+    wiring the explicit compaction derivative into SC-CGL improved CGL
+    edge/center ratios (`1afo 1.071`, `1rkl 1.008`) but drove `1afo` hbond
+    final value down to `72.64`, so the first derivative implementation was
+    still wrong.
+  - Implementation error:
+    `cg_lipid_rotamer_sc::propagate_deriv()` applied `row_scale` to SC/CGL
+    positional derivatives but not to `q_ctrl_sens` before adding it to
+    `cgl_compaction_state`.  The physical correction is to apply the same row
+    scale to the hidden-state derivative, not to change table parameters.
+
+- 2026-07-07: Final stock-output repair for the remaining dryMARTINI hybrid
+  defects is a split force-family ownership model for CGL tail compression.
+  - Rejected hypothesis:
+    the CGL node index contract is not the defect.  `compose_vector6d` force
+    nodes index local CGL rows, while `compose_vector6d/elem_index` and
+    `input/cgl_gle/atom_index` correctly map those rows to runtime atoms.
+  - SC-CGL implementation error:
+    `cg_lipid_sc` was authored as a residue-level whole-sidechain table but
+    consumed as individual rotamer bead rows.  The repaired table is bead-level
+    and keyed by the actual Martini sidechain bead type.
+  - CGL compaction design error:
+    compressed CGL was represented as larger head-to-tail extension.  The
+    repaired coordinate is signed tail compression, increasing as physical
+    head-to-tail span decreases.
+  - CGL-CGL implementation error:
+    implicit gap response originally mixed only extended/compact tensors and
+    skipped compressed correction tensors exactly in the leaflet-gap regime.
+  - Final design flaw:
+    the face-to-face gap classifier estimates CGL-CGL pair overlap requiring
+    compressed-tail relief.  It is not a single-lipid conformational state and
+    must not be injected into SC-CGL or CGL-target.  SC-CGL and CGL-target
+    remain active through their base physical tables unless an explicit
+    per-lipid compaction coordinate is present.
+  - Final validation on corrected stock paths:
+    `1rkl.stage_7.2` final half-bend is `11.837 deg` with CGL near:far
+    density `0.659`, versus the previous stock final half-bend `45.001 deg`
+    and near:far `0.309`.
+    `1afo.stage_7.1` no longer drives chains 3 and 4 into the stock bad
+    angles; corrected per-chain late tilt means are
+    `42.951/19.527/29.875/3.734 deg` versus previous stock
+    `51.952/16.935/48.131/26.650 deg`, and near:far density improves from
+    `0.489` to `0.785`.
+
+- 2026-07-06: The installed corrected default
+  `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
+  stays stable over longer stock-surface stage-7 continuation time on both
+  benchmark systems.
+  - `1rkl` validation chain:
+    `/private/tmp/1rkl_sc_target_comframe_fix_from70`
+    continued from `stage_7.1` through `stage_7.4`.
+    Late-half stage means stayed within
+    `Rg ~= 12.32-12.62 A`,
+    `bend ~= 5.47-6.31 A`,
+    `hbonds ~= 29.34-34.96`,
+    all consistent with a stable corrected compact basin and better than stock
+    `stage_7.1` bending (`6.59 A`) and H-bonds (`28.50`).
+  - `1afo` validation chain:
+    `/private/tmp/1afo_sc_target_comframe_fix_from73`
+    continued from `stage_7.4` through `stage_7.7`.
+    Late-half stage means stayed within
+    `Rg ~= 14.33-14.67 A`,
+    `bend ~= 12.27-13.23 A`,
+    `hbonds ~= 71.45-75.45`,
+    which is stock-like relative to stock `stage_7.4`
+    (`Rg ~= 14.61 A`, `bend ~= 12.61 A`, `hbonds ~= 75.70`).
+  - CGL compaction remained well behaved during the longer replays:
+    `1rkl q_mean ~= 1.14-1.19`, `q_p95 ~= 1.50-1.56`;
+    `1afo q_mean ~= 1.18-1.20`, `q_p95 ~= 1.56-1.59`.
+  - Secondary-structure result:
+    a direct torsion-retention metric against the corrected-chain start frame
+    shows stable backbone cores on both systems.
+    For `1rkl`, the core-residue late-half retention within
+    `|dphi|, |dpsi| <= 45 deg` stayed at `0.966-0.990`;
+    for `1afo`, it stayed at `0.944-0.957`.
+    The only severe torsion-retention outliers in `1afo` were terminal
+    residues (`68`, `98`, `99`, `100`), not the central membrane-facing core.
+
+- 2026-07-06: The remaining SC-CGL bend bug was a compressed-reference
+  coordinate-frame mismatch in the single-CGL SC and target table builders.
+  - Active workflow fact:
+    the stock hybrid `.up` files use `cg_lipid_rotamer_sc` with explicit
+    `cgl_compaction_state`, so the live SC path is the explicit compressed
+    correction branch, not the old implicit gap-response proxy.
+  - Design flaw:
+    synthetic compressed CGL conformers were generated in a head/tail
+    deformation frame and then reused directly in COM-anchored SC and target
+    fits.
+  - Implementation error:
+    `_retarget_lipid_reference_tail_extension_ang(...)` shifted only the tail
+    beads and never re-centered the retargeted conformer back to the original
+    CGL COM frame.
+  - Direct evidence:
+    for the installed interface reference pool, the old synthetic compressed
+    conformers carried large positive COM drifts along the lipid axis
+    (`~0.171 nm` and `~0.233 nm`) instead of staying at the CGL COM.
+  - Scope:
+    the pair path is less sensitive because it re-centers bead geometry during
+    pair sampling, but the SC and target builders consume `ref_conf` directly,
+    so both compressed branches had to be rebuilt together.
+  - Accepted implementation:
+    patch the builder to re-center synthetic compressed conformers, rebuild the
+    exact compressed SC correction and the exact compressed target correction,
+    and overwrite the installed
+    `/Users/yinhan/Documents/upside2-md/parameters/dryMARTINI/dopc.h5`
+    after backing up the old file.
 
 - 2026-07-06: The accepted generic fix is a runtime interpolation repair plus
   the sampled high-population `v13` H5; the higher-center `v11` H5 is rejected.
@@ -1299,3 +1743,13 @@
     the installation and stock-path injection are verified; exact behavioral
     parity would require rerunning with matched seeds or a reused packed
     starting structure.
+## Residual 1afo Failure After BB Proxy Refresh
+- Refreshing hybrid BB proxies inside `CGLipidTargetPotential` fixes a real ordering defect and leaves stage-7 burn-in healthy, but it is not sufficient: fresh `1afo` production still loses secondary structure, reaching hbonds 70.6 by production step 6100.
+- The remaining defect is production/release-specific rather than an immediate minimization or burn-in instability. Future fixes must explain why burn-in is stable while production degrades, and must preserve the physically required hybrid SC-env/BB-env interactions.
+- Stage-7 burn-in uses a temporary protein position restraint, so production
+  after `remove_protein_position_restraints()` is a new Hamiltonian.  Exact
+  momentum restart across that boundary worsens `1afo` hbond loss.  Resetting
+  atomic and CGL hidden momenta improves the same starting state to
+  `87.5/76.3/84.95/84.02/86.6` hbond start/min/mean/last20/final, but still
+  does not pass; treat it as a required workflow fix plus a clue, not as the
+  final physical repair.

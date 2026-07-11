@@ -23,6 +23,28 @@ from martini_itp_reader import parse_dry_forcefield, parse_itp_atomtype_masses, 
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
+SINGLE_CGL_ENDPOINT_DELTA_SOURCE = "single_cgl_tail_repulsive_relief_endpoint_rebuild_v5"
+SINGLE_CGL_RELAXATION_SOURCE = "source_conditioned_single_cgl_tail_repulsive_relief"
+SINGLE_CGL_RELAXATION_CONTACT_ENERGY_SOURCE = "tail_bead_positive_nonbonded_overlap_relief"
+CGL_COMPACTION_SELF_PMF_SOURCE = "isolated_dopc_dense_tail_compression_histogram_v2"
+CGL_PAIR_RELAXATION_CORRECTION_SOURCE = "source_conditioned_two_lipid_collective_tail_axial_compaction"
+CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED = "disabled_pair_relaxed_base_only"
+CGL_PAIR_RUNTIME_DELTA_DATASETS = (
+    "delta_extended_extended",
+    "delta_extended_compact",
+    "delta_compact_compact",
+    "delta_extended_compressed",
+    "delta_compact_compressed",
+    "delta_compressed_compressed",
+    "grid_extended_extended_kj_mol",
+    "grid_extended_compact_kj_mol",
+    "grid_compact_compact_kj_mol",
+    "grid_extended_compressed_kj_mol",
+    "grid_compact_compressed_kj_mol",
+    "grid_compressed_compressed_kj_mol",
+    "grid_average_kj_mol",
+    "face_mask",
+)
 
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
@@ -92,6 +114,36 @@ def _decode_h5_attr(value):
     if isinstance(value, bytes):
         return value.decode("ascii")
     return value
+
+
+def _cg_lipid_compaction_uses_explicit_state(compaction_grp) -> bool:
+    if compaction_grp is None:
+        return False
+    runtime = _decode_h5_attr(
+        compaction_grp.attrs.get("runtime_representation", "")
+    )
+    source = _decode_h5_attr(compaction_grp.attrs.get("source", ""))
+    implicit_mode = _decode_h5_attr(
+        compaction_grp.attrs.get("implicit_response_mode", "")
+    )
+    uses_pair_response = (
+        runtime == "mean_field_activation_of_pairrelax_delta"
+        or str(implicit_mode).startswith("gap_")
+        or (
+            source == "mean_field_pair_relaxation_response"
+            and "gap_response_coeff" in compaction_grp
+        )
+    )
+    return not uses_pair_response
+
+
+def _cg_lipid_pair_runtime_overlay_disabled(compaction_grp) -> bool:
+    if compaction_grp is None:
+        return False
+    return (
+        str(_decode_h5_attr(compaction_grp.attrs.get("pair_runtime_compaction_overlay", ""))).strip()
+        == CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED
+    )
 
 
 def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
@@ -247,22 +299,141 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
     if compaction_grp is not None:
         required_dsets = [
             "self_coeff",
-            "delta_extended_extended",
-            "delta_extended_compact",
-            "delta_compact_compact",
         ]
         compressed_state_center = float(compaction_grp.attrs.get("compressed_state_center_ang", np.nan))
-        if np.isfinite(compressed_state_center):
-            required_dsets.extend(
-                (
-                    "delta_extended_compressed",
-                    "delta_compact_compressed",
-                    "delta_compressed_compressed",
-                )
+        compaction_coordinate = _decode_h5_attr(
+            compaction_grp.attrs.get("compaction_coordinate", "")
+        )
+        response_quantity = _decode_h5_attr(
+            compaction_grp.attrs.get("gap_response_quantity", "")
+        )
+        source = _decode_h5_attr(compaction_grp.attrs.get("source", ""))
+        runtime_representation = _decode_h5_attr(
+            compaction_grp.attrs.get("runtime_representation", "")
+        )
+        implicit_response_mode = _decode_h5_attr(
+            compaction_grp.attrs.get("implicit_response_mode", "")
+        )
+        has_response_coordinate = int(
+            compaction_grp.attrs.get("gap_response_is_compaction_coordinate", 0)
+        ) != 0
+        has_gap_response_table = "gap_response_coeff" in compaction_grp
+        uses_implicit_pair_response = not _cg_lipid_compaction_uses_explicit_state(
+            compaction_grp
+        )
+        invalid_implicit_pair_response = (
+            uses_implicit_pair_response
+            and (
+                not has_gap_response_table
+                or response_quantity != "normalized_tail_compression_coordinate"
+                or not has_response_coordinate
+            )
+        )
+        stale_gap_proxy = (
+            source == "mean_field_pair_relaxation_response"
+            or runtime_representation == "mean_field_activation_of_pairrelax_delta"
+            or implicit_response_mode.startswith("gap_")
+            or "target_upside_h5_path" in compaction_grp.attrs
+            or "model_upside_h5_path" in compaction_grp.attrs
+        )
+        if uses_implicit_pair_response or stale_gap_proxy:
+            raise RuntimeError(
+                f"Stale CG lipid compaction table in {source_path}: SC-CGL would "
+                "consume a cross-leaflet gap proxy instead of the physical DOPC "
+                "tail-compression state. Rebuild martini.h5 so CGL-CGL, SC-CGL, "
+                "and CGL-target use the explicit cgl_compaction_state coordinate."
             )
         missing_dsets = [name for name in required_dsets if name not in compaction_grp]
+        missing_pair_mask = []
+        if not _cg_lipid_pair_runtime_overlay_disabled(compaction_grp):
+            missing_pair_mask.append(
+                f"pair_runtime_compaction_overlay={CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED}"
+            )
+        stale_pair_dsets = [
+            name for name in CGL_PAIR_RUNTIME_DELTA_DATASETS if name in compaction_grp
+        ]
+        if has_gap_response_table:
+            stale_pair_dsets.append("gap_response_coeff")
+        if stale_pair_dsets:
+            missing_pair_mask.append(
+                "absent runtime pair q tensors: " + ",".join(stale_pair_dsets)
+            )
+        stale_pair_attrs = [
+            name for name in (
+                "face_cos_min",
+                "radial_cutoff_nm",
+                "mask_mode",
+                "face_mask_convention",
+                "correction_center_mode",
+                "pair_state_model",
+            )
+            if name in compaction_grp.attrs
+        ]
+        if stale_pair_attrs:
+            missing_pair_mask.append(
+                "absent runtime pair q attrs: " + ",".join(stale_pair_attrs)
+            )
+        if pair_grp is not None:
+            pair_relaxation_source = str(
+                _decode_h5_attr(pair_grp.attrs.get("pair_relaxation_correction_source", ""))
+            ).strip()
+            compaction_pair_relaxation_source = str(
+                _decode_h5_attr(compaction_grp.attrs.get("pair_relaxation_correction_source", ""))
+            ).strip()
+            if pair_relaxation_source != CGL_PAIR_RELAXATION_CORRECTION_SOURCE:
+                missing_pair_mask.append("pair_relaxed_base_table")
+            if compaction_pair_relaxation_source != pair_relaxation_source:
+                missing_pair_mask.append("pair_relaxation_correction_source")
+        pair_reference_compressed = float(
+            compaction_grp.attrs.get("pair_reference_compressed_center_ang", np.nan)
+        )
+        reference_compressed = float(
+            compaction_grp.attrs.get("reference_compressed_center_ang", np.nan)
+        )
+        pmf_values = (
+            np.asarray(compaction_grp["pmf_values_kj_mol"][:], dtype=np.float64)
+            if "pmf_values_kj_mol" in compaction_grp
+            else np.asarray([], dtype=np.float64)
+        )
+        pmf_centers = (
+            np.asarray(compaction_grp["pmf_centers_ang"][:], dtype=np.float64)
+            if "pmf_centers_ang" in compaction_grp
+            else np.asarray([], dtype=np.float64)
+        )
+        pmf_bin_count = int(pmf_values.size)
+        pmf_min_sample_count = max(
+            int(compaction_grp.attrs.get("self_pmf_min_sample_count", 0)),
+            max(64, 4 * max(1, pmf_bin_count)),
+        )
+        pmf_min_nonempty_count = max(
+            int(compaction_grp.attrs.get("self_pmf_min_nonempty_bin_count", 0)),
+            max(6, int(math.ceil(0.6 * max(1, pmf_bin_count)))),
+        )
+        self_pmf_source = _decode_h5_attr(
+            compaction_grp.attrs.get("self_pmf_source", "")
+        ).strip()
+        invalid_self_pmf = (
+            self_pmf_source != CGL_COMPACTION_SELF_PMF_SOURCE
+            or pmf_bin_count < 8
+            or pmf_centers.ndim != 1
+            or pmf_values.ndim != 1
+            or pmf_centers.size != pmf_values.size
+            or not np.isfinite(pmf_centers).all()
+            or not np.isfinite(pmf_values).all()
+            or int(compaction_grp.attrs.get("self_pmf_sample_count", 0))
+                < pmf_min_sample_count
+            or int(compaction_grp.attrs.get("self_pmf_nonempty_bin_count", 0))
+                < pmf_min_nonempty_count
+        )
         if (
             _decode_h5_attr(compaction_grp.attrs.get("schema", "")) != "cg_lipid_compaction_v1"
+            or compaction_coordinate != "tail_compression"
+            or (
+                has_gap_response_table
+                and not uses_implicit_pair_response
+                and response_quantity != "normalized_tail_compression_coordinate"
+            )
+            or invalid_implicit_pair_response
             or float(compaction_grp.attrs.get("boltzmann_temperature_upside", 0.0)) <= 0.0
             or float(compaction_grp.attrs.get("thermostat_timescale", 0.0)) <= 0.0
             or float(compaction_grp.attrs.get("mass_up", 0.0)) <= 0.0
@@ -271,12 +442,31 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
             or float(compaction_grp.attrs.get("compact_state_center_ang", 0.0))
                 == float(compaction_grp.attrs.get("extended_state_center_ang", 0.0))
             or missing_dsets
+            or missing_pair_mask
+            or invalid_self_pmf
+            or (stale_gap_proxy and not uses_implicit_pair_response)
+            or (
+                np.isfinite(compressed_state_center)
+                and not uses_implicit_pair_response
+                and (
+                    not np.isfinite(pair_reference_compressed)
+                    or not np.isfinite(reference_compressed)
+                    or abs(pair_reference_compressed - reference_compressed) > 1.0e-3
+                )
+            )
         ):
             missing_text = ", ".join(missing_dsets)
+            if missing_pair_mask:
+                missing_text = ", ".join(filter(None, (missing_text, ", ".join(missing_pair_mask))))
+            if invalid_self_pmf:
+                missing_text = ", ".join(
+                    filter(None, (missing_text, "dense self_pmf_source/sample coverage"))
+                )
             raise RuntimeError(
                 f"Stale CG lipid compaction table in {source_path}: missing/invalid "
                 f"compaction-state metadata ({missing_text}). Rebuild martini.h5 so "
-                "the CGL compaction redesign is sourced from the isolated DOPC ensemble."
+                "single-CGL state uses the DOPC tail-compression coordinate and "
+                "CGL-CGL compaction is limited to physical cross-leaflet tail-facing geometry."
             )
     sc_grp = cglt.get("cg_lipid_sc")
     if sc_grp is not None:
@@ -313,6 +503,146 @@ def _validate_cg_lipid_table_schema(mh5: h5py.File, source_path: Path) -> None:
                 "Rebuild martini.h5 so CGL-SC overlap is represented by force-field-derived "
                 "table values."
             )
+    if compaction_grp is not None:
+        compressed_state_center = float(compaction_grp.attrs.get("compressed_state_center_ang", np.nan))
+        reference_compressed = float(
+            compaction_grp.attrs.get("reference_compressed_center_ang", np.nan)
+        )
+        for group_name, table_grp in (
+            ("cg_lipid_sc", sc_grp),
+            ("cg_lipid_target", target_grp),
+        ):
+            if table_grp is None:
+                continue
+            if (
+                group_name == "cg_lipid_target"
+                and "target_order" in table_grp
+                and int(table_grp["target_order"].shape[0]) == 0
+            ):
+                continue
+            group_has_rows = (
+                group_name != "cg_lipid_sc"
+                or int(table_grp.attrs.get("n_sc_types", 0)) > 0
+            )
+            if not group_has_rows:
+                continue
+            table_coordinate = _decode_h5_attr(
+                table_grp.attrs.get("compaction_coordinate", "")
+            )
+            table_compressed = float(
+                table_grp.attrs.get("compressed_state_center_ang", np.nan)
+            )
+            table_reference_compressed = float(
+                table_grp.attrs.get("reference_compressed_center_ang", np.nan)
+            )
+            endpoint_delta_source = _decode_h5_attr(
+                table_grp.attrs.get("single_cgl_endpoint_delta_source", "")
+            ).strip()
+            relaxation_source = _decode_h5_attr(
+                table_grp.attrs.get("single_cgl_relaxation_source", "")
+            ).strip()
+            relaxation_contact_energy_source = _decode_h5_attr(
+                table_grp.attrs.get("single_cgl_relaxation_contact_energy_source", "")
+            ).strip()
+            relaxation_energy_floor = float(
+                table_grp.attrs.get("single_cgl_relaxation_energy_floor_kj_mol", np.nan)
+            )
+            has_compressed_delta = "delta_compressed" in table_grp
+            has_compaction_payload = (
+                table_coordinate == "tail_compression"
+                or "delta_extended" in table_grp
+                or "delta_compact" in table_grp
+                or has_compressed_delta
+                or np.isfinite(table_compressed)
+                or np.isfinite(table_reference_compressed)
+            )
+            if not has_compaction_payload:
+                continue
+            if endpoint_delta_source != SINGLE_CGL_ENDPOINT_DELTA_SOURCE:
+                raise RuntimeError(
+                    f"Stale CG lipid table in {source_path}: {group_name} has "
+                    "tail-compression metadata but its SC/target endpoint deltas "
+                    "do not record a source-conditioned tail-relaxation rebuild. Rebuild "
+                    "martini.h5 so SC-CGL consumes physical compressed-tail "
+                    "states rather than recycled gap/overlap endpoint tables."
+                )
+            if relaxation_source != SINGLE_CGL_RELAXATION_SOURCE:
+                raise RuntimeError(
+                    f"Stale CG lipid table in {source_path}: {group_name} has "
+                    "tail-compression metadata but lacks source-conditioned "
+                    "tail-relaxation provenance. Rebuild martini.h5 so CGL-protein "
+                    "uses physical tail-relaxation deltas instead of static "
+                    "retargeted endpoint tables."
+                )
+            if relaxation_contact_energy_source != SINGLE_CGL_RELAXATION_CONTACT_ENERGY_SOURCE:
+                raise RuntimeError(
+                    f"Stale CG lipid table in {source_path}: {group_name} has "
+                    "source-conditioned tail-relaxation provenance but does "
+                    "not restrict q-dependent contact relief to tail-bead "
+                    "positive overlap. Rebuild martini.h5 so CGL-protein keeps "
+                    "base attractive/head interactions out of the compaction "
+                    "delta."
+                )
+            if (
+                not np.isfinite(relaxation_energy_floor)
+                or abs(relaxation_energy_floor) > 1.0e-6
+            ):
+                raise RuntimeError(
+                    f"Stale CG lipid table in {source_path}: {group_name} "
+                    "tail-relief deltas do not record the zero-overlap energy "
+                    "floor. Rebuild martini.h5 so q-dependent CGL-protein relief "
+                    "cannot create an attractive contact well."
+                )
+            if (
+                np.isfinite(compressed_state_center)
+                and (
+                    table_coordinate != "tail_compression"
+                    or not has_compressed_delta
+                    or not np.isfinite(table_compressed)
+                    or not np.isfinite(table_reference_compressed)
+                    or abs(table_compressed - compressed_state_center) > 1.0e-3
+                    or abs(table_reference_compressed - reference_compressed) > 1.0e-3
+                )
+            ):
+                raise RuntimeError(
+                    f"Stale CG lipid table in {source_path}: {group_name} does not "
+                    "share the DOPC tail-compression coordinate and compressed-state "
+                    "center used by cg_lipid_compaction. Rebuild martini.h5 so "
+                    "SC-CGL, target-CGL, and CGL-CGL consume the same physical "
+                    "single-lipid compression state."
+                )
+            if has_compressed_delta:
+                delta_compact = np.asarray(table_grp["delta_compact"][:], dtype=np.float64)
+                delta_compressed = np.asarray(
+                    table_grp["delta_compressed"][:],
+                    dtype=np.float64,
+                )
+                compact_max = float(
+                    table_grp.attrs.get(
+                        "single_cgl_relaxation_compact_max_compaction_nm",
+                        np.nan,
+                    )
+                )
+                compressed_max = float(
+                    table_grp.attrs.get(
+                        "single_cgl_relaxation_compressed_max_compaction_nm",
+                        np.nan,
+                    )
+                )
+                if (
+                    delta_compact.shape != delta_compressed.shape
+                    or float(np.max(np.abs(delta_compact - delta_compressed))) <= 1.0e-6
+                    or not np.isfinite(compact_max)
+                    or not np.isfinite(compressed_max)
+                    or not (0.0 < compact_max < compressed_max)
+                ):
+                    raise RuntimeError(
+                        f"Stale CG lipid table in {source_path}: {group_name} "
+                        "has a compressed tail state but its compact and "
+                        "compressed endpoint-relief tensors are degenerate. "
+                        "Rebuild martini.h5 so CGL-protein can drive protein-facing "
+                        "lipids from compact into the compressed tail-relief state."
+                    )
 
 
 def _validate_compose_vector6d_cg_attrs(compose_grp, cg_table_grp, source_path: Path) -> None:
@@ -1360,18 +1690,19 @@ def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
     existing = coords(atoms)
     placed = []
     cutoff2 = cutoff * cutoff
+    box = np.asarray(box_lengths, dtype=float)
     types = [("NA", "NA", 1.0, "IONS")] * n_na + [("CL", "CL", -1.0, "IONS")] * n_cl
     for name, resname, _charge, segid in types:
         accepted = False
         for _ in range(20000):
-            trial = rng.uniform([0, 0, 0], box_lengths)
+            trial = rng.uniform([0, 0, 0], box)
             if existing.size:
-                d2 = np.sum((existing - trial) ** 2, axis=1)
+                d2 = np.sum(_minimum_image_delta(existing - trial, box) ** 2, axis=1)
                 if np.min(d2) < cutoff2:
                     continue
             if placed:
                 placed_xyz = np.array([[a["x"], a["y"], a["z"]] for a in placed], dtype=float)
-                d2_placed = np.sum((placed_xyz - trial) ** 2, axis=1)
+                d2_placed = np.sum(_minimum_image_delta(placed_xyz - trial, box) ** 2, axis=1)
                 if np.min(d2_placed) < cutoff2:
                     continue
             placed.append(
@@ -4177,7 +4508,12 @@ def inject_cg_lipid_nodes(
 
         with h5py.File(martini_h5, "r") as mh5:
             comp_grp = mh5["cg_lipid_table/cg_lipid_compaction"] if has_compaction else None
-            enable_explicit_compaction_state = has_compaction
+            enable_explicit_compaction_state = (
+                has_compaction and _cg_lipid_compaction_uses_explicit_state(comp_grp)
+            )
+            pair_runtime_overlay_disabled = (
+                has_compaction and _cg_lipid_pair_runtime_overlay_disabled(comp_grp)
+            )
             def copy_single_cgl_compaction(
                 node,
                 pair_interaction,
@@ -4200,9 +4536,23 @@ def inject_cg_lipid_nodes(
                     "extended_state_center_ang",
                     "compressed_state_center_ang",
                     "compact_state_probability",
+                    "single_cgl_endpoint_delta_source",
+                    "single_cgl_relaxation_source",
+                    "single_cgl_relaxation_max_compaction_nm",
+                    "single_cgl_relaxation_compact_max_compaction_nm",
+                    "single_cgl_relaxation_compressed_max_compaction_nm",
+                    "single_cgl_relaxation_contact_energy_source",
+                    "single_cgl_relaxation_energy_floor_kj_mol",
                 ):
                     if attr_name in table_grp.attrs:
-                        node.attrs[attr_name] = np.float32(table_grp.attrs[attr_name])
+                        if attr_name in (
+                            "single_cgl_endpoint_delta_source",
+                            "single_cgl_relaxation_source",
+                            "single_cgl_relaxation_contact_energy_source",
+                        ):
+                            node.attrs[attr_name] = table_grp.attrs[attr_name]
+                        else:
+                            node.attrs[attr_name] = np.float32(table_grp.attrs[attr_name])
                     elif attr_name in comp_grp.attrs:
                         node.attrs[attr_name] = np.float32(comp_grp.attrs[attr_name])
                 if use_implicit_response:
@@ -4214,6 +4564,8 @@ def inject_cg_lipid_nodes(
                         "gap_response_face_cos_min",
                         "gap_response_smooth_weight",
                         "gap_response_fallback_ang",
+                        "gap_response_is_compaction_coordinate",
+                        "gap_response_quantity",
                     ):
                         if attr_name in comp_grp.attrs:
                             node.attrs[attr_name] = comp_grp.attrs[attr_name]
@@ -4239,6 +4591,8 @@ def inject_cg_lipid_nodes(
 
             def initial_cgl_compaction_state_values():
                 values = pot["compose_vector6d"]["initial_compaction_ang"][:].astype(np.float32)
+                if _decode_h5_attr(comp_grp.attrs.get("compaction_coordinate", "")) == "tail_compression":
+                    values = -values
                 coord_min = float(comp_grp.attrs.get("self_coord_min_ang", np.min(values)))
                 coord_max = float(comp_grp.attrs.get("self_coord_max_ang", np.max(values)))
                 if (
@@ -4297,9 +4651,19 @@ def inject_cg_lipid_nodes(
                 cg_pair = pot.create_group("cg_lipid_pair")
                 cg_pair.attrs["initialized"] = True
                 if has_compaction:
-                    cg_pair.attrs["arguments"] = np.array(
-                        [b"compose_vector6d", b"cgl_compaction_state"]
-                    )
+                    if pair_runtime_overlay_disabled:
+                        cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
+                        cg_pair.attrs["pair_runtime_compaction_overlay"] = (
+                            CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED
+                        )
+                    elif enable_explicit_compaction_state:
+                        cg_pair.attrs["arguments"] = np.array(
+                            [b"compose_vector6d", b"cgl_compaction_state"]
+                        )
+                    else:
+                        cg_pair.attrs["arguments"] = np.array([b"compose_vector6d"])
+                        cg_pair.attrs["implicit_compaction_response"] = np.int32(1)
+                        cg_pair.attrs["implicit_compaction_gap_response"] = np.int32(1)
                     for attr_name in (
                         "compact_state_center_ang",
                         "extended_state_center_ang",
@@ -4342,6 +4706,24 @@ def inject_cg_lipid_nodes(
                 for attr_name in ("n_modes", "n_radial", "n_angular"):
                     if attr_name in pair_grp.attrs:
                         cg_pair.attrs[attr_name] = np.int32(pair_grp.attrs[attr_name])
+                if (
+                    has_compaction
+                    and not pair_runtime_overlay_disabled
+                    and not enable_explicit_compaction_state
+                ):
+                    for attr_name in (
+                        "gap_response_coord_min_ang",
+                        "gap_response_coord_spacing_ang",
+                        "gap_response_n_knot",
+                        "gap_response_radial_cutoff_ang",
+                        "gap_response_face_cos_min",
+                        "gap_response_smooth_weight",
+                        "gap_response_fallback_ang",
+                        "gap_response_is_compaction_coordinate",
+                        "gap_response_quantity",
+                    ):
+                        if attr_name in comp_grp.attrs:
+                            cg_pair.attrs[attr_name] = comp_grp.attrs[attr_name]
 
                 pi = cg_pair.create_group("pair_interaction")
                 pi.create_dataset(
@@ -4353,7 +4735,7 @@ def inject_cg_lipid_nodes(
                         "reference_energy_eup",
                         data=pair_grp["reference_energy_eup"][:].astype(np.float32),
                     )
-                if has_compaction:
+                if has_compaction and not pair_runtime_overlay_disabled:
                     for dataset_name in (
                         "delta_extended_extended",
                         "delta_extended_compact",
@@ -4367,6 +4749,11 @@ def inject_cg_lipid_nodes(
                                 dataset_name,
                                 data=comp_grp[dataset_name][:].astype(np.float32),
                             )
+                    if not enable_explicit_compaction_state and "gap_response_coeff" in comp_grp:
+                        pi.create_dataset(
+                            "gap_response_coeff",
+                            data=comp_grp["gap_response_coeff"][:].astype(np.float32),
+                        )
 
                 # Element mapping: CG lipids use identity mapping (1 CG type)
                 # Shift ids by 4 bits so all shifted ids are unique:
@@ -4379,10 +4766,17 @@ def inject_cg_lipid_nodes(
                 pi.create_dataset("id", data=(np.arange(n_cg, dtype=np.int32) << 4))
 
                 n_param = int(pair_grp["interaction_param"].shape[-1])
-                if has_compaction:
+                if has_compaction and pair_runtime_overlay_disabled:
                     print(
                         "  Injected cg_lipid_pair: "
-                        f"{n_cg} CG lipids, 1x1x{n_param} base params plus compaction corrections"
+                        f"{n_cg} CG lipids, 1x1x{n_param} base params "
+                        "(pair-relaxed base only; no runtime q overlay)"
+                    )
+                elif has_compaction:
+                    print(
+                        "  Injected cg_lipid_pair: "
+                        f"{n_cg} CG lipids, 1x1x{n_param} base params plus "
+                        f"{'explicit' if enable_explicit_compaction_state else 'implicit gap-response'} compaction corrections"
                     )
                 else:
                     print(f"  Injected cg_lipid_pair: {n_cg} CG lipids, 1x1x{n_param} params")
@@ -4469,6 +4863,10 @@ def inject_cg_lipid_nodes(
                         rotamer = pot_r["rotamer"]
                         n_sc = int(sc_place["affine_residue"].shape[0])
                         sc_residue_idx = sc_place["affine_residue"][:].astype(np.int32)
+                        sc_beadtype_seq = [
+                            s.decode("ascii") if isinstance(s, bytes) else str(s)
+                            for s in sc_place["beadtype_seq"][:]
+                        ] if "beadtype_seq" in sc_place else []
                         sequence = [
                             s.decode("ascii") if isinstance(s, bytes) else str(s)
                             for s in up_r["input/sequence"][:]
@@ -4481,6 +4879,7 @@ def inject_cg_lipid_nodes(
                     else:
                         n_sc = 0
                         sc_residue_idx = np.empty(0, dtype=np.int32)
+                        sc_beadtype_seq = []
                         row_rotamer_idx = np.empty(0, dtype=np.int32)
                         sequence = []
                     n_cg = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
@@ -4496,22 +4895,32 @@ def inject_cg_lipid_nodes(
                             "explicit cgl_compaction_state runtime path is enabled. "
                             f"Rebuild {martini_h5} completely before injection."
                         )
-                    sc_restype_order = [
-                        r.decode("ascii") if isinstance(r, bytes) else str(r)
-                        for r in sc_grp["restype_order"][:]
-                    ]
-                    # Build restype to type_index map for CG-SC table.
-                    restype_to_sc_type = {r: i for i, r in enumerate(sc_restype_order)}
-
                     row_types = np.full(n_sc, -1, dtype=np.int32)
                     matched_rows = 0
-                    for row_idx in range(n_sc):
-                        res_idx = int(sc_residue_idx[row_idx])
-                        resname = sequence[res_idx] if res_idx < len(sequence) else ""
-                        type_idx = restype_to_sc_type.get(resname)
-                        if type_idx is not None:
-                            row_types[row_idx] = type_idx
-                            matched_rows += 1
+                    if "beadtype_order" in sc_grp:
+                        sc_beadtype_order = [
+                            r.decode("ascii") if isinstance(r, bytes) else str(r)
+                            for r in sc_grp["beadtype_order"][:]
+                        ]
+                        beadtype_to_sc_type = {r: i for i, r in enumerate(sc_beadtype_order)}
+                        for row_idx, bead_name in enumerate(sc_beadtype_seq[:n_sc]):
+                            type_idx = beadtype_to_sc_type.get(bead_name)
+                            if type_idx is not None:
+                                row_types[row_idx] = type_idx
+                                matched_rows += 1
+                    else:
+                        sc_restype_order = [
+                            r.decode("ascii") if isinstance(r, bytes) else str(r)
+                            for r in sc_grp["restype_order"][:]
+                        ]
+                        restype_to_sc_type = {r: i for i, r in enumerate(sc_restype_order)}
+                        for row_idx in range(n_sc):
+                            res_idx = int(sc_residue_idx[row_idx])
+                            resname = sequence[res_idx] if res_idx < len(sequence) else ""
+                            type_idx = restype_to_sc_type.get(resname)
+                            if type_idx is not None:
+                                row_types[row_idx] = type_idx
+                                matched_rows += 1
 
                     injected_cutoff_ang = None
                     if matched_rows == 0:
@@ -4541,6 +4950,9 @@ def inject_cg_lipid_nodes(
                             cg_sc.attrs["schema"] = sc_grp.attrs["schema"]
                         cg_sc.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
                         cg_sc.attrs["radial_mode"] = sc_grp.attrs.get("radial_mode", "full_multimode")
+                        for attr_name in ("table_granularity", "normalize_by_row_group"):
+                            if attr_name in sc_grp.attrs:
+                                cg_sc.attrs[attr_name] = sc_grp.attrs[attr_name]
                         for attr_name in ("knot_spacing_ang", "taper_width_ang", "fit_r_min_nm", "fit_r_max_nm"):
                             if attr_name in sc_grp.attrs:
                                 cg_sc.attrs[attr_name] = np.float32(sc_grp.attrs[attr_name])
@@ -4635,12 +5047,6 @@ def inject_cg_lipid_nodes(
                 target_has_compaction_deltas = (
                     "delta_extended" in target_grp and "delta_compact" in target_grp
                 )
-                if enable_explicit_compaction_state and comp_grp is not None and not target_has_compaction_deltas:
-                    raise RuntimeError(
-                        "cg_lipid_target is missing delta_extended/delta_compact while the "
-                        "explicit cgl_compaction_state runtime path is enabled. "
-                        f"Rebuild {martini_h5} completely before injection."
-                    )
                 target_order = [
                     t.decode("ascii") if isinstance(t, bytes) else str(t)
                     for t in target_grp["target_order"][:]
@@ -4655,6 +5061,10 @@ def inject_cg_lipid_nodes(
                     atom_names = [
                         t.decode("ascii") if isinstance(t, bytes) else str(t)
                         for t in up_r["input/atom_names"][:]
+                    ]
+                    particle_classes = [
+                        t.decode("ascii") if isinstance(t, bytes) else str(t)
+                        for t in up_r["input/particle_class"][:]
                     ]
                     n_cg_lipids = up_r["input/potential/compose_vector6d/elem_index"].shape[0]
                     backbone_carrier_idx = set()
@@ -4674,9 +5084,8 @@ def inject_cg_lipid_nodes(
                                 if int(v) >= 0
                             }
 
-                target_idx = []
-                target_types = []
-                target_ids = []
+                protein_target_records = []
+                base_only_target_records = []
                 for atom_idx, atom_type in enumerate(atom_types):
                     if atom_type.upper() == "CGL":
                         continue
@@ -4685,21 +5094,30 @@ def inject_cg_lipid_nodes(
                     type_idx = target_type_to_idx.get(atom_type)
                     if type_idx is None:
                         continue
-                    target_idx.append(atom_idx)
-                    target_types.append(type_idx)
-                    target_ids.append((atom_idx + 300000) << 4)
+                    record = (atom_idx, type_idx, (atom_idx + 300000) << 4)
+                    if particle_classes[atom_idx].upper() == "PROTEIN":
+                        protein_target_records.append(record)
+                    else:
+                        base_only_target_records.append(record)
 
-                if target_idx:
-                    target_idx_arr = np.array(target_idx, dtype=np.int32)
-                    target_types_arr = np.array(target_types, dtype=np.int32)
-                    target_ids_arr = np.array(target_ids, dtype=np.int32)
+                if protein_target_records or base_only_target_records:
                     base_params = target_grp["interaction_param"][:].astype(np.float32)
                     cg_index = np.arange(n_cg_lipids, dtype=np.int32)
                     cg_type = np.zeros(n_cg_lipids, dtype=np.int32)
                     cg_id = ((cg_index + 200000) << 4).astype(np.int32)
 
-                    def write_target_node(node_name, interaction_param):
+                    def target_arrays(records):
+                        return (
+                            np.array([r[0] for r in records], dtype=np.int32),
+                            np.array([r[1] for r in records], dtype=np.int32),
+                            np.array([r[2] for r in records], dtype=np.int32),
+                        )
+
+                    def write_target_node(node_name, interaction_param, records, allow_compaction):
+                        target_idx_arr, target_types_arr, target_ids_arr = target_arrays(records)
                         use_explicit_compaction = (
+                            allow_compaction
+                            and
                             enable_explicit_compaction_state
                             and comp_grp is not None
                             and target_has_compaction_deltas
@@ -4751,29 +5169,68 @@ def inject_cg_lipid_nodes(
                                 "reference_energy_eup",
                                 data=target_grp["reference_energy_eup"][:].astype(np.float32),
                             )
+                        target_pi.create_dataset(
+                            "target_order",
+                            data=np.array(target_order, dtype="S"),
+                        )
                         target_pi.create_dataset("index1", data=cg_index)
                         target_pi.create_dataset("type1", data=cg_type)
                         target_pi.create_dataset("id1", data=cg_id)
                         target_pi.create_dataset("index2", data=target_idx_arr)
                         target_pi.create_dataset("type2", data=target_types_arr)
                         target_pi.create_dataset("id2", data=target_ids_arr)
-                        copied_compaction = copy_single_cgl_compaction(
-                            target_node,
-                            target_pi,
-                            target_grp,
-                            use_implicit_response=(not use_explicit_compaction),
-                        )
+                        copied_compaction = False
+                        if allow_compaction:
+                            copied_compaction = copy_single_cgl_compaction(
+                                target_node,
+                                target_pi,
+                                target_grp,
+                                use_implicit_response=(not use_explicit_compaction),
+                            )
                         if use_explicit_compaction and not copied_compaction:
                             raise RuntimeError(
                                 "cg_lipid_target explicit compaction path requires "
                                 "delta_extended and delta_compact datasets"
                             )
 
-                    write_target_node("cg_lipid_target", base_params)
-                    print(
-                        f"  Injected cg_lipid_target: {n_cg_lipids} CGL x {len(target_idx)} "
-                        f"target particles ({len(target_order)} target types; physical direct table)"
+                    if protein_target_records:
+                        write_target_node(
+                            "cg_lipid_target",
+                            base_params,
+                            protein_target_records,
+                            allow_compaction=True,
+                        )
+                    if base_only_target_records:
+                        write_target_node(
+                            "cg_lipid_target_base",
+                            base_params,
+                            base_only_target_records,
+                            allow_compaction=False,
+                        )
+                    protein_target_label = (
+                        "q-active protein targets"
+                        if enable_explicit_compaction_state and target_has_compaction_deltas
+                        else "base-only protein targets"
                     )
+                    print(
+                        f"  Injected cg_lipid_target: {n_cg_lipids} CGL x "
+                        f"{len(protein_target_records)} {protein_target_label}"
+                    )
+                    if base_only_target_records:
+                        print(
+                            f"  Injected cg_lipid_target_base: {n_cg_lipids} CGL x "
+                            f"{len(base_only_target_records)} base-only non-protein targets"
+                        )
+                    if not protein_target_records:
+                        print(
+                            "  cg_lipid_target: no protein target particles; "
+                            "base CGL-target spline remains active through cg_lipid_target_base"
+                        )
+                    else:
+                        print(
+                            f"  cg_lipid_target target table covers {len(target_order)} target types; "
+                            "non-protein targets do not consume cgl_compaction_state"
+                        )
                 else:
                     print("  cg_lipid_target: no matching target particles, skipping")
 

@@ -1545,6 +1545,58 @@ def _compute_pair_energy_and_gradient(
     return total_energy, grad1, grad2
 
 
+def _compute_positive_pair_energy(
+    pos1: np.ndarray,
+    pos2: np.ndarray,
+    bead_types1: list,
+    bead_types2: list,
+    bead_charges1: list,
+    bead_charges2: list,
+    pair_params: dict,
+    dist_min_nm: float = NUMERICAL_DISTANCE_GUARD_NM,
+    cutoff_nm: float | None = DRY_MARTINI_NONBONDED_CUTOFF_NM,
+) -> float:
+    """Return only positive nonbonded contact energy.
+
+    This is used for tail-relief corrections: attractive SC-lipid interactions
+    remain in the base SC-CGL table, while q-dependent relaxation removes
+    positive tail overlap.
+    """
+    n1, n2 = pos1.shape[0], pos2.shape[0]
+    total_energy = 0.0
+    for i in range(n1):
+        for j in range(n2):
+            dx = pos2[j] - pos1[i]
+            dist = float(np.linalg.norm(dx))
+            if cutoff_nm is not None and dist > float(cutoff_nm):
+                continue
+            eff_dist = max(dist, dist_min_nm)
+
+            key = (bead_types1[i], bead_types2[j])
+            params = pair_params.get(key)
+            if params is None:
+                params = pair_params.get((bead_types2[j], bead_types1[i]))
+            if params is None:
+                raise RuntimeError(
+                    f"Missing pair params for ({bead_types1[i]}, {bead_types2[j]})"
+                )
+
+            sigma_nm = params["sigma_nm"]
+            epsilon_kj = params["epsilon_kj_mol"]
+            sr = sigma_nm / eff_dist
+            sr2 = sr * sr
+            sr6 = sr2 * sr2 * sr2
+            pair_energy = 4.0 * epsilon_kj * (sr6 * sr6 - sr6)
+
+            q1 = bead_charges1[i]
+            q2 = bead_charges2[j]
+            if q1 and q2:
+                pair_energy += COULOMB_K_DRY_KJ_NM * q1 * q2 / eff_dist
+            if pair_energy > 0.0:
+                total_energy += pair_energy
+    return float(total_energy)
+
+
 def _compute_cg_pair_energy(
     r_nm: float,
     dir1: np.ndarray,
@@ -2123,6 +2175,1139 @@ def _run_pair_conditioned_tail_relaxation_grid_task(
     )
 
 
+def _sc_conditioned_tail_relaxation_effective_energy(
+    r_nm: float,
+    dir_cg: np.ndarray,
+    frame_angle: float,
+    ref_bead: np.ndarray,
+    bead_types: list[str],
+    bead_charges: list[float],
+    sc_bead_type: str,
+    pair_params: dict,
+    lipids_itp_path: Path,
+    dist_min_nm: float = NUMERICAL_DISTANCE_GUARD_NM,
+    step_schedule_nm: tuple[float, ...] = (0.20, 0.10, 0.05, 0.025),
+    max_compaction_nm: float = 0.9,
+) -> tuple[float, float]:
+    """Return rigid and tail-relaxed effective energy for one SC bead near one CGL.
+
+    The SC-CGL compaction overlay must be a relaxation correction: the DOPC
+    bonded/internal force field pays the cost of tail deformation, and the
+    nonbonded SC contact supplies the benefit when compression removes overlap.
+    """
+    dir_cg = np.asarray(dir_cg, dtype=np.float64)
+    ref_bead = np.asarray(ref_bead, dtype=np.float64)
+    target_com = np.array([float(r_nm), 0.0, 0.0], dtype=np.float64)
+    sc_pos = np.zeros((1, 3), dtype=np.float64)
+    sc_charge = infer_charge_from_atomtype(sc_bead_type)
+
+    pos = _orient_canonical_lipid_reference(ref_bead, dir_cg, target_com, frame_angle)
+    tail_weights = _tail_axial_compaction_weights(ref_bead)
+    radial_unit, max_radial = _tail_radial_unit_vectors(pos, dir_cg)
+
+    intra0 = _compute_dopc_internal_energy(
+        pos - target_com[None, :],
+        bead_types,
+        bead_charges,
+        pair_params,
+        lipids_itp_path,
+    )
+    tail_idx = _PAIR_RELAX_TAIL_INDICES
+    tail_types = [bead_types[int(i)] for i in tail_idx]
+    tail_charges = [bead_charges[int(i)] for i in tail_idx]
+    inter0 = _compute_positive_pair_energy(
+        pos[tail_idx],
+        sc_pos,
+        tail_types,
+        [sc_bead_type],
+        tail_charges,
+        [sc_charge],
+        pair_params,
+        dist_min_nm=dist_min_nm,
+        cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
+    )
+    rigid_total = float(intra0 + inter0)
+    positive_steps = [float(step) for step in step_schedule_nm if float(step) > 0.0]
+    if not positive_steps:
+        return rigid_total, rigid_total
+    state_quantum_nm = min(positive_steps)
+    max_compaction = max(float(max_compaction_nm), 0.0)
+    lipid_state_cache: dict[tuple[tuple[int, ...], int], tuple[np.ndarray, float]] = {}
+    sc_energy_cache: dict[tuple[tuple[int, ...], int], float] = {}
+
+    def state_key(comp_nm: np.ndarray, radial_nm: float) -> tuple[tuple[int, ...], int]:
+        comp = np.asarray(comp_nm, dtype=np.float64)
+        comp_key = tuple(int(x) for x in np.rint(comp / state_quantum_nm))
+        radial_key = int(np.rint(float(radial_nm) / state_quantum_nm))
+        return comp_key, radial_key
+
+    def local_state(
+        comp_nm: np.ndarray,
+        radial_nm: float,
+    ) -> tuple[tuple[np.ndarray, float], tuple[tuple[int, ...], int]]:
+        key = state_key(comp_nm, radial_nm)
+        cached = lipid_state_cache.get(key)
+        if cached is not None:
+            return cached, key
+        local = _recenter_bead_positions_to_target_com(
+            _apply_tail_compaction_modes(
+                pos,
+                dir_cg,
+                comp_nm,
+                radial_nm,
+                tail_weights,
+                radial_unit,
+            ),
+            target_com,
+        )
+        intra = _compute_dopc_internal_energy(
+            local - target_com[None, :],
+            bead_types,
+            bead_charges,
+            pair_params,
+            lipids_itp_path,
+        )
+        cached = (local, float(intra))
+        lipid_state_cache[key] = cached
+        return cached, key
+
+    def total_energy(comp_nm: np.ndarray, radial_nm: float) -> float:
+        (local, intra), key = local_state(comp_nm, radial_nm)
+        e_inter = sc_energy_cache.get(key)
+        if e_inter is None:
+            e_inter = _compute_positive_pair_energy(
+                local[tail_idx],
+                sc_pos,
+                tail_types,
+                [sc_bead_type],
+                tail_charges,
+                [sc_charge],
+                pair_params,
+                dist_min_nm=dist_min_nm,
+                cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
+            )
+            e_inter = float(e_inter)
+            sc_energy_cache[key] = e_inter
+        return float(intra + e_inter)
+
+    n_chain = len(_PAIR_RELAX_TAIL_CHAINS)
+    cur_comp = np.zeros(n_chain, dtype=np.float64)
+    cur_radial = 0.0
+    cur_total = rigid_total
+    for step_nm in positive_steps:
+        improved = True
+        while improved:
+            improved = False
+            for chain_idx in range(n_chain):
+                best_total = cur_total
+                best_comp = cur_comp.copy()
+                best_radial = float(cur_radial)
+                for sign in (-1.0, 1.0):
+                    trial_comp = cur_comp.copy()
+                    trial_radial = float(cur_radial)
+                    trial_comp[chain_idx] = float(
+                        np.clip(
+                            cur_comp[chain_idx] + sign * step_nm,
+                            0.0,
+                            max_compaction,
+                        )
+                    )
+                    if np.array_equal(trial_comp, cur_comp):
+                        continue
+                    e_trial = total_energy(trial_comp, trial_radial)
+                    if e_trial < best_total - 1.0e-9:
+                        best_total = e_trial
+                        best_comp = trial_comp
+                        best_radial = trial_radial
+                if best_total < cur_total - 1.0e-9:
+                    cur_comp = best_comp.copy()
+                    cur_radial = float(best_radial)
+                    cur_total = float(best_total)
+                    improved = True
+
+            best_total = cur_total
+            best_comp = cur_comp.copy()
+            best_radial = float(cur_radial)
+            for sign in (-1.0, 1.0):
+                trial_comp = cur_comp.copy()
+                trial_radial = float(
+                    np.clip(cur_radial + sign * step_nm, 0.0, max_radial)
+                )
+                if trial_radial == cur_radial:
+                    continue
+                e_trial = total_energy(trial_comp, trial_radial)
+                if e_trial < best_total - 1.0e-9:
+                    best_total = e_trial
+                    best_comp = trial_comp
+                    best_radial = trial_radial
+            if best_total < cur_total - 1.0e-9:
+                cur_comp = best_comp.copy()
+                cur_radial = float(best_radial)
+                cur_total = float(best_total)
+                improved = True
+
+    return rigid_total, float(min(cur_total, rigid_total))
+
+
+def _run_sc_conditioned_tail_relaxation_grid_task(
+    task: dict,
+) -> tuple[int, int, float, float, float]:
+    _ensure_cg_bonds_angles(Path(task["lipids_itp_path"]).expanduser().resolve())
+    rigid_samples = []
+    relaxed_samples = []
+    for direction in np.asarray(task["dirs"], dtype=np.float64):
+        for frame_angle in task["bead_frame_angles"]:
+            for ref in np.asarray(task["refs"], dtype=np.float64):
+                rigid, relaxed = _sc_conditioned_tail_relaxation_effective_energy(
+                    float(task["r_nm"]),
+                    direction,
+                    float(frame_angle),
+                    ref,
+                    bead_types=list(task["bead_types"]),
+                    bead_charges=list(task["bead_charges"]),
+                    sc_bead_type=str(task["sc_bead_type"]),
+                    pair_params=task["pair_params"],
+                    lipids_itp_path=Path(task["lipids_itp_path"]).expanduser().resolve(),
+                    dist_min_nm=float(task["dist_min_nm"]),
+                    max_compaction_nm=float(task["max_compaction_nm"]),
+                )
+                rigid_samples.append(rigid)
+                relaxed_samples.append(relaxed)
+    rigid_fe = _boltzmann_free_energy_kj_mol(
+        np.asarray(rigid_samples, dtype=np.float64),
+        float(task["temperature"]),
+    )
+    relaxed_fe = _boltzmann_free_energy_kj_mol(
+        np.asarray(relaxed_samples, dtype=np.float64),
+        float(task["temperature"]),
+    )
+    correction = min(0.0, float(relaxed_fe - rigid_fe))
+    return int(task["ir"]), int(task["ia"]), float(rigid_fe), float(relaxed_fe), correction
+
+
+def _sc_conditioned_tail_relaxation_correction_grid(
+    ref_bead_positions_nm: np.ndarray,
+    bead_types: list[str],
+    bead_charges: list[float],
+    sc_bead_type: str,
+    pair_params: dict,
+    lipids_itp_path: Path,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    average_temperature: float,
+    azimuthal_count: int = 4,
+    bead_frame_count: int = 1,
+    dist_min_nm: float = NUMERICAL_DISTANCE_GUARD_NM,
+    max_compaction_nm: float = 0.9,
+) -> dict:
+    refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
+    r_values = np.asarray(r_values_nm, dtype=np.float64)
+    cos_theta = np.asarray(cos_theta_grid, dtype=np.float64)
+    phi_values = np.linspace(0.0, 2.0 * np.pi, max(int(azimuthal_count), 1), endpoint=False)
+    cgl_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    dirs = _directions_with_dot_np(cgl_axis, cos_theta, phi_values)
+    bead_frame_angles = _bead_frame_angles(max(int(bead_frame_count), 1))
+    temp = float(average_temperature)
+    if temp <= 0.0:
+        raise ValueError("SC-conditioned tail relaxation correction requires positive average temperature")
+
+    tasks = []
+    for ir, r_nm in enumerate(r_values):
+        for ia in range(cos_theta.size):
+            tasks.append(
+                {
+                    "ir": ir,
+                    "ia": ia,
+                    "r_nm": float(r_nm),
+                    "dirs": np.asarray(dirs[ia], dtype=np.float64),
+                    "bead_frame_angles": list(bead_frame_angles),
+                    "refs": np.asarray(refs, dtype=np.float64),
+                    "bead_types": list(bead_types),
+                    "bead_charges": list(bead_charges),
+                    "sc_bead_type": str(sc_bead_type),
+                    "pair_params": pair_params,
+                    "lipids_itp_path": Path(lipids_itp_path).expanduser().resolve(),
+                    "dist_min_nm": float(dist_min_nm),
+                    "temperature": temp,
+                    "max_compaction_nm": float(max_compaction_nm),
+                }
+            )
+
+    correction_grid = np.zeros((r_values.size, cos_theta.size), dtype=np.float64)
+    rigid_grid = np.full_like(correction_grid, np.nan)
+    relaxed_grid = np.full_like(correction_grid, np.nan)
+    for ir, ia, rigid_fe, relaxed_fe, correction in _parallel_map_ordered(
+        f"SC-conditioned tail relaxation grid {sc_bead_type}",
+        _run_sc_conditioned_tail_relaxation_grid_task,
+        tasks,
+    ):
+        rigid_grid[ir, ia] = rigid_fe
+        relaxed_grid[ir, ia] = relaxed_fe
+        correction_grid[ir, ia] = correction
+
+    return {
+        "correction_grid_kj_mol": correction_grid,
+        "rigid_grid_kj_mol": rigid_grid,
+        "relaxed_grid_kj_mol": relaxed_grid,
+        "max_compaction_nm": float(max_compaction_nm),
+    }
+
+
+def _target_conditioned_tail_relaxation_effective_energy(
+    r_nm: float,
+    dir_cg: np.ndarray,
+    frame_angle: float,
+    ref_bead: np.ndarray,
+    bead_types: list[str],
+    bead_charges: list[float],
+    target_type: str,
+    pair_params: dict,
+    lipids_itp_path: Path,
+    dist_min_nm: float = NUMERICAL_DISTANCE_GUARD_NM,
+    step_schedule_nm: tuple[float, ...] = (0.20, 0.10, 0.05, 0.025),
+    max_compaction_nm: float = 0.9,
+) -> tuple[float, float]:
+    """Return rigid and tail-relaxed energy in cg_lipid_target geometry.
+
+    `cg_lipid_target` tables use CGL-at-origin, target-at-+r sampling and the
+    runtime evaluates the same dr(CGL -> target) convention.
+    """
+    dir_cg = np.asarray(dir_cg, dtype=np.float64)
+    ref_bead = np.asarray(ref_bead, dtype=np.float64)
+    cgl_com = np.zeros(3, dtype=np.float64)
+    target_pos = np.array([[float(r_nm), 0.0, 0.0]], dtype=np.float64)
+    target_charge = infer_charge_from_atomtype(target_type)
+
+    pos = _orient_canonical_lipid_reference(ref_bead, dir_cg, cgl_com, frame_angle)
+    tail_weights = _tail_axial_compaction_weights(ref_bead)
+    radial_unit, max_radial = _tail_radial_unit_vectors(pos, dir_cg)
+
+    intra0 = _compute_dopc_internal_energy(
+        pos,
+        bead_types,
+        bead_charges,
+        pair_params,
+        lipids_itp_path,
+    )
+    tail_idx = _PAIR_RELAX_TAIL_INDICES
+    tail_types = [bead_types[int(i)] for i in tail_idx]
+    tail_charges = [bead_charges[int(i)] for i in tail_idx]
+    inter0 = _compute_positive_pair_energy(
+        pos[tail_idx],
+        target_pos,
+        tail_types,
+        [target_type],
+        tail_charges,
+        [target_charge],
+        pair_params,
+        dist_min_nm=dist_min_nm,
+        cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
+    )
+    rigid_total = float(intra0 + inter0)
+    positive_steps = [float(step) for step in step_schedule_nm if float(step) > 0.0]
+    if not positive_steps:
+        return rigid_total, rigid_total
+    state_quantum_nm = min(positive_steps)
+    max_compaction = max(float(max_compaction_nm), 0.0)
+    lipid_state_cache: dict[tuple[tuple[int, ...], int], tuple[np.ndarray, float]] = {}
+    target_energy_cache: dict[tuple[tuple[int, ...], int], float] = {}
+
+    def state_key(comp_nm: np.ndarray, radial_nm: float) -> tuple[tuple[int, ...], int]:
+        comp = np.asarray(comp_nm, dtype=np.float64)
+        comp_key = tuple(int(x) for x in np.rint(comp / state_quantum_nm))
+        radial_key = int(np.rint(float(radial_nm) / state_quantum_nm))
+        return comp_key, radial_key
+
+    def local_state(
+        comp_nm: np.ndarray,
+        radial_nm: float,
+    ) -> tuple[tuple[np.ndarray, float], tuple[tuple[int, ...], int]]:
+        key = state_key(comp_nm, radial_nm)
+        cached = lipid_state_cache.get(key)
+        if cached is not None:
+            return cached, key
+        local = _recenter_bead_positions_to_target_com(
+            _apply_tail_compaction_modes(
+                pos,
+                dir_cg,
+                comp_nm,
+                radial_nm,
+                tail_weights,
+                radial_unit,
+            ),
+            cgl_com,
+        )
+        intra = _compute_dopc_internal_energy(
+            local,
+            bead_types,
+            bead_charges,
+            pair_params,
+            lipids_itp_path,
+        )
+        cached = (local, float(intra))
+        lipid_state_cache[key] = cached
+        return cached, key
+
+    def total_energy(comp_nm: np.ndarray, radial_nm: float) -> float:
+        (local, intra), key = local_state(comp_nm, radial_nm)
+        e_inter = target_energy_cache.get(key)
+        if e_inter is None:
+            e_inter = _compute_positive_pair_energy(
+                local[tail_idx],
+                target_pos,
+                tail_types,
+                [target_type],
+                tail_charges,
+                [target_charge],
+                pair_params,
+                dist_min_nm=dist_min_nm,
+                cutoff_nm=DRY_MARTINI_NONBONDED_CUTOFF_NM,
+            )
+            e_inter = float(e_inter)
+            target_energy_cache[key] = e_inter
+        return float(intra + e_inter)
+
+    n_chain = len(_PAIR_RELAX_TAIL_CHAINS)
+    cur_comp = np.zeros(n_chain, dtype=np.float64)
+    cur_radial = 0.0
+    cur_total = rigid_total
+    for step_nm in positive_steps:
+        improved = True
+        while improved:
+            improved = False
+            for chain_idx in range(n_chain):
+                best_total = cur_total
+                best_comp = cur_comp.copy()
+                best_radial = float(cur_radial)
+                for sign in (-1.0, 1.0):
+                    trial_comp = cur_comp.copy()
+                    trial_radial = float(cur_radial)
+                    trial_comp[chain_idx] = float(
+                        np.clip(
+                            cur_comp[chain_idx] + sign * step_nm,
+                            0.0,
+                            max_compaction,
+                        )
+                    )
+                    if np.array_equal(trial_comp, cur_comp):
+                        continue
+                    e_trial = total_energy(trial_comp, trial_radial)
+                    if e_trial < best_total - 1.0e-9:
+                        best_total = e_trial
+                        best_comp = trial_comp
+                        best_radial = trial_radial
+                if best_total < cur_total - 1.0e-9:
+                    cur_comp = best_comp.copy()
+                    cur_radial = float(best_radial)
+                    cur_total = float(best_total)
+                    improved = True
+
+            best_total = cur_total
+            best_comp = cur_comp.copy()
+            best_radial = float(cur_radial)
+            for sign in (-1.0, 1.0):
+                trial_comp = cur_comp.copy()
+                trial_radial = float(
+                    np.clip(cur_radial + sign * step_nm, 0.0, max_radial)
+                )
+                if trial_radial == cur_radial:
+                    continue
+                e_trial = total_energy(trial_comp, trial_radial)
+                if e_trial < best_total - 1.0e-9:
+                    best_total = e_trial
+                    best_comp = trial_comp
+                    best_radial = trial_radial
+            if best_total < cur_total - 1.0e-9:
+                cur_comp = best_comp.copy()
+                cur_radial = float(best_radial)
+                cur_total = float(best_total)
+                improved = True
+
+    return rigid_total, float(min(cur_total, rigid_total))
+
+
+def _run_target_conditioned_tail_relaxation_grid_task(
+    task: dict,
+) -> tuple[int, int, float, float, float]:
+    _ensure_cg_bonds_angles(Path(task["lipids_itp_path"]).expanduser().resolve())
+    rigid_samples = []
+    relaxed_samples = []
+    for direction in np.asarray(task["dirs"], dtype=np.float64):
+        for frame_angle in task["bead_frame_angles"]:
+            for ref in np.asarray(task["refs"], dtype=np.float64):
+                rigid, relaxed = _target_conditioned_tail_relaxation_effective_energy(
+                    float(task["r_nm"]),
+                    direction,
+                    float(frame_angle),
+                    ref,
+                    bead_types=list(task["bead_types"]),
+                    bead_charges=list(task["bead_charges"]),
+                    target_type=str(task["target_type"]),
+                    pair_params=task["pair_params"],
+                    lipids_itp_path=Path(task["lipids_itp_path"]).expanduser().resolve(),
+                    dist_min_nm=float(task["dist_min_nm"]),
+                    max_compaction_nm=float(task["max_compaction_nm"]),
+                )
+                rigid_samples.append(rigid)
+                relaxed_samples.append(relaxed)
+    rigid_fe = _boltzmann_free_energy_kj_mol(
+        np.asarray(rigid_samples, dtype=np.float64),
+        float(task["temperature"]),
+    )
+    relaxed_fe = _boltzmann_free_energy_kj_mol(
+        np.asarray(relaxed_samples, dtype=np.float64),
+        float(task["temperature"]),
+    )
+    correction = min(0.0, float(relaxed_fe - rigid_fe))
+    return int(task["ir"]), int(task["ia"]), float(rigid_fe), float(relaxed_fe), correction
+
+
+def _target_conditioned_tail_relaxation_correction_grid(
+    ref_bead_positions_nm: np.ndarray,
+    bead_types: list[str],
+    bead_charges: list[float],
+    target_type: str,
+    pair_params: dict,
+    lipids_itp_path: Path,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    average_temperature: float,
+    azimuthal_count: int = 4,
+    bead_frame_count: int = 1,
+    dist_min_nm: float = NUMERICAL_DISTANCE_GUARD_NM,
+    max_compaction_nm: float = 0.9,
+) -> dict:
+    refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
+    r_values = np.asarray(r_values_nm, dtype=np.float64)
+    cos_theta = np.asarray(cos_theta_grid, dtype=np.float64)
+    phi_values = np.linspace(0.0, 2.0 * np.pi, max(int(azimuthal_count), 1), endpoint=False)
+    target_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    dirs = _directions_with_dot_np(target_axis, cos_theta, phi_values)
+    bead_frame_angles = _bead_frame_angles(max(int(bead_frame_count), 1))
+    temp = float(average_temperature)
+    if temp <= 0.0:
+        raise ValueError("target-conditioned tail relaxation correction requires positive average temperature")
+
+    tasks = []
+    for ir, r_nm in enumerate(r_values):
+        for ia in range(cos_theta.size):
+            tasks.append(
+                {
+                    "ir": ir,
+                    "ia": ia,
+                    "r_nm": float(r_nm),
+                    "dirs": np.asarray(dirs[ia], dtype=np.float64),
+                    "bead_frame_angles": list(bead_frame_angles),
+                    "refs": np.asarray(refs, dtype=np.float64),
+                    "bead_types": list(bead_types),
+                    "bead_charges": list(bead_charges),
+                    "target_type": str(target_type),
+                    "pair_params": pair_params,
+                    "lipids_itp_path": Path(lipids_itp_path).expanduser().resolve(),
+                    "dist_min_nm": float(dist_min_nm),
+                    "temperature": temp,
+                    "max_compaction_nm": float(max_compaction_nm),
+                }
+            )
+
+    correction_grid = np.zeros((r_values.size, cos_theta.size), dtype=np.float64)
+    rigid_grid = np.full_like(correction_grid, np.nan)
+    relaxed_grid = np.full_like(correction_grid, np.nan)
+    for ir, ia, rigid_fe, relaxed_fe, correction in _parallel_map_ordered(
+        f"target-conditioned tail relaxation grid {target_type}",
+        _run_target_conditioned_tail_relaxation_grid_task,
+        tasks,
+    ):
+        rigid_grid[ir, ia] = rigid_fe
+        relaxed_grid[ir, ia] = relaxed_fe
+        correction_grid[ir, ia] = correction
+
+    return {
+        "correction_grid_kj_mol": correction_grid,
+        "rigid_grid_kj_mol": rigid_grid,
+        "relaxed_grid_kj_mol": relaxed_grid,
+        "max_compaction_nm": float(max_compaction_nm),
+    }
+
+
+def _fit_single_cgl_relaxation_delta_full_tensor(
+    base_interaction_param: np.ndarray,
+    correction_grid_kj_mol: np.ndarray,
+    reference_energy_eup: float,
+    temperature_upside: float,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    n_knot_radial: int,
+    n_knot_angular: int,
+    knot_spacing_ang: float,
+    smooth: float = 0.01,
+    relief_floor_kj_mol: float = 0.0,
+) -> dict:
+    base_control = _evaluate_radial_angular_angular_tensor_controls(
+        np.asarray(base_interaction_param, dtype=np.float64).reshape(
+            int(n_knot_radial),
+            int(n_knot_angular),
+            int(n_knot_angular),
+        ),
+        np.asarray(r_values_nm, dtype=np.float64),
+        np.asarray(cos_theta_grid, dtype=np.float64),
+        float(knot_spacing_ang),
+    )
+    correction = np.asarray(correction_grid_kj_mol, dtype=np.float64)
+    if correction.ndim == 2:
+        correction = np.repeat(correction[:, None, :], base_control.shape[1], axis=1)
+    if correction.shape != base_control.shape:
+        raise ValueError(
+            "SC relaxation correction grid shape mismatch: "
+            f"{correction.shape} vs {base_control.shape}"
+        )
+    kbt_kj_mol = float(temperature_upside) * ENERGY_CONVERSION_KJ_PER_EUP
+    if kbt_kj_mol <= 0.0:
+        raise RuntimeError("SC relaxation correction requires positive control temperature")
+    reference_energy_kj_mol = float(reference_energy_eup) * ENERGY_CONVERSION_KJ_PER_EUP
+    base_energy = reference_energy_kj_mol + kbt_kj_mol * np.expm1(base_control)
+    relief_floor = float(relief_floor_kj_mol)
+    relieved_energy = base_energy + np.minimum(correction, 0.0)
+    corrected_energy = np.where(
+        base_energy > relief_floor,
+        np.maximum(relieved_energy, relief_floor),
+        base_energy,
+    )
+    corrected_control = np.log1p(
+        np.maximum((corrected_energy - reference_energy_kj_mol) / kbt_kj_mol, 0.0)
+    )
+    delta_grid = corrected_control - base_control
+    tensor = _fit_radial_angular_angular_tensor_bspline(
+        np.asarray(r_values_nm, dtype=np.float64),
+        np.asarray(cos_theta_grid, dtype=np.float64),
+        delta_grid,
+        n_knot_radial=int(n_knot_radial),
+        n_knot_angular=int(n_knot_angular),
+        knot_spacing_ang=float(knot_spacing_ang),
+        energy_conversion=1.0,
+        smooth=float(smooth),
+    )
+    delta_min = float(np.min(delta_grid))
+    delta_max = float(np.max(delta_grid))
+    return {
+        "delta": np.clip(tensor, delta_min, delta_max).reshape(-1),
+        "base_energy_grid_kj_mol": np.asarray(base_energy, dtype=np.float32),
+        "corrected_energy_grid_kj_mol": np.asarray(corrected_energy, dtype=np.float32),
+        "correction_grid_kj_mol": np.asarray(correction, dtype=np.float32),
+        "relief_floor_kj_mol": float(relief_floor),
+    }
+
+
+def _fit_single_cgl_relaxation_delta_radial_angular(
+    base_interaction_param: np.ndarray,
+    correction_grid_kj_mol: np.ndarray,
+    reference_energy_eup: float,
+    temperature_upside: float,
+    r_values_nm: np.ndarray,
+    cos_theta_grid: np.ndarray,
+    n_knot_radial: int,
+    n_knot_angular: int,
+    knot_spacing_ang: float,
+    smooth: float = 0.01,
+    relief_floor_kj_mol: float = 0.0,
+) -> dict:
+    base_control = _evaluate_radial_angular_tensor_controls(
+        np.asarray(base_interaction_param, dtype=np.float64).reshape(
+            int(n_knot_radial),
+            int(n_knot_angular),
+        ),
+        np.asarray(r_values_nm, dtype=np.float64),
+        np.asarray(cos_theta_grid, dtype=np.float64),
+        float(knot_spacing_ang),
+    )
+    correction = np.asarray(correction_grid_kj_mol, dtype=np.float64)
+    if correction.shape != base_control.shape:
+        raise ValueError(
+            "target relaxation correction grid shape mismatch: "
+            f"{correction.shape} vs {base_control.shape}"
+        )
+    kbt_kj_mol = float(temperature_upside) * ENERGY_CONVERSION_KJ_PER_EUP
+    if kbt_kj_mol <= 0.0:
+        raise RuntimeError("target relaxation correction requires positive control temperature")
+    reference_energy_kj_mol = float(reference_energy_eup) * ENERGY_CONVERSION_KJ_PER_EUP
+    base_energy = reference_energy_kj_mol + kbt_kj_mol * np.expm1(base_control)
+    relief_floor = float(relief_floor_kj_mol)
+    relieved_energy = base_energy + np.minimum(correction, 0.0)
+    corrected_energy = np.where(
+        base_energy > relief_floor,
+        np.maximum(relieved_energy, relief_floor),
+        base_energy,
+    )
+    corrected_control = np.log1p(
+        np.maximum((corrected_energy - reference_energy_kj_mol) / kbt_kj_mol, 0.0)
+    )
+    delta_grid = corrected_control - base_control
+    tensor = _fit_radial_angular_tensor_bspline(
+        np.asarray(r_values_nm, dtype=np.float64),
+        np.asarray(cos_theta_grid, dtype=np.float64),
+        delta_grid,
+        n_knot_radial=int(n_knot_radial),
+        n_knot_angular=int(n_knot_angular),
+        knot_spacing_ang=float(knot_spacing_ang),
+        energy_conversion=1.0,
+        smooth=float(smooth),
+    )
+    delta_min = float(np.min(delta_grid))
+    delta_max = float(np.max(delta_grid))
+    return {
+        "delta": np.clip(tensor, delta_min, delta_max).reshape(-1),
+        "base_energy_grid_kj_mol": np.asarray(base_energy, dtype=np.float32),
+        "corrected_energy_grid_kj_mol": np.asarray(corrected_energy, dtype=np.float32),
+        "correction_grid_kj_mol": np.asarray(correction, dtype=np.float32),
+        "relief_floor_kj_mol": float(relief_floor),
+    }
+
+
+def _build_sc_bead_tail_relaxation_compaction_payload(
+    sc_grp: h5py.Group,
+    ref_bead_positions_nm: np.ndarray,
+    dopc: dict,
+    pair_params: dict,
+    lipids_itp_path: Path,
+    compressed_state_coord: float | None,
+    extended_center_ang: float | None = None,
+    compact_center_ang: float | None = None,
+    compressed_center_ang: float | None = None,
+) -> dict:
+    beadtype_order = _decode_h5_string_array(sc_grp["beadtype_order"][:])
+    bead_martini_type_order = _decode_h5_string_array(
+        sc_grp["bead_martini_type_order"][:]
+    )
+    if len(beadtype_order) != len(bead_martini_type_order):
+        raise RuntimeError(
+            "cg_lipid_sc beadtype_order and bead_martini_type_order length mismatch"
+        )
+    sc_n_modes = int(sc_grp.attrs.get("n_modes", 0))
+    if sc_n_modes != 0:
+        raise RuntimeError("SC-CGL tail-relaxation retrofit requires full-tensor cg_lipid_sc")
+    sc_n_radial = int(sc_grp.attrs["n_radial"])
+    sc_n_angular = int(sc_grp.attrs["n_angular"])
+    sc_r_count = sc_n_radial
+    sc_cos_theta_count = max(sc_n_angular - 2, 1)
+    sc_temperature = float(
+        sc_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
+    )
+    sc_average_temperature = float(
+        sc_grp.attrs.get(
+            "azimuthal_average_temperature_upside",
+            DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+        )
+    )
+    sc_angular_smooth = float(sc_grp.attrs.get("angular_smooth", 0.1))
+    knot_spacing_ang = float(sc_grp.attrs["knot_spacing_ang"])
+    r_values_nm = np.linspace(
+        float(sc_grp.attrs.get("fit_r_min_nm", 0.30)),
+        float(sc_grp.attrs["fit_r_max_nm"]),
+        sc_r_count,
+        dtype=np.float64,
+    )
+    cos_theta_grid = np.linspace(-1.0, 1.0, sc_cos_theta_count, dtype=np.float64)
+    max_compaction_nm = _float_env("UPSIDE_SC_CGL_RELAXATION_MAX_COMPACTION_NM", 0.9)
+    if max_compaction_nm <= 0.0:
+        raise RuntimeError("UPSIDE_SC_CGL_RELAXATION_MAX_COMPACTION_NM must be positive")
+    endpoint_compact_fraction = 1.0
+    if compressed_state_coord is not None and float(compressed_state_coord) > 1.0 + 1.0e-6:
+        endpoint_compact_fraction = 1.0 / float(compressed_state_coord)
+    if (
+        extended_center_ang is not None
+        and compact_center_ang is not None
+        and compressed_center_ang is not None
+        and np.isfinite(float(extended_center_ang))
+        and np.isfinite(float(compact_center_ang))
+        and np.isfinite(float(compressed_center_ang))
+        and float(compressed_center_ang) > float(compact_center_ang) + 1.0e-6
+        and float(compact_center_ang) > float(extended_center_ang) + 1.0e-6
+    ):
+        endpoint_compact_fraction = (
+            (float(compact_center_ang) - float(extended_center_ang))
+            / (float(compressed_center_ang) - float(extended_center_ang))
+        )
+    endpoint_compact_fraction = float(np.clip(endpoint_compact_fraction, 1.0e-6, 1.0))
+    compact_max_compaction_nm = float(max_compaction_nm * endpoint_compact_fraction)
+    compressed_max_compaction_nm = float(max_compaction_nm)
+
+    compact_relaxation_by_type = {}
+    compressed_relaxation_by_type = {}
+    for martini_type in sorted(set(bead_martini_type_order)):
+        compact_relaxation_by_type[martini_type] = _sc_conditioned_tail_relaxation_correction_grid(
+            ref_bead_positions_nm=np.asarray(ref_bead_positions_nm, dtype=np.float64),
+            bead_types=list(dopc["bead_types"]),
+            bead_charges=list(dopc["bead_charges"]),
+            sc_bead_type=martini_type,
+            pair_params=pair_params,
+            lipids_itp_path=lipids_itp_path,
+            r_values_nm=r_values_nm,
+            cos_theta_grid=cos_theta_grid,
+            average_temperature=sc_average_temperature,
+            azimuthal_count=int(sc_grp.attrs.get("azimuthal_count", 4)),
+            bead_frame_count=int(sc_grp.attrs.get("cgl_bead_frame_count", 1)),
+            max_compaction_nm=float(compact_max_compaction_nm),
+        )
+        if compressed_state_coord is not None:
+            compressed_relaxation_by_type[martini_type] = (
+                _sc_conditioned_tail_relaxation_correction_grid(
+                    ref_bead_positions_nm=np.asarray(ref_bead_positions_nm, dtype=np.float64),
+                    bead_types=list(dopc["bead_types"]),
+                    bead_charges=list(dopc["bead_charges"]),
+                    sc_bead_type=martini_type,
+                    pair_params=pair_params,
+                    lipids_itp_path=lipids_itp_path,
+                    r_values_nm=r_values_nm,
+                    cos_theta_grid=cos_theta_grid,
+                    average_temperature=sc_average_temperature,
+                    azimuthal_count=int(sc_grp.attrs.get("azimuthal_count", 4)),
+                    bead_frame_count=int(sc_grp.attrs.get("cgl_bead_frame_count", 1)),
+                    max_compaction_nm=float(compressed_max_compaction_nm),
+                )
+            )
+
+    n_sc_types = len(beadtype_order)
+    sc_n_param = sc_n_radial * sc_n_angular * sc_n_angular
+    sc_delta_extended = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
+    sc_delta_compact = np.zeros_like(sc_delta_extended)
+    sc_delta_compressed = (
+        np.zeros_like(sc_delta_extended)
+        if compressed_state_coord is not None
+        else None
+    )
+    sc_grid_extended = np.zeros(
+        (n_sc_types, sc_r_count, sc_cos_theta_count, sc_cos_theta_count),
+        dtype=np.float32,
+    )
+    sc_grid_compact = np.zeros_like(sc_grid_extended)
+    sc_grid_compressed = (
+        np.zeros_like(sc_grid_extended)
+        if compressed_state_coord is not None
+        else None
+    )
+
+    for ti, martini_type in enumerate(bead_martini_type_order):
+        base_interaction_param = np.asarray(
+            sc_grp["interaction_param"][ti, 0, :],
+            dtype=np.float64,
+        )
+        base_reference_energy = float(
+            np.asarray(sc_grp["reference_energy_eup"][ti, 0], dtype=np.float64)
+        )
+        fit = _fit_single_cgl_relaxation_delta_full_tensor(
+            base_interaction_param=base_interaction_param,
+            correction_grid_kj_mol=np.asarray(
+                compact_relaxation_by_type[martini_type]["correction_grid_kj_mol"],
+                dtype=np.float64,
+            ),
+            reference_energy_eup=base_reference_energy,
+            temperature_upside=float(sc_temperature),
+            r_values_nm=r_values_nm,
+            cos_theta_grid=cos_theta_grid,
+            n_knot_radial=sc_n_radial,
+            n_knot_angular=sc_n_angular,
+            knot_spacing_ang=knot_spacing_ang,
+            smooth=sc_angular_smooth,
+        )
+        sc_delta_compact[ti, 0, :] = np.asarray(fit["delta"], dtype=np.float32)
+        sc_grid_extended[ti] = np.asarray(
+            fit["base_energy_grid_kj_mol"],
+            dtype=np.float32,
+        )
+        sc_grid_compact[ti] = np.asarray(
+            fit["corrected_energy_grid_kj_mol"],
+            dtype=np.float32,
+        )
+        if sc_delta_compressed is not None and sc_grid_compressed is not None:
+            compressed_fit = _fit_single_cgl_relaxation_delta_full_tensor(
+                base_interaction_param=base_interaction_param,
+                correction_grid_kj_mol=np.asarray(
+                    compressed_relaxation_by_type[martini_type]["correction_grid_kj_mol"],
+                    dtype=np.float64,
+                ),
+                reference_energy_eup=base_reference_energy,
+                temperature_upside=float(sc_temperature),
+                r_values_nm=r_values_nm,
+                cos_theta_grid=cos_theta_grid,
+                n_knot_radial=sc_n_radial,
+                n_knot_angular=sc_n_angular,
+                knot_spacing_ang=knot_spacing_ang,
+                smooth=sc_angular_smooth,
+            )
+            sc_delta_compressed[ti, 0, :] = np.asarray(
+                compressed_fit["delta"],
+                dtype=np.float32,
+            )
+            sc_grid_compressed[ti] = np.asarray(
+                compressed_fit["corrected_energy_grid_kj_mol"],
+                dtype=np.float32,
+            )
+
+    payload = {
+        "delta_extended": sc_delta_extended,
+        "delta_compact": sc_delta_compact,
+        "grid_extended_kj_mol": sc_grid_extended,
+        "grid_compact_kj_mol": sc_grid_compact,
+        "single_cgl_relaxation_source": _SINGLE_CGL_RELAXATION_SOURCE,
+        "single_cgl_relaxation_max_compaction_nm": float(max_compaction_nm),
+        "single_cgl_relaxation_compact_max_compaction_nm": float(
+            compact_max_compaction_nm
+        ),
+        "single_cgl_relaxation_compressed_max_compaction_nm": float(
+            compressed_max_compaction_nm
+        ),
+        "single_cgl_relaxation_contact_energy_source": (
+            _SINGLE_CGL_RELAXATION_CONTACT_ENERGY_SOURCE
+        ),
+        "single_cgl_relaxation_energy_floor_kj_mol": 0.0,
+    }
+    if sc_delta_compressed is not None and sc_grid_compressed is not None:
+        payload["delta_compressed"] = sc_delta_compressed
+        payload["grid_compressed_kj_mol"] = sc_grid_compressed
+        payload["compressed_state_reference_source"] = (
+            _SINGLE_CGL_COMPRESSED_REFERENCE_SOURCE
+        )
+    return payload
+
+
+def _target_relaxation_type_set(target_types: list[str]) -> set[str]:
+    spec = os.environ.get("UPSIDE_TARGET_CGL_RELAXATION_TYPES", "").strip()
+    if not spec:
+        return set(target_types)
+    requested = {part.strip() for part in spec.split(",") if part.strip()}
+    unknown = sorted(requested.difference(target_types))
+    if unknown:
+        raise RuntimeError(
+            "UPSIDE_TARGET_CGL_RELAXATION_TYPES contains target types not "
+            f"present in cg_lipid_target/target_order: {', '.join(unknown)}"
+        )
+    return requested
+
+
+def _build_target_tail_relaxation_compaction_payload(
+    target_grp: h5py.Group,
+    ref_bead_positions_nm: np.ndarray,
+    dopc: dict,
+    pair_params: dict,
+    lipids_itp_path: Path,
+    compressed_state_coord: float | None,
+    extended_center_ang: float | None = None,
+    compact_center_ang: float | None = None,
+    compressed_center_ang: float | None = None,
+) -> dict:
+    target_types = _decode_h5_string_array(target_grp["target_order"][:])
+    n_types = len(target_types)
+    n_knot_radial = int(target_grp.attrs["n_radial"])
+    n_knot_angular = int(target_grp.attrs["n_angular"])
+    knot_spacing_ang = float(target_grp.attrs["knot_spacing_ang"])
+    target_temperature = float(
+        target_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
+    )
+    target_average_temperature = float(
+        target_grp.attrs.get(
+            "azimuthal_average_temperature_upside",
+            DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+        )
+    )
+    max_compaction_nm = _float_env("UPSIDE_SC_CGL_RELAXATION_MAX_COMPACTION_NM", 0.9)
+    if max_compaction_nm <= 0.0:
+        raise RuntimeError("UPSIDE_SC_CGL_RELAXATION_MAX_COMPACTION_NM must be positive")
+    endpoint_compact_fraction = 1.0
+    if compressed_state_coord is not None and float(compressed_state_coord) > 1.0 + 1.0e-6:
+        endpoint_compact_fraction = 1.0 / float(compressed_state_coord)
+    if (
+        extended_center_ang is not None
+        and compact_center_ang is not None
+        and compressed_center_ang is not None
+        and np.isfinite(float(extended_center_ang))
+        and np.isfinite(float(compact_center_ang))
+        and np.isfinite(float(compressed_center_ang))
+        and float(compressed_center_ang) > float(compact_center_ang) + 1.0e-6
+        and float(compact_center_ang) > float(extended_center_ang) + 1.0e-6
+    ):
+        endpoint_compact_fraction = (
+            (float(compact_center_ang) - float(extended_center_ang))
+            / (float(compressed_center_ang) - float(extended_center_ang))
+        )
+    endpoint_compact_fraction = float(np.clip(endpoint_compact_fraction, 1.0e-6, 1.0))
+    compact_max_compaction_nm = float(max_compaction_nm * endpoint_compact_fraction)
+    compressed_max_compaction_nm = float(max_compaction_nm)
+
+    r_max_ang = float((n_knot_radial - 2) * knot_spacing_ang)
+    radial_samples = min(
+        _positive_int_env("UPSIDE_TARGET_CGL_RELAXATION_RADIAL_SAMPLES", min(n_knot_radial, 25)),
+        n_knot_radial,
+    )
+    angular_samples = min(
+        _positive_int_env("UPSIDE_TARGET_CGL_RELAXATION_ANGULAR_SAMPLES", min(n_knot_angular, 33)),
+        n_knot_angular,
+    )
+    r_sample_ang = np.linspace(
+        float(knot_spacing_ang),
+        r_max_ang,
+        int(radial_samples),
+        dtype=np.float64,
+    )
+    r_sample_nm = r_sample_ang / LENGTH_CONVERSION_A_PER_NM
+    cos_theta_grid = np.linspace(-1.0, 1.0, int(angular_samples), dtype=np.float64)
+    target_fit_smooth = float(target_grp.attrs.get("fit_smooth", 0.01))
+    azimuthal_count = _positive_int_env(
+        "UPSIDE_TARGET_CGL_RELAXATION_AZIMUTHAL_COUNT",
+        max(1, min(int(target_grp.attrs.get("azimuthal_count", 4)), 4)),
+    )
+    bead_frame_count = int(target_grp.attrs.get("cgl_bead_frame_count", 1))
+    active_types = _target_relaxation_type_set(target_types)
+
+    compact_relaxation_by_type = {}
+    compressed_relaxation_by_type = {}
+    for target_type in target_types:
+        if target_type not in active_types:
+            continue
+        compact_relaxation_by_type[target_type] = _target_conditioned_tail_relaxation_correction_grid(
+            ref_bead_positions_nm=np.asarray(ref_bead_positions_nm, dtype=np.float64),
+            bead_types=list(dopc["bead_types"]),
+            bead_charges=list(dopc["bead_charges"]),
+            target_type=target_type,
+            pair_params=pair_params,
+            lipids_itp_path=lipids_itp_path,
+            r_values_nm=r_sample_nm,
+            cos_theta_grid=cos_theta_grid,
+            average_temperature=target_average_temperature,
+            azimuthal_count=int(azimuthal_count),
+            bead_frame_count=int(bead_frame_count),
+            max_compaction_nm=float(compact_max_compaction_nm),
+        )
+        if compressed_state_coord is not None:
+            compressed_relaxation_by_type[target_type] = _target_conditioned_tail_relaxation_correction_grid(
+                ref_bead_positions_nm=np.asarray(ref_bead_positions_nm, dtype=np.float64),
+                bead_types=list(dopc["bead_types"]),
+                bead_charges=list(dopc["bead_charges"]),
+                target_type=target_type,
+                pair_params=pair_params,
+                lipids_itp_path=lipids_itp_path,
+                r_values_nm=r_sample_nm,
+                cos_theta_grid=cos_theta_grid,
+                average_temperature=target_average_temperature,
+                azimuthal_count=int(azimuthal_count),
+                bead_frame_count=int(bead_frame_count),
+                max_compaction_nm=float(compressed_max_compaction_nm),
+            )
+
+    n_param = n_knot_radial * n_knot_angular
+    target_delta_extended = np.zeros((1, n_types, n_param), dtype=np.float32)
+    target_delta_compact = np.zeros_like(target_delta_extended)
+    target_delta_compressed = (
+        np.zeros_like(target_delta_extended)
+        if compressed_state_coord is not None
+        else None
+    )
+    target_grid_extended = np.zeros(
+        (n_types, r_sample_nm.size, cos_theta_grid.size),
+        dtype=np.float32,
+    )
+    target_grid_compact = np.zeros_like(target_grid_extended)
+    target_grid_compressed = (
+        np.zeros_like(target_grid_extended)
+        if compressed_state_coord is not None
+        else None
+    )
+    target_ref_energy = np.asarray(
+        target_grp["reference_energy_eup"][:],
+        dtype=np.float64,
+    ).reshape(-1)
+    for ti, target_type in enumerate(target_types):
+        base_interaction_param = np.asarray(
+            target_grp["interaction_param"][0, ti, :],
+            dtype=np.float64,
+        )
+        if target_type not in active_types:
+            base_control = _evaluate_radial_angular_tensor_controls(
+                base_interaction_param.reshape(n_knot_radial, n_knot_angular),
+                r_sample_nm,
+                cos_theta_grid,
+                knot_spacing_ang,
+            )
+            kbt_kj_mol = float(target_temperature) * ENERGY_CONVERSION_KJ_PER_EUP
+            reference_energy_kj_mol = float(target_ref_energy[ti]) * ENERGY_CONVERSION_KJ_PER_EUP
+            base_energy = reference_energy_kj_mol + kbt_kj_mol * np.expm1(base_control)
+            target_grid_extended[ti] = np.asarray(base_energy, dtype=np.float32)
+            target_grid_compact[ti] = np.asarray(base_energy, dtype=np.float32)
+            if target_grid_compressed is not None:
+                target_grid_compressed[ti] = np.asarray(base_energy, dtype=np.float32)
+            continue
+        fit = _fit_single_cgl_relaxation_delta_radial_angular(
+            base_interaction_param=base_interaction_param,
+            correction_grid_kj_mol=np.asarray(
+                compact_relaxation_by_type[target_type]["correction_grid_kj_mol"],
+                dtype=np.float64,
+            ),
+            reference_energy_eup=float(target_ref_energy[ti]),
+            temperature_upside=float(target_temperature),
+            r_values_nm=r_sample_nm,
+            cos_theta_grid=cos_theta_grid,
+            n_knot_radial=n_knot_radial,
+            n_knot_angular=n_knot_angular,
+            knot_spacing_ang=knot_spacing_ang,
+            smooth=target_fit_smooth,
+        )
+        target_delta_compact[0, ti, :] = np.asarray(fit["delta"], dtype=np.float32)
+        target_grid_extended[ti] = np.asarray(fit["base_energy_grid_kj_mol"], dtype=np.float32)
+        target_grid_compact[ti] = np.asarray(fit["corrected_energy_grid_kj_mol"], dtype=np.float32)
+        if target_delta_compressed is not None and target_grid_compressed is not None:
+            compressed_fit = _fit_single_cgl_relaxation_delta_radial_angular(
+                base_interaction_param=base_interaction_param,
+                correction_grid_kj_mol=np.asarray(
+                    compressed_relaxation_by_type[target_type]["correction_grid_kj_mol"],
+                    dtype=np.float64,
+                ),
+                reference_energy_eup=float(target_ref_energy[ti]),
+                temperature_upside=float(target_temperature),
+                r_values_nm=r_sample_nm,
+                cos_theta_grid=cos_theta_grid,
+                n_knot_radial=n_knot_radial,
+                n_knot_angular=n_knot_angular,
+                knot_spacing_ang=knot_spacing_ang,
+                smooth=target_fit_smooth,
+            )
+            target_delta_compressed[0, ti, :] = np.asarray(
+                compressed_fit["delta"],
+                dtype=np.float32,
+            )
+            target_grid_compressed[ti] = np.asarray(
+                compressed_fit["corrected_energy_grid_kj_mol"],
+                dtype=np.float32,
+            )
+
+    payload = {
+        "delta_extended": target_delta_extended,
+        "delta_compact": target_delta_compact,
+        "grid_extended_kj_mol": target_grid_extended,
+        "grid_compact_kj_mol": target_grid_compact,
+        "single_cgl_relaxation_source": _SINGLE_CGL_RELAXATION_SOURCE,
+        "single_cgl_relaxation_max_compaction_nm": float(max_compaction_nm),
+        "single_cgl_relaxation_compact_max_compaction_nm": float(
+            compact_max_compaction_nm
+        ),
+        "single_cgl_relaxation_compressed_max_compaction_nm": float(
+            compressed_max_compaction_nm
+        ),
+        "single_cgl_relaxation_contact_energy_source": (
+            _SINGLE_CGL_RELAXATION_CONTACT_ENERGY_SOURCE
+        ),
+        "single_cgl_relaxation_energy_floor_kj_mol": 0.0,
+        "single_cgl_relaxation_target_types": ",".join(sorted(active_types)),
+        "single_cgl_relaxation_radial_sample_count": int(r_sample_nm.size),
+        "single_cgl_relaxation_angular_sample_count": int(cos_theta_grid.size),
+    }
+    if target_delta_compressed is not None and target_grid_compressed is not None:
+        payload["delta_compressed"] = target_delta_compressed
+        payload["grid_compressed_kj_mol"] = target_grid_compressed
+        payload["compressed_state_reference_source"] = (
+            _SINGLE_CGL_COMPRESSED_REFERENCE_SOURCE
+        )
+    return payload
+
+
 def _apply_pair_conditioned_tail_relaxation_to_cg_result(
     result_cg: dict,
     ref_bead_positions_nm: np.ndarray,
@@ -2328,7 +3513,7 @@ def _fit_compaction_result_for_cg_result(
 ) -> dict:
     from martini_itp_reader import parse_dopc_from_itp
 
-    compaction_pool_conformers = _positive_int_env("UPSIDE_CGL_COMPACTION_POOL_CONFORMERS", 32)
+    compaction_pool_conformers = _positive_int_env("UPSIDE_CGL_COMPACTION_POOL_CONFORMERS", 256)
     compaction_burnin_steps = _positive_int_env("UPSIDE_CGL_COMPACTION_BURNIN_STEPS", 20000)
     compaction_steps_per_conf = _positive_int_env("UPSIDE_CGL_COMPACTION_STEPS_PER_CONFORMER", 500)
     compaction_representatives = _positive_int_env("UPSIDE_CGL_COMPACTION_STATE_REPRESENTATIVES", 2)
@@ -2348,7 +3533,7 @@ def _fit_compaction_result_for_cg_result(
         mc_burnin_steps=compaction_burnin_steps,
         mc_steps_per_conformer=compaction_steps_per_conf,
     )
-    compaction_values_ang = _dopc_tail_extension_series_ang(compaction_refs_nm)
+    compaction_values_ang = _dopc_tail_compression_coordinate_series_ang(compaction_refs_nm)
     compaction_states = _select_compaction_state_representatives(
         compaction_refs_nm,
         compaction_values_ang,
@@ -2376,6 +3561,11 @@ def _fit_compaction_result_for_cg_result(
         fit_smooth=compaction_fit_smooth,
     )
     compaction_result["self"] = compaction_self
+    compaction_result["self_sample_refs_nm"] = np.asarray(
+        compaction_refs_nm,
+        dtype=np.float64,
+    )
+    compaction_result["self_sample_source"] = "isolated_dopc_intramolecular_mc_samples"
     return compaction_result
 
 
@@ -2672,6 +3862,7 @@ def _fit_pair_compaction_result_for_states(
         compaction_result["face_cos_min"] = float(face_cos_min)
         compaction_result["radial_cutoff_nm"] = float(radial_cutoff_nm)
         compaction_result["mask_mode"] = str(mask_mode)
+        compaction_result["face_mask_convention"] = "negative_tail_face"
     return compaction_result
 
 
@@ -2907,6 +4098,13 @@ def apply_compaction_correction_to_dopc_h5(
     with h5py.File(table_h5_path, "r+") as h5:
         cglt = h5["cg_lipid_table"]
         pair_grp = cglt["cg_lipid_pair"]
+        base_pair_relaxation_source = _decode_h5_scalar_attr(
+            pair_grp.attrs.get("pair_relaxation_correction_source", "")
+        ).strip()
+        if base_pair_relaxation_source != _CGL_PAIR_RELAXATION_CORRECTION_SOURCE:
+            raise RuntimeError(
+                "CGL compaction correction requires a pair-relaxed CGL-CGL base table"
+            )
         energy_grid = np.asarray(pair_grp["energy_grid_raw_kj_mol"][:], dtype=np.float64)
         n_radial, n_angle1, n_angle2 = energy_grid.shape
         if n_angle1 != n_angle2:
@@ -2942,10 +4140,26 @@ def apply_compaction_correction_to_dopc_h5(
             pair_state_model=pair_state_model,
         )
         pair_grp.attrs["compaction_pair_correction"] = (
-            "isolated_source_two_state_log1p_control_delta_relative_to_base_pair_table"
+            "pair_relaxed_base_only_no_runtime_compaction_overlay"
         )
         pair_grp.attrs["compact_state_center_ang"] = np.float32(compaction_result["compact_center_ang"])
         pair_grp.attrs["extended_state_center_ang"] = np.float32(compaction_result["extended_center_ang"])
+        if "self_sample_refs_nm" in compaction_result:
+            sample_dataset = str(
+                compaction_result.get(
+                    "self_sample_source",
+                    "isolated_dopc_intramolecular_mc_samples",
+                )
+            )
+            if sample_dataset in cglt:
+                del cglt[sample_dataset]
+            cglt.create_dataset(
+                sample_dataset,
+                data=np.asarray(
+                    compaction_result["self_sample_refs_nm"],
+                    dtype=np.float32,
+                ),
+            )
         if "cg_lipid_compaction" in cglt:
             del cglt["cg_lipid_compaction"]
         comp_grp = cglt.create_group("cg_lipid_compaction")
@@ -2957,7 +4171,7 @@ def apply_compaction_correction_to_dopc_h5(
             target_object="dynamic_cgl_hidden_axial_extension_coordinate",
             projection_ensemble="isolated_dopc_mc_ensemble",
             runtime_representation=(
-                "clamped_bspline_self_pmf_plus_two_state_log1p_control_delta_relative_to_base_pair_table"
+                "clamped_bspline_self_pmf_with_pair_relaxed_base_only"
             ),
             correction_layer="isolated_source_compaction_state",
         )
@@ -2969,6 +4183,13 @@ def apply_compaction_correction_to_dopc_h5(
         comp_grp.attrs["mass_up"] = np.float32(
             compaction_result["self"]["effective_stiffness_eup_a2"] * compaction_tau * compaction_tau
         )
+        comp_grp.attrs["self_compaction_sample_source"] = np.bytes_(
+            compaction_result.get(
+                "self_sample_source",
+                "isolated_dopc_intramolecular_mc_samples",
+            )
+        )
+        _write_compaction_self_pmf_metadata(comp_grp, compaction_result["self"])
         comp_grp.attrs["effective_stiffness_eup_a2"] = np.float32(
             compaction_result["self"]["effective_stiffness_eup_a2"]
         )
@@ -2981,12 +4202,16 @@ def apply_compaction_correction_to_dopc_h5(
         comp_grp.attrs["compact_state_center_ang"] = np.float32(compaction_result["compact_center_ang"])
         comp_grp.attrs["extended_state_center_ang"] = np.float32(compaction_result["extended_center_ang"])
         comp_grp.attrs["compact_state_probability"] = np.float32(compaction_result["compact_probability"])
-        comp_grp.attrs["correction_center_mode"] = compaction_result["correction_center_mode"]
-        comp_grp.attrs["pair_state_model"] = compaction_result["pair_state_model"]
-        if "face_cos_min" in compaction_result:
-            comp_grp.attrs["face_cos_min"] = np.float32(compaction_result["face_cos_min"])
-            comp_grp.attrs["radial_cutoff_nm"] = np.float32(compaction_result["radial_cutoff_nm"])
-            comp_grp.attrs["mask_mode"] = compaction_result["mask_mode"]
+        comp_grp.attrs["compaction_coordinate"] = "tail_compression"
+        comp_grp.attrs["compaction_coordinate_source"] = "negative_dopc_head_to_tail_extension"
+        comp_grp.attrs["source"] = "dry_martini_tail_compression_endpoint_projection"
+        comp_grp.attrs["runtime_representation"] = (
+            "explicit_hidden_tail_compression_state_no_pair_runtime_overlay"
+        )
+        comp_grp.attrs["pair_runtime_compaction_overlay"] = (
+            _CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED
+        )
+        comp_grp.attrs["pair_relaxation_correction_source"] = base_pair_relaxation_source
         comp_grp.attrs["compaction_pool_size"] = np.int32(compaction_result["pool_size"])
         comp_grp.attrs["compact_pool_size"] = np.int32(compaction_result["compact_pool_size"])
         comp_grp.attrs["extended_pool_size"] = np.int32(compaction_result["extended_pool_size"])
@@ -2996,31 +4221,26 @@ def apply_compaction_correction_to_dopc_h5(
         comp_grp.attrs["compaction_max_ang"] = np.float32(compaction_result["compaction_max_ang"])
         comp_grp.attrs["compaction_p05_ang"] = np.float32(compaction_result["compaction_p05_ang"])
         comp_grp.attrs["compaction_p95_ang"] = np.float32(compaction_result["compaction_p95_ang"])
+        comp_grp.attrs["pair_reference_compact_center_ang"] = np.float32(
+            compaction_result["compact_center_ang"]
+        )
+        comp_grp.attrs["pair_reference_extended_center_ang"] = np.float32(
+            compaction_result["extended_center_ang"]
+        )
+        comp_grp.attrs["pair_compaction_state_source"] = np.bytes_(
+            compaction_result.get(
+                "self_sample_source",
+                "isolated_dopc_intramolecular_mc_samples",
+            )
+        )
         for name, values in (
             ("self_coeff", compaction_result["self"]["self_coeff_eup"]),
             ("pmf_centers_ang", compaction_result["self"]["pmf_centers_ang"]),
             ("pmf_values_kj_mol", compaction_result["self"]["pmf_values_kj_mol"]),
-            ("delta_extended_extended", compaction_result["delta_extended_extended"]),
-            ("delta_extended_compact", compaction_result["delta_extended_compact"]),
-            ("delta_compact_compact", compaction_result["delta_compact_compact"]),
-            ("grid_extended_extended_kj_mol", compaction_result["grid_extended_extended_kj_mol"]),
-            ("grid_extended_compact_kj_mol", compaction_result["grid_extended_compact_kj_mol"]),
-            ("grid_compact_compact_kj_mol", compaction_result["grid_compact_compact_kj_mol"]),
-            ("grid_average_kj_mol", compaction_result["grid_average_kj_mol"]),
+            ("pmf_raw_counts", compaction_result["self"]["pmf_raw_counts"]),
+            ("pmf_smoothed_counts", compaction_result["self"]["pmf_smoothed_counts"]),
         ):
             comp_grp.create_dataset(name, data=np.asarray(values, dtype=np.float32))
-        for name in (
-            "delta_extended_compressed",
-            "delta_compact_compressed",
-            "delta_compressed_compressed",
-            "grid_extended_compressed_kj_mol",
-            "grid_compact_compressed_kj_mol",
-            "grid_compressed_compressed_kj_mol",
-        ):
-            if name in compaction_result:
-                comp_grp.create_dataset(name, data=np.asarray(compaction_result[name], dtype=np.float32))
-        if "face_mask" in compaction_result:
-            comp_grp.create_dataset("face_mask", data=np.asarray(compaction_result["face_mask"], dtype=np.float32))
     print(f"Applied compaction correction to {table_h5_path}")
     return compaction_result
 
@@ -3228,11 +4448,28 @@ def _dopc_tail_extension_series_ang(ref_bead_positions_nm: np.ndarray) -> np.nda
     return np.asarray([_dopc_tail_extension_ang(ref) for ref in refs], dtype=np.float64)
 
 
+def _dopc_tail_compression_coordinate_ang(ref_bead_positions_nm: np.ndarray) -> float:
+    """Signed coordinate whose larger values mean a shorter head-to-tail span."""
+    return -_dopc_tail_extension_ang(ref_bead_positions_nm)
+
+
+def _dopc_tail_compression_coordinate_series_ang(ref_bead_positions_nm: np.ndarray) -> np.ndarray:
+    return -_dopc_tail_extension_series_ang(ref_bead_positions_nm)
+
+
+def _tail_extension_from_compression_coordinate_ang(compaction_ang: float) -> float:
+    extension = -float(compaction_ang)
+    if not np.isfinite(extension) or extension <= 0.0:
+        raise ValueError(f"Invalid DOPC tail-compression coordinate {compaction_ang!r}")
+    return extension
+
+
 def _retarget_lipid_reference_tail_extension_ang(
     ref_bead_positions_nm: np.ndarray,
     target_extension_ang: float,
 ) -> np.ndarray:
     ref = _canonicalize_lipid_reference_to_z(ref_bead_positions_nm)
+    target_com = np.mean(ref, axis=0)
     target = float(target_extension_ang)
     if not np.isfinite(target) or target <= 0.0:
         raise ValueError(f"Target tail extension must be positive and finite, got {target_extension_ang!r}")
@@ -3251,7 +4488,12 @@ def _retarget_lipid_reference_tail_extension_ang(
         -(delta_ang * ANGSTROM_TO_NM),
         tail_weights,
     )
-    return _canonicalize_lipid_reference_to_z(retargeted)
+    # Synthetic compaction changes only the tail beads, so re-center to the
+    # original CGL COM frame before reusing the geometry in COM-anchored fits.
+    return _recenter_bead_positions_to_target_com(
+        _canonicalize_lipid_reference_to_z(retargeted),
+        target_com,
+    )
 
 
 def _select_reference_ensemble_representatives(
@@ -3261,7 +4503,7 @@ def _select_reference_ensemble_representatives(
     refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
     count = max(1, int(representative_count))
     if refs.shape[0] <= count:
-        compaction = _dopc_tail_extension_series_ang(refs)
+        compaction = _dopc_tail_compression_coordinate_series_ang(refs)
         return {
             "representative_refs_nm": refs.copy(),
             "representative_indices": np.arange(refs.shape[0], dtype=np.int32),
@@ -3269,7 +4511,7 @@ def _select_reference_ensemble_representatives(
             "pool_size": int(refs.shape[0]),
         }
 
-    compaction = _dopc_tail_extension_series_ang(refs)
+    compaction = _dopc_tail_compression_coordinate_series_ang(refs)
     order = np.argsort(compaction)
     # Use equal-probability bin centers so the reduced ensemble represents the
     # bulk shell distribution instead of forcing rare compaction extrema into
@@ -3320,8 +4562,8 @@ def _select_compaction_state_representatives(
 
     q25 = float(np.quantile(compaction, 0.25))
     q75 = float(np.quantile(compaction, 0.75))
-    # For the axial head-to-tail extension coordinate, bilayer-like compact
-    # tails correspond to larger extension, not smaller.
+    # For the tail-compression coordinate, larger values mean a shorter
+    # physical head-to-tail extension.
     compact_mask = compaction >= q75
     extended_mask = compaction <= q25
     if int(np.count_nonzero(compact_mask)) < 1 or int(np.count_nonzero(extended_mask)) < 1:
@@ -3367,7 +4609,7 @@ def _select_compaction_state_representatives_by_center(
     compact_probability: float | None = None,
 ) -> dict:
     refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
-    compaction = _dopc_tail_extension_series_ang(refs)
+    compaction = _dopc_tail_compression_coordinate_series_ang(refs)
     if refs.shape[0] < 2:
         raise ValueError("Center-matched compaction-state redesign requires at least two conformers")
 
@@ -3441,7 +4683,10 @@ def _augment_compaction_states_with_compressed_branch(
             augmented = dict(compaction_states)
             augmented["compressed_refs_nm"] = np.asarray(
                 [
-                    _retarget_lipid_reference_tail_extension_ang(ref, compressed_center)
+                    _retarget_lipid_reference_tail_extension_ang(
+                        ref,
+                        _tail_extension_from_compression_coordinate_ang(compressed_center),
+                    )
                     for ref in compact_refs[selected]
                 ],
                 dtype=np.float64,
@@ -3462,7 +4707,7 @@ def _augment_compaction_states_with_compressed_branch(
         if refs_nm is None:
             return
         refs = _canonicalize_lipid_reference_ensemble_to_z(refs_nm)
-        compaction = _dopc_tail_extension_series_ang(refs)
+        compaction = _dopc_tail_compression_coordinate_series_ang(refs)
         if refs.shape[0] != compaction.size:
             raise ValueError("Compressed compaction-state support requires matched reference conformers")
         above_compact = compaction > compact_center + 1.0e-6
@@ -3493,15 +4738,114 @@ def _augment_compaction_states_with_compressed_branch(
     return augmented
 
 
+_SINGLE_CGL_STATE_REFERENCE_MODE = "tail_axis_retargeted_common_reference"
+_SINGLE_CGL_COMPRESSED_REFERENCE_SOURCE = "tail_axis_retargeted_reference_ensemble"
+_SINGLE_CGL_ENDPOINT_DELTA_SOURCE = "single_cgl_tail_repulsive_relief_endpoint_rebuild_v5"
+_SINGLE_CGL_RELAXATION_SOURCE = "source_conditioned_single_cgl_tail_repulsive_relief"
+_SINGLE_CGL_RELAXATION_CONTACT_ENERGY_SOURCE = "tail_bead_positive_nonbonded_overlap_relief"
+_CGL_COMPACTION_SELF_PMF_SOURCE = "isolated_dopc_dense_tail_compression_histogram_v2"
+_CGL_COMPACTION_SELF_PMF_KERNEL = "jeffreys_pseudocount_0.5"
+_CGL_PAIR_RELAXATION_CORRECTION_SOURCE = "source_conditioned_two_lipid_collective_tail_axial_compaction"
+_CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED = "disabled_pair_relaxed_base_only"
+
+
+def _single_cgl_group_uses_tail_retargeted_refs(grp: h5py.Group) -> bool:
+    return (
+        _decode_h5_scalar_attr(
+            grp.attrs.get("single_cgl_state_reference_mode", "")
+        ).strip()
+        == _SINGLE_CGL_STATE_REFERENCE_MODE
+    )
+
+
+def _single_cgl_endpoint_centers_match(
+    source_extended_ang: float,
+    source_compact_ang: float,
+    target_extended_ang: float,
+    target_compact_ang: float,
+    tolerance_ang: float = 1.0e-4,
+) -> bool:
+    return (
+        np.isfinite(source_extended_ang)
+        and np.isfinite(source_compact_ang)
+        and abs(float(source_extended_ang) - float(target_extended_ang)) <= tolerance_ang
+        and abs(float(source_compact_ang) - float(target_compact_ang)) <= tolerance_ang
+    )
+
+
+def _tail_retargeted_single_cgl_state_refs(
+    ref_bead_positions_nm: np.ndarray,
+    extended_center_ang: float,
+    compact_center_ang: float,
+    compressed_center_ang: float | None = None,
+    representative_count: int | None = None,
+) -> dict:
+    refs = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
+    if representative_count is not None and refs.shape[0] > int(representative_count):
+        refs = _select_reference_ensemble_representatives(
+            refs,
+            representative_count=int(representative_count),
+        )["representative_refs_nm"]
+
+    def retarget(center_ang: float) -> np.ndarray:
+        target_extension_ang = _tail_extension_from_compression_coordinate_ang(
+            float(center_ang)
+        )
+        return np.asarray(
+            [
+                _retarget_lipid_reference_tail_extension_ang(
+                    ref,
+                    target_extension_ang,
+                )
+                for ref in refs
+            ],
+            dtype=np.float64,
+        )
+
+    out = {
+        "extended_refs_nm": retarget(float(extended_center_ang)),
+        "compact_refs_nm": retarget(float(compact_center_ang)),
+        "mode": _SINGLE_CGL_STATE_REFERENCE_MODE,
+    }
+    if compressed_center_ang is not None and np.isfinite(float(compressed_center_ang)):
+        out["compressed_refs_nm"] = retarget(float(compressed_center_ang))
+    return out
+
+
+def _single_cgl_state_reference_ensemble_for_group(
+    cg_grp: h5py.Group,
+    grp: h5py.Group,
+    fallback_ref_bead_positions_nm: np.ndarray,
+    fallback_dataset_name: str,
+) -> tuple[np.ndarray, str]:
+    dataset_name = _decode_h5_scalar_attr(
+        grp.attrs.get("reference_dataset_name", "")
+    ).strip()
+    if dataset_name and dataset_name in cg_grp:
+        return np.asarray(cg_grp[dataset_name][:], dtype=np.float64), dataset_name
+    return np.asarray(fallback_ref_bead_positions_nm, dtype=np.float64), str(fallback_dataset_name)
+
+
 def _fit_compaction_self_pmf(
     compaction_ang: np.ndarray,
     temperature_upside: float,
     n_bin: int = 12,
     smooth: float = 0.01,
+    coord_min_override: float | None = None,
+    coord_max_override: float | None = None,
 ) -> dict:
     values = np.asarray(compaction_ang, dtype=np.float64)
-    if values.ndim != 1 or values.size < 4:
-        raise ValueError("Compaction self PMF requires at least four samples")
+    if values.ndim != 1:
+        raise ValueError("Compaction self PMF requires a one-dimensional sample array")
+    values = values[np.isfinite(values)]
+    n_center = max(8, int(n_bin))
+    min_sample_count = max(64, 4 * n_center)
+    if values.size < min_sample_count:
+        raise ValueError(
+            "Compaction self PMF requires a dense isolated DOPC sample pool; "
+            f"got {values.size} samples for {n_center} bins, need at least "
+            f"{min_sample_count}"
+        )
     kbt_kj_mol = float(temperature_upside) * ENERGY_CONVERSION_KJ_PER_EUP
     if kbt_kj_mol <= 0.0:
         raise ValueError("Compaction self PMF temperature must be positive")
@@ -3512,12 +4856,24 @@ def _fit_compaction_self_pmf(
     margin = max(0.15 * span, 0.1)
     coord_min = float(min(np.min(values), lo - margin))
     coord_max = float(max(np.max(values), hi + margin))
-    n_center = max(8, int(n_bin))
+    if coord_min_override is not None:
+        coord_min = min(coord_min, float(coord_min_override))
+    if coord_max_override is not None:
+        coord_max = max(coord_max, float(coord_max_override))
     centers = np.linspace(coord_min, coord_max, n_center, dtype=np.float64)
     spacing = float(centers[1] - centers[0]) if centers.size > 1 else 0.25
     edges = _grid_edges_from_centers(centers, lo=centers[0] - 0.5 * spacing, hi=centers[-1] + 0.5 * spacing)
     hist, _ = np.histogram(values, bins=edges)
-    prob = hist.astype(np.float64) / max(1.0, float(np.sum(hist)))
+    nonempty_bin_count = int(np.count_nonzero(hist))
+    min_nonempty_bin_count = max(6, int(math.ceil(0.6 * n_center)))
+    if nonempty_bin_count < min_nonempty_bin_count:
+        raise ValueError(
+            "Compaction self PMF sample pool does not cover enough coordinate "
+            f"bins; got {nonempty_bin_count}/{n_center} nonempty bins, need at "
+            f"least {min_nonempty_bin_count}"
+        )
+    regularized_hist = hist.astype(np.float64) + 0.5
+    prob = regularized_hist / max(1.0e-12, float(np.sum(regularized_hist)))
     floor = 1.0 / max(float(values.size) * 1000.0, 1.0)
     pmf_kj_mol = -kbt_kj_mol * np.log(np.maximum(prob, floor))
     pmf_kj_mol -= float(np.min(pmf_kj_mol))
@@ -3559,9 +4915,48 @@ def _fit_compaction_self_pmf(
         "n_knot": int(n_knot),
         "pmf_centers_ang": centers,
         "pmf_values_kj_mol": pmf_kj_mol,
+        "pmf_raw_counts": hist.astype(np.float64),
+        "pmf_smoothed_counts": regularized_hist.astype(np.float64),
         "effective_stiffness_eup_a2": float(effective_stiffness),
         "sample_count": int(values.size),
+        "nonempty_bin_count": int(nonempty_bin_count),
+        "min_sample_count": int(min_sample_count),
+        "min_nonempty_bin_count": int(min_nonempty_bin_count),
+        "source": _CGL_COMPACTION_SELF_PMF_SOURCE,
+        "histogram_kernel": _CGL_COMPACTION_SELF_PMF_KERNEL,
     }
+
+
+def _write_compaction_self_pmf_metadata(group: h5py.Group, payload: dict) -> None:
+    source = payload.get("self_pmf_source", _CGL_COMPACTION_SELF_PMF_SOURCE)
+    if source == _CGL_COMPACTION_SELF_PMF_SOURCE:
+        source = payload.get("source", source)
+    if source != _CGL_COMPACTION_SELF_PMF_SOURCE:
+        source = _CGL_COMPACTION_SELF_PMF_SOURCE
+    group.attrs["self_pmf_source"] = str(
+        source
+    )
+    group.attrs["self_pmf_histogram_kernel"] = str(
+        payload.get(
+            "self_pmf_histogram_kernel",
+            payload.get("histogram_kernel", _CGL_COMPACTION_SELF_PMF_KERNEL),
+        )
+    )
+    group.attrs["self_pmf_sample_count"] = np.int32(
+        int(payload.get("sample_count", 0))
+    )
+    group.attrs["self_pmf_bin_count"] = np.int32(
+        int(np.asarray(payload.get("pmf_centers_ang", []), dtype=np.float64).size)
+    )
+    group.attrs["self_pmf_nonempty_bin_count"] = np.int32(
+        int(payload.get("nonempty_bin_count", 0))
+    )
+    group.attrs["self_pmf_min_sample_count"] = np.int32(
+        int(payload.get("min_sample_count", 0))
+    )
+    group.attrs["self_pmf_min_nonempty_bin_count"] = np.int32(
+        int(payload.get("min_nonempty_bin_count", 0))
+    )
 
 
 def _single_cgl_state_reparameterized_tables(
@@ -5581,7 +6976,7 @@ def _full_dopc_gap_and_compaction_samples_from_upside_h5(
                 centers.append(np.mean(beads_ang, axis=0))
                 directions.append(direction / norm)
                 beads_nm = (beads_ang - np.mean(beads_ang, axis=0)[None, :]) * ANGSTROM_TO_NM
-                compaction.append(_dopc_tail_extension_ang(beads_nm))
+                compaction.append(_dopc_tail_compression_coordinate_ang(beads_nm))
             if not centers:
                 continue
             centers_ang = np.asarray(centers, dtype=np.float64)
@@ -5653,7 +7048,7 @@ def _reference_compaction_state_metadata_from_ensemble(
     representative_count: int,
 ) -> dict:
     refs = _canonicalize_lipid_reference_ensemble_to_z(ref_ensemble_nm)
-    compaction_ang = _dopc_tail_extension_series_ang(refs)
+    compaction_ang = _dopc_tail_compression_coordinate_series_ang(refs)
     if compaction_ang.size < 4:
         raise ValueError("Reference-ensemble compaction metadata requires at least four conformers")
     seed_states = _select_compaction_state_representatives(
@@ -5713,6 +7108,14 @@ def _load_physical_compaction_state_centers_from_h5(
                     f"{compaction_reference_h5_path} lacks cg_lipid_table/cg_lipid_compaction"
                 )
             comp_grp = h5["cg_lipid_table/cg_lipid_compaction"]
+            coordinate = _decode_h5_scalar_attr(
+                comp_grp.attrs.get("compaction_coordinate", "")
+            ).strip()
+            if coordinate != "tail_compression":
+                raise RuntimeError(
+                    f"{compaction_reference_h5_path} has stale compaction coordinate "
+                    f"{coordinate!r}; cannot reuse stored centers as tail-compression centers"
+                )
             compact = float(
                 comp_grp.attrs.get(
                     "reference_compact_center_ang",
@@ -5735,28 +7138,87 @@ def _load_physical_compaction_state_centers_from_h5(
     return compact, extended
 
 
+def _load_runtime_compressed_state_center_from_h5(
+    compaction_reference_h5_path: Path,
+) -> float:
+    compaction_reference_h5_path = Path(compaction_reference_h5_path).expanduser().resolve()
+    with h5py.File(compaction_reference_h5_path, "r") as h5:
+        if "cg_lipid_table/cg_lipid_compaction" not in h5:
+            raise RuntimeError(
+                f"{compaction_reference_h5_path} lacks cg_lipid_table/cg_lipid_compaction"
+            )
+        comp_grp = h5["cg_lipid_table/cg_lipid_compaction"]
+        compressed = float(comp_grp.attrs.get("compressed_state_center_ang", 1.0))
+    if not np.isfinite(compressed) or compressed <= 0.0:
+        raise RuntimeError(
+            f"{compaction_reference_h5_path} has invalid compressed_state_center_ang={compressed}"
+        )
+    return compressed
+
+
 def _cg_lipid_compaction_metadata_needs_refresh(cg_grp: h5py.Group) -> bool:
     if "cg_lipid_compaction" not in cg_grp:
         return False
     comp_grp = cg_grp["cg_lipid_compaction"]
-    required_pair_dsets = [
+    coordinate = _decode_h5_scalar_attr(
+        comp_grp.attrs.get("compaction_coordinate", "")
+    ).strip()
+    if coordinate != "tail_compression":
+        return True
+    pair_runtime_dsets = [
         "delta_extended_extended",
         "delta_extended_compact",
         "delta_compact_compact",
+        "delta_extended_compressed",
+        "delta_compact_compressed",
+        "delta_compressed_compressed",
+        "grid_extended_extended_kj_mol",
+        "grid_extended_compact_kj_mol",
+        "grid_compact_compact_kj_mol",
+        "grid_extended_compressed_kj_mol",
+        "grid_compact_compressed_kj_mol",
+        "grid_compressed_compressed_kj_mol",
+        "grid_average_kj_mol",
+        "face_mask",
     ]
     compressed_state_center = float(comp_grp.attrs.get("compressed_state_center_ang", np.nan))
-    if np.isfinite(compressed_state_center):
-        required_pair_dsets.extend(
-            (
-                "delta_extended_compressed",
-                "delta_compact_compressed",
-                "delta_compressed_compressed",
-            )
-        )
-    if "self_coeff" not in comp_grp or any(name not in comp_grp for name in required_pair_dsets):
+    if any(name in comp_grp for name in pair_runtime_dsets):
+        return True
+    if "self_coeff" not in comp_grp:
         return True
     self_coeff = np.asarray(comp_grp["self_coeff"][:], dtype=np.float64)
     if self_coeff.size < 1 or not np.isfinite(self_coeff).all() or float(np.max(np.abs(self_coeff))) <= 1.0e-6:
+        return True
+    if "pmf_centers_ang" not in comp_grp or "pmf_values_kj_mol" not in comp_grp:
+        return True
+    pmf_values = np.asarray(comp_grp["pmf_values_kj_mol"][:], dtype=np.float64)
+    pmf_centers = np.asarray(comp_grp["pmf_centers_ang"][:], dtype=np.float64)
+    if (
+        pmf_values.ndim != 1
+        or pmf_centers.ndim != 1
+        or pmf_values.size != pmf_centers.size
+        or pmf_values.size < 8
+        or not np.isfinite(pmf_values).all()
+        or not np.isfinite(pmf_centers).all()
+    ):
+        return True
+    self_pmf_source = _decode_h5_scalar_attr(
+        comp_grp.attrs.get("self_pmf_source", "")
+    ).strip()
+    if self_pmf_source != _CGL_COMPACTION_SELF_PMF_SOURCE:
+        return True
+    pmf_bin_count = int(pmf_values.size)
+    min_sample_count = max(
+        int(comp_grp.attrs.get("self_pmf_min_sample_count", 0)),
+        max(64, 4 * pmf_bin_count),
+    )
+    min_nonempty_bin_count = max(
+        int(comp_grp.attrs.get("self_pmf_min_nonempty_bin_count", 0)),
+        max(6, int(math.ceil(0.6 * pmf_bin_count))),
+    )
+    if int(comp_grp.attrs.get("self_pmf_sample_count", 0)) < min_sample_count:
+        return True
+    if int(comp_grp.attrs.get("self_pmf_nonempty_bin_count", 0)) < min_nonempty_bin_count:
         return True
     compact = float(comp_grp.attrs.get("reference_compact_center_ang", 0.0))
     extended = float(comp_grp.attrs.get("reference_extended_center_ang", 0.0))
@@ -5773,6 +7235,34 @@ def _cg_lipid_compaction_metadata_needs_refresh(cg_grp: h5py.Group) -> bool:
         return True
     if "pair_compaction_state_source" not in comp_grp.attrs:
         return True
+    pair_runtime_overlay = _decode_h5_scalar_attr(
+        comp_grp.attrs.get("pair_runtime_compaction_overlay", "")
+    ).strip()
+    if pair_runtime_overlay != _CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED:
+        return True
+    pair_relaxation_source = ""
+    if "cg_lipid_pair" in cg_grp:
+        pair_relaxation_source = _decode_h5_scalar_attr(
+            cg_grp["cg_lipid_pair"].attrs.get("pair_relaxation_correction_source", "")
+        ).strip()
+    compaction_pair_relaxation_source = _decode_h5_scalar_attr(
+        comp_grp.attrs.get("pair_relaxation_correction_source", "")
+    ).strip()
+    if (
+        pair_relaxation_source != _CGL_PAIR_RELAXATION_CORRECTION_SOURCE
+        or compaction_pair_relaxation_source != pair_relaxation_source
+    ):
+        return True
+    for attr_name in (
+        "face_cos_min",
+        "radial_cutoff_nm",
+        "mask_mode",
+        "face_mask_convention",
+        "correction_center_mode",
+        "pair_state_model",
+    ):
+        if attr_name in comp_grp.attrs:
+            return True
     if np.isfinite(compressed_state_center):
         pair_compressed = float(comp_grp.attrs.get("pair_reference_compressed_center_ang", np.nan))
         ref_compressed = float(comp_grp.attrs.get("reference_compressed_center_ang", np.nan))
@@ -5780,16 +7270,25 @@ def _cg_lipid_compaction_metadata_needs_refresh(cg_grp: h5py.Group) -> bool:
             return True
         if np.isfinite(ref_compressed) and abs(pair_compressed - ref_compressed) > 1.0e-3:
             return True
-    self_compaction_sample_source = _decode_h5_scalar_attr(
-        comp_grp.attrs.get("self_compaction_sample_source", "")
+    if "gap_response_coeff" in comp_grp:
+        return True
+    source = _decode_h5_scalar_attr(comp_grp.attrs.get("source", "")).strip()
+    runtime = _decode_h5_scalar_attr(comp_grp.attrs.get("runtime_representation", "")).strip()
+    implicit_response = _decode_h5_scalar_attr(
+        comp_grp.attrs.get("implicit_response_mode", "")
     ).strip()
-    if np.isfinite(compressed_state_center) and "target_compaction_ang" in comp_grp:
-        if self_compaction_sample_source != "target_compaction_ang_projection":
-            return True
+    if source == "mean_field_pair_relaxation_response":
+        return True
+    if runtime == "mean_field_activation_of_pairrelax_delta":
+        return True
+    if implicit_response.startswith("gap_"):
+        return True
+    if "target_upside_h5_path" in comp_grp.attrs or "model_upside_h5_path" in comp_grp.attrs:
+        return True
     try:
         ref_dataset = _select_cgl_compaction_reference_dataset_name(cg_grp)
         ref_ensemble_nm = np.asarray(cg_grp[ref_dataset][:], dtype=np.float64)
-        ref_compaction_ang = _dopc_tail_extension_series_ang(ref_ensemble_nm)
+        ref_compaction_ang = _dopc_tail_compression_coordinate_series_ang(ref_ensemble_nm)
         ref_q = _normalize_compaction_coordinate_values(ref_compaction_ang, compact, extended)
     except (RuntimeError, ValueError):
         return True
@@ -5804,8 +7303,51 @@ def _single_cgl_compaction_group_needs_refresh(
     if group_name not in cg_grp:
         return False
     grp = cg_grp[group_name]
+    coordinate = _decode_h5_scalar_attr(
+        grp.attrs.get("compaction_coordinate", "")
+    ).strip()
+    if (
+        group_name == "cg_lipid_target"
+        and "delta_extended" not in grp
+        and "delta_compact" not in grp
+        and "delta_compressed" not in grp
+    ):
+        return "cg_lipid_compaction" in cg_grp
+    if coordinate != "tail_compression":
+        return True
+    if not _single_cgl_group_uses_tail_retargeted_refs(grp):
+        return True
+    expected_ref_dataset = _decode_h5_scalar_attr(
+        grp.attrs.get("reference_dataset_name", "")
+    ).strip()
+    actual_ref_dataset = _decode_h5_scalar_attr(
+        grp.attrs.get("single_cgl_state_reference_dataset", "")
+    ).strip()
+    if expected_ref_dataset and actual_ref_dataset != expected_ref_dataset:
+        return True
+    if expected_ref_dataset and expected_ref_dataset in cg_grp:
+        expected_ref_count = int(cg_grp[expected_ref_dataset].shape[0])
+        actual_ref_count = int(grp.attrs.get("single_cgl_state_reference_count", -1))
+        if actual_ref_count != expected_ref_count:
+            return True
     if "delta_extended" not in grp or "delta_compact" not in grp:
         return True
+    delta_source = _decode_h5_scalar_attr(
+        grp.attrs.get("single_cgl_endpoint_delta_source", "")
+    ).strip()
+    if delta_source != _SINGLE_CGL_ENDPOINT_DELTA_SOURCE:
+        return True
+    if group_name in ("cg_lipid_sc", "cg_lipid_target"):
+        relaxation_source = _decode_h5_scalar_attr(
+            grp.attrs.get("single_cgl_relaxation_source", "")
+        ).strip()
+        if relaxation_source != _SINGLE_CGL_RELAXATION_SOURCE:
+            return True
+        contact_energy_source = _decode_h5_scalar_attr(
+            grp.attrs.get("single_cgl_relaxation_contact_energy_source", "")
+        ).strip()
+        if contact_energy_source != _SINGLE_CGL_RELAXATION_CONTACT_ENERGY_SOURCE:
+            return True
     compact = float(grp.attrs.get("compact_state_center_ang", np.nan))
     extended = float(grp.attrs.get("extended_state_center_ang", np.nan))
     if abs(compact - 1.0) > 1.0e-3 or abs(extended - 0.0) > 1.0e-3:
@@ -5835,6 +7377,31 @@ def _single_cgl_compaction_group_needs_refresh(
     if np.isfinite(expected_runtime_compressed):
         if "delta_compressed" not in grp or "grid_compressed_kj_mol" not in grp:
             return True
+        if group_name in ("cg_lipid_sc", "cg_lipid_target"):
+            delta_compact = np.asarray(grp["delta_compact"][:], dtype=np.float64)
+            delta_compressed = np.asarray(grp["delta_compressed"][:], dtype=np.float64)
+            if (
+                delta_compact.shape != delta_compressed.shape
+                or float(np.max(np.abs(delta_compact - delta_compressed))) <= 1.0e-6
+            ):
+                return True
+            compact_max = float(
+                grp.attrs.get("single_cgl_relaxation_compact_max_compaction_nm", np.nan)
+            )
+            compressed_max = float(
+                grp.attrs.get("single_cgl_relaxation_compressed_max_compaction_nm", np.nan)
+            )
+            if (
+                not np.isfinite(compact_max)
+                or not np.isfinite(compressed_max)
+                or not (0.0 < compact_max < compressed_max)
+            ):
+                return True
+        compressed_source = _decode_h5_scalar_attr(
+            grp.attrs.get("compressed_state_reference_source", "")
+        ).strip()
+        if compressed_source != _SINGLE_CGL_COMPRESSED_REFERENCE_SOURCE:
+            return True
         if not np.isfinite(group_runtime_compressed) or abs(group_runtime_compressed - expected_runtime_compressed) > 1.0e-3:
             return True
         if (
@@ -5862,40 +7429,34 @@ def _single_cgl_compaction_group_needs_refresh(
     return False
 
 
-def _fit_gap_compact_probability_response(
-    gap_samples_ang: np.ndarray,
-    compact_probability_samples: np.ndarray,
+def _fit_gap_overlap_pair_compressed_coordinate_response(
+    target_gap: np.ndarray,
+    model_gap: np.ndarray,
+    compressed_state_center: float,
     n_response: int = 32,
     n_hist: int = 96,
     pseudocount: float = 0.5,
     smooth: float = 1.0e-3,
-    coord_range_source: np.ndarray | None = None,
 ) -> dict:
-    gap_samples_ang = np.asarray(gap_samples_ang, dtype=np.float64)
-    compact_probability_samples = np.asarray(compact_probability_samples, dtype=np.float64)
-    if gap_samples_ang.shape != compact_probability_samples.shape:
-        raise ValueError("gap and compact-probability samples must have matching shapes")
-    if gap_samples_ang.size < 1:
-        raise ValueError("gap response fit requires at least one sample")
-    coord_source = gap_samples_ang if coord_range_source is None else np.asarray(coord_range_source, dtype=np.float64)
-    coord_lo = float(np.min(coord_source))
-    coord_hi = float(np.max(coord_source))
+    target_gap = np.asarray(target_gap, dtype=np.float64)
+    model_gap = np.asarray(model_gap, dtype=np.float64)
+    if target_gap.size < 1 or model_gap.size < 1:
+        raise ValueError("gap overlap response requires target and model gap samples")
+    coord_lo = float(min(np.min(target_gap), np.min(model_gap)))
+    coord_hi = float(max(np.max(target_gap), np.max(model_gap)))
     pad = max(0.05 * (coord_hi - coord_lo), 0.25)
     coord_min = max(0.0, coord_lo - pad)
     coord_max = coord_hi + pad
     hist_edges = np.linspace(coord_min, coord_max, int(n_hist) + 1, dtype=np.float64)
     hist_centers = 0.5 * (hist_edges[:-1] + hist_edges[1:])
-    target_counts, _ = np.histogram(gap_samples_ang, bins=hist_edges)
-    target_q_sum, _ = np.histogram(
-        gap_samples_ang,
-        bins=hist_edges,
-        weights=np.clip(compact_probability_samples, 0.0, 1.0),
-    )
-    prior_mean = float(np.mean(np.clip(compact_probability_samples, 0.0, 1.0)))
-    compact_probability = (target_q_sum + float(pseudocount) * prior_mean) / (
-        target_counts.astype(np.float64) + float(pseudocount)
-    )
-    sampled = target_counts > 0
+    target_counts, _ = np.histogram(target_gap, bins=hist_edges)
+    model_counts, _ = np.histogram(model_gap, bins=hist_edges)
+    target_prob = target_counts.astype(np.float64) + float(pseudocount)
+    model_prob = model_counts.astype(np.float64) + float(pseudocount)
+    target_prob /= float(np.sum(target_prob))
+    model_prob /= float(np.sum(model_prob))
+    compact_probability = target_prob / np.maximum(target_prob + model_prob, 1.0e-12)
+    sampled = (target_counts + model_counts) > 0
     if np.any(sampled):
         first = int(np.argmax(sampled))
         last = int(len(sampled) - 1 - np.argmax(sampled[::-1]))
@@ -5907,6 +7468,7 @@ def _fit_gap_compact_probability_response(
     else:
         compact_probability = np.minimum.accumulate(compact_probability)
     compact_probability = np.clip(compact_probability, 1.0e-3, 1.0 - 1.0e-3)
+    response_hist = compact_probability * float(compressed_state_center)
 
     coord_spacing = max(coord_max - coord_min, 1.0e-3) / float(int(n_response) - 3)
     knot_vector = np.zeros(int(n_response) + 4, dtype=np.float64)
@@ -5915,7 +7477,7 @@ def _fit_gap_compact_probability_response(
     coord_t = 1.0 + (hist_centers - coord_min) / coord_spacing
     response_coeff = _fit_radial_bspline(
         coord_t,
-        compact_probability,
+        response_hist,
         knot_vector,
         smooth=float(smooth),
     )
@@ -5927,8 +7489,10 @@ def _fit_gap_compact_probability_response(
         "response_n_knot": int(n_response),
         "gap_hist_centers": hist_centers.astype(np.float32),
         "target_counts": target_counts.astype(np.float32),
+        "model_counts": model_counts.astype(np.float32),
         "compact_probability_hist": compact_probability.astype(np.float32),
-        "prior_mean_probability": float(prior_mean),
+        "response_hist": response_hist.astype(np.float32),
+        "prior_mean_probability": float(np.mean(compact_probability)),
     }
 
 
@@ -6368,8 +7932,13 @@ def _build_gap_compaction_response_table(
             smooth=float(smooth),
         )
         response_mode = "gap_compact_probability_classifier"
+        response_quantity = "compact_probability"
+        response_is_compaction_coordinate = 0
         prior_mean_probability = float(np.mean(compact_probability))
+        compact_probability_hist = compact_probability
+        response_hist = compact_probability
         target_compaction_ang = None
+        target_compaction_coordinate = None
         target_compact_probability = None
         reference_compact_center_ang = None
         reference_extended_center_ang = None
@@ -6390,20 +7959,24 @@ def _build_gap_compaction_response_table(
         reference_compact_center_ang, reference_extended_center_ang = _load_physical_compaction_state_centers_from_h5(
             target_compaction_reference_h5_path
         )
-        target_compact_probability = np.clip(
-            (target_compaction_ang - reference_extended_center_ang)
-            / max(reference_compact_center_ang - reference_extended_center_ang, 1.0e-12),
-            0.0,
-            1.0,
+        target_compaction_coordinate = _normalize_compaction_coordinate_values(
+            target_compaction_ang,
+            compact_center_ang=reference_compact_center_ang,
+            extended_center_ang=reference_extended_center_ang,
+            clip=False,
         )
-        fit = _fit_gap_compact_probability_response(
+        target_compact_probability = np.clip(target_compaction_coordinate, 0.0, 1.0)
+        compressed_state_center = _load_runtime_compressed_state_center_from_h5(
+            target_compaction_reference_h5_path
+        )
+        fit = _fit_gap_overlap_pair_compressed_coordinate_response(
             target_gap,
-            target_compact_probability,
+            model_gap,
+            compressed_state_center,
             n_response=n_response,
             n_hist=n_hist,
             pseudocount=pseudocount,
             smooth=smooth,
-            coord_range_source=np.concatenate([target_gap, model_gap]),
         )
         response_coeff = np.asarray(fit["response_coeff"], dtype=np.float64)
         coord_min = float(fit["response_coord_min"])
@@ -6411,10 +7984,12 @@ def _build_gap_compaction_response_table(
         coord_spacing = float(fit["response_coord_spacing"])
         hist_centers = np.asarray(fit["gap_hist_centers"], dtype=np.float64)
         target_counts = np.asarray(fit["target_counts"], dtype=np.float64)
-        compact_probability = np.asarray(fit["compact_probability_hist"], dtype=np.float64)
-        hist_edges = _grid_edges_from_centers(hist_centers, lo=coord_min, hi=coord_max)
-        model_counts, _ = np.histogram(model_gap, bins=hist_edges)
-        response_mode = "gap_target_compact_state_projection"
+        model_counts = np.asarray(fit["model_counts"], dtype=np.float64)
+        compact_probability_hist = np.asarray(fit["compact_probability_hist"], dtype=np.float64)
+        response_hist = np.asarray(fit["response_hist"], dtype=np.float64)
+        response_mode = "gap_overlap_pair_compressed_coordinate_classifier"
+        response_quantity = "normalized_tail_compression_coordinate"
+        response_is_compaction_coordinate = 1
         prior_mean_probability = float(fit["prior_mean_probability"])
         target_frame_count = int(target_data["frame_count"])
         target_sample_count = int(target_data["sample_count"])
@@ -6422,7 +7997,7 @@ def _build_gap_compaction_response_table(
     print(
         f"  CGL gap compaction response: mode={response_mode}, cutoff={radial_cutoff_ang:.3f} A, "
         f"face_cos_min={face_cos_min:.3f}, gap={coord_min:.3f}..{coord_max:.3f} A, "
-        f"compact_prob={float(np.min(compact_probability)):.3f}..{float(np.max(compact_probability)):.3f}"
+        f"response={float(np.min(response_hist)):.3f}..{float(np.max(response_hist)):.3f}"
     )
     out = {
         "response_coeff": np.asarray(response_coeff, dtype=np.float32),
@@ -6439,11 +8014,14 @@ def _build_gap_compaction_response_table(
         "gap_hist_centers": hist_centers.astype(np.float32),
         "target_counts": target_counts.astype(np.float32),
         "model_counts": model_counts.astype(np.float32),
-        "compact_probability_hist": compact_probability.astype(np.float32),
+        "compact_probability_hist": compact_probability_hist.astype(np.float32),
+        "response_hist": response_hist.astype(np.float32),
         "pseudocount": float(pseudocount),
         "smooth": float(smooth),
         "prior_mean_probability": float(prior_mean_probability),
         "implicit_response_mode": response_mode,
+        "gap_response_quantity": response_quantity,
+        "gap_response_is_compaction_coordinate": int(response_is_compaction_coordinate),
         "target_frame_count": int(target_frame_count),
         "model_frame_count": int(len(model_frames)),
         "target_sample_count": int(target_sample_count),
@@ -6458,6 +8036,7 @@ def _build_gap_compaction_response_table(
             Path(target_compaction_reference_h5_path).expanduser().resolve()
         )
         out["target_compaction_ang"] = target_compaction_ang.astype(np.float32)
+        out["target_compaction_coordinate"] = target_compaction_coordinate.astype(np.float32)
         out["target_compact_probability"] = target_compact_probability.astype(np.float32)
         out["reference_compact_center_ang"] = float(reference_compact_center_ang)
         out["reference_extended_center_ang"] = float(reference_extended_center_ang)
@@ -6492,6 +8071,9 @@ def _build_gap_compaction_response_from_stored_h5(
         model_frame_start_fraction = float(comp_grp.attrs.get("model_frame_start_fraction", 0.5))
         target_upside_h5_path = comp_grp.attrs.get("target_upside_h5_path", "")
         model_upside_h5_path = comp_grp.attrs.get("model_upside_h5_path", "")
+        stored_coordinate = _decode_h5_scalar_attr(
+            comp_grp.attrs.get("compaction_coordinate", "")
+        ).strip()
         if target_compaction_reference_h5_path is None:
             raise RuntimeError(
                 "stored-sample gap-response rebuild requires target_compaction_reference_h5_path"
@@ -6499,31 +8081,32 @@ def _build_gap_compaction_response_from_stored_h5(
         if "target_compaction_ang" not in comp_grp:
             raise RuntimeError(f"{base_h5_path} lacks stored target_compaction_ang samples")
         target_compaction_ang = np.asarray(comp_grp["target_compaction_ang"][:], dtype=np.float64)
+        if stored_coordinate != "tail_compression":
+            target_compaction_ang = -target_compaction_ang
 
     reference_compact_center_ang, reference_extended_center_ang = _load_physical_compaction_state_centers_from_h5(
         target_compaction_reference_h5_path
     )
-    target_compact_probability = _normalize_compaction_coordinate_values(
+    target_compaction_coordinate = _normalize_compaction_coordinate_values(
         target_compaction_ang,
         compact_center_ang=reference_compact_center_ang,
         extended_center_ang=reference_extended_center_ang,
+        clip=False,
     )
-    fit = _fit_gap_compact_probability_response(
+    target_compact_probability = np.clip(target_compaction_coordinate, 0.0, 1.0)
+    compressed_state_center = _load_runtime_compressed_state_center_from_h5(
+        target_compaction_reference_h5_path
+    )
+    fit = _fit_gap_overlap_pair_compressed_coordinate_response(
         target_gap,
-        target_compact_probability,
+        model_gap,
+        compressed_state_center,
         n_response=n_response,
         n_hist=n_hist,
         pseudocount=pseudocount,
         smooth=smooth,
-        coord_range_source=np.concatenate([target_gap, model_gap]),
     )
     hist_centers = np.asarray(fit["gap_hist_centers"], dtype=np.float64)
-    hist_edges = _grid_edges_from_centers(
-        hist_centers,
-        lo=float(fit["response_coord_min"]),
-        hi=float(fit["response_coord_max"]),
-    )
-    model_counts, _ = np.histogram(model_gap, bins=hist_edges)
     return {
         "response_coeff": np.asarray(fit["response_coeff"], dtype=np.float32),
         "response_coord_min": float(fit["response_coord_min"]),
@@ -6538,12 +8121,15 @@ def _build_gap_compaction_response_from_stored_h5(
         "model_gap": model_gap.astype(np.float32),
         "gap_hist_centers": hist_centers.astype(np.float32),
         "target_counts": np.asarray(fit["target_counts"], dtype=np.float32),
-        "model_counts": np.asarray(model_counts, dtype=np.float32),
+        "model_counts": np.asarray(fit["model_counts"], dtype=np.float32),
         "compact_probability_hist": np.asarray(fit["compact_probability_hist"], dtype=np.float32),
+        "response_hist": np.asarray(fit["response_hist"], dtype=np.float32),
         "pseudocount": float(pseudocount),
         "smooth": float(smooth),
         "prior_mean_probability": float(fit["prior_mean_probability"]),
-        "implicit_response_mode": "gap_target_compact_state_projection_stored_samples",
+        "implicit_response_mode": "gap_overlap_pair_compressed_coordinate_classifier_stored_samples",
+        "gap_response_quantity": "normalized_tail_compression_coordinate",
+        "gap_response_is_compaction_coordinate": 1,
         "target_frame_count": int(target_frame_count),
         "model_frame_count": int(model_frame_count),
         "target_sample_count": int(target_sample_count),
@@ -6556,6 +8142,7 @@ def _build_gap_compaction_response_from_stored_h5(
             Path(target_compaction_reference_h5_path).expanduser().resolve()
         ),
         "target_compaction_ang": target_compaction_ang.astype(np.float32),
+        "target_compaction_coordinate": target_compaction_coordinate.astype(np.float32),
         "target_compact_probability": target_compact_probability.astype(np.float32),
         "reference_compact_center_ang": float(reference_compact_center_ang),
         "reference_extended_center_ang": float(reference_extended_center_ang),
@@ -6661,7 +8248,9 @@ def add_cg_lipid_gap_compaction_response_to_h5(
             "target_counts",
             "model_counts",
             "compact_probability_hist",
+            "response_hist",
             "target_compaction_ang",
+            "target_compaction_coordinate",
             "target_compact_probability",
         ):
             if dataset_name in comp_grp:
@@ -6675,6 +8264,13 @@ def add_cg_lipid_gap_compaction_response_to_h5(
         comp_grp.attrs["gap_response_face_cos_min"] = np.float32(response["gap_face_cos_min"])
         comp_grp.attrs["gap_response_smooth_weight"] = np.int32(response["gap_smooth_weight"])
         comp_grp.attrs["gap_response_fallback_ang"] = np.float32(response["gap_fallback_ang"])
+        comp_grp.attrs["gap_response_is_compaction_coordinate"] = np.int32(
+            response.get("gap_response_is_compaction_coordinate", 0)
+        )
+        comp_grp.attrs["gap_response_quantity"] = response.get(
+            "gap_response_quantity",
+            "compact_probability",
+        )
         for attr_name in (
             "pseudocount",
             "smooth",
@@ -6714,8 +8310,15 @@ def add_cg_lipid_gap_compaction_response_to_h5(
         comp_grp.create_dataset("target_counts", data=response["target_counts"])
         comp_grp.create_dataset("model_counts", data=response["model_counts"])
         comp_grp.create_dataset("compact_probability_hist", data=response["compact_probability_hist"])
+        if "response_hist" in response:
+            comp_grp.create_dataset("response_hist", data=response["response_hist"])
         if "target_compaction_ang" in response:
             comp_grp.create_dataset("target_compaction_ang", data=response["target_compaction_ang"])
+            if "target_compaction_coordinate" in response:
+                comp_grp.create_dataset(
+                    "target_compaction_coordinate",
+                    data=response["target_compaction_coordinate"],
+                )
             comp_grp.create_dataset(
                 "target_compact_probability",
                 data=response["target_compact_probability"],
@@ -6761,8 +8364,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
     sidechain_lib_path: Path | None = None,
     forcefield_name: str = "martini22",
     include_sc: bool = True,
-    include_target: bool = True,
-    include_pair_compaction: bool = True,
+    include_target: bool = False,
     reference_dataset_name: str | None = None,
 ) -> dict:
     defaults = _default_dry_martini_repo_paths()
@@ -6787,7 +8389,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         or "auto"
     )
     compaction_pool_conformers = _positive_int_env(
-        "UPSIDE_CGL_COMPACTION_POOL_CONFORMERS", 32
+        "UPSIDE_CGL_COMPACTION_POOL_CONFORMERS", 256
     )
     compaction_burnin_steps = _positive_int_env(
         "UPSIDE_CGL_COMPACTION_BURNIN_STEPS", 20000
@@ -6822,6 +8424,9 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         ref_ensemble_nm = np.asarray(cg_grp[ref_dataset][:], dtype=np.float64)
         bead_charges = list(np.asarray(cg_grp["bead_charges"][:], dtype=np.float64))
         comp_grp = cg_grp["cg_lipid_compaction"]
+        stored_coordinate = _decode_h5_scalar_attr(
+            comp_grp.attrs.get("compaction_coordinate", "")
+        ).strip()
         compaction_tau = float(comp_grp.attrs.get("thermostat_timescale", 5.0))
         stored_compact_center_ang = float(comp_grp.attrs.get("reference_compact_center_ang", 0.0))
         stored_extended_center_ang = float(comp_grp.attrs.get("reference_extended_center_ang", 0.0))
@@ -6831,6 +8436,56 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                 stored_compact_center_ang,
             )
         stored_compact_probability = float(comp_grp.attrs.get("compact_state_probability", 0.5))
+        stored_pair_compact_center_ang = float(
+            comp_grp.attrs.get(
+                "pair_reference_compact_center_ang",
+                stored_compact_center_ang,
+            )
+        )
+        stored_pair_extended_center_ang = float(
+            comp_grp.attrs.get(
+                "pair_reference_extended_center_ang",
+                stored_extended_center_ang,
+            )
+        )
+        if stored_pair_compact_center_ang <= stored_pair_extended_center_ang:
+            stored_pair_compact_center_ang, stored_pair_extended_center_ang = (
+                stored_pair_extended_center_ang,
+                stored_pair_compact_center_ang,
+            )
+        if (
+            stored_coordinate == "tail_compression"
+            and stored_compact_center_ang < 0.0
+            and stored_extended_center_ang < 0.0
+            and stored_pair_compact_center_ang > 0.0
+            and stored_pair_extended_center_ang > 0.0
+        ):
+            stored_pair_compact_center_ang = stored_compact_center_ang
+            stored_pair_extended_center_ang = stored_extended_center_ang
+        stored_pair_compressed_center_ang = float(
+            comp_grp.attrs.get(
+                "pair_reference_compressed_center_ang",
+                comp_grp.attrs.get("reference_compressed_center_ang", np.nan),
+            )
+        )
+        stored_reference_compressed_center_ang = float(
+            comp_grp.attrs.get("reference_compressed_center_ang", np.nan)
+        )
+        if (
+            stored_coordinate == "tail_compression"
+            and np.isfinite(stored_reference_compressed_center_ang)
+            and stored_reference_compressed_center_ang < 0.0
+            and np.isfinite(stored_pair_compressed_center_ang)
+            and stored_pair_compressed_center_ang > 0.0
+        ):
+            stored_pair_compressed_center_ang = stored_reference_compressed_center_ang
+        stored_runtime_compressed_state_center = float(
+            comp_grp.attrs.get("compressed_state_center_ang", np.nan)
+        )
+        stored_pair_contract_valid = (
+            stored_coordinate == "tail_compression"
+            and stored_pair_compact_center_ang - stored_pair_extended_center_ang > 1.0
+        )
         compact_center_ang = 0.0
         extended_center_ang = 0.0
         compact_probability = 0.5
@@ -6840,10 +8495,71 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
         compressed_center_ang = None
         compressed_state_coord = None
         clip_compaction_state_values = False
-        if compaction_state_source in (
+        single_cgl_reference_refs_nm = np.asarray(ref_ensemble_nm, dtype=np.float64)
+        single_cgl_reference_dataset = str(ref_dataset)
+        stored_pair_isolated_modes = (
+            "stored_pair_isolated",
+            "stored_pair_isolated_dopc",
+            "stored_pair_isolated_self",
+            "stored_pair_contract",
+        )
+        if (
+            compaction_states is None
+            and (
+                compaction_state_source in stored_pair_isolated_modes
+                or (compaction_state_source == "auto" and stored_pair_contract_valid)
+            )
+        ):
+            if not stored_pair_contract_valid:
+                raise RuntimeError(
+                    "Stored-pair isolated compaction repair requires valid "
+                    "tail-compression pair_reference_*_center_ang metadata"
+                )
+            compaction_refs_nm = ensure_isolated_compaction_refs_nm()
+            compaction_values_ang = _dopc_tail_compression_coordinate_series_ang(
+                compaction_refs_nm
+            )
+            compaction_states = _select_compaction_state_representatives_by_center(
+                compaction_refs_nm,
+                compact_center_ang=stored_pair_compact_center_ang,
+                extended_center_ang=stored_pair_extended_center_ang,
+                representative_count=compaction_representatives,
+                compact_probability=stored_compact_probability,
+            )
+            compact_center_ang = float(stored_pair_compact_center_ang)
+            extended_center_ang = float(stored_pair_extended_center_ang)
+            compact_probability = float(stored_compact_probability)
+            compaction_coord_samples = np.asarray(compaction_values_ang, dtype=np.float64)
+            compaction_state_source_used = "isolated_dopc_mc_stored_pair_contract_matched"
+            single_cgl_reference_refs_nm = np.asarray(compaction_refs_nm, dtype=np.float64)
+            single_cgl_reference_dataset = "isolated_dopc_intramolecular_mc"
+            clip_compaction_state_values = False
+        if compaction_states is None and compaction_state_source in (
+            "isolated",
+            "isolated_dopc",
+            "isolated_dopc_mc",
+            "auto",
+        ):
+            compaction_refs_nm = ensure_isolated_compaction_refs_nm()
+            compaction_values_ang = _dopc_tail_compression_coordinate_series_ang(
+                compaction_refs_nm
+            )
+            compaction_states = _select_compaction_state_representatives(
+                compaction_refs_nm,
+                compaction_values_ang,
+                representative_count=compaction_representatives,
+            )
+            compact_center_ang = float(compaction_states["compact_center_ang"])
+            extended_center_ang = float(compaction_states["extended_center_ang"])
+            compact_probability = float(compaction_states["compact_probability"])
+            compaction_coord_samples = np.asarray(compaction_values_ang, dtype=np.float64)
+            compaction_state_source_used = "isolated_dopc_mc_quantile_center_matched"
+            single_cgl_reference_refs_nm = np.asarray(compaction_refs_nm, dtype=np.float64)
+            single_cgl_reference_dataset = "isolated_dopc_intramolecular_mc"
+            clip_compaction_state_values = True
+        if compaction_states is None and compaction_state_source in (
             "reference_ensemble",
             "reference",
-            "auto",
         ):
             try:
                 compaction_states = _reference_compaction_state_metadata_from_ensemble(
@@ -6864,7 +8580,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                     f"falling back from {ref_dataset} center-matched states ({exc})"
                 )
         if compaction_states is None and compaction_state_source in ("stored_contract", "stored", "base_h5_contract", "auto"):
-            if stored_compact_center_ang - stored_extended_center_ang > 1.0:
+            if stored_coordinate == "tail_compression" and stored_compact_center_ang - stored_extended_center_ang > 1.0:
                 compaction_states = _select_compaction_state_representatives_by_center(
                     ref_ensemble_nm,
                     compact_center_ang=stored_compact_center_ang,
@@ -6875,17 +8591,22 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                 compact_center_ang = float(stored_compact_center_ang)
                 extended_center_ang = float(stored_extended_center_ang)
                 compact_probability = float(stored_compact_probability)
-                compaction_coord_samples = _dopc_tail_extension_series_ang(ref_ensemble_nm)
+                compaction_coord_samples = _dopc_tail_compression_coordinate_series_ang(
+                    ref_ensemble_nm
+                )
                 compaction_state_source_used = f"{ref_dataset}_stored_contract_matched"
                 clip_compaction_state_values = False
             elif compaction_state_source != "auto":
                 raise RuntimeError(
                     "Stored-contract compaction-state repair requires valid "
-                    "reference_compact_center_ang / reference_extended_center_ang metadata"
+                    "tail-compression reference_compact_center_ang / "
+                    "reference_extended_center_ang metadata"
                 )
         if compaction_states is None:
             compaction_refs_nm = ensure_isolated_compaction_refs_nm()
-            compaction_values_ang = _dopc_tail_extension_series_ang(compaction_refs_nm)
+            compaction_values_ang = _dopc_tail_compression_coordinate_series_ang(
+                compaction_refs_nm
+            )
             compaction_states = _select_compaction_state_representatives(
                 compaction_refs_nm,
                 compaction_values_ang,
@@ -6899,51 +8620,135 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
             clip_compaction_state_values = True
         if compaction_coord_samples is None:
             raise RuntimeError("Failed to determine compaction-coordinate samples for CGL metadata repair")
-        ref_compaction_values_ang = _dopc_tail_extension_series_ang(ref_ensemble_nm)
+        ref_compaction_values_ang = _dopc_tail_compression_coordinate_series_ang(
+            single_cgl_reference_refs_nm
+        )
         compressed_supplemental_refs_nm = None
         sample_compaction_support_ang = None
-        if "target_compaction_ang" in comp_grp:
-            sample_compaction_support_ang = np.asarray(
-                comp_grp["target_compaction_ang"][:],
-                dtype=np.float64,
-            )
-        if int(np.count_nonzero(ref_compaction_values_ang > compact_center_ang + 1.0e-6)) < max(2, compaction_representatives):
+        stored_compressed_contract_available = (
+            str(compaction_state_source_used or "").endswith("_stored_contract_matched")
+            and np.isfinite(stored_reference_compressed_center_ang)
+            and stored_reference_compressed_center_ang > compact_center_ang + 1.0e-6
+        )
+        if (
+            not stored_compressed_contract_available
+            and int(np.count_nonzero(ref_compaction_values_ang > compact_center_ang + 1.0e-6))
+                < max(2, compaction_representatives)
+        ):
             extra_ref_pools = []
-            for dataset_name in ("sc_interface_ref_bead_positions_nm", "ref_bead_positions_nm"):
-                if dataset_name != ref_dataset and dataset_name in cg_grp:
-                    extra_ref_pools.append(np.asarray(cg_grp[dataset_name][:], dtype=np.float64))
             extra_ref_pools.append(np.asarray(ensure_isolated_compaction_refs_nm(), dtype=np.float64))
+            if not str(compaction_state_source_used or "").startswith("isolated_dopc"):
+                for dataset_name in ("sc_interface_ref_bead_positions_nm", "ref_bead_positions_nm"):
+                    if dataset_name != ref_dataset and dataset_name in cg_grp:
+                        extra_ref_pools.append(np.asarray(cg_grp[dataset_name][:], dtype=np.float64))
             if extra_ref_pools:
                 compressed_supplemental_refs_nm = np.concatenate(extra_ref_pools, axis=0)
         compaction_states = _augment_compaction_states_with_compressed_branch(
-            ref_ensemble_nm,
+            single_cgl_reference_refs_nm,
             compaction_states,
             representative_count=compaction_representatives,
             supplemental_refs_nm=compressed_supplemental_refs_nm,
             sample_compaction_ang=sample_compaction_support_ang,
         )
+        if (
+            str(compaction_state_source_used or "") == "isolated_dopc_mc_stored_pair_contract_matched"
+            and np.isfinite(stored_pair_compressed_center_ang)
+            and stored_pair_compressed_center_ang > compact_center_ang + 1.0e-6
+        ):
+            compact_refs = np.asarray(compaction_states["compact_refs_nm"], dtype=np.float64)
+            count = max(1, min(int(compaction_representatives), compact_refs.shape[0]))
+            compaction_states = dict(compaction_states)
+            compaction_states["compressed_refs_nm"] = np.asarray(
+                [
+                    _retarget_lipid_reference_tail_extension_ang(
+                        ref,
+                        _tail_extension_from_compression_coordinate_ang(
+                            stored_pair_compressed_center_ang
+                        ),
+                    )
+                    for ref in compact_refs[:count]
+                ],
+                dtype=np.float64,
+            )
+            compaction_states["compressed_center_ang"] = float(stored_pair_compressed_center_ang)
+            compaction_states["compressed_pool_size"] = int(count)
+            compaction_states["compressed_selected_compaction_ang"] = np.asarray(
+                [stored_pair_compressed_center_ang] * count,
+                dtype=np.float64,
+            )
+            compaction_states["compressed_center_source"] = "stored_pair_tail_compression_contract"
+        if (
+            str(compaction_state_source_used or "").endswith("_stored_contract_matched")
+            and str(compaction_state_source_used or "") != "isolated_dopc_mc_stored_pair_contract_matched"
+            and np.isfinite(stored_reference_compressed_center_ang)
+            and stored_reference_compressed_center_ang > compact_center_ang + 1.0e-6
+        ):
+            compact_refs = np.asarray(compaction_states["compact_refs_nm"], dtype=np.float64)
+            count = max(1, min(int(compaction_representatives), compact_refs.shape[0]))
+            compaction_states = dict(compaction_states)
+            compaction_states["compressed_refs_nm"] = np.asarray(
+                [
+                    _retarget_lipid_reference_tail_extension_ang(
+                        ref,
+                        _tail_extension_from_compression_coordinate_ang(
+                            stored_reference_compressed_center_ang
+                        ),
+                    )
+                    for ref in compact_refs[:count]
+                ],
+                dtype=np.float64,
+            )
+            compaction_states["compressed_center_ang"] = float(
+                stored_reference_compressed_center_ang
+            )
+            compaction_states["compressed_pool_size"] = int(count)
+            compaction_states["compressed_selected_compaction_ang"] = np.asarray(
+                [stored_reference_compressed_center_ang] * count,
+                dtype=np.float64,
+            )
+            compaction_states["compressed_center_source"] = (
+                "stored_single_cgl_tail_compression_contract"
+            )
         compressed_center_ang = compaction_states.get("compressed_center_ang")
         if compressed_center_ang is not None and float(compressed_center_ang) > compact_center_ang + 1.0e-6:
-            compressed_state_coord = float(
-                _normalize_compaction_coordinate_values(
-                    np.asarray([compressed_center_ang], dtype=np.float64),
-                    compact_center_ang=compact_center_ang,
-                    extended_center_ang=extended_center_ang,
-                    clip=False,
-                )[0]
-            )
+            if (
+                str(compaction_state_source_used or "").endswith("_stored_contract_matched")
+                and np.isfinite(stored_runtime_compressed_state_center)
+                and stored_runtime_compressed_state_center > 1.0 + 1.0e-6
+            ):
+                compressed_state_coord = float(stored_runtime_compressed_state_center)
+            else:
+                compressed_state_coord = float(
+                    _normalize_compaction_coordinate_values(
+                        np.asarray([compressed_center_ang], dtype=np.float64),
+                        compact_center_ang=compact_center_ang,
+                        extended_center_ang=extended_center_ang,
+                        clip=False,
+                    )[0]
+                )
             clip_compaction_state_values = False
+        single_cgl_state_refs = _tail_retargeted_single_cgl_state_refs(
+            single_cgl_reference_refs_nm,
+            extended_center_ang=extended_center_ang,
+            compact_center_ang=compact_center_ang,
+            compressed_center_ang=(
+                compressed_center_ang
+                if compressed_state_coord is not None
+                else None
+            ),
+            representative_count=compaction_representatives,
+        )
         correction_compact_probability = float(compact_probability)
         if 1.0e-6 < stored_compact_probability < 1.0 - 1.0e-6:
             correction_compact_probability = float(stored_compact_probability)
         self_compaction_coord_samples = np.asarray(compaction_coord_samples, dtype=np.float64)
-        self_compaction_sample_source = "compaction_state_samples"
-        if compressed_state_coord is not None and "target_compaction_ang" in comp_grp:
-            self_compaction_coord_samples = np.asarray(
-                comp_grp["target_compaction_ang"][:],
-                dtype=np.float64,
-            )
-            self_compaction_sample_source = "target_compaction_ang_projection"
+        self_compaction_sample_source = (
+            "isolated_dopc_intramolecular_mc_samples"
+            if str(compaction_state_source_used or "").startswith("isolated_dopc")
+            else "compaction_state_samples"
+        )
+        if single_cgl_reference_dataset == self_compaction_sample_source:
+            single_cgl_reference_dataset = "isolated_dopc_intramolecular_mc"
         compaction_state_values = _normalize_compaction_coordinate_values(
             self_compaction_coord_samples,
             compact_center_ang=compact_center_ang,
@@ -6960,286 +8765,219 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
             compaction_states["extended_probability"] = float(np.mean(extended_mask))
             compaction_states["compact_middle_probability"] = float(np.mean(compact_middle_mask))
             compaction_states["compressed_probability"] = float(np.mean(compressed_mask))
+        single_cgl_reference_count = int(compaction_representatives)
+        for group_name in ("cg_lipid_sc", "cg_lipid_target"):
+            group = cg_grp.get(group_name)
+            if group is None:
+                continue
+            single_cgl_reference_count = max(
+                single_cgl_reference_count,
+                int(group.attrs.get("single_cgl_state_reference_count", 0)),
+                int(group.attrs.get("reference_conformer_count", 0)),
+            )
+        single_cgl_reference_count = max(1, single_cgl_reference_count)
+        if np.asarray(single_cgl_reference_refs_nm).shape[0] > single_cgl_reference_count:
+            stored_single_cgl_reference_refs_nm = _select_reference_ensemble_representatives(
+                single_cgl_reference_refs_nm,
+                representative_count=single_cgl_reference_count,
+            )["representative_refs_nm"]
+        else:
+            stored_single_cgl_reference_refs_nm = np.asarray(
+                single_cgl_reference_refs_nm,
+                dtype=np.float64,
+            )
         compaction_self = _fit_compaction_self_pmf(
             compaction_state_values,
             temperature_upside=DEFAULT_PRODUCTION_TEMP_UPSIDE,
             n_bin=compaction_self_bins,
             smooth=0.01,
+            coord_min_override=min(0.0, float(np.min(compaction_state_values))),
+            coord_max_override=max(
+                1.0,
+                float(np.max(compaction_state_values)),
+                float(compressed_state_coord)
+                if compressed_state_coord is not None
+                else 1.0,
+            ),
         )
+        reference_datasets = {
+            single_cgl_reference_dataset: np.asarray(
+                stored_single_cgl_reference_refs_nm,
+                dtype=np.float32,
+            ),
+        }
+        if self_compaction_sample_source == "isolated_dopc_intramolecular_mc_samples":
+            reference_datasets[self_compaction_sample_source] = np.asarray(
+                single_cgl_reference_refs_nm,
+                dtype=np.float32,
+            )
         corrections = {
             "compact_state_center_ang": 1.0,
             "extended_state_center_ang": 0.0,
             "compact_state_probability": correction_compact_probability,
             "reference_compact_center_ang": compact_center_ang,
             "reference_extended_center_ang": extended_center_ang,
+            "compaction_coordinate": "tail_compression",
+            "compaction_coordinate_source": "negative_dopc_head_to_tail_extension",
             "compaction_state_source": compaction_state_source_used,
-            "compaction_reference_dataset": ref_dataset,
+            "compaction_reference_dataset": single_cgl_reference_dataset,
+            "single_cgl_state_reference_dataset": single_cgl_reference_dataset,
             "self_compaction_sample_source": self_compaction_sample_source,
+            "single_cgl_state_reference_mode": single_cgl_state_refs["mode"],
+            "reference_datasets": reference_datasets,
             "cg_lipid_compaction": {
                 "self_coeff": np.asarray(compaction_self["self_coeff_eup"], dtype=np.float32),
                 "pmf_centers_ang": np.asarray(compaction_self["pmf_centers_ang"], dtype=np.float32),
                 "pmf_values_kj_mol": np.asarray(compaction_self["pmf_values_kj_mol"], dtype=np.float32),
+                "pmf_raw_counts": np.asarray(compaction_self["pmf_raw_counts"], dtype=np.float32),
+                "pmf_smoothed_counts": np.asarray(compaction_self["pmf_smoothed_counts"], dtype=np.float32),
                 "coord_min_ang": float(compaction_self["coord_min_ang"]),
                 "coord_max_ang": float(compaction_self["coord_max_ang"]),
                 "coord_spacing_ang": float(compaction_self["coord_spacing_ang"]),
                 "n_knot": int(compaction_self["n_knot"]),
                 "effective_stiffness_eup_a2": float(compaction_self["effective_stiffness_eup_a2"]),
+                "self_pmf_source": str(compaction_self["source"]),
+                "self_pmf_histogram_kernel": str(compaction_self["histogram_kernel"]),
+                "sample_count": int(compaction_self["sample_count"]),
+                "nonempty_bin_count": int(compaction_self["nonempty_bin_count"]),
+                "min_sample_count": int(compaction_self["min_sample_count"]),
+                "min_nonempty_bin_count": int(compaction_self["min_nonempty_bin_count"]),
                 "mass_up": float(
                     compaction_self["effective_stiffness_eup_a2"] * compaction_tau * compaction_tau
                 ),
             },
         }
+        if not include_target and "cg_lipid_target" in cg_grp:
+            corrections["strip_cg_lipid_target_compaction"] = True
         if compressed_state_coord is not None and compressed_center_ang is not None:
             corrections["compressed_state_center_ang"] = float(compressed_state_coord)
             corrections["reference_compressed_center_ang"] = float(compressed_center_ang)
 
         pair_grp = cg_grp.get("cg_lipid_pair")
-        if include_pair_compaction and pair_grp is not None:
-            source_pair_compact_ang = float(
-                comp_grp.attrs.get(
-                    "pair_reference_compact_center_ang",
-                    comp_grp.attrs.get("reference_compact_center_ang", np.nan),
+        base_pair_relaxation_source = ""
+        if pair_grp is not None:
+            base_pair_relaxation_source = _decode_h5_scalar_attr(
+                pair_grp.attrs.get("pair_relaxation_correction_source", "")
+            ).strip()
+            if base_pair_relaxation_source != _CGL_PAIR_RELAXATION_CORRECTION_SOURCE:
+                raise RuntimeError(
+                    "Single-CGL compaction retrofit requires the CGL-CGL base "
+                    "table to carry the source-conditioned pair tail-relaxation correction"
                 )
+        corrections["cg_lipid_compaction"].update(
+            {
+                "source": "dry_martini_tail_compression_endpoint_projection",
+                "runtime_representation": (
+                    "explicit_hidden_tail_compression_state_no_pair_runtime_overlay"
+                ),
+                "correction_layer": "isolated_source_compaction_state",
+                "pair_runtime_compaction_overlay": _CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED,
+                "pair_reference_compact_center_ang": float(compact_center_ang),
+                "pair_reference_extended_center_ang": float(extended_center_ang),
+                "pair_compaction_state_source": str(compaction_state_source_used),
+            }
+        )
+        if base_pair_relaxation_source:
+            corrections["cg_lipid_compaction"]["pair_relaxation_correction_source"] = (
+                base_pair_relaxation_source
             )
-            source_pair_extended_ang = float(
-                comp_grp.attrs.get(
-                    "pair_reference_extended_center_ang",
-                    comp_grp.attrs.get("reference_extended_center_ang", np.nan),
-                )
+        if compressed_state_coord is not None and compressed_center_ang is not None:
+            corrections["cg_lipid_compaction"]["pair_reference_compressed_center_ang"] = float(
+                compressed_center_ang
             )
-            source_pair_compressed_ang = float(
-                comp_grp.attrs.get(
-                    "pair_reference_compressed_center_ang",
-                    comp_grp.attrs.get("reference_compressed_center_ang", np.nan),
-                )
-            )
-            has_source_pair_compressed_payload = all(
-                dataset_name in comp_grp
-                for dataset_name in (
-                    "delta_extended_compressed",
-                    "delta_compact_compressed",
-                    "delta_compressed_compressed",
-                )
-            )
-            if (
-                np.isfinite(source_pair_compact_ang)
-                and np.isfinite(source_pair_extended_ang)
-                and source_pair_compact_ang - source_pair_extended_ang > 1.0
-                and all(
-                    dataset_name in comp_grp
-                    for dataset_name in (
-                        "delta_extended_extended",
-                        "delta_extended_compact",
-                        "delta_compact_compact",
-                    )
-                )
-                and (
-                    compressed_state_coord is None
-                    or (
-                        has_source_pair_compressed_payload
-                        and np.isfinite(source_pair_compressed_ang)
-                        and source_pair_compressed_ang > source_pair_compact_ang + 1.0e-6
-                    )
-                )
-            ):
-                pair_compaction = _pair_compaction_reparameterized_tables(
-                    delta_extended_extended=np.asarray(
-                        comp_grp["delta_extended_extended"][:],
-                        dtype=np.float64,
-                    ),
-                    delta_extended_compact=np.asarray(
-                        comp_grp["delta_extended_compact"][:],
-                        dtype=np.float64,
-                    ),
-                    delta_compact_compact=np.asarray(
-                        comp_grp["delta_compact_compact"][:],
-                        dtype=np.float64,
-                    ),
-                    grid_extended_extended_kj_mol=np.asarray(
-                        comp_grp["grid_extended_extended_kj_mol"][:],
-                        dtype=np.float64,
-                    ) if "grid_extended_extended_kj_mol" in comp_grp else None,
-                    grid_extended_compact_kj_mol=np.asarray(
-                        comp_grp["grid_extended_compact_kj_mol"][:],
-                        dtype=np.float64,
-                    ) if "grid_extended_compact_kj_mol" in comp_grp else None,
-                    grid_compact_compact_kj_mol=np.asarray(
-                        comp_grp["grid_compact_compact_kj_mol"][:],
-                        dtype=np.float64,
-                    ) if "grid_compact_compact_kj_mol" in comp_grp else None,
-                    grid_average_kj_mol=np.asarray(
-                        comp_grp["grid_average_kj_mol"][:],
-                        dtype=np.float64,
-                    ) if "grid_average_kj_mol" in comp_grp else None,
-                    source_extended_center_ang=source_pair_extended_ang,
-                    source_compact_center_ang=source_pair_compact_ang,
-                    target_extended_center_ang=extended_center_ang,
-                    target_compact_center_ang=compact_center_ang,
-                    delta_extended_compressed=np.asarray(
-                        comp_grp["delta_extended_compressed"][:],
-                        dtype=np.float64,
-                    ) if "delta_extended_compressed" in comp_grp else None,
-                    delta_compact_compressed=np.asarray(
-                        comp_grp["delta_compact_compressed"][:],
-                        dtype=np.float64,
-                    ) if "delta_compact_compressed" in comp_grp else None,
-                    delta_compressed_compressed=np.asarray(
-                        comp_grp["delta_compressed_compressed"][:],
-                        dtype=np.float64,
-                    ) if "delta_compressed_compressed" in comp_grp else None,
-                    grid_extended_compressed_kj_mol=np.asarray(
-                        comp_grp["grid_extended_compressed_kj_mol"][:],
-                        dtype=np.float64,
-                    ) if "grid_extended_compressed_kj_mol" in comp_grp else None,
-                    grid_compact_compressed_kj_mol=np.asarray(
-                        comp_grp["grid_compact_compressed_kj_mol"][:],
-                        dtype=np.float64,
-                    ) if "grid_compact_compressed_kj_mol" in comp_grp else None,
-                    grid_compressed_compressed_kj_mol=np.asarray(
-                        comp_grp["grid_compressed_compressed_kj_mol"][:],
-                        dtype=np.float64,
-                    ) if "grid_compressed_compressed_kj_mol" in comp_grp else None,
-                    source_compressed_center_ang=float(
-                        source_pair_compressed_ang
-                    ),
-                    target_compressed_center_ang=float(compressed_center_ang)
-                    if compressed_state_coord is not None and compressed_center_ang is not None
-                    else None,
-                )
-            else:
-                pair_relax_state_correction = "pair_relax" in _decode_h5_scalar_attr(
-                    comp_grp.attrs.get("source", "")
-                )
-                face_cos_min = (
-                    float(comp_grp.attrs["face_cos_min"])
-                    if "face_cos_min" in comp_grp.attrs
-                    else None
-                )
-                radial_cutoff_nm = float(comp_grp.attrs.get("radial_cutoff_nm", 2.5))
-                mask_mode = _decode_h5_scalar_attr(comp_grp.attrs.get("mask_mode", "binary")) or "binary"
-                correction_center_mode = (
-                    _decode_h5_scalar_attr(comp_grp.attrs.get("correction_center_mode", "base")) or "base"
-                )
-                pair_state_model = (
-                    _decode_h5_scalar_attr(comp_grp.attrs.get("pair_state_model", "bilinear")) or "bilinear"
-                )
-                pair_energy_grid = np.asarray(pair_grp["energy_grid_raw_kj_mol"][:], dtype=np.float64)
-                n_radial, n_angle1, n_angle2 = pair_energy_grid.shape
-                if n_angle1 != n_angle2:
-                    raise RuntimeError("CGL pair retrofit requires a square angular grid")
-                pair_result_cg = {
-                    "energy_grid_raw": pair_energy_grid,
-                    "reference_energy_eup": float(pair_grp["reference_energy_eup"][0, 0]),
-                    "r_values_nm": np.linspace(
-                        float(pair_grp.attrs["fit_r_min_nm"]),
-                        float(pair_grp.attrs["fit_r_max_nm"]),
-                        int(n_radial),
-                        dtype=np.float64,
-                    ),
-                    "cos_theta_grid": np.linspace(-1.0, 1.0, int(n_angle1), dtype=np.float64),
-                    "n_radial": int(pair_grp.attrs["n_radial"]),
-                    "n_angular": int(pair_grp.attrs["n_angular"]),
-                    "knot_spacing_ang": float(pair_grp.attrs["knot_spacing_ang"]),
-                    "fit_smooth": float(pair_grp.attrs.get("fit_smooth", 0.1)),
-                    "azimuthal_count": int(pair_grp.attrs.get("azimuthal_count", 1)),
-                    "bead_frame_count": int(pair_grp.attrs.get("cgl_bead_frame_count", 1)),
-                }
-                pair_compaction = _fit_pair_compaction_result_for_states(
-                    result_cg=pair_result_cg,
-                    compaction_states=compaction_states,
-                    bead_types=list(dopc["bead_types"]),
-                    bead_charges=list(dopc["bead_charges"]),
-                    pair_params=pair_params,
-                    lipids_itp_path=lipids_itp_path,
-                    face_cos_min=face_cos_min,
-                    radial_cutoff_nm=radial_cutoff_nm,
-                    pair_relax_state_correction=pair_relax_state_correction,
-                    mask_mode=mask_mode,
-                    correction_center_mode=correction_center_mode,
-                    pair_state_model=pair_state_model,
-                )
-            corrections["cg_lipid_compaction"].update(
-                {
-                    "delta_extended_extended": np.asarray(
-                        pair_compaction["delta_extended_extended"], dtype=np.float32
-                    ),
-                    "delta_extended_compact": np.asarray(
-                        pair_compaction["delta_extended_compact"], dtype=np.float32
-                    ),
-                    "delta_compact_compact": np.asarray(
-                        pair_compaction["delta_compact_compact"], dtype=np.float32
-                    ),
-                    "pair_reference_compact_center_ang": float(compact_center_ang),
-                    "pair_reference_extended_center_ang": float(extended_center_ang),
-                    "pair_compaction_state_source": str(compaction_state_source_used),
-                }
-            )
-            if "delta_extended_compressed" in pair_compaction:
-                corrections["cg_lipid_compaction"]["delta_extended_compressed"] = np.asarray(
-                    pair_compaction["delta_extended_compressed"],
-                    dtype=np.float32,
-                )
-                corrections["cg_lipid_compaction"]["delta_compact_compressed"] = np.asarray(
-                    pair_compaction["delta_compact_compressed"],
-                    dtype=np.float32,
-                )
-                corrections["cg_lipid_compaction"]["delta_compressed_compressed"] = np.asarray(
-                    pair_compaction["delta_compressed_compressed"],
-                    dtype=np.float32,
-                )
-                corrections["cg_lipid_compaction"]["pair_reference_compressed_center_ang"] = float(
-                    compressed_center_ang
-                )
-            for dataset_name in (
-                "grid_extended_extended_kj_mol",
-                "grid_extended_compact_kj_mol",
-                "grid_compact_compact_kj_mol",
-                "grid_extended_compressed_kj_mol",
-                "grid_compact_compressed_kj_mol",
-                "grid_compressed_compressed_kj_mol",
-                "grid_average_kj_mol",
-            ):
-                if dataset_name in pair_compaction:
-                    corrections["cg_lipid_compaction"][dataset_name] = np.asarray(
-                        pair_compaction[dataset_name],
-                        dtype=np.float32,
-                    )
-            if "correction_center_mode" in pair_compaction:
-                corrections["cg_lipid_compaction"]["correction_center_mode"] = str(
-                    pair_compaction["correction_center_mode"]
-                )
-            if "pair_state_model" in pair_compaction:
-                corrections["cg_lipid_compaction"]["pair_state_model"] = str(
-                    pair_compaction["pair_state_model"]
-                )
-            if "face_mask" in pair_compaction:
-                corrections["cg_lipid_compaction"]["face_mask"] = np.asarray(
-                    pair_compaction["face_mask"], dtype=np.float32
-                )
-                corrections["cg_lipid_compaction"]["face_cos_min"] = float(
-                    pair_compaction["face_cos_min"]
-                )
-                corrections["cg_lipid_compaction"]["radial_cutoff_nm"] = float(
-                    pair_compaction["radial_cutoff_nm"]
-                )
-                corrections["cg_lipid_compaction"]["mask_mode"] = str(
-                    pair_compaction["mask_mode"]
-                )
 
         sc_grp = cg_grp.get("cg_lipid_sc")
         if include_sc and sc_grp is not None:
+            sc_reference_count = int(
+                sc_grp.attrs.get("single_cgl_state_reference_count", compaction_representatives)
+            )
+            if sc_reference_count <= 0:
+                sc_reference_count = int(compaction_representatives)
+            if str(compaction_state_source_used or "").startswith("isolated_dopc"):
+                sc_ref_ensemble_nm = np.asarray(single_cgl_reference_refs_nm, dtype=np.float64)
+                sc_single_cgl_reference_dataset = str(single_cgl_reference_dataset)
+            else:
+                sc_ref_ensemble_nm, sc_single_cgl_reference_dataset = (
+                    _single_cgl_state_reference_ensemble_for_group(
+                        cg_grp,
+                        sc_grp,
+                        ref_ensemble_nm,
+                        ref_dataset,
+                    )
+                )
+            sc_single_cgl_state_refs = _tail_retargeted_single_cgl_state_refs(
+                sc_ref_ensemble_nm,
+                extended_center_ang=extended_center_ang,
+                compact_center_ang=compact_center_ang,
+                compressed_center_ang=(
+                    compressed_center_ang
+                    if compressed_state_coord is not None
+                    else None
+                ),
+                representative_count=sc_reference_count,
+            )
+            source_sc_coordinate_ok = (
+                _decode_h5_scalar_attr(
+                    sc_grp.attrs.get("compaction_coordinate", "")
+                ).strip()
+                == "tail_compression"
+            )
             source_sc_compact_ang = float(sc_grp.attrs.get("reference_compact_center_ang", np.nan))
             source_sc_extended_ang = float(sc_grp.attrs.get("reference_extended_center_ang", np.nan))
+            source_sc_state_ref_dataset = _decode_h5_scalar_attr(
+                sc_grp.attrs.get("single_cgl_state_reference_dataset", "")
+            ).strip()
+            source_sc_state_ref_count = int(
+                sc_grp.attrs.get("single_cgl_state_reference_count", -1)
+            )
+            source_sc_delta_source = _decode_h5_scalar_attr(
+                sc_grp.attrs.get("single_cgl_endpoint_delta_source", "")
+            ).strip()
+            source_sc_relaxation_source = _decode_h5_scalar_attr(
+                sc_grp.attrs.get("single_cgl_relaxation_source", "")
+            ).strip()
             if (
-                np.isfinite(source_sc_compact_ang)
-                and np.isfinite(source_sc_extended_ang)
+                source_sc_coordinate_ok
+                and _single_cgl_group_uses_tail_retargeted_refs(sc_grp)
+                and source_sc_delta_source == _SINGLE_CGL_ENDPOINT_DELTA_SOURCE
+                and source_sc_relaxation_source == _SINGLE_CGL_RELAXATION_SOURCE
+                and compressed_state_coord is None
+                and source_sc_state_ref_dataset == sc_single_cgl_reference_dataset
+                and source_sc_state_ref_count == int(sc_single_cgl_state_refs["extended_refs_nm"].shape[0])
+                and _single_cgl_endpoint_centers_match(
+                    source_sc_extended_ang,
+                    source_sc_compact_ang,
+                    extended_center_ang,
+                    compact_center_ang,
+                )
                 and "delta_extended" in sc_grp
                 and "delta_compact" in sc_grp
             ):
                 corrections["cg_lipid_sc"] = {
                     "delta_extended": np.asarray(sc_grp["delta_extended"][:], dtype=np.float32),
                     "delta_compact": np.asarray(sc_grp["delta_compact"][:], dtype=np.float32),
+                    "single_cgl_state_reference_dataset": sc_single_cgl_reference_dataset,
+                    "single_cgl_state_reference_count": int(
+                        sc_single_cgl_state_refs["extended_refs_nm"].shape[0]
+                    ),
+                    "single_cgl_relaxation_source": _SINGLE_CGL_RELAXATION_SOURCE,
+                    "single_cgl_relaxation_contact_energy_source": (
+                        _SINGLE_CGL_RELAXATION_CONTACT_ENERGY_SOURCE
+                    ),
+                    "single_cgl_relaxation_energy_floor_kj_mol": 0.0,
                 }
+                if "single_cgl_relaxation_max_compaction_nm" in sc_grp.attrs:
+                    corrections["cg_lipid_sc"]["single_cgl_relaxation_max_compaction_nm"] = float(
+                        sc_grp.attrs["single_cgl_relaxation_max_compaction_nm"]
+                    )
+                for attr_name in (
+                    "single_cgl_relaxation_compact_max_compaction_nm",
+                    "single_cgl_relaxation_compressed_max_compaction_nm",
+                ):
+                    if attr_name in sc_grp.attrs:
+                        corrections["cg_lipid_sc"][attr_name] = float(
+                            sc_grp.attrs[attr_name]
+                        )
                 if "grid_extended_kj_mol" in sc_grp:
                     corrections["cg_lipid_sc"]["grid_extended_kj_mol"] = np.asarray(
                         sc_grp["grid_extended_kj_mol"][:],
@@ -7250,377 +8988,166 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                         sc_grp["grid_compact_kj_mol"][:],
                         dtype=np.float32,
                     )
-                if compressed_state_coord is not None:
-                    restype_order = _decode_h5_string_array(sc_grp["restype_order"][:])
-                    orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
-                    residue_map = load_martini_forcefield(martinize_path, forcefield_name)
-                    martini_sidechain_offsets_nm = _load_martini_sidechain_offsets_nm(
-                        martinize_path, forcefield_name
-                    )
-                    cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
-                    cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
-                    sc_n_modes = int(sc_grp.attrs.get("n_modes", 0))
-                    if sc_n_modes != 0:
-                        raise RuntimeError("single-CGL compaction retrofit only supports full-tensor cg_lipid_sc")
-                    sc_n_radial = int(sc_grp.attrs["n_radial"])
-                    sc_n_angular = int(sc_grp.attrs["n_angular"])
-                    sc_r_count = sc_n_radial
-                    sc_cos_theta_count = max(sc_n_angular - 2, 1)
-                    sc_temperature = float(
-                        sc_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
-                    )
-                    sc_average_temperature = float(
-                        sc_grp.attrs.get(
-                            "azimuthal_average_temperature_upside",
-                            DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-                        )
-                    )
-                    sc_angular_smooth = float(sc_grp.attrs.get("angular_smooth", 0.1))
-                    sc_tasks = []
-                    for ri, residue in enumerate(restype_order):
-                        if residue not in residue_map or residue not in orientation_map:
-                            raise RuntimeError(
-                                f"{base_h5_path} cg_lipid_sc residue {residue!r} is missing orientation/source data"
-                            )
-                        sc_bead_types = residue_map[residue]
-                        sc_bead_charges = [infer_charge_from_atomtype(bt) for bt in sc_bead_types]
-                        orientation = orientation_map[residue]
-                        sc_positions_by_rotamer = _expand_rotamer_sidechain_positions(
-                            orientation,
-                            residue,
-                            np.asarray(martini_sidechain_offsets_nm[residue], dtype=np.float64),
-                        )
-                        sc_tasks.append(
-                            {
-                                "ri": ri,
-                                "residue": residue,
-                                "ref_bead_positions_nm": ref_ensemble_nm,
-                                "cg_bead_types": list(dopc["bead_types"]),
-                                "cg_bead_charges": list(dopc["bead_charges"]),
-                                "target_type": "CGL",
-                                "target_charge": 0.0,
-                                "rotamer_bead_positions_nm": sc_positions_by_rotamer,
-                                "rotamer_weights": orientation["weight"],
-                                "sc_bead_types": list(sc_bead_types),
-                                "sc_bead_charges": list(sc_bead_charges),
-                                "pair_params": pair_params,
-                                "cb_anchor_nm": cb_anchor_nm,
-                                "cb_vector_unit": cb_vector_unit,
-                                "r_min_nm": float(sc_grp.attrs.get("fit_r_min_nm", 0.30)),
-                                "r_max_nm": float(sc_grp.attrs["fit_r_max_nm"]),
-                                "r_count": sc_r_count,
-                                "cos_theta_count": sc_cos_theta_count,
-                                "azimuthal_count": int(sc_grp.attrs.get("azimuthal_count", 4)),
-                                "sidechain_bead_frame_count": int(
-                                    sc_grp.attrs.get("sidechain_bead_frame_count", 1)
-                                ),
-                                "cg_bead_frame_count": int(sc_grp.attrs.get("cgl_bead_frame_count", 1)),
-                                "n_modes": sc_n_modes,
-                                "n_knot_radial": sc_n_radial,
-                                "n_knot_angular": sc_n_angular,
-                                "angular_smooth": sc_angular_smooth,
-                                "knot_spacing_ang": float(sc_grp.attrs["knot_spacing_ang"]),
-                                "temperature": sc_temperature,
-                                "average_temperature": sc_average_temperature,
-                            }
-                        )
-                    compressed_sc_results = {
-                        ri: result_sc
-                        for ri, _residue, result_sc in _parallel_map_ordered(
-                            "CG-SC compressed-state retrofit table",
-                            _fit_cg_lipid_sc_quadspline_from_dict,
-                            [
-                                {
-                                    **task,
-                                    "ref_bead_positions_nm": np.asarray(
-                                        compaction_states["compressed_refs_nm"],
-                                        dtype=np.float64,
-                                    ),
-                                }
-                                for task in sc_tasks
-                            ],
-                        )
-                    }
-                    n_sc_types = len(restype_order)
-                    sc_n_param = sc_n_radial * sc_n_angular * sc_n_angular
-                    sc_delta_compressed = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
-                    sc_grid_compressed = np.zeros(
-                        (n_sc_types, sc_r_count, sc_cos_theta_count, sc_cos_theta_count),
-                        dtype=np.float32,
-                    )
-                    for ri in range(n_sc_types):
-                        base_interaction_param = np.asarray(
-                            sc_grp["interaction_param"][ri, 0, :],
-                            dtype=np.float64,
-                        )
-                        base_reference_energy = float(
-                            np.asarray(sc_grp["reference_energy_eup"][ri, 0], dtype=np.float64)
-                        )
-                        r_values_nm = np.linspace(
-                            float(sc_grp.attrs.get("fit_r_min_nm", 0.30)),
-                            float(sc_grp.attrs["fit_r_max_nm"]),
-                            sc_r_count,
-                            dtype=np.float64,
-                        )
-                        cos_theta_grid = np.linspace(-1.0, 1.0, sc_cos_theta_count, dtype=np.float64)
-                        delta = _fit_single_cgl_state_delta_full_tensor(
-                            base_energy_grid_kj_mol=np.asarray(
-                                compressed_sc_results[ri]["energy_grid_raw"],
-                                dtype=np.float64,
-                            ),
-                            extended_energy_grid_kj_mol=np.asarray(
-                                compressed_sc_results[ri]["energy_grid_raw"],
-                                dtype=np.float64,
-                            ),
-                            compact_energy_grid_kj_mol=np.asarray(
-                                compressed_sc_results[ri]["energy_grid_raw"],
-                                dtype=np.float64,
-                            ),
-                            compressed_energy_grid_kj_mol=np.asarray(
-                                compressed_sc_results[ri]["energy_grid_raw"],
-                                dtype=np.float64,
-                            ),
-                            reference_energy_eup=base_reference_energy,
-                            base_interaction_param=base_interaction_param,
-                            temperature_upside=float(sc_temperature),
-                            r_values_nm=r_values_nm,
-                            cos_theta_grid=cos_theta_grid,
-                            n_knot_radial=sc_n_radial,
-                            n_knot_angular=sc_n_angular,
-                            knot_spacing_ang=float(sc_grp.attrs["knot_spacing_ang"]),
-                            smooth=sc_angular_smooth,
-                        )
-                        sc_delta_compressed[ri, 0, :] = np.asarray(
-                            delta["delta_compressed"],
-                            dtype=np.float32,
-                        )
-                        sc_grid_compressed[ri] = np.asarray(
-                            delta["grid_compressed_kj_mol"],
-                            dtype=np.float32,
-                        )
-                    corrections["cg_lipid_sc"]["delta_compressed"] = sc_delta_compressed
-                    corrections["cg_lipid_sc"]["grid_compressed_kj_mol"] = sc_grid_compressed
-            else:
-                restype_order = _decode_h5_string_array(sc_grp["restype_order"][:])
-                orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
-                residue_map = load_martini_forcefield(martinize_path, forcefield_name)
-                martini_sidechain_offsets_nm = _load_martini_sidechain_offsets_nm(
-                    martinize_path, forcefield_name
+            if "cg_lipid_sc" not in corrections and "beadtype_order" in sc_grp:
+                sc_payload = _build_sc_bead_tail_relaxation_compaction_payload(
+                    sc_grp=sc_grp,
+                    ref_bead_positions_nm=np.asarray(
+                        sc_single_cgl_state_refs["extended_refs_nm"],
+                        dtype=np.float64,
+                    ),
+                    dopc=dopc,
+                    pair_params=pair_params,
+                    lipids_itp_path=lipids_itp_path,
+                    compressed_state_coord=compressed_state_coord,
+                    extended_center_ang=extended_center_ang,
+                    compact_center_ang=compact_center_ang,
+                    compressed_center_ang=(
+                        compressed_center_ang
+                        if compressed_state_coord is not None
+                        else None
+                    ),
                 )
-                cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
-                cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
-                sc_n_modes = int(sc_grp.attrs.get("n_modes", 0))
-                if sc_n_modes != 0:
-                    raise RuntimeError("single-CGL compaction retrofit only supports full-tensor cg_lipid_sc")
-                sc_n_radial = int(sc_grp.attrs["n_radial"])
-                sc_n_angular = int(sc_grp.attrs["n_angular"])
-                sc_r_count = sc_n_radial
-                sc_cos_theta_count = max(sc_n_angular - 2, 1)
-                sc_tasks = []
-                sc_temperature = float(
-                    sc_grp.attrs.get("boltzmann_temperature_upside", DEFAULT_PRODUCTION_TEMP_UPSIDE)
-                )
-                sc_average_temperature = float(
-                    sc_grp.attrs.get(
-                        "azimuthal_average_temperature_upside",
-                        DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-                    )
-                )
-                sc_angular_smooth = float(sc_grp.attrs.get("angular_smooth", 0.1))
-                for ri, residue in enumerate(restype_order):
-                    if residue not in residue_map or residue not in orientation_map:
-                        raise RuntimeError(
-                            f"{base_h5_path} cg_lipid_sc residue {residue!r} is missing orientation/source data"
-                        )
-                    sc_bead_types = residue_map[residue]
-                    sc_bead_charges = [infer_charge_from_atomtype(bt) for bt in sc_bead_types]
-                    orientation = orientation_map[residue]
-                    sc_positions_by_rotamer = _expand_rotamer_sidechain_positions(
-                        orientation,
-                        residue,
-                        np.asarray(martini_sidechain_offsets_nm[residue], dtype=np.float64),
-                    )
-                    sc_tasks.append(
-                        {
-                            "ri": ri,
-                            "residue": residue,
-                            "ref_bead_positions_nm": ref_ensemble_nm,
-                            "cg_bead_types": list(dopc["bead_types"]),
-                            "cg_bead_charges": list(dopc["bead_charges"]),
-                            "target_type": "CGL",
-                            "target_charge": 0.0,
-                            "rotamer_bead_positions_nm": sc_positions_by_rotamer,
-                            "rotamer_weights": orientation["weight"],
-                            "sc_bead_types": list(sc_bead_types),
-                            "sc_bead_charges": list(sc_bead_charges),
-                            "pair_params": pair_params,
-                            "cb_anchor_nm": cb_anchor_nm,
-                            "cb_vector_unit": cb_vector_unit,
-                            "r_min_nm": float(sc_grp.attrs.get("fit_r_min_nm", 0.30)),
-                            "r_max_nm": float(sc_grp.attrs["fit_r_max_nm"]),
-                            "r_count": sc_r_count,
-                            "cos_theta_count": sc_cos_theta_count,
-                            "azimuthal_count": int(sc_grp.attrs.get("azimuthal_count", 4)),
-                            "sidechain_bead_frame_count": int(
-                                sc_grp.attrs.get("sidechain_bead_frame_count", 1)
-                            ),
-                            "cg_bead_frame_count": int(sc_grp.attrs.get("cgl_bead_frame_count", 1)),
-                            "n_modes": sc_n_modes,
-                            "n_knot_radial": sc_n_radial,
-                            "n_knot_angular": sc_n_angular,
-                            "angular_smooth": sc_angular_smooth,
-                            "knot_spacing_ang": float(sc_grp.attrs["knot_spacing_ang"]),
-                            "temperature": sc_temperature,
-                            "average_temperature": sc_average_temperature,
-                        }
-                    )
-
-                base_sc_results = {
-                    ri: result_sc
-                    for ri, _residue, result_sc in _parallel_map_ordered(
-                        "CG-SC base retrofit table",
-                        _fit_cg_lipid_sc_quadspline_from_dict,
-                        sc_tasks,
-                    )
-                }
-                extended_sc_results = {
-                    ri: result_sc
-                    for ri, _residue, result_sc in _parallel_map_ordered(
-                        "CG-SC extended-state retrofit table",
-                        _fit_cg_lipid_sc_quadspline_from_dict,
-                        [
-                            {
-                                **task,
-                                "ref_bead_positions_nm": np.asarray(
-                                    compaction_states["extended_refs_nm"],
-                                    dtype=np.float64,
-                                ),
-                            }
-                            for task in sc_tasks
-                        ],
-                    )
-                }
-                compact_sc_results = {
-                    ri: result_sc
-                    for ri, _residue, result_sc in _parallel_map_ordered(
-                        "CG-SC compacted-state retrofit table",
-                        _fit_cg_lipid_sc_quadspline_from_dict,
-                        [
-                            {
-                                **task,
-                                "ref_bead_positions_nm": np.asarray(
-                                    compaction_states["compact_refs_nm"],
-                                    dtype=np.float64,
-                                ),
-                            }
-                            for task in sc_tasks
-                        ],
-                    )
-                }
-                compressed_sc_results = None
-                if compressed_state_coord is not None:
-                    compressed_sc_results = {
-                        ri: result_sc
-                        for ri, _residue, result_sc in _parallel_map_ordered(
-                            "CG-SC compressed-state retrofit table",
-                            _fit_cg_lipid_sc_quadspline_from_dict,
-                            [
-                                {
-                                    **task,
-                                    "ref_bead_positions_nm": np.asarray(
-                                        compaction_states["compressed_refs_nm"],
-                                        dtype=np.float64,
-                                    ),
-                                }
-                                for task in sc_tasks
-                            ],
-                        )
-                    }
-                n_sc_types = len(restype_order)
-                sc_n_param = sc_n_radial * sc_n_angular * sc_n_angular
-                sc_delta_extended = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
-                sc_delta_compact = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
-                sc_delta_compressed = (
-                    np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
-                    if compressed_sc_results is not None
-                    else None
-                )
-                sc_grid_extended = np.zeros(
-                    (n_sc_types, sc_r_count, sc_cos_theta_count, sc_cos_theta_count),
-                    dtype=np.float32,
-                )
-                sc_grid_compact = np.zeros_like(sc_grid_extended)
-                sc_grid_compressed = (
-                    np.zeros_like(sc_grid_extended)
-                    if compressed_sc_results is not None
-                    else None
-                )
-                for ri in range(n_sc_types):
-                    base_sc = base_sc_results[ri]
-                    delta = _fit_single_cgl_state_delta_full_tensor(
-                        base_energy_grid_kj_mol=np.asarray(base_sc["energy_grid_raw"], dtype=np.float64),
-                        extended_energy_grid_kj_mol=np.asarray(
-                            extended_sc_results[ri]["energy_grid_raw"],
-                            dtype=np.float64,
-                        ),
-                        compact_energy_grid_kj_mol=np.asarray(
-                            compact_sc_results[ri]["energy_grid_raw"],
-                            dtype=np.float64,
-                        ),
-                        compressed_energy_grid_kj_mol=(
-                            np.asarray(
-                                compressed_sc_results[ri]["energy_grid_raw"],
-                                dtype=np.float64,
-                            )
-                            if compressed_sc_results is not None
-                            else None
-                        ),
-                        reference_energy_eup=float(base_sc["reference_energy_eup"]),
-                        base_interaction_param=np.asarray(base_sc["interaction_param"], dtype=np.float64),
-                        temperature_upside=float(sc_temperature),
-                        r_values_nm=np.asarray(base_sc["r_values_nm"], dtype=np.float64),
-                        cos_theta_grid=np.asarray(base_sc["cos_theta_grid"], dtype=np.float64),
-                        n_knot_radial=sc_n_radial,
-                        n_knot_angular=sc_n_angular,
-                        knot_spacing_ang=float(sc_grp.attrs["knot_spacing_ang"]),
-                        smooth=sc_angular_smooth,
-                    )
-                    sc_delta_extended[ri, 0, :] = np.asarray(delta["delta_extended"], dtype=np.float32)
-                    sc_delta_compact[ri, 0, :] = np.asarray(delta["delta_compact"], dtype=np.float32)
-                    sc_grid_extended[ri] = np.asarray(delta["grid_extended_kj_mol"], dtype=np.float32)
-                    sc_grid_compact[ri] = np.asarray(delta["grid_compact_kj_mol"], dtype=np.float32)
-                    if sc_delta_compressed is not None and sc_grid_compressed is not None:
-                        sc_delta_compressed[ri, 0, :] = np.asarray(
-                            delta["delta_compressed"],
-                            dtype=np.float32,
-                        )
-                        sc_grid_compressed[ri] = np.asarray(
-                            delta["grid_compressed_kj_mol"],
-                            dtype=np.float32,
-                        )
                 corrections["cg_lipid_sc"] = {
-                    "delta_extended": sc_delta_extended,
-                    "delta_compact": sc_delta_compact,
-                    "grid_extended_kj_mol": sc_grid_extended,
-                    "grid_compact_kj_mol": sc_grid_compact,
+                    **sc_payload,
+                    "single_cgl_state_reference_dataset": sc_single_cgl_reference_dataset,
+                    "single_cgl_state_reference_count": int(
+                        sc_single_cgl_state_refs["extended_refs_nm"].shape[0]
+                    ),
                 }
-                if sc_delta_compressed is not None and sc_grid_compressed is not None:
-                    corrections["cg_lipid_sc"]["delta_compressed"] = sc_delta_compressed
-                    corrections["cg_lipid_sc"]["grid_compressed_kj_mol"] = sc_grid_compressed
+            elif "cg_lipid_sc" not in corrections:
+                raise RuntimeError(
+                    "SC-CGL tail-relaxation retrofit requires bead-level "
+                    "cg_lipid_sc with beadtype_order"
+                )
 
         target_grp = cg_grp.get("cg_lipid_target")
         if include_target and target_grp is not None:
+            target_reference_count = int(
+                target_grp.attrs.get("single_cgl_state_reference_count", compaction_representatives)
+            )
+            if target_reference_count <= 0:
+                target_reference_count = int(compaction_representatives)
+            target_reference_count = max(
+                int(target_reference_count),
+                int(compaction_representatives),
+            )
+            if str(compaction_state_source_used or "").startswith("isolated_dopc"):
+                target_ref_ensemble_nm = np.asarray(single_cgl_reference_refs_nm, dtype=np.float64)
+                target_single_cgl_reference_dataset = str(single_cgl_reference_dataset)
+            else:
+                target_ref_ensemble_nm, target_single_cgl_reference_dataset = (
+                    _single_cgl_state_reference_ensemble_for_group(
+                        cg_grp,
+                        target_grp,
+                        ref_ensemble_nm,
+                        ref_dataset,
+                    )
+                )
+            target_single_cgl_state_refs = _tail_retargeted_single_cgl_state_refs(
+                target_ref_ensemble_nm,
+                extended_center_ang=extended_center_ang,
+                compact_center_ang=compact_center_ang,
+                compressed_center_ang=(
+                    compressed_center_ang
+                    if compressed_state_coord is not None
+                    else None
+                ),
+                representative_count=target_reference_count,
+            )
+            target_payload = _build_target_tail_relaxation_compaction_payload(
+                target_grp=target_grp,
+                ref_bead_positions_nm=np.asarray(
+                    target_single_cgl_state_refs["extended_refs_nm"],
+                    dtype=np.float64,
+                ),
+                dopc=dopc,
+                pair_params=pair_params,
+                lipids_itp_path=lipids_itp_path,
+                compressed_state_coord=compressed_state_coord,
+                extended_center_ang=extended_center_ang,
+                compact_center_ang=compact_center_ang,
+                compressed_center_ang=(
+                    compressed_center_ang
+                    if compressed_state_coord is not None
+                    else None
+                ),
+            )
+            corrections["cg_lipid_target"] = {
+                **target_payload,
+                "single_cgl_state_reference_dataset": target_single_cgl_reference_dataset,
+                "single_cgl_state_reference_count": int(
+                    target_single_cgl_state_refs["extended_refs_nm"].shape[0]
+                ),
+            }
+            include_target = False
+        if include_target and target_grp is not None:
+            target_reference_count = int(
+                target_grp.attrs.get("single_cgl_state_reference_count", compaction_representatives)
+            )
+            if target_reference_count <= 0:
+                target_reference_count = int(compaction_representatives)
+            if str(compaction_state_source_used or "").startswith("isolated_dopc"):
+                target_ref_ensemble_nm = np.asarray(single_cgl_reference_refs_nm, dtype=np.float64)
+                target_single_cgl_reference_dataset = str(single_cgl_reference_dataset)
+            else:
+                target_ref_ensemble_nm, target_single_cgl_reference_dataset = (
+                    _single_cgl_state_reference_ensemble_for_group(
+                        cg_grp,
+                        target_grp,
+                        ref_ensemble_nm,
+                        ref_dataset,
+                    )
+                )
+            target_single_cgl_state_refs = _tail_retargeted_single_cgl_state_refs(
+                target_ref_ensemble_nm,
+                extended_center_ang=extended_center_ang,
+                compact_center_ang=compact_center_ang,
+                compressed_center_ang=(
+                    compressed_center_ang
+                    if compressed_state_coord is not None
+                    else None
+                ),
+                representative_count=target_reference_count,
+            )
+            source_target_coordinate_ok = (
+                _decode_h5_scalar_attr(
+                    target_grp.attrs.get("compaction_coordinate", "")
+                ).strip()
+                == "tail_compression"
+            )
             source_target_compact_ang = float(target_grp.attrs.get("reference_compact_center_ang", np.nan))
             source_target_extended_ang = float(target_grp.attrs.get("reference_extended_center_ang", np.nan))
+            source_target_state_ref_dataset = _decode_h5_scalar_attr(
+                target_grp.attrs.get("single_cgl_state_reference_dataset", "")
+            ).strip()
+            source_target_state_ref_count = int(
+                target_grp.attrs.get("single_cgl_state_reference_count", -1)
+            )
+            source_target_delta_source = _decode_h5_scalar_attr(
+                target_grp.attrs.get("single_cgl_endpoint_delta_source", "")
+            ).strip()
             if (
-                np.isfinite(source_target_compact_ang)
-                and np.isfinite(source_target_extended_ang)
+                source_target_coordinate_ok
+                and _single_cgl_group_uses_tail_retargeted_refs(target_grp)
+                and source_target_delta_source == _SINGLE_CGL_ENDPOINT_DELTA_SOURCE
+                and source_target_state_ref_dataset == target_single_cgl_reference_dataset
+                and source_target_state_ref_count == int(target_single_cgl_state_refs["extended_refs_nm"].shape[0])
+                and _single_cgl_endpoint_centers_match(
+                    source_target_extended_ang,
+                    source_target_compact_ang,
+                    extended_center_ang,
+                    compact_center_ang,
+                )
                 and "delta_extended" in target_grp
                 and "delta_compact" in target_grp
             ):
                 corrections["cg_lipid_target"] = {
                     "delta_extended": np.asarray(target_grp["delta_extended"][:], dtype=np.float32),
                     "delta_compact": np.asarray(target_grp["delta_compact"][:], dtype=np.float32),
+                    "single_cgl_state_reference_dataset": target_single_cgl_reference_dataset,
+                    "single_cgl_state_reference_count": int(
+                        target_single_cgl_state_refs["extended_refs_nm"].shape[0]
+                    ),
                 }
                 if "grid_extended_kj_mol" in target_grp:
                     corrections["cg_lipid_target"]["grid_extended_kj_mol"] = np.asarray(
@@ -7666,7 +9193,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                             "bead_types": list(dopc["bead_types"]),
                             "bead_charges": bead_charges,
                             "pair_params": pair_params,
-                            "ref_nm": ref_ensemble_nm,
+                            "ref_nm": target_ref_ensemble_nm,
                             "r_sample_nm": r_sample_nm,
                             "cos_theta_grid": cos_theta_grid,
                             "orientation_dirs": orientation_dirs,
@@ -7685,7 +9212,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                                 {
                                     **task,
                                     "ref_nm": np.asarray(
-                                        compaction_states["compressed_refs_nm"],
+                                        target_single_cgl_state_refs["compressed_refs_nm"],
                                         dtype=np.float64,
                                     ),
                                 }
@@ -7732,6 +9259,9 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                         )
                     corrections["cg_lipid_target"]["delta_compressed"] = target_delta_compressed
                     corrections["cg_lipid_target"]["grid_compressed_kj_mol"] = target_grid_compressed
+                    corrections["cg_lipid_target"]["compressed_state_reference_source"] = (
+                        _SINGLE_CGL_COMPRESSED_REFERENCE_SOURCE
+                    )
             else:
                 target_types = _decode_h5_string_array(target_grp["target_order"][:])
                 n_types = len(target_types)
@@ -7766,7 +9296,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                         "bead_types": list(dopc["bead_types"]),
                         "bead_charges": bead_charges,
                         "pair_params": pair_params,
-                        "ref_nm": ref_ensemble_nm,
+                        "ref_nm": target_ref_ensemble_nm,
                         "r_sample_nm": r_sample_nm,
                         "cos_theta_grid": cos_theta_grid,
                         "orientation_dirs": orientation_dirs,
@@ -7776,14 +9306,6 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                     }
                     for ti, tgt_type in enumerate(target_types)
                 ]
-                base_target_results = {
-                    ti: np.asarray(energy_grid, dtype=np.float64)
-                    for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
-                        "CGL-particle base retrofit table",
-                        _run_cgl_target_type_task,
-                        target_tasks,
-                    )
-                }
                 extended_target_results = {
                     ti: np.asarray(energy_grid, dtype=np.float64)
                     for ti, _tgt_type, _control_flat, _ref_kj_mol, energy_grid in _parallel_map_ordered(
@@ -7792,7 +9314,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                         [
                             {
                                 **task,
-                                "ref_nm": np.asarray(compaction_states["extended_refs_nm"], dtype=np.float64),
+                                "ref_nm": np.asarray(target_single_cgl_state_refs["extended_refs_nm"], dtype=np.float64),
                             }
                             for task in target_tasks
                         ],
@@ -7806,7 +9328,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                         [
                             {
                                 **task,
-                                "ref_nm": np.asarray(compaction_states["compact_refs_nm"], dtype=np.float64),
+                                "ref_nm": np.asarray(target_single_cgl_state_refs["compact_refs_nm"], dtype=np.float64),
                             }
                             for task in target_tasks
                         ],
@@ -7823,7 +9345,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                                 {
                                     **task,
                                     "ref_nm": np.asarray(
-                                        compaction_states["compressed_refs_nm"],
+                                        target_single_cgl_state_refs["compressed_refs_nm"],
                                         dtype=np.float64,
                                     ),
                                 }
@@ -7854,8 +9376,12 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                     else None
                 )
                 for ti in range(n_types):
+                    base_interaction_param = np.asarray(
+                        target_grp["interaction_param"][0, ti, :],
+                        dtype=np.float64,
+                    )
                     delta = _build_single_cgl_state_delta_radial_angular(
-                        base_energy_grid_kj_mol=base_target_results[ti],
+                        base_energy_grid_kj_mol=np.zeros_like(extended_target_results[ti]),
                         extended_energy_grid_kj_mol=extended_target_results[ti],
                         compact_energy_grid_kj_mol=compact_target_results[ti],
                         compressed_energy_grid_kj_mol=(
@@ -7870,6 +9396,7 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                         n_knot_radial=n_knot_radial,
                         n_knot_angular=n_knot_angular,
                         knot_spacing_ang=knot_spacing_ang,
+                        base_interaction_param=base_interaction_param,
                     )
                     target_delta_extended[0, ti, :] = np.asarray(
                         delta["delta_extended"],
@@ -7901,14 +9428,22 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
                     "delta_compact": target_delta_compact,
                     "grid_extended_kj_mol": target_grid_extended,
                     "grid_compact_kj_mol": target_grid_compact,
+                    "single_cgl_state_reference_dataset": target_single_cgl_reference_dataset,
+                    "single_cgl_state_reference_count": int(
+                        target_single_cgl_state_refs["extended_refs_nm"].shape[0]
+                    ),
                 }
                 if target_delta_compressed is not None and target_grid_compressed is not None:
                     corrections["cg_lipid_target"]["delta_compressed"] = target_delta_compressed
                     corrections["cg_lipid_target"]["grid_compressed_kj_mol"] = target_grid_compressed
+                    corrections["cg_lipid_target"]["compressed_state_reference_source"] = (
+                        _SINGLE_CGL_COMPRESSED_REFERENCE_SOURCE
+                    )
 
     print(
         "  Single-CGL compaction retrofit: "
-        f"ref={ref_dataset}, pair={'delta_compact_compact' in corrections['cg_lipid_compaction']}, "
+        f"ref={single_cgl_reference_dataset}, "
+        f"pair_runtime={corrections['cg_lipid_compaction'].get('pair_runtime_compaction_overlay', 'legacy')}, "
         f"SC={'cg_lipid_sc' in corrections}, "
         f"target={'cg_lipid_target' in corrections}, "
         f"state source={compaction_state_source_used}, "
@@ -7923,6 +9458,59 @@ def _build_single_cgl_compaction_corrections_from_base_h5(
 
 
 def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, corrections: dict) -> None:
+    if corrections.get("strip_cg_lipid_target_compaction", False) and "cg_lipid_target" in cg_grp:
+        target_grp = cg_grp["cg_lipid_target"]
+        for dataset_name in (
+            "delta_extended",
+            "delta_compact",
+            "delta_compressed",
+            "grid_extended_kj_mol",
+            "grid_compact_kj_mol",
+            "grid_compressed_kj_mol",
+        ):
+            if dataset_name in target_grp:
+                del target_grp[dataset_name]
+        for attr_name in (
+            "compact_state_center_ang",
+            "extended_state_center_ang",
+            "compressed_state_center_ang",
+            "compact_state_probability",
+            "compaction_coordinate",
+            "compaction_coordinate_source",
+            "compaction_state_source",
+            "correction_layer",
+            "reference_compact_center_ang",
+            "reference_extended_center_ang",
+            "reference_compressed_center_ang",
+            "single_cgl_endpoint_delta_source",
+            "single_cgl_state_reference_count",
+            "single_cgl_state_reference_dataset",
+            "single_cgl_state_reference_mode",
+            "compressed_state_reference_source",
+            "single_cgl_relaxation_source",
+            "single_cgl_relaxation_max_compaction_nm",
+            "single_cgl_relaxation_compact_max_compaction_nm",
+            "single_cgl_relaxation_compressed_max_compaction_nm",
+            "single_cgl_relaxation_contact_energy_source",
+            "single_cgl_relaxation_energy_floor_kj_mol",
+            "single_cgl_relaxation_target_types",
+            "single_cgl_relaxation_radial_sample_count",
+            "single_cgl_relaxation_angular_sample_count",
+        ):
+            if attr_name in target_grp.attrs:
+                del target_grp.attrs[attr_name]
+
+    for dataset_name, values in corrections.get("reference_datasets", {}).items():
+        dataset_name = str(dataset_name)
+        if not dataset_name:
+            continue
+        if dataset_name in cg_grp:
+            del cg_grp[dataset_name]
+        cg_grp.create_dataset(
+            dataset_name,
+            data=np.asarray(values, dtype=np.float32),
+        )
+
     if "cg_lipid_compaction" in cg_grp and "cg_lipid_compaction" in corrections:
         comp_grp = cg_grp["cg_lipid_compaction"]
         payload = corrections["cg_lipid_compaction"]
@@ -7930,6 +9518,8 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             "self_coeff",
             "pmf_centers_ang",
             "pmf_values_kj_mol",
+            "pmf_raw_counts",
+            "pmf_smoothed_counts",
         ):
             if dataset_name in comp_grp:
                 del comp_grp[dataset_name]
@@ -7949,13 +9539,70 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             "grid_average_kj_mol",
             "face_mask",
         )
-        if any(dataset_name in payload for dataset_name in pair_payload_names):
-            for dataset_name in pair_payload_names:
+        disable_pair_runtime_overlay = (
+            str(payload.get("pair_runtime_compaction_overlay", ""))
+            == _CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED
+        )
+        if disable_pair_runtime_overlay or any(dataset_name in payload for dataset_name in pair_payload_names):
+            stale_gap_payload_names = (
+                "gap_response_coeff",
+                "gap_hist_centers",
+                "target_gap",
+                "model_gap",
+                "target_counts",
+                "model_counts",
+                "compact_probability_hist",
+                "response_hist",
+                "target_compaction_ang",
+                "target_compaction_coordinate",
+                "target_compact_probability",
+                "model_compaction_ang",
+                "model_compaction_coordinate",
+            )
+            for dataset_name in pair_payload_names + stale_gap_payload_names:
                 if dataset_name in comp_grp:
                     del comp_grp[dataset_name]
+            stale_gap_attrs = (
+                "gap_response_coord_max_ang",
+                "gap_response_coord_min_ang",
+                "gap_response_coord_spacing_ang",
+                "gap_response_face_cos_min",
+                "gap_response_fallback_ang",
+                "gap_response_is_compaction_coordinate",
+                "gap_response_n_knot",
+                "gap_response_quantity",
+                "gap_response_radial_cutoff_ang",
+                "gap_response_smooth_weight",
+                "implicit_response_mode",
+                "model_frame_count",
+                "model_frame_start_fraction",
+                "model_sample_count",
+                "model_upside_h5_path",
+                "prior_mean_probability",
+                "pseudocount",
+                "smooth",
+                "target_compaction_reference_h5_path",
+                "target_frame_count",
+                "target_frame_start_fraction",
+                "target_sample_count",
+                "target_upside_h5_path",
+                "face_cos_min",
+                "radial_cutoff_nm",
+                "mask_mode",
+                "face_mask_convention",
+                "correction_center_mode",
+                "pair_state_model",
+            )
+            for attr_name in stale_gap_attrs:
+                if attr_name in comp_grp.attrs:
+                    del comp_grp.attrs[attr_name]
         comp_grp.attrs["compact_state_center_ang"] = np.float32(corrections["compact_state_center_ang"])
         comp_grp.attrs["extended_state_center_ang"] = np.float32(corrections["extended_state_center_ang"])
         comp_grp.attrs["compact_state_probability"] = np.float32(corrections["compact_state_probability"])
+        comp_grp.attrs["compaction_coordinate"] = str(corrections["compaction_coordinate"])
+        comp_grp.attrs["compaction_coordinate_source"] = str(
+            corrections["compaction_coordinate_source"]
+        )
         comp_grp.attrs["reference_compact_center_ang"] = np.float32(
             corrections["reference_compact_center_ang"]
         )
@@ -7974,10 +9621,14 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
         comp_grp.attrs["self_coord_max_ang"] = np.float32(payload["coord_max_ang"])
         comp_grp.attrs["self_coord_spacing_ang"] = np.float32(payload["coord_spacing_ang"])
         comp_grp.attrs["self_n_knot"] = np.int32(payload["n_knot"])
+        comp_grp.attrs["boltzmann_temperature_upside"] = np.float32(
+            DEFAULT_PRODUCTION_TEMP_UPSIDE
+        )
         comp_grp.attrs["effective_stiffness_eup_a2"] = np.float32(
             payload["effective_stiffness_eup_a2"]
         )
         comp_grp.attrs["mass_up"] = np.float32(payload["mass_up"])
+        _write_compaction_self_pmf_metadata(comp_grp, payload)
         if "correction_center_mode" in payload:
             comp_grp.attrs["correction_center_mode"] = str(payload["correction_center_mode"])
         if "pair_state_model" in payload:
@@ -7998,10 +9649,22 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             comp_grp.attrs["pair_compaction_state_source"] = np.bytes_(
                 str(payload["pair_compaction_state_source"])
             )
+        for attr_name in (
+            "source",
+            "runtime_representation",
+            "correction_layer",
+            "pair_relaxation_correction_source",
+            "pair_runtime_compaction_overlay",
+        ):
+            if attr_name in payload:
+                comp_grp.attrs[attr_name] = str(payload[attr_name])
         if "face_cos_min" in payload:
             comp_grp.attrs["face_cos_min"] = np.float32(payload["face_cos_min"])
             comp_grp.attrs["radial_cutoff_nm"] = np.float32(payload["radial_cutoff_nm"])
             comp_grp.attrs["mask_mode"] = str(payload["mask_mode"])
+            comp_grp.attrs["face_mask_convention"] = str(
+                payload.get("face_mask_convention", "negative_tail_face")
+            )
         if "compaction_state_source" in corrections:
             comp_grp.attrs["compaction_state_source"] = np.bytes_(str(corrections["compaction_state_source"]))
         if "compaction_reference_dataset" in corrections:
@@ -8021,6 +9684,16 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             "pmf_values_kj_mol",
             data=np.asarray(payload["pmf_values_kj_mol"], dtype=np.float32),
         )
+        if "pmf_raw_counts" in payload:
+            comp_grp.create_dataset(
+                "pmf_raw_counts",
+                data=np.asarray(payload["pmf_raw_counts"], dtype=np.float32),
+            )
+        if "pmf_smoothed_counts" in payload:
+            comp_grp.create_dataset(
+                "pmf_smoothed_counts",
+                data=np.asarray(payload["pmf_smoothed_counts"], dtype=np.float32),
+            )
         for dataset_name in (
             "delta_extended_extended",
             "delta_extended_compact",
@@ -8065,6 +9738,10 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
         grp.attrs["compact_state_center_ang"] = np.float32(corrections["compact_state_center_ang"])
         grp.attrs["extended_state_center_ang"] = np.float32(corrections["extended_state_center_ang"])
         grp.attrs["compact_state_probability"] = np.float32(corrections["compact_state_probability"])
+        grp.attrs["compaction_coordinate"] = str(corrections["compaction_coordinate"])
+        grp.attrs["compaction_coordinate_source"] = str(
+            corrections["compaction_coordinate_source"]
+        )
         grp.attrs["reference_compact_center_ang"] = np.float32(
             corrections["reference_compact_center_ang"]
         )
@@ -8081,7 +9758,61 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             )
         if "compaction_state_source" in corrections:
             grp.attrs["compaction_state_source"] = np.bytes_(str(corrections["compaction_state_source"]))
+        if "single_cgl_state_reference_mode" in corrections:
+            grp.attrs["single_cgl_state_reference_mode"] = np.bytes_(
+                str(corrections["single_cgl_state_reference_mode"])
+            )
+        grp.attrs["single_cgl_endpoint_delta_source"] = np.bytes_(
+            _SINGLE_CGL_ENDPOINT_DELTA_SOURCE
+        )
         payload = corrections[group_name]
+        if "single_cgl_state_reference_dataset" in payload:
+            grp.attrs["reference_dataset_name"] = np.bytes_(
+                str(payload["single_cgl_state_reference_dataset"])
+            )
+            grp.attrs["single_cgl_state_reference_dataset"] = np.bytes_(
+                str(payload["single_cgl_state_reference_dataset"])
+            )
+        if "single_cgl_state_reference_count" in payload:
+            grp.attrs["single_cgl_state_reference_count"] = np.int32(
+                int(payload["single_cgl_state_reference_count"])
+            )
+        if "compressed_state_reference_source" in payload:
+            grp.attrs["compressed_state_reference_source"] = str(
+                payload["compressed_state_reference_source"]
+            )
+        if "single_cgl_relaxation_source" in payload:
+            grp.attrs["single_cgl_relaxation_source"] = str(
+                payload["single_cgl_relaxation_source"]
+            )
+        if "single_cgl_relaxation_max_compaction_nm" in payload:
+            grp.attrs["single_cgl_relaxation_max_compaction_nm"] = np.float32(
+                payload["single_cgl_relaxation_max_compaction_nm"]
+            )
+        for attr_name in (
+            "single_cgl_relaxation_compact_max_compaction_nm",
+            "single_cgl_relaxation_compressed_max_compaction_nm",
+        ):
+            if attr_name in payload:
+                grp.attrs[attr_name] = np.float32(payload[attr_name])
+        if "single_cgl_relaxation_contact_energy_source" in payload:
+            grp.attrs["single_cgl_relaxation_contact_energy_source"] = str(
+                payload["single_cgl_relaxation_contact_energy_source"]
+            )
+        if "single_cgl_relaxation_energy_floor_kj_mol" in payload:
+            grp.attrs["single_cgl_relaxation_energy_floor_kj_mol"] = np.float32(
+                payload["single_cgl_relaxation_energy_floor_kj_mol"]
+            )
+        if "single_cgl_relaxation_target_types" in payload:
+            grp.attrs["single_cgl_relaxation_target_types"] = np.bytes_(
+                str(payload["single_cgl_relaxation_target_types"])
+            )
+        for attr_name in (
+            "single_cgl_relaxation_radial_sample_count",
+            "single_cgl_relaxation_angular_sample_count",
+        ):
+            if attr_name in payload:
+                grp.attrs[attr_name] = np.int32(int(payload[attr_name]))
         grp.create_dataset("delta_extended", data=np.asarray(payload["delta_extended"], dtype=np.float32))
         grp.create_dataset("delta_compact", data=np.asarray(payload["delta_compact"], dtype=np.float32))
         if "delta_compressed" in payload:
@@ -8102,6 +9833,489 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
                 "grid_compressed_kj_mol",
                 data=np.asarray(payload["grid_compressed_kj_mol"], dtype=np.float32),
             )
+
+
+def rebuild_cg_lipid_sc_bead_table_in_h5(
+    base_h5_path: Path,
+    output_path: Path,
+    dry_ff_path: Path | None = None,
+    lipids_itp_path: Path | None = None,
+    martinize_path: Path | None = None,
+    sidechain_lib_path: Path | None = None,
+    forcefield_name: str = "martini22",
+    active_residue_names: list | None = None,
+    reference_dataset_name: str | None = None,
+) -> None:
+    """Replace only cg_lipid_sc with placement-bead SC-CGL tables."""
+    defaults = _default_dry_martini_repo_paths()
+    base_h5_path = Path(base_h5_path).expanduser().resolve()
+    output_path = Path(output_path).expanduser().resolve()
+    dry_ff_path = Path(dry_ff_path or defaults["dry_ff_path"]).expanduser().resolve()
+    lipids_itp_path = Path(lipids_itp_path or defaults["lipids_itp_path"]).expanduser().resolve()
+    martinize_path = Path(martinize_path or defaults["martinize_path"]).expanduser().resolve()
+    sidechain_lib_path = Path(sidechain_lib_path or defaults["sidechain_lib_path"]).expanduser().resolve()
+
+    from martini_itp_reader import parse_dopc_from_itp
+
+    _ensure_cg_bonds_angles(lipids_itp_path)
+    _atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
+    atomtype_masses = parse_itp_atomtype_masses(dry_ff_path)
+    dopc = parse_dopc_from_itp(lipids_itp_path)
+    bead_types = list(dopc["bead_types"])
+    bead_charges = [float(q) for q in dopc["bead_charges"]]
+    bead_mass_values = [atomtype_masses[bt] for bt in bead_types]
+    residue_map = load_martini_forcefield(martinize_path, forcefield_name)
+    orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
+    active_residue_names = list(active_residue_names or CANONICAL_RESIDUES)
+
+    with h5py.File(base_h5_path, "r") as h5:
+        if "cg_lipid_table" not in h5:
+            raise RuntimeError(f"{base_h5_path} lacks cg_lipid_table")
+        cg_grp = h5["cg_lipid_table"]
+        old_sc_grp = cg_grp.get("cg_lipid_sc")
+        requested_ref = str(reference_dataset_name or "").strip()
+        if requested_ref:
+            if requested_ref not in cg_grp:
+                raise RuntimeError(f"{base_h5_path} lacks {requested_ref}")
+            sc_ref_dataset = requested_ref
+        elif old_sc_grp is not None:
+            old_ref = _decode_h5_scalar_attr(old_sc_grp.attrs.get("reference_dataset_name", ""))
+            if old_ref and old_ref in cg_grp:
+                sc_ref_dataset = old_ref
+            elif "sc_interface_ref_bead_positions_nm" in cg_grp:
+                sc_ref_dataset = "sc_interface_ref_bead_positions_nm"
+            else:
+                sc_ref_dataset = _select_cgl_compaction_reference_dataset_name(cg_grp)
+        elif "sc_interface_ref_bead_positions_nm" in cg_grp:
+            sc_ref_dataset = "sc_interface_ref_bead_positions_nm"
+        else:
+            sc_ref_dataset = _select_cgl_compaction_reference_dataset_name(cg_grp)
+
+        ref_ensemble_nm = np.asarray(cg_grp[sc_ref_dataset][:], dtype=np.float64)
+        if ref_ensemble_nm.shape == (14, 3):
+            ref_ensemble_nm = ref_ensemble_nm[None, :, :]
+        ref_ensemble_nm = _canonicalize_lipid_reference_ensemble_to_z(ref_ensemble_nm)
+        if old_sc_grp is not None:
+            r_min_nm = float(old_sc_grp.attrs.get("fit_r_min_nm", 0.30))
+            r_max_nm = float(old_sc_grp.attrs.get("fit_r_max_nm", 2.80))
+            sc_n_radial = int(old_sc_grp.attrs.get("n_radial", 25))
+            sc_n_angular = int(old_sc_grp.attrs.get("n_angular", 11))
+            sc_azimuthal_count = int(old_sc_grp.attrs.get("azimuthal_count", 4))
+            cg_bead_frame_count = int(old_sc_grp.attrs.get("cgl_bead_frame_count", 8))
+            sc_angular_smooth = float(old_sc_grp.attrs.get("angular_smooth", 0.1))
+            sc_knot_spacing_ang = float(old_sc_grp.attrs.get("knot_spacing_ang", 1.4))
+            sc_cutoff_ang = float(old_sc_grp.attrs.get("cutoff_ang", r_max_nm * 10.0 + sc_knot_spacing_ang))
+        else:
+            sc_knot_spacing_ang = 1.4
+            r_min_nm = 0.30
+            r_max_nm, sc_n_radial = _cg_lipid_target_radial_support(ref_ensemble_nm, sc_knot_spacing_ang)
+            sc_n_angular = 11
+            sc_azimuthal_count = 4
+            cg_bead_frame_count = _bead_frame_count("CGL", 8)
+            sc_angular_smooth = 0.1
+            sc_cutoff_ang = r_max_nm * 10.0 + sc_knot_spacing_ang
+
+        compaction_states = None
+        compaction_attrs = {}
+        if "cg_lipid_compaction" in cg_grp:
+            comp_grp = cg_grp["cg_lipid_compaction"]
+            comp_ref_dataset = _decode_h5_scalar_attr(
+                comp_grp.attrs.get("compaction_reference_dataset", "")
+            )
+            if not comp_ref_dataset or comp_ref_dataset not in cg_grp:
+                comp_ref_dataset = _select_cgl_compaction_reference_dataset_name(cg_grp)
+            comp_ref_ensemble_nm = np.asarray(cg_grp[comp_ref_dataset][:], dtype=np.float64)
+            stored_coordinate = _decode_h5_scalar_attr(
+                comp_grp.attrs.get("compaction_coordinate", "")
+            ).strip()
+            compact_ref_ang = float(
+                comp_grp.attrs.get(
+                    "reference_compact_center_ang",
+                    comp_grp.attrs.get("compact_state_center_ang", np.nan),
+                )
+            )
+            extended_ref_ang = float(
+                comp_grp.attrs.get(
+                    "reference_extended_center_ang",
+                    comp_grp.attrs.get("extended_state_center_ang", np.nan),
+                )
+            )
+            if compact_ref_ang <= extended_ref_ang:
+                compact_ref_ang, extended_ref_ang = extended_ref_ang, compact_ref_ang
+            representative_count = _positive_int_env(
+                "UPSIDE_CGL_COMPACTION_STATE_REPRESENTATIVES", 2
+            )
+            if stored_coordinate == "tail_compression":
+                compaction_states = _select_compaction_state_representatives_by_center(
+                    comp_ref_ensemble_nm,
+                    compact_center_ang=compact_ref_ang,
+                    extended_center_ang=extended_ref_ang,
+                    representative_count=representative_count,
+                    compact_probability=float(comp_grp.attrs.get("compact_state_probability", 0.5)),
+                )
+            else:
+                compaction_states = _reference_compaction_state_metadata_from_ensemble(
+                    comp_ref_ensemble_nm,
+                    representative_count=representative_count,
+                )
+                compact_ref_ang = float(compaction_states["compact_center_ang"])
+                extended_ref_ang = float(compaction_states["extended_center_ang"])
+            supplemental_refs = []
+            comp_source = _decode_h5_scalar_attr(
+                comp_grp.attrs.get("compaction_state_source", "")
+            ).strip()
+            if not (
+                comp_ref_dataset.startswith("isolated_dopc")
+                or comp_source.startswith("isolated_dopc")
+            ):
+                for dataset in ("sc_interface_ref_bead_positions_nm", "ref_bead_positions_nm"):
+                    if dataset != comp_ref_dataset and dataset in cg_grp:
+                        supplemental_refs.append(np.asarray(cg_grp[dataset][:], dtype=np.float64))
+            supplemental_refs_nm = (
+                np.concatenate(supplemental_refs, axis=0)
+                if supplemental_refs
+                else None
+            )
+            compaction_states = _augment_compaction_states_with_compressed_branch(
+                comp_ref_ensemble_nm,
+                compaction_states,
+                representative_count=representative_count,
+                supplemental_refs_nm=supplemental_refs_nm,
+                sample_compaction_ang=None,
+            )
+            ref_compressed = comp_grp.attrs.get("reference_compressed_center_ang", None)
+            if "compressed_refs_nm" not in compaction_states and ref_compressed is not None:
+                ref_compressed = float(ref_compressed)
+                if np.isfinite(ref_compressed) and ref_compressed > compact_ref_ang + 1.0e-6:
+                    compact_refs = np.asarray(
+                        compaction_states["compact_refs_nm"],
+                        dtype=np.float64,
+                    )
+                    count = max(1, min(int(representative_count), compact_refs.shape[0]))
+                    compaction_states = dict(compaction_states)
+                    compaction_states["compressed_refs_nm"] = np.asarray(
+                        [
+                            _retarget_lipid_reference_tail_extension_ang(
+                                ref,
+                                _tail_extension_from_compression_coordinate_ang(ref_compressed),
+                            )
+                            for ref in compact_refs[:count]
+                        ],
+                        dtype=np.float64,
+                    )
+                    compaction_states["compressed_center_ang"] = ref_compressed
+                    compaction_states["compressed_pool_size"] = int(count)
+                    compaction_states["compressed_selected_compaction_ang"] = np.asarray(
+                        [ref_compressed] * count,
+                        dtype=np.float64,
+                    )
+                    compaction_states["compressed_center_source"] = (
+                        _SINGLE_CGL_COMPRESSED_REFERENCE_SOURCE
+                    )
+            compaction_attrs = {
+                "compact_state_center_ang": float(comp_grp.attrs.get("compact_state_center_ang", 1.0)),
+                "extended_state_center_ang": float(comp_grp.attrs.get("extended_state_center_ang", 0.0)),
+                "compact_state_probability": float(comp_grp.attrs.get("compact_state_probability", 0.5)),
+                "reference_compact_center_ang": compact_ref_ang,
+                "reference_extended_center_ang": extended_ref_ang,
+                "compaction_coordinate": "tail_compression",
+                "compaction_coordinate_source": "negative_dopc_head_to_tail_extension",
+                "compaction_state_source": _decode_h5_scalar_attr(
+                    comp_grp.attrs.get("compaction_state_source", "")
+                ),
+            }
+            if "compressed_refs_nm" in compaction_states:
+                compaction_attrs["reference_compressed_center_ang"] = float(
+                    compaction_states["compressed_center_ang"]
+                )
+                ref_compressed = comp_grp.attrs.get("reference_compressed_center_ang", None)
+                if ref_compressed is not None:
+                    compaction_attrs["reference_compressed_center_ang"] = float(ref_compressed)
+                compressed_coord = comp_grp.attrs.get("compressed_state_center_ang", None)
+                if compressed_coord is not None:
+                    compaction_attrs["compressed_state_center_ang"] = float(compressed_coord)
+
+    sc_cos_theta_count = max(int(sc_n_angular) - 2, 1)
+    sc_n_modes = 0
+    sc_n_param = int(sc_n_radial) * int(sc_n_angular) * int(sc_n_angular)
+    residues = [
+        r for r in active_residue_names
+        if r in residue_map and residue_map[r] and r in orientation_map
+    ]
+    sc_type_names = []
+    sc_type_martini_types = []
+    seen_sc_beads = set()
+    for residue in residues:
+        for bead_idx, martini_type in enumerate(residue_map[residue]):
+            bead_name = f"{residue}_{bead_idx}"
+            if bead_name in seen_sc_beads:
+                continue
+            seen_sc_beads.add(bead_name)
+            sc_type_names.append(bead_name)
+            sc_type_martini_types.append(str(martini_type))
+    n_sc_types = len(sc_type_names)
+    interaction_param_sc = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float64)
+    sc_rms_error = np.zeros(n_sc_types, dtype=np.float32)
+    sc_short_range_core = np.zeros(n_sc_types, dtype=np.float32)
+    sc_short_range_core_rows = np.zeros(n_sc_types, dtype=np.int32)
+    sc_reference_energy = np.zeros(n_sc_types, dtype=np.float32)
+    first_sc_result = None
+
+    def make_sc_tasks(refs_nm: np.ndarray) -> list[dict]:
+        return [
+            {
+                "ti": ti,
+                "bead_name": bead_name,
+                "ref_bead_positions_nm": np.asarray(refs_nm, dtype=np.float64),
+                "cg_bead_types": list(bead_types),
+                "cg_bead_charges": list(bead_charges),
+                "sc_bead_type": str(martini_type),
+                "pair_params": pair_params,
+                "r_min_nm": r_min_nm,
+                "r_max_nm": r_max_nm,
+                "r_count": int(sc_n_radial),
+                "cos_theta_count": int(sc_cos_theta_count),
+                "azimuthal_count": int(sc_azimuthal_count),
+                "cg_bead_frame_count": int(cg_bead_frame_count),
+                "n_knot_radial": int(sc_n_radial),
+                "n_knot_angular": int(sc_n_angular),
+                "angular_smooth": float(sc_angular_smooth),
+                "knot_spacing_ang": float(sc_knot_spacing_ang),
+                "temperature": DEFAULT_PRODUCTION_TEMP_UPSIDE,
+                "average_temperature": DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
+            }
+            for ti, (bead_name, martini_type) in enumerate(
+                zip(sc_type_names, sc_type_martini_types)
+            )
+        ]
+
+    base_sc_results = {}
+    if n_sc_types:
+        for ti, bead_name, result_sc in _parallel_map_ordered(
+            "CG-SC bead table",
+            _fit_cg_lipid_sc_point_quadspline_from_dict,
+            make_sc_tasks(ref_ensemble_nm),
+        ):
+            if first_sc_result is None:
+                first_sc_result = result_sc
+            interaction_param_sc[ti, 0, :] = result_sc["interaction_param"]
+            sc_rms_error[ti] = np.float32(result_sc["rms_error"])
+            sc_short_range_core[ti] = np.float32(result_sc["short_range_core_kj_mol"])
+            sc_short_range_core_rows[ti] = np.int32(result_sc["short_range_core_rows"])
+            sc_reference_energy[ti] = np.float32(result_sc.get("reference_energy_eup", 0.0))
+            sc_cutoff_ang = min(sc_cutoff_ang, float(result_sc["cutoff_ang"]))
+            base_sc_results[ti] = result_sc
+            print(
+                f"  CG-SC({bead_name}/{sc_type_martini_types[ti]}): "
+                f"RMS error = {result_sc['rms_error']:.4f} kJ/mol"
+            )
+
+    derived_params = _derive_dopc_cg_params_from_reference_ensemble(
+        ref_ensemble_nm,
+        bead_types=bead_types,
+        pair_params=pair_params,
+        bead_masses_g_mol=bead_mass_values,
+        bonds=_CURRENT_CG_BONDS,
+    )
+
+    def _writer(h5: h5py.File) -> None:
+        with h5py.File(base_h5_path, "r") as src:
+            for key, value in src.attrs.items():
+                h5.attrs[key] = value
+            for key in src.keys():
+                src.copy(key, h5)
+        cg_grp = h5["cg_lipid_table"]
+        if "cg_lipid_sc" in cg_grp:
+            del cg_grp["cg_lipid_sc"]
+        cg_sc_grp = cg_grp.create_group("cg_lipid_sc")
+        _write_common_table_contract_attrs(
+            cg_sc_grp,
+            table_family="CGL-SC",
+            source_object="sidechain_rotamer_placement_beads",
+            target_object="dopc_cgl_constituent_bead_ensemble",
+            projection_ensemble="placement_beads_x_cgl_conformers_x_cgl_orientation_x_bead_frames",
+            runtime_representation="log1p_reduced_tensor_bspline",
+            correction_layer=(
+                _SINGLE_CGL_RELAXATION_SOURCE
+                if compaction_attrs and n_sc_types
+                else "none"
+            ),
+        )
+        cg_sc_grp.create_dataset("interaction_param", data=interaction_param_sc.astype(np.float32))
+        cg_sc_grp.create_dataset(
+            "beadtype_order",
+            data=np.asarray([np.bytes_(x) for x in sc_type_names], dtype="S16"),
+        )
+        cg_sc_grp.create_dataset(
+            "bead_martini_type_order",
+            data=np.asarray([np.bytes_(x) for x in sc_type_martini_types], dtype="S8"),
+        )
+        cg_sc_grp.create_dataset(
+            "reference_energy_eup",
+            data=sc_reference_energy[:, None].astype(np.float32),
+        )
+        cg_sc_grp.create_dataset("rms_error_kj_mol", data=sc_rms_error)
+        cg_sc_grp.create_dataset("short_range_core_kj_mol", data=sc_short_range_core)
+        cg_sc_grp.create_dataset("short_range_core_rows", data=sc_short_range_core_rows)
+        cg_sc_grp.attrs["n_sc_types"] = np.int32(n_sc_types)
+        cg_sc_grp.attrs["n_cg_types"] = np.int32(1)
+        cg_sc_grp.attrs["schema"] = "cg_lipid_sc_full_tensor"
+        cg_sc_grp.attrs["table_granularity"] = "placement_bead"
+        cg_sc_grp.attrs["normalize_by_row_group"] = np.int32(0)
+        cg_sc_grp.attrs["radial_mode"] = "full_tensor"
+        cg_sc_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
+        cg_sc_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
+        cg_sc_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
+        cg_sc_grp.attrs["radial_support_source"] = "max_dopc_bead_radius_plus_dry_martini_cutoff"
+        cg_sc_grp.attrs["sample_dist_min_nm"] = np.float32(NUMERICAL_DISTANCE_GUARD_NM)
+        cg_sc_grp.attrs["sample_dist_min_source"] = "numerical_zero_guard_only"
+        cg_sc_grp.attrs["fit_r_min_nm"] = np.float32(r_min_nm)
+        cg_sc_grp.attrs["fit_r_max_nm"] = np.float32(r_max_nm)
+        cg_sc_grp.attrs["n_modes"] = np.int32(sc_n_modes)
+        cg_sc_grp.attrs["n_radial"] = np.int32(sc_n_radial)
+        cg_sc_grp.attrs["n_angular"] = np.int32(sc_n_angular)
+        cg_sc_grp.attrs["angular_smooth"] = np.float32(sc_angular_smooth if n_sc_types else 0.0)
+        cg_sc_grp.attrs["azimuthal_count"] = np.int32(sc_azimuthal_count if n_sc_types else 0)
+        cg_sc_grp.attrs["sidechain_bead_frame_count"] = np.int32(0)
+        cg_sc_grp.attrs["cgl_bead_frame_count"] = np.int32(cg_bead_frame_count if n_sc_types else 0)
+        cg_sc_grp.attrs["conformer_count"] = np.int32(ref_ensemble_nm.shape[0])
+        cg_sc_grp.attrs["reference_conformer_count"] = np.int32(ref_ensemble_nm.shape[0])
+        cg_sc_grp.attrs["reference_dataset_name"] = sc_ref_dataset
+        cg_sc_grp.attrs["single_cgl_state_reference_dataset"] = sc_ref_dataset
+        cg_sc_grp.attrs["single_cgl_state_reference_count"] = np.int32(ref_ensemble_nm.shape[0])
+        cg_sc_grp.attrs["single_cgl_state_reference_mode"] = np.bytes_(
+            _SINGLE_CGL_STATE_REFERENCE_MODE
+        )
+        cg_sc_grp.attrs["reference_source"] = "existing_dopc_h5_sc_reference_ensemble"
+        cg_sc_grp.attrs["orientation_sampling"] = "placement_bead_position_and_cgl_direction_vector"
+        cg_sc_grp.attrs["knot_spacing_ang"] = np.float32(sc_knot_spacing_ang)
+        cg_sc_grp.attrs["cutoff_ang"] = np.float32(sc_cutoff_ang)
+        cg_sc_grp.attrs["taper_width_ang"] = np.float32(sc_knot_spacing_ang)
+        cg_sc_grp.attrs["azimuthal_average"] = (
+            first_sc_result["azimuthal_average"] if first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["azimuthal_average_temperature_upside"] = np.float32(
+            first_sc_result["azimuthal_average_temperature_upside"]
+            if first_sc_result is not None
+            else 0.0
+        )
+        cg_sc_grp.attrs["energy_transform"] = (
+            first_sc_result["energy_transform"] if first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["spline_control_quantity"] = (
+            first_sc_result["spline_control_quantity"] if first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["log1p_reduced_transform"] = np.int32(1)
+        cg_sc_grp.attrs["boltzmann_temperature_upside"] = np.float32(DEFAULT_PRODUCTION_TEMP_UPSIDE)
+        cg_sc_grp.attrs["short_range_core_source"] = (
+            first_sc_result["short_range_core_source"] if first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["excluded_area_source"] = (
+            str(first_sc_result["excluded_area_source"]) if first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["isotropic_background_source"] = (
+            str(first_sc_result["isotropic_background_source"]) if first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["attractive_control_source"] = (
+            str(first_sc_result["attractive_control_source"]) if first_sc_result is not None else ""
+        )
+        cg_sc_grp.attrs["excluded_area_nonnegative_rows"] = np.int32(
+            int(first_sc_result["excluded_area_nonnegative_rows"])
+            if first_sc_result is not None
+            else 0
+        )
+        if compaction_attrs:
+            for attr_name, value in compaction_attrs.items():
+                if attr_name == "compaction_state_source":
+                    cg_sc_grp.attrs[attr_name] = np.bytes_(str(value))
+                elif isinstance(value, (str, bytes, np.bytes_)):
+                    cg_sc_grp.attrs[attr_name] = _decode_h5_scalar_attr(value)
+                else:
+                    cg_sc_grp.attrs[attr_name] = np.float32(value)
+        if compaction_attrs and n_sc_types:
+            compressed_state_coord = None
+            if "compressed_state_center_ang" in compaction_attrs:
+                compressed_state_coord = float(
+                    compaction_attrs["compressed_state_center_ang"]
+                )
+            sc_compaction_payload = _build_sc_bead_tail_relaxation_compaction_payload(
+                sc_grp=cg_sc_grp,
+                ref_bead_positions_nm=ref_ensemble_nm,
+                dopc=dopc,
+                pair_params=pair_params,
+                lipids_itp_path=lipids_itp_path,
+                compressed_state_coord=compressed_state_coord,
+                extended_center_ang=compaction_attrs.get("reference_extended_center_ang"),
+                compact_center_ang=compaction_attrs.get("reference_compact_center_ang"),
+                compressed_center_ang=compaction_attrs.get("reference_compressed_center_ang"),
+            )
+            cg_sc_grp.attrs["single_cgl_endpoint_delta_source"] = np.bytes_(
+                _SINGLE_CGL_ENDPOINT_DELTA_SOURCE
+            )
+            cg_sc_grp.attrs["single_cgl_relaxation_source"] = str(
+                sc_compaction_payload["single_cgl_relaxation_source"]
+            )
+            cg_sc_grp.attrs["single_cgl_relaxation_max_compaction_nm"] = np.float32(
+                sc_compaction_payload["single_cgl_relaxation_max_compaction_nm"]
+            )
+            for attr_name in (
+                "single_cgl_relaxation_compact_max_compaction_nm",
+                "single_cgl_relaxation_compressed_max_compaction_nm",
+            ):
+                if attr_name in sc_compaction_payload:
+                    cg_sc_grp.attrs[attr_name] = np.float32(
+                        sc_compaction_payload[attr_name]
+                    )
+            cg_sc_grp.attrs["single_cgl_relaxation_contact_energy_source"] = str(
+                sc_compaction_payload["single_cgl_relaxation_contact_energy_source"]
+            )
+            cg_sc_grp.attrs["single_cgl_relaxation_energy_floor_kj_mol"] = np.float32(
+                sc_compaction_payload["single_cgl_relaxation_energy_floor_kj_mol"]
+            )
+            if "compressed_state_reference_source" in sc_compaction_payload:
+                cg_sc_grp.attrs["compressed_state_reference_source"] = (
+                    sc_compaction_payload["compressed_state_reference_source"]
+                )
+            cg_sc_grp.create_dataset(
+                "delta_extended",
+                data=np.asarray(sc_compaction_payload["delta_extended"], dtype=np.float32),
+            )
+            cg_sc_grp.create_dataset(
+                "delta_compact",
+                data=np.asarray(sc_compaction_payload["delta_compact"], dtype=np.float32),
+            )
+            cg_sc_grp.create_dataset(
+                "grid_extended_kj_mol",
+                data=np.asarray(sc_compaction_payload["grid_extended_kj_mol"], dtype=np.float32),
+            )
+            cg_sc_grp.create_dataset(
+                "grid_compact_kj_mol",
+                data=np.asarray(sc_compaction_payload["grid_compact_kj_mol"], dtype=np.float32),
+            )
+            if "delta_compressed" in sc_compaction_payload:
+                cg_sc_grp.create_dataset(
+                    "delta_compressed",
+                    data=np.asarray(sc_compaction_payload["delta_compressed"], dtype=np.float32),
+                )
+            if "grid_compressed_kj_mol" in sc_compaction_payload:
+                cg_sc_grp.create_dataset(
+                    "grid_compressed_kj_mol",
+                    data=np.asarray(sc_compaction_payload["grid_compressed_kj_mol"], dtype=np.float32),
+                )
+        if sc_type_martini_types:
+            sc_bead_types = sorted(set(sc_type_martini_types))
+            cg_sc_grp.create_dataset(
+                "sc_bead_types",
+                data=np.asarray([np.bytes_(x) for x in sc_bead_types], dtype="S8"),
+            )
+        _write_cg_derived_attrs(cg_sc_grp, derived_params)
+        h5.attrs["dopc_interface_preserves_sc"] = np.int32(0)
+
+    _write_h5_atomically(output_path, _writer)
+    print(
+        f"Built {output_path} with bead-level cg_lipid_sc "
+        f"({n_sc_types}x1x{sc_n_param}) from {sc_ref_dataset}"
+    )
 
 
 def _load_cg_lipid_pair_energy_grid_from_h5(
@@ -9414,11 +11628,166 @@ def _fit_cg_lipid_sc_quadspline(
         }
 
 
+def _fit_cg_lipid_sc_point_quadspline(
+    ref_bead_positions_nm: np.ndarray,
+    cg_bead_types: list,
+    cg_bead_charges: list,
+    sc_bead_type: str,
+    pair_params: dict,
+    r_min_nm: float = 0.30,
+    r_max_nm: float = 0.70,
+    r_count: int = 16,
+    cos_theta_count: int = 9,
+    azimuthal_count: int = 4,
+    cg_bead_frame_count: int = 1,
+    n_knot_radial: int = 14,
+    n_knot_angular: int = 15,
+    angular_smooth: float = 0.01,
+    knot_spacing_ang: float = 1.4,
+    temperature: float = 0.0,
+    average_temperature: float | None = None,
+) -> dict:
+    r_values = np.asarray(_linspace(r_min_nm, r_max_nm, r_count), dtype=np.float64)
+    cos_theta_grid = np.asarray(_linspace(-1.0, 1.0, cos_theta_count), dtype=np.float64)
+    if average_temperature is None:
+        average_temperature = temperature
+    average_temperature = float(average_temperature)
+
+    phi_values = np.linspace(0.0, 2.0 * np.pi, azimuthal_count, endpoint=False)
+    cg_bead_frame_angles = _bead_frame_angles(cg_bead_frame_count)
+    ref_nm = _canonicalize_lipid_reference_ensemble_to_z(ref_bead_positions_nm)
+    sc_charge = infer_charge_from_atomtype(sc_bead_type)
+    sc_pos = np.zeros((1, 3), dtype=np.float64)
+    cgl_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    z_axis = np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    cgl_dirs = _directions_with_dot_np(cgl_axis, cos_theta_grid, phi_values)
+
+    print(
+        f"  Sampling CG-SC bead energy for {sc_bead_type}: "
+        f"{r_count} radial x {cos_theta_count} CGL-angular x {azimuthal_count} azimuthal "
+        f"x {len(cg_bead_frame_angles)} CGL bead-frame x {ref_nm.shape[0]} conformers"
+    )
+
+    energy_grid = np.zeros((r_count, cos_theta_count), dtype=np.float64)
+    for ir, r_nm in enumerate(r_values):
+        cg_com = np.array([float(r_nm), 0.0, 0.0], dtype=np.float64)
+        for ia in range(cos_theta_count):
+            sample_energies = []
+            for direction in cgl_dirs[ia]:
+                rot_base = _rotation_to_align_z_np(direction)
+                for frame_angle in cg_bead_frame_angles:
+                    rot = rot_base @ _rotation_about_axis_np(z_axis, float(frame_angle))
+                    for ref_conf in ref_nm:
+                        cg_positions = cg_com[None, :] + (rot @ ref_conf.T).T
+                        energy, _, _ = _compute_pair_energy_and_gradient(
+                            cg_positions,
+                            sc_pos,
+                            cg_bead_types,
+                            [sc_bead_type],
+                            cg_bead_charges,
+                            [sc_charge],
+                            pair_params,
+                            dist_min_nm=NUMERICAL_DISTANCE_GUARD_NM,
+                        )
+                        sample_energies.append(float(energy))
+            energy_grid[ir, ia] = _boltzmann_free_energy_kj_mol(
+                sample_energies,
+                average_temperature,
+            )
+
+    reference_energy_kj_mol = float(np.min(energy_grid))
+    kbt_kj_mol = float(temperature) * ENERGY_CONVERSION_KJ_PER_EUP
+    if kbt_kj_mol <= 0.0:
+        raise RuntimeError("SC-CGL point-bead log1p reduced table requires positive transform temperature")
+    reduced_energy = (energy_grid - reference_energy_kj_mol) / kbt_kj_mol
+    control_grid = np.log1p(np.maximum(reduced_energy, 0.0))
+    radial_angular = _fit_radial_angular_tensor_bspline(
+        r_values,
+        cos_theta_grid,
+        control_grid,
+        n_knot_radial=n_knot_radial,
+        n_knot_angular=n_knot_angular,
+        knot_spacing_ang=knot_spacing_ang,
+        energy_conversion=1.0,
+        smooth=angular_smooth,
+    )
+    control_min = float(np.min(control_grid))
+    control_max = float(np.max(control_grid))
+    radial_angular = np.clip(radial_angular, control_min, control_max)
+    tensor = np.repeat(radial_angular[:, None, :], int(n_knot_angular), axis=1)
+    energy_grid_full = np.repeat(energy_grid[:, None, :], cos_theta_count, axis=1)
+    r_min_ang = float(r_min_nm) * LENGTH_CONVERSION_A_PER_NM
+    n_core = max(0, min(n_knot_radial - 1, int(math.ceil((r_min_ang - 1e-6) / float(knot_spacing_ang)))))
+
+    return {
+        "tensor_knots": tensor,
+        "interaction_param": tensor.reshape(-1),
+        "rms_error": 0.0,
+        "energy_grid_raw": energy_grid_full,
+        "reference_energy_eup": reference_energy_kj_mol / ENERGY_CONVERSION_KJ_PER_EUP,
+        "short_range_core_kj_mol": float(np.max(energy_grid[0])),
+        "short_range_core_rows": int(n_core),
+        "short_range_core_source": "angular_resolved_first_sampled_dry_martini_energy",
+        "excluded_area_source": "none_full_resolved_dry_martini_sc_cgl_table",
+        "excluded_area_nonnegative_rows": 0,
+        "isotropic_background_source": "none_full_resolved_dry_martini_sc_cgl_table",
+        "attractive_control_source": "retained_full_resolved_dry_martini_sc_cgl_table",
+        "r_values_nm": r_values,
+        "cos_theta_grid": cos_theta_grid,
+        "knot_spacing_ang": float(knot_spacing_ang),
+        "cutoff_ang": float((n_knot_radial - 2) * float(knot_spacing_ang)),
+        "taper_width_ang": float(knot_spacing_ang),
+        "n_modes": 0,
+        "n_radial": int(n_knot_radial),
+        "n_angular": int(n_knot_angular),
+        "angular_smooth": float(angular_smooth),
+        "azimuthal_count": int(azimuthal_count),
+        "sidechain_bead_frame_count": 0,
+        "cg_bead_frame_count": int(len(cg_bead_frame_angles)),
+        "conformer_count": int(ref_nm.shape[0]),
+        "azimuthal_average": (
+            "energy_expectation"
+            if average_temperature <= 0.0
+            else (
+                "tempered_boltzmann_free_energy"
+                if abs(average_temperature - float(temperature)) > 1e-8
+                else "boltzmann_free_energy"
+            )
+        ),
+        "azimuthal_average_temperature_upside": float(average_temperature),
+        "energy_transform": (
+            "log1p_reduced_energy_expectation"
+            if average_temperature <= 0.0
+            else (
+                "log1p_reduced_tempered_pmf"
+                if abs(average_temperature - float(temperature)) > 1e-8
+                else "log1p_reduced_pmf"
+            )
+        ),
+        "spline_control_quantity": (
+            "log1p_reduced_energy_expectation"
+            if average_temperature <= 0.0
+            else (
+                "log1p_reduced_tempered_free_energy"
+                if abs(average_temperature - float(temperature)) > 1e-8
+                else "log1p_reduced_free_energy"
+            )
+        ),
+    }
+
+
 def _fit_cg_lipid_sc_quadspline_from_dict(task: dict) -> tuple[int, str, dict]:
     task = dict(task)
     ri = int(task.pop("ri"))
     residue = str(task.pop("residue"))
     return ri, residue, _fit_cg_lipid_sc_quadspline(**task)
+
+
+def _fit_cg_lipid_sc_point_quadspline_from_dict(task: dict) -> tuple[int, str, dict]:
+    task = dict(task)
+    ti = int(task.pop("ti"))
+    bead_name = str(task.pop("bead_name"))
+    return ti, bead_name, _fit_cg_lipid_sc_point_quadspline(**task)
 
 
 def _rotation_to_align_z_np(dir_vec: np.ndarray) -> np.ndarray:
@@ -9744,7 +12113,7 @@ def _build_cg_lipid_tables(
         from martini_itp_reader import parse_dopc_from_itp
 
         compaction_pool_conformers = _positive_int_env(
-            "UPSIDE_CGL_COMPACTION_POOL_CONFORMERS", 32
+            "UPSIDE_CGL_COMPACTION_POOL_CONFORMERS", 256
         )
         compaction_burnin_steps = _positive_int_env(
             "UPSIDE_CGL_COMPACTION_BURNIN_STEPS", 20000
@@ -9769,7 +12138,9 @@ def _build_cg_lipid_tables(
             mc_burnin_steps=compaction_burnin_steps,
             mc_steps_per_conformer=compaction_steps_per_conf,
         )
-        compaction_values_ang = _dopc_tail_extension_series_ang(compaction_refs_nm)
+        compaction_values_ang = _dopc_tail_compression_coordinate_series_ang(
+            compaction_refs_nm
+        )
         compaction_states = _select_compaction_state_representatives(
             compaction_refs_nm,
             compaction_values_ang,
@@ -9892,6 +12263,8 @@ def _build_cg_lipid_tables(
 
         compaction_result = {
             "self": compaction_self,
+            "self_sample_refs_nm": np.asarray(compaction_refs_nm, dtype=np.float64),
+            "self_sample_source": "isolated_dopc_intramolecular_mc_samples",
             "compact_center_ang": float(compaction_states["compact_center_ang"]),
             "extended_center_ang": float(compaction_states["extended_center_ang"]),
             "compact_probability": compact_probability,
@@ -9945,65 +12318,54 @@ def _build_cg_lipid_tables(
         sc_n_param = sc_n_radial * sc_n_angular * sc_n_angular
     else:
         sc_n_param = sc_n_radial + sc_n_modes * (2 * sc_n_angular + sc_n_radial)
-    sc_rms_error = np.zeros(len(residues), dtype=np.float32)
-    sc_short_range_core = np.zeros(len(residues), dtype=np.float32)
-    sc_short_range_core_rows = np.zeros(len(residues), dtype=np.int32)
-    sc_reference_energy = np.zeros(len(residues), dtype=np.float32)
-    sc_compaction_delta_extended = None
-    sc_compaction_delta_compact = None
-    sc_compaction_extended_grid = None
-    sc_compaction_compact_grid = None
     first_sc_result = None
+    sc_type_names = []
+    sc_type_martini_types = []
 
-    if not residues:
+    seen_sc_beads = set()
+    for residue in residues:
+        for bead_idx, martini_type in enumerate(residue_map[residue]):
+            bead_name = f"{residue}_{bead_idx}"
+            if bead_name in seen_sc_beads:
+                continue
+            seen_sc_beads.add(bead_name)
+            sc_type_names.append(bead_name)
+            sc_type_martini_types.append(str(martini_type))
+
+    if not sc_type_names:
         print("  cg_lipid_sc: no active residues with sidechains, skipping")
         n_sc_types = 0
         interaction_param_sc = np.zeros((0, 1, sc_n_param), dtype=np.float64)
-        sc_residue_names = []
+        sc_rms_error = np.zeros(0, dtype=np.float32)
+        sc_short_range_core = np.zeros(0, dtype=np.float32)
+        sc_short_range_core_rows = np.zeros(0, dtype=np.int32)
+        sc_reference_energy = np.zeros(0, dtype=np.float32)
     else:
-        cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
-        cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
-
-        n_sc_types = len(residues)
+        n_sc_types = len(sc_type_names)
         interaction_param_sc = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float64)
-        sc_residue_names = []
+        sc_rms_error = np.zeros(n_sc_types, dtype=np.float32)
+        sc_short_range_core = np.zeros(n_sc_types, dtype=np.float32)
+        sc_short_range_core_rows = np.zeros(n_sc_types, dtype=np.int32)
+        sc_reference_energy = np.zeros(n_sc_types, dtype=np.float32)
         base_sc_results = {}
 
         sc_fit_tasks = []
-        for ri, residue in enumerate(residues):
-            sc_bead_types = residue_map[residue]
-            sc_bead_charges = [infer_charge_from_atomtype(bt) for bt in sc_bead_types]
-            orientation = orientation_map[residue]
-            sc_positions_by_rotamer = _expand_rotamer_sidechain_positions(
-                orientation,
-                residue,
-                np.asarray(martini_sidechain_offsets_nm[residue], dtype=np.float64),
-            )
-
+        for ti, (bead_name, martini_type) in enumerate(zip(sc_type_names, sc_type_martini_types)):
             sc_fit_tasks.append(
                 {
-                    "ri": ri,
-                    "residue": residue,
+                    "ti": ti,
+                    "bead_name": bead_name,
                     "ref_bead_positions_nm": ref_ensemble_nm,
                     "cg_bead_types": list(bead_types),
                     "cg_bead_charges": list(bead_charges),
-                    "target_type": "CGL",
-                    "target_charge": 0.0,
-                    "rotamer_bead_positions_nm": sc_positions_by_rotamer,
-                    "rotamer_weights": orientation["weight"],
-                    "sc_bead_types": list(sc_bead_types),
-                    "sc_bead_charges": list(sc_bead_charges),
+                    "sc_bead_type": str(martini_type),
                     "pair_params": pair_params,
-                    "cb_anchor_nm": cb_anchor_nm,
-                    "cb_vector_unit": cb_vector_unit,
                     "r_min_nm": r_min_nm,
                     "r_max_nm": sc_fit_r_max_nm,
                     "r_count": sc_r_count,
                     "cos_theta_count": sc_cos_theta_count,
                     "azimuthal_count": sc_azimuthal_count,
-                    "sidechain_bead_frame_count": sc_bead_frame_count,
                     "cg_bead_frame_count": cg_bead_frame_count,
-                    "n_modes": sc_n_modes,
                     "n_knot_radial": sc_n_radial,
                     "n_knot_angular": sc_n_angular,
                     "angular_smooth": sc_angular_smooth,
@@ -10013,103 +12375,22 @@ def _build_cg_lipid_tables(
                 }
             )
 
-        for ri, residue, result_sc in _parallel_map_ordered(
-            "CG-SC table", _fit_cg_lipid_sc_quadspline_from_dict, sc_fit_tasks
+        for ti, bead_name, result_sc in _parallel_map_ordered(
+            "CG-SC bead table", _fit_cg_lipid_sc_point_quadspline_from_dict, sc_fit_tasks
         ):
             if first_sc_result is None:
                 first_sc_result = result_sc
-            interaction_param_sc[ri, 0, :] = result_sc["interaction_param"]
-            sc_rms_error[ri] = np.float32(result_sc["rms_error"])
-            sc_short_range_core[ri] = np.float32(result_sc["short_range_core_kj_mol"])
-            sc_short_range_core_rows[ri] = np.int32(result_sc["short_range_core_rows"])
-            sc_reference_energy[ri] = np.float32(result_sc.get("reference_energy_eup", 0.0))
+            interaction_param_sc[ti, 0, :] = result_sc["interaction_param"]
+            sc_rms_error[ti] = np.float32(result_sc["rms_error"])
+            sc_short_range_core[ti] = np.float32(result_sc["short_range_core_kj_mol"])
+            sc_short_range_core_rows[ti] = np.int32(result_sc["short_range_core_rows"])
+            sc_reference_energy[ti] = np.float32(result_sc.get("reference_energy_eup", 0.0))
             sc_cutoff_ang = min(sc_cutoff_ang, float(result_sc["cutoff_ang"]))
-            sc_residue_names.append(residue)
-            base_sc_results[ri] = result_sc
-            print(f"  CG-SC({residue}): RMS error = {result_sc['rms_error']:.4f} kJ/mol, "
-                  f"modes = {result_sc['n_modes']}")
-
-        if compaction_states is not None and base_sc_results:
-            sc_compaction_delta_extended = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
-            sc_compaction_delta_compact = np.zeros((n_sc_types, 1, sc_n_param), dtype=np.float32)
-            sc_compaction_extended_grid = np.zeros(
-                (n_sc_types, sc_r_count, sc_cos_theta_count, sc_cos_theta_count),
-                dtype=np.float32,
+            base_sc_results[ti] = result_sc
+            print(
+                f"  CG-SC({bead_name}/{sc_type_martini_types[ti]}): "
+                f"RMS error = {result_sc['rms_error']:.4f} kJ/mol"
             )
-            sc_compaction_compact_grid = np.zeros_like(sc_compaction_extended_grid, dtype=np.float32)
-            sc_extended_tasks = []
-            sc_compact_tasks = []
-            for task in sc_fit_tasks:
-                sc_extended_tasks.append({
-                    **task,
-                    "ref_bead_positions_nm": np.asarray(
-                        compaction_states["extended_refs_nm"],
-                        dtype=np.float64,
-                    ),
-                })
-                sc_compact_tasks.append({
-                    **task,
-                    "ref_bead_positions_nm": np.asarray(
-                        compaction_states["compact_refs_nm"],
-                        dtype=np.float64,
-                    ),
-                })
-
-            extended_sc_results = {
-                ri: result_sc
-                for ri, _residue, result_sc in _parallel_map_ordered(
-                    "CG-SC extended-state table",
-                    _fit_cg_lipid_sc_quadspline_from_dict,
-                    sc_extended_tasks,
-                )
-            }
-            compact_sc_results = {
-                ri: result_sc
-                for ri, _residue, result_sc in _parallel_map_ordered(
-                    "CG-SC compacted-state table",
-                    _fit_cg_lipid_sc_quadspline_from_dict,
-                    sc_compact_tasks,
-                )
-            }
-            for ri in range(n_sc_types):
-                base_sc = base_sc_results[ri]
-                delta = _fit_single_cgl_state_delta_full_tensor(
-                    base_energy_grid_kj_mol=np.asarray(base_sc["energy_grid_raw"], dtype=np.float64),
-                    extended_energy_grid_kj_mol=np.asarray(
-                        extended_sc_results[ri]["energy_grid_raw"],
-                        dtype=np.float64,
-                    ),
-                    compact_energy_grid_kj_mol=np.asarray(
-                        compact_sc_results[ri]["energy_grid_raw"],
-                        dtype=np.float64,
-                    ),
-                    compressed_energy_grid_kj_mol=None,
-                    reference_energy_eup=float(base_sc["reference_energy_eup"]),
-                    base_interaction_param=np.asarray(base_sc["interaction_param"], dtype=np.float64),
-                    temperature_upside=float(DEFAULT_PRODUCTION_TEMP_UPSIDE),
-                    r_values_nm=np.asarray(base_sc["r_values_nm"], dtype=np.float64),
-                    cos_theta_grid=np.asarray(base_sc["cos_theta_grid"], dtype=np.float64),
-                    n_knot_radial=int(base_sc["n_radial"]),
-                    n_knot_angular=int(base_sc["n_angular"]),
-                    knot_spacing_ang=float(base_sc["knot_spacing_ang"]),
-                    smooth=float(sc_angular_smooth),
-                )
-                sc_compaction_delta_extended[ri, 0, :] = np.asarray(
-                    delta["delta_extended"],
-                    dtype=np.float32,
-                )
-                sc_compaction_delta_compact[ri, 0, :] = np.asarray(
-                    delta["delta_compact"],
-                    dtype=np.float32,
-                )
-                sc_compaction_extended_grid[ri] = np.asarray(
-                    delta["grid_extended_kj_mol"],
-                    dtype=np.float32,
-                )
-                sc_compaction_compact_grid[ri] = np.asarray(
-                    delta["grid_compact_kj_mol"],
-                    dtype=np.float32,
-                )
 
     # Store in HDF5
     cg_grp = h5.create_group("cg_lipid_table")
@@ -10121,13 +12402,21 @@ def _build_cg_lipid_tables(
     cg_grp.attrs["conformer_source"] = "dynamic_vector_cgl_reference_ensemble"
     cg_grp.create_dataset("bead_charges", data=np.asarray(bead_charges, dtype=np.float32))
     cg_grp.create_dataset("ref_bead_positions_nm", data=ref_ensemble_nm.astype(np.float32))
+    if compaction_result is not None and "self_sample_refs_nm" in compaction_result:
+        cg_grp.create_dataset(
+            str(
+                compaction_result.get(
+                    "self_sample_source",
+                    "isolated_dopc_intramolecular_mc_samples",
+                )
+            ),
+            data=np.asarray(compaction_result["self_sample_refs_nm"], dtype=np.float32),
+        )
     _write_cg_derived_attrs(cg_grp, derived_params)
 
     # CG-CG pair
     cg_pair_grp = cg_grp.create_group("cg_lipid_pair")
-    if compaction_result is not None:
-        cg_pair_correction = "source_derived_compaction_state"
-    elif int(result_cg.get("force_match_enabled", 0)):
+    if int(result_cg.get("force_match_enabled", 0)):
         cg_pair_correction = (
             "projected_generalized_force_matching"
             if str(result_cg.get("force_match_mode", "")) == "generalized"
@@ -10280,7 +12569,7 @@ def _build_cg_lipid_tables(
     cg_pair_grp.attrs["ibi_correction_mean_kj_mol"] = np.float32(result_cg.get("ibi_correction_mean_kj_mol", 0.0))
     if compaction_result is not None:
         cg_pair_grp.attrs["compaction_pair_correction"] = (
-            "isolated_source_two_state_log1p_control_delta_relative_to_base_pair_table"
+            "pair_relaxed_base_only_no_runtime_compaction_overlay"
         )
         cg_pair_grp.attrs["compact_state_center_ang"] = np.float32(
             compaction_result["compact_center_ang"]
@@ -10372,7 +12661,7 @@ def _build_cg_lipid_tables(
             target_object="dynamic_cgl_hidden_axial_extension_coordinate",
             projection_ensemble="isolated_dopc_mc_ensemble",
             runtime_representation=(
-                "clamped_bspline_self_pmf_plus_two_state_log1p_control_delta_relative_to_base_pair_table"
+                "clamped_bspline_self_pmf_with_pair_relaxed_base_only"
             ),
             correction_layer="isolated_source_compaction_state",
         )
@@ -10384,6 +12673,13 @@ def _build_cg_lipid_tables(
         comp_grp.attrs["mass_up"] = np.float32(
             compaction_result["self"]["effective_stiffness_eup_a2"] * compaction_tau * compaction_tau
         )
+        comp_grp.attrs["self_compaction_sample_source"] = np.bytes_(
+            compaction_result.get(
+                "self_sample_source",
+                "isolated_dopc_intramolecular_mc_samples",
+            )
+        )
+        _write_compaction_self_pmf_metadata(comp_grp, compaction_result["self"])
         comp_grp.attrs["effective_stiffness_eup_a2"] = np.float32(
             compaction_result["self"]["effective_stiffness_eup_a2"]
         )
@@ -10406,9 +12702,19 @@ def _build_cg_lipid_tables(
         comp_grp.attrs["compact_state_probability"] = np.float32(
             compaction_result["compact_probability"]
         )
-        if "face_cos_min" in compaction_result:
-            comp_grp.attrs["face_cos_min"] = np.float32(compaction_result["face_cos_min"])
-            comp_grp.attrs["radial_cutoff_nm"] = np.float32(compaction_result["radial_cutoff_nm"])
+        comp_grp.attrs["compaction_coordinate"] = "tail_compression"
+        comp_grp.attrs["compaction_coordinate_source"] = "negative_dopc_head_to_tail_extension"
+        comp_grp.attrs["source"] = "dry_martini_tail_compression_endpoint_projection"
+        comp_grp.attrs["runtime_representation"] = (
+            "explicit_hidden_tail_compression_state_no_pair_runtime_overlay"
+        )
+        comp_grp.attrs["pair_runtime_compaction_overlay"] = (
+            _CGL_PAIR_RUNTIME_COMPACTION_OVERLAY_DISABLED
+        )
+        if "pair_relaxation_correction_source" in result_cg:
+            comp_grp.attrs["pair_relaxation_correction_source"] = str(
+                result_cg["pair_relaxation_correction_source"]
+            )
         comp_grp.attrs["compaction_pool_size"] = np.int32(compaction_result["pool_size"])
         comp_grp.attrs["compact_pool_size"] = np.int32(compaction_result["compact_pool_size"])
         comp_grp.attrs["extended_pool_size"] = np.int32(compaction_result["extended_pool_size"])
@@ -10430,6 +12736,18 @@ def _build_cg_lipid_tables(
         comp_grp.attrs["compaction_max_ang"] = np.float32(compaction_result["compaction_max_ang"])
         comp_grp.attrs["compaction_p05_ang"] = np.float32(compaction_result["compaction_p05_ang"])
         comp_grp.attrs["compaction_p95_ang"] = np.float32(compaction_result["compaction_p95_ang"])
+        comp_grp.attrs["pair_reference_compact_center_ang"] = np.float32(
+            compaction_result["compact_center_ang"]
+        )
+        comp_grp.attrs["pair_reference_extended_center_ang"] = np.float32(
+            compaction_result["extended_center_ang"]
+        )
+        comp_grp.attrs["pair_compaction_state_source"] = np.bytes_(
+            compaction_result.get(
+                "self_sample_source",
+                "isolated_dopc_intramolecular_mc_samples",
+            )
+        )
         comp_grp.create_dataset(
             "self_coeff",
             data=np.asarray(compaction_result["self"]["self_coeff_eup"], dtype=np.float32),
@@ -10443,51 +12761,13 @@ def _build_cg_lipid_tables(
             data=np.asarray(compaction_result["self"]["pmf_values_kj_mol"], dtype=np.float32),
         )
         comp_grp.create_dataset(
-            "delta_extended_extended",
-            data=np.asarray(compaction_result["delta_extended_extended"], dtype=np.float32),
+            "pmf_raw_counts",
+            data=np.asarray(compaction_result["self"]["pmf_raw_counts"], dtype=np.float32),
         )
         comp_grp.create_dataset(
-            "delta_extended_compact",
-            data=np.asarray(compaction_result["delta_extended_compact"], dtype=np.float32),
+            "pmf_smoothed_counts",
+            data=np.asarray(compaction_result["self"]["pmf_smoothed_counts"], dtype=np.float32),
         )
-        comp_grp.create_dataset(
-            "delta_compact_compact",
-            data=np.asarray(compaction_result["delta_compact_compact"], dtype=np.float32),
-        )
-        for dataset_name in (
-            "delta_extended_compressed",
-            "delta_compact_compressed",
-            "delta_compressed_compressed",
-            "grid_extended_compressed_kj_mol",
-            "grid_compact_compressed_kj_mol",
-            "grid_compressed_compressed_kj_mol",
-        ):
-            if dataset_name in compaction_result:
-                comp_grp.create_dataset(
-                    dataset_name,
-                    data=np.asarray(compaction_result[dataset_name], dtype=np.float32),
-                )
-        comp_grp.create_dataset(
-            "grid_extended_extended_kj_mol",
-            data=np.asarray(compaction_result["grid_extended_extended_kj_mol"], dtype=np.float32),
-        )
-        comp_grp.create_dataset(
-            "grid_extended_compact_kj_mol",
-            data=np.asarray(compaction_result["grid_extended_compact_kj_mol"], dtype=np.float32),
-        )
-        comp_grp.create_dataset(
-            "grid_compact_compact_kj_mol",
-            data=np.asarray(compaction_result["grid_compact_compact_kj_mol"], dtype=np.float32),
-        )
-        comp_grp.create_dataset(
-            "grid_average_kj_mol",
-            data=np.asarray(compaction_result["grid_average_kj_mol"], dtype=np.float32),
-        )
-        if "face_mask" in compaction_result:
-            comp_grp.create_dataset(
-                "face_mask",
-                data=np.asarray(compaction_result["face_mask"], dtype=np.int8),
-            )
 
     # CG-SC
     cg_sc_grp = cg_grp.create_group("cg_lipid_sc")
@@ -10498,15 +12778,23 @@ def _build_cg_lipid_tables(
         target_object="dopc_cgl_constituent_bead_ensemble",
         projection_ensemble="sidechain_rotamers_x_cgl_conformers_x_two_orientations_x_bead_frames",
         runtime_representation="log1p_reduced_tensor_bspline",
-        correction_layer="source_derived_cgl_compaction_state" if sc_compaction_delta_extended is not None else "none",
+        correction_layer=(
+            _SINGLE_CGL_RELAXATION_SOURCE
+            if compaction_states is not None and n_sc_types
+            else "none"
+        ),
     )
     cg_sc_grp.create_dataset(
         "interaction_param",
         data=interaction_param_sc.astype(np.float32),
     )
     cg_sc_grp.create_dataset(
-        "restype_order",
-        data=np.asarray([np.bytes_(x) for x in sc_residue_names], dtype="S4"),
+        "beadtype_order",
+        data=np.asarray([np.bytes_(x) for x in sc_type_names], dtype="S16"),
+    )
+    cg_sc_grp.create_dataset(
+        "bead_martini_type_order",
+        data=np.asarray([np.bytes_(x) for x in sc_type_martini_types], dtype="S8"),
     )
     cg_sc_grp.create_dataset(
         "reference_energy_eup",
@@ -10518,6 +12806,8 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["schema"] = (
         "cg_lipid_sc_full_tensor" if sc_n_modes == 0 else "cg_lipid_sc_quadspline"
     )
+    cg_sc_grp.attrs["table_granularity"] = "placement_bead"
+    cg_sc_grp.attrs["normalize_by_row_group"] = np.int32(0)
     cg_sc_grp.attrs["radial_mode"] = "full_tensor" if sc_n_modes == 0 else "full_multimode"
     cg_sc_grp.attrs["angle_convention"] = "ang1=-n1_dot_n12;ang2=n2_dot_n12"
     cg_sc_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
@@ -10532,10 +12822,10 @@ def _build_cg_lipid_tables(
     cg_sc_grp.attrs["n_angular"] = np.int32(sc_n_angular)
     cg_sc_grp.attrs["angular_smooth"] = np.float32(sc_angular_smooth if n_sc_types else 0.0)
     cg_sc_grp.attrs["azimuthal_count"] = np.int32(sc_azimuthal_count if n_sc_types else 0)
-    cg_sc_grp.attrs["sidechain_bead_frame_count"] = np.int32(sc_bead_frame_count if n_sc_types else 0)
+    cg_sc_grp.attrs["sidechain_bead_frame_count"] = np.int32(0)
     cg_sc_grp.attrs["cgl_bead_frame_count"] = np.int32(cg_bead_frame_count if n_sc_types else 0)
     cg_sc_grp.attrs["conformer_count"] = np.int32(ref_ensemble_nm.shape[0])
-    cg_sc_grp.attrs["orientation_sampling"] = "sidechain_and_cgl_direction_vectors"
+    cg_sc_grp.attrs["orientation_sampling"] = "placement_bead_position_and_cgl_direction_vector"
     cg_sc_grp.attrs["knot_spacing_ang"] = np.float32(sc_knot_spacing_ang)
     cg_sc_grp.attrs["cutoff_ang"] = np.float32(sc_cutoff_ang)
     cg_sc_grp.attrs["taper_width_ang"] = np.float32(sc_taper_width_ang)
@@ -10581,7 +12871,18 @@ def _build_cg_lipid_tables(
     )
     cg_sc_grp.create_dataset("short_range_core_kj_mol", data=sc_short_range_core[:n_sc_types])
     cg_sc_grp.create_dataset("short_range_core_rows", data=sc_short_range_core_rows[:n_sc_types])
-    if sc_compaction_delta_extended is not None:
+    if compaction_states is not None and n_sc_types:
+        sc_compaction_payload = _build_sc_bead_tail_relaxation_compaction_payload(
+            sc_grp=cg_sc_grp,
+            ref_bead_positions_nm=ref_ensemble_nm,
+            dopc=dopc,
+            pair_params=pair_params,
+            lipids_itp_path=lipids_itp_path,
+            compressed_state_coord=None,
+            extended_center_ang=compaction_states.get("extended_center_ang"),
+            compact_center_ang=compaction_states.get("compact_center_ang"),
+            compressed_center_ang=compaction_states.get("compressed_center_ang"),
+        )
         cg_sc_grp.attrs["compact_state_center_ang"] = np.float32(
             compaction_states["compact_center_ang"]
         )
@@ -10591,31 +12892,59 @@ def _build_cg_lipid_tables(
         cg_sc_grp.attrs["compact_state_probability"] = np.float32(
             compaction_states["compact_probability"]
         )
+        cg_sc_grp.attrs["compaction_coordinate"] = "tail_compression"
+        cg_sc_grp.attrs["compaction_coordinate_source"] = "negative_dopc_head_to_tail_extension"
+        cg_sc_grp.attrs["single_cgl_endpoint_delta_source"] = np.bytes_(
+            _SINGLE_CGL_ENDPOINT_DELTA_SOURCE
+        )
+        cg_sc_grp.attrs["single_cgl_relaxation_source"] = str(
+            sc_compaction_payload["single_cgl_relaxation_source"]
+        )
+        cg_sc_grp.attrs["single_cgl_relaxation_max_compaction_nm"] = np.float32(
+            sc_compaction_payload["single_cgl_relaxation_max_compaction_nm"]
+        )
+        for attr_name in (
+            "single_cgl_relaxation_compact_max_compaction_nm",
+            "single_cgl_relaxation_compressed_max_compaction_nm",
+        ):
+            if attr_name in sc_compaction_payload:
+                cg_sc_grp.attrs[attr_name] = np.float32(
+                    sc_compaction_payload[attr_name]
+                )
+        cg_sc_grp.attrs["single_cgl_relaxation_contact_energy_source"] = str(
+            sc_compaction_payload["single_cgl_relaxation_contact_energy_source"]
+        )
+        cg_sc_grp.attrs["single_cgl_relaxation_energy_floor_kj_mol"] = np.float32(
+            sc_compaction_payload["single_cgl_relaxation_energy_floor_kj_mol"]
+        )
+        cg_sc_grp.attrs["single_cgl_state_reference_dataset"] = np.bytes_(
+            "ref_bead_positions_nm"
+        )
+        cg_sc_grp.attrs["single_cgl_state_reference_count"] = np.int32(
+            int(ref_ensemble_nm.shape[0])
+        )
         cg_sc_grp.create_dataset(
             "delta_extended",
-            data=sc_compaction_delta_extended.astype(np.float32),
+            data=np.asarray(sc_compaction_payload["delta_extended"], dtype=np.float32),
         )
         cg_sc_grp.create_dataset(
             "delta_compact",
-            data=sc_compaction_delta_compact.astype(np.float32),
+            data=np.asarray(sc_compaction_payload["delta_compact"], dtype=np.float32),
         )
         cg_sc_grp.create_dataset(
             "grid_extended_kj_mol",
-            data=sc_compaction_extended_grid.astype(np.float32),
+            data=np.asarray(sc_compaction_payload["grid_extended_kj_mol"], dtype=np.float32),
         )
         cg_sc_grp.create_dataset(
             "grid_compact_kj_mol",
-            data=sc_compaction_compact_grid.astype(np.float32),
+            data=np.asarray(sc_compaction_payload["grid_compact_kj_mol"], dtype=np.float32),
         )
     _write_cg_derived_attrs(cg_sc_grp, derived_params)
 
-    # Store the SC bead type names covered by this quadspline so that
+    # Store the Martini bead types covered by this quadspline so that
     # convert_stage() can zero the corresponding MartiniPotential entries.
-    if sc_residue_names:
-        sc_bead_types_set: set = set()
-        for r in sc_residue_names:
-            sc_bead_types_set.update(str(bt) for bt in residue_map.get(r, []))
-        sc_bead_types = sorted(sc_bead_types_set)
+    if sc_type_martini_types:
+        sc_bead_types = sorted(set(sc_type_martini_types))
         cg_sc_grp.create_dataset(
             "sc_bead_types",
             data=np.asarray([np.bytes_(x) for x in sc_bead_types], dtype="S8"),
@@ -10863,74 +13192,6 @@ def _build_cgl_target_table(
         reference_energy_eup[0, ti] = float(reference_energy_kj_mol) / float(energy_conv)
         base_energy_grid[ti] = np.asarray(energy_grid, dtype=np.float64)
 
-    target_compaction_delta_extended = None
-    target_compaction_delta_compact = None
-    target_compaction_extended_grid = None
-    target_compaction_compact_grid = None
-    if compaction_states is not None:
-        extended_tasks = [
-            {
-                **task,
-                "ref_nm": np.asarray(compaction_states["extended_refs_nm"], dtype=np.float64),
-            }
-            for task in target_tasks
-        ]
-        compact_tasks = [
-            {
-                **task,
-                "ref_nm": np.asarray(compaction_states["compact_refs_nm"], dtype=np.float64),
-            }
-            for task in target_tasks
-        ]
-        target_compaction_delta_extended = np.zeros((1, n_types, n_param), dtype=np.float32)
-        target_compaction_delta_compact = np.zeros((1, n_types, n_param), dtype=np.float32)
-        target_compaction_extended_grid = np.zeros_like(base_energy_grid, dtype=np.float32)
-        target_compaction_compact_grid = np.zeros_like(base_energy_grid, dtype=np.float32)
-
-        extended_results = {
-            ti: np.asarray(energy_grid, dtype=np.float64)
-            for ti, _tgt_type, _control_flat, _reference_energy_kj_mol, energy_grid in _parallel_map_ordered(
-                "CGL-particle target extended-state table",
-                _run_cgl_target_type_task,
-                extended_tasks,
-            )
-        }
-        compact_results = {
-            ti: np.asarray(energy_grid, dtype=np.float64)
-            for ti, _tgt_type, _control_flat, _reference_energy_kj_mol, energy_grid in _parallel_map_ordered(
-                "CGL-particle target compacted-state table",
-                _run_cgl_target_type_task,
-                compact_tasks,
-            )
-        }
-        for ti in range(n_types):
-            delta = _build_single_cgl_state_delta_radial_angular(
-                base_energy_grid_kj_mol=base_energy_grid[ti],
-                extended_energy_grid_kj_mol=extended_results[ti],
-                compact_energy_grid_kj_mol=compact_results[ti],
-                compressed_energy_grid_kj_mol=None,
-                reference_energy_eup=float(reference_energy_eup[0, ti]),
-                temperature_upside=float(temperature),
-                r_values_nm=r_sample_nm,
-                cos_theta_grid=cos_theta_grid,
-                n_knot_radial=n_knot_radial,
-                n_knot_angular=n_knot_angular,
-                knot_spacing_ang=knot_spacing_ang,
-                smooth=target_fit_smooth,
-            )
-            target_compaction_delta_extended[0, ti, :] = np.asarray(
-                delta["delta_extended"], dtype=np.float32
-            )
-            target_compaction_delta_compact[0, ti, :] = np.asarray(
-                delta["delta_compact"], dtype=np.float32
-            )
-            target_compaction_extended_grid[ti] = np.asarray(
-                delta["grid_extended_kj_mol"], dtype=np.float32
-            )
-            target_compaction_compact_grid[ti] = np.asarray(
-                delta["grid_compact_kj_mol"], dtype=np.float32
-            )
-
     target_grp = cg_grp.create_group("cg_lipid_target")
     _write_common_table_contract_attrs(
         target_grp,
@@ -10939,7 +13200,7 @@ def _build_cgl_target_table(
         target_object="dry_martini_particle_type",
         projection_ensemble="cgl_conformers_x_cgl_orientations_x_bead_frames",
         runtime_representation="log1p_reduced_radial_angular_bspline",
-        correction_layer="source_derived_cgl_compaction_state" if compaction_states is not None else "none",
+        correction_layer="none",
     )
     target_grp.create_dataset(
         "interaction_param",
@@ -11013,32 +13274,6 @@ def _build_cgl_target_table(
     target_grp.attrs["bead_nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
     target_grp.attrs["bead_nonbonded_cutoff_source"] = "generic_martini_potential_cutoff"
     target_grp.attrs["radial_support_source"] = "max_dopc_bead_radius_plus_dry_martini_cutoff"
-    if compaction_states is not None:
-        target_grp.attrs["compact_state_center_ang"] = np.float32(
-            compaction_states["compact_center_ang"]
-        )
-        target_grp.attrs["extended_state_center_ang"] = np.float32(
-            compaction_states["extended_center_ang"]
-        )
-        target_grp.attrs["compact_state_probability"] = np.float32(
-            compaction_states["compact_probability"]
-        )
-        target_grp.create_dataset(
-            "delta_extended",
-            data=target_compaction_delta_extended.astype(np.float32),
-        )
-        target_grp.create_dataset(
-            "delta_compact",
-            data=target_compaction_delta_compact.astype(np.float32),
-        )
-        target_grp.create_dataset(
-            "grid_extended_kj_mol",
-            data=target_compaction_extended_grid.astype(np.float32),
-        )
-        target_grp.create_dataset(
-            "grid_compact_kj_mol",
-            data=target_compaction_compact_grid.astype(np.float32),
-        )
     if derived_params:
         _write_cg_derived_attrs(target_grp, derived_params)
 
