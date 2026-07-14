@@ -1,5 +1,5 @@
 \documentclass{article}
-\usepackage{amsmath,amssymb,booktabs,graphicx,array}
+\usepackage{amsmath,amssymb,booktabs,array}
 \usepackage[T1]{fontenc}
 \usepackage[margin=1in]{geometry}
 \usepackage{url}
@@ -8,629 +8,492 @@
 
 \begin{document}
 
-\title{A Source-Derived dryMARTINI--Upside Interface for Hybrid Protein--Bilayer Simulations}
+\title{A Table-Projected One-Particle dryMARTINI Membrane for Hybrid Upside Protein Simulations}
 \author{}
 \date{}
 \maketitle
 
 \begin{abstract}
-We describe the full dryMARTINI--Upside interface used for hybrid
-protein--bilayer simulations in this repository.  The interface supports both
-the original 14-bead dryMARTINI DOPC representation and a one-particle
-coarse-grained lipid (CGL) representation that carries position and
-orientation.  All conservative interactions are written to HDF5 tables before
-simulation and are consumed by Upside only through spline-evaluated runtime
-nodes.  The build-time artifacts are \texttt{particle.h5} for generic
-dryMARTINI particle pairs, \texttt{sidechain.h5} for SC-particle interactions,
-and \texttt{dopc.h5} for CGL-CGL, CGL-SC, and CGL-particle tables.  The
-hybrid protein interface uses amino-acid backbone carrier atoms together with a
-virtual backbone proxy and explicit HDF5 mapping metadata.  The main modeling
-difficulty was not numerical instability but a physical training mismatch:
-isolated DOPC conformers do not capture the bilayer-induced compaction of the
-tails, so the naive one-particle projection pushes the two leaflets too far
-apart.  We summarize the design branches that were evaluated to resolve that
-failure.  The accepted model keeps the original directional pair tensor
-$E_0(r,\hat{\mathbf{n}}_1,\hat{\mathbf{n}}_2)$ and augments it with a local
-cross-leaflet gap response that interpolates among source-derived compact and
-extended correction surfaces.  The final model is therefore not a four-axis
-table $E(r,\hat{\mathbf{n}}_1,\hat{\mathbf{n}}_2,d)$, and it does not use a
-bilayer restraint, a thickness target, an extra orientational potential, or a
-nonphysical exclusion between leaflets.  A separate generalized Langevin
-transport model sets the one-particle time scale without changing the
-conservative force field.  Validation on a 288-lipid CGL-only bilayer and on
-the hybrid 1RKL and 1AFO systems gives correct leaflet separation, strong CGL
-orientation, laterally uniform leaflets, and the retained DOPC diffusion clock.
+We present a one-particle representation of dryMARTINI DOPC for hybrid
+protein--membrane simulations in Upside.  Each coarse-grained lipid (CGL)
+carries a center, a head-to-tail orientation, and a scalar tail-compression
+state.  Conservative CGL-CGL, side-chain--CGL (SC-CGL), backbone--CGL, and
+environment interactions are projected from dryMARTINI constituent
+interactions before simulation and stored as HDF5 spline tables.  A tempered
+Boltzmann projection at 25 Upside temperature units prevents a small number of
+low-energy conformers from dominating the reduced tables.  Pair-conditioned
+tail relaxation supplies the steric relief required when two DOPC molecules
+approach, while SC-CGL endpoint corrections are derived from the corresponding
+single-lipid tail-relaxation problem.  No bilayer-thickness restraint,
+orientational aligning field, force cap, or interaction exclusion is used.
+The conservative model is separated from the dynamical mapping.  All Upside
+and CGL forces are evaluated with one global step of
+$0.004\,T_{\mathrm{up}}=40$ ps, protein carrier masses remain
+$1\,m_{\mathrm{up}}$, and only CGL translation is calibrated with a mass
+scale and a fluctuation--dissipation-consistent two-mode generalized Langevin
+equation.  A 404-lipid membrane gives a coarse-graining-corrected long-lag
+lateral diffusion coefficient of $11.45$--$11.47~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$,
+consistent with DOPC measurements near 303 K.  Independent 1RKL and 1AFO
+trajectories remain finite through four production segments, preserve protein
+secondary structure, retain their initial protein--bilayer orientations, and
+maintain closed, ordered bilayers.  The resulting implementation preserves the
+committed protein force field and changes only the CGL transport mapping.
 \end{abstract}
 
 \section{Introduction}
 
-Hybrid membrane simulations require two things at the same time: a physically
-coherent environment model and a software boundary that does not fracture the
-host simulation engine.  In this project, the host engine is Upside, whose
-runtime is organized around HDF5-defined spline potentials and internal
-coordinate nodes.  The membrane environment is dryMARTINI DOPC, an implicit
-solvent coarse-grained lipid force field derived from the MARTINI family of
-models.\cite{marrink2007,arnarez2015}
+The MARTINI family reduces molecular detail sufficiently to access membrane
+length and time scales beyond routine atomistic simulation.
+\cite{marrink2007}  Dry Martini removes explicit solvent while retaining a
+coarse-grained lipid Hamiltonian suitable for membrane simulations.
+\cite{arnarez2015}  Coupling that environment to Upside presents a distinct
+multiscale problem.  The protein must continue to use the trained Upside force
+field, whereas every protein--environment and environment--environment
+interaction must remain active and traceable to dryMARTINI source physics.
 
-The challenge is more specific than ``build a membrane model.''  Upside must be
-able to run
-\begin{enumerate}
-\item full dryMARTINI lipid bilayers,
-\item one-particle lipid bilayers,
-\item protein--bilayer hybrids in which protein side chains and backbone sites
-      interact with the membrane through the same runtime graph, and
-\item all of the above through prebuilt HDF5 tables rather than hard-coded
-      pair formulas.
-\end{enumerate}
-At the same time, the interface must not disable hybrid interactions, must not
-smuggle bilayer geometry into an ad hoc restraint, and must not solve the
-leaflet-distance bug by turning off the opposing-leaflet physics.
+The present model further maps all 14 dryMARTINI particles in one DOPC
+molecule to one oriented CGL object.  A useful one-particle membrane must be
+both thermodynamically coherent and dynamically interpretable.  An isotropic
+center cannot encode the head--tail asymmetry of a phospholipid, and a rigid
+oriented center cannot reproduce the relief obtained when resolved lipid tails
+compress in a contact.  Conversely, fitting a membrane thickness or adding an
+aligning field would make the force field depend on the desired bilayer rather
+than on the represented molecule.
 
-One-particle lipid membranes have a long history in coarse-grained membrane
-modeling.\cite{drouffe1991,noguchi2006,yuan2010}  Those models show that
-single-particle membrane objects with orientational structure can self-assemble
-and remain fluid.  Our problem is different.  We do not start from a generic
-solvent-free membrane ansatz.  Instead, we require a one-particle model that
-remains tied to dryMARTINI constituent physics, shares a common interface with
-the full-resolution dryMARTINI mode, and can couple cleanly to the existing
-Upside protein machinery.  This requirement strongly constrains what is an
-acceptable fix.
+We therefore separate three questions.  First, conservative interactions are
+projected from resolved dryMARTINI particles to CGL coordinates and tabulated.
+Second, unresolved tail relaxation is represented by source-derived energy
+differences and a scalar internal coordinate.  Third, translational transport
+is calibrated independently with a CGL-only generalized Langevin equation
+(GLE).  This division prevents a transport correction from changing protein
+dynamics or compensating for an incorrect conservative potential.
 
-The purpose of this draft is to present the full design as a coherent method,
-not as a debug diary.  We therefore organize the paper around five questions:
-\begin{enumerate}
-\item What are the interface contracts and software boundaries?
-\item How are conservative tables built from dryMARTINI source interactions?
-\item How are proteins mapped into the hybrid runtime?
-\item Why did the first one-particle model fail, and what design branches were
-      tested?
-\item What is the accepted final CGL model and how is it validated?
-\end{enumerate}
+The implementation follows the native Upside runtime contract: all
+simulation-time conservative interactions are spline lookups from HDF5.  The
+paper describes the force-field derivation, hybrid mapping, dynamical time
+mapping, and validation tests in the same order in which they enter the model.
 
-\section{Design Requirements and Software Architecture}
+\section{Methods}
 
-\subsection{Interface Contracts}
+\subsection{Units and Table-Only Runtime Contract}
 
-The dryMARTINI--Upside interface is built around four strict contracts.
+Force-field sources and intermediate training arrays remain in native
+dryMARTINI units: nm, kJ mol$^{-1}$, and elementary charge.  Conversion to
+Upside uses
+\begin{equation}
+1~E_{\mathrm{up}}=2.914952774272~\mathrm{kJ\,mol^{-1}},
+\qquad
+1~\mathrm{nm}=10~\angstrom,
+\end{equation}
+and is recorded in HDF5 attributes.  No conversion factor is baked into a
+native dryMARTINI training artifact.
 
-First, all simulation-time conservative interactions are table driven.  Even
-generic dryMARTINI particle interactions that originate from a simple
-Lennard-Jones plus Coulomb form are written to HDF5 before runtime and are
-consumed by Upside as spline tables.
+For constituent particles $a$ and $b$, the source nonbonded energy is
+\begin{equation}
+u_{ab}(r)=4\epsilon_{ab}
+\left[\left(\frac{\sigma_{ab}}{r}\right)^{12}
+-\left(\frac{\sigma_{ab}}{r}\right)^6\right]
++\frac{k_e q_aq_b}{r},
+\qquad r<1.2~\mathrm{nm},
+\label{eq:source_pair}
+\end{equation}
+with the source cutoff convention applied during table construction.  Even
+this simple radial interaction is evaluated at runtime from
+\texttt{particle.h5}, not from a hard-coded Lennard-Jones expression.  The
+installed particle artifact contains 81 unique $(\epsilon,\sigma,q_aq_b)$
+rows on 1000-point radial grids.
 
-Second, training artifacts remain in native dryMARTINI units.  The build
-scripts read and write lengths in nm, energies in kJ/mol, and charges in units
-of $e$.  Conversion into Upside units is explicit metadata, not hidden
-constants baked into the training files.
+The three force-field artifacts have distinct roles:
+\begin{itemize}
+\item \texttt{particle.h5} stores generic dryMARTINI particle-pair tables;
+\item \texttt{sidechain.h5} stores rotamer-resolved Upside side-chain versus
+      dryMARTINI particle tables; and
+\item \texttt{dopc.h5} stores CGL-CGL, SC-CGL, CGL-particle, internal
+      compaction, and orientation metadata.
+\end{itemize}
+At preparation time these artifacts populate the runtime nodes
+\path{martini_potential}, \path{martini_sc_table_1body},
+\path{cg_lipid_pair}, \path{cg_lipid_rotamer_sc}, and
+\path{cg_lipid_target}.  The interface does not disable SC-environment,
+backbone-environment, SC-CGL, or CGL-CGL interactions.
 
-Third, the full-resolution and one-particle lipid representations share the
-same source physics.  The one-particle model is not an unrelated membrane
-potential; it is a projection of dryMARTINI constituent interactions plus a
-source-derived correction for the tail-compaction mismatch described below.
+\subsection{One-Particle DOPC Coordinates}
 
-Fourth, transport calibration is separated from conservative force-field
-construction.  The CGL generalized Langevin equation (GLE) changes masses,
-memory kernels, and thermostat coupling, but it does not rewrite the
-conservative tables.
+The 14 dryMARTINI particles of DOPC are mapped to a center
+$\mathbf R_i$ and a unit orientation $\hat{\mathbf n}_i$.  The orientation
+follows the DOPC head-to-tail axis defined by the NC3 head group and the
+midpoint of the terminal tail particles.  At runtime,
+\texttt{cgl\_orientation\_state} propagates $\hat{\mathbf n}_i$, and
+\texttt{compose\_vector6d} exposes
+$(\mathbf R_i,\hat{\mathbf n}_i)$ to the spline potentials.
 
-\subsection{Build-Time and Runtime Boundaries}
+The installed source ensemble gives a center-to-tail projection of
+$9.406~\angstrom$ and a transverse rotational inertia of
+$2.2597\times10^4~\mathrm{g\,mol^{-1}\,\angstrom^2}$.  Both are calculated from
+the constituent DOPC geometry and masses.  They are not fitted to a target
+bilayer orientation.
 
-The interface is split into a build-time layer and a runtime injection layer.
-Build time is handled by \path{martini_gen_params.py} and
-\path{martini_build_tables.py}.  Runtime preparation is handled by
-\path{martini_prepare_system.py} and
-\path{martini_prepare_system_lib.py}.  The major build artifacts are
-summarized in Table~\ref{tab:artifacts}.
+\subsection{Tempered Projection of Hidden Coordinates}
 
-\begin{table}[ht]
-\centering
-\caption{Primary build-time artifacts and the runtime nodes they feed.}
-\small
-\begin{tabular}{p{0.18\linewidth}p{0.20\linewidth}p{0.23\linewidth}p{0.24\linewidth}}
-\toprule
-Artifact & Main contents & Physical source object & Runtime use \\
-\midrule
-\texttt{particle.h5} &
-combined radial particle grids for 81 unique $(\epsilon,\sigma,qq)$ tuples
-across 38 dryMARTINI particle types &
-generic dryMARTINI particle pairs &
-\texttt{martini\_potential} in full-lipid and hybrid runs \\
+Each CGL table averages over unresolved DOPC conformers, bead-frame choices,
+azimuths, and rotamer states as appropriate to the interacting objects.  For
+resolved hidden coordinate $\omega$ and retained coordinate $x$, the projected
+free energy is
+\begin{equation}
+F_{\tau}(x)=-k_B\tau
+\log\left[
+\frac{\sum_{\omega}w_{\omega}
+\exp[-U(x,\omega)/(k_B\tau)]}
+{\sum_{\omega}w_{\omega}}
+\right].
+\label{eq:tempered_projection}
+\end{equation}
+The production tables retain $\tau=25$ in Upside temperature units.  This
+tempered Boltzmann average is deliberately broader than the production
+temperature.  It prevents rare, exceptionally favorable hidden conformers
+from producing localized attraction and CGL clustering while preserving the
+directional dependence of the constituent interactions.
 
-\texttt{sidechain.h5} &
-SC-particle table with 18 residue types, 38 target types, 96 radial points,
-13 angular points, and rotamer-resolved free energies &
-side-chain rotamer bead ensembles versus dryMARTINI particle types &
-\texttt{martini\_sc\_table\_1body} and the stage-7 rotamer solver \\
+The spline control values use the invertible transform
+\begin{equation}
+y(x)=\log\left[1+\frac{F_{\tau}(x)-F_{\min}}{k_BT_0}\right],
+\qquad
+F_{\tau}(x)=F_{\min}+k_BT_0[\exp y(x)-1],
+\label{eq:table_transform}
+\end{equation}
+where $T_0=0.8647~T_{\mathrm{up}}$.  The transform improves interpolation of
+the repulsive range without changing the represented energy.
 
-\texttt{dopc.h5} &
-CGL pair, CGL-SC, CGL-particle, and compaction tables &
-DOPC constituent bead ensembles projected into CGL coordinates &
-\texttt{cg\_lipid\_pair}, \texttt{cg\_lipid\_rotamer\_sc},
-\texttt{cg\_lipid\_target}, and optional compaction or embedding nodes \\
-\bottomrule
-\end{tabular}
-\label{tab:artifacts}
-\end{table}
+\subsection{CGL-CGL Directional Table and Tail Relaxation}
 
-The full-resolution interface is assembled by two runtime injectors.  The first
-maps \texttt{particle.h5} into the generic radial dryMARTINI node
-\texttt{martini\_potential}.  The second maps \texttt{sidechain.h5} into the
-rotamer-resolved side-chain environment machinery by injecting
-\texttt{placement\_fixed\_point\_vector\_only},
-\texttt{placement\_fixed\_scalar}, \texttt{rotamer}, and
-\texttt{martini\_sc\_table\_1body}.
+The base CGL pair coordinate is
+\begin{equation}
+x_{ij}=(r_{ij},a_i,a_j),\qquad
+a_i=-\hat{\mathbf n}_i\cdot\hat{\mathbf r}_{ij},\qquad
+a_j= \hat{\mathbf n}_j\cdot\hat{\mathbf r}_{ij}.
+\end{equation}
+The installed \texttt{cg\_lipid\_pair} table has 140 radial controls and
+9 controls on each angular axis.  Its uncorrected surface is the tempered
+projection of all constituent DOPC-DOPC interactions in Eq.~\ref{eq:source_pair}.
 
-The coarse one-particle interface adds a second family of runtime nodes.  A
-coarse stage first constructs \texttt{cgl\_orientation\_state} and
-\texttt{compose\_vector6d}.  Those nodes provide a six-component coordinate per
-lipid, consisting of the center position and the current unit orientation
-vector.  The injector then writes the CGL tables into
-\texttt{cg\_lipid\_pair}, \texttt{cg\_lipid\_rotamer\_sc}, and
-\texttt{cg\_lipid\_target}.  Finally,
-\texttt{apply\_cgl\_transport\_metadata()} modifies the CGL masses,
-thermostat time scales, and GLE metadata in the prepared stage file.
+A rigid constituent projection overestimates the cost of close tail contacts
+because resolved DOPC tails can shorten and rearrange.  The pair correction is
+therefore derived from two energies at every sampled pair coordinate.  The
+rigid free energy $F_{\mathrm{rigid}}(x_{ij})$ retains the reference tails.
+The relaxed free energy $F_{\mathrm{rel}}(x_{ij})$ minimizes sampled axial tail
+compression while including both the dryMARTINI contact energy and the
+intramolecular cost of the deformed DOPC conformers.  The correction is
+\begin{equation}
+\Delta F_{\mathrm{pair}}(x_{ij})=
+M(x_{ij})\min\left[0,
+F_{\mathrm{rel}}(x_{ij})-F_{\mathrm{rigid}}(x_{ij})\right],
+\label{eq:pair_relax}
+\end{equation}
+where $M$ restricts the relief to face-to-face tail contacts.  The installed
+artifact uses a 2.5 nm radial support and a face-cosine threshold of 0.5.
+Equation~\ref{eq:pair_relax} can only remove repulsion that is relieved by a
+physical tail deformation; it cannot create a fitted bilayer attraction.
+
+The correction is incorporated into the stored CGL-CGL spline.  The runtime
+pair-compaction overlay is disabled, so CGL-CGL energy is evaluated once from
+the pair-relaxed table rather than being counted again through the scalar
+compaction state.
+
+\subsection{Scalar Tail-Compression State and SC-CGL Coupling}
+
+Protein contact can select a different DOPC tail geometry even when the CGL
+center and orientation are unchanged.  A scalar state $q_i$ represents this
+remaining internal response.  Its physical source coordinate is the negative
+DOPC head-to-tail extension, so increasing $q_i$ corresponds to a shorter
+tail.  An affine mapping places the extended and compact representatives at
+$q=0$ and $q=1$; the installed compressed endpoint is $q=1.209$.
+
+The internal free energy $F_{\mathrm{self}}(q)$ is obtained from a 256-conformer
+isolated-DOPC intramolecular Monte Carlo ensemble and stored as a 14-control
+spline in \texttt{cg\_lipid\_compaction}.  The runtime state has mass
+$17.670~m_{\mathrm{up}}$ and thermostat time $1.0~T_{\mathrm{up}}$.  It is a
+physical molecular internal coordinate with a source-derived self PMF; it is
+not computed from leaflet identity, bilayer thickness, or distance to a
+membrane plane.
+
+For side-chain placement bead $A$, the endpoint relief follows the same
+source-conditioned construction as Eq.~\ref{eq:pair_relax}:
+\begin{equation}
+\Delta F_A^{(s)}(r,a)=
+\min\left[0,F_{A,\mathrm{rel}}^{(s)}(r,a)
+-F_{A,\mathrm{rigid}}^{(s)}(r,a)\right],
+\qquad s\in\{\mathrm{ext},\mathrm{comp},\mathrm{compr}\}.
+\label{eq:sc_relax}
+\end{equation}
+The relaxed energy is the reduction in positive tail-bead nonbonded overlap
+available to a tail deformation at that endpoint.  The production SC-CGL
+energy interpolates the extended, compact, and compressed endpoint splines
+with $q_i$.  The installed table contains 29 side-chain placement-bead rows,
+25 radial controls, and 11 controls on each directional angular axis.
+
+The generic CGL-particle table contains 38 dryMARTINI target types on 91 radial
+and 321 angular samples.  It remains a direct constituent projection without a
+$q$-dependent overlay because no independent target-conditioned internal
+relaxation term is required by the accepted model.  Backbone--CGL and other
+target interactions therefore remain active through their base physical
+tables; they are not turned off or replaced by restraints.
 
 \subsection{Hybrid Protein Mapping}
 
-The protein half of the interface is not a dryMARTINI protein model.  Upside
-retains its amino-acid protein representation and exports a hybrid mapping into
-the stage file.  The central idea is to keep the backbone carriers explicit
-while also providing a dryMARTINI-like virtual backbone target.
+The protein is not converted to a dryMARTINI protein.  Upside retains its
+backbone and rotamer force field.  For each complete residue, the hybrid
+mapping records the Upside backbone carriers and a virtual dryMARTINI-like
+backbone proxy formed from those carriers.  Side-chain--environment energies
+enter the existing rotamer solver through
+\texttt{martini\_sc\_table\_1body} and
+\texttt{cg\_lipid\_rotamer\_sc}; backbone and generic environment energies
+enter through \texttt{martini\_potential} and
+\texttt{cg\_lipid\_target}.  The virtual proxy transmits forces to the Upside
+carriers through the stored mapping.
 
-For each residue with a complete backbone, the preparation code keeps the
-runtime carrier atoms \texttt{N}, \texttt{CA}, \texttt{C}, and \texttt{O} and
-adds a virtual \texttt{BB} proxy located at the mass-weighted center of mass
-of those four atoms.  The mapping is stored in
-\texttt{/input/hybrid\_bb\_map}.  That group contains the carrier indices,
-carrier weights, the proxy index, the per-residue dryMARTINI backbone type, the
-secondary-structure label, and reference carrier coordinates for auditability.
-Protein membership and environment membership are stored in
-\texttt{/input/hybrid\_env\_topology}.  Activation rules and exclusion rules are
-stored in \texttt{/input/hybrid\_control}.
+Protein carrier masses are fixed at exactly $1~m_{\mathrm{up}}$.  Neither the
+protein masses, the trained protein force field, nor the protein thermostat is
+rescaled to match membrane transport.  Internal side-chain optimization may
+occur within an Upside stage, but SC-CGL forces are part of the same global
+force evaluation as CGL-CGL and backbone forces.
 
-This mapping has two consequences.  First, SC-environment interactions can stay
-inside the existing rotamer machinery.  Second, backbone-environment
-interactions can act on a dryMARTINI-like \texttt{BB} target while the actual
-protein dynamics remain on the Upside backbone carriers.  The hybrid stage
-preparation therefore remains explicit and reversible at the artifact level.
+\subsection{Global Time Step and CGL-Only GLE}
 
-\subsection{Workflow Stages}
-
-The hybrid driver \texttt{run-hybrid-workflow} organizes preparation into a
-small fixed stage sequence.  Stage 0 packs the protein and bilayer together,
-removes steric overlaps, and exports the hybrid mapping.  Stages 6.0--6.6 then
-perform the preproduction handoff, including rigid-protein box relaxation,
-progressive equilibration, and reduction of the transient lipid-head restraints
-used during packing.  Stage 7.0 activates the production Hamiltonian, performs
-a burn-in under that Hamiltonian, promotes the final burn-in state to the input
-restart state, and then continues production from the same stage file.  The
-same workflow supports \texttt{full} and \texttt{coarse} lipid resolution; only
-the injected lipid nodes differ.
-
-\section{Conservative Force-Field Construction}
-
-\subsection{Generic dryMARTINI Particle Tables}
-
-At the constituent level, the dryMARTINI nonbonded energy between beads $i$ and
-$j$ is
+One standard velocity-Verlet stage advances the full system by
 \begin{equation}
-u_{ij}(d) =
-4\epsilon_{ij}
-\left[
-\left(\frac{\sigma_{ij}}{d}\right)^{12}
--\left(\frac{\sigma_{ij}}{d}\right)^6
-\right]
-+ \frac{k_e q_i q_j}{d},
-\qquad d < r_c,
-\label{eq:ljcoul}
+\Delta t=0.004~T_{\mathrm{up}}=40~\mathrm{ps}.
+\label{eq:timestep}
 \end{equation}
-with $u_{ij}(d)=0$ for $d \ge r_c$ and $r_c=1.2~\mathrm{nm}$.  The build code
-uses a numerical guard $d_{\mathrm{eval}}=\max(d,10^{-6}~\mathrm{nm})$ only to
-avoid a singular evaluation at exact bead coincidence.
+There is no multiplier between requested steps and integrated steps.  Thus
+$1~T_{\mathrm{up}}=10$ ns, and CGL-CGL, SC-CGL, backbone--CGL, and protein
+forces all act on the same physical clock.
 
-The generic particle artifact \texttt{particle.h5} stores the combined
-energy grids after explicit conversion into Upside energy and length units.
-The installed file contains 81 unique $(\epsilon,\sigma,qq)$ tuples, each
-evaluated on a 1000-point radial grid out to $12~\angstrom$.  At runtime,
-\texttt{MartiniPotential} reads those tables and applies them to all generic
-environment particles.
-
-\subsection{Rotamer-Resolved SC-Particle Tables}
-
-The SC-particle artifact \texttt{sidechain.h5} is built directly from
-side-chain rotamer bead ensembles against the same dryMARTINI particle types.
-For each residue type and each dryMARTINI target type, the build code stores
-radial, angular, and combined rotamer free-energy grids.  The installed file
-contains 18 residue types, 38 target particle types, a 96-point radial grid,
-and a 13-point $\cos\theta$ grid.  This table family remains distinct from the
-CGL compaction machinery.  SC-particle interactions are direct rotamer tables;
-they are not routed through a synthetic lipid hidden state.
-
-\subsection{One-Particle CGL Mapping}
-
-Each DOPC molecule is mapped to a single coarse-grained lipid site with center
-position $\mathbf{R}$ and unit orientation vector $\hat{\mathbf{n}}$.  The
-center is the geometric center of the 14 dryMARTINI DOPC beads.  The
-orientation points from the NC3 head group toward the midpoint of the terminal
-tail beads.  The accepted runtime does not use a hidden marker particle.  The
-orientation is stored directly as a state vector in
-\texttt{cgl\_orientation\_state} and is combined with the center coordinates in
-\texttt{compose\_vector6d}.
-
-Two geometric quantities are extracted from the reference DOPC conformer
-ensemble:
-\begin{align}
-\ell &=
-\left\langle
-\left|
-(\mathbf{x}_{\mathrm{tail}}-\mathbf{x}_{\mathrm{COM}})
-\cdot \hat{\mathbf{n}}
-\right|
-\right\rangle,
-\\
-I_{\perp} &=
-\left\langle
-\sum_i m_i
-\left(
-|\mathbf{x}_i-\mathbf{x}_{\mathrm{COM}}|^2 -
-\left[(\mathbf{x}_i-\mathbf{x}_{\mathrm{COM}})\cdot\hat{\mathbf{n}}\right]^2
-\right)
-\right\rangle.
-\end{align}
-For the installed \texttt{dopc.h5}, the recorded values are
-$\ell=9.406~\angstrom$ and
-$I_{\perp}=2.26\times10^4~\mathrm{g\,mol^{-1}}\,\angstrom^2$.  These are not tuning
-knobs; they are properties of the mapped dryMARTINI reference ensemble.
-
-\subsection{Tempered Projection and Numerical Representation}
-
-For all projected coarse variables $x$, the conservative tables are built from
-an explicit hidden-state average,
+The native DOPC mass is $1008~\mathrm{g\,mol^{-1}}=84~m_{\mathrm{up}}$.  The
+accepted translational mass scale is 0.05, giving
+$m_{\mathrm{CGL}}=4.2~m_{\mathrm{up}}$.  A two-mode Markovian embedding of an
+exponential-memory GLE replaces the ordinary translational thermostat only for
+CGL particles.  At $T_0$, the memory times and couplings are
 \begin{equation}
-F_{\tau_{\mathrm{avg}}}(x) =
--k_B \tau_{\mathrm{avg}}
-\log
-\frac{\sum_{\omega} w_{\omega}
-\exp[-U(x,\omega)/(k_B \tau_{\mathrm{avg}})]}
-{\sum_{\omega} w_{\omega}},
-\label{eq:tempered}
+(\tau_1,\tau_2)=(0.2,2.0)~T_{\mathrm{up}},\qquad
+(g_1,g_2)=(0.30375,0.2205).
+\label{eq:gle}
 \end{equation}
-where $\omega$ denotes hidden conformers, bead-frame choices, azimuthal
-samples, and rotamer states as appropriate for the table family.  The retained
-tempered average is $\tau_{\mathrm{avg}}=25.0$ in Upside temperature units.
+The auxiliary momenta are propagated with the fluctuation--dissipation noise
+and are stored in every checkpoint.  The CGL orientation uses the
+source-derived transverse inertia and a rotational thermostat time of
+$0.008~T_{\mathrm{up}}$.  None of these settings acts on protein carriers.
+Colored-noise embeddings of this form provide a controlled separation between
+the conservative potential and dynamical friction.\cite{ceriotti2010}
 
-For the CGL tables, the stored spline control is not the raw free energy but
-the reduced transform
+\subsection{Diffusion Mapping and Analysis}
+
+Lateral positions are unwrapped across the periodic cell.  At every frame the
+instantaneous center-of-mass displacement of the CGL population is removed.
+For lag $t$, the raw two-dimensional diffusion estimate follows
 \begin{equation}
-y(x)=
-\log\left[
-1+\frac{F_{\tau_{\mathrm{avg}}}(x)-F_{\min}}{k_B T_{\mathrm{prod}}}
-\right],
-\label{eq:log1p}
+D_{\mathrm{CGL}}=\frac{1}{4}\frac{d}{dt}
+\left\langle|\mathbf R_{xy}(t_0+t)-\mathbf R_{xy}(t_0)|^2\right\rangle_{t_0,i}.
+\label{eq:diffusion}
 \end{equation}
-with exact inverse
+The model uses the prescribed temporal coarse-graining correction
 \begin{equation}
-F_{\tau_{\mathrm{avg}}}(x)=
-F_{\min}+k_B T_{\mathrm{prod}}\left[\exp(y(x))-1\right].
+D_{\mathrm{DOPC}}=(14\times4)D_{\mathrm{CGL}}=56D_{\mathrm{CGL}},
+\label{eq:cg_factor}
 \end{equation}
-This improves numerical conditioning while preserving the underlying tempered
-free-energy surface.
+where 14 is the number of dryMARTINI particles represented by one CGL and 4 is
+the MARTINI particle coarse-graining factor.  Because
+$1~\angstrom^2/T_{\mathrm{up}}=1~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ under
+Eq.~\ref{eq:timestep}, the numerical conversion is direct after multiplication
+by 56.  The factor modifies the interpreted diffusion coefficient, not the
+Upside simulation clock.
 
-\subsection{CGL Table Families}
+Bilayer validation also measures the mean leaflet-center separation,
+$|n_z|$, lateral occupancy, low-wavevector density modes, nearest-neighbor
+spacing, leaflet reassignment, and finite coordinates and energies.  Hybrid
+validation additionally measures hydrogen-bond score, C$\alpha$ RMSD after
+rigid alignment, DSSP agreement, helix fraction, and the angle between each
+protein transmembrane axis and the bilayer plane.  No protein-angle restraint
+is present.
 
-The installed \texttt{dopc.h5} stores three production CGL table families.
-The pair table \texttt{cg\_lipid\_pair} is a directional tensor spline over one
-CGL type pair with 140 radial knots and 9 angular knots per angular axis.  The
-SC-CGL table \texttt{cg\_lipid\_sc} is an 18-residue family with 24 radial
-knots and 11 angular knots.  The CGL-particle table \texttt{cg\_lipid\_target}
-is a 38-target family with 89 radial knots and 321 angular samples.
+\subsection{Simulation Protocol}
 
-The important point is that the physical source model is shared across those
-families.  CGL-CGL, SC-CGL, and CGL-particle tables are all explicit
-constituent projections of dryMARTINI bead interactions.  They differ in source
-and target objects, not in physical contract.
+The transport calibration used a fresh 404-CGL DOPC bilayer at
+$T=0.8647~T_{\mathrm{up}}\simeq303$ K.  The run contained 30,000 global steps,
+or $120~T_{\mathrm{up}}=1.2~\mu$s.  Structural and multi-origin diffusion
+statistics discarded the initial 20\%, leaving $96~T_{\mathrm{up}}$.
 
-\section{Why the Initial One-Particle Model Failed}
+Hybrid validation used fresh 1RKL and 1AFO preparations with 275 and 174 CGL
+particles, respectively.  Each system was propagated through stage 7.0 and
+three sequential production continuations.  Every segment contained 2000
+steps ($8~T_{\mathrm{up}}=80$ ns), for a total of 320 ns per protein.  The
+committed workflow minimizes each continuation input before dynamics;
+trajectory statistics are evaluated within segments so that minimization
+displacements are not interpreted as diffusion.  CGL orientation, compaction,
+GLE auxiliary momenta, and ordinary momenta are restored from the preceding
+checkpoint.  Production burn-in restraints and protein orientation restraints
+are zero.
 
-\subsection{Physical Root Cause}
+\section{Results}
 
-The first one-particle CGL model was built from isolated DOPC training data.
-That choice preserved transferability and avoided fitting directly to a target
-bilayer observable.  It also exposed the central defect.  In a bilayer, DOPC
-tails are more compact than they are in the isolated reference ensemble.  The
-isolated one-particle projection therefore overestimates the steric and
-directional penalty of bringing the two leaflets together.  The result is not a
-complete membrane collapse; instead, the leaflets retain the correct
-orientation but relax to a separation that is too large.
+\subsection{Bilayer Structure and Lateral Transport}
 
-That diagnosis explains an earlier observation that turning off the
-interactions between leaflets can preserve the prepared separation.  Doing so
-removes the symptom by removing the physical channel that carries the training
-mismatch.  It is therefore not an acceptable fix.
+The 404-CGL membrane remained closed and laterally uniform.  After the initial
+relaxation, the mean leaflet-center separation was $16.52~\angstrom$ and the
+final separation was $16.41~\angstrom$.  The mean orientational order was
+$\langle|n_z|\rangle=0.9924$, with fifth percentile 0.9770.  Six-by-six
+occupancy grids had no empty cells in either leaflet; low-wavevector density
+amplitudes averaged 0.0158 and 0.0156 for the two leaflets.  The maximum
+leaflet reassignment fraction was 0.00495 and did not grow into mixing or
+ejection.
 
-\subsection{Design Branches That Were Evaluated}
-
-Several design branches were explored before the final method was retained.
-They are summarized here by mechanism rather than by chronology.
-
-First, the isolated projection itself was cleaned up.  The DOPC reference
-ensemble was rebuilt with intramolecular nonbonded interactions retained,
-sampling burn-in was made explicit, and table provenance was tightened.  Those
-changes improved reproducibility and removed earlier artifact-generation bugs,
-but they did not by themselves recover the correct leaflet distance.
-
-Second, several conservative many-body descriptors were tested as carriers of
-the missing bilayer compaction physics.  Same-leaflet density fields improved
-local in-plane packing but did not fix the time scale once the bilayer was
-stabilized.  Cross-leaflet contact embeddings and direct gap embeddings moved
-in the right structural direction, but either remained too weak to hold the
-leaflets together or degraded the dynamics.
-
-Third, explicit compact/extended hidden-state models were tested.  Those models
-made the missing compaction physics visible, but the explicit state dynamics
-introduced excessive friction.  Mean-field activation of pair-relaxation
-surfaces recovered structural information but tended to slow lateral diffusion
-too strongly when the correction was activated strongly enough to hold the
-bilayer.
-
-Fourth, a direct target potential of mean force over a local gap coordinate was
-tested.  That branch showed that the interleaflet gap is a useful structural
-descriptor, but a gap PMF alone was not sufficient.  It lacked the directional
-and state-dependent correction needed to repair the isolated projection.
-
-The accepted method emerged from those tests: the local interleaflet gap is the
-right descriptor, but it should drive a compact-state interpolation of
-source-derived correction surfaces rather than act as a standalone membrane PMF.
-
-\section{Accepted Final CGL Model}
-
-\subsection{Local Gap Response}
-
-The accepted model keeps the directional base table
-$E_0(r,\hat{\mathbf{n}}_1,\hat{\mathbf{n}}_2)$ and adds a local compact-state
-response per lipid.  For each CGL $i$, the runtime first classifies the two
-leaflets from the median $z$ coordinate.  It then builds a weighted opposite
-leaflet gap
-\begin{equation}
-g_i =
-\frac{\sum_{j \in \mathrm{opp}(i)} w_{ij}^{\mathrm{gap}} r_{ij}}
-{\sum_{j \in \mathrm{opp}(i)} w_{ij}^{\mathrm{gap}}},
-\label{eq:gapcoord}
-\end{equation}
-with a fallback value when no qualifying opposite-leaflet neighbors are
-present.  The pair weight $w_{ij}^{\mathrm{gap}}$ is nonzero only for
-opposing-face contacts within a radial cutoff and rises smoothly with
-face-to-face alignment in the retained production branch.
-
-The local compact-state weight is then
-\begin{equation}
-q_i = S(g_i),
-\end{equation}
-where $S$ is a monotone spline learned from full-resolution DOPC target data
-projected onto compact and extended state representatives.  The accepted
-runtime uses this response implicitly; no additional dynamical compaction degree
-of freedom is propagated in production.
-
-\subsection{Pair Corrections}
-
-The CGL-CGL pair energy becomes
-\begin{align}
-E_{ij} &=
-E_0(r_{ij},\hat{\mathbf{n}}_i,\hat{\mathbf{n}}_j)
-+ w_{ij}^{EE}\Delta E_{ij}^{EE}
-+ w_{ij}^{EC}\Delta E_{ij}^{EC}
-+ w_{ij}^{CC}\Delta E_{ij}^{CC},
-\\
-w_{ij}^{EE} &= (1-q_i)(1-q_j),
-\\
-w_{ij}^{EC} &= q_i(1-q_j) + (1-q_i)q_j,
-\\
-w_{ij}^{CC} &= q_i q_j .
-\end{align}
-Here $\Delta E^{EE}$, $\Delta E^{EC}$, and $\Delta E^{CC}$ are
-source-derived correction surfaces.  In the build artifact
-\texttt{dopc.h5}, they are stored as
-\texttt{delta\_extended\_extended},
-\texttt{delta\_extended\_compact}, and
-\texttt{delta\_compact\_compact}.  These are not arbitrary fit functions; they
-are the projected energetic differences among the resolved compact and extended
-reference states.
-
-The same local response is extended consistently to the SC-CGL and
-CGL-particle families:
-\begin{equation}
-E_{iA} = E_0(i,A) + (1-q_i)\Delta E^{\mathrm{ext}}_{iA}
-+ q_i \Delta E^{\mathrm{comp}}_{iA},
-\end{equation}
-where $A$ is a side-chain environment site or a generic target particle.  The
-corresponding correction surfaces are stored as
-\texttt{delta\_extended} and \texttt{delta\_compact} in the
-\texttt{cg\_lipid\_sc} and \texttt{cg\_lipid\_target} groups and are injected
-into the runtime nodes \texttt{cg\_lipid\_rotamer\_sc} and
-\texttt{cg\_lipid\_target}.
-
-This distinction matters.  The accepted model is \emph{not} a four-coordinate
-table with an explicit leaflet-distance axis.  The stored pair table is still a
-directional tensor in the original angular and radial coordinates.  The new
-physics enters through a separate, local, source-derived state interpolation.
-
-\subsection{What the Final Model Does Not Add}
-
-The accepted production branch does not add a bilayer-thickness restraint, a
-leaflet-separation cap, a custom orientational aligning field, or a permanent
-exclusion between opposing leaflets.  It also does not remove the retained
-tempered PMF contract.  The retained $\tau_{\mathrm{avg}}=25.0$ projection is
-the same one used by the original CGL tables; the redesign changes how the
-missing tail-compaction physics is encoded, not whether tempering is used.
-
-\section{Transport Model and Time-Scale Closure}
-
-\subsection{CGL GLE Contract}
-
-The conservative force field determines bilayer structure and torques but not
-the physical clock of the one-particle CGL dynamics.  That clock is supplied by
-a CGL-specific generalized Langevin model written into
-\texttt{/input/cgl\_gle}.  The production branch uses a two-mode exponential
-memory kernel with
-\begin{equation}
-\tau_1 = 0.2, \qquad \tau_2 = 2.0,
-\end{equation}
-and couplings
-\begin{equation}
-g_1 = 0.30375, \qquad g_2 = 0.2205.
-\end{equation}
-The CGL masses are rescaled by 0.012 relative to the dryMARTINI mass mapping,
-the Markovian CGL thermostat is replaced by the GLE embedding, and rotational
-dynamics are thermostatted separately.
-
-This transport layer is applied after conservative table injection.  It lives in
-the stage metadata and can be restarted from the last saved auxiliary GLE
-momenta.  Because it is factored out of the conservative HDF5 tables, the same
-force field can be compared under different transport settings without
-regenerating the underlying CGL interaction surfaces.
-
-\subsection{Diffusion Target}
-
-The time-scale target is based on the established DOPC lateral diffusion
-reference used in this project together with the 56-fold one-particle
-coarse-graining factor: 14 dryMARTINI particles per DOPC times a factor of 4
-per MARTINI bead.  Under the retained Upside clock, the accepted target window
-for the one-particle model is therefore approximately
-$D_{xy}\approx 0.25~\angstrom^2/\mathrm{tu}$, equivalent to the retained
-$0.25~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ CGL diffusion reference.
-
-The important separation of roles is that the compact-state redesign fixes the
-structural defect, while the GLE parameters fix the clock.  Earlier branches
-failed because they mixed those two roles: when the compact-state coupling was
-made strong enough to hold the bilayer, the explicit or mean-field state model
-slowed the diffusion too much.
-
-\section{Validation}
-
-\subsection{Bilayer-Only Exact-288 CGL Validation}
-
-The main bilayer gate is a 288-lipid CGL-only bilayer with the exact retained
-production branch.  The accepted run starts from an initial mean leaflet
-separation of $12.77~\angstrom$ and relaxes to
-$16.25~\angstrom$ over a 100-time-unit trajectory, with a maximum observed
-separation of $17.75~\angstrom$.  No leaflet flips are observed.  The final
-orientation remains strong, with late-frame $p_{05}(|n_z|)=0.989$ and
-minimum $|n_z|=0.963$.
-
-Lateral uniformity was checked explicitly rather than inferred from visual
-inspection alone.  Over the late half of the accepted trajectory, low-wavevector
-structure factors remain small, coarse 6-by-6 occupancy grids show no empty
-bins, finer 8-by-8 occupancy grids show only sparse transient vacancies, and
-the occupancy variance stays below the corresponding Poisson value.  The same
-late-half analysis gives a same-leaflet nearest-neighbor mean of about
-$7.57~\angstrom$ with a broad but stable distribution, which is consistent
-with a fluid laterally uniform bilayer rather than clustered lipid aggregates.
-
-The time-scale gate is also satisfied.  The accepted late-half diffusion
-coefficient is $D_{xy}=0.23185~\angstrom^2/\mathrm{tu}$, and the last-quarter block
-gives $D_{xy}=0.25329~\angstrom^2/\mathrm{tu}$.  Those values close the retained
-one-particle DOPC diffusion target without reopening the leaflet-distance bug.
-
-\subsection{Hybrid 1RKL and 1AFO Validation}
-
-The same CGL method was then applied to the live hybrid table families and
-rerun in the retained 1RKL and 1AFO workflows.  The results are summarized in
-Table~\ref{tab:validation}.  In both systems the late-half leaflet separation is
-approximately $16.38~\angstrom$, which is a large correction from the
-earlier over-separated hybrid branch.  The CGL orientations remain nearly
-perfectly aligned with the bilayer normal, and the lateral nearest-neighbor
-statistics remain consistent with a uniform leaflet.
-
-Protein stability remains acceptable.  In 1AFO, the final secondary structure
-is essentially unchanged over the stage-7 production run.  In 1RKL, the helix
-retention is weaker than in 1AFO but remains within the previously retained
-hybrid quality envelope and is no longer coupled to a bilayer-distance failure.
+Table~\ref{tab:diffusion} reports the diffusion estimates.  The short-lag
+window is subdiffusive ($\alpha=0.657$ in
+$\mathrm{MSD}\propto t^{\alpha}$) and gives the largest value.  At longer
+lags, the estimates converge: the 10--40 and 20--60 $T_{\mathrm{up}}$ windows
+give $11.47$ and $11.45~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ after the factor of
+56.  Lipid14 reports DOPC values of 6.48 and
+$9.49~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ in NPT and NVE simulations at 303 K
+and cites an experimental value of $11.5~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ at
+303 K.\cite{dickson2014}  An independent DOPC study reports approximately
+$9.32~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ at 298 K.\cite{ermilova2020}  The
+long-lag CGL result therefore closes the intended DOPC time scale without a
+change to the Upside clock.
 
 \begin{table}[ht]
 \centering
-\caption{Validation summary for the accepted production branch.}
-\small
-\begin{tabular}{p{0.22\linewidth}p{0.22\linewidth}p{0.18\linewidth}p{0.28\linewidth}}
+\caption{Multi-origin diffusion of the 404-CGL membrane.}
+\begin{tabular}{rrrrr}
 \toprule
-System & Leaflet geometry & Orientation / packing & Protein quality \\
+Fit window & $D_{\mathrm{CGL}}$ & $56D_{\mathrm{CGL}}$ & $R^2$ & $\alpha$ \\
+($T_{\mathrm{up}}$) & ($\angstrom^2/T_{\mathrm{up}}$) & ($\mu\mathrm{m}^2/\mathrm{s}$) & & \\
 \midrule
-288-lipid CGL bilayer &
-$12.77 \rightarrow 16.25~\angstrom$,
-$\max=17.75~\angstrom$, zero flips &
-$p_{05}(|n_z|)=0.989$, laterally uniform,
-$D_{xy}=0.232$--$0.253~\angstrom^2/\mathrm{tu}$ &
-not applicable \\
-
-1RKL hybrid &
-late-half mean separation $16.394~\angstrom$ &
-late-half mean $|n_z|=0.9933$,
-NN mean $7.33~\angstrom$,
-NN $p_{05}=6.25~\angstrom$ &
-backbone RMSD median $1.87~\angstrom$,
-final DSSP match 0.742,
-late-half DSSP mean 0.789 \\
-
-1AFO hybrid &
-late-half mean separation $16.379~\angstrom$ &
-late-half mean $|n_z|=0.9927$,
-NN mean $7.48~\angstrom$,
-NN $p_{05}=6.58~\angstrom$ &
-backbone RMSD median $2.74~\angstrom$,
-final DSSP match 0.986,
-late-half DSSP mean 0.987 \\
+1--5   & 0.3328 & 18.64 & 0.9912 & 0.657 \\
+5--20  & 0.2215 & 12.40 & 0.9997 & 0.695 \\
+10--40 & 0.2049 & 11.47 & 0.9993 & 0.774 \\
+20--60 & 0.2045 & 11.45 & 0.9982 & 0.836 \\
 \bottomrule
 \end{tabular}
-\label{tab:validation}
+\label{tab:diffusion}
 \end{table}
+
+\subsection{Hybrid Bilayer Stability}
+
+Both hybrid membranes remained finite through stage 7.3.  Table
+\ref{tab:hybrid_membrane} summarizes the pooled 320-ns trajectories.  The
+leaflet separations fluctuate around $15.2$--$15.4~\angstrom$ without opening.
+Orientational fifth percentiles remain above 0.98.  No CGL coordinate or energy
+is nonfinite, and the final trajectories show neither the stage-7.2 vertical
+protein state nor the stage-7.3 coordinate explosion observed in the rejected
+workflow.
+
+\begin{table}[ht]
+\centering
+\caption{Membrane observables in the hybrid trajectories.}
+\begin{tabular}{lrrrr}
+\toprule
+System & CGL count & Mean separation & Final separation & $p_{05}(|n_z|)$ \\
+ & & ($\angstrom$) & ($\angstrom$) & \\
+\midrule
+1RKL & 275 & 15.187 & 15.281 & 0.9840 \\
+1AFO & 174 & 15.305 & 15.342 & 0.9824 \\
+\bottomrule
+\end{tabular}
+\label{tab:hybrid_membrane}
+\end{table}
+
+\subsection{Protein Structure and Orientation}
+
+Protein observables remain within the committed stable envelope
+(Table~\ref{tab:protein}).  For 1RKL, the mean and final hydrogen-bond scores
+are 37.62 and 35.67 compared with 30.38 initially.  Mean and final DSSP matches
+are 0.925 and 0.903, and the final helix fraction is 0.710 compared with 0.742
+initially.  The protein--bilayer angle averages $35.90^\circ$ around an initial
+$34.42^\circ$ and spans $28.83^\circ$--$39.51^\circ$; it does not rotate to a
+vertical state.
+
+The two 1AFO helices retain a mean DSSP match of 0.989 and a final match of
+1.000.  Their orientation ranges remain close to the starting geometry:
+$12.76^\circ$--$18.94^\circ$ for chain A and
+$14.39^\circ$--$18.24^\circ$ for chain B.  These fluctuations occur without an
+orientational restraint and therefore result from the unchanged protein force
+field and the physical hybrid interaction tables.
+
+\begin{table}[ht]
+\centering
+\caption{Protein observables pooled over stages 7.0--7.3.}
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+System & H bond & DSSP & C$\alpha$ RMSD & Initial angle & Mean angle \\
+ & mean/final & mean/final & median/final ($\angstrom$) & (deg) & (deg) \\
+\midrule
+1RKL & 37.62/35.67 & 0.925/0.903 & 2.79/3.32 & 34.42 & 35.90 \\
+1AFO & 91.71/90.20 & 0.989/1.000 & 2.58/3.34 & 17.83/14.39 & 15.97/16.69 \\
+\bottomrule
+\end{tabular}
+\label{tab:protein}
+\end{table}
+
+\subsection{Clock and Restart Verification}
+
+Every 2000-step hybrid segment records exactly $8.0~T_{\mathrm{up}}$, and the
+30,000-step membrane trajectory records exactly $120~T_{\mathrm{up}}$.  The
+prepared hybrid files contain protein carrier mass 1, CGL mass 4.2, the two
+GLE modes in Eq.~\ref{eq:gle}, and all required conservative interaction
+nodes.  CGL orientation and compaction restart errors are at single-precision
+roundoff or zero.  These checks rule out the earlier three-integrations-per-step
+scheduler and confirm that the transport calibration does not slow the Upside
+protein core.
 
 \section{Discussion}
 
-The most important result is conceptual.  The leaflet-distance bug was not
-primarily a transport problem, and it was not fixed by suppressing the
-opposing-leaflet interactions.  The root cause was a state mismatch between the
-isolated DOPC training ensemble and the compacted tail geometry realized in the
-bilayer.  Once that mismatch is formulated explicitly, the design space becomes
-clear.  The fix should act on local lipid compaction, should remain tied to the
-source dryMARTINI physics, and should preserve the original directional pair
-coordinates.
+The principal modeling result is the separation of conservative reduction from
+dynamical coarse graining.  The tempered constituent projection and physical
+tail-relaxation energies determine membrane structure and protein contact
+forces.  The CGL mass and GLE determine how rapidly that conservative surface
+is explored.  Changing the protein mass, changing the global time unit, or
+weakening SC-CGL interactions would mix those roles and would not constitute a
+physical transport calibration.
 
-The accepted method satisfies those conditions.  It does not inject bilayer
-information as a direct extra pair coordinate.  Instead, it uses a local
-cross-leaflet gap response as an observable that estimates how compact a given
-lipid should be in its instantaneous neighborhood, and it uses that estimate to
-blend source-derived compact and extended correction surfaces.  That same logic
-extends naturally from CGL-CGL interactions to SC-CGL and CGL-particle
-interactions, which is why the hybrid workflows recover along with the
-bilayer-only model.
+The tail treatment also avoids membrane-specific fitting.  Pair relaxation is
+calculated from the energetic benefit and molecular cost of deforming two DOPC
+tails at a specified pair geometry.  The SC-CGL correction is calculated from
+the corresponding side-chain-conditioned tail relief.  The scalar state has an
+isolated-DOPC self PMF.  None of these terms contains a target leaflet
+separation or protein angle.  Bilayer closure and protein orientation are
+therefore validation observables rather than force-field inputs.
 
-The software architecture also matters.  The force-field tables, hybrid mapping
-metadata, stage conversion, and transport metadata are now cleanly separated.
-That makes the interface auditable and preserves a single logic path for both
-full-resolution and one-particle lipid modes.
+The long-lag diffusion plateau is the appropriate clock diagnostic.  Short-lag
+motion is subdiffusive because a CGL remains caged by neighboring lipids; in
+protein-containing systems, crowding and direct contacts add further
+subdiffusion.  That local slowing does not imply a different timestep for
+SC-CGL interactions.  All conservative forces are evaluated at the same
+40-ps global stage, while the protein-free membrane supplies the transferable
+bulk transport calibration.
 
-Several limitations remain.  The current one-particle model is DOPC specific,
-so other lipids require a corresponding rebuild of the source projection and
-compaction response.  The compact-state response is trained from a particular
-full-resolution target state, so future work should test its transferability
-across broader thermodynamic conditions and protein classes.  Those are
-extension problems, not architectural defects.
+The present validation is limited to DOPC, 303 K, and two membrane proteins.
+Other lipid chemistries require new constituent projections and source-derived
+internal relaxation surfaces.  Quantitative hydrodynamic finite-size analysis
+and a larger protein panel would be appropriate before using the model for
+absolute kinetic predictions outside this regime.
 
 \section{Conclusions}
 
-The dryMARTINI--Upside interface presented here is a full method rather than a
-single patched potential.  It combines
-\begin{enumerate}
-\item a table-only runtime contract,
-\item a shared full-resolution and one-particle dryMARTINI source model,
-\item an explicit hybrid protein mapping with virtual backbone proxies,
-\item a one-particle CGL runtime with direct orientation dynamics, and
-\item a local gap-responsive compact-state interpolation that repairs the
-      isolated-training mismatch responsible for the original leaflet-distance
-      defect.
-\end{enumerate}
-The final method produces correct leaflet separation, correct CGL orientation,
-laterally uniform leaflets, and the retained DOPC diffusion clock in both
-bilayer-only and protein--bilayer hybrid validation systems.
+The accepted dryMARTINI--Upside interface is a single physical model rather
+than a sequence of compensating patches.  It uses source-projected spline
+tables for every conservative interaction, retains the clustering-resistant
+tempered Boltzmann average, represents unresolved DOPC tail relaxation in both
+CGL-CGL and SC-CGL contacts, and keeps generic target interactions active.
+Transport is corrected only on CGL particles with a mass scale and an
+FDT-consistent GLE.  The Upside backbone remains on its original mass, force
+field, thermostat, and 40-ps global integration step.
+
+The 404-lipid membrane reproduces the experimental-scale DOPC diffusion rate
+while remaining closed, ordered, and laterally uniform.  Fresh 1RKL and 1AFO
+trajectories remain finite through stage 7.3, preserve secondary structure,
+and fluctuate around their initial bilayer orientations without restraints.
+Together these tests establish that the corrected CGL time mapping fixes the
+frozen-bilayer symptom without degrading the committed protein dynamics.
 
 \begin{thebibliography}{9}
 
@@ -648,24 +511,25 @@ Implicit Solvent.
 \emph{J. Chem. Theory Comput.} \textbf{2015}, \emph{11}, 260--275.
 DOI: 10.1021/ct500477k.
 
-\bibitem{drouffe1991}
-Drouffe, J.-M.; Maggs, A. C.; Leibler, S.
-Computer Simulations of Self-Assembled Membranes.
-\emph{Science} \textbf{1991}, \emph{254}, 1353--1356.
-DOI: 10.1126/science.1962193.
+\bibitem{ceriotti2010}
+Ceriotti, M.; Bussi, G.; Parrinello, M.
+Colored-Noise Thermostats \`a la Carte.
+\emph{J. Chem. Theory Comput.} \textbf{2010}, \emph{6}, 1170--1180.
+DOI: 10.1021/ct900563s.
 
-\bibitem{noguchi2006}
-Noguchi, H.; Gompper, G.
-Meshless Membrane Model Based on the Moving Least-Squares Method.
-\emph{Phys. Rev. E} \textbf{2006}, \emph{73}, 021903.
-DOI: 10.1103/PhysRevE.73.021903.
+\bibitem{dickson2014}
+Dickson, C. J.; Madej, B. D.; Skjevik, {\AA}. A.; Betz, R. M.; Teigen, K.;
+Gould, I. R.; Walker, R. C.
+Lipid14: The Amber Lipid Force Field.
+\emph{J. Chem. Theory Comput.} \textbf{2014}, \emph{10}, 865--879.
+DOI: 10.1021/ct4010307.
 
-\bibitem{yuan2010}
-Yuan, H.; Huang, C.; Li, J.; Lykotrafitis, G.; Zhang, S.
-One-Particle-Thick, Solvent-Free, Coarse-Grained Model for Biological and
-Biomimetic Fluid Membranes.
-\emph{Phys. Rev. E} \textbf{2010}, \emph{82}, 011905.
-DOI: 10.1103/PhysRevE.82.011905.
+\bibitem{ermilova2020}
+Ermilova, I.; Swenson, J.
+DOPC versus DOPE as a Helper Lipid for Gene-Therapies: Molecular Dynamics
+Simulations with DLin-MC3-DMA.
+\emph{Phys. Chem. Chem. Phys.} \textbf{2020}, \emph{22}, 28256--28268.
+DOI: 10.1039/D0CP05111J.
 
 \end{thebibliography}
 

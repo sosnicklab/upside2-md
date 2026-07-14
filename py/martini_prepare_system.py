@@ -63,6 +63,10 @@ DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
 DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
 DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
 MARTINI_MD_INTEGRATOR = "v"
+MARTINI_CGL_TIME_STEP = 0.004
+DEFAULT_CGL_MASS_SCALE = 0.05
+DEFAULT_CGL_GLE_MEMORY_TAUS = "0.2,2.0"
+DEFAULT_CGL_GLE_COUPLINGS = "0.30375,0.2205"
 
 
 def derive_dopc_contact_clearance_angstrom(upside_home: Path) -> float:
@@ -1067,6 +1071,21 @@ def assert_hybrid_stage_active(
                 f"{up_file}: expected stage={expected_stage}, activation={expected_activation}; "
                 f"got stage={stage}, activation={activation}"
             )
+        if "particle_class" in inp and "mass" in inp:
+            particle_class = np.asarray(
+                [h5_as_text(value).strip().upper() for value in inp["particle_class"][:]],
+                dtype=object,
+            )
+            protein_mass = np.asarray(inp["mass"][:], dtype=np.float64)[
+                particle_class == "PROTEIN"
+            ]
+            if protein_mass.size and not np.allclose(
+                protein_mass, 1.0, rtol=0.0, atol=1.0e-6
+            ):
+                raise ValueError(
+                    f"{up_file}: protein carriers must retain Upside unit mass; "
+                    f"observed range {protein_mass.min():.6g}-{protein_mass.max():.6g}"
+                )
         if require_interface_nodes:
             missing = [
                 node
@@ -1187,8 +1206,8 @@ def apply_cgl_transport_metadata(args, target_file: Path):
     lipid_res = getattr(args, "lipid_resolution", "coarse")
     if lipid_res == "full":
         return
-    mass_scale = float(getattr(args, "cg_lipid_mass_scale", env_float("CG_LIPID_MASS_SCALE", 1.0)))
-    replace_markovian = bool(int(getattr(args, "cgl_gle_replace_markovian", env_int("CGL_GLE_REPLACE_MARKOVIAN", 0))))
+    mass_scale = float(getattr(args, "cg_lipid_mass_scale", env_float("CG_LIPID_MASS_SCALE", DEFAULT_CGL_MASS_SCALE)))
+    replace_markovian = bool(int(getattr(args, "cgl_gle_replace_markovian", env_int("CGL_GLE_REPLACE_MARKOVIAN", 1))))
     if mass_scale <= 0.0:
         raise ValueError("cg_lipid_mass_scale must be positive")
 
@@ -1264,8 +1283,8 @@ def apply_cgl_transport_metadata(args, target_file: Path):
 
         if "/input/cgl_gle" in h5:
             del h5["/input/cgl_gle"]
-        memory_text = str(getattr(args, "cgl_gle_memory_taus", env_default("CGL_GLE_MEMORY_TAUS", ""))).strip()
-        coupling_text = str(getattr(args, "cgl_gle_couplings", env_default("CGL_GLE_COUPLINGS", ""))).strip()
+        memory_text = str(getattr(args, "cgl_gle_memory_taus", env_default("CGL_GLE_MEMORY_TAUS", DEFAULT_CGL_GLE_MEMORY_TAUS))).strip()
+        coupling_text = str(getattr(args, "cgl_gle_couplings", env_default("CGL_GLE_COUPLINGS", DEFAULT_CGL_GLE_COUPLINGS))).strip()
         memory_tau = parse_positive_float_list(memory_text, "CGL GLE memory tau")
         coupling = parse_positive_float_list(coupling_text, "CGL GLE coupling")
         if len(memory_tau) != len(coupling):
@@ -2071,9 +2090,9 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--protein-lipid-cutoff-max", type=float, default=env_float("PROTEIN_LIPID_CUTOFF_MAX", 8.0))
     parser.add_argument("--temperature", type=float, default=env_float("TEMPERATURE", 0.8647))
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
-    parser.add_argument("--cg-lipid-mass-scale", type=float, default=env_float("CG_LIPID_MASS_SCALE", 1.0))
-    parser.add_argument("--cgl-gle-memory-taus", default=env_default("CGL_GLE_MEMORY_TAUS", ""))
-    parser.add_argument("--cgl-gle-couplings", default=env_default("CGL_GLE_COUPLINGS", ""))
+    parser.add_argument("--cg-lipid-mass-scale", type=float, default=env_float("CG_LIPID_MASS_SCALE", DEFAULT_CGL_MASS_SCALE))
+    parser.add_argument("--cgl-gle-memory-taus", default=env_default("CGL_GLE_MEMORY_TAUS", DEFAULT_CGL_GLE_MEMORY_TAUS))
+    parser.add_argument("--cgl-gle-couplings", default=env_default("CGL_GLE_COUPLINGS", DEFAULT_CGL_GLE_COUPLINGS))
     parser.add_argument("--cgl-gle-temperature-grid", default=env_default("CGL_GLE_TEMPERATURE_GRID", ""))
     parser.add_argument("--cgl-gle-coupling-scales", default=env_default("CGL_GLE_COUPLING_SCALES", ""))
     parser.add_argument("--cgl-gle-memory-tau-scales", default=env_default("CGL_GLE_MEMORY_TAU_SCALES", ""))
@@ -2081,7 +2100,7 @@ def add_hybrid_workflow_arguments(parser):
         "--cgl-gle-replace-markovian",
         type=int,
         choices=[0, 1],
-        default=env_int("CGL_GLE_REPLACE_MARKOVIAN", 0),
+        default=env_int("CGL_GLE_REPLACE_MARKOVIAN", 1),
     )
     parser.add_argument("--thermostat-interval", type=int, default=env_int("THERMOSTAT_INTERVAL", -1))
     parser.add_argument("--strict-stage-handoff", type=int, default=env_int("STRICT_STAGE_HANDOFF", 1))
@@ -2120,8 +2139,8 @@ def add_hybrid_workflow_arguments(parser):
             DEFAULT_STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS,
         ),
     )
-    parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", 0.010))
-    parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", 0.002))
+    parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", MARTINI_CGL_TIME_STEP))
+    parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", MARTINI_CGL_TIME_STEP))
     parser.add_argument("--eq-frame-steps", type=int, default=env_int("EQ_FRAME_STEPS", 1000))
     parser.add_argument("--prod-frame-steps", type=int, default=env_int("PROD_FRAME_STEPS", 50))
     parser.add_argument("--prod-70-npt-enable", type=int, default=env_int("PROD_70_NPT_ENABLE", 0))
@@ -2175,6 +2194,16 @@ def validate_hybrid_workflow_args(args):
     ]:
         if not required.exists():
             raise FileNotFoundError(required)
+    if args.lipid_resolution == "coarse":
+        for label, dt in (
+            ("equilibration", args.eq_time_step),
+            ("production", args.prod_time_step),
+        ):
+            if abs(float(dt) - MARTINI_CGL_TIME_STEP) > 1.0e-12:
+                raise ValueError(
+                    f"Coarse CGL {label} must use the Upside backbone timestep "
+                    f"{MARTINI_CGL_TIME_STEP:g} T_up (40 ps); got {float(dt):.12g}"
+                )
 
 
 def workflow_stage_files(args):

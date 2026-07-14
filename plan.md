@@ -1,51 +1,76 @@
 # Project Goal
 
-Maintain the validated dryMARTINI DOPC hybrid workflow and keep the example
-`1rkl`/`1afo` workflows runnable from `example/16.MARTINI`.
+Preserve the committed dryMARTINI force field and stable protein dynamics while
+correcting CGL transport to the Upside clock: one integration stage is
+`dt=0.004 T_up = 40 ps`, CGL and CGL-SC forces are evaluated on that same
+stage, and the measured CGL lateral diffusion is interpreted with the
+`14 * 4 = 56` coarse-graining correction.
 
 # Architecture & Key Decisions
 
-- Keep all hybrid interface interactions active.  Do not disable SC-env,
-  BB-env, CGL-target, or CGL-CGL physics to work around failures.
-- The accepted DOPC runtime contract is pair-relaxed base-only for CGL-CGL:
-  `cg_lipid_pair` consumes only `compose_vector6d`; `cgl_compaction_state`
-  remains active for the self PMF and SC-CGL; CGL-target remains base-only with
-  no q overlay.
-- `parameters/dryMARTINI/dopc.h5` is the shared force-field artifact.  Back up
-  old H5 files and overwrite this path; do not create versioned force-field H5
-  names.
-- Coarse CGL stage-7 production should start from the handed-off/minimized
-  state without the restrained burn-in by default.  The restrained coarse
-  burn-in can translate the bilayer relative to a fixed protein and create an
-  unphysical depth offset before unrestrained production.
-- Workflow helper subprocesses must be robust to background/batch invocation
-  where inherited stdio descriptors may be closed or invalid.
+- Use commit `52f637e` as the behavioral baseline. Its CGL-CGL table, tempered
+  Boltzmann projection, hybrid interaction tables, GLE implementation, and
+  protein behavior remain unchanged.
+- Make transport-only changes: set every production integration stage to
+  `0.004 T_up` and calibrate only the permitted dryMARTINI mass/GLE transport
+  against raw `D≈0.25 A^2/T_up`. Keep protein carrier masses at exactly
+  `1 m_up`.
+- Retain the committed two-mode CGL GLE (`tau=0.2,2.0`, coupling
+  `0.30375,0.2205`). It acts only on CGL/environment particles; the Upside
+  protein thermostat and force field are not slowed or rescaled.
+- Preserve all CGL-CGL, SC-CGL, BB-CGL, and environment interactions. They are
+  evaluated from the committed H5 spline tables on every global integration
+  stage.
+- Keep the required `25 T_up` tempered Boltzmann projection. Removing it
+  causes CGL clustering.
+- Do not add orientational restraints, force caps, exclusions, fitted membrane
+  terms, explicit fork states, or new force-field reconstruction machinery.
+- Start fresh after a mass/timestep change. Continuations must validate the
+  stored transport signature and must not carry momentum across a mass change.
+- Leave installed H5 files unchanged unless a force-field defect is separately
+  demonstrated after the corrected transport baseline passes or fails.
 
-# Current Task: Stage-7 CGL Continuation, Timescale, and 1rkl Orientation
+# Execution Phases
 
-- [completed] Inspect failed `stage_7.3` outputs for `1rkl` and `1afo`.
-- [completed] Identify the explosion root cause: CGL masses were multiplied by
-  `CG_LIPID_MASS_SCALE` again on every continuation.
-- [completed] Patch continuation metadata so CGL mass scaling is idempotent and
-  already repeatedly scaled checkpoints are rejected.
-- [completed] Regenerate `stage_7.1` through `stage_7.3` from valid `stage_7.0`
-  checkpoints and verify both systems no longer explode.
-- [completed] Inspect all `example/16.MARTINI/**/*.out` logs and connect failures
-  to either invalid old checkpoints or remaining code defects.
-- [completed] Validate CGL transport timescale against full-lipid DOPC COM motion.
-- [completed] Diagnose why `1rkl` rotates toward the bilayer normal during
-  stable stage-7 production.
-- [completed] Patch the minimal orientation/release issue without disabling any
-  hybrid interactions.
-- [completed] Update the active CGL-target table convention in
-  `parameters/dryMARTINI/dopc.h5`, re-run the necessary `1rkl`/`1afo`
-  validation stages, and document the result in `progress.md` and
-  `findings.md`.
+- [x] Restore active Python/C++ force-field and hybrid code to commit
+  `52f637e`, preserving only the minimal transport configuration.
+- [x] Build and run focused static checks: unchanged table hashes, protein mass
+  `1`, accepted CGL mass/GLE metadata, and stage `dt=0.004`.
+- [x] Run a fresh protein-free CGL membrane and measure lateral diffusion,
+  bilayer structure, clustering, and finite energies.
+- [x] Run fresh short 1rkl and 1afo trajectories and check secondary structure,
+  hbonds, RMSD, protein-bilayer angle, bilayer integrity, and finite dynamics.
+- [x] Extend accepted runs through stages 7.0-7.3 and inspect trajectories and
+  logs for ejection, angle drift, leaflet-gap bending, or explosion.
+- [x] Update `example/16.MARTINI/cg_lipid_potentials.tex` only after the model
+  and simulations are accepted.
 
 # Known Errors / Blockers
 
-- Existing original `stage_7.1+` checkpoints in `martini_1rkl_hybrid` and
-  `martini_1afo_hybrid` are invalid because their CGL masses were already
-  repeatedly scaled.  Continue from a valid `stage_7.0` or rerun fresh.
-- No current blocker.  The patched coarse workflow keeps `1rkl` tilted through
-  `stage_7.3` and both benchmark continuations stay finite.
+- No current blocker.
+
+## Revised Decisions
+
+- Commit `9fb81b5` is the historical exact-step transport source, and its GLE
+  kernel/schedule are already present in `52f637e`. Its `0.012` mass cannot
+  be transplanted unchanged to the later pair-relaxed spline: a fresh 404-CGL
+  run gives raw `D=0.910 A^2/T_up`, leaflet separation
+  `16.4 -> 24.9 A`, and 34% maximum leaflet reassignment.
+- Promote the stable `0.05` branch as the active default. On the fresh
+  one-step 404-CGL trajectory, multi-origin x56 diffusion converges to
+  `11.47/11.45 um^2/s` over the `10-40/20-60 T_up` windows with
+  `R2 > 0.998`. This matches the reported `11.5 um^2/s` DOPC value at 303 K
+  while the bilayer remains finite, closed, ordered, and laterally uniform.
+- Reject `0.075`: its matched early probe remains too fast
+  (x56 `30.9 um^2/s`). Promote `0.05` as the workflow default.
+
+# Review
+
+- The accepted implementation is the committed force field plus the transport
+  delta: one global `0.004 T_up` Verlet step, CGL mass scale `0.05`, and the
+  committed two-mode GLE. Protein mass and protein dynamics are unchanged.
+- Fresh 404-CGL, 1RKL, and 1AFO runs pass diffusion, finite-energy, membrane,
+  secondary-structure, and protein-angle gates. Stage 7.2 is not vertical and
+  stage 7.3 does not explode.
+- The methods paper was rewritten around the accepted model and fresh results;
+  it compiles without warnings and all seven rendered pages were inspected.

@@ -32,11 +32,11 @@ protein_orientation_mode = "input"
 protein_surface_gap = 6.0
 
 temperature        = 0.8647
-eq_time_step       = 0.010
-prod_time_step     = 0.002
+eq_time_step       = 0.004
+prod_time_step     = 0.004
 eq_frame_steps     = 1000
 prod_frame_steps   = 50
-prod_70_npt_enable = 0
+prod_70_npt_enable = 1
 
 min_60_max_iter    = 500
 min_61_max_iter    = 0
@@ -47,7 +47,7 @@ eq_63_nsteps       = 500
 eq_64_nsteps       = 500
 eq_65_nsteps       = 500
 eq_66_nsteps       = 500
-prod_70_burnin_nsteps = 40000
+prod_70_burnin_nsteps = 0
 prod_70_nsteps     = 10000
 
 prep_seed          = 2026

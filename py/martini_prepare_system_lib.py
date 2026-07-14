@@ -23,6 +23,7 @@ from martini_itp_reader import parse_dry_forcefield, parse_itp_atomtype_masses, 
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
+DEFAULT_CGL_ROTATIONAL_THERMOSTAT_TIMESCALE = 0.008
 SINGLE_CGL_ENDPOINT_DELTA_SOURCE = "single_cgl_tail_repulsive_relief_endpoint_rebuild_v5"
 SINGLE_CGL_RELAXATION_SOURCE = "source_conditioned_single_cgl_tail_repulsive_relief"
 SINGLE_CGL_RELAXATION_CONTACT_ENERGY_SOURCE = "tail_bead_positive_nonbonded_overlap_relief"
@@ -2043,6 +2044,28 @@ def read_martini_masses(ff_file):
     return parse_itp_atomtype_masses(ff_file_path)
 
 
+def build_hybrid_mass_array_up(atom_types, particle_class, martini_masses):
+    mass = np.empty(len(atom_types), dtype=np.float32)
+    for index, (atom_type, class_value) in enumerate(
+        zip(atom_types, particle_class)
+    ):
+        class_name = (
+            class_value.decode("ascii")
+            if isinstance(class_value, (bytes, np.bytes_))
+            else str(class_value)
+        ).strip().upper()
+        if class_name == "PROTEIN":
+            mass[index] = 1.0
+            continue
+        if atom_type not in martini_masses:
+            raise ValueError(
+                f"Mass not found for atom type '{atom_type}' (atom index {index}); "
+                f"available atom types: {sorted(martini_masses.keys())}"
+            )
+        mass[index] = martini_masses[atom_type] / 12.0
+    return mass
+
+
 def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     """Build the HDF5 input for one MARTINI workflow stage."""
     if 'UPSIDE_HOME' not in os.environ:
@@ -3057,20 +3080,20 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 all_martini_types.add(t2)
             all_martini_types.update(str(x) for x in np.unique(atom_types))
 
-        mass = np.zeros(n_atoms, dtype='f4')
-        for i, atom_type in enumerate(atom_types):
-            if atom_type not in martini_masses:
-                raise ValueError(
-                    f"Mass not found for atom type '{atom_type}' (atom index {i}); "
-                    f"available atom types: {sorted(martini_masses.keys())}"
-                )
-            mass[i] = martini_masses[atom_type] / 12.0
+        mass = build_hybrid_mass_array_up(
+            atom_types,
+            particle_class,
+            martini_masses,
+        )
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])
         mass_array._v_attrs.shape = mass.shape
         mass_array._v_attrs.n_atoms = n_atoms
         mass_array._v_attrs.initialized = True
+        mass_array._v_attrs.protein_mass_up = np.float32(1.0)
+        mass_array._v_attrs.protein_mass_source = b"upside_core_unit_mass"
+        mass_array._v_attrs.environment_mass_source = b"native_dry_martini_mass_div_12"
 
         print("Hybrid stage files use AA backbone carriers (N/CA/C/O) for protein runtime representation")
         
@@ -3469,7 +3492,10 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 cg_lipid_derived_params["transverse_inertia_g_mol_a2"]
             )
             orient_grp._v_attrs.rotational_thermostat_timescale = float(
-                os.environ.get("CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE", "5.0")
+                os.environ.get(
+                    "CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE",
+                    DEFAULT_CGL_ROTATIONAL_THERMOSTAT_TIMESCALE,
+                )
             )
             t.create_array(orient_grp, 'direction', obj=lipid_directions.astype('f4'))
 
