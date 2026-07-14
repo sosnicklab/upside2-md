@@ -39,8 +39,32 @@
   angle `35.9 deg` versus `34.4 deg` initially, and a closed `15.19 A`
   bilayer. 1AFO retains mean/final DSSP `0.989/1.000`, both chain angles within
   `12.8-18.9 deg`, and a closed `15.31 A` bilayer.
+- The accepted coarse transport settings do not by themselves validate the
+  full 14-bead workflow. A fresh full 1AFO run with protein mass `1` and global
+  production `dt=0.004` remains stable through burn-in step 30,450, then shows
+  an abrupt protein-energy spike above `+10,000` and sustained hbond collapse.
+  That trajectory is rejected and must not be continued.
+- The former stage-7 continuation path was not an exact restart: after promoting
+  final position and momentum, it ran minimization, moved positions by up to
+  `0.83 A`, and invalidated momentum. Repeated segments drove 1RKL's membrane
+  angle from about `34 deg` to `6 deg`. Production continuation must go directly
+  from state promotion/interface refresh to MD.
+- Removing continuation minimization restores exact position/momentum and
+  compaction boundaries. It does not explain the current 1RKL rotation: that
+  checkpoint becomes vertical within its original stage 7.0 and is therefore
+  independently rejected.
+- A rigid whole-protein tilt scan of the complete stage-7 Hamiltonian has its
+  minimum at the initial 1RKL tilt (`34.15 deg`); rotating toward vertical
+  raises the potential by about `61 E_up`. The observed rotation is therefore
+  not an equilibrium preference in the initial conservative potential.
 - The installed `dopc.h5`, `particle.h5`, and `sidechain.h5` hashes are
   unchanged. There is no active C++ or force-field-builder diff.
+- Reconstruction audit of `dopc.h5` confirms that CGL-CGL uses two isolated
+  references, a `140 x 9 x 9` tensor and pair-tail relaxation; SC-CGL uses
+  eight references, 29 placement-bead rows, `25 x 11 x 11` controls and
+  positive-overlap tail relief; CGL-target uses twelve references and
+  `91 x 321` controls with no compaction overlay. The CGL-CGL force-match,
+  bilayer-PMF, and IBI counters are zero.
 
 ## Physical Interpretation
 
@@ -55,6 +79,15 @@
   applied to the measured diffusion, not to the simulation clock.
 
 ## Lessons
+
+- A valid completed stage-7 checkpoint takes precedence over rerunning hybrid
+  packing and equilibration. Before restarting a named production workflow,
+  inspect its latest exact `PDB.stage_7.N.up` file and enable continuation
+  explicitly; never infer continuation merely from an existing output folder.
+- Do not force a legacy checkpoint through current validation. If particle
+  masses or the global timestep changed, preserve its files for provenance but
+  regenerate a compatible production stage before enabling exact momentum
+  continuation.
 
 - When the committed version already passes the protein and force-field
   behavior gates, preserve it exactly and isolate the transport delta. Do not
@@ -74,3 +107,7 @@
   table changes. Preserve the later stable table, then calibrate only the
   explicitly permitted dryMARTINI transport variable against diffusion and
   structure gates.
+- A methods paper must make the force field independently reconstructible.
+  Naming tables and reporting validation is insufficient; document source
+  ensembles, coordinates, statistical projection, relaxation optimization,
+  spline fitting, unit conversion, and runtime force/torque evaluation.

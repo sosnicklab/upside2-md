@@ -2,6 +2,44 @@
 
 ## Current Phase
 
+- Confirmed that no workflow, preparation, Upside, or persistent `screen`
+  process remains active.
+- Verified all four requested wrappers through the real auto-continuation
+  selector without running dynamics. Coarse 1RKL, coarse 1AFO, and full 1RKL
+  select their active `stage_7.0.up`; full 1AFO finds no active checkpoint
+  because its unstable stage 7.0 is intentionally archived and rejected.
+- Stopped the two mistakenly restarted coarse workflows before they reached
+  production. Their previously completed coarse `stage_7.0.up` checkpoints
+  remain intact.
+- Located the missing completed full-resolution `stage_7.0.up` checkpoints in
+  `/Users/yinhan/Documents/upside2-md-bak`. They have restart-valid momentum,
+  but current validation correctly rejects them: protein carrier mass is `6`
+  instead of `1`, and their production timestep is `0.002` instead of `0.004`.
+- Enabled latest-stage auto-selection by default in the four requested system
+  wrappers. The shared workflow remains opt-in.
+- Previously started four persistent, named `screen` loops. Both coarse
+  workflows resumed from stage 7.0, completed stage 7.1, and automatically
+  advanced to stage 7.2 without rerunning preparation; those generated stages
+  were later rejected because the old continuation path minimized them.
+- Previously started both full workflows fresh because the archived checkpoints violate
+  current mass/timestep invariants. Full 1AFO became unstable abruptly at
+  burn-in step 30,500 (`protein_potential > 10000`, sustained hbond loss) and
+  was stopped at step 31,500. Full 1RKL and both coarse loops were subsequently
+  stopped as well.
+- Validation across the auto-generated coarse segments found non-exact restart
+  boundaries (`0.45-0.83 A` position errors and large momentum errors) and
+  strong orientation drift. Root cause: `run_stage70_continuation` minimized
+  every copied production checkpoint, which replaced the promoted position and
+  invalidated momentum before MD. All workflows are now stopped, and the
+  continuation minimization has been removed.
+- Isolated 500-step continuations now preserve position, momentum, and
+  compaction exactly for both proteins; orientation differs only by one
+  float32 normalization ULP (`1.19e-7`). No minimization is invoked and source
+  hashes remain unchanged.
+- The same test reveals that the retained fresh 1RKL stage 7.0 had already
+  rotated from `34 deg` to roughly `4 deg`. This source checkpoint is rejected;
+  executable/source parity must be established before a new baseline run.
+
 - Restored every modified C++ and force-field builder file exactly to
   `52f637e`; removed the inactive explicit-state/sieve implementation.
 - Applied the narrow transport delta: standard Verlet remains one step,
@@ -37,13 +75,17 @@
   `0.925/0.903`, mean angle `35.9 deg` versus `34.4 deg` initially, and finite
   stage-7.3 dynamics. 1AFO has mean/final DSSP `0.989/1.000`, retains both
   initial shallow angles, and remains finite.
-- Rewrote `cg_lipid_potentials.tex` as a cohesive Methods--Results manuscript
-  using the installed force-field provenance and fresh validation. `latexmk`
-  completes without warnings; all seven rendered pages pass visual inspection.
+- Expanded `cg_lipid_potentials.tex` into a reconstruction-level paper. The
+  Methods now specify the source Hamiltonian, all conformer ensembles,
+  tempered projection, spline equations and resolutions, physical pair/SC tail
+  minimizations, compaction PMF, runtime derivatives, and exact GLE process.
+- `latexmk` completes without warnings; all 10 final PDF pages pass visual
+  inspection. The manuscript numbers match installed H5 metadata and accepted
+  trajectories.
 - Final syntax, diff, hash, and build checks pass. C++ and force-field builder
   files are unchanged from `52f637e`.
 
 ## Next
 
-- No required implementation work remains. Longer independent replicas would
-  narrow transport uncertainty but are not needed to resolve the reported bug.
+- Verify and rebuild the Upside executable from the restored source, rerun fresh
+  coarse stage 7.0, then continue only if the protein-angle gate passes.

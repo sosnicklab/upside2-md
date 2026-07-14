@@ -8,5 +8,6 @@ export LIPID_RESOLUTION="${LIPID_RESOLUTION:-full}"
 export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1rkl_hybrid_full}"
 export RUN_DIR="${RUN_DIR:-outputs/martini_1rkl_hybrid_full}"
 export PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/1rkl.pdb}"
+export AUTO_CONTINUE_STAGE_70="${AUTO_CONTINUE_STAGE_70:-1}"
 
 exec "${SCRIPT_DIR}/run_sim_hybrid.sh" "$@"

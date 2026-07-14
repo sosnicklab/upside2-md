@@ -1876,7 +1876,6 @@ def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_l
             "Regenerate the previous production stage with the current workflow so momentum is recorded."
         )
     assert_hybrid_stage_active(output_file, "production", "production")
-    run_minimization_stage(args, stage_label, output_file, args.min_70_max_iter, preserve_stage=True)
     run_md_stage(args, stage_label, output_file, output_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
     extract_stage_vtf(args, stage_label, output_file, "2")
 
