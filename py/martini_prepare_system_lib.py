@@ -5126,6 +5126,19 @@ def inject_cg_lipid_nodes(
                     else:
                         base_only_target_records.append(record)
 
+                if (
+                    protein_target_records
+                    and enable_explicit_compaction_state
+                    and not target_has_compaction_deltas
+                ):
+                    raise RuntimeError(
+                        f"Stale CG lipid table in {martini_h5}: protein-facing "
+                        "cg_lipid_target would fall back to the base tensor while "
+                        "cgl_compaction_state is active. Rebuild dopc.h5 so "
+                        "cg_lipid_target carries explicit single-CGL "
+                        "tail-relaxation datasets for protein targets."
+                    )
+
                 if protein_target_records or base_only_target_records:
                     base_params = target_grp["interaction_param"][:].astype(np.float32)
                     cg_index = np.arange(n_cg_lipids, dtype=np.int32)

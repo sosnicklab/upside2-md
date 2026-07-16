@@ -481,11 +481,21 @@ F_A^{\mathrm{target}}(r,a)=\mathcal P_{\tau}
 \qquad a=-\hat{\mathbf n}\cdot\hat{\mathbf r}_{\mathrm{CGL}\rightarrow A}.
 \label{eq:target_table}
 \end{equation}
-The installed artifact covers 38 target types with 91 radial and 321 angular
-controls, four azimuths, one bead frame, and the twelve embedded conformers.
-It is a direct constituent projection without a $q$ overlay.  This is a model
-boundary rather than an interaction exclusion: BB-CGL and CGL-target forces
-remain active through Eq.~\ref{eq:target_table}.
+The installed artifact stores this direct base tensor together with
+single-CGL endpoint corrections for the extended, compact, and compressed tail
+states.  Protein-facing target nodes therefore use
+\begin{equation}
+y_A^{\mathrm{target}}(r,a,q)=y_A^{0}(r,a)
++w_{\mathrm e}(q)\Delta y_A^{(\mathrm e)}
++w_{\mathrm c}(q)\Delta y_A^{(\mathrm c)}
++w_{\mathrm x}(q)\Delta y_A^{(\mathrm x)},
+\label{eq:target_q_table}
+\end{equation}
+with the same piecewise-linear weights as Eq.~\ref{eq:sc_mix}.  Non-protein
+targets continue to use the base tensor through \texttt{cg\_lipid\_target\_base}.
+This is a model boundary rather than an interaction exclusion: BB-CGL and
+CGL-target forces remain active, but protein overlap can now relax the same
+hidden tail-compression coordinate used by SC-CGL.
 
 For non-CGL environment particles, \texttt{sidechain.h5} is constructed from
 the Upside orientation library and MARTINI side-chain geometry.  A canonical

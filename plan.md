@@ -1,122 +1,84 @@
 # Project Goal
 
-Preserve the committed dryMARTINI force field and stable protein dynamics while
-correcting CGL transport to the Upside clock: one integration stage is
-`dt=0.004 T_up = 40 ps`, CGL and CGL-SC forces are evaluated on that same
-stage, and the measured CGL lateral diffusion is interpreted with the
-`14 * 4 = 56` coarse-graining correction. Keep the coarse and full 1RKL/1AFO
-production workflows continuing from their latest valid stage-7 checkpoints.
+Fix the dryMARTINI hybrid force field so protein-facing CGL-target interactions
+use the same physical single-lipid tail-compression state already used by
+SC-CGL. Regenerate the installed DOPC force-field tables, rebuild fresh hybrid
+stage-7 inputs, and validate the resulting 1RKL/1AFO stage-7.0 trajectories.
 
 # Architecture & Key Decisions
 
-- Use commit `52f637e` as the behavioral baseline. Its CGL-CGL table, tempered
-  Boltzmann projection, hybrid interaction tables, GLE implementation, and
-  protein behavior remain unchanged.
-- Make transport-only changes: set every production integration stage to
-  `0.004 T_up` and calibrate only the permitted dryMARTINI mass/GLE transport
-  against raw `D≈0.25 A^2/T_up`. Keep protein carrier masses at exactly
-  `1 m_up`.
-- Retain the committed two-mode CGL GLE (`tau=0.2,2.0`, coupling
-  `0.30375,0.2205`). It acts only on CGL/environment particles; the Upside
-  protein thermostat and force field are not slowed or rescaled.
-- Preserve all CGL-CGL, SC-CGL, BB-CGL, and environment interactions. They are
-  evaluated from the committed H5 spline tables on every global integration
-  stage.
-- Keep the required `25 T_up` tempered Boltzmann projection. Removing it
-  causes CGL clustering.
-- Do not add orientational restraints, force caps, exclusions, fitted membrane
-  terms, explicit fork states, or new force-field reconstruction machinery.
-- Start fresh after a mass/timestep change. Continuations must validate the
-  stored transport signature and must not carry momentum across a mass change.
-- Leave installed H5 files unchanged unless a force-field defect is separately
-  demonstrated after the corrected transport baseline passes or fails.
+- Keep the physical model unchanged except for restoring the missing
+  protein-facing target-CGL tail-relief term. Do not change timestep,
+  temperature, protein mass, damping, or add restraints.
+- Scope the conservative fix to protein-facing `cg_lipid_target` only.
+  `cg_lipid_target_base` remains the base table for non-protein particles.
+- Use the existing source-conditioned target tail-relaxation machinery in
+  `py/martini_build_tables.py`; do not introduce a new fitted membrane term or
+  target-specific heuristic.
+- Regenerated `dopc.h5` must preserve the current CGL-CGL and SC-CGL contracts,
+  including the compressed single-CGL state and explicit hidden compaction
+  coordinate.
+- Stage injection must fail loudly if protein-facing `cg_lipid_target` would
+  silently fall back to the base tensor while explicit CGL compaction is active.
+- Validate the fix with fresh hybrid stage-7.0 runs for both 1RKL and 1AFO.
 
 # Execution Phases
 
-- [x] Restore active Python/C++ force-field and hybrid code to commit
-  `52f637e`, preserving only the minimal transport configuration.
-- [x] Build and run focused static checks: unchanged table hashes, protein mass
-  `1`, accepted CGL mass/GLE metadata, and stage `dt=0.004`.
-- [x] Run a fresh protein-free CGL membrane and measure lateral diffusion,
-  bilayer structure, clustering, and finite energies.
-- [x] Run fresh short 1rkl and 1afo trajectories and check secondary structure,
-  hbonds, RMSD, protein-bilayer angle, bilayer integrity, and finite dynamics.
-- [x] Extend accepted runs through stages 7.0-7.3 and inspect trajectories and
-  logs for ejection, angle drift, leaflet-gap bending, or explosion.
-- [x] Update `example/16.MARTINI/cg_lipid_potentials.tex` only after the model
-  and simulations are accepted.
-- [x] Audit the accepted table builders, HDF5 provenance, and runtime spline
-  evaluation so every force-field equation and numerical procedure is explicit.
-- [x] Expand the manuscript Methods into a reproducible derivation of generic,
-  CGL-CGL, SC-CGL, CGL-target, compaction, hybrid, and transport terms.
-- [x] Recompile and visually inspect the revised manuscript, then verify that
-  its numerical claims match the installed HDF5 files and accepted trajectories.
-- [x] Validate all four candidate continuation sources. Accept the two current
-  coarse stage-7.0 checkpoints and reject the archived full checkpoints because
-  they store protein mass `6` and production `dt=0.002`.
-- [x] Launch coarse stage 7.1 directly and verify automatic handoff to stage
-  7.2. Regenerate both full stage-7.0 runs with current mass/timestep settings.
-- [x] Remove production minimization from continuation, verify exact position,
-  momentum, orientation, and compaction boundaries, and reject every stage
-  generated by the old minimized-continuation path.
-- [x] Stop all active workflow processes and enable latest-stage continuation
-  by default in the coarse/full 1RKL and 1AFO wrappers. Verify the actual
-  selector without running dynamics.
-- [ ] Reject the current 1RKL stage 7.0, which rotates from about `34 deg` to
-  `4 deg` before continuation. Verify that `obj/upside` matches the restored
-  C++ source, rebuild it, and rerun the fresh coarse baseline.
-- [ ] Diagnose the full 1AFO burn-in instability at step 30,500, where protein
-  potential jumps above `+10,000` and hbonds collapse. Keep that workflow
-  stopped until a physical correction passes the same trajectory gate.
-- [ ] Complete current full 1RKL stage 7.0, validate both full workflows, and
-  restore all four automatic continuation loops only after the failure is fixed.
+- [x] Update the base DOPC table builder so `cg_lipid_target` writes the
+  single-CGL compaction payload and so the base SC builder preserves the
+  compressed-state branch.
+- [x] Tighten stage injection/validation so protein-facing `cg_lipid_target`
+  requires the explicit compaction payload when `cgl_compaction_state` is in use.
+- [x] Regenerate `parameters/dryMARTINI/dopc.h5`, backing up the current file,
+  and verify the new `cg_lipid_target` metadata/datasets.
+- [x] Regenerate fresh hybrid stage-7.0 inputs for 1RKL and 1AFO and verify
+  that protein-facing `cg_lipid_target` takes arguments
+  `compose_vector6d,pos,cgl_compaction_state`.
+- [x] Run fresh stage-7.0 trajectories and measure tilt/depth drift against the
+  July 16, 2026 rejected outputs.
+- [x] Update `example/16.MARTINI/cg_lipid_potentials.tex` so it documents the
+  q-dependent protein-facing CGL-target relief after the new tables pass.
+- [x] Record the accepted results and remaining risks in `progress.md` and
+  `findings.md`.
 
 # Known Errors / Blockers
 
-- Full 1AFO is blocked on a reproducible burn-in instability under current
-  protein mass `1` and production `dt=0.004`. Its loop and all child processes
-  are stopped. All remaining loops are also stopped; continuation is enabled
-  in the wrappers but no simulation was relaunched.
-- The active coarse 1RKL stage 7.0 is also rejected for vertical orientation
-  drift, independent of the now-fixed restart discontinuity.
+- The repaired `parameters/dryMARTINI/dopc.h5` now fixes the original target-CGL
+  asymmetry, but Thursday, July 16, 2026 validation is mixed:
+  1RKL is corrected cleanly, while 1AFO no longer drifts out of the bilayer yet
+  still shows a chain-resolved tilt redistribution that is not fully resolved.
+- Fresh stage-7.0 validation metrics:
+  1RKL old `34.1 -> 7.8 deg`, `0.62 -> 10.44 A`;
+  1RKL new `34.4 -> 31.4 deg`, `0.26 -> 1.03 A`.
+  1AFO old whole-protein `6.0 -> 3.6 deg`, `0.02 -> 5.26 A`;
+  1AFO new whole-protein `7.0 -> 25.6 deg`, `2.44 -> 0.06 A`.
+- Chain-resolved 1AFO input helix tilts from the OPM-oriented AA PDB are
+  `A=22.6 deg`, `B=8.7 deg`. The corrected stage-7.0 rerun ends near
+  `A=12.2 deg`, `B=26.3 deg`, so the depth bug is fixed but one helix still
+  rotates away from its initial orientation.
 
 ## Revised Decisions
 
-- Commit `9fb81b5` is the historical exact-step transport source, and its GLE
-  kernel/schedule are already present in `52f637e`. Its `0.012` mass cannot
-  be transplanted unchanged to the later pair-relaxed spline: a fresh 404-CGL
-  run gives raw `D=0.910 A^2/T_up`, leaflet separation
-  `16.4 -> 24.9 A`, and 34% maximum leaflet reassignment.
-- Promote the stable `0.05` branch as the active default. On the fresh
-  one-step 404-CGL trajectory, multi-origin x56 diffusion converges to
-  `11.47/11.45 um^2/s` over the `10-40/20-60 T_up` windows with
-  `R2 > 0.998`. This matches the reported `11.5 um^2/s` DOPC value at 303 K
-  while the bilayer remains finite, closed, ordered, and laterally uniform.
-- Reject `0.075`: its matched early probe remains too fast
-  (x56 `30.9 um^2/s`). Promote `0.05` as the workflow default.
-- The four system-specific wrappers default to latest-stage continuation. The
-  shared workflow retains its explicit opt-in default so unrelated callers do
-  not silently continue an existing trajectory.
-- Do not rewrite legacy full checkpoints to masquerade as valid restarts. A
-  protein-mass and global-timestep change requires a fresh full stage 7.0; the
-  background launch then invokes the same wrapper again to auto-select it as
-  the stage-7.1 source.
-- A production continuation is an exact state handoff, not a new equilibration
-  stage. Interface-node refresh may preserve the Hamiltonian implementation,
-  but no minimization or momentum rethermalization is permitted between the
-  source final frame and continuation frame zero.
+- Treat the current `martini-dev` HEAD `ad8981b` and the installed July 15,
+  2026 artifacts as the implementation baseline for this fix; earlier
+  transport-only notes around `52f637e` are no longer sufficient.
+- The missing target-CGL compaction payload is the first conservative defect to
+  repair because it matches the observed ejection/verticalization mechanism and
+  is already defined physically in the repo.
+- Use an exact target-group rebuild of `cg_lipid_target` through the patched
+  builder path to replace the installed `dopc.h5` atomically, rather than
+  waiting for a full CG-CG table rebuild during force-field validation.
 
 # Review
 
-- The accepted implementation is the committed force field plus the transport
-  delta: one global `0.004 T_up` Verlet step, CGL mass scale `0.05`, and the
-  committed two-mode GLE. Protein mass and protein dynamics are unchanged.
-- Fresh 404-CGL, 1RKL, and 1AFO runs pass diffusion, finite-energy, membrane,
-  secondary-structure, and protein-angle gates. Stage 7.2 is not vertical and
-  stage 7.3 does not explode.
-- The Methods now derive the source Hamiltonian, conformer sampling, tempered
-  projection, spline fitting, CGL-CGL and SC-CGL relaxation, compaction PMF,
-  runtime force/torque chain rule, and exact GLE step. Installed resolutions and
-  source-ensemble counts match `dopc.h5`.
-- The final 10-page PDF builds without warnings; every rendered page was
-  inspected. Runtime code, table builders, and installed H5 files are unchanged.
+- Installed artifact `parameters/dryMARTINI/dopc.h5` now carries
+  `cg_lipid_target/{delta_extended,delta_compact,delta_compressed}` and the
+  single-CGL compaction metadata required by the runtime.
+- Reinjected stage-7.0 prepared files confirm protein-facing
+  `cg_lipid_target` now uses arguments
+  `compose_vector6d,pos,cgl_compaction_state`, while non-protein targets remain
+  on `cg_lipid_target_base`.
+- Fresh validation outputs were written to:
+  `example/16.MARTINI/outputs/martini_1rkl_hybrid_target_fix_20260716/1rkl.stage_7.0.vtf`
+  and
+  `example/16.MARTINI/outputs/martini_1afo_hybrid_target_fix_20260716/1afo.stage_7.0.vtf`.
