@@ -9967,6 +9967,57 @@ def _apply_single_cgl_compaction_corrections_to_h5(cg_grp: h5py.Group, correctio
             )
 
 
+def add_single_cgl_compaction_to_dopc_h5(
+    base_h5_path: Path,
+    output_path: Path,
+    dry_ff_path: Path | None = None,
+    lipids_itp_path: Path | None = None,
+    martinize_path: Path | None = None,
+    sidechain_lib_path: Path | None = None,
+    forcefield_name: str = "martini22",
+    include_sc: bool = True,
+    include_target: bool = True,
+    reference_dataset_name: str | None = None,
+) -> None:
+    """Copy a DOPC H5 and refresh only the single-CGL compaction overlays.
+
+    This preserves the existing CG-SC and CGL-target base interaction tensors.
+    Use it when the physical base tables are already accepted and only the
+    hidden-state tail-relaxation payload must be added or repaired.
+    """
+    base_h5_path = Path(base_h5_path).expanduser().resolve()
+    output_path = Path(output_path).expanduser().resolve()
+    corrections = _build_single_cgl_compaction_corrections_from_base_h5(
+        base_h5_path=base_h5_path,
+        dry_ff_path=dry_ff_path,
+        lipids_itp_path=lipids_itp_path,
+        martinize_path=martinize_path,
+        sidechain_lib_path=sidechain_lib_path,
+        forcefield_name=forcefield_name,
+        include_sc=include_sc,
+        include_target=include_target,
+        reference_dataset_name=reference_dataset_name,
+    )
+
+    def _writer(h5: h5py.File) -> None:
+        with h5py.File(base_h5_path, "r") as src:
+            for key, value in src.attrs.items():
+                h5.attrs[key] = value
+            for key in src.keys():
+                src.copy(key, h5)
+        cg_grp = h5.get("cg_lipid_table")
+        if cg_grp is None:
+            raise RuntimeError(f"{base_h5_path} lacks cg_lipid_table")
+        _apply_single_cgl_compaction_corrections_to_h5(cg_grp, corrections)
+
+    _write_h5_atomically(output_path, _writer)
+    print(
+        "Built "
+        f"{output_path} with single-CGL compaction refresh "
+        f"(SC={bool(include_sc)}, target={bool(include_target)})"
+    )
+
+
 def rebuild_cg_lipid_sc_bead_table_in_h5(
     base_h5_path: Path,
     output_path: Path,
