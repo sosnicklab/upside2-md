@@ -120,18 +120,15 @@ both READMEs, `plan.md`, `findings.md`, and `progress.md`.
 
 - Restored the historical BB reverse route required by Upside's regenerated-O cycle: N/CA/C receive
   14/54, 12/54, and 12/54 of the BB gradient, while sensitivities on regenerated O and BB are discarded.
-- Localized helix loss to the first stage-7 minimization: stages 6.0--6.6 retain 23 helical residues, while the
-  existing stage-7 trajectory starts at 13.
-- Replayed the handoff from identical coordinates. The unrestrained minimization left 9 helical residues, an
-  early spring-10 restraint left 17, and hard-fixing protein coordinates retained all 23.
-- Replaced the intermediate fixed-plus-spring protocol with one rigid `production_handoff`: SC-env and BB-env
+- Replaced the unprotected/fixed-plus-spring handoff with one rigid `production_handoff`: SC-env and BB-env
   are active while the complete protein remains a rigid body through minimization and burn-in. Flexible dynamics
   start only after the explicit `production` relabel.
-- A reduced end-to-end workflow completed the new sequence. The maximum internal pair-distance change across all
-  93 persistent N/CA/C carriers through handoff minimization and burn-in was `4.58e-5 A`. The shortened membrane
-  equilibration makes this a wiring/invariant test only; a full fresh 1RKL run remains the structural gate.
-- Final verification passed: exact H5 weight assertions, removed stage-7 spring/release controls, Python and shell
-  syntax, full C++ build, two-pass warning-free TeX compilation, and `git diff --check`.
+- Full corrected 1RKL and 1AFO runs resolve the structural gate. DSSP first/final/minimum/mean counts are
+  `23/23/16/21.88` and `54/51/48/50.77`; 1RKL residues 10--28 have 96.5--100% helical occupancy.
+- Rewrote the manuscript around the final construct as a single method narrative, including explicit forward and
+  reverse BB equations, rigid-handoff lifecycle, current structural evidence, and unchanged kinetic/HDX limits.
+- Final verification passed: H5 provenance/result assertions, obsolete-claim scan, two-pass warning-free TeX
+  compilation, `chktex`, and `git diff --check`.
 
 Files modified for this correction: `src/martini_hybrid.cpp`, `py/martini_prepare_system.py`,
 `example/16.MARTINI/run_sim_hybrid.sh`, `example/16.MARTINI/readme.md`,

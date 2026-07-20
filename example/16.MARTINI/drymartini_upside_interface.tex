@@ -21,25 +21,26 @@ dry-MARTINI Membrane}
 We couple the machine-learned Upside protein force field to a full-resolution
 dry-MARTINI membrane without fitting the combined model to membrane-protein data.
 All real degrees of freedom use one g-JF force schedule and one system temperature
-for both fluctuation--dissipation noise and friction calibration. The preferred
-kinetic target is factor-four-corrected DOPC molecular lateral diffusion. A stable
-one-step friction scan does not reach that target, so production uses a narrower
-fallback: the requested free-particle mobility of a MARTINI bead. Each
-membrane-contacting protein N/CA/C carrier is assigned the sum of the frictions of
-the lipid beads within the 12~\AA{} interaction range. Regenerated O and
-backbone-centre sites are virtual. The backbone-centre reaction is routed with
-the MARTINI mass fractions $14/54$, $12/54$, and $12/54$ to persistent N/CA/C;
-the $16/54$ share assigned to regenerated O is intentionally disposable under
-the Upside integration cycle. This defines the implemented coupling contract,
-but not a physical molecular clock. Measured DOPC molecular diffusion
-remains orders of magnitude below target, and the contact-count rule is not a
-hydrodynamic resistance tensor. Equilibrium observables are potentially usable
-because their values do not require a physical trajectory clock, but only after
-timestep, ensemble, and replica or enhanced-sampling convergence have been
-demonstrated. Present trajectories do not yet pass those gates. In particular,
-the HDX adapter correctly reuses the established EX2 analysis, but current HDX
-predictions are not quantitative because protection-state populations are
-unconverged and a dry membrane supplies no calibrated water-accessibility field.
+for both fluctuation--dissipation noise and friction calibration. The interface
+respects Upside's regenerated-backbone integration cycle. O is reconstructed from
+persistent N/CA/C coordinates, and the dry-MARTINI backbone centre is their
+$14{:}12{:}12{:}16$ mass-weighted N/CA/C/O centre. In the reverse pass, the
+backbone--environment sensitivity is returned to persistent N/CA/C with fractions
+$14/54$, $12/54$, and $12/54$; the $16/54$ O share is not reassigned because O is
+deleted and regenerated rather than integrated. Before flexible production, the
+complete protein is one rigid body while the full BB--environment and
+SC--environment interactions are active, allowing the bilayer to relax around an
+undeformed protein. The rigid constraint is removed only at the explicit
+production transition. This construct resolves the secondary-structure
+regression: in the corrected 50,000-step 1RKL run, DSSP assigns 23 helical
+residues at both the first and final production frames, and residues 10--28 are
+helical in 96.5--100\% of frames. The kinetic calibration remains narrower than
+the structural result. Factor-four-corrected DOPC molecular diffusion is not
+reproduced, so production uses a bare-MARTINI-particle mobility and contact-local
+protein damping as an explicit fallback. Absolute membrane-coupled rates and
+quantitative HDX remain unsupported until molecular transport, timestep and
+ensemble convergence, and membrane water accessibility are independently
+validated.
 \end{abstract}
 
 \section{Introduction}
@@ -102,7 +103,8 @@ therefore require an explicitly limited particle-mobility fallback
 area-sampling algorithm and baseline membrane-structure measurements, whose
 current-configuration convergence remains to be established
 (Sec.~\ref{sec:mechanics}); and (5) a raw-force-field protein--membrane interface
-that confines an embedded protein without any added potential
+with regenerated-O-aware BB force routing and a rigid pre-production handoff
+that preserves an embedded protein without any added confining potential
 (Sec.~\ref{sec:interface}), enabling conditional equilibrium and HDX analyses
 (Sec.~\ref{sec:hdx}).
 
@@ -311,26 +313,51 @@ $\exp\!\big[-\beta(\Delta U+P\Delta V)\big]\,(V'/V)^{N_\mathrm{mol}}$. Being a
 Monte-Carlo move, it samples the correct isothermal--isobaric ensemble by
 construction, independent of any coupling constant, and restores physical area
 fluctuations. Consistent with the sub-diffusive lipid dynamics, the area
-decorrelates slowly, so a converged $K_A$ requires long sampling; the barostat is
+decorrelates slowly, so a converged $K_A$ requires long sampling. The barostat
 proposal and acceptance rule are verified, but quantitative convergence remains
 open.
 
 \subsection{The protein--membrane interface}
 \label{sec:interface}
 
-The protein keeps its native Upside force field. N, CA, and C are its physical
-backbone carriers. O is regenerated from their geometry and the dry-MARTINI
-backbone centre is constructed from N/CA/C/O. Neither derived site is integrated,
-thermostatted, or counted in kinetic temperature. A dedicated coordinate node
-constructs these sites during the forward pass. During the reverse pass the
-BB-env sensitivity is copied with the dry-MARTINI backbone mass fractions
-$14/54$, $12/54$, $12/54$, and $16/54$ to N, CA, C, and regenerated O,
-respectively. Upside overwrites O during its integration cycle rather than
-integrating it, so only the N/CA/C shares persist: $38/54$, or 70.37\%, of the
-translational BB reaction. Differentiating the regenerated-O construction and
-returning its share to N/CA/C would change this integration contract; it is not
-done here. Raw N/CA/C/O--environment pairs are excluded so that the derived BB
-interaction is counted exactly once.
+The protein retains its native Upside force field. Its persistent backbone
+coordinates are N, CA, and C. Carbonyl O is reconstructed from their local frame
+during each force evaluation and is regenerated again during the Upside
+integration cycle; it is not an independent degree of freedom. The dry-MARTINI
+backbone interaction centre is likewise a derived site. For one residue,
+\begin{equation}
+  \mathbf r_\mathrm{O}=\mathcal R
+  (\mathbf r_\mathrm{N},\mathbf r_\mathrm{CA},\mathbf r_\mathrm{C}),
+  \qquad
+  \mathbf r_\mathrm{BB}=\frac{
+  14\mathbf r_\mathrm{N}+12\mathbf r_\mathrm{CA}
+  +12\mathbf r_\mathrm{C}+16\mathbf r_\mathrm{O}}{54},
+  \label{eq:bb_forward}
+\end{equation}
+where $\mathcal R$ preserves the reference carbonyl geometry in the current
+N--CA--C frame. A dedicated coordinate node evaluates Eq.~\ref{eq:bb_forward}
+without mutating the integrated position array. O and BB receive no independent
+integration, thermal noise, or kinetic-temperature contribution.
+
+The reverse map follows the force distribution expected by the Upside backbone
+cycle, rather than differentiating the regenerated O coordinate back into the
+persistent atoms. If $\mathbf s_\mathrm{BB}$ is the sensitivity accumulated on
+the BB site, its additions to the integrated coordinates are
+\begin{equation}
+  \Delta\mathbf s_\mathrm{N}=\frac{14}{54}\mathbf s_\mathrm{BB},\qquad
+  \Delta\mathbf s_\mathrm{CA}=\frac{12}{54}\mathbf s_\mathrm{BB},\qquad
+  \Delta\mathbf s_\mathrm{C}=\frac{12}{54}\mathbf s_\mathrm{BB}.
+  \label{eq:bb_reverse}
+\end{equation}
+The remaining $16/54$ is the O share of the dry-MARTINI backbone partition. It is
+not reassigned to N/CA/C because O is deleted and reconstructed rather than
+advanced by the integrator. Thus $38/54=70.37\%$ of a translational BB
+sensitivity reaches persistent protein coordinates. This partial route is an
+explicit model contract; it is not the full coordinate Jacobian of
+Eq.~\ref{eq:bb_forward}. Sensitivities on derived O and BB storage sites are
+discarded after Eq.~\ref{eq:bb_reverse}. Raw N/CA/C/O--environment pairs are
+excluded, so BB--environment coupling is evaluated exactly once through the BB
+site.
 
 \paragraph{SC-env (side chain $\leftrightarrow$ lipid).} Upside resolves a side
 chain into one directional site, dry-MARTINI into several beads. This one genuine
@@ -344,12 +371,12 @@ U_\mathrm{SC\text{-}env}(\mathbf{r}) = -k_BT\,\ln\Big\langle
 giving a smooth, orientation-resolved spline table (\texttt{sc\_table}). This is
 the only PMF in the interface.
 
-\paragraph{BB--environment.} The backbone is a single
-site in both models, so nothing is integrated out: BB-env is the \emph{raw}
+\paragraph{BB--environment.} The backbone is a single site in both models, so
+nothing is integrated out: BB-env is the \emph{raw}
 dry-MARTINI Lennard-Jones (plus Coulomb) interaction, from the same
 \texttt{martini\_potential} spline as lipid--lipid. No softening, no PMF, no
-capping. An early softened BB-env was tried and found to \emph{cause} the protein
-to drift out of the bilayer (Sec.~\ref{sec:hybrid}); the raw field is retained.
+capping. The raw field is retained because smoothing this interaction changes
+protein insertion and confinement rather than repairing the interface.
 
 \paragraph{Protein confinement.} No term keeps the protein in the membrane; its
 equilibrium depth and orientation follow from the raw force field, as they should
@@ -378,23 +405,35 @@ proteins 1RKL (Ost4p) and 1AFO (glycophorin~A dimer). Lateral diffusion is
 measured from unwrapped, mass-weighted 14-bead molecular COM trajectories after
 bilayer COM drift removal; protein tilt is measured backbone-only.
 
-The production BB-env and SC-env interactions are activated in a dedicated
-\texttt{production\_handoff} stage. Throughout its minimization and burn-in the
-complete protein is one rigid body: it may translate and rotate, but its internal
-geometry cannot absorb resolution-handoff work. Only after burn-in is the stage
-relabelled \texttt{production}, which removes the rigid-body constraint and
-starts flexible sampling. No finite positional spring or gradual release is used,
-and no preparation constraint contributes to the sampled production dynamics.
+All pre-production stages treat the persistent N/CA/C coordinates of the complete
+protein as one rigid body. Forces may translate and rotate that body, while a
+mass-weighted rigid projection prevents changes in its internal geometry; O and
+BB are then regenerated from the projected carriers. This rule remains active in
+the dedicated \texttt{production\_handoff} stage, where the final, unsoftened
+BB--environment and SC--environment interactions are already active. Handoff
+minimization removes interface clashes by moving the membrane and the protein as
+physical bodies, not by unfolding the protein. A subsequent rigid burn-in lets
+the bilayer relax around the fully coupled protein.
+
+After burn-in, the final coordinates and momenta are promoted to the production
+input, contact-local friction counts are refreshed, and the stage is relabelled
+\texttt{production}. The engine then clears the rigid group and begins flexible
+protein sampling under the same conservative interface. There is no positional
+spring, staged spring release, interaction softening, or gap in BB-env or SC-env
+activation at this transition. Consequently, pre-production protects the input
+fold without adding a restraint to the production Hamiltonian.
 
 \section{Results}
 
 Results are separated by the configuration that generated them. Baseline membrane
-measurements predate the final particle-mobility mapping. Fresh 50,000-step hybrid
-trajectories for 1RKL and 1AFO use $T=0.8$ for both the runtime thermostat and
-friction calibration and store the expected
-$D_\mathrm{bead,up}=5.11111$ and $\alpha_\mathrm{bead}=0.15652$. These runs test
-the unified implementation; they do not by themselves establish timestep or
-ensemble convergence.
+measurements predate the final particle-mobility mapping. The corrected
+50,000-step 1RKL and 1AFO trajectories use the regenerated-O force route of
+Eq.~\ref{eq:bb_reverse}, the rigid handoff described above, and $T=0.8$ for both
+the runtime thermostat and friction calibration. Each trajectory contains 1,001
+production frames and stores $D_\mathrm{bead,up}=5.11111$ and
+$\alpha_\mathrm{bead}=0.15652$. These runs establish that the resolved interface
+can enter flexible production without destroying the input fold. They do not by
+themselves establish equilibrium or kinetic convergence.
 
 \subsection{Baseline bilayer structure and mechanics}
 \label{sec:structure}
@@ -417,24 +456,20 @@ bending-modulus claims remain open.
 \subsection{Thermostat and transport checks}
 \label{sec:barrier}
 
-In the fresh 50,000-step trajectories, the last-200-frame protein kinetic-energy
-means are 1.005 and 1.002 times $3k_BT/2$ for 1RKL and 1AFO; the corresponding
-lipid ratios are 0.991 and 1.018.
+In the corrected 50,000-step trajectories, the last-200-frame protein
+kinetic-energy means are 1.001 and 1.006 times $3k_BT/2$ for 1RKL and 1AFO; the
+corresponding lipid ratios are 1.009 and 1.012.
 This verifies that the implemented stochastic update thermalizes momenta at the
 temperature it is given. It does not verify configurational sampling or a physical
-clock. Multi-origin, drift-removed DOPC COM fits are strongly window-dependent:
-$D=0.0053$--$0.0112~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ for 1RKL and
-$0.0027$--$0.0103~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ for 1AFO over tested
-20--1000~ns windows, versus the
-$11.5~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ target. The window dependence itself
-shows that a clean diffusive regime has not been reached, while every estimate is
-more than three orders of magnitude below target. Molecular DOPC diffusion is
-therefore demonstrably uncalibrated.
+clock. Drift-removed DOPC COM fits remain window-dependent and of order
+$10^{-3}$--$10^{-2}~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$, versus the
+$11.5~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ target. A clean diffusive regime has not
+been reached, and molecular DOPC diffusion remains uncalibrated.
 
 \subsection{Evidence boundary}
 \label{sec:evidence}
 
-\begin{table}[h]
+\begin{table}[ht]
 \centering
 \small
 \begin{tabular}{
@@ -447,6 +482,18 @@ Quantity & Current status & Permitted interpretation \\
 One temperature and one bath per real degree of freedom &
 Verified in workflow and H5 wiring &
 The thermostat and friction calibration use the same $k_BT$ in the fresh H5 files. \\
+Regenerated-O BB coordinate and force route &
+Verified in code, H5 weights, and trajectory output &
+Equation~\ref{eq:bb_forward} constructs O/BB; Eq.~\ref{eq:bb_reverse} routes only
+the persistent N/CA/C shares. \\
+Rigid pre-production handoff &
+Verified in both corrected examples &
+Internal carrier distances are preserved through interface minimization and
+burn-in; flexible dynamics begins only at production. \\
+Secondary-structure regression &
+Resolved for the tested trajectories &
+The corrected 1RKL run enters and ends production with 23 DSSP-helical residues;
+this is a stability regression, not an equilibrium population estimate. \\
 Bare-particle friction of Eqs.~\ref{eq:bead_diffusion}--\ref{eq:bead_friction} &
 Calibrated by construction &
 An auditable effective mobility input; not the measured motion of a bonded bead. \\
@@ -473,38 +520,40 @@ guarantee that the available trajectory has sampled it.}
 \label{tab:evidence}
 \end{table}
 
-\subsection{The raw force field confines the protein}
+\subsection{Regenerated-O routing and the rigid handoff preserve the input fold}
 \label{sec:hybrid}
 
-The raw field can keep a rigid 1RKL embedded, whereas replacing BB--environment
-interactions with a smoothed PMF drives it out. The production interface therefore
-retains the raw spline interactions and adds no confining potential. The current
-virtual-coordinate node reconstructs O and the BB centre and applies the
-historical partial mass-fraction route to persistent N/CA/C; direct table, type,
-sign, cutoff, and pair-exclusion checks match the historical particle table.
-These are implementation facts.
+The raw spline interface keeps both test proteins embedded without a confining
+potential. Direct checks of the pair table, type assignment, derivative sign,
+cutoff, pair exclusions, H5 mass fractions, and C++ reverse route agree with the
+construct in Sec.~\ref{sec:interface}. SC-env and BB-env remain active during the
+rigid handoff and throughout production; neither interaction is softened,
+disabled, or replaced by a structural restraint.
 
-They do not establish secondary-structure stability. In the fresh, consistently
-thermostatted $T=0.8$ run, DSSP assigns 13 helical residues to 1RKL at production
-frame 0, 16 at the final frame, and as few as 5 during the trajectory; the
-trajectory mean is 12.3. Thus substantial native helicity was already absent at
-the production handoff and remains intermittent. Stage-resolved analysis found
-23 helical residues throughout stages 6.0--6.6, but an unrestrained first
-production-Hamiltonian minimization reduced that count to 9. The revised protocol
-keeps the protein rigid through both interface minimization and burn-in. A reduced
-end-to-end workflow test changed no persistent-backbone internal pair distance by
-more than $4.6\times10^{-5}$~\AA{} before the flexible-production handoff. A new
-full trajectory is still required, so the existing stage-7 result is not a test
-of the revised protocol. By contrast, 1AFO has 54
-helical residues initially, 52 finally, and a minimum of 51. Existing timestep
-tests also show that $dt=0.009$ perturbs the coupled hard interface more strongly
-than $dt=0.00225$.
-In addition, charged pair splines are abruptly truncated at 12~\AA{}. A fresh
-single-temperature run, a timestep series, and a cutoff-continuity test are
-therefore required before interpreting helix populations thermodynamically. The
-current trajectory can show that the workflow moves, remains finite, and keeps
-the protein embedded over the observed window; it cannot establish a quantitative
-helix-opening population. No interaction is softened or disabled.
+The handoff preserves the fold it is given. Comparing the final stage-6.6
+structure with the post-burn-in production input, the maximum change among all
+pair distances between persistent backbone carriers is 0.017~\AA{} for 1RKL and
+0.0037~\AA{} for 1AFO. These small residuals are numerical projection drift; the
+protein cannot undergo an internal conformational transition while the rigid
+group is active. The first production frame is therefore a flexible trajectory
+started from the pre-production fold, not a structure deformed during interface
+activation.
+
+DSSP confirms that this construct resolves the reported secondary-structure
+failure. For 1RKL, the number of helical residues is 23 at the first frame, 23 at
+the final frame, 16 at the minimum, and 21.88 on average over 1,001 frames. Every
+residue in the central transmembrane segment 10--28 is helical in 96.5--100\% of
+frames. The short excursions reflected by the minimum recover rather than growing
+into persistent helix loss. For the larger 1AFO dimer, the corresponding
+first/final/minimum/mean counts are 54/51/48/50.77. Thus the corrected interface
+passes the intended finite-run structural-stability regression for both systems.
+
+This result validates the force-routing and preparation construct, not the
+equilibrium probability of helix opening. Charged pair splines remain abruptly
+truncated at 12~\AA{}, and timestep, cutoff-continuity, independent-replica, and
+enhanced-sampling tests are still required before assigning thermodynamic
+populations. Structural stability also does not repair the separate molecular
+DOPC diffusion mismatch.
 
 \subsection{Application: hydrogen-deuterium exchange}
 \label{sec:hdx}
@@ -550,15 +599,17 @@ A quantitative membrane-protein HDX result requires all of the following:
   accessibility must come from a calibrated local depth/water-activity model or
   an explicit-water reference.
 \end{enumerate}
-The fresh 1RKL source still fails these gates: it is a single trajectory with
-strongly intermittent secondary structure, timestep convergence is unresolved,
-the lipid ensemble has not reached a clean diffusive regime, and no calibrated
-membrane-water accessibility is available. Its protection-state block convergence
-and effective sample size must be recomputed before any HDX interpretation.
-Current HDX outputs should therefore be used only to verify workflow wiring and
-to perform clearly labelled qualitative sensitivity analyses. They should not be
-reported as quantitative protection factors, residue opening free energies, or
-peptide uptake predictions.
+The corrected 1RKL trajectory now supplies a mechanically credible folded source:
+the interface no longer creates a false opening population by deforming the helix
+before production. That repair is necessary for HDX, but it is not sufficient.
+The source is still one finite trajectory, timestep convergence of opening events
+is unresolved, the lipid ensemble has not reached a clean diffusive regime, and
+no calibrated membrane-water accessibility is available. Protection-state block
+convergence and effective sample size must be recomputed for the corrected source
+before interpreting any uptake. Current HDX outputs should therefore be used to
+verify workflow wiring and for clearly labelled qualitative sensitivity analyses,
+not as quantitative protection factors, residue opening free energies, or peptide
+uptake predictions.
 
 \subsection{Transmembrane helix tilt: a coupled-kinetics limit}
 \label{sec:tilt}
@@ -575,9 +626,13 @@ force-field error.
 \section{Discussion}
 
 Three validation layers must remain separate. First, implementation validation
-asks whether tables, forces, virtual-site derivatives, stochastic baths, and
-metadata implement the stated equations. The one-temperature wiring, FDT impulse,
+asks whether tables, force routing, regenerated coordinates, stochastic baths,
+stage constraints, and metadata implement the stated equations. The partial BB
+route, rigid-to-flexible handoff, one-temperature wiring, FDT impulse,
 bare-particle friction, contact-count mapping, and HDX projection pass this layer.
+The corrected finite-run secondary-structure regression additionally shows that
+the implementation can activate the full interface without destroying the input
+fold.
 Second, configurational validation asks whether the finite-timestep simulation
 samples the intended equilibrium distribution and whether that distribution
 matches the physical system. The present timestep dependence, charged-pair cutoff,
@@ -587,12 +642,13 @@ DOPC diffusion error and unvalidated protein drag fail this layer.
 
 This hierarchy defines what can be trusted now. Input parameters and H5 metadata
 can be trusted to describe the implemented stochastic model. Kinetic-temperature
-averages can be trusted as momentum diagnostics. The bilayer remaining assembled,
-the protein remaining embedded, and qualitative structural events can be used as
-debugging observations tied to a particular run. One cannot yet trust absolute
-DOPC or protein-coupled rates, a 40~ps physical interpretation of each trajectory
-step, molecular diffusion, quantitative helix-opening populations, converged
-bilayer elastic constants, or current HDX protection and uptake values.
+averages can be trusted as momentum diagnostics. The handoff can be trusted to
+preserve internal protein geometry, and the corrected trajectories pass the
+specific test that 1RKL and 1AFO remain predominantly helical after flexible
+production begins. One cannot yet promote that stability test to an equilibrium
+helix-opening probability, nor trust absolute DOPC or protein-coupled rates, a
+40~ps physical interpretation of each trajectory step, molecular diffusion,
+converged bilayer elastic constants, or current HDX protection and uptake values.
 
 Equilibrium methods remain the appropriate route forward, but equilibrium status
 does not confer validity by itself. Timestep-halving, cutoff-continuity tests,
@@ -619,14 +675,19 @@ must be validated independently.
 
 A membrane protein and a full-resolution dry-MARTINI bilayer can be propagated
 together through one g-JF force schedule with one temperature and one stochastic
-bath per real degree of freedom. The factor-four mapping defines an explicit
-bare-particle mobility, and the protein receives a reproducible contact-local
-friction without modifying conservative SC--environment or BB--environment
-interactions. This is an implementation result, not a physical-timescale
-validation. Whole-DOPC diffusion is not matched, protein hydrodynamic friction is
-not established, and current equilibrium and HDX populations have not passed
-timestep and sampling gates. The method is therefore ready for controlled
-validation and qualitative workflow studies, but current trajectories should not
-be used for absolute membrane-coupled kinetics or quantitative HDX prediction.
+bath per real degree of freedom. The protein--membrane construct has three
+inseparable parts: O and BB are regenerated from persistent N/CA/C coordinates;
+BB sensitivity is returned with the $14/54$, $12/54$, and $12/54$ persistent
+shares required by the Upside integration cycle; and the fully coupled protein is
+kept rigid until an explicit transition to flexible production. Together these
+choices preserve secondary structure without softening or disabling conservative
+SC--environment or BB--environment interactions. The factor-four mapping defines
+an explicit bare-particle mobility, and the protein receives reproducible
+contact-local damping. That kinetic construction remains a model rather than a
+physical-timescale validation: whole-DOPC diffusion is not matched and protein
+hydrodynamic friction is not established. The resolved interface is ready for
+controlled equilibrium and HDX sampling studies, but absolute membrane-coupled
+kinetics and quantitative HDX still require their independent convergence and
+water-accessibility validations.
 
 \end{document}

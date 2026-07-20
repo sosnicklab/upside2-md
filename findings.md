@@ -1879,19 +1879,19 @@ Lesson: organize validation by implementation, configurational distribution, and
 equilibrium-form estimator to a trustworthy prediction before its finite-step ensemble and sampling convergence
 have passed.
 
-## Update 74 (2026-07-20): fresh unified-temperature trajectories
+## Update 74 (2026-07-20): unified-temperature pre-fix trajectories (superseded structurally)
 
 Fresh stage-7 files replaced the previously audited outputs while the manuscript was being revised. Both 1RKL and
 1AFO now contain 1,001 frames at runtime $T_\mathrm{up}=.8$ with friction-reference $T_\mathrm{up}=.8$,
 $D_\mathrm{bead,up}=5.11111$, and $\alpha_\mathrm{bead}=.15652$. Last-200-frame protein/lipid kinetic-energy
 ratios to $3kT/2$ are 1.005/0.991 for 1RKL and 1.002/1.018 for 1AFO, so the unified thermostat works as specified.
 
-Drift-removed DOPC COM fits remain window-dependent and far below target: 1RKL gives
+These files still used the full-Jacobian BB reverse route and the unprotected handoff, so their structural
+measurements are not results of the final interface. They were nevertheless sufficient to isolate temperature
+and transport: drift-removed DOPC COM fits were window-dependent and far below target, with 1RKL giving
 $0.0053$--$0.0112~\mu\mathrm{m}^2/\mathrm{s}$ and 1AFO
-$0.0027$--$0.0103~\mu\mathrm{m}^2/\mathrm{s}$ over tested 20--1000 ns windows, versus 11.5 target. DSSP gives
-1RKL helical counts first/final/minimum/mean of 13/16/5/12.3; 1AFO gives 54/52/51/53.5. Thus correcting the
-temperature mismatch does not restore the 1RKL ensemble, although it removes temperature provenance as a
-confounder. The manuscript now reports these fresh values and keeps timestep/cutoff/force-path validation open.
+$0.0027$--$0.0103~\mu\mathrm{m}^2/\mathrm{s}$ over tested 20--1000 ns windows, versus 11.5 target. Their failed
+1RKL DSSP result motivated the force-route and handoff audit and is replaced by Update 75.
 
 Lesson: when outputs can be regenerated concurrently, re-read artifact provenance immediately before finalizing
 result-specific documentation; a correct historical diagnosis can become stale during the same task.
@@ -1911,11 +1911,10 @@ but the obsolete stage-7 trajectory began at 13 after an unprotected production-
 non-negotiable preparation rule is now stronger than a fixed minimization or finite positional spring. BB-env
 and SC-env activate in `production_handoff`, while the complete protein remains one rigid body through both
 minimization and burn-in. The stage is relabelled `production` only afterward, which removes the rigid group and
-starts flexible sampling. A reduced end-to-end run completed this sequence; across all 93 persistent N/CA/C
-carriers, the maximum internal pair-distance change from stage 6.6 through handoff burn-in was
-$4.58\times10^{-5}$ A (float-level drift). The deliberately shortened membrane equilibration in that wiring test
-was not physically stable, so it validates the handoff invariant but not production structure or kinetics. A
-complete freshly equilibrated stage-7 trajectory remains the structural acceptance test.
+starts flexible sampling. Full corrected 50,000-step runs now complete this sequence. Handoff pair-distance
+changes are at most 0.017 A for 1RKL and 0.0037 A for 1AFO. Corrected DSSP first/final/minimum/mean helical counts
+are 23/23/16/21.88 for 1RKL and 54/51/48/50.77 for 1AFO; 1RKL residues 10--28 are individually helical in
+96.5--100% of frames. The structural regression is resolved.
 
 The engine and ordinary example infrastructure confirm the standard Upside numerical step is `.009`; `.09`
 would be tenfold too large. The official Martini 2 parameter contract is a separate open issue: LJ is shifted or
@@ -1927,3 +1926,5 @@ Lesson: do not infer the intended reverse force map from virtual-site calculus a
 deletes and regenerates one of the mapped atoms. Audit which force shares survive the integration cycle. Also,
 "protected during minimization" is not equivalent to "rigid before production": enforce one rigid protein body
 through every pre-production minimization and MD segment, and release it only at the explicit production handoff.
+Once that construct passes a full run, rewrite the primary documentation around the final design and remove the
+superseded debugging narrative rather than accumulating successive correction notes.
