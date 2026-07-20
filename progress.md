@@ -42,3 +42,28 @@ Files modified: `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.p
   not quantitative HDX prediction.
 
 Files modified for this audit: `plan.md`, `findings.md`, and `progress.md` only.
+
+## 1RKL temperature and hybrid-HDX reassessment (2026-07-20)
+
+- Confirmed production `T_up=0.8647` equals 303.15 K and is passed consistently to g-JF and OU baths. Last-window
+  protein/lipid kinetic temperatures are within 1.1%/0.3% of target, excluding a temperature-conversion error.
+- Recomputed DSSP over all 1,001 stage-7 frames. The 10--29 core averages 84.5% helix occupancy, briefly drops to
+  four helical residues near 1.09 us, and ends at 19/20; core CA RMSD stays below 1.58 A.
+- Corrected the prior physical-duration arithmetic: 50,000 numerical steps at the declared 40 ps/step are 2 us,
+  not 18 ns.
+- Identified timestep convergence—not integrator-specific temperature scaling—as the unresolved numerical check;
+  prior evidence favors `.00225` over `.009` for the coupled hard interface.
+- Defined the HDX adapter: map hybrid N/CA/C into a protein-only HDX analysis engine, preserve full-system energy
+  and temperature for ensemble weighting, and treat membrane water accessibility as a separately calibrated term.
+- Found a workflow documentation hazard: `T.npy` must contain Upside `kT`, not Kelvin as stated in the README.
+
+Files modified for this reassessment: `plan.md`, `findings.md`, and `progress.md` only.
+
+## HDX reuse architecture correction (2026-07-20)
+
+- Recast the hybrid path as one H5 projection adapter rather than a separate HDX implementation.
+- The adapter will map hybrid N/CA/C into a standard protein-only trajectory view while retaining full-system
+  potential and Upside temperature for the existing MBAR analysis.
+- `example/04.HDX` remains the method reference; `example/00.AnalysisScripts` remains the maintained uptake and
+  experiment-comparison pipeline. Existing steps run unchanged after projection.
+- Any membrane accessibility correction remains a transparent postprocessing layer with the stock PS retained.

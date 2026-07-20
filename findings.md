@@ -1718,8 +1718,10 @@ mostly report the geometric membrane rule and the 1000-fold floor, not a sampled
 For 1AFO the mean exchange-competent fraction is 0.132, but 65/67 donors never change state in those frames.
 These preparation-frame numbers diagnose criterion behavior only; they are not production HDX estimates.
 
-The corrected 50,000-step production length is `50000*.009*40 ps = 18 ns` under the requested protein clock.
-That is useful for stability and mobility regression, not evidence of converged rare opening populations.
+The corrected 50,000-step production length is `50000*40 ps = 2 us` under the requested literal
+40-ps-per-numerical-step protein clock. The earlier 18-ns statement incorrectly multiplied the empirical clock
+by the reduced numerical step a second time. Two microseconds is materially better sampling, but a single
+trajectory is still not evidence of converged rare opening populations.
 Quantitative hybrid HDX requires a wired hybrid extraction path, a defensible membrane/water-accessibility model,
 replica/enhanced sampling, protection-probability convergence and effective-sample-size checks, and external
 peptide-level validation. Until then, use any calculated profile only as a qualitative structural-protection map.
@@ -1727,3 +1729,63 @@ peptide-level validation. Until then, use any calculated profile only as a quali
 Lesson: before judging HDX from a dynamics timescale, inspect whether the estimator is kinetic or equilibrium.
 Then verify coordinate-layout compatibility and whether binary protection rules saturate; a mathematically valid
 uptake curve can still contain almost no trajectory-derived information.
+
+## Update 67 (2026-07-20): 1RKL runs at the intended 303 K; endpoint DSSP hid reversible helix loss
+
+The completed 1RKL production invocation uses `--temperature 0.8647`, and all 1,001 H5 frames store that value.
+With `1 T_up=350.588235 K`, this is 303.15 K. The last 200 frames give protein and lipid mean kinetic energies
+1.011 and 1.003 times `3 kT/2`, respectively. g-JF receives the same `kT` as the OU thermostat, and positive-
+friction degrees of freedom are excluded from OU. There is no evidence for a missing factor of four or another
+integrator-dependent temperature conversion; the MARTINI factor four changes time, not thermodynamic temperature.
+
+Direct DSSP from the mapped N/CA/C/O coordinates confirms the user's visual correction. Residues 10--29 average
+84.5% helical occupancy over the 2-us trajectory. They briefly fall to four helical residues near frame 543
+(about 1.09 us on the declared clock), then recover to 19/20 in the final frame. The core CA RMSD from frame zero
+is only 0.99 A on average and 1.58 A at maximum, so this is a reversible local hydrogen-bond/geometric disruption,
+not global unfolding. The central alpha2 region (including residues 18--24 identified in the experimental study)
+is the most persistent. Endpoint-only statements that the core “remained helical” were insufficient and are
+superseded by occupancy and minimum-event reporting.
+
+Correct kinetic temperature does not prove the nonlinear hard-core configurational distribution is converged at
+finite timestep. The existing matched-duration study already found `.009` under-resolves the coupled interface,
+whereas `.00225` retained the native helix. g-JF has favorable harmonic configurational statistics but no exact
+finite-step guarantee for this nonlinear hybrid force field. Therefore lowering the thermostat temperature to
+hide helix loss is not defensible. Match the experimental temperature (`T_up=T_exp/350.588235`) and establish the
+largest acceptable timestep with `.009/.0045/.00225` structural-population comparisons. The older Upside membrane
+examples use `T_up=0.80` (280.5 K); that is a different thermodynamic condition, not an integrator correction.
+
+For HDX, the clean hybrid adapter is to extract N/CA/C coordinates through `/input/hybrid_bb_map/atom_indices`,
+evaluate those coordinates with a separate protein-only `-HDX.up` analysis engine to recover the stock backbone
+H-bond, Asp/Glu-contact, and protein-burial terms, and combine them with membrane accessibility evaluated from the
+full hybrid frame. The current global-phosphate-plane Boolean is not quantitative: it permanently protects a
+stable transmembrane donor and saturates 1RKL. Since dry MARTINI contains no water, local water accessibility must
+come from a calibrated depth/water-activity function or an explicit-water reference; otherwise membrane-corrected
+HDX should be reported only as a sensitivity analysis.
+
+The adapter must save the full hybrid potential for MBAR, not the protein-only analysis-engine energy. It must
+also save `T.npy` in Upside `kT` units. The `example/00.AnalysisScripts/README.md` statement that `T.npy` is Kelvin
+is incorrect: `4.calc_D_uptake.py` constructs `beta=1/T` directly and expects values such as 0.85; only the
+intrinsic-chemistry branch converts that target to Kelvin. Feeding 303 instead of 0.8647 would invalidate MBAR.
+
+Lesson: validate secondary structure with per-residue occupancy, time blocks, and worst excursions, not endpoint
+counts. A correct kinetic-temperature average cannot substitute for configurational timestep convergence.
+
+## Update 68 (2026-07-20): maximize reuse by projecting a standard HDX trajectory view
+
+The user corrected the architecture priority: the hybrid analysis must maximize reuse of `example/04.HDX` and
+`example/00.AnalysisScripts`, not fork their formulas. The narrow adapter should create a protein-only HDX-view
+H5 from each hybrid replica. Its `/input` comes from the ordinary `-HDX.up` config; each output group's positions
+are N/CA/C mapped through `hybrid_bb_map/atom_indices[:, :3]`. Full coupled-system potential, Upside temperature,
+and compatible H-bond logs are copied from the hybrid group. This makes `mdtraj_upside`,
+`get_info_from_upside_traj.py`, and `get_protection_state.py` see their native `3*n_res` contract while MBAR still
+uses the correct protein+bilayer Hamiltonian.
+
+`example/04.HDX` remains the reference for REMD, MBAR-weighted protection probabilities, residue dG, and
+denaturant dependence. `example/00.AnalysisScripts` is the maintained superset for experimental preprocessing,
+intrinsic chemistry, peptide uptake, stability summaries, comparison, and plotting. New hybrid-specific code is
+limited to the H5 projection and an optional, separately validated membrane-accessibility combination. The stock
+protein-only `PS.npy` must be retained beside any combined PS so the membrane correction is observable and
+reversible.
+
+Lesson: when adapting a new trajectory representation to a mature analysis workflow, translate the data into the
+existing contract. Do not duplicate the established estimator merely because the source coordinate layout differs.

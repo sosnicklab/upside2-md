@@ -46,6 +46,50 @@ CURRENT BASELINE: production uses the factor-four-corrected bare-particle mobili
 
 # ACTIVE PHASE (2026-07-20)
 
+## K. Reassess 1RKL temperature/secondary structure and define a hybrid HDX workflow
+
+- [x] Read the production invocation and H5 temperature/friction metadata and convert the requested Upside
+      temperature to Kelvin.
+- [x] Measure protein/lipid kinetic temperatures independently and determine whether the new integrator needs
+      a distinct temperature conversion.
+- [x] Quantify residue-level DSSP occupancy, transient helix loss, recovery, and backbone RMSD from the final
+      stage-7 trajectory rather than relying on endpoint counts.
+- [x] Reconcile the result with prior timestep-resolution evidence and the temperature used by ordinary Upside
+      membrane examples.
+- [x] Specify the coordinate, protection-state, ensemble, and validation adapters needed to use full hybrid
+      trajectories in the existing HDX analysis contract.
+
+### K Decisions
+
+- Production is at `T_up=0.8647 = 303.15 K`. Protein and lipid last-window kinetic energies are respectively
+  1.1% and 0.3% above `3 kT/2`; there is no missing integrator-specific temperature scaling. Never lower the
+  reported temperature merely to compensate for structural loss. Use `T_up=T_exp/350.588235` for HDX.
+- DSSP confirms a real but reversible hydrogen-bond-network disruption: the residue 10--29 core averages 84.5%
+  helix occupancy, falls to four helical residues near 1.09 us, and ends at 19/20; its CA RMSD stays below
+  1.58 A. The central experimental alpha2 region remains the most stable. Endpoint-only validation previously
+  hid this event.
+- Correct kinetic temperature does not establish configurational timestep convergence for nonlinear hard-core
+  forces. Existing matched-duration evidence found `.009` under-resolves the coupled interface while `.00225`
+  preserves the helix. The next controlled test is a current-model `.009/.0045/.00225` comparison at the same
+  physical temperature and duration. Do not relabel this as a temperature-conversion problem.
+- A mechanically compatible HDX adapter should evaluate mapped hybrid N/CA/C coordinates with a separate
+  protein-only `-HDX.up` engine, reuse the standard H-bond/side-chain/burial terms, and combine them with full-
+  system membrane accessibility. The current global-PO4 binary slab is not quantitative because it saturates
+  stable transmembrane donors.
+- Hybrid MBAR must use the full coupled-system `output/potential`. Its `T.npy` must remain in Upside `kT` units
+  (for example 0.8647), despite the current README incorrectly describing Kelvin; `4.calc_D_uptake.py` uses
+  `beta=1/T` in Upside units and converts to Kelvin only for intrinsic chemistry.
+- Dry MARTINI contains no water, so quantitative membrane accessibility must be supplied by a calibrated local
+  depth/water-activity model or an explicit-water reference. Until that is validated, report H-bond/protein-
+  burial HDX separately from the membrane-accessibility correction.
+- Revised per user direction: do not create a parallel hybrid HDX implementation. Add one projection adapter
+  that writes a protein-only HDX-view `.up` with mapped N/CA/C positions but copied full-hybrid potential,
+  temperature, and H-bond logs. Then reuse `example/04.HDX/1.config.py`, the stock steps 2--3, and
+  `example/00.AnalysisScripts` steps 4--6 unchanged. Apply any calibrated membrane-accessibility correction as
+  an explicit postprocessing layer on the stock `PS.npy`, preserving the unmodified protein-only PS for audit.
+
+# PREVIOUSLY COMPLETED PHASE (2026-07-20)
+
 ## J. Audit the HDX analysis workflow and reassess trust
 
 - [x] Trace protection-state extraction from trajectory coordinates and identify whether it is an equilibrium
@@ -72,7 +116,7 @@ CURRENT BASELINE: production uses the factor-four-corrected bare-particle mobili
   not a resolved protection factor.
 - No HDX/PS/percentD artifacts exist under `example/16.MARTINI`, so there is no produced hybrid HDX result to
   validate. Existing frozen outputs are unusable for ensemble estimates; corrected single 50,000-step runs span
-  only about 18 ns on the stated protein clock and are not a substitute for converged REMD/ensemble sampling.
+  2 us on the stated 40 ps-per-numerical-step protein clock but still need convergence/replica evidence.
 - Do not modify the HDX model during this audit. A quantitative hybrid workflow first needs an explicit mapped-
   coordinate path, robust membrane/water-accessibility treatment, and convergence/replica validation.
 
