@@ -82,7 +82,16 @@ Ea_glu = 1.083
 Ea_his = 7.5
 
 single_T = bool_env('single_T', True)  # checkme
-legacy_T_range = np.array([1.14], dtype=float)
+legacy_temperature_setting = os.environ.get('legacy_T_range')
+if legacy_temperature_setting:
+    legacy_T_range = np.asarray(
+        [float(value.strip()) for value in legacy_temperature_setting.split(',') if value.strip()],
+        dtype=float,
+    )
+    if legacy_T_range.size == 0:
+        raise ValueError('legacy_T_range must contain at least one Upside temperature')
+else:
+    legacy_T_range = np.array([1.14], dtype=float)
 # legacy_T_range = np.array([0.84, 0.85, 0.92, 0.99, 1.1], dtype=float)
 
 T_search_range = (0.7, 1.2)
@@ -100,12 +109,11 @@ T_acid_K = 278.0
 
 # for calculation of protein HX in D2O
 pD_corr = float(os.environ.get('pD_corr', '6.70'))  # checkme pD_read+0.4
-legacy_Kws = np.array([14.96], dtype=float)
 D_plus = np.power(10, -pD_corr)
-legacy_od_minus_map = {
-    float(T_target): np.power(10, pD_corr - Kw)
-    for T_target, Kw in zip(legacy_T_range, legacy_Kws)
-}
+if legacy_temperature_setting:
+    legacy_od_minus_map = {}
+else:
+    legacy_od_minus_map = {1.14: np.power(10, pD_corr - 14.96)}
 
 ka_poly = (np.power(10, 1.62)) / 60
 kb_poly = (np.power(10, 10.18)) / 60
@@ -983,7 +991,10 @@ exp_pep_starts, exp_pep_ends, exp_pep_labels = build_experimental_peptides(exp_d
 
 kB = 1.0
 T_arr = np.array(T)
-T_mean = np.mean(T_arr[:, start_frame:], axis=1)
+if T_arr.ndim == 1:
+    T_mean = T_arr
+else:
+    T_mean = np.mean(T_arr[:, start_frame:], axis=1)
 beta = kB * T_mean ** (-1)
 
 cE0 = Pot[:, start_frame:]

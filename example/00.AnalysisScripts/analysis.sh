@@ -1,52 +1,68 @@
 #!/bin/bash
+set -eo pipefail
 
-source ../../source.sh
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$script_dir/../../source.sh"
+set -u
 
 #----------------------------------------------------------------------
 ## User settings
 #----------------------------------------------------------------------
 
-script_dir=$(cd $(dirname $0) && pwd)
 self_path=$script_dir/$(basename $0)
 
 # checkme: update these for the target run mode, workflow directory, and repository install.
-runner=local # local or slurm
-work_dir=./
-python_env_cmd= # Leave empty to use UPSIDE_HOME/.venv when present, or set e.g. "module load anaconda3".
+runner=${runner:-local} # local or slurm
+work_dir=${work_dir:-./}
+python_env_cmd=${python_env_cmd:-} # Leave empty to use UPSIDE_HOME/.venv when present.
 
 # checkme: update these for the target system and experimental condition.
-pdb_id=glpG-RKRK-79HIS
-sim_id=memb_test
-n_rep=48
-start_frame=100
+pdb_id=${pdb_id:-glpG-RKRK-79HIS}
+sim_id=${sim_id:-memb_test}
+n_rep=${n_rep:-48}
+start_frame=${start_frame:-100}
+
+# Use trajectory_mode=martini_hybrid to project full hybrid trajectories into the
+# ordinary protein-only HDX trajectory contract before running steps 2--6.
+trajectory_mode=${trajectory_mode:-upside} # upside or martini_hybrid
+hybrid_source_dir=${hybrid_source_dir:-}
+if [ -z "${hybrid_source_pattern:-}" ]; then
+    hybrid_source_pattern="$pdb_id.stage_7.{replica}.up"
+fi
+hybrid_project_overwrite=${hybrid_project_overwrite:-true}
+
+# Optional calibrated water-accessibility arrays, shaped exactly like PS.npy.
+# Leave the pattern empty to retain the stock protein-only protection state.
+water_accessibility_dir=${water_accessibility_dir:-}
+water_accessibility_pattern=${water_accessibility_pattern:-}
 
 # checkme: set skip_experiment_data=true if no experimental data available, otherwise set all parameters for experimental data
-skip_experiment_data=false
-hxms_method=stretch_exp
-protein_state=pd9
-exp_data_file="GlpG psWT Sub final peptides up sum 11192024.csv"
+skip_experiment_data=${skip_experiment_data:-false}
+hxms_method=${hxms_method:-stretch_exp}
+protein_state=${protein_state:-pd9}
+exp_data_file=${exp_data_file:-GlpG psWT Sub final peptides up sum 11192024.csv}
 
 # checkme: optional legacy HX plot step. Use auto to run only when the legacy inputs are present.
-hx_plot_enabled=auto # auto, true, or false
-hx_plot_prefix=glpg
-hx_plot_state=$protein_state
-hx_plot_dfout_file=
-hx_plot_fitdata_file=
-hx_plot_dg_file=
-hx_plot_resid_file=
-hx_plot_output_dir=
+hx_plot_enabled=${hx_plot_enabled:-auto} # auto, true, or false
+hx_plot_prefix=${hx_plot_prefix:-glpg}
+hx_plot_state=${hx_plot_state:-$protein_state}
+hx_plot_dfout_file=${hx_plot_dfout_file:-}
+hx_plot_fitdata_file=${hx_plot_fitdata_file:-}
+hx_plot_dg_file=${hx_plot_dg_file:-}
+hx_plot_resid_file=${hx_plot_resid_file:-}
+hx_plot_output_dir=${hx_plot_output_dir:-}
 
 #----------------------------------------------------------------------
 ## Slurm settings
 #----------------------------------------------------------------------
 
 # checkme: adjust these only when runner=slurm.
-slurm_job_name=analysis_$pdb_id
-slurm_time=08:00:00
-slurm_cpus_per_task=4
-slurm_mem=16G
-slurm_partition=
-slurm_account=
+slurm_job_name=${slurm_job_name:-analysis_$pdb_id}
+slurm_time=${slurm_time:-08:00:00}
+slurm_cpus_per_task=${slurm_cpus_per_task:-4}
+slurm_mem=${slurm_mem:-16G}
+slurm_partition=${slurm_partition:-}
+slurm_account=${slurm_account:-}
 
 work_dir=$(cd $work_dir && pwd)
 result_dir=$work_dir/results
@@ -61,6 +77,12 @@ workflow_env=(
     "HXMS_method=$hxms_method"
     "protein_state=$protein_state"
     "exp_data_file=$exp_data_file"
+    "trajectory_mode=$trajectory_mode"
+    "hybrid_source_dir=$hybrid_source_dir"
+    "hybrid_source_pattern=$hybrid_source_pattern"
+    "hybrid_project_overwrite=$hybrid_project_overwrite"
+    "water_accessibility_dir=$water_accessibility_dir"
+    "water_accessibility_pattern=$water_accessibility_pattern"
 )
 
 log() {
@@ -188,6 +210,12 @@ submit_to_slurm() {
         hxms_method=$hxms_method \
         protein_state=$protein_state \
         exp_data_file=$exp_data_file \
+        trajectory_mode=$trajectory_mode \
+        hybrid_source_dir=$hybrid_source_dir \
+        hybrid_source_pattern=$hybrid_source_pattern \
+        hybrid_project_overwrite=$hybrid_project_overwrite \
+        water_accessibility_dir=$water_accessibility_dir \
+        water_accessibility_pattern=$water_accessibility_pattern \
         slurm_job_name=$slurm_job_name \
         slurm_time=$slurm_time \
         slurm_cpus_per_task=$slurm_cpus_per_task \
@@ -215,7 +243,7 @@ activate_runtime() {
 }
 
 verify_python_environment() {
-    local module_list="numpy pandas scipy matplotlib pymbar mdtraj_upside"
+    local module_list="numpy pandas scipy matplotlib pymbar mdtraj_upside tables"
     local missing_modules
 
     if ! is_true $skip_experiment_data; then
@@ -242,20 +270,20 @@ run_python_step() {
     shift 3
 
     log "Running $label"
-    env ${workflow_env[@]} analysis_mode=$mode python $script_path "$@"
+    env "${workflow_env[@]}" analysis_mode=$mode python $script_path "$@"
 }
 
 run_config_step() {
     local action=$1
     log "Running 1.config.py ($action)"
-    env ${workflow_env[@]} workflow_action=$action python $script_dir/1.config.py
+    env "${workflow_env[@]}" workflow_action=$action python $script_dir/1.config.py
 }
 
 run_shell_step() {
     local label=$1
     local script_path=$2
     log "Running $label"
-    env ${workflow_env[@]} bash $script_path
+    env "${workflow_env[@]}" bash $script_path
 }
 
 run_hx_plot_step() {
@@ -291,7 +319,7 @@ run_hx_plot_step() {
 
     log "Running 6.generate_hx_plots.py"
     env \
-        ${workflow_env[@]} \
+        "${workflow_env[@]}" \
         hx_plot_work_dir=$work_dir \
         hx_plot_results_dir=$result_dir \
         hx_plot_output_dir=$output_dir \
@@ -331,6 +359,21 @@ run_workflow() {
 
     activate_runtime
     validate_hx_plot_mode
+    case $trajectory_mode in
+        upside)
+            ;;
+        martini_hybrid)
+            if [ -z "$hybrid_source_dir" ]; then
+                echo "trajectory_mode=martini_hybrid requires hybrid_source_dir" >&2
+                exit 1
+            fi
+            require_dir $hybrid_source_dir
+            ;;
+        *)
+            echo "Unsupported trajectory_mode: $trajectory_mode" >&2
+            exit 1
+            ;;
+    esac
     verify_python_environment
     cd $work_dir
 
@@ -338,7 +381,7 @@ run_workflow() {
         log "Skipping 0.run_HXMS.py because skip_experiment_data=$skip_experiment_data"
     else
         log "Running 0.run_HXMS.py"
-        env ${workflow_env[@]} python $script_dir/0.run_HXMS.py
+        env "${workflow_env[@]}" python $script_dir/0.run_HXMS.py
     fi
 
     run_config_step config

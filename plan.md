@@ -44,7 +44,36 @@ CURRENT BASELINE: production uses the factor-four-corrected bare-particle mobili
       timestep evidence below.
 - [x] Update 50: C++ analytic LJ/Coulomb removed -> spline-only engine (bit-identical).
 
-# ACTIVE PHASE (2026-07-20)
+# COMPLETED PHASE (2026-07-20)
+
+## L. Implement the hybrid-to-existing-HDX compatibility layer
+
+- [x] Add a reusable projector that converts each full hybrid replica into the standard `3*n_res` HDX-view H5
+      while retaining full-system potential, temperature, time, and H-bond observables.
+- [x] Add an auditable protection-state combiner that preserves stock protein PS and optionally applies an
+      externally calibrated per-frame water-accessibility array without changing the existing uptake formulas.
+- [x] Update `example/00.AnalysisScripts` driver and steps 2--3 to support ordinary and `martini_hybrid` inputs
+      through configuration, with the ordinary path behavior unchanged.
+- [x] Add a 16.MARTINI wrapper/configuration for projecting the current stage-7 outputs and running the maintained
+      `00.AnalysisScripts` workflow rather than duplicating HDX calculations.
+- [x] Update both READMEs, including the correct Upside-unit `T.npy` contract and the scientific limitations of
+      dry, uncalibrated membrane accessibility.
+- [x] Test projection shape/content, stock protection extraction, downstream single-replica uptake/stability,
+      ordinary-path shell syntax, and full-system energy/temperature preservation.
+- [x] Reassess HDX trust specifically for unequal lipid/protein kinetic clocks and document the acceptance gates.
+
+### L Decisions
+
+- The compatibility layer is representation-only: mapped N/CA/C positions feed the stock protection extractor,
+  while full hybrid potential, H-bond, temperature, and time arrays are copied exactly for downstream weighting.
+- A single-temperature wrapper reads `T_up` from replica 0 and analyzes only at that sampled temperature. The
+  ordinary workflow retains its existing default when no override is supplied.
+- The current 1RKL result is not quantitatively trustworthy. Molecular DOPC diffusion is `0.0152 um^2/s` versus
+  `11.5 um^2/s`, the worst first/second-half protection-probability difference is `0.621`, and dry MARTINI has no
+  calibrated water accessibility. Unequal clocks do not rescale the EX2 uptake axis, but here they accompany
+  demonstrably inadequate ensemble mixing.
+
+# PREVIOUSLY COMPLETED PHASE (2026-07-20)
 
 ## K. Reassess 1RKL temperature/secondary structure and define a hybrid HDX workflow
 

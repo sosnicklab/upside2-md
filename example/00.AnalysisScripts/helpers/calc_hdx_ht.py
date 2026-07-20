@@ -68,7 +68,7 @@ mbar0 = pymbar.MBAR(reduced_pot, FNs, verbose=True)
 def reweight(T_target_value):
     u_n = (cE0 / (T_target_value * kB)).flatten()
     log_w = mbar0._computeUnnormalizedLogWeights(u_n)
-    weights = np.exp(log_w)
+    weights = np.exp(log_w - np.max(log_w))
     weights /= np.sum(weights)
     return weights
 

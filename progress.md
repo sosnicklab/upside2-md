@@ -67,3 +67,18 @@ Files modified for this reassessment: `plan.md`, `findings.md`, and `progress.md
 - `example/04.HDX` remains the method reference; `example/00.AnalysisScripts` remains the maintained uptake and
   experiment-comparison pipeline. Existing steps run unchanged after projection.
 - Any membrane accessibility correction remains a transparent postprocessing layer with the stock PS retained.
+
+## Hybrid HDX implementation and verification (2026-07-20)
+
+- Added a hybrid H5 projector and optional calibrated water-accessibility combiner; stock protein PS is retained.
+- Wired hybrid configuration through `00.AnalysisScripts` and added `16.MARTINI/run_hdx_analysis.sh`.
+- Kept steps 1--6 and the `04.HDX` MBAR/EX2 method as the analysis path; fixed scalar-temperature handling and
+  numerically stable log-weight normalization reached by the single-replica hybrid case.
+- Verified exact mapped coordinates and exact full potential/H-bond/temperature/time preservation for 1,001
+  frames. The full temperature-matched 1RKL workflow completed uptake, stability, and summary generation.
+- Quantitative trust gate failed: first/second-half PS differs by up to `0.621`, minimum effective sample count is
+  `3.74`, DOPC diffusion is `0.0152` versus `11.5 um^2/s`, and no calibrated membrane water accessibility exists.
+
+Files added: `py/martini_hdx_project.py`, `py/combine_hdx_protection.py`, and
+`example/16.MARTINI/run_hdx_analysis.sh`. Updated the `00.AnalysisScripts` driver, steps 2--4, stability helper,
+both READMEs, `plan.md`, `findings.md`, and `progress.md`.

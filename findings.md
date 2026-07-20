@@ -1789,3 +1789,29 @@ reversible.
 
 Lesson: when adapting a new trajectory representation to a mature analysis workflow, translate the data into the
 existing contract. Do not duplicate the established estimator merely because the source coordinate layout differs.
+
+## Update 69 (2026-07-20): hybrid HDX adapter implemented; current 1RKL fails quantitative gates
+
+The implemented projector creates the standard `3*n_res` H5 view and preserves the full coupled observables.
+On all 1,001 1RKL frames, projected N/CA/C coordinates are exactly equal to the hybrid-map selection, and
+potential, H-bond, temperature, and time arrays are exactly equal to the source. The ordinary
+`get_protection_state.py` path then produces `(1001,29)` PS. Without an external accessibility array,
+`PS_protein.npy` and downstream `PS.npy` are exactly identical. A synthetic check confirmed
+`P_protected,total = 1-(1-P_protected,protein)*P_water_accessible` exactly.
+
+The full single-replica workflow now completes through uptake, stability, and summary. Two latent workflow
+defects reached by this case were fixed without changing the estimator: scalar `T.npy` is accepted for MBAR,
+and stability weights use a max-shift before exponentiation. The hybrid wrapper reads the sampled `T_up` from
+replica 0 and sets all single-temperature targets to that value; the current trajectory is analyzed at
+`0.8647`, not the legacy unsampled `1.14` default.
+
+The generated numbers remain non-quantitative. Current molecular DOPC diffusion is `0.0152 um^2/s`, about 750
+times below the `11.5 um^2/s` target. More decisively for this equilibrium estimator, first/second-half donor
+protection differs by `0.078` on average and `0.621` at residue 10; the smallest estimated effective sample
+count is only `3.74`. Dry MARTINI also lacks a calibrated water-accessibility field. The friction-clock mismatch
+does not rescale experimental seconds in the EX2 calculation, but it severely limits configurational mixing, and
+the protein's additive contact bath has not been validated as the physical bilayer hydrodynamic friction.
+
+Lesson: a mechanically correct HDX pipeline does not validate its source ensemble. Gate trust on per-residue
+block convergence and effective sample size, sampled-temperature matching, timestep convergence, membrane
+accessibility calibration, and independent-replica or REMD agreement.
