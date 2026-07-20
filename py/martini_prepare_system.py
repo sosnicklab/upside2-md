@@ -50,12 +50,9 @@ WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
 DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS = 200
 DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
-DEFAULT_STAGE_70_RELEASE_SC_ENV_BACKBONE_HOLD_STEPS = 0
-DEFAULT_STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS = 0
 DEFAULT_NPT_TAU = 4.0
 DEFAULT_NPT_INTERVAL = 10
 DEFAULT_PROD_70_BAROSTAT_TYPE = 1
-DEFAULT_STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING = 10.0
 DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
 DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
 DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
@@ -908,23 +905,6 @@ def remove_protein_position_restraints(up_file: Path):
             del h5[path]
 
 
-def reset_stage70_release_hybrid_transition(up_file: Path, args):
-    import h5py
-
-    with h5py.File(up_file, "r+") as h5:
-        path = "/input/hybrid_control"
-        if path not in h5:
-            return
-        ctrl = h5[path].attrs
-        ctrl["sc_env_transition_step_start"] = np.int32(0)
-        ctrl["sc_env_backbone_hold_steps"] = np.int32(
-            int(args.stage_70_release_sc_env_backbone_hold_steps)
-        )
-        ctrl["sc_env_po4_z_hold_steps"] = np.int32(
-            int(args.stage_70_release_sc_env_po4_z_hold_steps)
-        )
-
-
 def set_hybrid_production_controls(up_file: Path, args):
     import h5py
 
@@ -1044,7 +1024,7 @@ def stage_npt_targets(stage_label: str, args):
 
 def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable: int, lipidhead_fc: float):
     target_pxy, target_pz = stage_npt_targets(stage_label, args)
-    if stage_label == "production":
+    if stage_label in {"production", "production_handoff"}:
         dynamics_phase = "production"
     elif prepare_stage == "npt_prod":
         dynamics_phase = "overlap_settling"
@@ -1115,8 +1095,8 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
     set_hybrid_control_mode(target_file, args.hybrid_preprod_activation_stage)
     set_stage_label(target_file, stage_label)
     inject_particles_table(up_file=target_file, martini_h5=args.martini_h5)
-    if stage_label == "production":
-        inject_hybrid_interface_nodes(args, target_file, "production", "production")
+    if stage_label in {"production", "production_handoff"}:
+        inject_hybrid_interface_nodes(args, target_file, stage_label, "production")
     else:
         inject_hybrid_interface_nodes(
             args,
@@ -1380,8 +1360,12 @@ def promote_md_output_state_to_input(up_file: Path, elapsed_steps: int):
 
         if "/input/hybrid_control" in h5:
             ctrl = h5["/input/hybrid_control"].attrs
-            start = int(ctrl.get("sc_env_transition_step_start", 0))
-            ctrl["sc_env_transition_step_start"] = np.int32(start + int(elapsed_steps))
+            stage = h5_as_text(
+                h5["/input/stage_parameters"].attrs.get("current_stage", b"")
+            ).strip()
+            if stage == "production":
+                start = int(ctrl.get("sc_env_transition_step_start", 0))
+                ctrl["sc_env_transition_step_start"] = np.int32(start + int(elapsed_steps))
 
         last_box = None
         if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
@@ -1402,9 +1386,9 @@ def promote_md_output_state_to_input(up_file: Path, elapsed_steps: int):
 def run_stage70_burnin(args, stage_file: Path):
     nsteps = int(args.prod_70_burnin_nsteps)
     if nsteps <= 0:
-        print("=== Stage 7.0: Production-Hamiltonian burn-in skipped (nsteps <= 0) ===")
+        print("=== Stage 7.0: Rigid interface-handoff burn-in skipped (nsteps <= 0) ===")
         return
-    print(f"=== Stage 7.0: Production-Hamiltonian burn-in ({nsteps} steps) ===")
+    print(f"=== Stage 7.0: Rigid interface-handoff burn-in ({nsteps} steps) ===")
     run_md_stage(
         args,
         "7.0.burnin",
@@ -1416,7 +1400,7 @@ def run_stage70_burnin(args, stage_file: Path):
         echo=False,
     )
     promote_md_output_state_to_input(stage_file, nsteps)
-    print(f"Promoted stage-7 burn-in final state to production input: {stage_file}")
+    print(f"Promoted rigid handoff final state for production: {stage_file}")
 
 
 def extract_stage_vtf(args, stage_label: str, stage_file: Path, mode: str):
@@ -1511,12 +1495,6 @@ def normalize_hybrid_workflow_args(args):
     args.hybrid_preprod_activation_stage = "minimization"
     args.sc_env_backbone_hold_steps = DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
-    if not np.isfinite(float(args.stage_70_burnin_protein_restraint_spring)):
-        raise ValueError("stage_70_burnin_protein_restraint_spring must be finite")
-    if int(args.stage_70_release_sc_env_backbone_hold_steps) < 0:
-        raise ValueError("stage_70_release_sc_env_backbone_hold_steps must be nonnegative")
-    if int(args.stage_70_release_sc_env_po4_z_hold_steps) < 0:
-        raise ValueError("stage_70_release_sc_env_po4_z_hold_steps must be nonnegative")
     args.npt_tau = DEFAULT_NPT_TAU
     args.npt_interval = DEFAULT_NPT_INTERVAL
     args.prod_70_barostat_type = DEFAULT_PROD_70_BAROSTAT_TYPE
@@ -1653,30 +1631,6 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--eq-66-nsteps", type=int, default=env_int("EQ_66_NSTEPS", 500))
     parser.add_argument("--prod-70-burnin-nsteps", type=int, default=env_int("PROD_70_BURNIN_NSTEPS", 40000))
     parser.add_argument("--prod-70-nsteps", type=int, default=env_int("PROD_70_NSTEPS", 10000))
-    parser.add_argument(
-        "--stage-70-burnin-protein-restraint-spring",
-        type=float,
-        default=env_float(
-            "STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING",
-            DEFAULT_STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING,
-        ),
-    )
-    parser.add_argument(
-        "--stage-70-release-sc-env-backbone-hold-steps",
-        type=int,
-        default=env_int(
-            "STAGE_70_RELEASE_SC_ENV_BACKBONE_HOLD_STEPS",
-            DEFAULT_STAGE_70_RELEASE_SC_ENV_BACKBONE_HOLD_STEPS,
-        ),
-    )
-    parser.add_argument(
-        "--stage-70-release-sc-env-po4-z-hold-steps",
-        type=int,
-        default=env_int(
-            "STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS",
-            DEFAULT_STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS,
-        ),
-    )
     parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", MARTINI_MD_TIME_STEP))
     parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", MARTINI_MD_TIME_STEP))
     parser.add_argument("--eq-frame-steps", type=int, default=env_int("EQ_FRAME_STEPS", 1000))
@@ -1789,33 +1743,15 @@ def run_stage70_handoff(args, files, source_stage: Path):
         args.prod_70_npt_enable,
         args.prod_70_barostat_type,
         0,
-        "production",
+        "production_handoff",
     )
     shutil.copy2(files["prepared_70"], files["stage_70"])
     handoff_initial_position(args, source_stage, files["stage_70"], "production_hybrid")
-    assert_hybrid_stage_active(files["stage_70"], "production", "production")
+    assert_hybrid_stage_active(files["stage_70"], "production_handoff", "production")
     run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
-    if float(args.stage_70_burnin_protein_restraint_spring) > 0.0:
-        inject_protein_position_restraints(
-            files["stage_70"],
-            spring_const=float(args.stage_70_burnin_protein_restraint_spring),
-        )
     run_stage70_burnin(args, files["stage_70"])
-    if (
-        int(args.prod_70_burnin_nsteps) > 0
-        and float(args.stage_70_burnin_protein_restraint_spring) > 0.0
-        and (
-            int(args.stage_70_release_sc_env_backbone_hold_steps) > 0
-            or int(args.stage_70_release_sc_env_po4_z_hold_steps) > 0
-        )
-    ):
-        reset_stage70_release_hybrid_transition(files["stage_70"], args)
-    remove_protein_position_restraints(files["stage_70"])
-    if (
-        int(args.prod_70_burnin_nsteps) > 0
-        and float(args.stage_70_burnin_protein_restraint_spring) > 0.0
-    ):
-        run_minimization_stage(args, "7.0.release", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
+    set_stage_label(files["stage_70"], "production")
+    assert_hybrid_stage_active(files["stage_70"], "production", "production")
     run_md_stage(
         args,
         "7.0",

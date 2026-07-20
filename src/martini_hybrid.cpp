@@ -98,174 +98,53 @@ static inline bool build_frame_from_three(
     return true;
 }
 
-struct Dual9 {
-    double value = 0.0;
-    std::array<double,9> deriv{};
-};
-
-using DualVec3 = std::array<Dual9,3>;
-
-static Dual9 dual_constant(double value) {
-    Dual9 out;
-    out.value = value;
-    return out;
-}
-
-static Dual9 dual_variable(double value, int index) {
-    Dual9 out = dual_constant(value);
-    out.deriv[static_cast<size_t>(index)] = 1.0;
-    return out;
-}
-
-static Dual9 dual_add(const Dual9& a, const Dual9& b) {
-    Dual9 out;
-    out.value = a.value + b.value;
-    for(int i = 0; i < 9; ++i) out.deriv[i] = a.deriv[i] + b.deriv[i];
-    return out;
-}
-
-static Dual9 dual_sub(const Dual9& a, const Dual9& b) {
-    Dual9 out;
-    out.value = a.value - b.value;
-    for(int i = 0; i < 9; ++i) out.deriv[i] = a.deriv[i] - b.deriv[i];
-    return out;
-}
-
-static Dual9 dual_mul(const Dual9& a, const Dual9& b) {
-    Dual9 out;
-    out.value = a.value * b.value;
-    for(int i = 0; i < 9; ++i) {
-        out.deriv[i] = a.deriv[i]*b.value + a.value*b.deriv[i];
-    }
-    return out;
-}
-
-static Dual9 dual_scale(const Dual9& a, double scale) {
-    Dual9 out;
-    out.value = a.value * scale;
-    for(int i = 0; i < 9; ++i) out.deriv[i] = a.deriv[i] * scale;
-    return out;
-}
-
-static Dual9 dual_div(const Dual9& a, const Dual9& b) {
-    Dual9 out;
-    out.value = a.value / b.value;
-    double inv_b2 = 1.0 / (b.value*b.value);
-    for(int i = 0; i < 9; ++i) {
-        out.deriv[i] = (a.deriv[i]*b.value - a.value*b.deriv[i]) * inv_b2;
-    }
-    return out;
-}
-
-static Dual9 dual_sqrt(const Dual9& a) {
-    Dual9 out;
-    out.value = std::sqrt(a.value);
-    double scale = 0.5 / out.value;
-    for(int i = 0; i < 9; ++i) out.deriv[i] = a.deriv[i] * scale;
-    return out;
-}
-
-static DualVec3 dual_vec_sub(const DualVec3& a, const DualVec3& b) {
-    return DualVec3{{dual_sub(a[0], b[0]), dual_sub(a[1], b[1]), dual_sub(a[2], b[2])}};
-}
-
-static Dual9 dual_vec_dot(const DualVec3& a, const DualVec3& b) {
-    Dual9 out = dual_constant(0.0);
-    for(int d = 0; d < 3; ++d) out = dual_add(out, dual_mul(a[d], b[d]));
-    return out;
-}
-
-static DualVec3 dual_vec_cross(const DualVec3& a, const DualVec3& b) {
-    return DualVec3{{
-        dual_sub(dual_mul(a[1], b[2]), dual_mul(a[2], b[1])),
-        dual_sub(dual_mul(a[2], b[0]), dual_mul(a[0], b[2])),
-        dual_sub(dual_mul(a[0], b[1]), dual_mul(a[1], b[0]))
-    }};
-}
-
-static bool dual_vec_normalize(const DualVec3& value, DualVec3& normalized) {
-    Dual9 norm2 = dual_vec_dot(value, value);
-    if(norm2.value <= 1e-16) return false;
-    Dual9 norm = dual_sqrt(norm2);
-    for(int d = 0; d < 3; ++d) normalized[d] = dual_div(value[d], norm);
-    return true;
-}
-
 static bool map_backbone_sites(
         const HybridRuntimeState& st,
         size_t k,
         const std::array<std::array<float,3>,3>& carrier,
         std::array<float,3>& mapped_o,
-        std::array<float,3>& mapped_bb,
-        std::array<float,27>& jacobian) {
+        std::array<float,3>& mapped_bb) {
     const auto& ref = st.bb_reference_atom_coords[k];
-    float F_ref[3][3];
-    if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref)) return false;
+    float F_ref[3][3], F_cur[3][3];
+    if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref) ||
+       !build_frame_from_three(carrier[0], carrier[1], carrier[2], F_cur)) return false;
 
     auto ref_local_o = vec_sub(ref[3], ref[1]);
-    std::array<double,3> local_o{0.0, 0.0, 0.0};
+    std::array<float,3> local_o{{0.f, 0.f, 0.f}};
     for(int basis = 0; basis < 3; ++basis) {
         for(int d = 0; d < 3; ++d) {
             local_o[basis] += F_ref[d][basis] * ref_local_o[d];
         }
     }
 
-    std::array<DualVec3,3> carrier_dual;
-    for(int atom = 0; atom < 3; ++atom) {
-        for(int d = 0; d < 3; ++d) {
-            carrier_dual[atom][d] = dual_variable(carrier[atom][d], 3*atom + d);
+    for(int d = 0; d < 3; ++d) {
+        mapped_o[d] = carrier[1][d];
+        for(int basis = 0; basis < 3; ++basis) {
+            mapped_o[d] += F_cur[d][basis] * local_o[basis];
         }
     }
-    DualVec3 e1;
-    if(!dual_vec_normalize(dual_vec_sub(carrier_dual[1], carrier_dual[0]), e1)) return false;
-    DualVec3 v2 = dual_vec_sub(carrier_dual[2], carrier_dual[0]);
-    DualVec3 e3;
-    if(!dual_vec_normalize(dual_vec_cross(e1, v2), e3)) return false;
-    DualVec3 e2 = dual_vec_cross(e3, e1);
 
-    DualVec3 mapped_o_dual;
-    for(int d = 0; d < 3; ++d) {
-        mapped_o_dual[d] = carrier_dual[1][d];
-        mapped_o_dual[d] = dual_add(mapped_o_dual[d], dual_scale(e1[d], local_o[0]));
-        mapped_o_dual[d] = dual_add(mapped_o_dual[d], dual_scale(e2[d], local_o[1]));
-        mapped_o_dual[d] = dual_add(mapped_o_dual[d], dual_scale(e3[d], local_o[2]));
-    }
-
-    std::array<DualVec3,4> sites{{
-        carrier_dual[0], carrier_dual[1], carrier_dual[2], mapped_o_dual
-    }};
-    DualVec3 mapped_bb_dual{{
-        dual_constant(0.0), dual_constant(0.0), dual_constant(0.0)
-    }};
+    std::array<std::array<float,3>,4> sites{{carrier[0], carrier[1], carrier[2], mapped_o}};
+    mapped_bb = std::array<float,3>{{0.f, 0.f, 0.f}};
     float wsum = 0.f;
     for(int d = 0; d < 4; ++d) {
         if(st.atom_mask[k][d] == 0) continue;
         float w = st.weights[k][d];
         if(w == 0.f) continue;
         for(int coord = 0; coord < 3; ++coord) {
-            mapped_bb_dual[coord] =
-                dual_add(mapped_bb_dual[coord], dual_scale(sites[d][coord], w));
+            mapped_bb[coord] += w * sites[d][coord];
         }
         wsum += w;
     }
     if(wsum <= 0.f) return false;
     if(fabsf(wsum - 1.f) > 1e-6f) {
-        for(int d = 0; d < 3; ++d) mapped_bb_dual[d] = dual_scale(mapped_bb_dual[d], 1.f/wsum);
-    }
-    for(int output = 0; output < 3; ++output) {
-        mapped_o[output] = static_cast<float>(mapped_o_dual[output].value);
-        mapped_bb[output] = static_cast<float>(mapped_bb_dual[output].value);
-        for(int input = 0; input < 9; ++input) {
-            jacobian[9*output + input] =
-                static_cast<float>(mapped_bb_dual[output].deriv[input]);
-        }
+        for(int d = 0; d < 3; ++d) mapped_bb[d] *= 1.f/wsum;
     }
     return true;
 }
 
 struct HybridPositionNode : public CoordNode {
     CoordNode& source;
-    std::vector<std::array<float,27>> jacobian;
 
     HybridPositionNode(hid_t, CoordNode& source_):
         CoordNode(source_.n_elem, 3),
@@ -285,7 +164,6 @@ struct HybridPositionNode : public CoordNode {
            st->bb_reference_runtime_atom_indices.size() != st->n_bb) {
             throw string("Hybrid position node requires complete BB reference data");
         }
-        jacobian.resize(st->n_bb);
         for(size_t k = 0; k < st->n_bb; ++k) {
             const auto& atom_idx = st->bb_reference_runtime_atom_indices[k];
             int o_idx = atom_idx[3];
@@ -300,7 +178,7 @@ struct HybridPositionNode : public CoordNode {
                 carrier[atom] = std::array<float,3>{{value[0], value[1], value[2]}};
             }
             std::array<float,3> mapped_o, mapped_bb;
-            if(!map_backbone_sites(*st, k, carrier, mapped_o, mapped_bb, jacobian[k])) {
+            if(!map_backbone_sites(*st, k, carrier, mapped_o, mapped_bb)) {
                 throw string("Hybrid position node encountered a singular BB frame");
             }
             store_vec<3>(output, o_idx, make_vec3(mapped_o[0], mapped_o[1], mapped_o[2]));
@@ -316,10 +194,6 @@ struct HybridPositionNode : public CoordNode {
             }
             return;
         }
-        if(jacobian.size() != st->n_bb) {
-            throw string("Hybrid position node Jacobian is not initialized");
-        }
-
         std::vector<unsigned char> derived(static_cast<size_t>(n_elem), 0u);
         for(size_t k = 0; k < st->n_bb; ++k) {
             int o_idx = st->bb_reference_runtime_atom_indices[k][3];
@@ -335,17 +209,10 @@ struct HybridPositionNode : public CoordNode {
         for(size_t k = 0; k < st->n_bb; ++k) {
             int bb_idx = st->bb_atom_index[k];
             Vec<3> grad = load_vec<3>(sens, bb_idx);
-            const auto& jac = jacobian[k];
             for(int carrier = 0; carrier < 3; ++carrier) {
                 int atom_idx = st->atom_indices[k][carrier];
-                Vec<3> projected = make_zero<3>();
-                for(int input_dim = 0; input_dim < 3; ++input_dim) {
-                    int input = 3*carrier + input_dim;
-                    for(int output_dim = 0; output_dim < 3; ++output_dim) {
-                        projected[input_dim] += jac[9*output_dim + input] * grad[output_dim];
-                    }
-                }
-                update_vec<3>(source.sens, atom_idx, projected);
+                float weight = st->weights[k][carrier];
+                update_vec<3>(source.sens, atom_idx, weight * grad);
             }
         }
     }
@@ -862,6 +729,13 @@ static inline bool enforce_preprod_rigid_stage(
     return st.preprod_rigid && (stage != "production");
 }
 
+static inline bool hybrid_interface_active_stage(
+        const HybridRuntimeState& st,
+        const std::string& stage) {
+    if(stage == st.activation_stage) return true;
+    return st.activation_stage == "production" && stage == "production_handoff";
+}
+
 static void apply_stage_fixing(
         DerivEngine& engine,
         HybridRuntimeState& st,
@@ -902,7 +776,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
         martini_fix_rigid::clear_dynamic_rigid_groups(*engine);
         return;
     }
-    st->active = (stage == st->activation_stage);
+    st->active = hybrid_interface_active_stage(*st, stage);
     if(st->active != was_active) {
         st->has_prev_bb = false;
         st->prev_bb_pos.clear();
@@ -917,7 +791,7 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
 void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     auto parsed = read_hybrid_settings(config_root, engine.pos->n_elem);
     auto current_stage = martini_stage_params::get_current_stage(&engine);
-    parsed.active = parsed.has_config && (current_stage == parsed.activation_stage);
+    parsed.active = parsed.has_config && hybrid_interface_active_stage(parsed, current_stage);
 
     auto st = std::make_shared<HybridRuntimeState>(std::move(parsed));
 

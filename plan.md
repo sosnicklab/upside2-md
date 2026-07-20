@@ -73,6 +73,110 @@ CURRENT BASELINE: production uses the factor-four-corrected bare-particle mobili
   calibrated water accessibility. Unequal clocks do not rescale the EX2 uptake axis, but here they accompany
   demonstrably inadequate ensemble mixing.
 
+# ACTIVE PHASE (2026-07-20)
+
+## N. Rewrite friction calibration and evidence boundaries in the interface manuscript (completed)
+
+- [x] Trace the implemented temperature, diffusion, friction, contact-count, and thermostat equations from the
+      workflow/H5 builder so every manuscript formula matches code.
+- [x] Replace obsolete or contradictory timescale language with one derivation from the factor-four-corrected
+      bare-particle target to the g-JF friction and contact-local protein drag.
+- [x] Rewrite the results, HDX, discussion, and conclusion claims into explicit validated, conditional, and
+      unsupported domains, including current molecular diffusion and ensemble-convergence failures.
+- [x] Remove duplicated patch-like prose and ensure the document reads as one methods narrative.
+- [x] Compile the TeX and inspect warnings/errors; run repository diff checks.
+- [x] Recompute trust-critical diagnostics after the fresh unified-temperature stage-7 outputs replaced the
+      previously audited trajectories, then update all result-specific manuscript statements.
+
+### N Decisions
+
+- One system `TEMPERATURE` controls both runtime FDT noise and the temperature used to calibrate friction.
+- The calibrated observable is free/bare MARTINI-particle mobility. Whole-DOPC molecular diffusion and a full
+  membrane hydrodynamic resistance tensor are not calibrated.
+- Correct thermostat statistics and a mechanically working HDX adapter are necessary but insufficient for a
+  trustworthy HDX prediction. Current results remain qualitative until timestep, ensemble, replica/enhanced-
+  sampling, and membrane-water-accessibility gates pass.
+
+### N Review
+
+- The manuscript derives $D_\mathrm{bead,up}=5.11111$ and
+  $\alpha_\mathrm{bead}=0.15652$ at the unified default $T_\mathrm{up}=0.8$, documents the static contact-count
+  approximation, and distinguishes preparation damping from production calibration.
+- An evidence table now separates implementation checks, calibrated inputs, failed molecular transport, open
+  equilibrium populations, and the mechanically correct but scientifically unvalidated HDX adapter.
+- Two-pass pdflatex completes without warnings; arithmetic assertions, manuscript consistency checks, chktex,
+  and git diff --check pass.
+- Fresh 1RKL/1AFO artifacts both store runtime and calibration $T_\mathrm{up}=.8$, the derived
+  $\alpha_\mathrm{bead}=.15652$, and 1,001 frames. Kinetic temperature passes, molecular diffusion remains more
+  than $10^3$-fold too slow, and 1RKL secondary structure remains unsuitable for a quantitative HDX ensemble.
+
+## M. Diagnose the 1RKL BB-env force regression against `b1041bb`
+
+- [x] Check the cited stage-7 VTF/H5 provenance and identify affected residues rather than relying on the final
+      frame. The cited output is an older `T_up=0.8647`, `dt=.009` run, not the requested `T_up=.80` run.
+- [x] Diff the particle--backbone table generation, H5 schema/wiring, C++ pair-force evaluation, and virtual-BB
+      derivative propagation against commit `b1041bb6640b34edf55fe371b5cf943d054ba187`.
+- [x] Compare current and historical BB-env potential/force curves in common Upside units and test force sign,
+      magnitude, residue/type assignment, pair exclusions, and Newton-pair reactions on representative inputs.
+- [x] Isolate the first behavior-changing commit or code path and distinguish a force regression from timestep,
+      thermostat, startup-hold, or trajectory-provenance effects.
+- [x] Re-audit the fresh `T_up=.80` H5 invocation, temperature/friction metadata, and residue-wise DSSP
+      timeline. The unified temperature is correct, but 1RKL still has substantial helix loss.
+- [x] Compare the BB--particle interaction definition across the coarse and full-resolution historical paths:
+      interaction centre, type assignment, radial table/cutoff treatment, pair admission, and virtual-site force
+      projection.
+- [x] Determine the Upside-correct BB--particle reverse force mapping under regenerated-O integration semantics;
+      distinguish the persistent N/CA/C force from the force written to disposable O.
+- [x] Restore the historical partial BB routing (14/54 N, 12/54 CA, 12/54 C; disposable 16/54 O share omitted)
+      directly in the current coordinate-node architecture, while retaining the protected stage-7 handoff and
+      never disabling SC-env or BB-env.
+- [x] Make the entire stage-7 interface handoff conformationally rigid: activate BB-env/SC-env in a dedicated
+      rigid `production_handoff` stage, equilibrate the membrane, and switch to flexible `production` only after
+      burn-in. Remove the superseded stage-7 positional-spring/release controls.
+- [x] Verify partial-routing source/H5 weights, stage-6.6-to-handoff rigid geometry, shell/Python syntax, full
+      build, manuscript compilation, and repository diff.
+- [ ] Regenerate the complete 1RKL stage-7 trajectory with the corrected handoff and repeat the DSSP/timestep
+      audit; the existing output was generated by the obsolete unrestrained-minimization protocol.
+
+### M Interim Decision
+
+- The current script now defaults `TEMPERATURE=.8`, but the cited output was generated before that edit and stores
+  `.8647` in every output frame. It cannot establish instability at `.80`.
+- Fresh replacement outputs now store `.8` consistently in runtime and friction calibration. They remove
+  temperature mismatch as a confounder but do not restore 1RKL helicity.
+- At the user's direction, `run_sim_hybrid.sh` now has one authoritative `TEMPERATURE`: the Upside thermostat and
+  DOPC friction calibration both receive this exact value, and a separate bilayer-temperature override is no
+  longer accepted by this workflow.
+- No raw particle--BB spline regression was found: tables, type assignment, derivative sign/scale, and active
+  pair class match `b1041bb`. The old fixed-weight reverse map wrote 14/54, 12/54, 12/54, and 16/54 of the BB
+  gradient to N/CA/C/O. Upside deletes and regenerates O during its integration cycle, so the 16/54 O share is
+  intentionally disposable and only 38/54 (70.37%) should reach persistent protein coordinates. Revised after
+  user correction: the full Jacobian transpose does not match that integration contract and must be replaced by
+  the historical partial route.
+- The obsolete trajectory retains 23 helical residues through every saved frame of stages 6.0--6.6 but starts
+  stage 7 production at 13. Its workflow activated the full interface and performed 500 unrestrained
+  minimization iterations before adding the burn-in restraint. Replaying that handoff gave 9 helical residues
+  unrestrained, 17 with the spring-10 restraint installed early, and all 23 when protein coordinates are fixed
+  during the clash-removal minimization. This staging error is the demonstrated correction.
+- Revised per non-negotiable user requirement: the protein must remain a rigid body for all pre-production work,
+  not merely be fixed during minimization or held by a finite spring during burn-in. Stage-7 handoff therefore
+  needs an active hybrid interface plus the existing rigid-body constraint, followed by one explicit transition
+  to flexible production.
+- Standard Upside uses `dt=.009`, confirmed by the engine default and example infrastructure. `dt=.09` is a
+  decimal-place error and must not be used. The historical full interface used smaller values in some revisions,
+  but the requested workflow remains on the standard `.009` single step.
+
+### M Review
+
+- The reverse pass now applies H5 weights 14/54, 12/54, and 12/54 to persistent N/CA/C. The stored 16/54 O
+  weight remains part of the forward BB definition but its derived-site sensitivity is discarded.
+- A reduced end-to-end 1RKL workflow exercised interface-active `production_handoff` minimization and burn-in,
+  followed by the explicit flexible `production` relabel. Across 93 persistent backbone carriers, the maximum
+  internal pair-distance change through the rigid handoff was `4.58e-5 A`.
+- C++ build, Python compilation, shell syntax, removed-control checks, two-pass TeX compilation, and
+  `git diff --check` pass. The reduced run intentionally shortened membrane preparation and is not a physical
+  stability result; the complete freshly equilibrated 1RKL trajectory remains the sole open acceptance item.
+
 # PREVIOUSLY COMPLETED PHASE (2026-07-20)
 
 ## K. Reassess 1RKL temperature/secondary structure and define a hybrid HDX workflow
@@ -217,7 +321,7 @@ CURRENT BASELINE: production uses the factor-four-corrected bare-particle mobili
 - Equilibrium potentials, hard cores, SC-env, and BB-env are immutable. Only masses, dissipative/noise
   dynamics, and multirate integration may be calibrated.
 - Use the same `.009` numerical timestep as the ordinary Upside examples and prefer the existing one-step
-  all-particle g-JF architecture, which applies full SC-env/BB-env reactions through the virtual-site Jacobian.
+  all-particle g-JF architecture, which applies SC-env/BB-env reactions through the hybrid coordinate node.
 - Molecular COM diffusion is primary and must always be reported. The accepted fallback is a friction clock,
   not a diffusion claim: raw dry-MARTINI relaxation 4 ps becomes 16 ps physical after the factor four, hence
   `tau_up = dt * 4/10 = .0036` at `.009` and `alpha_i = m_i/tau_up`. Protein carriers inside the same 12 A
@@ -250,10 +354,9 @@ CURRENT BASELINE: production uses the factor-four-corrected bare-particle mobili
 - A single scalar "ps per step" must not be claimed for both components unless one observable-independent
   mapping is demonstrated. The final design must separate equilibrium correctness from kinetic calibration.
 - Root cause found in the virtual backbone path: regenerated O and BB sites are not physical degrees of
-  freedom. They must not be integrated or thermostatted, and the BB-env gradient must include the full
-  derivative of the regenerated-O/BB position with respect to the real N/CA/C carriers. The initial
-  finite-difference Jacobian still produced timestep-independent NVE drift and interface heating, so it
-  is replaced by a forward-mode automatic derivative of the coordinate construction.
+  freedom and must not be integrated or thermostatted. The coordinate node constructs both sites without
+  mutating integration state, while its reverse pass follows the regenerated-O contract by routing the
+  14/54, 12/54, and 12/54 BB shares to persistent N/CA/C and discarding the O share.
 - The raw all-pairs filter is now explicit and stage-independent: production admits only the derived BB
   proxy as a protein--environment raw pair. SC-env remains fully active exactly once through its dedicated
   spline PMF; N/CA/C/O and fixed SC bookkeeping sites do not acquire discarded raw gradients.

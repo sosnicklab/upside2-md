@@ -42,6 +42,14 @@ python run.py
 Outputs are written under `outputs/`. Each run contains stage checkpoints, logs,
 and VTF files.
 
+At the stage-7 handoff, the production BB--environment and SC--environment
+interactions are active in a dedicated `production_handoff` stage. The complete
+protein remains one rigid body through both minimization and burn-in: it can
+translate and rotate, but its internal geometry cannot absorb interface clashes.
+The workflow relabels the system `production` only after burn-in, which removes
+the rigid-body constraint and begins flexible production. No finite positional
+spring or gradual release is used.
+
 ## HDX analysis
 
 The hybrid simulation does not implement a separate HDX estimator. It projects

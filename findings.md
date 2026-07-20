@@ -1513,11 +1513,11 @@ criterion in a dry membrane. New Outlook: compose-by-physical-coupling generaliz
 The former `friction_scale=100` conclusion was a system-dependent thermostat fit, not a physical
 protein--membrane drag model, and is superseded. The actual failure combined three independent defects:
 
-1. O and the MARTINI BB centre are derived from N/CA/C, but the force path regenerated them by mutating
-   the integrator position array and manually projected only the BB force. This broke the differentiable
-   coordinate graph and omitted the regenerated-O chain rule. A `martini_hybrid_position` CoordNode now
-   constructs O/BB with forward-mode automatic differentiation and maps BB-env sensitivity back through
-   the complete Jacobian. O/BB are fixed virtual sites, not integrated or thermostatted particles.
+1. O and the MARTINI BB centre are derived from N/CA/C, but the old force path regenerated them by mutating
+   the integrator position array. A `martini_hybrid_position` CoordNode now constructs O/BB without mutating
+   the integrated coordinates. Its reverse pass follows Upside's regenerated-O contract: it copies the
+   14/54, 12/54, and 12/54 BB shares to persistent N/CA/C and discards derived-site sensitivities. O/BB are
+   not integrated or thermostatted particles.
 2. `/output/pos` used the raw integration array, so its O/BB entries were stale. Uncorrected DSSP therefore
    reported helix loss even when the N/CA/C helix core remained native. The logger now copies the evaluated
    hybrid coordinate node. A direct three-frame check found maximum O and BB mapping errors of
@@ -1572,8 +1572,8 @@ adequate for protein friction: it advances the lipids through all inner Brownian
 protein carriers receive only the final `pos->sens`. The time-integrated fluctuating protein--lipid reaction
 is discarded. The clean architecture is a mixed multirate SDE: on every inner step, update lipids with
 constant-mobility overdamped Brownian dynamics and FDT noise, and advance protein momenta/coordinates
-symmetrically from the simultaneous full conservative force. Every SC-env and BB-env reaction is returned
-through the virtual-site Jacobian. The joint canonical distribution is invariant; eliminating the lipid
+symmetrically from the simultaneous full conservative force. Every SC-env and BB-env reaction follows the
+hybrid force-routing contract. The proposed joint canonical distribution is invariant; eliminating the lipid
 coordinates gives the protein a colored memory/friction kernel without an empirical protein drag multiplier.
 
 Calibrate only lipid mobility on a large pure-DOPC patch to the 0.184 A^2/update slope; choose the inner-step
@@ -1815,3 +1815,115 @@ the protein's additive contact bath has not been validated as the physical bilay
 Lesson: a mechanically correct HDX pipeline does not validate its source ensemble. Gate trust on per-residue
 block convergence and effective sample size, sampled-temperature matching, timestep convergence, membrane
 accessibility calibration, and independent-replica or REMD agreement.
+
+## Update 70 (2026-07-20): low temperature does not exclude a BB-env force regression
+
+The user reports that 1RKL still loses part of its alpha helix at `T_up=0.80`, whereas older revisions such as
+`b1041bb6640b34edf55fe371b5cf943d054ba187` did not. This supersedes any inference that the observed helix loss
+can be explained primarily by the 303 K condition. The audit must compare the complete particle--backbone force
+path across revisions: source table values and units, H5 type mapping, pair classification/exclusions, spline
+derivative sign and scale, virtual-backbone geometry, and Jacobian propagation to N/CA/C/O carriers.
+
+Lesson: when a structural regression persists after lowering temperature and an older revision is stable, do
+not keep interpreting it as thermodynamic behavior. Establish trajectory provenance and bisect the full force
+path against the known-good revision before changing temperature, friction, or structural restraints.
+
+## Update 71 (2026-07-20): cited trajectory predates the `.80` temperature edit
+
+The cited `martini_1rkl_hybrid_full/1rkl.stage_7.0` output records `--temperature 0.8647` and stores
+`0.864700019` in every `/output/temperature` frame. Its `0.80` H5 value is the DOPC Brownian-friction reference,
+not the runtime thermostat temperature. The current workflow script has since been edited to default
+`TEMPERATURE=0.8`, so a fresh output is required before evaluating the user's low-temperature observation.
+
+The force audit found no raw particle--BB spline regression relative to `b1041bb`: the canonical pair grids are
+identical, and cutoff, type assignment, force sign/scale, pair exclusions, and Newton reaction are unchanged.
+The material derivative-path regression was the full BB virtual-site Jacobian replacing the historical static
+mapping, whose disposable O share leaves 70.37% of the translational BB reaction on persistent N/CA/C coordinates.
+The older default also used `dt=.002`, whereas the cited current output used `.009`. Per user direction, neither
+path will be changed until a fresh `.80` run separates temperature provenance from these other differences.
+
+Lesson: verify the completed H5 invocation and `/output/temperature` before interpreting a script's current
+defaults or a friction-reference temperature as the temperature of an already-generated trajectory.
+
+## Update 72 (2026-07-20): one temperature controls the full hybrid system
+
+`run_sim_hybrid.sh` previously allowed `TEMPERATURE` and `UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP` to differ. The
+former controls the actual Upside thermostat for the coupled system; the latter enters the DOPC mobility/friction
+calibration. A mismatch does not create a second thermostat, but it calibrates friction at one `kT` and drives its
+noise at another, changing the nominal diffusion. The workflow now assigns the DOPC reference directly from the
+single authoritative `TEMPERATURE` and overwrites any independently supplied reference-temperature environment
+value. `run.py` already enforces the same relationship.
+
+Lesson: temperature-dependent friction calibration and runtime FDT noise must derive from one system-temperature
+setting unless a deliberately temperature-dependent transport model is explicitly implemented and validated.
+
+## Update 73 (2026-07-20): friction derivation and trust boundary consolidated
+
+The interface manuscript now follows the implemented calibration directly. With $f_\mathrm{CG}=4$,
+$D_\mathrm{target}=11.5~\mu\mathrm{m}^2/\mathrm{s}$, 40 ps declared protein time, and $dt=.009$, the raw
+mapping is 10 ps and $46~\mu\mathrm{m}^2/\mathrm{s}$. This gives
+$D_\mathrm{bead,up}=5.11111~\text{\AA}^2/t_\mathrm{up}$ and, at the unified $T_\mathrm{up}=.8$,
+$\alpha_\mathrm{bead}=.15652$. Protein carrier friction is the static per-segment contact count times this bead
+friction. This is an additive local FDT damping approximation; it omits correlated, anisotropic, hydrodynamic,
+and memory effects and is not a measured protein resistance.
+
+The evidence boundary is now explicit. One-temperature wiring, one-bath bookkeeping, metadata, virtual-site force
+projection, and HDX representation mapping are implementation results. Bare-particle mobility is calibrated by
+construction. Whole-DOPC diffusion fails by roughly three orders of magnitude; the 40 ps clock cannot be assigned
+to collective trajectory kinetics. Bilayer/protein equilibrium populations remain conditional on timestep,
+charged-cutoff, ensemble, and replica convergence. Current HDX is not quantitative because its source ensemble
+fails block/ESS gates and dry MARTINI lacks calibrated water accessibility. The unequal kinetic clock does not
+rescale EX2 seconds directly; it undermines sampling of the protected probability.
+
+Lesson: organize validation by implementation, configurational distribution, and kinetics. Never promote an
+equilibrium-form estimator to a trustworthy prediction before its finite-step ensemble and sampling convergence
+have passed.
+
+## Update 74 (2026-07-20): fresh unified-temperature trajectories
+
+Fresh stage-7 files replaced the previously audited outputs while the manuscript was being revised. Both 1RKL and
+1AFO now contain 1,001 frames at runtime $T_\mathrm{up}=.8$ with friction-reference $T_\mathrm{up}=.8$,
+$D_\mathrm{bead,up}=5.11111$, and $\alpha_\mathrm{bead}=.15652$. Last-200-frame protein/lipid kinetic-energy
+ratios to $3kT/2$ are 1.005/0.991 for 1RKL and 1.002/1.018 for 1AFO, so the unified thermostat works as specified.
+
+Drift-removed DOPC COM fits remain window-dependent and far below target: 1RKL gives
+$0.0053$--$0.0112~\mu\mathrm{m}^2/\mathrm{s}$ and 1AFO
+$0.0027$--$0.0103~\mu\mathrm{m}^2/\mathrm{s}$ over tested 20--1000 ns windows, versus 11.5 target. DSSP gives
+1RKL helical counts first/final/minimum/mean of 13/16/5/12.3; 1AFO gives 54/52/51/53.5. Thus correcting the
+temperature mismatch does not restore the 1RKL ensemble, although it removes temperature provenance as a
+confounder. The manuscript now reports these fresh values and keeps timestep/cutoff/force-path validation open.
+
+Lesson: when outputs can be regenerated concurrently, re-read artifact provenance immediately before finalizing
+result-specific documentation; a correct historical diagnosis can become stale during the same task.
+
+## Update 75 (2026-07-20): BB routing follows regenerated-O semantics; pre-production is rigid
+
+The user corrected the integration contract behind the historical reverse map. In `b1041bb`, a BB gradient was
+copied with N/CA/C/O mass fractions 14/54, 12/54, 12/54, and 16/54. Upside overwrites O during the integration
+cycle instead of integrating it, so the O share is intentionally disposable. The persistent backbone must
+therefore receive only 38/54, or 70.37%, of the translational BB reaction. Although a full coordinate Jacobian
+is the derivative of the reconstructed virtual site, it is not the requested Upside regenerated-O force-routing
+contract. The current coordinate node now reconstructs O and BB in the forward pass, copies only the N/CA/C
+mass-fraction shares in reverse, and discards sensitivity on derived O and BB sites.
+
+Stage-resolved DSSP localized the original loss: all saved frames in stages 6.0--6.6 had 23 helical residues,
+but the obsolete stage-7 trajectory began at 13 after an unprotected production-interface minimization. The
+non-negotiable preparation rule is now stronger than a fixed minimization or finite positional spring. BB-env
+and SC-env activate in `production_handoff`, while the complete protein remains one rigid body through both
+minimization and burn-in. The stage is relabelled `production` only afterward, which removes the rigid group and
+starts flexible sampling. A reduced end-to-end run completed this sequence; across all 93 persistent N/CA/C
+carriers, the maximum internal pair-distance change from stage 6.6 through handoff burn-in was
+$4.58\times10^{-5}$ A (float-level drift). The deliberately shortened membrane equilibration in that wiring test
+was not physically stable, so it validates the handoff invariant but not production structure or kinetics. A
+complete freshly equilibrated stage-7 trajectory remains the structural acceptance test.
+
+The engine and ordinary example infrastructure confirm the standard Upside numerical step is `.009`; `.09`
+would be tenfold too large. The official Martini 2 parameter contract is a separate open issue: LJ is shifted or
+force-switched from 0.9 to 1.2 nm and electrostatics are shifted/reaction-field treated to 1.2 nm. The current raw
+hard cutoff is therefore not force-field-equivalent and should be corrected in a dedicated table-validation
+phase rather than mixed into the reverse-map fix.
+
+Lesson: do not infer the intended reverse force map from virtual-site calculus alone when the host integrator
+deletes and regenerates one of the mapped atoms. Audit which force shares survive the integration cycle. Also,
+"protected during minimization" is not equivalent to "rigid before production": enforce one rigid protein body
+through every pre-production minimization and MD segment, and release it only at the explicit production handoff.

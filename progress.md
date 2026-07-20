@@ -82,3 +82,57 @@ Files modified for this reassessment: `plan.md`, `findings.md`, and `progress.md
 Files added: `py/martini_hdx_project.py`, `py/combine_hdx_protection.py`, and
 `example/16.MARTINI/run_hdx_analysis.sh`. Updated the `00.AnalysisScripts` driver, steps 2--4, stability helper,
 both READMEs, `plan.md`, `findings.md`, and `progress.md`.
+## 2026-07-20 — 1RKL temperature/BB-force audit paused for rerun
+
+- Verified that the cited stage-7 trajectory ran at `T_up=.8647`, not `.80`; the current script's `.80` default
+  was applied after that output was generated.
+- Compared particle--BB tables, type wiring, pair admission, spline derivative, and virtual-site force propagation
+  with `b1041bb`; found no raw pair-force regression and identified the then-current full-Jacobian route and
+  historical timestep as material differences. The later correction restores the historical partial route.
+- Made no physics or workflow-code changes. Per user direction, the next gate is a fresh `.80` simulation and
+  residue-wise DSSP/provenance check.
+
+## 2026-07-20 — Friction calibration and trust manuscript rewrite
+
+- Rewrote drymartini_upside_interface.tex around one code-matched calibration derivation, including the
+  factor-four mapping, numerical bead mobility/friction, contact-local protein drag, H5 audit fields, and
+  preparation-versus-production distinction.
+- Replaced broad thermodynamic/HDX trust claims with an evidence table and explicit implementation,
+  configurational, and kinetic validation layers. Documented the molecular-diffusion failure, unvalidated protein
+  friction, timestep/cutoff concerns, and current HDX convergence/accessibility failures.
+- Corrected the Coulomb description from shifted to abruptly truncated and identified its quantitative validation
+  consequence.
+- Verification passed: exact arithmetic assertions, manuscript consistency checks, two-pass warning-free
+  pdflatex, chktex, and git diff --check.
+- Detected and re-audited freshly replaced stage-7 outputs. Updated the manuscript to the unified $T_\mathrm{up}=.8$
+  artifacts and their new kinetic-temperature, DOPC COM diffusion, and DSSP diagnostics.
+
+## 2026-07-20 — Unified hybrid temperature configuration
+
+- Changed `run_sim_hybrid.sh` to define one `TEMPERATURE` and use it for both the Upside thermostat and DOPC
+  friction calibration; removed the independent bilayer reference-temperature default/override.
+- Left particle--BB forces, timestep, conservative tables, and all interface interactions unchanged pending the
+  fresh `.80` simulation.
+- Verification passed: `bash -n`, `git diff --check`, a static single-source contract assertion, and an execution
+  trace showing `TEMPERATURE=.77` overrides a conflicting reference setting and exports the reference as `.77`.
+
+## 2026-07-20 — 1RKL BB-force and stage-7 handoff correction
+
+- Restored the historical BB reverse route required by Upside's regenerated-O cycle: N/CA/C receive
+  14/54, 12/54, and 12/54 of the BB gradient, while sensitivities on regenerated O and BB are discarded.
+- Localized helix loss to the first stage-7 minimization: stages 6.0--6.6 retain 23 helical residues, while the
+  existing stage-7 trajectory starts at 13.
+- Replayed the handoff from identical coordinates. The unrestrained minimization left 9 helical residues, an
+  early spring-10 restraint left 17, and hard-fixing protein coordinates retained all 23.
+- Replaced the intermediate fixed-plus-spring protocol with one rigid `production_handoff`: SC-env and BB-env
+  are active while the complete protein remains a rigid body through minimization and burn-in. Flexible dynamics
+  start only after the explicit `production` relabel.
+- A reduced end-to-end workflow completed the new sequence. The maximum internal pair-distance change across all
+  93 persistent N/CA/C carriers through handoff minimization and burn-in was `4.58e-5 A`. The shortened membrane
+  equilibration makes this a wiring/invariant test only; a full fresh 1RKL run remains the structural gate.
+- Final verification passed: exact H5 weight assertions, removed stage-7 spring/release controls, Python and shell
+  syntax, full C++ build, two-pass warning-free TeX compilation, and `git diff --check`.
+
+Files modified for this correction: `src/martini_hybrid.cpp`, `py/martini_prepare_system.py`,
+`example/16.MARTINI/run_sim_hybrid.sh`, `example/16.MARTINI/readme.md`,
+`example/16.MARTINI/drymartini_upside_interface.tex`, `plan.md`, `findings.md`, and `progress.md`.
