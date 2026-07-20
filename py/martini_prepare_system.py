@@ -1044,12 +1044,19 @@ def stage_npt_targets(stage_label: str, args):
 
 def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable: int, lipidhead_fc: float):
     target_pxy, target_pz = stage_npt_targets(stage_label, args)
+    if stage_label == "production":
+        dynamics_phase = "production"
+    elif prepare_stage == "npt_prod":
+        dynamics_phase = "overlap_settling"
+    else:
+        dynamics_phase = "early_equilibration"
     return {
         "UPSIDE_HOME": str(args.upside_home),
         "UPSIDE_MARTINI_FF_DIR": str(args.itp_dir),
         "UPSIDE_MARTINI_ENERGY_CONVERSION": str(args.martini_energy_conversion),
         "UPSIDE_MARTINI_LENGTH_CONVERSION": str(args.martini_length_conversion),
         "UPSIDE_SIMULATION_STAGE": prepare_stage,
+        "UPSIDE_MARTINI_DYNAMICS_PHASE": dynamics_phase,
         "UPSIDE_NPT_ENABLE": str(int(npt_enable)),
         "UPSIDE_NPT_TARGET_PXY": str(target_pxy),
         "UPSIDE_NPT_TARGET_PZ": str(target_pz),
@@ -1126,6 +1133,67 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
     )
 
 
+def refresh_particle_mobility_friction(up_file: Path):
+    import h5py
+
+    with h5py.File(up_file, "r+") as h5:
+        if "/input/brownian" not in h5:
+            return
+        brownian = h5["/input/brownian"]
+        observable = brownian.attrs.get("transport_observable", b"")
+        if isinstance(observable, bytes):
+            observable = observable.decode()
+        if observable != "bare_martini_particle_lateral_diffusion":
+            return
+
+        atom_index = brownian["atom_index"][:]
+        particle_class = h5["/input/particle_class"][:]
+        atom_names = h5["/input/atom_names"][:]
+        position = np.asarray(h5["/input/pos"][:], dtype=np.float64).reshape((-1, 3))
+        lipid_beads = np.where(particle_class == b"LIPID")[0]
+        protein_carrier = (
+            (particle_class == b"PROTEIN")
+            & np.isin(atom_names, np.array([b"N", b"CA", b"C"], dtype=atom_names.dtype))
+        )
+
+        potential = h5["/input/potential/martini_potential"]
+        box = np.array(
+            [potential.attrs["x_len"], potential.attrs["y_len"], potential.attrs["z_len"]],
+            dtype=np.float64,
+        )
+        cutoff = float(brownian.attrs["interface_friction_cutoff_A"])
+        contact_count = np.zeros(particle_class.size, dtype=np.int32)
+        carrier_index = np.where(protein_carrier)[0]
+        for start in range(0, lipid_beads.size, 512):
+            delta = (
+                position[carrier_index, None, :]
+                - position[lipid_beads[start:start + 512]][None, :, :]
+            )
+            delta -= box * np.rint(delta / box)
+            contact_count[carrier_index] += np.sum(
+                np.sum(delta * delta, axis=2) < cutoff * cutoff,
+                axis=1,
+            )
+
+        particle_friction = float(brownian.attrs["bare_particle_friction_up"])
+        friction = np.full(atom_index.size, particle_friction, dtype=np.float32)
+        protein_index = protein_carrier[atom_index]
+        friction[protein_index] = (
+            particle_friction * contact_count[atom_index[protein_index]]
+        )
+        brownian["friction"][:] = friction
+
+        contact_atom_index = np.where(contact_count > 0)[0].astype(np.int32)
+        for name in ("protein_contact_atom_index", "protein_lipid_contact_count"):
+            if name in brownian:
+                del brownian[name]
+        brownian.create_dataset("protein_contact_atom_index", data=contact_atom_index)
+        brownian.create_dataset(
+            "protein_lipid_contact_count",
+            data=contact_count[contact_atom_index],
+        )
+
+
 def handoff_initial_position(args, input_file: Path, output_file: Path, mode="default", previous_dt=None):
     preserve_transition = "1" if mode == "production_restart" and previous_dt is not None else "0"
     public_dt = float(previous_dt) if previous_dt is not None else 0.0
@@ -1138,6 +1206,7 @@ def handoff_initial_position(args, input_file: Path, output_file: Path, mode="de
         }
     ):
         set_initial_position(input_file, output_file)
+    refresh_particle_mobility_friction(output_file)
 
 
 def input_momentum_restart_valid(up_file: Path):
@@ -1247,6 +1316,7 @@ def promote_minimized_state_to_input(up_file: Path):
             )
         else:
             print("Promoted minimized state to input")
+    refresh_particle_mobility_friction(up_file)
 
 
 def run_md_stage(
@@ -1326,6 +1396,7 @@ def promote_md_output_state_to_input(up_file: Path, elapsed_steps: int):
                     pot_grp.attrs["z_len"] = float(last_box[2])
 
         del h5["/output"]
+    refresh_particle_mobility_friction(up_file)
 
 
 def run_stage70_burnin(args, stage_file: Path):

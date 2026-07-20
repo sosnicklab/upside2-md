@@ -3,15 +3,14 @@
 dryMARTINI hybrid membrane in Upside. Full-resolution 14-bead DOPC + protein with a timestep
 validated for the coupled hard-core interface. Single-particle CGL subsystem ABANDONED (removed).
 
-CURRENT STABILITY BASELINE: every physical degree of freedom uses one g-JF force update at the standard
-Upside numerical timestep `dt=.009`; there is no lipid substep or displacement cap. Preparation stages use
-ordinary dry-MARTINI damping. Production maps the native 4 ps dry-MARTINI relaxation to a 16 ps physical
-relaxation after the factor-four correction and therefore to `.4` numerical steps (`tau_up=.0036`). This
-FDT-consistent friction is applied to all environment beads and to real protein N/CA/C carriers initially
-inside the existing 12 A protein--environment spline range. Noncontact protein carriers retain the standard
-Upside OU bath. Regenerated O and BB sites remain virtual and BB-env forces are mapped through the complete
-coordinate Jacobian. BB-env and SC-env remain active and spline-table-only. This is a contact-local friction
-clock; it is not a claim that molecular DOPC diffusion reaches the 40 ps/step target.
+REJECTED BASELINE: production mapped a 4 ps relaxation time directly onto `.4` numerical steps
+(`tau_up=.0036`). For a DOPC bead (`m=6`) this gave `alpha=1666.7` and
+`alpha*dt/(2m)=1.25`, suppressing molecular translation while leaving momentum temperature apparently
+normal. The saved stage-7 trajectories are invalid for kinetics.
+
+CURRENT BASELINE: production uses the factor-four-corrected bare-particle mobility clock
+(`alpha_bead=0.1691804`) plus additive lipid-contact friction on protein carriers. Both components use one
+`.009` g-JF step with no lipid substeps. The molecular DOPC target remains unmatched and is reported.
 
 # Architecture & Key Decisions
 
@@ -19,10 +18,12 @@ clock; it is not a claim that molecular DOPC diffusion reaches the 40 ps/step ta
   entire martini subsystem is Clean-Slate scope; keep it impeccably clean, remove dead code).
 - C++ (kept): martini_potential, dist_spring, angle_spring, martini_masses, martini_brownian,
   martini_fix_rigid, martini_hybrid, martini_stage_params, sc_table/particle tables. CGL removed.
-- Integrator: one all-particle g-JF update per `.009` numerical timestep. Production uses the calibrated
-  dry-MARTINI friction clock for environment beads and initially lipid-contacting protein carriers; carriers
-  with zero g-JF friction use the ordinary Upside OU bath. Positive-friction particles are excluded from OU,
-  so no degree of freedom is double-thermostatted.
+- Integrator: one all-particle g-JF update per `.009` numerical timestep. Production uses the requested
+  particle-level fallback: a free MARTINI bead has the lateral mobility corresponding to 40 ps/protein step
+  after applying the factor four exactly once (`10 ps` raw MARTINI time and `46 um^2/s` raw target). A protein
+  N/CA/C carrier receives the additive FDT friction of the lipid beads inside the existing 12 A spline
+  interaction range. Zero-contact carriers use the ordinary Upside OU bath. Positive-friction particles are
+  excluded from OU, so no degree of freedom is double-thermostatted.
 - Unit contract: native dry-MARTINI -> Upside conversion happens ONCE at Python h5-build; runtime
   h5/config store Upside-unit values; C++ engine does ZERO unit conversion.
 - H5 FF: parameters/ff_2.1/martini.h5 (/particles + /sc_table). No version numbers; back up + overwrite.
@@ -43,7 +44,77 @@ clock; it is not a claim that molecular DOPC diffusion reaches the 40 ps/step ta
       timestep evidence below.
 - [x] Update 50: C++ analytic LJ/Coulomb removed -> spline-only engine (bit-identical).
 
-# COMPLETED PHASE (2026-07-20)
+# ACTIVE PHASE (2026-07-20)
+
+## J. Audit the HDX analysis workflow and reassess trust
+
+- [x] Trace protection-state extraction from trajectory coordinates and identify whether it is an equilibrium
+      population estimator, a kinetic opening estimator, or a structural proxy.
+- [x] Trace protection factors, intrinsic exchange rates, peptide uptake, temperature mapping, and experimental
+      comparison, including all fitted or empirical parameters.
+- [x] Determine which outputs are invalidated by frozen trajectories and which could remain mathematically
+      defined but statistically untrustworthy.
+- [x] Run targeted synthetic/current-output checks where needed and issue a method-specific trust assessment.
+- [x] Record conclusions and limitations in findings/progress without changing the HDX method unless a code
+      defect is independently demonstrated.
+
+### J Decisions
+
+- The uptake calculation is an equilibrium EX2-like structural proxy, not direct MD-time kinetics. It averages a
+  binary protected state, uses `k_obs = k_chem * (1 - p_protected)`, and evaluates uptake analytically in seconds.
+  The 40 ps/Upside-time mapping therefore affects sampling efficiency/convergence, not the uptake time axis.
+- The stock extractor and trajectory-observable scripts are incompatible with hybrid files because they assume
+  exactly three coordinates per residue. Hybrid stage-7 inputs contain 2,894 (1AFO) and 4,098 (1RKL) particles,
+  versus protein-only expectations of 216 and 93. The hybrid-aware extractor is not wired into `analysis.sh`.
+- The available hybrid-aware membrane criterion is a geometric prior: any donor between global phosphate planes
+  is protected. On stage-6.6 it makes all 29 1RKL donors protected in all 11 frames despite 65.5% H-bond-open
+  observations; the downstream `mean_pf == 1` branch then imposes `k_obs = k_chem/1000`. This is saturation,
+  not a resolved protection factor.
+- No HDX/PS/percentD artifacts exist under `example/16.MARTINI`, so there is no produced hybrid HDX result to
+  validate. Existing frozen outputs are unusable for ensemble estimates; corrected single 50,000-step runs span
+  only about 18 ns on the stated protein clock and are not a substitute for converged REMD/ensemble sampling.
+- Do not modify the HDX model during this audit. A quantitative hybrid workflow first needs an explicit mapped-
+  coordinate path, robust membrane/water-accessibility treatment, and convergence/replica validation.
+
+# PREVIOUSLY COMPLETED PHASE (2026-07-20)
+
+## I. Resolve production freeze introduced by the friction-clock mapping
+
+- [x] Quantify protein and DOPC coordinate mobility in the saved 1AFO and 1RKL stage-7 VTF/H5 trajectories.
+- [x] Derive the actual coordinate mobility implied by the current mass-scaled g-JF friction and identify the
+      mismatch between relaxation-clock metadata, numerical integration time, and physical 40 ps/step time.
+- [x] Replace the freezing friction treatment with the particle-mobility/additive-contact model without
+      changing SC-env, BB-env, hard cores, or spline tables.
+- [x] Re-run fresh 1AFO and 1RKL workflows and gate on coordinate motion, DOPC COM MSD, secondary structure,
+      kinetic temperature, virtual-site constraints, and build/static checks.
+- [x] Update the manuscript and calibration claims to match the verified observable.
+
+### I Decisions
+
+- Do not restore the native-relaxation or earlier `friction_scale=100` regimes: both unfreeze DOPC but heat
+  the interface and reduce 1RKL helicity in matched 5,000-step tests.
+- Production bare-bead friction is derived from the stated observable, not fitted:
+  `D_raw = 4 D_target`, `dt_raw = 40 ps / 4`,
+  `D_up = D_raw * 1e-4 A^2/ps * dt_raw / .009`, and `alpha_bead = kT/D_up`.
+  At the defaults this is `alpha_bead=0.1691804`.
+- Protein drag is local and additive: `alpha_protein,i = n_contact,i * alpha_bead`, where `n_contact,i`
+  counts DOPC beads within the already-defined 12 A spline cutoff in the production starting structure.
+  This is a static, one-body approximation to interfacial drag, not a full hydrodynamic resistance tensor.
+- The acceptance gate includes coordinate-space mobility and DSSP, not kinetic temperature alone. The
+  5,000-step prototypes moved DOPC COM by 1.8--2.0 A RMS and retained 54/54 (1AFO) and 19/24 (1RKL) final
+  helical residues, with last-window protein kinetic energy within 2% of `3kT/2`.
+- A wiring-only fresh-workflow shortcut that disabled all minimization and used 50-step equilibration stages
+  was invalid: it entered stage 6.0 at potential `+131697`, overheated immediately, and exploded when the
+  full hard core activated. It is not a model result. Fresh-workflow verification must retain the normal
+  minimization and 500-step soft-core schedule before testing the new production friction.
+- Revised after fresh 1AFO exposed a real pre-production failure: stage 6.3 injects large kinetic energy as
+  the core is sharpened, and the production-mobility bath is too weak to settle those overlaps before the
+  full hard core. Use three explicit phases: native dry-MARTINI damping in softened early equilibration;
+  strong FDT overlap-settling damping in full-core stages 6.1/6.4--6.6; and the derived particle/additive-
+  contact clock only in production. Preparation damping is not a kinetic claim or analyzed trajectory.
+  Conservative softening, restraints, and all interface interactions remain unchanged.
+
+# PREVIOUSLY COMPLETED PHASE (2026-07-20)
 
 ## H. Match DOPC transport at the standard Upside timestep (2026-07-20)
 
@@ -177,20 +248,20 @@ clock; it is not a claim that molecular DOPC diffusion reaches the 40 ps/step ta
 
 # Review
 
-- Root causes resolved: virtual-coordinate graph/chain rule, stale virtual-site trajectories, double-bath
-  bookkeeping, empirical protein friction, and unequal component clocks.
-- Final fresh 5000-step `.009` workflows: mapped DSSP helix count remained 7/7 for 1RKL and 27/27 for 1AFO;
-  mean protein/lipid kinetic energies were 1.286/1.297 and 1.300/1.298 against the 1.297 target.
-- 50,000-step production continuations kept the same helix counts; mean kinetic energies were 99.9% and
-  100.2% of target. O/BB momenta were exactly zero.
-- Whole-DOPC COM diffusion is measured honestly: roughly `6e-5`--`7e-5 um^2/s`, not the 11.5 target. The
-  final claim is the contact-local corrected dry-MARTINI friction clock.
-- Build, Python compilation, shell syntax, diff whitespace, H5 metadata, constraint smokes, analyzer synthetic
-  regression, fresh workflows, and manuscript compilation all pass.
+- The user-visible freeze is removed: 50,000-step DOPC COM net RMS motion is `3.43 A` (1AFO) and `3.72 A`
+  (1RKL), versus `0.17--0.24 A` in the rejected outputs.
+- Total kinetic energy is within 1% of target; 1AFO retains all 54 helical residues, and the physical 1RKL
+  transmembrane core at residues 10--29 retains mostly 0.9--0.99 helix occupancy.
+- Measured molecular DOPC diffusion is `0.0132--0.0152 um^2/s`, not 11.5. The verified claim is the
+  factor-four-corrected bare-particle mobility plus an additive local protein-friction approximation.
+- A valid fresh workflow completed minimization, equilibration, burn-in, production, and VTF extraction with
+  finite moving coordinates and refreshed contact metadata for both 1AFO and 1RKL. Fresh 5,000-step DOPC
+  COM net RMS motion was `1.45 A` and `1.22 A`, respectively.
+- Build, Python compilation, shell syntax, diff whitespace, H5 metadata, fresh workflow, 50,000-step
+  regressions, DSSP/mobility analysis, and manuscript compilation pass.
 
 # Known Errors / Blockers
-- Molecular DOPC diffusion is not matched at 40 ps/step; the single-step friction scan saturates about 66x
-  below target before the final high-friction clock is applied.
-- The contact-local relaxation clock is not a quantitative hydrodynamic resistance tensor. Such a tensor
+- Molecular DOPC diffusion is not matched at 40 ps/step; the fallback is explicitly particle-level.
+- The additive contact friction is not a quantitative hydrodynamic resistance tensor. Such a tensor
   would require independent parallel, normal, and rotational reference data and a momentum-conserving model.
 - DO NOT break the full-res path or master behavior. Back up any h5 before overwrite. Git READ-ONLY.

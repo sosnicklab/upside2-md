@@ -1645,3 +1645,85 @@ and no conservative potential was modified.
 
 Lesson: when diffusion and friction clocks disagree, name the calibrated observable in H5 and in the paper.
 Never report a friction-calibrated trajectory as having the target molecular lateral diffusion.
+
+## Update 64 (2026-07-20): user-reported stage-7 freeze reopens the friction design
+
+The user found that the delivered 1AFO and 1RKL stage-7 VTF trajectories are effectively frozen. The prior
+acceptance gates over-weighted finite coordinates, secondary-structure retention, and canonical kinetic
+energy. Those checks can all pass for a high-friction g-JF process whose momenta thermalize but whose
+coordinates barely move. The production value `tau_up=.0036` gives `alpha*dt/m=2.5`, so mobility and actual
+coordinate displacement must be measured directly before any friction-clock claim is accepted.
+
+Lesson: never accept a kinetic calibration from temperature and structural stability alone. Every friction
+change must gate on protein displacement/orientation and whole-molecule lipid MSD over the saved trajectory,
+and the reported VTF must be inspected rather than only the source H5 statistics.
+
+## Update 65 (2026-07-20): particle-mobility clock removes the freeze without melting the TM core
+
+The saved broken trajectories quantify the regression. Drift-removed DOPC molecular COM motion was only
+`0.0081 A` per saved frame and `0.17--0.24 A` net RMS over 1,001 frames. The cause is the rejected production
+mapping `tau_up=.0036`: for a mass-6 bead, `alpha=1666.7` and `alpha*dt/(2m)=1.25`. g-JF still produces a
+thermal-looking momentum distribution in this regime, so temperature was a false acceptance signal.
+
+Three nonfreezing controls were compared for 5,000 steps. Native dry-MARTINI damping (`alpha=0.3043`, no
+protein g-JF friction) and the previous single-step regime (`alpha_lipid=.0035`, `alpha_protein=.35`) both
+moved DOPC but heated the interface and reduced 1RKL helicity. Direct bare-particle friction on lipid-contacting
+protein carriers likewise destabilized 1RKL. The accepted model uses the user-approved sub-molecular fallback:
+`D_raw=4*11.5=46 um^2/s`, `dt_raw=40/4=10 ps`,
+`D_bead,up=D_raw*1e-4*dt_raw/.009=5.1111 A^2/U`, and
+`alpha_bead=kT/D_bead,up=0.1691804`. Each environment bead receives this friction. A real protein N/CA/C
+carrier receives the additive friction `n_contact*alpha_bead`, where `n_contact` is the number of DOPC beads
+inside the existing 12 A spline cutoff. Counts are refreshed after stage handoff, minimization promotion, and
+production continuation, then held fixed during each segment so the SDE does not silently acquire
+position-dependent multiplicative noise.
+
+Matched 50,000-step tests at the shared `.009` timestep passed without substeps. DOPC COM net RMS motion was
+`3.43 A` (1AFO) and `3.72 A` (1RKL), compared with less than `0.24 A` in the broken outputs. Measured molecular
+diffusion remained only `0.0132` and `0.0152 um^2/s`; this is reported as a failed molecular target, not hidden.
+Total kinetic energy was within 1% of `3kT/2`; protein subset means were within 1.3%. 1AFO finished with all
+54 helical residues. In 1RKL, residues 10--29 retained mostly 0.9--0.99 helix occupancy; the N-terminal
+extension at residues 6--9 relaxed to coil, leaving a 19-residue transmembrane helix. Valid fresh workflows
+for both proteins completed normal minimization, equilibration, burn-in, production, and VTF extraction with
+finite moving coordinates and correct H5 friction/contact metadata. Preparation uses native damping in
+softened stages and strong FDT overlap-settling damping in full-core stages 6.1/6.4--6.6; neither bath is a
+kinetic claim. Production alone uses the particle clock. A deliberately abbreviated workflow that disabled
+minimization exploded from unresolved packing overlaps and is not evidence about the friction model.
+
+Lesson: derive fallback friction from the named observable, propagate it to protein through a documented
+local physical approximation, and validate both coordinate transport and structural occupancy on the final
+trajectory. Never skip hard-core preparation merely to shorten an end-to-end test.
+
+## Update 66 (2026-07-20): HDX is an equilibrium structural proxy; the hybrid path is not production-ready
+
+The `example/00.AnalysisScripts` uptake path does not read simulated elapsed time as exchange time. For each
+amide donor, `get_protection_state.py` assigns a binary protected flag from backbone H-bond score, an Asp/Glu
+side-chain-contact proxy, and backbone/side-chain burial (plus an optional membrane-surface term that the driver
+does not enable). `4.calc_D_uptake.py` MBAR-reweights those flags to `p_protected`, calculates sequence-, pD-,
+and temperature-dependent intrinsic `k_chem`, then applies the EX2-like approximation
+`k_obs = k_chem * (1-p_protected)` and `D(t)=1-exp(-k_obs*t)` in experimental seconds. Thus a wrong friction or
+40 ps mapping does not directly rescale the HDX time axis; it matters because it controls decorrelation and the
+ability to sample opening/closing equilibria. The old frozen trajectories fail that requirement.
+
+The stock extraction path cannot consume the hybrid coordinate layout. `mdtraj_upside.traj_from_upside` asserts
+`n_coord = 3*n_res`, whereas the stage-7 hybrid files have 2,894 coordinates for 72-residue 1AFO and 4,098 for
+31-residue 1RKL. The standalone `py/martini_protection_state.py` understands full hybrid coordinates but is not
+called by `analysis.sh` or `3.get_protaction_states.sh`; no `PS.npy`, percentD, or HDX output currently exists
+under `example/16.MARTINI`.
+
+The current hybrid criterion also saturates membrane protection. It marks an amide protected whenever its N is
+between the two global PO4 planes, independently of local hydration or defects. On the 11 stage-6.6 frames,
+1RKL has 29/29 donors protected in every frame although 65.5% of donor-frame observations are H-bond-open. The
+uptake code handles exact `p_protected=1` with an empirical floor `k_obs=k_chem/1000`, so such a prediction would
+mostly report the geometric membrane rule and the 1000-fold floor, not a sampled protein free-energy signal.
+For 1AFO the mean exchange-competent fraction is 0.132, but 65/67 donors never change state in those frames.
+These preparation-frame numbers diagnose criterion behavior only; they are not production HDX estimates.
+
+The corrected 50,000-step production length is `50000*.009*40 ps = 18 ns` under the requested protein clock.
+That is useful for stability and mobility regression, not evidence of converged rare opening populations.
+Quantitative hybrid HDX requires a wired hybrid extraction path, a defensible membrane/water-accessibility model,
+replica/enhanced sampling, protection-probability convergence and effective-sample-size checks, and external
+peptide-level validation. Until then, use any calculated profile only as a qualitative structural-protection map.
+
+Lesson: before judging HDX from a dynamics timescale, inspect whether the estimator is kinetic or equilibrium.
+Then verify coordinate-layout compatibility and whether binary protection rules saturate; a mathematically valid
+uptake curve can still contain almost no trajectory-derived information.

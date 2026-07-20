@@ -42,8 +42,9 @@ done
 PDB_ID="${PDB_ID:-1rkl}"
 
 # Full-resolution dynamics use one g-JF step for every physical degree of freedom. Production maps the
-# native dry-MARTINI relaxation clock onto the 40 ps protein step and gives the same FDT-consistent bath
-# to lipid-contacting protein carriers. Molecular COM diffusion is measured and reported separately.
+# requested factor-four-corrected 40 ps clock onto the bare mobility of each MARTINI particle. A protein
+# carrier receives the additive FDT friction of the DOPC beads inside the 12 A interaction range. Molecular
+# DOPC COM diffusion remains an independently measured validation observable.
 export UPSIDE_PROTEIN_TIME_PS_PER_STEP="${UPSIDE_PROTEIN_TIME_PS_PER_STEP:-40.0}"
 export UPSIDE_MARTINI_TIME_FACTOR="${UPSIDE_MARTINI_TIME_FACTOR:-4.0}"
 export UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S="${UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S:-11.5}"

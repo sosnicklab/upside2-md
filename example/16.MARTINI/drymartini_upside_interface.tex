@@ -48,8 +48,9 @@ kinetic clocks are different. We advance all real degrees of freedom through one
 g-JF force update at the standard Upside timestep. The ideal clock is the
 factor-four-corrected DOPC molecular lateral diffusion. Because a stable
 single-step friction scan cannot reach that target, we use the accepted fallback:
-the dry-MARTINI friction clock, applied both to the environment and to protein
-N/CA/C carriers in lipid contact. Regenerated O and backbone-centre sites are virtual: they
+the corresponding free-particle mobility for each MARTINI bead. A protein
+N/CA/C carrier receives the additive FDT friction of the lipid beads inside the
+12~\AA{} interaction range. Regenerated O and backbone-centre sites are virtual: they
 receive no independent integration or thermal noise, and their membrane force is
 returned to N/CA/C through a derived coordinate node with an automatic Jacobian. This removes an
 earlier force/noise inconsistency that destabilized secondary structure. The
@@ -58,7 +59,7 @@ does and does not deliver. Its rigorous domain is \emph{thermodynamics}:
 previously measured bilayer structure (area per lipid, hydrophobic thickness,
 chain order) and a validated Monte-Carlo area-sampling method, and---for the
 protein---equilibrium conformational ensembles and local stabilities. The
-implemented clock reproduces a local relaxation/friction timescale, not DOPC
+implemented clock reproduces a particle-level mobility and a local interfacial-friction approximation, not DOPC
 molecular diffusion or a complete hydrodynamic resistance tensor. We argue this
 is the right kinetic fallback for the questions the tool targets:
 enhanced-sampling free-energy calculations and, in particular, hydrogen-deuterium
@@ -112,8 +113,8 @@ the hybrid is a \emph{thermodynamic} instrument. Its equilibrium claims require
 explicit timestep and ensemble convergence rather than following automatically
 from an integrator name.
 It does \emph{not} reproduce the target DOPC molecular diffusion. Instead it
-models the factor-four-corrected dry-MARTINI relaxation/friction clock locally at
-the interface and reports molecular diffusion independently. Free-energy methods (replica exchange,
+models the factor-four-corrected bare-particle mobility and the associated local
+interface friction, and reports molecular diffusion independently. Free-energy methods (replica exchange,
 metadynamics) deliberately distort dynamics to accelerate sampling, so they need
 correct statics, not correct kinetics; and hydrogen-deuterium exchange, our
 flagship observable, measures an equilibrium quantity (Sec.~\ref{sec:hdx}).
@@ -153,17 +154,24 @@ At each outer step all real degrees of freedom advance once under a single g-JF
 force schedule (Eq.~\ref{eq:gjf}). The ideal calibration is the DOPC molecular
 lateral diffusion after the MARTINI factor-four correction. Because that target
 cannot be reached stably by changing a one-step friction coefficient
-(Sec.~\ref{sec:timescale}), production instead uses a contact-local friction
-clock. The native 4~ps dry-MARTINI Langevin relaxation is 16~ps after the
-factor-four correction. A 40~ps physical protein step is 10~ps in raw MARTINI
-time, so the relaxation is $0.4$ numerical steps:
-$\tau_\mathrm{up}=0.4dt=0.0036$ and $\alpha_i=m_i/\tau_\mathrm{up}$.
-This FDT-consistent friction is assigned to every environment bead and to real
-protein N/CA/C carriers initially within the existing 12~\AA{} interface-spline
-range of a lipid. Noncontact carriers retain the standard Upside
+(Sec.~\ref{sec:timescale}), production instead uses the requested particle-level
+fallback. A 40~ps physical protein step is 10~ps in raw MARTINI time, and the
+uncorrected particle target is $D_\mathrm{raw}=4D_\mathrm{target}=46~\mu$m$^2$/s.
+For the numerical step $dt=0.009$, this gives
+$D_\mathrm{bead,up}=D_\mathrm{raw}(10^{-4}~\text{\AA}^2/\mathrm{ps})(10~\mathrm{ps})/dt$
+and $\alpha_\mathrm{bead}=k_BT/D_\mathrm{bead,up}=0.16918$ in Upside units.
+Each environment particle receives this FDT-consistent friction. A real protein
+N/CA/C carrier receives $n_i\alpha_\mathrm{bead}$, where $n_i$ is the number of
+DOPC beads initially within the existing 12~\AA{} interface-spline range.
+The count is refreshed from the actual coordinates at stage handoff; it is held
+fixed during a trajectory segment to avoid an unaccounted multiplicative-noise
+term. Zero-contact carriers retain the standard Upside
 Ornstein--Uhlenbeck (OU) bath. Positive-g-JF-friction particles are excluded from
-OU. During minimization and equilibration the environment instead uses the
-ordinary native dry-MARTINI damping, avoiding a nearly frozen preparation bath.
+OU. Preparation has no kinetic interpretation: softened early stages use native
+dry-MARTINI damping, and the full-core settling stages use strong FDT damping to
+remove the kinetic energy released as overlaps are resolved. The production
+particle clock is activated only after this conservative soft-core/restraint
+schedule is complete.
 Regenerated O and backbone-centre sites are not physical degrees of freedom and
 receive neither update nor thermostat. This assigns exactly one stochastic bath
 to each real particle. The earlier implementation violated all three rules:
@@ -243,11 +251,13 @@ overdamped inner steps; softening the core enough to permit one step destroyed
 excluded volume. That result applies to the tested explicit local schemes, not as
 a universal impossibility theorem.
 
-The production value is fixed by the corrected dry-MARTINI relaxation clock.
-For a mass-6 environment bead $\alpha=1666.67$ in Upside units at $dt=0.009$.
-This large friction is stable in the implicit g-JF update and is not an
-overdamped multistep approximation. Physical molecular transport is measured
-rather than inferred from this thermostat parameter.
+An earlier production mapping set $\alpha=1666.67$ for a mass-6 environment bead.
+Although finite, it gave $\alpha dt/(2m)=1.25$: the g-JF momentum distribution
+looked thermal while coordinate motion was almost extinguished. In the saved
+trajectories, drift-removed DOPC molecular COMs moved only about $0.008$~\AA{}
+per saved frame and $0.17$--$0.24$~\AA{} over the nominal 2~$\mu$s run. We reject
+that mapping. The replacement $\alpha_\mathrm{bead}=0.16918$ is fixed by the
+declared bare-particle mobility and retains the one-step hard-core update.
 
 \subsection{Diffusion target and the contact-local friction fallback}
 \label{sec:timescale}
@@ -268,14 +278,15 @@ heats and loses hydrogen bonds. Thus neither molecular COM diffusion nor the
 long-time motion of an individual bonded bead can supply the requested clock:
 all beads of a bonded molecule share its asymptotic COM diffusion.
 
-The accepted fallback is therefore the local dissipative clock described above.
-It models the friction of membrane-contacting protein carriers with the same
-relaxation and fluctuation--dissipation relation as the bilayer bath. It does not
+The accepted fallback is therefore the particle-level dissipative clock described above.
+It models the friction of membrane-contacting protein carriers as the additive
+friction of nearby bilayer beads with the same fluctuation--dissipation relation.
+It does not
 claim to reproduce DOPC molecular diffusion or a hydrodynamic protein resistance
-tensor. A reproducible analyzer unwraps mass-weighted 14-bead molecular COMs,
+tensor. Validation unwraps mass-weighted 14-bead molecular COMs,
 removes bilayer COM drift, fits multi-origin lateral MSD, and always reports the
 measured diffusion beside the target and the bare-bead mobility implied by the
-friction. \textbf{[FRICTION-CLOCK CALIBRATED; MOLECULAR DIFFUSION UNMATCHED]}
+friction. \textbf{[PARTICLE-MOBILITY CLOCK CALIBRATED; MOLECULAR DIFFUSION UNMATCHED]}
 
 \subsection{Membrane mechanics from a Monte-Carlo barostat}
 \label{sec:mechanics}
@@ -356,7 +367,7 @@ bilayer COM drift removal; protein tilt is measured backbone-only.
 
 \section{Results}
 
-The structural membrane measurements below predate the final friction-clock
+The structural membrane measurements below predate the final particle-mobility
 mapping and remain baseline thermodynamic measurements. The temperature,
 diffusion, and protein-structure regressions are from freshly prepared systems
 using the final one-step implementation.
@@ -377,16 +388,17 @@ the fixed-box state, indicating the force field is marginally over-cohesive---a
 force-field fidelity note, reported and not tuned away. \textbf{[BASELINE; CURRENT
 REGRESSION OPEN]}
 
-\subsection{The single-step barrier and friction clock, demonstrated}
+\subsection{The single-step barrier and particle-mobility clock, demonstrated}
 \label{sec:barrier}
 
-The g-JF update is stable at $M=1$ with the raw hard core intact. A 50,000-step
-production continuation gives protein- and lipid-carrier kinetic energies within
-0.2\% of the $3k_BT/2$ target when averaged across 1RKL and 1AFO. The mass-weighted
-DOPC COM analyzer finds $D=6.7\times10^{-5}$ and $6.0\times10^{-5}~\mu$m$^2$/s,
-respectively, versus the $11.5~\mu$m$^2$/s molecular target. Thus the numerical
-stability and local friction-clock claims pass, while the molecular-diffusion
-claim explicitly fails and is not made. \textbf{[VALIDATED FRICTION FALLBACK]}
+The g-JF update is stable at $M=1$ with the raw hard core intact. In 50,000-step
+production continuations, total kinetic energy is within 1\% of the $3k_BT/2$
+target for both 1RKL and 1AFO; the separate protein means are within 1.3\%, and
+the lipid means within 5.2\%. The mass-weighted DOPC COM analysis finds
+$D=0.0152$ and $0.0132~\mu$m$^2$/s, respectively, over the stated fit window,
+versus the $11.5~\mu$m$^2$/s molecular target. Thus numerical stability and the
+bare-particle mobility clock pass, while the molecular-diffusion claim explicitly
+fails and is not made. \textbf{[VALIDATED PARTICLE-MOBILITY FALLBACK]}
 
 \subsection{The raw force field confines the protein}
 \label{sec:hybrid}
@@ -404,11 +416,14 @@ gave the membrane and protein inconsistent dissipative clocks. The final path
 uses one $0.009$ g-JF step and assigns the contact-local FDT bath without changing
 any conservative interaction. The saved trajectory now records the derived
 O/BB coordinates used by the force graph, eliminating a separate false DSSP
-collapse caused by stale virtual sites. Mapped all-atom DSSP gave a constant
-helical count of 7 throughout 50,000 steps for 1RKL; 1AFO
-remained at 27. The 1RKL hydrogen-bond score changed from 24.2 to 23.8 after a
-minimum of 20.3, and 1AFO from 80.9 to 76.2 after a minimum of 72.3. Average
-kinetic energies were 99.9\% and 100.2\% of the target. No interaction is
+collapse caused by stale virtual sites. Mapped all-atom DSSP retains all 54
+helical residues of 1AFO at the end of 50,000 steps. For 1RKL, the physical
+transmembrane core (residues 10--29) remains helical with mostly 0.9--0.99
+occupancy; the final helix contains 19 residues, while the initial N-terminal
+extension at residues 6--9 relaxes to coil. The 1RKL hydrogen-bond score changes
+from 25.2 to 17.8 (last-100-frame mean 20.0), and 1AFO from 83.5 to 65.2
+(last-100-frame mean 63.8). Total kinetic energies were within 1\% of target.
+No interaction is
 softened or disabled. These finite-window regressions directly resolve the
 reported rapid secondary-structure failure, though they are not an ensemble-
 convergence claim.
@@ -473,10 +488,11 @@ membrane-protein thermodynamics can be studied without membrane-protein training
 data. Its scope follows directly from how it is built. Static claims require
 explicit timestep and ensemble convergence; the Monte-Carlo barostat supplies the
 correct isothermal--isobaric area move. The kinetic claim is deliberately narrow:
-the bilayer and its contact-local protein bath share the corrected dry-MARTINI
-relaxation clock, while measured molecular DOPC diffusion remains far below its
-target. The honest boundary is therefore between \emph{equilibrium} observables
-(trustworthy), a calibrated local friction timescale, and absolute rates of
+the bilayer uses the corrected bare-particle mobility clock and its contact-local
+protein bath uses additive bead friction, while measured molecular DOPC diffusion
+remains far below its target. The honest boundary is therefore between
+\emph{equilibrium} observables (trustworthy), a calibrated particle-level mobility,
+and absolute rates of
 collective lipid-coupled processes (not established). HDX protection
 factors are equilibrium quantities and can lie inside the boundary; a helix-tilt
 relaxation \emph{rate} lies outside it. Relative statements across temperature or
@@ -514,7 +530,7 @@ combine without any membrane-protein training data. The model's intended domain 
 thermodynamics: bilayer structure and area sampling, and---via enhanced
 sampling---protein conformational ensembles and local stabilities, with HDX
 protection factors as the flagship equilibrium observable. Its factor-four-
-corrected local friction clock is explicit and testable, while molecular DOPC
+corrected bare-particle mobility clock is explicit and testable, while molecular DOPC
 diffusion is measured separately and is not matched. The same
 compose-by-physical-coupling strategy extends
 the reach of the model to other data-sparse systems such as nanoparticles.

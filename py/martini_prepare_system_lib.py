@@ -1948,9 +1948,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         particle_class_array._v_attrs.description = b"Per-atom class: PROTEIN, LIPID, WATER, ION, OTHER"
 
         # Every physical degree of freedom uses one g-JF step. Regenerated O and BB sites are excluded:
-        # their positions and BB-env derivatives are projected through N/CA/C. The fallback kinetic claim
-        # is the dry-MARTINI friction clock felt by lipid-contacting protein carriers, not molecular DOPC
-        # COM diffusion.
+        # their positions and BB-env derivatives are projected through N/CA/C. Production uses the requested
+        # bare-particle mobility clock. Protein drag is the sum of the bead frictions inside the existing
+        # protein--environment spline range.
         lipid_beads = np.where(particle_class == b"LIPID")[0].astype('i4')
         if lipid_beads.size:
             protein_carrier = (
@@ -1965,24 +1965,34 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             target_diffusion = float(os.environ.get("UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S", "11.5"))
             reference_temperature = float(os.environ.get("UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP", "0.8647"))
             raw_relaxation_ps = float(os.environ.get("UPSIDE_DRY_MARTINI_RELAXATION_PS", "4.0"))
+            dynamics_phase = os.environ.get("UPSIDE_MARTINI_DYNAMICS_PHASE", "production")
             if numerical_time_step <= 0.0 or protein_time_ps <= 0.0 or martini_time_factor <= 0.0:
                 raise ValueError("MARTINI clock parameters must be positive")
             if target_diffusion <= 0.0 or reference_temperature <= 0.0 or raw_relaxation_ps <= 0.0:
                 raise ValueError("DOPC transport target and reference temperature must be positive")
+            if dynamics_phase not in {"early_equilibration", "overlap_settling", "production"}:
+                raise ValueError(f"Unknown MARTINI dynamics phase '{dynamics_phase}'")
             raw_martini_time_ps = protein_time_ps / martini_time_factor
             raw_target_diffusion = target_diffusion * martini_time_factor
             time_unit_ps = 1.0e12 * math.sqrt(
                 (0.012 * 1.0e-20) / (energy_conversion * 1000.0))
-            production_friction_clock = stage == "npt_prod"
-            if production_friction_clock:
-                relaxation_up = numerical_time_step * raw_relaxation_ps / raw_martini_time_ps
+            if dynamics_phase == "production":
+                raw_target_diffusion_A2_ps = raw_target_diffusion * 1.0e-4
+                particle_diffusion_up = (
+                    raw_target_diffusion_A2_ps * raw_martini_time_ps / numerical_time_step
+                )
+                particle_friction = reference_temperature / particle_diffusion_up
+                friction = np.full(brownian_atom_index.size, particle_friction, dtype=np.float64)
             else:
-                relaxation_up = raw_relaxation_ps / time_unit_ps
-            friction = mass[brownian_atom_index] / relaxation_up
+                if dynamics_phase == "overlap_settling":
+                    relaxation_up = numerical_time_step * raw_relaxation_ps / raw_martini_time_ps
+                else:
+                    relaxation_up = raw_relaxation_ps / time_unit_ps
+                friction = mass[brownian_atom_index] / relaxation_up
 
             interface_cutoff = 12.0
-            contact_carrier = np.zeros(n_atoms, dtype=bool)
-            if np.any(protein_carrier):
+            contact_count = np.zeros(n_atoms, dtype=np.int32)
+            if dynamics_phase == "production" and np.any(protein_carrier):
                 box = np.array([x_len, y_len, z_len], dtype=np.float64)
                 carrier_index = np.where(protein_carrier)[0]
                 for start in range(0, lipid_beads.size, 512):
@@ -1991,22 +2001,20 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                         - final_positions[lipid_beads[start:start + 512]][None, :, :]
                     )
                     delta -= box * np.rint(delta / box)
-                    contact_carrier[carrier_index] |= np.any(
+                    contact_count[carrier_index] += np.sum(
                         np.sum(delta * delta, axis=2) < interface_cutoff * interface_cutoff,
                         axis=1,
                     )
             protein_friction = protein_carrier[brownian_atom_index]
-            if production_friction_clock:
-                protein_friction &= ~contact_carrier[brownian_atom_index]
-            friction[protein_friction] = 0.0
+            if dynamics_phase == "production":
+                friction[protein_friction] = (
+                    particle_friction * contact_count[brownian_atom_index[protein_friction]]
+                )
+            else:
+                friction[protein_friction] = 0.0
             brownian_grp = t.create_group(input_grp, 'brownian')
             t.create_array(brownian_grp, 'atom_index', obj=brownian_atom_index)
             t.create_array(brownian_grp, 'friction', obj=friction.astype(np.float32))
-            t.create_array(
-                brownian_grp,
-                'protein_contact_atom_index',
-                obj=np.where(contact_carrier)[0].astype('i4'),
-            )
             brownian_grp._v_attrs.numerical_time_step = np.float64(numerical_time_step)
             brownian_grp._v_attrs.protein_time_ps_per_step = np.float64(protein_time_ps)
             brownian_grp._v_attrs.martini_time_factor = np.float64(martini_time_factor)
@@ -2014,13 +2022,27 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             brownian_grp._v_attrs.target_dopc_diffusion_um2_s = np.float64(target_diffusion)
             brownian_grp._v_attrs.raw_target_diffusion_um2_s = np.float64(raw_target_diffusion)
             brownian_grp._v_attrs.reference_temperature_up = np.float64(reference_temperature)
-            brownian_grp._v_attrs.raw_langevin_relaxation_ps = np.float64(raw_relaxation_ps)
-            brownian_grp._v_attrs.relaxation_time_up = np.float64(relaxation_up)
-            brownian_grp._v_attrs.production_friction_clock = np.int64(production_friction_clock)
-            brownian_grp._v_attrs.interface_friction_cutoff_A = np.float64(interface_cutoff)
-            brownian_grp._v_attrs.protein_contact_carrier_count = np.int64(np.sum(contact_carrier))
-            brownian_grp._v_attrs.transport_observable = b"contact_local_dry_martini_friction_clock"
-            brownian_grp._v_attrs.time_unit_ps = np.float64(time_unit_ps)
+            brownian_grp._v_attrs.dynamics_phase = dynamics_phase.encode()
+            if dynamics_phase == "production":
+                contact_atom_index = np.where(contact_count > 0)[0].astype('i4')
+                t.create_array(brownian_grp, 'protein_contact_atom_index', obj=contact_atom_index)
+                t.create_array(
+                    brownian_grp,
+                    'protein_lipid_contact_count',
+                    obj=contact_count[contact_atom_index],
+                )
+                brownian_grp._v_attrs.bare_particle_diffusion_up = np.float64(particle_diffusion_up)
+                brownian_grp._v_attrs.bare_particle_friction_up = np.float64(particle_friction)
+                brownian_grp._v_attrs.interface_friction_cutoff_A = np.float64(interface_cutoff)
+                brownian_grp._v_attrs.transport_observable = b"bare_martini_particle_lateral_diffusion"
+            else:
+                brownian_grp._v_attrs.raw_langevin_relaxation_ps = np.float64(raw_relaxation_ps)
+                brownian_grp._v_attrs.relaxation_time_up = np.float64(relaxation_up)
+                brownian_grp._v_attrs.time_unit_ps = np.float64(time_unit_ps)
+                if dynamics_phase == "overlap_settling":
+                    brownian_grp._v_attrs.transport_observable = b"overlap_settling_damping"
+                else:
+                    brownian_grp._v_attrs.transport_observable = b"native_dry_martini_relaxation"
 
         # Create charges array
         charge_array = t.create_array(input_grp, 'charges', obj=charges)
