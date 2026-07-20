@@ -47,7 +47,7 @@ eq_64_nsteps       = 500
 eq_65_nsteps       = 500
 eq_66_nsteps       = 500
 prod_70_burnin_nsteps = 0
-prod_70_nsteps     = 10000
+prod_70_nsteps     = 40000
 
 prep_seed          = 2026
 randomseed         = 1
@@ -101,6 +101,12 @@ env = os.environ.copy()
 env["UPSIDE_HOME"] = str(upside_path)
 env["PATH"] = "{}{}{}".format(upside_path / "obj", os.pathsep, env.get("PATH", ""))
 env["PYTHONPATH"] = "{}{}{}".format(upside_utils_dir, os.pathsep, env.get("PYTHONPATH", ""))
+env["UPSIDE_MARTINI_TIME_STEP_UP"] = str(prod_time_step)
+env["UPSIDE_PROTEIN_TIME_PS_PER_STEP"] = "40.0"
+env["UPSIDE_MARTINI_TIME_FACTOR"] = "4.0"
+env["UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S"] = "11.5"
+env["UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP"] = str(temperature)
+env["UPSIDE_DRY_MARTINI_RELAXATION_PS"] = "4.0"
 
 required_params = [
     upside_path / "parameters" / "ff_2.1" / "martini.h5",

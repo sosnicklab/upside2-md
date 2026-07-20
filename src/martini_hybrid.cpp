@@ -28,12 +28,15 @@ static std::vector<int> active_protein_proxy_fixed_atoms(const HybridRuntimeStat
         if(st.protein_membership[atom_idx] < 0) continue;
         if(atom_idx >= st.atom_role_class.size()) continue;
         auto role = st.atom_role_class[atom_idx];
-        bool is_backbone_carrier =
-            atom_idx < st.atom_backbone_carrier_mask.size() &&
-            st.atom_backbone_carrier_mask[atom_idx] != 0u;
-        if((role == ROLE_BB || role == ROLE_SC) && !is_backbone_carrier) {
+        bool is_bb_source =
+            atom_idx < st.atom_bb_source_mask.size() &&
+            st.atom_bb_source_mask[atom_idx] != 0u;
+        if((role == ROLE_BB || role == ROLE_SC) && !is_bb_source) {
             atoms.push_back(static_cast<int>(atom_idx));
         }
+    }
+    for(const auto& atom_idx : st.bb_reference_runtime_atom_indices) {
+        if(atom_idx[3] >= 0) atoms.push_back(atom_idx[3]);
     }
     std::sort(atoms.begin(), atoms.end());
     atoms.erase(std::unique(atoms.begin(), atoms.end()), atoms.end());
@@ -45,72 +48,8 @@ int bb_map_index_for_proxy(const HybridRuntimeState& st, int bb_proxy_atom) {
     return st.bb_proxy_to_map_index[static_cast<size_t>(bb_proxy_atom)];
 }
 
-void project_bb_proxy_gradient_if_active(
-        const HybridRuntimeState& st,
-        VecArray pos_sens,
-        int n_atom,
-        int bb_proxy_atom,
-        const Vec<3>& grad) {
-    int map_idx = bb_map_index_for_proxy(st, bb_proxy_atom);
-    if(map_idx < 0 || map_idx >= static_cast<int>(st.n_bb)) return;
-    bool site_is_carrier =
-        bb_proxy_atom >= 0 &&
-        bb_proxy_atom < static_cast<int>(st.atom_backbone_carrier_mask.size()) &&
-        st.atom_backbone_carrier_mask[static_cast<size_t>(bb_proxy_atom)] != 0u;
-
-    for(int d = 0; d < 4; ++d) {
-        if(st.atom_mask[static_cast<size_t>(map_idx)][d] == 0) continue;
-        int atom_idx = st.atom_indices[static_cast<size_t>(map_idx)][d];
-        float w = st.weights[static_cast<size_t>(map_idx)][d];
-        if(atom_idx < 0 || atom_idx >= n_atom || w == 0.f) continue;
-        if(!site_is_carrier && atom_idx == bb_proxy_atom) continue;
-        update_vec<3>(pos_sens, atom_idx, w * grad);
-    }
-}
-
-static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom);
-
-void refresh_bb_positions_if_active(
-        const HybridRuntimeState& st,
-        VecArray pos,
-        int n_atom) {
-    if(!st.active) return;
-    refresh_backbone_o_positions_if_active(st, pos, n_atom);
-    for(size_t k = 0; k < st.n_bb; ++k) {
-        int bb = st.bb_atom_index[k];
-        if(bb < 0 || bb >= n_atom) continue;
-        Vec<3> com = make_zero<3>();
-        float wsum = 0.f;
-        for(int d = 0; d < 4; ++d) {
-            if(st.atom_mask[k][d] == 0) continue;
-            int ai = st.atom_indices[k][d];
-            float w = st.weights[k][d];
-            if(ai < 0 || ai >= n_atom || w == 0.f) continue;
-            if(ai == bb) continue;
-            com += w * load_vec<3>(pos, ai);
-            wsum += w;
-        }
-        if(wsum > 0.f) {
-            if(fabsf(wsum - 1.f) > 1e-6f) com *= (1.f / wsum);
-            store_vec<3>(pos, bb, com);
-        }
-    }
-}
-
-static inline std::array<float,3> apply_rot(const float R[3][3], const std::array<float,3>& v) {
-    return std::array<float,3>{
-        R[0][0] * v[0] + R[0][1] * v[1] + R[0][2] * v[2],
-        R[1][0] * v[0] + R[1][1] * v[1] + R[1][2] * v[2],
-        R[2][0] * v[0] + R[2][1] * v[1] + R[2][2] * v[2]
-    };
-}
-
 static inline std::array<float,3> vec_sub(const std::array<float,3>& a, const std::array<float,3>& b) {
     return std::array<float,3>{a[0]-b[0], a[1]-b[1], a[2]-b[2]};
-}
-
-static inline std::array<float,3> vec_add(const std::array<float,3>& a, const std::array<float,3>& b) {
-    return std::array<float,3>{a[0]+b[0], a[1]+b[1], a[2]+b[2]};
 }
 
 static inline std::array<float,3> vec_scale(const std::array<float,3>& a, float s) {
@@ -159,55 +98,261 @@ static inline bool build_frame_from_three(
     return true;
 }
 
-static inline void mat_mul(const float A[3][3], const float B[3][3], float C[3][3]) {
-    for(int i=0;i<3;++i) for(int j=0;j<3;++j) {
-        C[i][j] = 0.f;
-        for(int k=0;k<3;++k) C[i][j] += A[i][k]*B[k][j];
+struct Dual9 {
+    double value = 0.0;
+    std::array<double,9> deriv{};
+};
+
+using DualVec3 = std::array<Dual9,3>;
+
+static Dual9 dual_constant(double value) {
+    Dual9 out;
+    out.value = value;
+    return out;
+}
+
+static Dual9 dual_variable(double value, int index) {
+    Dual9 out = dual_constant(value);
+    out.deriv[static_cast<size_t>(index)] = 1.0;
+    return out;
+}
+
+static Dual9 dual_add(const Dual9& a, const Dual9& b) {
+    Dual9 out;
+    out.value = a.value + b.value;
+    for(int i = 0; i < 9; ++i) out.deriv[i] = a.deriv[i] + b.deriv[i];
+    return out;
+}
+
+static Dual9 dual_sub(const Dual9& a, const Dual9& b) {
+    Dual9 out;
+    out.value = a.value - b.value;
+    for(int i = 0; i < 9; ++i) out.deriv[i] = a.deriv[i] - b.deriv[i];
+    return out;
+}
+
+static Dual9 dual_mul(const Dual9& a, const Dual9& b) {
+    Dual9 out;
+    out.value = a.value * b.value;
+    for(int i = 0; i < 9; ++i) {
+        out.deriv[i] = a.deriv[i]*b.value + a.value*b.deriv[i];
     }
+    return out;
 }
 
-static inline void mat_transpose(const float A[3][3], float AT[3][3]) {
-    for(int i=0;i<3;++i) for(int j=0;j<3;++j) AT[i][j] = A[j][i];
+static Dual9 dual_scale(const Dual9& a, double scale) {
+    Dual9 out;
+    out.value = a.value * scale;
+    for(int i = 0; i < 9; ++i) out.deriv[i] = a.deriv[i] * scale;
+    return out;
 }
 
-static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom) {
-    if(!st.active) return;
-    if(st.bb_reference_atom_coords.size() != st.n_bb) return;
-    if(st.bb_reference_runtime_atom_indices.size() != st.n_bb) return;
+static Dual9 dual_div(const Dual9& a, const Dual9& b) {
+    Dual9 out;
+    out.value = a.value / b.value;
+    double inv_b2 = 1.0 / (b.value*b.value);
+    for(int i = 0; i < 9; ++i) {
+        out.deriv[i] = (a.deriv[i]*b.value - a.value*b.deriv[i]) * inv_b2;
+    }
+    return out;
+}
 
-    for(size_t k = 0; k < st.n_bb; ++k) {
-        const auto& atom_idx = st.bb_reference_runtime_atom_indices[k];
-        const int n_idx = atom_idx[0];
-        const int ca_idx = atom_idx[1];
-        const int c_idx = atom_idx[2];
-        const int o_idx = atom_idx[3];
-        if(n_idx < 0 || n_idx >= n_atom ||
-           ca_idx < 0 || ca_idx >= n_atom ||
-           c_idx < 0 || c_idx >= n_atom ||
-           o_idx < 0 || o_idx >= n_atom) {
-            continue;
+static Dual9 dual_sqrt(const Dual9& a) {
+    Dual9 out;
+    out.value = std::sqrt(a.value);
+    double scale = 0.5 / out.value;
+    for(int i = 0; i < 9; ++i) out.deriv[i] = a.deriv[i] * scale;
+    return out;
+}
+
+static DualVec3 dual_vec_sub(const DualVec3& a, const DualVec3& b) {
+    return DualVec3{{dual_sub(a[0], b[0]), dual_sub(a[1], b[1]), dual_sub(a[2], b[2])}};
+}
+
+static Dual9 dual_vec_dot(const DualVec3& a, const DualVec3& b) {
+    Dual9 out = dual_constant(0.0);
+    for(int d = 0; d < 3; ++d) out = dual_add(out, dual_mul(a[d], b[d]));
+    return out;
+}
+
+static DualVec3 dual_vec_cross(const DualVec3& a, const DualVec3& b) {
+    return DualVec3{{
+        dual_sub(dual_mul(a[1], b[2]), dual_mul(a[2], b[1])),
+        dual_sub(dual_mul(a[2], b[0]), dual_mul(a[0], b[2])),
+        dual_sub(dual_mul(a[0], b[1]), dual_mul(a[1], b[0]))
+    }};
+}
+
+static bool dual_vec_normalize(const DualVec3& value, DualVec3& normalized) {
+    Dual9 norm2 = dual_vec_dot(value, value);
+    if(norm2.value <= 1e-16) return false;
+    Dual9 norm = dual_sqrt(norm2);
+    for(int d = 0; d < 3; ++d) normalized[d] = dual_div(value[d], norm);
+    return true;
+}
+
+static bool map_backbone_sites(
+        const HybridRuntimeState& st,
+        size_t k,
+        const std::array<std::array<float,3>,3>& carrier,
+        std::array<float,3>& mapped_o,
+        std::array<float,3>& mapped_bb,
+        std::array<float,27>& jacobian) {
+    const auto& ref = st.bb_reference_atom_coords[k];
+    float F_ref[3][3];
+    if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref)) return false;
+
+    auto ref_local_o = vec_sub(ref[3], ref[1]);
+    std::array<double,3> local_o{0.0, 0.0, 0.0};
+    for(int basis = 0; basis < 3; ++basis) {
+        for(int d = 0; d < 3; ++d) {
+            local_o[basis] += F_ref[d][basis] * ref_local_o[d];
+        }
+    }
+
+    std::array<DualVec3,3> carrier_dual;
+    for(int atom = 0; atom < 3; ++atom) {
+        for(int d = 0; d < 3; ++d) {
+            carrier_dual[atom][d] = dual_variable(carrier[atom][d], 3*atom + d);
+        }
+    }
+    DualVec3 e1;
+    if(!dual_vec_normalize(dual_vec_sub(carrier_dual[1], carrier_dual[0]), e1)) return false;
+    DualVec3 v2 = dual_vec_sub(carrier_dual[2], carrier_dual[0]);
+    DualVec3 e3;
+    if(!dual_vec_normalize(dual_vec_cross(e1, v2), e3)) return false;
+    DualVec3 e2 = dual_vec_cross(e3, e1);
+
+    DualVec3 mapped_o_dual;
+    for(int d = 0; d < 3; ++d) {
+        mapped_o_dual[d] = carrier_dual[1][d];
+        mapped_o_dual[d] = dual_add(mapped_o_dual[d], dual_scale(e1[d], local_o[0]));
+        mapped_o_dual[d] = dual_add(mapped_o_dual[d], dual_scale(e2[d], local_o[1]));
+        mapped_o_dual[d] = dual_add(mapped_o_dual[d], dual_scale(e3[d], local_o[2]));
+    }
+
+    std::array<DualVec3,4> sites{{
+        carrier_dual[0], carrier_dual[1], carrier_dual[2], mapped_o_dual
+    }};
+    DualVec3 mapped_bb_dual{{
+        dual_constant(0.0), dual_constant(0.0), dual_constant(0.0)
+    }};
+    float wsum = 0.f;
+    for(int d = 0; d < 4; ++d) {
+        if(st.atom_mask[k][d] == 0) continue;
+        float w = st.weights[k][d];
+        if(w == 0.f) continue;
+        for(int coord = 0; coord < 3; ++coord) {
+            mapped_bb_dual[coord] =
+                dual_add(mapped_bb_dual[coord], dual_scale(sites[d][coord], w));
+        }
+        wsum += w;
+    }
+    if(wsum <= 0.f) return false;
+    if(fabsf(wsum - 1.f) > 1e-6f) {
+        for(int d = 0; d < 3; ++d) mapped_bb_dual[d] = dual_scale(mapped_bb_dual[d], 1.f/wsum);
+    }
+    for(int output = 0; output < 3; ++output) {
+        mapped_o[output] = static_cast<float>(mapped_o_dual[output].value);
+        mapped_bb[output] = static_cast<float>(mapped_bb_dual[output].value);
+        for(int input = 0; input < 9; ++input) {
+            jacobian[9*output + input] =
+                static_cast<float>(mapped_bb_dual[output].deriv[input]);
+        }
+    }
+    return true;
+}
+
+struct HybridPositionNode : public CoordNode {
+    CoordNode& source;
+    std::vector<std::array<float,27>> jacobian;
+
+    HybridPositionNode(hid_t, CoordNode& source_):
+        CoordNode(source_.n_elem, 3),
+        source(source_) {
+        check_elem_width_lower_bound(source, 3);
+    }
+
+    virtual void compute_value(ComputeMode) override {
+        VecArray source_pos = source.output;
+        for(int atom = 0; atom < n_elem; ++atom) {
+            store_vec<3>(output, atom, load_vec<3>(source_pos, atom));
         }
 
-        const auto& ref = st.bb_reference_atom_coords[k];
-        float F_ref[3][3], F_cur[3][3], F_ref_T[3][3], R[3][3];
-        if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref)) continue;
+        auto st = get_state_for_coord(source);
+        if(!st || !st->active) return;
+        if(st->bb_reference_atom_coords.size() != st->n_bb ||
+           st->bb_reference_runtime_atom_indices.size() != st->n_bb) {
+            throw string("Hybrid position node requires complete BB reference data");
+        }
+        jacobian.resize(st->n_bb);
+        for(size_t k = 0; k < st->n_bb; ++k) {
+            const auto& atom_idx = st->bb_reference_runtime_atom_indices[k];
+            int o_idx = atom_idx[3];
+            int bb_idx = st->bb_atom_index[k];
+            bool valid = o_idx >= 0 && o_idx < n_elem && bb_idx >= 0 && bb_idx < n_elem;
+            for(int d = 0; d < 3; ++d) valid = valid && atom_idx[d] >= 0 && atom_idx[d] < n_elem;
+            if(!valid) throw string("Hybrid position node has an invalid BB mapping index");
 
-        auto cur_n = load_vec<3>(pos, n_idx);
-        auto cur_ca = load_vec<3>(pos, ca_idx);
-        auto cur_c = load_vec<3>(pos, c_idx);
-        auto cur_n_arr = std::array<float,3>{cur_n[0], cur_n[1], cur_n[2]};
-        auto cur_ca_arr = std::array<float,3>{cur_ca[0], cur_ca[1], cur_ca[2]};
-        auto cur_c_arr = std::array<float,3>{cur_c[0], cur_c[1], cur_c[2]};
-        if(!build_frame_from_three(cur_n_arr, cur_ca_arr, cur_c_arr, F_cur)) continue;
-
-        mat_transpose(F_ref, F_ref_T);
-        mat_mul(F_cur, F_ref_T, R);
-
-        auto ref_local_o = vec_sub(ref[3], ref[1]);
-        auto mapped_o = vec_add(apply_rot(R, ref_local_o), cur_ca_arr);
-        store_vec<3>(pos, o_idx, make_vec3(mapped_o[0], mapped_o[1], mapped_o[2]));
+            std::array<std::array<float,3>,3> carrier;
+            for(int atom = 0; atom < 3; ++atom) {
+                auto value = load_vec<3>(source_pos, atom_idx[atom]);
+                carrier[atom] = std::array<float,3>{{value[0], value[1], value[2]}};
+            }
+            std::array<float,3> mapped_o, mapped_bb;
+            if(!map_backbone_sites(*st, k, carrier, mapped_o, mapped_bb, jacobian[k])) {
+                throw string("Hybrid position node encountered a singular BB frame");
+            }
+            store_vec<3>(output, o_idx, make_vec3(mapped_o[0], mapped_o[1], mapped_o[2]));
+            store_vec<3>(output, bb_idx, make_vec3(mapped_bb[0], mapped_bb[1], mapped_bb[2]));
+        }
     }
-}
+
+    virtual void propagate_deriv() override {
+        auto st = get_state_for_coord(source);
+        if(!st || !st->active) {
+            for(int atom = 0; atom < n_elem; ++atom) {
+                update_vec<3>(source.sens, atom, load_vec<3>(sens, atom));
+            }
+            return;
+        }
+        if(jacobian.size() != st->n_bb) {
+            throw string("Hybrid position node Jacobian is not initialized");
+        }
+
+        std::vector<unsigned char> derived(static_cast<size_t>(n_elem), 0u);
+        for(size_t k = 0; k < st->n_bb; ++k) {
+            int o_idx = st->bb_reference_runtime_atom_indices[k][3];
+            int bb_idx = st->bb_atom_index[k];
+            if(o_idx >= 0 && o_idx < n_elem) derived[static_cast<size_t>(o_idx)] = 1u;
+            if(bb_idx >= 0 && bb_idx < n_elem) derived[static_cast<size_t>(bb_idx)] = 1u;
+        }
+        for(int atom = 0; atom < n_elem; ++atom) {
+            if(!derived[static_cast<size_t>(atom)]) {
+                update_vec<3>(source.sens, atom, load_vec<3>(sens, atom));
+            }
+        }
+        for(size_t k = 0; k < st->n_bb; ++k) {
+            int bb_idx = st->bb_atom_index[k];
+            Vec<3> grad = load_vec<3>(sens, bb_idx);
+            const auto& jac = jacobian[k];
+            for(int carrier = 0; carrier < 3; ++carrier) {
+                int atom_idx = st->atom_indices[k][carrier];
+                Vec<3> projected = make_zero<3>();
+                for(int input_dim = 0; input_dim < 3; ++input_dim) {
+                    int input = 3*carrier + input_dim;
+                    for(int output_dim = 0; output_dim < 3; ++output_dim) {
+                        projected[input_dim] += jac[9*output_dim + input] * grad[output_dim];
+                    }
+                }
+                update_vec<3>(source.sens, atom_idx, projected);
+            }
+        }
+    }
+};
+
+static RegisterNodeType<HybridPositionNode, 1> hybrid_position_node("martini_hybrid_position");
+
 static std::string trim_h5_string(const std::string& in);
 
 static std::vector<std::string> split_csv_tokens(const std::string& s) {
@@ -268,7 +413,7 @@ static inline unsigned char classify_atom_role_name(const std::string& raw_name)
     return ROLE_OTHER;
 }
 
-static inline bool is_backbone_carrier_role_name(const std::string& raw_name) {
+static inline bool is_bb_source_role_name(const std::string& raw_name) {
     std::string name = normalize_role_token(raw_name);
     return name == "N" || name == "CA" || name == "C" || name == "O";
 }
@@ -331,10 +476,10 @@ unsigned char atom_role_class_at(const HybridRuntimeState& st, int i) {
     return st.atom_role_class[i];
 }
 
-bool atom_is_backbone_carrier_at(const HybridRuntimeState& st, int i) {
+bool atom_is_bb_source_at(const HybridRuntimeState& st, int i) {
     return i >= 0 &&
-           i < static_cast<int>(st.atom_backbone_carrier_mask.size()) &&
-           st.atom_backbone_carrier_mask[static_cast<size_t>(i)] != 0;
+           i < static_cast<int>(st.atom_bb_source_mask.size()) &&
+           st.atom_bb_source_mask[static_cast<size_t>(i)] != 0;
 }
 
 static inline bool allow_protein_pair_by_rule(const HybridRuntimeState& st, int i, int j) {
@@ -522,19 +667,19 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         throw string("Hybrid control requires /input/hybrid_env_topology");
     }
     out.atom_role_class.assign(static_cast<size_t>(n_atom), ROLE_OTHER);
-    out.atom_backbone_carrier_mask.assign(static_cast<size_t>(n_atom), 0u);
+    out.atom_bb_source_mask.assign(static_cast<size_t>(n_atom), 0u);
     if(h5_exists(root, "/input/atom_roles")) {
         traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
             if(static_cast<int>(i) < n_atom) {
                 out.atom_role_class[i] = classify_atom_role_name(v);
-                out.atom_backbone_carrier_mask[i] = is_backbone_carrier_role_name(v) ? 1u : 0u;
+                out.atom_bb_source_mask[i] = is_bb_source_role_name(v) ? 1u : 0u;
             }
         });
     } else if(h5_exists(root, "/input/atom_names")) {
         traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
             if(static_cast<int>(i) < n_atom) {
                 out.atom_role_class[i] = classify_atom_role_name(v);
-                out.atom_backbone_carrier_mask[i] = is_backbone_carrier_role_name(v) ? 1u : 0u;
+                out.atom_bb_source_mask[i] = is_bb_source_role_name(v) ? 1u : 0u;
             }
         });
     }
@@ -585,7 +730,12 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             if(has_roles && i < (int)atom_roles.size()) {
                 is_head = (lipid_head_roles.count(atom_roles[i]) > 0);
             }
-            if(is_protein) {
+            bool is_carrier = false;
+            if(is_protein && has_roles && i < static_cast<int>(atom_roles.size())) {
+                const std::string& role = atom_roles[i];
+                is_carrier = role == "N" || role == "CA" || role == "C";
+            }
+            if(is_carrier) {
                 out.preprod_fixed_atom_indices.push_back(i);
             } else if(is_head) {
                 out.preprod_z_fixed_atom_indices.push_back(i);
@@ -717,7 +867,7 @@ static void apply_stage_fixing(
         HybridRuntimeState& st,
         const std::string& stage) {
     if(enforce_preprod_rigid_stage(st, stage)) {
-        martini_fix_rigid::clear_dynamic_fixed_atoms(engine);
+        martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(st));
         martini_fix_rigid::set_dynamic_rigid_groups(engine, {st.preprod_fixed_atom_indices});
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st.preprod_z_fixed_atom_indices);
         return;
@@ -774,6 +924,11 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     g_hybrid_state[&engine] = st;
     g_hybrid_state_by_coord[static_cast<const CoordNode*>(engine.pos)] = st;
+    for(auto& node : engine.nodes) {
+        if(node.name != "martini_hybrid_position") continue;
+        auto* coord = dynamic_cast<CoordNode*>(node.computation.get());
+        if(coord) g_hybrid_state_by_coord[coord] = st;
+    }
     apply_stage_fixing(engine, *st, current_stage);
 }
 
@@ -802,6 +957,17 @@ double get_last_bb_env_interface_potential(const DerivEngine& engine) {
     auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
     if(it == g_hybrid_state.end() || !it->second) return 0.0;
     return static_cast<double>(it->second->bb_env_interface_potential);
+}
+
+void copy_positions_for_output(DerivEngine& engine, float* buffer) {
+    for(auto& node : engine.nodes) {
+        if(node.name != "martini_hybrid_position") continue;
+        auto* coord = dynamic_cast<CoordNode*>(node.computation.get());
+        if(!coord) break;
+        copy_vec_array_to_buffer(coord->output, coord->n_elem, 3, buffer);
+        return;
+    }
+    copy_vec_array_to_buffer(engine.pos->output, engine.pos->n_elem, 3, buffer);
 }
 
 std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& coord) {

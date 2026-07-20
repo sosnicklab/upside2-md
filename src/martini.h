@@ -36,6 +36,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine);
 bool is_hybrid_enabled(const DerivEngine& engine);
 double get_last_bb_env_interface_potential(const DerivEngine& engine);
 void refresh_transition_holds_for_engine(DerivEngine& engine);
+void copy_positions_for_output(DerivEngine& engine, float* buffer);
 }
 
 namespace martini_masses {

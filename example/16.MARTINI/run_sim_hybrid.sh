@@ -41,22 +41,14 @@ done
 
 PDB_ID="${PDB_ID:-1rkl}"
 
-# Full-resolution lipid dynamics. DEFAULT: g-JF inertial-Langevin SINGLE step for the lipids
-# (UPSIDE_LIPID_LANGEVIN=1) -- no RESPA sub-loop -- with a calibrated effective-time factor
-# R = D_exp/D_sim (g-JF under-diffuses, so physical_time = sim_time / R). Exact lipid D is unattainable single-step on
-# hard cores, so g-JF (stable, correct thermostat) runs at its natural step and the lipid timescale is
-# recovered by the effective-time factor (MARTINI-style; a single global factor is an approximation of
-# the protein<->lipid relative clock). The PROTEIN keeps the STANDARD Upside integrator (integrator v,
-# time step below, thermostat) -- identical to the other examples; only the lipids change.
-# Fallback: UPSIDE_LIPID_LANGEVIN=0 -> overdamped RESPA lipids (UPSIDE_LIPID_NSUBSTEP inner steps per
-# protein step, dt_inner ~1e-4; exact lipid D but ~M-fold cost). Friction is the smooth Arrhenius law
-# gamma(T)=gamma_ref*(kT/t_ref)*exp(Ea*(1/kT-1/t_ref)), calibrated so lateral D_COM*4 matches DOPC D(T).
-export UPSIDE_LIPID_GAMMA_REF="${UPSIDE_LIPID_GAMMA_REF:-0.0035}"
-export UPSIDE_LIPID_T_REF="${UPSIDE_LIPID_T_REF:-0.8647}"
-export UPSIDE_LIPID_EA_EUP="${UPSIDE_LIPID_EA_EUP:-10.3}"
-export UPSIDE_LIPID_LANGEVIN="${UPSIDE_LIPID_LANGEVIN:-1}"          # 1 = g-JF single-step (default); 0 = overdamped RESPA
-export UPSIDE_LIPID_TIME_FACTOR="${UPSIDE_LIPID_TIME_FACTOR:-7.3}"  # R = D_exp/D_sim (g-JF too slow): physical_time = sim_time / this
-export UPSIDE_LIPID_NSUBSTEP="${UPSIDE_LIPID_NSUBSTEP:-90}"         # overdamped fallback only (ignored when LANGEVIN=1)
+# Full-resolution dynamics use one g-JF step for every physical degree of freedom. Production maps the
+# native dry-MARTINI relaxation clock onto the 40 ps protein step and gives the same FDT-consistent bath
+# to lipid-contacting protein carriers. Molecular COM diffusion is measured and reported separately.
+export UPSIDE_PROTEIN_TIME_PS_PER_STEP="${UPSIDE_PROTEIN_TIME_PS_PER_STEP:-40.0}"
+export UPSIDE_MARTINI_TIME_FACTOR="${UPSIDE_MARTINI_TIME_FACTOR:-4.0}"
+export UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S="${UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S:-11.5}"
+export UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP="${UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP:-0.8647}"
+export UPSIDE_DRY_MARTINI_RELAXATION_PS="${UPSIDE_DRY_MARTINI_RELAXATION_PS:-4.0}"
 
 RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_hybrid_full}"
 RUN_DIR="${RUN_DIR:-outputs/martini_${PDB_ID}_hybrid_full}"
@@ -102,6 +94,11 @@ EQ_TIME_STEP="${EQ_TIME_STEP:-0.009}"
 PROD_TIME_STEP="${PROD_TIME_STEP:-0.009}"
 EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
 PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-50}"
+if [ "${EQ_TIME_STEP}" != "${PROD_TIME_STEP}" ]; then
+    echo "ERROR: equilibration and production must use the same MARTINI timestep" >&2
+    exit 1
+fi
+export UPSIDE_MARTINI_TIME_STEP_UP="${PROD_TIME_STEP}"
 PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-0}"
 
 PREP_SEED="${PREP_SEED:-}"

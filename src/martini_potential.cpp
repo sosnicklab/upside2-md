@@ -619,7 +619,6 @@ struct MartiniPotential : public PotentialNode
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         auto* mutable_hybrid = static_cast<martini_hybrid::HybridRuntimeState*>(nullptr);
         if(hybrid_state) {
-            martini_hybrid::refresh_bb_positions_if_active(*hybrid_state, pos1, n_atom);
             mutable_hybrid = const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
             if(mutable_hybrid) {
                 mutable_hybrid->bb_env_interface_potential = 0.f;
@@ -705,19 +704,16 @@ struct MartiniPotential : public PotentialNode
                               ? martini_hybrid::atom_role_class_at(*hybrid_state, j)
                               : martini_hybrid::ROLE_OTHER;
             if(hybrid_state && hybrid_state->active) {
-                bool i_carrier_env_pair =
-                    i_is_protein &&
-                    !j_is_protein &&
-                    martini_hybrid::atom_is_backbone_carrier_at(*hybrid_state, i) &&
+                bool i_is_derived_bb =
+                    i_role == martini_hybrid::ROLE_BB &&
+                    !martini_hybrid::atom_is_bb_source_at(*hybrid_state, i) &&
                     martini_hybrid::bb_map_index_for_proxy(*hybrid_state, i) >= 0;
-                bool j_carrier_env_pair =
-                    j_is_protein &&
-                    !i_is_protein &&
-                    martini_hybrid::atom_is_backbone_carrier_at(*hybrid_state, j) &&
+                bool j_is_derived_bb =
+                    j_role == martini_hybrid::ROLE_BB &&
+                    !martini_hybrid::atom_is_bb_source_at(*hybrid_state, j) &&
                     martini_hybrid::bb_map_index_for_proxy(*hybrid_state, j) >= 0;
-                if(i_carrier_env_pair || j_carrier_env_pair) {
-                    continue;
-                }
+                if((i_is_protein && !j_is_protein && !i_is_derived_bb) ||
+                   (j_is_protein && !i_is_protein && !j_is_derived_bb)) continue;
             }
             if(active_hybrid_startup &&
                ((i_is_protein && i_role == martini_hybrid::ROLE_SC) ||
@@ -743,26 +739,8 @@ struct MartiniPotential : public PotentialNode
             if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
                 gj *= sc_backbone_feedback_mix;
             }
-            bool i_projected = false;
-            bool j_projected = false;
-            if(hybrid_state && i_is_protein && i_role == martini_hybrid::ROLE_BB &&
-               !martini_hybrid::atom_is_backbone_carrier_at(*hybrid_state, i) &&
-               martini_hybrid::bb_map_index_for_proxy(*hybrid_state, i) >= 0) {
-                martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, i, gi);
-                i_projected = true;
-            }
-            if(hybrid_state && j_is_protein && j_role == martini_hybrid::ROLE_BB &&
-               !martini_hybrid::atom_is_backbone_carrier_at(*hybrid_state, j) &&
-               martini_hybrid::bb_map_index_for_proxy(*hybrid_state, j) >= 0) {
-                martini_hybrid::project_bb_proxy_gradient_if_active(*hybrid_state, pos1_sens, n_atom, j, gj);
-                j_projected = true;
-            }
-            if(!i_projected) {
-                update_vec<3>(pos1_sens, i, gi);
-            }
-            if(!j_projected) {
-                update_vec<3>(pos1_sens, j, gj);
-            }
+            update_vec<3>(pos1_sens, i, gi);
+            update_vec<3>(pos1_sens, j, gj);
         }
 
     }

@@ -34,7 +34,7 @@ struct HybridRuntimeState {
     std::vector<std::array<std::array<float,3>,4>> bb_reference_atom_coords;
     std::vector<int> protein_membership;
     std::vector<unsigned char> atom_role_class;
-    std::vector<unsigned char> atom_backbone_carrier_mask;
+    std::vector<unsigned char> atom_bb_source_mask;
     bool has_prev_bb = false;
     int sc_env_backbone_hold_steps = 200;
     int sc_env_po4_z_hold_steps = 150;
@@ -51,17 +51,10 @@ struct HybridRuntimeState {
 };
 
 int bb_map_index_for_proxy(const HybridRuntimeState& st, int bb_proxy_atom);
-void project_bb_proxy_gradient_if_active(
-        const HybridRuntimeState& st,
-        VecArray pos_sens,
-        int n_atom,
-        int bb_proxy_atom,
-        const Vec<3>& grad);
-void refresh_bb_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom);
 float compute_sc_backbone_feedback_mix(const HybridRuntimeState& st);
 void initialize_sc_env_po4_z_reference(HybridRuntimeState& st, VecArray pos, int n_atom);
 unsigned char atom_role_class_at(const HybridRuntimeState& st, int i);
-bool atom_is_backbone_carrier_at(const HybridRuntimeState& st, int i);
+bool atom_is_bb_source_at(const HybridRuntimeState& st, int i);
 bool allow_intra_protein_pair_if_active(const HybridRuntimeState& st, int i, int j);
 bool allow_multibody_term_if_active(const HybridRuntimeState& st, const index_t* atoms, int n_atom_dep);
 std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& coord);

@@ -1038,7 +1038,7 @@ def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
     if not martini_table:
         raise ValueError(f"Could not read MARTINI parameters from '{martini_param_file}'")
 
-    print("Protein runtime representation: AA backbone carriers only (N/CA/C/O)")
+    print("Protein runtime representation: N/CA/C carriers; regenerated O/BB virtual sites")
 
     dopc_param_file = pick_ff_file("dry_martini_v2.1_lipids.itp")
     lipid_preproc_defs = {}
@@ -1875,7 +1875,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mass_array._v_attrs.protein_mass_source = b"upside_core_unit_mass"
         mass_array._v_attrs.environment_mass_source = b"native_dry_martini_mass_div_12"
 
-        print("Hybrid stage files use AA backbone carriers (N/CA/C/O) for protein runtime representation")
+        print("Hybrid stage files use N/CA/C protein carriers with regenerated O/BB virtual sites")
         
         # Create stage-specific parameters group (always create this)
         stage_grp = t.create_group(input_grp, 'stage_parameters')
@@ -1947,47 +1947,80 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         particle_class_array._v_attrs.initialized = True
         particle_class_array._v_attrs.description = b"Per-atom class: PROTEIN, LIPID, WATER, ION, OTHER"
 
-        # Integrator setup for the full-resolution system.
-        # PRODUCTION (langevin=1): advance ALL atoms with one symmetric g-JF step so the protein and
-        # lipids share a consistent integrator (a mixed g-JF(lipid)/Verlet(protein) coupling exchanges
-        # the interface force inconsistently and injects energy at the hard interface, NaNing over long
-        # runs). Lipids get friction_scale 1 (g-JF: Boltzmann-correct, hard core intact, diffusion
-        # ~effective_time_factor x too slow, mapped by physical_time = sim_time / effective_time_factor).
-        # The PROTEIN gets a LARGER friction_scale, NOT 0: at friction_scale 0 the g-JF step is plain
-        # velocity Verlet with no dissipation, and a Hamiltonian protein coupled to the noisy g-JF lipid
-        # bath across the stiff hard core absorbs the finite-step interface energy faster than the weak
-        # global thermostat can remove it, so it overheats (kT ~ 1.5-2) and its secondary structure melts.
-        # A per-bead protein friction (~100x the lipid value) supplies the Langevin dissipation that holds
-        # the protein at T (kT ~ target with stable, still-fluctuating H-bonds; friction_scale 0 leaves
-        # it at kT ~ 1.6, friction_scale 300 over-cools it). The value is a thermostat coupling only --
-        # Langevin is Boltzmann-correct, so it sets the temperature and the (effective) protein kinetics
-        # but does NOT bias the equilibrium ensemble, leaving equilibrium/thermodynamic observables
-        # (e.g. HDX protection factors) correct once T is matched.
-        # FALLBACK (langevin=0, the default): overdamped Brownian RESPA on the lipids only, protein on
-        # the standard Verlet -- the M sub-steps resolve the interface, so no consistency issue.
-        # Friction is the Arrhenius law gamma(T) = gamma_ref*(kT/t_ref)*exp(Ea*(1/kT - 1/t_ref)).
+        # Every physical degree of freedom uses one g-JF step. Regenerated O and BB sites are excluded:
+        # their positions and BB-env derivatives are projected through N/CA/C. The fallback kinetic claim
+        # is the dry-MARTINI friction clock felt by lipid-contacting protein carriers, not molecular DOPC
+        # COM diffusion.
         lipid_beads = np.where(particle_class == b"LIPID")[0].astype('i4')
         if lipid_beads.size:
-            langevin = int(os.environ.get("UPSIDE_LIPID_LANGEVIN", "0"))
-            if langevin == 1:
-                n_all = int(particle_class.shape[0])
-                brownian_atom_index = np.arange(n_all, dtype='i4')
-                friction_scale = np.ones(n_all, dtype=np.float32)
-                friction_scale[particle_class == b"PROTEIN"] = float(
-                    os.environ.get("UPSIDE_PROTEIN_FRICTION_SCALE", "100.0"))
+            protein_carrier = (
+                (particle_class == b"PROTEIN")
+                & np.isin(atom_names, np.array(["N", "CA", "C"], dtype=atom_names.dtype))
+            )
+            dynamic_atom = (particle_class != b"PROTEIN") | protein_carrier
+            brownian_atom_index = np.where(dynamic_atom)[0].astype('i4')
+            numerical_time_step = float(os.environ.get("UPSIDE_MARTINI_TIME_STEP_UP", "0.009"))
+            protein_time_ps = float(os.environ.get("UPSIDE_PROTEIN_TIME_PS_PER_STEP", "40.0"))
+            martini_time_factor = float(os.environ.get("UPSIDE_MARTINI_TIME_FACTOR", "4.0"))
+            target_diffusion = float(os.environ.get("UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S", "11.5"))
+            reference_temperature = float(os.environ.get("UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP", "0.8647"))
+            raw_relaxation_ps = float(os.environ.get("UPSIDE_DRY_MARTINI_RELAXATION_PS", "4.0"))
+            if numerical_time_step <= 0.0 or protein_time_ps <= 0.0 or martini_time_factor <= 0.0:
+                raise ValueError("MARTINI clock parameters must be positive")
+            if target_diffusion <= 0.0 or reference_temperature <= 0.0 or raw_relaxation_ps <= 0.0:
+                raise ValueError("DOPC transport target and reference temperature must be positive")
+            raw_martini_time_ps = protein_time_ps / martini_time_factor
+            raw_target_diffusion = target_diffusion * martini_time_factor
+            time_unit_ps = 1.0e12 * math.sqrt(
+                (0.012 * 1.0e-20) / (energy_conversion * 1000.0))
+            production_friction_clock = stage == "npt_prod"
+            if production_friction_clock:
+                relaxation_up = numerical_time_step * raw_relaxation_ps / raw_martini_time_ps
             else:
-                brownian_atom_index = lipid_beads
-                friction_scale = None
+                relaxation_up = raw_relaxation_ps / time_unit_ps
+            friction = mass[brownian_atom_index] / relaxation_up
+
+            interface_cutoff = 12.0
+            contact_carrier = np.zeros(n_atoms, dtype=bool)
+            if np.any(protein_carrier):
+                box = np.array([x_len, y_len, z_len], dtype=np.float64)
+                carrier_index = np.where(protein_carrier)[0]
+                for start in range(0, lipid_beads.size, 512):
+                    delta = (
+                        final_positions[carrier_index, None, :]
+                        - final_positions[lipid_beads[start:start + 512]][None, :, :]
+                    )
+                    delta -= box * np.rint(delta / box)
+                    contact_carrier[carrier_index] |= np.any(
+                        np.sum(delta * delta, axis=2) < interface_cutoff * interface_cutoff,
+                        axis=1,
+                    )
+            protein_friction = protein_carrier[brownian_atom_index]
+            if production_friction_clock:
+                protein_friction &= ~contact_carrier[brownian_atom_index]
+            friction[protein_friction] = 0.0
             brownian_grp = t.create_group(input_grp, 'brownian')
             t.create_array(brownian_grp, 'atom_index', obj=brownian_atom_index)
-            if friction_scale is not None:
-                t.create_array(brownian_grp, 'friction_scale', obj=friction_scale)
-            brownian_grp._v_attrs.gamma_ref = float(os.environ.get("UPSIDE_LIPID_GAMMA_REF", "0.0035"))
-            brownian_grp._v_attrs.t_ref = float(os.environ.get("UPSIDE_LIPID_T_REF", "0.8647"))
-            brownian_grp._v_attrs.activation_energy = float(os.environ.get("UPSIDE_LIPID_EA_EUP", "10.3"))
-            brownian_grp._v_attrs.n_substep = int(os.environ.get("UPSIDE_LIPID_NSUBSTEP", "90"))
-            brownian_grp._v_attrs.langevin = langevin
-            brownian_grp._v_attrs.effective_time_factor = float(os.environ.get("UPSIDE_LIPID_TIME_FACTOR", "1.0"))
+            t.create_array(brownian_grp, 'friction', obj=friction.astype(np.float32))
+            t.create_array(
+                brownian_grp,
+                'protein_contact_atom_index',
+                obj=np.where(contact_carrier)[0].astype('i4'),
+            )
+            brownian_grp._v_attrs.numerical_time_step = np.float64(numerical_time_step)
+            brownian_grp._v_attrs.protein_time_ps_per_step = np.float64(protein_time_ps)
+            brownian_grp._v_attrs.martini_time_factor = np.float64(martini_time_factor)
+            brownian_grp._v_attrs.raw_martini_time_ps_per_step = np.float64(raw_martini_time_ps)
+            brownian_grp._v_attrs.target_dopc_diffusion_um2_s = np.float64(target_diffusion)
+            brownian_grp._v_attrs.raw_target_diffusion_um2_s = np.float64(raw_target_diffusion)
+            brownian_grp._v_attrs.reference_temperature_up = np.float64(reference_temperature)
+            brownian_grp._v_attrs.raw_langevin_relaxation_ps = np.float64(raw_relaxation_ps)
+            brownian_grp._v_attrs.relaxation_time_up = np.float64(relaxation_up)
+            brownian_grp._v_attrs.production_friction_clock = np.int64(production_friction_clock)
+            brownian_grp._v_attrs.interface_friction_cutoff_A = np.float64(interface_cutoff)
+            brownian_grp._v_attrs.protein_contact_carrier_count = np.int64(np.sum(contact_carrier))
+            brownian_grp._v_attrs.transport_observable = b"contact_local_dry_martini_friction_clock"
+            brownian_grp._v_attrs.time_unit_ps = np.float64(time_unit_ps)
 
         # Create charges array
         charge_array = t.create_array(input_grp, 'charges', obj=charges)
@@ -2033,10 +2066,13 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         
         # Create potential group (required by UPSIDE)
         potential_grp = t.create_group(input_grp, 'potential')
+
+        hybrid_position = t.create_group(potential_grp, 'martini_hybrid_position')
+        hybrid_position._v_attrs.arguments = np.array([b'pos'])
         
         # Create MARTINI potential with proper parameters
         martini_potential = t.create_group(potential_grp, 'martini_potential')
-        martini_potential._v_attrs.arguments = np.array([b'pos'])
+        martini_potential._v_attrs.arguments = np.array([b'martini_hybrid_position'])
         martini_potential._v_attrs.potential_type = b'lj_coulomb'
         # coulomb_constant feeds the Python soft-core builder for the equilibration
         # stages; the runtime spline table already has Coulomb baked in.

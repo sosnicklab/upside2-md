@@ -1508,45 +1508,140 @@ break/reform RATES cancel; caveats = converge rare opens via REMD/metad + "open 
 criterion in a dry membrane. New Outlook: compose-by-physical-coupling generalizes to rare-data systems
 (nanoparticles). Compiles clean (pdflatex, 260 KB).
 
-## Update 60 (2026-07-19): BUG -- protein overheats in hybrid (secondary structure melts); fixed
+## Update 60 (2026-07-19): secondary-structure failure and coupled clock, corrected diagnosis
 
-SYMPTOM (user): fresh hybrid runs (1afo/1rkl stage_7 production) show protein secondary-structure
-instability. QUANTIFIED: backbone H-bonds fall (1afo 93->58; 1rkl 34->9 = near-total helix loss) while Rg
-stays compact -> helices MELT, not global unfold. ROOT CAUSE: per-species kinetic temperature shows the
-PROTEIN runs at kT ~1.4-2.0 (1afo) / up to 2.0 (1rkl) vs target 0.8647, while lipids are correct (kT ~0.86).
-The protein was at friction_scale=0 (pure velocity Verlet -- from the Update-51 clamp fix): a Hamiltonian
-body coupled to the NOISY g-JF lipid bath across the stiff hard-core interface, with NO dissipation of its
-own. The finite-step interface injects energy the weak global OU (tau=5.0) cannot remove -> the protein
-overheats -> H-bonds melt. (thermostat-interval -1 is a red herring: main.cpp clamps it to max(1,...) =
-every step with POSITIVE dt, so the OU is weak, not sign-broken.) This is a fluctuation-dissipation
-imbalance, NOT a coupling/force bug. SUPERSEDES Update 51/49 "protein = velocity-Verlet + OU": that design
-lacks protein dissipation and overheats in the coupled system.
-FIX (prep, martini_prepare_system_lib.py, langevin==1): give the protein its OWN Langevin friction --
-friction_scale[PROTEIN] = UPSIDE_PROTEIN_FRICTION_SCALE (default 100) instead of 0. Faithful scan (start =
-real production frame 0): fs=0 kT 1.58 (melts), fs=30 kT 1.09, fs=100 kT 0.875 ~ target (H-bonds STABLE,
-still fluctuating), fs=300 kT 0.735 (over-cooled). fs~100 is the sweet spot. No C++ change, no rebuild;
-existing configs must be RE-PREPPED to pick up the fix.
-HDX CORRECTNESS: the fix RESTORES correct HDX (the overheating had made it wrong -- inflated K_op ->
-over-exchange). Friction is Boltzmann-correct: it sets T + (effective) kinetics but does NOT bias the
-equilibrium, so once kT=target the equilibrium opening constant K_op (= EX2 protection factor) is correct.
-Use the MINIMUM friction that holds T (fs~100) to keep local opening sampled (don't over-damp -> would
-under-sample opens -> falsely over-protected); converge rare opens with REMD/metad; use an
-"open AND water-accessible" protection criterion for TM segments.
+The former `friction_scale=100` conclusion was a system-dependent thermostat fit, not a physical
+protein--membrane drag model, and is superseded. The actual failure combined three independent defects:
 
-## Update 61 (2026-07-19): protein overheating fix VALIDATED (1afo); kT-precision is a fragile balance
+1. O and the MARTINI BB centre are derived from N/CA/C, but the force path regenerated them by mutating
+   the integrator position array and manually projected only the BB force. This broke the differentiable
+   coordinate graph and omitted the regenerated-O chain rule. A `martini_hybrid_position` CoordNode now
+   constructs O/BB with forward-mode automatic differentiation and maps BB-env sensitivity back through
+   the complete Jacobian. O/BB are fixed virtual sites, not integrated or thermostatted particles.
+2. `/output/pos` used the raw integration array, so its O/BB entries were stale. Uncorrected DSSP therefore
+   reported helix loss even when the N/CA/C helix core remained native. The logger now copies the evaluated
+   hybrid coordinate node. A direct three-frame check found maximum O and BB mapping errors of
+   `1.91e-6 A`; ordinary trajectory analysis and stage restarts now see the force-graph geometry.
+3. The soluble-protein step `dt=0.009` under-resolves the hard coupled interface. Equal-duration 1RKL
+   regressions (45 Upside units, all SC-env and BB-env interactions active) gave:
 
-fs_prot=100 fix VALIDATED on 1afo (faithful production start): kT_prot controlled (~0.87-0.94 vs fs=0's
-1.5-2.0), and the residual H-bond loss (95->~64) is EXPECTED TERMINAL FRAYING, not disruption -- per-donor
-analysis: the helical CORES stay protected (donors 7-54 chain A, 72-120 chain B), the lost H-bonds are the
-two C-termini (55-64, 121-130) + a few scattered. So the fix resolves the melting; the residual is thermal
-end-fraying + relaxation from the over-minimized (cold) start.
-kT PRECISION (matters for HDX, K_op ~ e^{-dG/kT}): exact kT=0.865 is a FRAGILE driven-steady-state balance
-(interface heating vs g-JF cold-bias-at-high-friction vs OU cooling). Both knobs overshoot around the
-crossover: friction scan fs=100->0.9, 150->0.80, 300->0.735; OU scan (fs=100) tau=5->0.94, 2->0.77, 1->0.75.
-kT=0.865 sits at ~fs 115 (tau=5) or ~tau 3.5 (fs=100), and the balance is system-dependent. kT_lip stays
-correct (0.862-0.872) throughout -- only the protein T is sensitive. DECISION: keep fs_prot default 100
-(env UPSIDE_PROTEIN_FRICTION_SCALE; resolves the severe bug, kT within ~5% of target) rather than tune to
-the fragile crossover. For rigorous HDX: VERIFY per-system protein kT and nudge fs in ~[100,150] to center
-on 0.865 (a ~5% T offset -> ~15% protection-factor bias if uncorrected). Robust exact-T would want a
-velocity-rescale/per-atom thermostat -- flagged, not built. Both proteins re-prepped (fs=100); 1rkl run
-in progress confirms the same mechanism.
+   - `dt=.009`: carrier kT mean/peak 1.160/2.539; H-bonds 32.79 -> min 7.12 -> 32.25.
+   - `dt=.0045`: carrier kT mean/peak .872/1.101; H-bonds 32.79 -> min 20.23 -> 30.50.
+   - `dt=.00225`: carrier kT mean/peak .945/1.480; H-bonds 32.79 -> min 22.43 -> 32.54.
+
+The current logger rerun at `.00225` was bitwise identical for every real coordinate and momentum; only
+the formerly stale virtual positions changed. Direct raw-output DSSP found 23 helical residues initially,
+24 finally, and all 23 native helical sites retained at the endpoint. O/BB mapping maxima were
+`1.15e-6/1.06e-6 A`, versus `10.76/11.38 A` with the old logger.
+
+The hybrid default is therefore `dt=.00225`. Default step counts and frame strides are multiplied by four
+to preserve the previous nominal duration and output cadence. The fix does not soften, disable, or cap any
+SC-env or BB-env interaction; all runtime pair forces remain spline-table evaluations.
+
+Fresh current-code 1AFO at `dt=.00225` for the same 45 units retained the native helix core at 45/45
+(minimum 44/45), total DSSP helix 54 -> 54, H-bonds 93.44 -> 83.36, and Rg 15.79 -> 15.50 A. Its final
+nine-unit block had carrier/lipid kT .917/.836. Saved O and BB mapping maxima were `1.90e-6` and
+`1.21e-6 A`, and O/BB momenta were exactly zero. At `dt=.009`, the comparable final-block carrier kT,
+H-bonds, and native core were 1.139, 68.51, and 43.8/45.
+
+Thermostatting now follows one-bath-per-particle fluctuation--dissipation bookkeeping. Environment beads
+use absolute g-JF friction `alpha=m/(4 ps / 0.202896643 ps)` (mass-6 alpha `0.304344964`); positive-friction
+particles are excluded from global OU. Protein N/CA/C carriers use the zero-friction Verlet limit of the
+same g-JF update and retain the standard Upside OU bath. The mechanical step is 0.457 fs. The often quoted
+40 ps per Upside time unit is an empirical protein conformational acceleration, not the mixed-system clock.
+
+This gives the bilayer the standard dry-MARTINI stochastic relaxation and lets the protein receive
+stochastic drag through conservative collisions with that damped bath. It does not establish a quantitative
+protein resistance tensor: exact parallel, normal, and rotational protein--membrane drag would require a
+momentum-conserving pair thermostat calibrated to a conventional dry-MARTINI or atomistic reference. No
+uncalibrated DPD/contact coefficient is introduced merely to make secondary structure survive.
+
+## Update 61 (2026-07-20): literal 40 ps protein-step clock requires a synchronously coupled lipid micro-solver
+
+The requested protein clock is one integration step = 40 ps physical, not 40 ps per Upside time unit. Code
+inspection adds a critical scheduling fact: `DerivEngine::integration_cycle` advances the protein through
+three consecutive stages, but the current lipid propagator runs only once on stage zero. Thus the mixed
+system already has an explicit 3x schedule mismatch. With the standard MARTINI factor four
+(`t_physical = 4 t_CG`), the lipid must represent 10 ps raw MARTINI dynamics per protein stage, or 30 ps per
+three-stage cycle. For `D_DOPC = 11.5 um^2/s` at 303 K, the acceptance target is `0.184 A^2` lateral MSD per
+stage and `0.552 A^2` per cycle. Equivalently, raw-CG D is 46 um^2/s. Multiplying again by four would
+double-count the correction.
+
+The current single-step g-JF path cannot represent this clock, and the existing overdamped fallback is not
+adequate for protein friction: it advances the lipids through all inner Brownian force refreshes while the
+protein carriers receive only the final `pos->sens`. The time-integrated fluctuating protein--lipid reaction
+is discarded. The clean architecture is a mixed multirate SDE: on every inner step, update lipids with
+constant-mobility overdamped Brownian dynamics and FDT noise, and advance protein momenta/coordinates
+symmetrically from the simultaneous full conservative force. Every SC-env and BB-env reaction is returned
+through the virtual-site Jacobian. The joint canonical distribution is invariant; eliminating the lipid
+coordinates gives the protein a colored memory/friction kernel without an empirical protein drag multiplier.
+
+Calibrate only lipid mobility on a large pure-DOPC patch to the 0.184 A^2/update slope; choose the inner-step
+count by convergence, not by diffusion. The existing hard-core tests suggest about 90 overdamped inner steps
+for the hybrid, while an inertial dry-MARTINI reference spanning 10 ps would require 250--500 conventional
+40--20 fs steps. Do not use the current displacement cap in the calibrated path. Validate a Fickian MSD
+window plus APL, thickness, order, and compressibility, then measure protein lateral/normal/rotational
+resistance and membrane force/torque correlations. Add a calibrated pair/contact GLE only if this emergent
+friction misses those independent reference observables.
+
+## Update 62 (2026-07-20): standard `.009` single-step constraint and molecular-versus-bead target
+
+The user clarified that both components should use the same numerical timestep as the ordinary Upside
+examples and that bilayer multistepping should be avoided if possible. `example/02.ReplicaExchangeSimulation`
+does not override the engine default, so its timestep is `.009`; the ordinary Verlet path groups three `.009`
+steps per outer bookkeeping cycle. The next implementation must therefore test a one-step all-particle path
+at `.009` before considering any lipid subcycling.
+
+The primary transport target remains whole-DOPC COM diffusion: at 303 K, 11.5 um^2/s and 40 physical ps per
+`.009` step require `0.184 A^2` lateral MSD per numerical step. The MARTINI-equivalent statement is 46 um^2/s
+over 10 raw-CG ps per step. For a bonded molecule, every bead's long-time trajectory is the COM trajectory
+plus bounded internal motion, so every bead and the COM have the same asymptotic diffusion coefficient. A
+separate sub-molecular fallback can only calibrate the *bare/free bead mobility*. Its initial g-JF friction is
+`alpha_bead = kT_ref*dt/(D_phys*40 ps)`; at `kT=.8647`, `dt=.009`, and 11.5 um^2/s this is about 0.1692 in
+Upside units. A free-draining molecular initial estimate is `alpha_bead/14`, but hard-core caging makes the
+actual DOPC COM diffusion a measured, nonlinear quantity.
+
+Lesson: do not assign physical time to outer logging cycles or infer a bead-specific long-time diffusion in
+a bonded lipid. Verify the numerical timestep against the reference example, state whether the observable is
+molecular COM diffusion or bare bead mobility, and apply the MARTINI factor four exactly once.
+
+## Update 63 (2026-07-20): molecular-D scan fails; use an explicit protein--bilayer friction clock
+
+The user refined the claim hierarchy: prefer the factor-four-corrected molecular DOPC lateral diffusion; if
+40 ps/step is unreachable, define the kinetic mapping through the friction experienced by protein in the
+bilayer. A one-step `.009` 1RKL scan used lipid frictions 0.3043 (old standard), 0.1692 (free-bead D target),
+0.0121 (14-bead free-draining molecular estimate), 0.0035, and 0.001. Inferred whole-DOPC COM diffusion was
+0.055, 0.084, 0.155, 0.168, and 0.175 um^2/s respectively, versus 11.5 target. The low-friction response has
+already reached a Kramers/cage plateau about 66x too slow, while protein/lipid kinetic temperatures rise and
+H-bonds degrade. Friction reduction cannot produce the molecular clock in a stable single step.
+
+The selected fallback maps the known dry-MARTINI 4 ps raw stochastic relaxation rather than pretending that
+the measured COM diffusion is correct. Factor four makes that 16 ps physical. With one `.009` integration
+step representing 40 ps physical (10 ps raw), `tau_up=.009*(4/10)=.0036` and `alpha_i=m_i/tau_up`. The same
+mass-scaled g-JF bath is applied to environment particles and to real N/CA/C protein carriers whose initial
+positions lie within the existing 12 A spline interaction cutoff of a lipid bead; noncontact carriers retain
+the standard Upside OU bath. This is FDT-consistent and gives the protein a literal bilayer-friction clock,
+but it is explicitly not a claim that DOPC COM diffusion equals 11.5 um^2/s.
+
+A 5000-step upper-bound test applying the mapped friction to every 1RKL carrier reduced mean/final protein
+kinetic energy from 1.69/1.72 (lipid-only friction clock) to 1.29/1.21 and raised the minimum H-bond score
+from 16.0 to 19.8. The production mask uses the physical 12 A interaction cutoff instead of damping
+noncontact protein indiscriminately.
+
+The final implementation removes the overdamped/substep branch and its displacement cap. Every physical
+particle takes one g-JF update per `.009` step. H5 records the full clock contract and the exact contact
+carrier indices. Preparation uses ordinary native dry-MARTINI damping; switching to the high production
+friction before resolving packing overlaps froze the bath and failed, so the friction clock activates only
+for `npt_prod`. Fixed and z-fixed constraints are enforced inside g-JF; regenerated O/BB sites remain
+nonintegrated with exactly zero momentum.
+
+Fresh final-code workflows passed for both proteins. In 5000-step stage-7 runs, mapped all-atom DSSP helix
+counts stayed exactly 7 for 1RKL and 27 for 1AFO. Mean protein/lipid kinetic energies were 1.286/1.297 and
+1.300/1.298, respectively, versus `3 kT/2 = 1.297`. Current short-window molecular DOPC estimates were
+`7.13e-5` and `7.00e-5 um^2/s`, versus 11.5 target. Separate 50,000-step continuations on the same production
+integrator also kept helix counts fixed and averaged 99.9%/100.2% of target kinetic energy; their molecular
+diffusion estimates were `6.72e-5` and `6.04e-5 um^2/s`. SC-env and BB-env spline nodes remained present,
+and no conservative potential was modified.
+
+Lesson: when diffusion and friction clocks disagree, name the calibrated observable in H5 and in the paper.
+Never report a friction-calibrated trajectory as having the target molecular lateral diffusion.

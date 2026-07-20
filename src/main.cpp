@@ -116,6 +116,8 @@ struct System {
     uint64_t round_num;
     bool martini_hybrid_progress;
     vector<int> protein_rg_atom_indices;
+    vector<unsigned char> protein_atom_mask;
+    vector<unsigned char> lipid_atom_mask;
     System(): round_num(0), martini_hybrid_progress(false) {}
 
     void set_temperature(float new_temp) {
@@ -123,6 +125,22 @@ struct System {
         thermostat.set_temp(temperature);
     }
 };
+
+static vector<unsigned char> read_particle_class_mask(
+        hid_t config_root,
+        int n_atom,
+        const string& target_class) {
+    vector<unsigned char> out(static_cast<size_t>(n_atom), 0u);
+    if(!h5_exists(config_root, "/input/particle_class")) return out;
+    auto shape = get_dset_size(1, config_root, "/input/particle_class");
+    if(static_cast<int>(shape[0]) != n_atom)
+        throw string("/input/particle_class length must match n_atom");
+    traverse_string_dset<1>(config_root, "/input/particle_class",
+            [&](size_t i, const string& value) {
+                if(value.find(target_class) != string::npos) out[i] = 1u;
+            });
+    return out;
+}
 
 static vector<int> collect_hybrid_ca_indices(hid_t config_root, int n_atom) {
     vector<int> out;
@@ -234,19 +252,64 @@ static HybridProteinPotentialComponents compute_hybrid_protein_potential_compone
 
 static double compute_logged_kinetic_energy(System* sys) {
     double sum_kin = 0.0;
+    if(!sys->martini_hybrid_progress) {
+        VecArray mom_array = sys->mom;
+        if(martini_masses::has_masses(&sys->engine)) {
+            for(int na=0; na<sys->n_atom; ++na) {
+                float mass = martini_masses::get_mass(&sys->engine, na);
+                if(mass <= 0.f) mass = 1.f;
+                sum_kin += mag2(load_vec<3>(mom_array, na)) / mass;
+            }
+        } else {
+            for(int na=0; na<sys->n_atom; ++na) {
+                sum_kin += mag2(load_vec<3>(mom_array, na));
+            }
+        }
+        return (0.5/sys->n_atom) * sum_kin;
+    }
+    int n_dynamic = 0;
     VecArray mom_array = sys->mom;
+    vector<unsigned char> fixed_mask(static_cast<size_t>(sys->n_atom), 0u);
+    for(int atom : martini_fix_rigid::get_fixed_atoms(sys->engine)) {
+        if(atom >= 0 && atom < sys->n_atom) fixed_mask[static_cast<size_t>(atom)] = 1u;
+    }
     if(martini_masses::has_masses(&sys->engine)) {
         for(int na=0; na<sys->n_atom; ++na) {
+            if(fixed_mask[static_cast<size_t>(na)]) continue;
             float mass = martini_masses::get_mass(&sys->engine, na);
             if(mass <= 0.f) mass = 1.f;
             sum_kin += mag2(load_vec<3>(mom_array, na)) / mass;
+            n_dynamic += 1;
         }
     } else {
         for(int na=0; na<sys->n_atom; ++na) {
+            if(fixed_mask[static_cast<size_t>(na)]) continue;
             sum_kin += mag2(load_vec<3>(mom_array, na));
+            n_dynamic += 1;
         }
     }
-    return (0.5/sys->n_atom) * sum_kin;
+    return n_dynamic > 0 ? (0.5/n_dynamic) * sum_kin : 0.0;
+}
+
+static double compute_logged_subset_kinetic_energy(
+        System* sys,
+        const vector<unsigned char>& atom_mask) {
+    if(atom_mask.size() != static_cast<size_t>(sys->n_atom)) return 0.0;
+    vector<unsigned char> fixed_mask(static_cast<size_t>(sys->n_atom), 0u);
+    for(int atom : martini_fix_rigid::get_fixed_atoms(sys->engine)) {
+        if(atom >= 0 && atom < sys->n_atom) fixed_mask[static_cast<size_t>(atom)] = 1u;
+    }
+    double sum_kin = 0.0;
+    int n_dynamic = 0;
+    for(int na=0; na<sys->n_atom; ++na) {
+        if(!atom_mask[static_cast<size_t>(na)] || fixed_mask[static_cast<size_t>(na)]) continue;
+        float mass = martini_masses::has_masses(&sys->engine)
+            ? martini_masses::get_mass(&sys->engine, na) : 1.f;
+        if(mass <= 0.f) mass = 1.f;
+        sum_kin += mag2(load_vec<3>(sys->mom, na)) / mass;
+        n_dynamic += 1;
+    }
+    return n_dynamic > 0 ? (0.5/n_dynamic) * sum_kin : 0.0;
 }
 
 static vector<float> read_atom_thermostat_timescales(hid_t config_root, int n_atom) {
@@ -929,10 +992,14 @@ try {
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
             // Register hybrid MARTINI/Upside metadata for this engine (read from H5)
             martini_hybrid::register_hybrid_for_engine(sys->config.get(), sys->engine);
-            // Overdamped (Brownian) integrator for full-resolution MARTINI lipid beads
+            // Single-step g-JF integrator for every physical MARTINI particle
             martini_brownian::register_brownian_for_engine(
                     &sys->engine, sys->config.get(), sys->random_seed);
             sys->martini_hybrid_progress = martini_hybrid::is_hybrid_enabled(sys->engine);
+            sys->protein_atom_mask = read_particle_class_mask(
+                    sys->config.get(), sys->n_atom, "PROTEIN");
+            sys->lipid_atom_mask = read_particle_class_mask(
+                    sys->config.get(), sys->n_atom, "LIPID");
             if(sys->martini_hybrid_progress) {
                 sys->protein_rg_atom_indices = collect_hybrid_ca_indices(sys->config.get(), sys->n_atom);
             } else {
@@ -993,21 +1060,20 @@ try {
             }
             else {
                 for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
-                sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine); // initial thermalization if it's a fresh start
+                if(sys->martini_hybrid_progress)
+                    sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine, true, true);
+                else
+                    sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine);
             }
 
-            // Hybrid virtual BB proxy atoms are position-overwritten from the
-            // active carrier set, so they must not retain independently
-            // thermalized momentum before the first MD step.
+            // Hybrid O/BB virtual sites are derived from the carrier set and
+            // must not retain independently thermalized momentum.
             martini_fix_rigid::apply_fix_rigid_md(sys->engine, sys->engine.pos->output, sys->engine.pos->sens, sys->mom);
 
 
             // we must capture the sys pointer by value here so that it is available later
             sys->logger->add_logger<float>("pos", {1, sys->n_atom, 3}, [sys](float* pos_buffer) {
-                    VecArray pos_array = sys->engine.pos->output;
-                    for(int na=0; na<sys->n_atom; ++na) 
-                    for(int d=0; d<3; ++d) 
-                    pos_buffer[na*3 + d] = pos_array(d,na);
+                    martini_hybrid::copy_positions_for_output(sys->engine, pos_buffer);
                     });
             if (record_momentum_arg.getValue()) { // record the momentum if requested, with the same frequency as the position recording
                 sys->logger->add_logger<float>("mom", {1, sys->n_atom, 3}, [sys](float* mom_buffer) {
@@ -1021,6 +1087,14 @@ try {
             sys->logger->add_logger<double>("kinetic", {1}, [sys](double* kin_buffer) {
                     kin_buffer[0] = compute_logged_kinetic_energy(sys);
                     });
+            if(sys->martini_hybrid_progress) {
+                sys->logger->add_logger<double>("protein_kinetic", {1}, [sys](double* kin_buffer) {
+                        kin_buffer[0] = compute_logged_subset_kinetic_energy(sys, sys->protein_atom_mask);
+                        });
+                sys->logger->add_logger<double>("lipid_kinetic", {1}, [sys](double* kin_buffer) {
+                        kin_buffer[0] = compute_logged_subset_kinetic_energy(sys, sys->lipid_atom_mask);
+                        });
+            }
             sys->logger->add_logger<double>("potential", {1}, [sys](double* pot_buffer) {
                     sys->engine.compute(PotentialAndDerivMode);
                     pot_buffer[0] = sys->engine.potential;});

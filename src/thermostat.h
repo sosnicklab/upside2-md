@@ -40,5 +40,10 @@ struct OrnsteinUhlenbeckThermostat
         OrnsteinUhlenbeckThermostat& set_atom_timescale(const std::vector<float>& atom_timescale_) {
             atom_timescale = atom_timescale_; return *this;}
 
-        void apply(VecArray mom, int n_atom, DerivEngine* engine = nullptr);
+        void apply(
+                VecArray mom,
+                int n_atom,
+                DerivEngine* engine = nullptr,
+                bool include_brownian = false,
+                bool full_refresh = false);
 };

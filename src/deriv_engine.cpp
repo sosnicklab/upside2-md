@@ -394,19 +394,20 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
 }
 
 void DerivEngine::integration_cycle(VecArray mom, float dt) {
+    // MARTINI configurations list every dynamic particle in the single-step g-JF integrator.
+    if(martini_brownian::has_brownian(this)) {
+        compute(DerivMode);
+        martini_brownian::apply_langevin_step(this, mom, dt);
+        return;
+    }
+
     auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
     bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
-    // Overdamped (Brownian) lipid beads are advanced once per cycle (on stage 0) and are
-    // skipped by the inertial Verlet update below.
-    bool has_brownian = martini_brownian::has_brownian(this);
-    const auto& brownian_mask = martini_brownian::brownian_mask(this);
-
     for(int stage=0; stage<3; ++stage) {
         compute(DerivMode);   // compute derivatives
-        if(stage==0 && has_brownian) martini_brownian::apply_brownian_step(this, mom, dt);
         Timer timer(string("integration"));
 
         // Check if MARTINI masses are available and use mass-aware integrator
@@ -417,7 +418,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
                     store_vec(mom, na, make_zero<3>());
                     continue;
                 }
-                if(has_brownian && brownian_mask[static_cast<size_t>(na)]) continue;
                 bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
 
                 // Get mass for this atom from MARTINI mass storage
@@ -443,7 +443,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
                     store_vec(mom, na, make_zero<3>());
                     continue;
                 }
-                if(has_brownian && brownian_mask[static_cast<size_t>(na)]) continue;
                 bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
 
                 auto d = load_vec<3>(pos->sens, na);
