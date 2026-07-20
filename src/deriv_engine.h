@@ -27,7 +27,9 @@ integration_stage(
         float vel_factor, //!< [in] fraction of force to add to momentum (integration dependent)
         float pos_factor,//!< [in] fraction of momentum to add to position (integration dependent)
         float max_force, //!< [in] clip forces so that they do not exceed maxforce (increase stability)
-        int n_atom //!<[in] number of atoms
+        int n_atom, //!<[in] number of atoms
+        const std::vector<unsigned char>* fixed_mask = nullptr,  //!< [in] optional per-atom fixed-in-space mask (nullptr = none)
+        const std::vector<unsigned char>* z_fixed_mask = nullptr //!< [in] optional per-atom z-only fixed mask (nullptr = none)
         );
 
 //! \brief Recenter position array to origin

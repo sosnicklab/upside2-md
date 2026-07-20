@@ -63,12 +63,8 @@ if [ -z "${UPSIDE_MARTINI_TABLE_WORKERS+x}" ]; then
     export UPSIDE_MARTINI_TABLE_WORKERS
 fi
 
-# CGL tables use direct rotated dry-MARTINI bead geometry.
-UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT=8
-export UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT
-
-echo "Regenerating dry-MARTINI .h5 files under ${PROJECT_ROOT}/parameters/dryMARTINI"
-echo "Using ${UPSIDE_MARTINI_TABLE_WORKERS} MARTINI table worker(s), ${UPSIDE_MARTINI_CGL_BEAD_FRAME_COUNT} CGL bead-frame sample(s)"
+echo "Regenerating dry-MARTINI force field ${PROJECT_ROOT}/parameters/ff_2.1/martini.h5"
+echo "Using ${UPSIDE_MARTINI_TABLE_WORKERS} MARTINI table worker(s)"
 
 python3 "${PROJECT_ROOT}/py/martini_gen_params.py" \
     --upside-home "${PROJECT_ROOT}" \

@@ -1,22 +1,7 @@
 #include "martini_internal.h"
 #include "deriv_engine.h"
-#include "timing.h"
-#include "state_logger.h"
 #include <mutex>
-#include "spline.h"
-#include <iostream>
-#include <H5Apublic.h> // for H5Aexists
-#include <cmath> // For pow, cosf, sinf, acosf
-#include <cctype>
-#include <cstdint>
-#include <set> // For std::set
-#include <array>
 #include <vector>
-#include <algorithm>
-#include <unordered_map>
-#include <memory>
-#include <limits>
-#include "box.h" // For PBC minimum_image function
 
 using namespace h5;
 using namespace std;
@@ -162,14 +147,6 @@ void apply_stage_angle_params(DerivEngine& engine) {
     auto param_it = stage_angles.find(current_stage);
     if(param_it == stage_angles.end()) return;
     
-}
-
-// Clear stage parameters for an engine
-void clear_stage_params_for_engine(DerivEngine* engine) {
-    std::lock_guard<std::mutex> lock(g_stage_mutex);
-    g_current_stage.erase(engine);
-    g_stage_bond_params.erase(engine);
-    g_stage_angle_params.erase(engine);
 }
 
 } // namespace martini_stage_params

@@ -1,7 +1,6 @@
 #include "box.h"
 #include "martini.h"
 #include <cmath>
-#include <cstdio>
 #include <algorithm>
 #include <atomic>
 #include <mutex>
@@ -11,26 +10,6 @@
 using namespace h5;
 
 namespace simulation_box {
-
-void wrap_positions(VecArray pos, int n_atom, float box_x, float box_y, float box_z) {
-    for(int i = 0; i < n_atom; ++i) {
-        float x = pos(0, i);
-        float y = pos(1, i);
-        float z = pos(2, i);
-        
-        // Wrap into [0, box_dim)
-        x = fmodf(x, box_x);
-        if(x < 0) x += box_x;
-        y = fmodf(y, box_y);
-        if(y < 0) y += box_y;
-        z = fmodf(z, box_z);
-        if(z < 0) z += box_z;
-        
-        pos(0, i) = x;
-        pos(1, i) = y;
-        pos(2, i) = z;
-    }
-}
 
 namespace npt {
 
@@ -55,11 +34,16 @@ static BarostatSettings read_barostat_settings(hid_t root) {
         s.compressibility_z = read_attribute<float>(grp.get(), ".", "compressibility_z", s.compressibility);
         s.semi_isotropic = read_attribute<int>(grp.get(), ".", "semi_isotropic", int(s.semi_isotropic)) != 0;
         int type_int = read_attribute<int>(grp.get(), ".", "type", 0);
-        if(type_int == 1) {
+        if(type_int == 2) {
+            s.type = BarostatType::MonteCarlo;
+        } else if(type_int == 1) {
             s.type = BarostatType::ParrinelloRahman;
         } else {
             s.type = BarostatType::Berendsen;
         }
+        s.mc_dmax_xy = read_attribute<float>(grp.get(), ".", "mc_dmax_xy", s.mc_dmax_xy);
+        s.mc_dmax_z  = read_attribute<float>(grp.get(), ".", "mc_dmax_z",  s.mc_dmax_z);
+        s.mc_seed    = read_attribute<unsigned>(grp.get(), ".", "mc_seed", s.mc_seed);
     }
     return s;
 }
@@ -296,15 +280,106 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
     try {
         if(h5_exists(config_root, "/input/mass")) {
             st.masses.clear();
-            traverse_dset<1,float>(config_root, "/input/mass", 
+            traverse_dset<1,float>(config_root, "/input/mass",
                 [&](size_t i, float m){ st.masses.push_back(m); });
         }
     } catch(...) {}
-    
+
+    // Monte-Carlo barostat: group atoms by molecule (COM scaling) + seed the RNG
+    st.mc_mol_atoms.clear();
+    st.mc_init = false;
+    if(s.type == BarostatType::MonteCarlo) {
+        try {
+            if(h5_exists(config_root, "/input/molecule_ids")) {
+                std::vector<int> mol_id;
+                traverse_dset<1,int>(config_root, "/input/molecule_ids",
+                    [&](size_t, int m){ mol_id.push_back(m); });
+                int max_id = -1;
+                for(int m : mol_id) max_id = std::max(max_id, m);
+                if(max_id >= 0) {
+                    st.mc_mol_atoms.assign(static_cast<size_t>(max_id + 1), {});
+                    for(size_t a = 0; a < mol_id.size(); ++a)
+                        st.mc_mol_atoms[static_cast<size_t>(mol_id[a])].push_back(static_cast<int>(a));
+                    st.mc_rng.seed(s.mc_seed);
+                    st.mc_init = true;
+                }
+            }
+        } catch(...) { st.mc_mol_atoms.clear(); st.mc_init = false; }
+        if(!st.mc_init)
+            throw std::string("Monte-Carlo barostat requires /input/molecule_ids for COM scaling");
+    }
 }
 
 void register_node_box_updater(NodeBoxUpdater updater) {
     g_node_box_updater.store(updater, std::memory_order_relaxed);
+}
+
+// Monte-Carlo barostat: one lateral (xy) + one normal (z) trial move per call, each accepting on the
+// exact NPT weight exp(-beta[dU + P*dV]) * (V'/V)^N_mol. Molecule COMs are scaled (internal geometry
+// preserved), so dU is purely intermolecular -- the modulus reflects membrane area elasticity, not bond
+// stiffness. Correct fluctuations by construction, independent of any coupling constant.
+static void apply_mc_barostat(BarostatState& st, DerivEngine& engine, int n_atom, float kT) {
+    if(!st.mc_init || st.mc_mol_atoms.empty() || kT <= 0.f) return;
+    auto& s = st.settings;
+    VecArray pos = engine.pos->output;
+
+    std::vector<unsigned char> fixed(static_cast<size_t>(std::max(0, n_atom)), 0);
+    for(int a : martini_fix_rigid::get_fixed_atoms(engine))   if(a >= 0 && a < n_atom) fixed[a] = 1;
+    for(int a : martini_fix_rigid::get_z_fixed_atoms(engine)) if(a >= 0 && a < n_atom) fixed[a] = 1;
+
+    std::vector<float> saved(3 * static_cast<size_t>(std::max(0, n_atom)));
+    std::uniform_real_distribution<double> uni(0.0, 1.0);
+
+    engine.compute(PotentialAndDerivMode);
+    double U_old = engine.potential;
+
+    for(int axis = 0; axis < 2; ++axis) {         // 0 = lateral (xy), 1 = normal (z)
+        float dmax = (axis == 0) ? s.mc_dmax_xy : s.mc_dmax_z;
+        if(dmax <= 0.f) continue;
+        float P = (axis == 0) ? s.target_p_xy : s.target_p_z;
+        float scale = std::exp(static_cast<float>(dmax * (2.0 * uni(st.mc_rng) - 1.0)));
+        float sx = (axis == 0) ? scale : 1.f;
+        float sy = (axis == 0) ? scale : 1.f;
+        float sz = (axis == 0) ? 1.f   : scale;
+
+        float bx0 = st.box_x, by0 = st.box_y, bz0 = st.box_z;
+        double V_old = double(bx0) * by0 * bz0;
+
+        for(int i = 0; i < n_atom; ++i) { saved[3*i] = pos(0,i); saved[3*i+1] = pos(1,i); saved[3*i+2] = pos(2,i); }
+        long n_scaled = 0;
+        for(auto& atoms : st.mc_mol_atoms) {
+            if(atoms.empty()) continue;
+            bool anyfix = false;
+            for(int a : atoms) if(a < n_atom && fixed[a]) { anyfix = true; break; }
+            if(anyfix) continue;
+            double cx = 0, cy = 0, cz = 0;
+            for(int a : atoms) { cx += pos(0,a); cy += pos(1,a); cz += pos(2,a); }
+            double inv = 1.0 / atoms.size(); cx *= inv; cy *= inv; cz *= inv;
+            float dx = float(cx*sx - cx), dy = float(cy*sy - cy), dz = float(cz*sz - cz);
+            for(int a : atoms) { pos(0,a) += dx; pos(1,a) += dy; pos(2,a) += dz; }
+            ++n_scaled;
+        }
+        if(n_scaled == 0) continue;
+
+        st.box_x *= sx; st.box_y *= sy; st.box_z *= sz;
+        update_node_boxes(engine, sx, sz);       // xy scale = sx (=sy), z scale = sz
+        double V_new = double(st.box_x) * st.box_y * st.box_z;
+
+        engine.compute(PotentialAndDerivMode);
+        double U_new = engine.potential;
+
+        double arg = -(1.0/kT) * ((U_new - U_old) + double(P) * (V_new - V_old))
+                     + double(n_scaled) * std::log(V_new / V_old);
+        st.mc_attempt[axis]++;
+        if(std::log(uni(st.mc_rng)) < arg) {
+            U_old = U_new; st.mc_accept[axis]++;                 // accept
+        } else {
+            for(int i = 0; i < n_atom; ++i) { pos(0,i) = saved[3*i]; pos(1,i) = saved[3*i+1]; pos(2,i) = saved[3*i+2]; }
+            st.box_x = bx0; st.box_y = by0; st.box_z = bz0;      // restore box exactly
+            update_node_boxes(engine, 1.f/sx, 1.f/sz);           // undo node-box scaling
+        }
+    }
+    st.last_scale_xy = 1.f; st.last_scale_z = 1.f;
 }
 
 void maybe_apply_barostat(DerivEngine& engine,
@@ -313,6 +388,7 @@ void maybe_apply_barostat(DerivEngine& engine,
                           uint64_t round_num,
                           float dt,
                           int inner_step,
+                          float temperature,
                           int verbose,
                           bool print_now) {
     (void)verbose;
@@ -330,8 +406,14 @@ void maybe_apply_barostat(DerivEngine& engine,
     // Determine current box
     float bx = st.box_x, by = st.box_y, bz = st.box_z;
     if(bx == 0.f || by == 0.f || bz == 0.f) return;
+
+    if(s.type == BarostatType::MonteCarlo) {
+        apply_mc_barostat(st, engine, n_atom, temperature);
+        return;
+    }
+
     float V = volume_xyz(bx, by, bz);
-    
+
     // Compute forces for virial
     engine.compute(PotentialAndDerivMode);
     VecArray pos = engine.pos->output;

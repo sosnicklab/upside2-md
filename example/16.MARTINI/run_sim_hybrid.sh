@@ -40,57 +40,30 @@ while [[ $# -gt 0 ]]; do
 done
 
 PDB_ID="${PDB_ID:-1rkl}"
-LIPID_RESOLUTION="${LIPID_RESOLUTION:-coarse}"
-if [ "${LIPID_RESOLUTION}" != "coarse" ] && [ "${LIPID_RESOLUTION}" != "full" ]; then
-    echo "ERROR: LIPID_RESOLUTION must be coarse or full" >&2
-    exit 1
-fi
 
-coarse_hybrid_args=()
-if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
-    export UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE="${UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE:-25.0}"
-    export EXPLICIT_IONS="${EXPLICIT_IONS:-1}"
-    export CG_LIPID_MASS_SCALE="${CG_LIPID_MASS_SCALE:-0.05}"
-    export CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE="${CG_LIPID_ROTATIONAL_THERMOSTAT_TIMESCALE:-0.008}"
-    export CGL_GLE_MEMORY_TAUS="${CGL_GLE_MEMORY_TAUS:-0.2,2.0}"
-    export CGL_GLE_COUPLINGS="${CGL_GLE_COUPLINGS:-0.30375,0.2205}"
-    export CGL_GLE_TEMPERATURE_GRID="${CGL_GLE_TEMPERATURE_GRID:-0.7,0.8,0.8647,0.9,1.0,1.1,1.2}"
-    export CGL_GLE_COUPLING_SCALES="${CGL_GLE_COUPLING_SCALES:-1,1;1,1;1,1;1.013,1.057;1.05,1.22;1.20,1.39;1.50,1.50}"
-    export CGL_GLE_MEMORY_TAU_SCALES="${CGL_GLE_MEMORY_TAU_SCALES:-0.33,0.33;0.50,0.50;1,1;0.85,0.95;1.10,1.33;1.35,1.58;1.70,1.70}"
-    export CGL_GLE_REPLACE_MARKOVIAN="${CGL_GLE_REPLACE_MARKOVIAN:-1}"
-    export PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-1}"
-    export PROD_70_BURNIN_NSTEPS="${PROD_70_BURNIN_NSTEPS:-0}"
-    export STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING="${STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING:-0.0}"
-    export CGL_VTF_DISPLAY_MODE="${CGL_VTF_DISPLAY_MODE:-rod}"
-    coarse_hybrid_args=(
-        --explicit-ions "${EXPLICIT_IONS}"
-        --cg-lipid-mass-scale "${CG_LIPID_MASS_SCALE}"
-        --cgl-gle-memory-taus "${CGL_GLE_MEMORY_TAUS}"
-        --cgl-gle-couplings "${CGL_GLE_COUPLINGS}"
-        --cgl-gle-replace-markovian "${CGL_GLE_REPLACE_MARKOVIAN}"
-    )
-    if [ -n "${CGL_GLE_TEMPERATURE_GRID}" ] || [ -n "${CGL_GLE_COUPLING_SCALES}" ] || [ -n "${CGL_GLE_MEMORY_TAU_SCALES}" ]; then
-        coarse_hybrid_args+=(
-            --cgl-gle-temperature-grid "${CGL_GLE_TEMPERATURE_GRID}"
-            --cgl-gle-coupling-scales "${CGL_GLE_COUPLING_SCALES}"
-            --cgl-gle-memory-tau-scales "${CGL_GLE_MEMORY_TAU_SCALES}"
-        )
-    fi
-fi
+# Full-resolution lipid dynamics. DEFAULT: g-JF inertial-Langevin SINGLE step for the lipids
+# (UPSIDE_LIPID_LANGEVIN=1) -- no RESPA sub-loop -- with a calibrated effective-time factor
+# R = D_exp/D_sim (g-JF under-diffuses, so physical_time = sim_time / R). Exact lipid D is unattainable single-step on
+# hard cores, so g-JF (stable, correct thermostat) runs at its natural step and the lipid timescale is
+# recovered by the effective-time factor (MARTINI-style; a single global factor is an approximation of
+# the protein<->lipid relative clock). The PROTEIN keeps the STANDARD Upside integrator (integrator v,
+# time step below, thermostat) -- identical to the other examples; only the lipids change.
+# Fallback: UPSIDE_LIPID_LANGEVIN=0 -> overdamped RESPA lipids (UPSIDE_LIPID_NSUBSTEP inner steps per
+# protein step, dt_inner ~1e-4; exact lipid D but ~M-fold cost). Friction is the smooth Arrhenius law
+# gamma(T)=gamma_ref*(kT/t_ref)*exp(Ea*(1/kT-1/t_ref)), calibrated so lateral D_COM*4 matches DOPC D(T).
+export UPSIDE_LIPID_GAMMA_REF="${UPSIDE_LIPID_GAMMA_REF:-0.0035}"
+export UPSIDE_LIPID_T_REF="${UPSIDE_LIPID_T_REF:-0.8647}"
+export UPSIDE_LIPID_EA_EUP="${UPSIDE_LIPID_EA_EUP:-10.3}"
+export UPSIDE_LIPID_LANGEVIN="${UPSIDE_LIPID_LANGEVIN:-1}"          # 1 = g-JF single-step (default); 0 = overdamped RESPA
+export UPSIDE_LIPID_TIME_FACTOR="${UPSIDE_LIPID_TIME_FACTOR:-7.3}"  # R = D_exp/D_sim (g-JF too slow): physical_time = sim_time / this
+export UPSIDE_LIPID_NSUBSTEP="${UPSIDE_LIPID_NSUBSTEP:-90}"         # overdamped fallback only (ignored when LANGEVIN=1)
 
-if [ "${LIPID_RESOLUTION}" = "full" ]; then
-    default_suffix="_hybrid_full"
-else
-    default_suffix="_hybrid"
-fi
-
-RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}${default_suffix}}"
-RUN_DIR="${RUN_DIR:-outputs/martini_${PDB_ID}${default_suffix}}"
+RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-${PDB_ID}_hybrid_full}"
+RUN_DIR="${RUN_DIR:-outputs/martini_${PDB_ID}_hybrid_full}"
 PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/${PDB_ID}.pdb}"
 BILAYER_PDB="${BILAYER_PDB:-${UPSIDE_HOME}/parameters/dryMARTINI/DOPC.pdb}"
 UNIVERSAL_PREP_SCRIPT="${UNIVERSAL_PREP_SCRIPT:-${PROJECT_ROOT}/py/martini_prepare_system.py}"
 EXTRACT_VTF_SCRIPT="${EXTRACT_VTF_SCRIPT:-${PROJECT_ROOT}/py/martini_extract_vtf.py}"
-CGL_VTF_DISPLAY_MODE="${CGL_VTF_DISPLAY_MODE:-rod}"
 
 SALT_MOLAR="${SALT_MOLAR:-0.15}"
 PROTEIN_LIPID_CUTOFF="${PROTEIN_LIPID_CUTOFF:-0.0}"
@@ -125,12 +98,8 @@ STAGE_70_BURNIN_PROTEIN_RESTRAINT_SPRING="${STAGE_70_BURNIN_PROTEIN_RESTRAINT_SP
 STAGE_70_RELEASE_SC_ENV_BACKBONE_HOLD_STEPS="${STAGE_70_RELEASE_SC_ENV_BACKBONE_HOLD_STEPS:-0}"
 STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS="${STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS:-0}"
 
-if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
-    EQ_TIME_STEP="${EQ_TIME_STEP:-0.004}"
-else
-    EQ_TIME_STEP="${EQ_TIME_STEP:-0.010}"
-fi
-PROD_TIME_STEP="${PROD_TIME_STEP:-0.004}"
+EQ_TIME_STEP="${EQ_TIME_STEP:-0.009}"
+PROD_TIME_STEP="${PROD_TIME_STEP:-0.009}"
 EQ_FRAME_STEPS="${EQ_FRAME_STEPS:-1000}"
 PROD_FRAME_STEPS="${PROD_FRAME_STEPS:-50}"
 PROD_70_NPT_ENABLE="${PROD_70_NPT_ENABLE:-0}"
@@ -172,22 +141,11 @@ find_latest_stage7() {
 }
 
 ensure_martini_parameter_files() {
-    local martini_ff_dir="${UPSIDE_HOME}/parameters/dryMARTINI"
-    local param_file=""
-    local required_params=(
-        "${martini_ff_dir}/particle.h5"
-        "${martini_ff_dir}/sidechain.h5"
-    )
-    if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
-        required_params+=("${martini_ff_dir}/dopc.h5")
+    local martini_h5="${UPSIDE_HOME}/parameters/ff_2.1/martini.h5"
+    if [ ! -f "${martini_h5}" ]; then
+        echo "MARTINI force-field file missing. Generating..."
+        python3 "${PROJECT_ROOT}/py/martini_gen_params.py" --upside-home "${UPSIDE_HOME}"
     fi
-    for param_file in "${required_params[@]}"; do
-        if [ ! -f "${param_file}" ]; then
-            echo "One or more MARTINI parameter files missing. Generating..."
-            python3 "${PROJECT_ROOT}/py/martini_gen_params.py" --upside-home "${UPSIDE_HOME}"
-            break
-        fi
-    done
 }
 
 if [ -z "${CONTINUE_STAGE_70_FROM}" ] && [ "${AUTO_CONTINUE_STAGE_70}" = "1" ]; then
@@ -209,12 +167,8 @@ workflow_args=(
     --protein-aa-pdb "${PROTEIN_AA_PDB}"
     --bilayer-pdb "${BILAYER_PDB}"
     --extract-vtf-script "${EXTRACT_VTF_SCRIPT}"
-    --cg-lipid-vtf-display "${CGL_VTF_DISPLAY_MODE}"
     --salt-molar "${SALT_MOLAR}"
 )
-if [ "${LIPID_RESOLUTION}" = "coarse" ]; then
-    workflow_args+=("${coarse_hybrid_args[@]}")
-fi
 workflow_args+=(
     --protein-lipid-cutoff "${PROTEIN_LIPID_CUTOFF}"
     --ion-cutoff "${ION_CUTOFF}"
@@ -250,7 +204,6 @@ workflow_args+=(
     --eq-frame-steps "${EQ_FRAME_STEPS}"
     --prod-frame-steps "${PROD_FRAME_STEPS}"
     --prod-70-npt-enable "${PROD_70_NPT_ENABLE}"
-    --lipid-resolution "${LIPID_RESOLUTION}"
     --prep-seed "${PREP_SEED}"
     --seed "${SEED}"
     --continue-stage-70-from "${CONTINUE_STAGE_70_FROM}"

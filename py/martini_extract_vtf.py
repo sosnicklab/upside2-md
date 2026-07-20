@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import argparse
 import os
@@ -262,276 +262,10 @@ def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
     return out
 
 
-def minimum_image_delta(delta, box_lengths):
-    out = np.asarray(delta, dtype=np.float32)
-    box = np.asarray(box_lengths, dtype=np.float32).reshape(1, 3)
-    safe_box = np.where(box > 0.0, box, 1.0)
-    return out - safe_box * np.round(out / safe_box)
-
-
 def write_vtf_frame(fh, pos):
     fh.write("\ntimestep ordered\n")
     for x, y, z in pos:
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
-
-
-def read_dopc_template_display_offsets(pdb_file):
-    residues = {}
-    if not pdb_file or not os.path.exists(pdb_file):
-        return None
-    with open(pdb_file, "r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            if not (line.startswith("ATOM") or line.startswith("HETATM")):
-                continue
-            resname = line[17:21].strip().upper()
-            if resname not in {"DOPC", "DOP"}:
-                continue
-            resid = int(line[22:26])
-            atom_name = line[12:16].strip().upper()
-            xyz = np.array(
-                [float(line[30:38]), float(line[38:46]), float(line[46:54])],
-                dtype=np.float64,
-            )
-            residues.setdefault(resid, {})[atom_name] = xyz
-
-    head_offsets = []
-    tail_offsets = []
-    for atoms in residues.values():
-        required = {"NC3", "C5A", "C5B"}
-        if not required.issubset(atoms):
-            continue
-        bead_pos = np.asarray(list(atoms.values()), dtype=np.float64)
-        com = np.mean(bead_pos, axis=0)
-        head_pos = atoms["NC3"]
-        tail_mid = 0.5 * (atoms["C5A"] + atoms["C5B"])
-        direction = tail_mid - head_pos
-        norm = float(np.linalg.norm(direction))
-        if norm <= 1e-8:
-            continue
-        direction /= norm
-        head_offsets.append(float(np.dot(head_pos - com, direction)))
-        tail_offsets.append(float(np.dot(tail_mid - com, direction)))
-
-    if not head_offsets or not tail_offsets:
-        return None
-    return float(np.median(head_offsets)), float(np.median(tail_offsets))
-
-
-def build_cg_lipid_vector_info(struct_h5, rod_geometry="h5", reference_pdb=None):
-    """Read compose_vector6d data and build CG lipid display-vector info.
-
-    Returns None if no CG lipids are present, else a dict with:
-      - elem_indices: (n_cg,) int, original HDF5 indices of CG lipids
-      - orientation_indices: (n_cg,) int or None, original HDF5 CGLD indices
-      - direction: (n_cg, 3) float, static fallback unit direction vectors
-      - head_offsets: (n_cg,) float, hydrophilic outer offsets in Angstrom
-      - tail_offsets: (n_cg,) float, hydrophobic outer offsets in Angstrom
-    """
-    cv6_path = "input/potential/compose_vector6d"
-    if cv6_path not in struct_h5:
-        return None
-
-    cv6 = struct_h5[cv6_path]
-    if "elem_index" not in cv6 or "direction" not in cv6:
-        return None
-
-    elem_index = np.asarray(cv6["elem_index"][:], dtype=int)  # maps CG to pos atom index
-    direction = np.asarray(cv6["direction"][:], dtype=np.float32)
-    orientation_index = (
-        np.asarray(cv6["orientation_index"][:], dtype=int)
-        if "orientation_index" in cv6
-        else None
-    )
-    fallback_span = float(cv6.attrs.get("orientation_length_ang", 5.0))
-    metadata_head_offsets = (
-        np.asarray(cv6["display_head_offset_ang"][:], dtype=np.float32)
-        if "display_head_offset_ang" in cv6
-        else np.full(elem_index.shape[0], -fallback_span, dtype=np.float32)
-    )
-    metadata_tail_offsets = (
-        np.asarray(cv6["display_tail_offset_ang"][:], dtype=np.float32)
-        if "display_tail_offset_ang" in cv6
-        else np.full(elem_index.shape[0], fallback_span, dtype=np.float32)
-    )
-
-    if elem_index.size == 0:
-        return None
-    if metadata_head_offsets.shape[0] != elem_index.shape[0] or metadata_tail_offsets.shape[0] != elem_index.shape[0]:
-        raise ValueError("CG lipid VTF endpoint-offset metadata length mismatch")
-    if rod_geometry == "template":
-        template_offsets = read_dopc_template_display_offsets(reference_pdb)
-        if template_offsets is not None:
-            head_offset, tail_offset = template_offsets
-            metadata_head_offsets = np.full(elem_index.shape[0], head_offset, dtype=np.float32)
-            metadata_tail_offsets = np.full(elem_index.shape[0], tail_offset, dtype=np.float32)
-        else:
-            print(f"WARNING: could not read DOPC template offsets from {reference_pdb}; using H5 rod offsets")
-    display_span = float(np.mean(metadata_tail_offsets - metadata_head_offsets))
-    if not np.isfinite(display_span) or display_span <= 0.0:
-        display_span = float(cv6.attrs.get("head_tail_span_ang", 0.0))
-    if not np.isfinite(display_span) or display_span <= 0.0:
-        display_span = fallback_span
-    display_radius = float(cv6.attrs.get("max_perp_radius_ang", 0.0))
-    if not np.isfinite(display_radius) or display_radius <= 0.0:
-        display_radius = 1.7
-
-    return {
-        "elem_indices": elem_index,
-        "orientation_indices": orientation_index,
-        "direction": direction,
-        "head_offsets": metadata_head_offsets,
-        "tail_offsets": metadata_tail_offsets,
-        "display_span": display_span,
-        "display_radius": display_radius,
-    }
-
-
-def extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds):
-    """Add synthetic atoms for two colored CG lipid half-rods."""
-    elem_idx = vector_info["elem_indices"]
-    orig_to_output = mapping.get("orig_to_output", {})
-    output_cg_idx = []
-    source_ordinals = []
-    for ordinal, original_idx in enumerate(elem_idx):
-        output_idx = orig_to_output.get(int(original_idx))
-        if output_idx is None:
-            continue
-        output_cg_idx.append(int(output_idx))
-        source_ordinals.append(int(ordinal))
-    output_cg_idx = np.asarray(output_cg_idx, dtype=int)
-    source_ordinals = np.asarray(source_ordinals, dtype=int)
-    n_cg = int(output_cg_idx.size)
-    if n_cg == 0:
-        vector_info["_tail_start"] = None
-        vector_info["_n_vectors"] = 0
-        return
-
-    hydrophilic_names = np.array(["PO4"] * n_cg, dtype=object)
-    hydrophilic_types = np.array(["Qa"] * n_cg, dtype=object)
-    hydrophilic_resnames = np.array(["LIPH"] * n_cg, dtype=object)
-    hydrophilic_atomic_numbers = np.full(n_cg, 15, dtype=int)
-    hydrophobic_names = np.array(["C1A"] * n_cg, dtype=object)
-    hydrophobic_types = np.array(["C1"] * n_cg, dtype=object)
-    hydrophobic_resnames = np.array(["LIPT"] * n_cg, dtype=object)
-    hydrophobic_atomic_numbers = np.full(n_cg, 6, dtype=int)
-    display_radius = float(vector_info.get("display_radius", 1.7))
-    lipid_resids = np.array(mapping["output_residue_ids"], dtype=int)[output_cg_idx]
-    lipid_chain_ids = np.array(mapping["output_chain_ids"], dtype=object)[output_cg_idx]
-    output_radii = mapping.get("output_atom_radii")
-    if output_radii is None:
-        output_radii = np.full(mapping["output_atom_names"].shape[0], np.nan, dtype=np.float32)
-    else:
-        output_radii = np.asarray(output_radii, dtype=np.float32)
-
-    n_orig = mapping["output_atom_names"].shape[0]
-    mapping["output_atom_names"] = np.concatenate([
-        mapping["output_atom_names"],
-        hydrophilic_names,
-        hydrophilic_names,
-        hydrophobic_names,
-        hydrophobic_names,
-    ])
-    mapping["output_atom_types"] = np.concatenate([
-        mapping["output_atom_types"],
-        hydrophilic_types,
-        hydrophilic_types,
-        hydrophobic_types,
-        hydrophobic_types,
-    ])
-    mapping["output_residue_names"] = np.concatenate([
-        mapping["output_residue_names"],
-        hydrophilic_resnames,
-        hydrophilic_resnames,
-        hydrophobic_resnames,
-        hydrophobic_resnames,
-    ])
-    mapping["output_residue_ids"] = np.concatenate([
-        mapping["output_residue_ids"],
-        lipid_resids,
-        lipid_resids,
-        lipid_resids,
-        lipid_resids,
-    ])
-    mapping["output_chain_ids"] = np.concatenate([
-        mapping["output_chain_ids"],
-        lipid_chain_ids,
-        lipid_chain_ids,
-        lipid_chain_ids,
-        lipid_chain_ids,
-    ])
-    mapping["output_atomic_numbers"] = np.concatenate([
-        mapping["output_atomic_numbers"],
-        hydrophilic_atomic_numbers,
-        hydrophilic_atomic_numbers,
-        hydrophobic_atomic_numbers,
-        hydrophobic_atomic_numbers,
-    ])
-    mapping["output_atom_radii"] = np.concatenate([
-        output_radii,
-        np.full(4 * n_cg, display_radius, dtype=np.float32),
-    ])
-
-    hydrophilic_head_start = n_orig
-    hydrophilic_center_start = n_orig + n_cg
-    hydrophobic_center_start = n_orig + 2 * n_cg
-    hydrophobic_tail_start = n_orig + 3 * n_cg
-
-    for gi in range(n_cg):
-        head_atom = hydrophilic_head_start + gi
-        hydrophilic_center_atom = hydrophilic_center_start + gi
-        hydrophobic_center_atom = hydrophobic_center_start + gi
-        tail_atom = hydrophobic_tail_start + gi
-        out_bonds.append((head_atom, hydrophilic_center_atom))
-        out_bonds.append((hydrophilic_center_atom, hydrophobic_center_atom))
-        out_bonds.append((hydrophobic_center_atom, tail_atom))
-
-    vector_info["_hydrophilic_head_start"] = hydrophilic_head_start
-    vector_info["_hydrophilic_center_start"] = hydrophilic_center_start
-    vector_info["_hydrophobic_center_start"] = hydrophobic_center_start
-    vector_info["_tail_start"] = hydrophobic_tail_start
-    vector_info["_n_vectors"] = n_cg
-    vector_info["_output_head_indices"] = output_cg_idx
-    vector_info["_source_ordinals"] = source_ordinals
-
-    print(f"CG lipid vectors: {n_cg} hydrophilic/hydrophobic half-rod pairs emitted")
-
-
-def extend_frame_with_lipid_vectors(frame, vector_info, source_frame=None, box_lengths=None):
-    """Append side-colored display rod atoms while preserving CGL centers."""
-    if vector_info is None or "_tail_start" not in vector_info:
-        return frame
-    if vector_info.get("_n_vectors", 0) == 0:
-        return frame
-
-    output_center_idx = vector_info["_output_head_indices"]
-    source_ordinals = vector_info["_source_ordinals"]
-    elem_idx = vector_info["elem_indices"][source_ordinals]
-    orientation_idx = vector_info.get("orientation_indices")
-    direction = vector_info["direction"][source_ordinals]
-    head_offsets = vector_info["head_offsets"][source_ordinals]
-    tail_offsets = vector_info["tail_offsets"][source_ordinals]
-
-    if source_frame is not None and orientation_idx is not None:
-        orient_idx = orientation_idx[source_ordinals]
-        if np.max(orient_idx) < source_frame.shape[0] and np.max(elem_idx) < source_frame.shape[0]:
-            direction = source_frame[orient_idx] - source_frame[elem_idx]
-            if box_lengths is not None:
-                direction = minimum_image_delta(direction, box_lengths)
-        else:
-            direction = np.asarray(direction, dtype=np.float32)
-        norm = np.linalg.norm(direction, axis=1)
-        mask = norm > 1e-12
-        if np.any(mask):
-            direction = direction.copy()
-            direction[mask] /= norm[mask, None]
-
-    out = np.asarray(frame, dtype=np.float32).copy()
-    centers = out[output_center_idx].copy()
-    head_pos = centers + direction * head_offsets[:, None]
-    hydrophilic_center_pos = centers.copy()
-    hydrophobic_center_pos = centers.copy()
-    tail_pos = centers + direction * tail_offsets[:, None]
-    return np.concatenate([out, head_pos, hydrophilic_center_pos, hydrophobic_center_pos, tail_pos], axis=0)
 
 
 def copy_output_mapping(mapping):
@@ -716,12 +450,6 @@ def build_mode1_mapping(
         keep_mask = np.array([pc != "PROTEINAA" for pc in particle_class], dtype=bool)
         if np.any(~keep_mask):
             martini_indices = np.where(keep_mask)[0]
-    visible_mask = np.array(
-        [str(atom_names[idx]).strip().upper() != "CGLD" for idx in martini_indices],
-        dtype=bool,
-    )
-    if np.any(~visible_mask):
-        martini_indices = martini_indices[visible_mask]
 
     if (
         pdb_metadata is not None
@@ -795,12 +523,6 @@ def build_mode2_mapping(
         raise ValueError("protein_membership length mismatch")
 
     non_protein_idx = np.where(protein_membership < 0)[0]
-    visible_mask = np.array(
-        [str(atom_names[idx]).strip().upper() != "CGLD" for idx in non_protein_idx],
-        dtype=bool,
-    )
-    if np.any(~visible_mask):
-        non_protein_idx = non_protein_idx[visible_mask]
     bb_map = build_backbone_projection_map(struct_h5, input_pos)
     if bb_map is None:
         raise ValueError("Mode 2 requires /input/hybrid_bb_map with valid backbone entries")
@@ -919,23 +641,6 @@ def parse_args():
     parser.add_argument("pdb_id", nargs="?", default=None, help="PDB id for pdb/<id>.MARTINI.pdb metadata")
     parser.add_argument("--mode", type=int, choices=(1, 2), default=1, help="output mode (default: 1)")
     parser.add_argument(
-        "--cg-lipid-display",
-        choices=("rod", "center"),
-        default="rod",
-        help="CGL VTF style: rod writes synthetic head/tail display atoms; center writes the physical CGL particle only.",
-    )
-    parser.add_argument(
-        "--cg-lipid-rod-geometry",
-        choices=("h5", "template"),
-        default="h5",
-        help="Rod endpoint offsets: h5 uses stored per-lipid metadata; template uses median full-resolution DOPC bead geometry.",
-    )
-    parser.add_argument(
-        "--cg-lipid-reference-pdb",
-        default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"),
-        help="Full-resolution DOPC PDB used when --cg-lipid-rod-geometry=template.",
-    )
-    parser.add_argument(
         "--split-segments",
         action="store_true",
         help="Write one output file per output_previous_* / output trajectory segment instead of combining them.",
@@ -957,9 +662,6 @@ def extract_trajectory(
     pdb_id,
     mode,
     output_group,
-    cg_lipid_display,
-    cg_lipid_rod_geometry,
-    cg_lipid_reference_pdb,
 ):
     fmt = output_file.split(".")[-1].lower()
     if fmt != "vtf":
@@ -998,27 +700,6 @@ def extract_trajectory(
     n_output_particles = mapping['output_atom_names'].shape[0]
     print(f"Particles (output): {n_output_particles}")
 
-    vector_info = build_cg_lipid_vector_info(
-        struct_h5,
-        rod_geometry=cg_lipid_rod_geometry,
-        reference_pdb=cg_lipid_reference_pdb,
-    )
-    use_lipid_rods = vector_info is not None and cg_lipid_display == "rod"
-    if use_lipid_rods:
-        extend_with_lipid_vector_atoms(mapping, vector_info, out_bonds)
-        print(f"Particles (output+lipid-vectors): {mapping['output_atom_names'].shape[0]}")
-        span = vector_info["tail_offsets"] - vector_info["head_offsets"]
-        print(
-            "CG lipid display span: "
-            f"mean={float(np.mean(span)):.3f} A "
-            f"min={float(np.min(span)):.3f} A "
-            f"max={float(np.max(span)):.3f} A"
-        )
-        print(f"CG lipid display radius: {float(vector_info['display_radius']):.3f} A")
-        print(f"CG lipid rod geometry: {cg_lipid_rod_geometry}")
-    elif vector_info is not None:
-        print("CG lipid display: center-only physical CGL particles")
-
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
 
@@ -1026,7 +707,6 @@ def extract_trajectory(
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
         f.write(f"# mode {mode}\n")
         f.write(f"# group {output_group}\n")
-        output_radii = mapping.get("output_atom_radii")
         for i, (aname, atype, rname, resid, chain_id, atomic_number) in enumerate(
             zip(
                 mapping["output_atom_names"],
@@ -1039,15 +719,10 @@ def extract_trajectory(
         ):
             chain = (str(chain_id).strip() or "X")[0]
             segid = f"s{chain}"
-            radius_field = ""
-            if output_radii is not None:
-                radius = float(output_radii[i])
-                if np.isfinite(radius) and radius > 0.0:
-                    radius_field = f" radius {radius:.3f}"
             f.write(
                 f"atom {i} name {aname} type {atype} resid {int(resid)} "
                 f"resname {str(rname)} segid {segid} chain {chain} "
-                f"atomicnumber {int(atomic_number)}{radius_field}\n"
+                f"atomicnumber {int(atomic_number)}\n"
             )
         for i, j in out_bonds:
             f.write(f"bond {i}:{j}\n")
@@ -1071,13 +746,6 @@ def extract_trajectory(
                 y_len,
                 z_len,
             )
-            if use_lipid_rods:
-                out_frame = extend_frame_with_lipid_vectors(
-                    out_frame,
-                    vector_info,
-                    source_frame=frame,
-                    box_lengths=(x_len, y_len, z_len),
-                )
             if np.isnan(out_frame).any():
                 raise ValueError(f"NaN coordinates found in frame {frame_idx} for group {output_group}")
             write_vtf_frame(f, out_frame)
@@ -1192,9 +860,6 @@ def main():
                     pdb_id,
                     mode,
                     output_group=target_group,
-                    cg_lipid_display=args.cg_lipid_display,
-                    cg_lipid_rod_geometry=args.cg_lipid_rod_geometry,
-                    cg_lipid_reference_pdb=args.cg_lipid_reference_pdb,
                 )
             else:
                 print(f"Found {len(output_groups)} trajectory segments; writing one file per segment.")
@@ -1214,9 +879,6 @@ def main():
                         pdb_id,
                         mode,
                         output_group=output_group,
-                        cg_lipid_display=args.cg_lipid_display,
-                        cg_lipid_rod_geometry=args.cg_lipid_rod_geometry,
-                        cg_lipid_reference_pdb=args.cg_lipid_reference_pdb,
                     )
                     print(f"Wrote segment {segment_index}: {segment_output_file} ({output_group})")
         else:
@@ -1235,9 +897,6 @@ def main():
                 pdb_id,
                 mode,
                 output_group=target_group,
-                cg_lipid_display=args.cg_lipid_display,
-                cg_lipid_rod_geometry=args.cg_lipid_rod_geometry,
-                cg_lipid_reference_pdb=args.cg_lipid_reference_pdb,
             )
 
 

@@ -1,22 +1,10 @@
 #include "martini.h"
 #include "deriv_engine.h"
-#include "timing.h"
-#include "state_logger.h"
 #include <mutex>
-#include "spline.h"
-#include <iostream>
-#include <H5Apublic.h> // for H5Aexists
-#include <cmath> // For pow, cosf, sinf, acosf
-#include <cctype>
-#include <cstdint>
-#include <set> // For std::set
+#include <cmath>
 #include <array>
 #include <vector>
 #include <algorithm>
-#include <unordered_map>
-#include <memory>
-#include <limits>
-#include "box.h" // For PBC minimum_image function
 
 using namespace h5;
 using namespace std;
@@ -565,24 +553,6 @@ std::vector<int> read_fix_rigid_settings(hid_t root) {
     return fixed_atoms;
 }
 
-std::vector<int> read_martini_backbone_hold(hid_t root, const std::string& atom_role_name) {
-    std::vector<int> fixed_atoms;
-    try {
-        if(atom_role_name.empty()) return fixed_atoms;
-        if(!h5_exists(root, "/input/atom_roles")) {
-            return fixed_atoms;
-        }
-        traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& name) {
-            if(name == atom_role_name) {
-                fixed_atoms.push_back(static_cast<int>(i));
-            }
-        });
-    } catch(...) {
-        return std::vector<int>();
-    }
-    return fixed_atoms;
-}
-
 // Register fix rigid constraints for an engine
 void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
@@ -596,17 +566,6 @@ void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine) {
     auto fixed_atoms = read_fix_rigid_settings(config_root);
     merge_fixed_atoms(engine, fixed_atoms);
     rebuild_rigid_groups(engine);
-}
-
-void register_fix_rigid_backbone_for_engine(hid_t config_root, DerivEngine& engine, const std::string& atom_name) {
-    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
-    if(h5_exists(config_root, "/input/potential/martini_potential")) {
-        if(!h5_exists(config_root, "/input/atom_roles")) {
-            throw string("MARTINI backbone hold requires /input/atom_roles");
-        }
-    }
-    auto fixed_atoms = read_martini_backbone_hold(config_root, atom_name);
-    merge_fixed_atoms(engine, fixed_atoms);
 }
 
 void set_dynamic_fixed_atoms(DerivEngine& engine, const std::vector<int>& atom_indices) {
@@ -764,17 +723,6 @@ void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecAr
             apply_rigid_group_constraints(engine, group, pos, deriv, mom);
         }
     }
-}
-
-// Check if an atom is fixed
-bool is_atom_fixed(const DerivEngine& engine, int atom_idx) {
-    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
-    auto it = g_fixed_atoms.find(const_cast<DerivEngine*>(&engine));
-    if(it != g_fixed_atoms.end()) {
-        const auto& fixed_atoms = it->second;
-        return std::find(fixed_atoms.begin(), fixed_atoms.end(), atom_idx) != fixed_atoms.end();
-    }
-    return false;
 }
 
 // Get list of fixed atoms for an engine

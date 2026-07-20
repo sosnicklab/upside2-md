@@ -17,7 +17,6 @@ opm_pdb            = "{}/{}.pdb".format(pdb_dir, pdb_id)
 sim_id             = "martini_{}_hybrid".format(pdb_id)
 work_dir           = "./"
 
-lipid_model        = "single_particle"  # "single_particle" for CGL/CGLD, "cg_lipid" for 14-bead DOPC
 lipid_composition  = dict(DOPC=1.0)
 
 salt_molar         = 0.15
@@ -32,8 +31,8 @@ protein_orientation_mode = "input"
 protein_surface_gap = 6.0
 
 temperature        = 0.8647
-eq_time_step       = 0.004
-prod_time_step     = 0.004
+eq_time_step       = 0.009
+prod_time_step     = 0.009
 eq_frame_steps     = 1000
 prod_frame_steps   = 50
 prod_70_npt_enable = 1
@@ -76,18 +75,10 @@ for direc in (run_dir, log_dir, slurm_dir):
     if not direc.exists():
         direc.mkdir(parents=True)
 
-lipid_resolution_by_model = {
-    "single_particle": "coarse",
-    "cg_lipid": "full",
-}
-if lipid_model not in lipid_resolution_by_model:
-    raise ValueError("lipid_model must be 'single_particle' or 'cg_lipid'")
-lipid_resolution = lipid_resolution_by_model[lipid_model]
-
 if set(lipid_composition) != {"DOPC"} or abs(lipid_composition["DOPC"] - 1.0) > 1e-6:
     raise ValueError("This example currently supports only 100% DOPC lipid composition")
 
-runtime_pdb_id = "{}_{}_hybrid".format(pdb_id, lipid_model)
+runtime_pdb_id = "{}_hybrid".format(pdb_id)
 bilayer_pdb = upside_path / "parameters" / "dryMARTINI" / "DOPC.pdb"
 prep_script = upside_path / "py" / "martini_prepare_system.py"
 param_script = upside_path / "py" / "martini_gen_params.py"
@@ -112,11 +103,8 @@ env["PATH"] = "{}{}{}".format(upside_path / "obj", os.pathsep, env.get("PATH", "
 env["PYTHONPATH"] = "{}{}{}".format(upside_utils_dir, os.pathsep, env.get("PYTHONPATH", ""))
 
 required_params = [
-    upside_path / "parameters" / "dryMARTINI" / "particle.h5",
-    upside_path / "parameters" / "dryMARTINI" / "sidechain.h5",
+    upside_path / "parameters" / "ff_2.1" / "martini.h5",
 ]
-if lipid_resolution == "coarse":
-    required_params.append(upside_path / "parameters" / "dryMARTINI" / "dopc.h5")
 
 workflow_cmd = [
     str(python), str(prep_script), "run-hybrid-workflow",
@@ -156,13 +144,11 @@ workflow_cmd = [
     "--prod-70-npt-enable", str(prod_70_npt_enable),
     "--prep-seed", str(prep_seed),
     "--seed", str(randomseed),
-    "--lipid-resolution", lipid_resolution,
 ]
 
 print("MARTINI hybrid example")
 print("  OPM PDB: {}".format(opm_pdb_path))
 print("  lipid composition: {}".format(lipid_composition))
-print("  lipid model: {} ({})".format(lipid_model, lipid_resolution))
 print("  run directory: {}".format(run_dir))
 
 if submit_slurm:

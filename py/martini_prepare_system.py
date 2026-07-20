@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import argparse
 import contextlib
@@ -15,8 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from martini_cg_lipid_params import dopc_max_sigma_nm
-from martini_itp_reader import parse_dopc_from_itp, parse_dry_forcefield
+from martini_itp_reader import dopc_max_sigma_nm, parse_dopc_from_itp, parse_dry_forcefield
 from martini_prepare_system_lib import (
     build_backbone_with_virtual_bb,
     center_of_mass,
@@ -28,7 +27,6 @@ from martini_prepare_system_lib import (
     infer_effective_ion_volume_fraction_from_template,
     infer_protein_charge_from_residues,
     inject_particles_table,
-    inject_cg_lipid_nodes,
     inject_stage7_sc_table_nodes,
     lipid_resname,
     map_backbone_types_from_martinize_fallback,
@@ -63,14 +61,11 @@ DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
 DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
 DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
 MARTINI_MD_INTEGRATOR = "v"
-MARTINI_CGL_TIME_STEP = 0.004
-DEFAULT_CGL_MASS_SCALE = 0.05
-DEFAULT_CGL_GLE_MEMORY_TAUS = "0.2,2.0"
-DEFAULT_CGL_GLE_COUPLINGS = "0.30375,0.2205"
+MARTINI_MD_TIME_STEP = 0.004
 
 
 def derive_dopc_contact_clearance_angstrom(upside_home: Path) -> float:
-    ff_dir = Path(upside_home) / "parameters" / "dryMARTINI"
+    ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
     dry_ff_path = ff_dir / "dry_martini_v2.1.itp"
     lipids_itp_path = ff_dir / "dry_martini_v2.1_lipids.itp"
     _atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
@@ -128,12 +123,6 @@ def parse_prepare_args(argv=None):
         help="Requested minimum gap in Angstrom between the protein surface and the lipid surface for outside-of-bilayer placement.",
     )
     parser.add_argument("--summary-json", default=None)
-    parser.add_argument(
-        "--lipid-resolution",
-        choices=["coarse", "full"],
-        default=os.environ.get("UPSIDE_LIPID_RESOLUTION", "coarse"),
-        help="DOPC lipid representation: coarse (single CGL particle) or full (14-bead ITP topology)",
-    )
     return parser.parse_args(argv)
 
 
@@ -534,7 +523,6 @@ def run_stage_conversion(args, runtime_pdb: Path):
 
     os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(runtime_pdb)
     os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
-    os.environ["UPSIDE_LIPID_RESOLUTION"] = str(getattr(args, "lipid_resolution", "coarse"))
 
     try:
         convert_stage(
@@ -549,7 +537,6 @@ def run_stage_conversion(args, runtime_pdb: Path):
             os.environ["UPSIDE_RUNTIME_PDB_FILE"] = prev_pdb
 
         os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
-        os.environ.pop("UPSIDE_LIPID_RESOLUTION", None)
 
 
 def write_summary(path: Path, payload):
@@ -590,7 +577,7 @@ def run_prepare_command(argv):
                 "UPSIDE_HOME": os.environ.get("UPSIDE_HOME", str(REPO_ROOT)),
                 "UPSIDE_MARTINI_FF_DIR": os.environ.get(
                     "UPSIDE_MARTINI_FF_DIR",
-                    str(REPO_ROOT / "parameters" / "dryMARTINI"),
+                    str(REPO_ROOT / "example" / "16.MARTINI" / "dryMARTINI_itp"),
                 ),
                 "UPSIDE_MARTINI_ENERGY_CONVERSION": os.environ.get(
                     "UPSIDE_MARTINI_ENERGY_CONVERSION",
@@ -604,16 +591,11 @@ def run_prepare_command(argv):
         ):
             run_stage_conversion(args, runtime_pdb)
         target_file = Path(args.run_dir).expanduser().resolve() / "test.input.up"
-        if args.mode == "bilayer" and args.lipid_resolution != "full":
-            ff_dir = Path(
-                os.environ.get(
-                    "UPSIDE_MARTINI_FF_DIR",
-                    str(REPO_ROOT / "parameters" / "dryMARTINI"),
-                )
-            ).expanduser().resolve()
-            inject_particles_table(up_file=target_file, martini_h5=ff_dir / "particle.h5")
-            inject_cg_lipid_nodes(up_file=target_file, martini_h5=ff_dir / "dopc.h5")
-            apply_cgl_transport_metadata(args, target_file)
+        if args.mode == "bilayer":
+            inject_particles_table(
+                up_file=target_file,
+                martini_h5=REPO_ROOT / "parameters" / "ff_2.1" / "martini.h5",
+            )
         summary["upside_input"] = str(target_file)
 
     if args.summary_json:
@@ -631,14 +613,14 @@ PROTEIN_RESIDUES = {
 }
 LIPID_RESIDUES = {"DOP", "DOPC"}
 SC_LIBRARY_REQUIRED_DATASETS = [
-    "grid_nm",
+    "grid_ang",
     "cos_theta_grid",
     "rotamer_count",
     "rotamer_probability_fixed",
-    "rotamer_radial_energy_kj_mol",
-    "rotamer_angular_energy_kj_mol",
+    "rotamer_radial_energy_eup",
+    "rotamer_angular_energy_eup",
     "rotamer_angular_profile",
-    "rotamer_full_energy_kj_mol",
+    "rotamer_full_energy_eup",
 ]
 
 
@@ -684,38 +666,6 @@ def env_int(name, default):
 
 def env_float(name, default):
     return Config.floating(name, default)
-
-
-def parse_positive_float_list(value, label):
-    values = [float(part) for part in str(value).replace(",", " ").split()]
-    if not values or any(v <= 0.0 for v in values):
-        raise ValueError(f"{label} must contain one or more positive numbers")
-    return values
-
-
-def parse_optional_positive_float_list(value, label):
-    text = str(value).strip()
-    return parse_positive_float_list(text, label) if text else []
-
-
-def parse_optional_positive_float_table(value, label):
-    text = str(value).strip()
-    if not text:
-        return []
-    if ";" not in text:
-        return parse_positive_float_list(text, label)
-    rows = []
-    for row_text in text.split(";"):
-        row_text = row_text.strip()
-        if not row_text:
-            continue
-        rows.append(parse_positive_float_list(row_text, label))
-    if not rows:
-        return []
-    n_col = len(rows[0])
-    if any(len(row) != n_col for row in rows[1:]):
-        raise ValueError(f"{label} rows must all have the same length")
-    return rows
 
 
 def workflow_path(value, base=WORKFLOW_DIR):
@@ -830,7 +780,6 @@ def prepare_workflow_hybrid_artifacts(args):
                 "--protein-surface-gap", str(args.protein_surface_gap),
                 "--seed", str(args.prep_seed),
                 "--summary-json", str(args.hybrid_prep_dir / "hybrid_prep_summary.json"),
-                "--lipid-resolution", args.lipid_resolution,
             ]
         )
         if not args.hybrid_packed_pdb.exists():
@@ -860,22 +809,10 @@ def prepare_workflow_hybrid_artifacts(args):
     print(f"Runtime MARTINI PDB: {args.runtime_pdb_file}")
 
 
-def replace_dataset(parent, name, data):
-    if name in parent:
-        del parent[name]
-    parent.create_dataset(name, data=data)
-
-
 def h5_as_text(value):
     if isinstance(value, (bytes, np.bytes_)):
         return value.decode("utf-8", errors="ignore")
     return str(value)
-
-
-def pad_bytes(value, dtype):
-    n = np.dtype(dtype).itemsize
-    raw = str(value).encode("ascii", errors="ignore")[:n]
-    return raw.ljust(n, b" ")
 
 
 def inject_hybrid_mapping(up_file: Path, mapping_file: Path):
@@ -890,31 +827,11 @@ def inject_hybrid_mapping(up_file: Path, mapping_file: Path):
         base_n_atom = int(dst_inp["pos"].shape[0])
         src_mem = src_inp["hybrid_env_topology"]["protein_membership"][:].astype(np.int32)
 
-        # If CG lipid coarse-graining reduced the atom count, remap the membership
-        old_to_new = None
         if base_n_atom != int(src_mem.shape[0]):
-            remap_grp = dst_inp.get("hybrid_remap")
-            if remap_grp is not None and "old_to_new" in remap_grp:
-                old_to_new = remap_grp["old_to_new"][:].astype(np.int32)
-                n_old = int(remap_grp.attrs["n_old"])
-                if n_old == src_mem.shape[0]:
-                    print(f"  Remapping hybrid membership from {n_old} -> {base_n_atom} atoms "
-                          f"(CG lipid coarse-graining)")
-                    new_membership = np.full(base_n_atom, -1, dtype=np.int32)
-                    for old_idx in range(n_old):
-                        new_idx = old_to_new[old_idx]
-                        new_membership[new_idx] = src_mem[old_idx]
-                    src_mem = new_membership
-                else:
-                    raise ValueError(
-                        f"CG remap n_old={n_old} doesn't match mapping "
-                        f"n_atom={src_mem.shape[0]}"
-                    )
-            else:
-                raise ValueError(
-                    f"Hybrid mapping n_atom mismatch for {up_file}: up has {base_n_atom}, "
-                    f"mapping has {src_mem.shape[0]}, and no CG lipid remap data found"
-                )
+            raise ValueError(
+                f"Hybrid mapping n_atom mismatch for {up_file}: up has {base_n_atom}, "
+                f"mapping has {src_mem.shape[0]}"
+            )
 
         for group in groups:
             if group not in src_inp:
@@ -929,25 +846,12 @@ def inject_hybrid_mapping(up_file: Path, mapping_file: Path):
                 del dst_inp[group]
             src.copy(src_inp[group], dst_inp, name=group)
 
-        # If we remapped membership, fix up the stored membership in the output
-        if old_to_new is not None and "protein_membership" in dst_inp["hybrid_env_topology"]:
-            del dst_inp["hybrid_env_topology"]["protein_membership"]
-            dst_inp["hybrid_env_topology"].create_dataset(
-                "protein_membership", data=src_mem.astype(np.int32))
-
         bb_grp = dst_inp["hybrid_bb_map"]
         env_grp = dst_inp["hybrid_env_topology"]
         if bb_grp["atom_indices"].shape[0] != bb_grp["bb_residue_index"].shape[0]:
             raise ValueError("hybrid_bb_map atom_indices/bb_residue_index size mismatch")
         if bb_grp["atom_indices"].shape[1] != 4:
             raise ValueError("hybrid_bb_map/atom_indices must have shape (n_bb,4)")
-
-        # Remap BB atom_indices through old_to_new if CG lipids changed atom ordering
-        if old_to_new is not None:
-            bb_indices = bb_grp["atom_indices"][:].astype(np.int32)
-            bb_remapped = old_to_new[bb_indices]
-            del dst_inp["hybrid_bb_map"]["atom_indices"]
-            dst_inp["hybrid_bb_map"].create_dataset("atom_indices", data=bb_remapped.astype(np.int32))
 
         bb_grp.attrs["atom_index_space"] = np.bytes_("stage_runtime")
         bb_grp.attrs["reference_index_space"] = np.bytes_("stage_runtime")
@@ -1041,7 +945,7 @@ def set_barostat_type(up_file: Path, barostat_type: int):
 def ensure_sc_martini_library(args):
     import h5py
 
-    library = args.sidechain_h5
+    library = args.martini_h5
     if not library.exists():
         raise FileNotFoundError(library)
     with h5py.File(library, "r") as h5:
@@ -1056,7 +960,6 @@ def assert_hybrid_stage_active(
     expected_stage: str,
     expected_activation: str,
     require_interface_nodes: bool = False,
-    lipid_resolution: str = "coarse",
 ):
     import h5py
 
@@ -1092,15 +995,6 @@ def assert_hybrid_stage_active(
                 for node in ("martini_potential", "martini_sc_table_1body")
                 if node not in pot
             ]
-            if lipid_resolution != "full":
-                atom_names = []
-                if "atom_names" in inp:
-                    atom_names = [
-                        x.decode("ascii") if isinstance(x, (bytes, np.bytes_)) else str(x)
-                        for x in inp["atom_names"][:]
-                    ]
-                if any(name.strip().upper() == "CGL" for name in atom_names) and "cg_lipid_rotamer_sc" not in pot:
-                    missing.append("cg_lipid_rotamer_sc")
             if missing:
                 raise ValueError(
                     f"{up_file}: missing required hybrid interface node(s): {', '.join(missing)}"
@@ -1137,37 +1031,6 @@ def assert_hybrid_stage_active(
                             f"{up_file}: strand residues {start}-{end} BB endpoint charges must be +1/-1; "
                             f"got {q_start:g}/{q_end:g}"
                         )
-            if lipid_resolution != "full":
-                proxy_idx = np.asarray(bb_idx, dtype=np.int32)
-                target_nodes = [
-                    node
-                    for node in ("cg_lipid_target", "cg_lipid_target_charged_bb_excluded_volume")
-                    if node in pot and "pair_interaction" in pot[node]
-                ]
-                if target_nodes:
-                    target_idx = np.concatenate(
-                        [
-                            np.asarray(pot[node]["pair_interaction"]["index2"][:], dtype=np.int32)
-                            for node in target_nodes
-                        ]
-                    )
-                    missing_proxies = np.setdiff1d(proxy_idx, target_idx, assume_unique=False)
-                    if missing_proxies.size:
-                        raise ValueError(
-                            f"{up_file}: CGL target nodes are missing BB proxy target(s): "
-                            f"{missing_proxies[:8].tolist()}"
-                        )
-        if lipid_resolution != "full" and "type" in inp:
-            atom_types = np.asarray([
-                h5_as_text(x).strip().upper() for x in inp["type"][:]
-            ], dtype=object)
-            lipid_internal = np.isin(atom_types, ["CGL", "CGLD"])
-            if np.any(lipid_internal & (env_membership >= 0)):
-                bad = np.where(lipid_internal & (env_membership >= 0))[0][:8]
-                raise ValueError(
-                    f"{up_file}: CGL/CGLD sites must not have protein membership; "
-                    f"bad indices={bad.tolist()}"
-                )
     print(f"Hybrid activation verified: stage={expected_stage}, activation_stage={expected_activation}")
 
 
@@ -1183,7 +1046,7 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
     target_pxy, target_pz = stage_npt_targets(stage_label, args)
     return {
         "UPSIDE_HOME": str(args.upside_home),
-        "UPSIDE_MARTINI_FF_DIR": str(args.martini_ff_dir),
+        "UPSIDE_MARTINI_FF_DIR": str(args.itp_dir),
         "UPSIDE_MARTINI_ENERGY_CONVERSION": str(args.martini_energy_conversion),
         "UPSIDE_MARTINI_LENGTH_CONVERSION": str(args.martini_length_conversion),
         "UPSIDE_SIMULATION_STAGE": prepare_stage,
@@ -1197,167 +1060,8 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         "UPSIDE_NPT_INTERVAL": str(args.npt_interval),
         "UPSIDE_NPT_SEMI": "1",
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
-        "UPSIDE_LIPID_RESOLUTION": str(getattr(args, "lipid_resolution", "coarse")),
         "THERMOSTAT_TIMESCALE": str(args.thermostat_timescale),
     }
-
-
-def apply_cgl_transport_metadata(args, target_file: Path):
-    lipid_res = getattr(args, "lipid_resolution", "coarse")
-    if lipid_res == "full":
-        return
-    mass_scale = float(getattr(args, "cg_lipid_mass_scale", env_float("CG_LIPID_MASS_SCALE", DEFAULT_CGL_MASS_SCALE)))
-    replace_markovian = bool(int(getattr(args, "cgl_gle_replace_markovian", env_int("CGL_GLE_REPLACE_MARKOVIAN", 1))))
-    if mass_scale <= 0.0:
-        raise ValueError("cg_lipid_mass_scale must be positive")
-
-    import h5py
-
-    def decode_names(values):
-        out = []
-        for value in values:
-            if isinstance(value, bytes):
-                out.append(value.decode("ascii", errors="ignore").strip())
-            else:
-                out.append(str(value).strip())
-        return np.asarray(out, dtype=object)
-
-    with h5py.File(target_file, "r+") as h5:
-        atom_types = decode_names(h5["/input/type"][:])
-        cgl_mask = atom_types == "CGL"
-        if not np.any(cgl_mask):
-            raise ValueError(f"{target_file} has no CGL atoms")
-
-        mass_node = h5["/input/mass"]
-        mass = np.asarray(mass_node[:], dtype=np.float32)
-        previous_mass_scale = None
-        if "/input/thermostat_timescale" in h5:
-            tau_attrs = h5["/input/thermostat_timescale"].attrs
-            if "cgl_mass_scale" in tau_attrs:
-                previous_mass_scale = float(tau_attrs["cgl_mass_scale"])
-            elif "cg_lipid_mass_scale" in tau_attrs:
-                previous_mass_scale = float(tau_attrs["cg_lipid_mass_scale"])
-        inferred_base_mass_from_previous_scale = False
-        if "cgl_unscaled_mass" in mass_node.attrs:
-            base_cgl_mass = np.full(
-                np.count_nonzero(cgl_mask),
-                float(mass_node.attrs["cgl_unscaled_mass"]),
-                dtype=np.float32,
-            )
-        elif previous_mass_scale is not None and previous_mass_scale > 0.0:
-            base_cgl_mass = mass[cgl_mask] / np.float32(previous_mass_scale)
-            inferred_base_mass_from_previous_scale = True
-        else:
-            base_cgl_mass = mass[cgl_mask].copy()
-        if inferred_base_mass_from_previous_scale and float(np.median(base_cgl_mass)) < 10.0:
-            raise ValueError(
-                f"{target_file} has repeatedly scaled CGL masses "
-                f"(median mass={float(np.median(mass[cgl_mask])):.6g}, "
-                f"stored scale={previous_mass_scale:.6g}). "
-                "Regenerate the previous production stage with the fixed idempotent CGL mass scaling."
-            )
-        mass[cgl_mask] = base_cgl_mass * np.float32(mass_scale)
-        del h5["/input/mass"]
-        mass_dset = h5.create_dataset("/input/mass", data=mass)
-        if base_cgl_mass.size and np.allclose(base_cgl_mass, base_cgl_mass[0]):
-            mass_dset.attrs["cgl_unscaled_mass"] = np.float32(base_cgl_mass[0])
-        mass_dset.attrs["cgl_mass_scale"] = np.float32(mass_scale)
-        mass_dset.attrs["cgl_mass_scale_source"] = "idempotent_unscaled_cgl_mass"
-
-        global_tau = float(getattr(args, "thermostat_timescale", env_float("THERMOSTAT_TIMESCALE", 5.0)))
-        tau = (
-            np.asarray(h5["/input/thermostat_timescale"][:], dtype=np.float32)
-            if "/input/thermostat_timescale" in h5
-            else np.full(atom_types.shape[0], global_tau, dtype=np.float32)
-        )
-        tau[cgl_mask] = np.float32(1.0e8 if replace_markovian else global_tau)
-        if "/input/thermostat_timescale" in h5:
-            del h5["/input/thermostat_timescale"]
-        dset = h5.create_dataset("/input/thermostat_timescale", data=tau)
-        dset.attrs["global_timescale"] = np.float32(global_tau)
-        dset.attrs["cg_lipid_timescale"] = np.float32(global_tau)
-        dset.attrs["cgl_timescale"] = np.float32(global_tau)
-        dset.attrs["cg_lipid_mass_scale"] = np.float32(mass_scale)
-        dset.attrs["cgl_mass_scale"] = np.float32(mass_scale)
-        dset.attrs["cgl_gle_replace_markovian"] = np.int8(1 if replace_markovian else 0)
-
-        if "/input/cgl_gle" in h5:
-            del h5["/input/cgl_gle"]
-        memory_text = str(getattr(args, "cgl_gle_memory_taus", env_default("CGL_GLE_MEMORY_TAUS", DEFAULT_CGL_GLE_MEMORY_TAUS))).strip()
-        coupling_text = str(getattr(args, "cgl_gle_couplings", env_default("CGL_GLE_COUPLINGS", DEFAULT_CGL_GLE_COUPLINGS))).strip()
-        memory_tau = parse_positive_float_list(memory_text, "CGL GLE memory tau")
-        coupling = parse_positive_float_list(coupling_text, "CGL GLE coupling")
-        if len(memory_tau) != len(coupling):
-            raise ValueError("CGL GLE memory tau and coupling lists must have the same length")
-        temperature_grid = parse_optional_positive_float_list(
-            getattr(args, "cgl_gle_temperature_grid", env_default("CGL_GLE_TEMPERATURE_GRID", "")),
-            "CGL GLE temperature grid",
-        )
-        coupling_scale = parse_optional_positive_float_table(
-            getattr(args, "cgl_gle_coupling_scales", env_default("CGL_GLE_COUPLING_SCALES", "")),
-            "CGL GLE coupling scale",
-        )
-        memory_tau_scale = parse_optional_positive_float_table(
-            getattr(args, "cgl_gle_memory_tau_scales", env_default("CGL_GLE_MEMORY_TAU_SCALES", "")),
-            "CGL GLE memory tau scale",
-        )
-        if not temperature_grid and (coupling_scale or memory_tau_scale):
-            raise ValueError("CGL GLE temperature grid is required when temperature-dependent GLE scales are provided")
-        if temperature_grid:
-            if len(temperature_grid) < 2:
-                raise ValueError("CGL GLE temperature grid requires at least two temperatures")
-            if any(t2 <= t1 for t1, t2 in zip(temperature_grid, temperature_grid[1:])):
-                raise ValueError("CGL GLE temperature grid must be strictly increasing")
-            if not coupling_scale:
-                coupling_scale = [1.0] * len(temperature_grid)
-            if not memory_tau_scale:
-                memory_tau_scale = [1.0] * len(temperature_grid)
-            def normalize_temperature_scale(scale, scale_name):
-                if scale and isinstance(scale[0], (list, tuple)):
-                    if len(scale) != len(temperature_grid):
-                        raise ValueError(f"CGL GLE temperature grid and {scale_name} rows must have the same length")
-                    if any(len(row) != n_mode for row in scale):
-                        raise ValueError(f"CGL GLE {scale_name} rows must each have length n_mode={n_mode}")
-                    return np.asarray(scale, dtype=np.float32)
-                if len(scale) != len(temperature_grid):
-                    raise ValueError(f"CGL GLE temperature grid and {scale_name} must have the same length")
-                return np.asarray(scale, dtype=np.float32)
-        n_mode = len(memory_tau)
-        coupling_scale_array = None
-        memory_tau_scale_array = None
-        if temperature_grid:
-            coupling_scale_array = normalize_temperature_scale(coupling_scale, "coupling scales")
-            memory_tau_scale_array = normalize_temperature_scale(memory_tau_scale, "memory tau scales")
-        cgl_indices = np.where(cgl_mask)[0].astype(np.int32)
-        gle = h5.create_group("/input/cgl_gle")
-        gle.attrs["schema"] = "cgl_exponential_memory_gle"
-        gle.attrs["transport_model"] = (
-            "fdt_markovian_embedding_sum_of_exponential_memory_kernels"
-            if n_mode > 1
-            else "fdt_markovian_embedding_exponential_memory_kernel"
-        )
-        gle.attrs["n_mode"] = np.int32(n_mode)
-        gle.attrs["memory_tau"] = np.float32(memory_tau[0])
-        gle.attrs["coupling"] = np.float32(coupling[0])
-        gle.attrs["replace_markovian_cgl_thermostat"] = np.int8(1 if replace_markovian else 0)
-        gle.attrs["zero_frequency_friction_source"] = (
-            "m_cgl*sum_i(coupling_i^2*memory_tau_i)_for_free_particle_limit"
-        )
-        gle.attrs["conservative_forcefield_changed"] = np.int8(0)
-        gle.attrs["one_particle_cgl_preserved"] = np.int8(1)
-        gle.attrs["temperature_scaled_coupling"] = np.int8(1 if temperature_grid else 0)
-        gle.attrs["temperature_scaled_memory_tau"] = np.int8(1 if temperature_grid else 0)
-        gle.create_dataset("atom_index", data=cgl_indices)
-        if temperature_grid:
-            gle.create_dataset("temperature_grid", data=np.asarray(temperature_grid, dtype=np.float32))
-            gle.create_dataset("coupling_scale", data=coupling_scale_array)
-            gle.create_dataset("memory_tau_scale", data=memory_tau_scale_array)
-        if n_mode > 1:
-            gle.create_dataset("memory_tau", data=np.asarray(memory_tau, dtype=np.float32))
-            gle.create_dataset("coupling", data=np.asarray(coupling, dtype=np.float32))
-            gle.create_dataset("aux_momentum", data=np.zeros((n_mode, cgl_indices.size, 3), dtype=np.float32))
-        else:
-            gle.create_dataset("aux_momentum", data=np.zeros((cgl_indices.size, 3), dtype=np.float32))
 
 
 def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, activation_stage: str):
@@ -1366,25 +1070,18 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
     set_hybrid_production_controls(target_file, args)
     inject_stage7_sc_table_nodes(
         up_file=target_file,
-        martini_h5=args.sidechain_h5,
+        martini_h5=args.martini_h5,
         upside_home=args.upside_home,
         rama_library=args.upside_rama_library,
         rama_sheet_mixing=args.upside_rama_sheet_mixing,
         hbond_energy=args.upside_hbond_energy,
         reference_state_rama=args.upside_reference_state_rama,
     )
-    # Rotamer placement nodes must exist before CG lipid node injection
-    # so that cg_lipid_rotamer_sc can feed the rotamer solver.
-    lipid_res = getattr(args, "lipid_resolution", "coarse")
-    if lipid_res != "full":
-        inject_cg_lipid_nodes(up_file=target_file, martini_h5=args.dopc_h5)
-        apply_cgl_transport_metadata(args, target_file)
     assert_hybrid_stage_active(
         target_file,
         current_stage,
         activation_stage,
         require_interface_nodes=True,
-        lipid_resolution=lipid_res,
     )
 
 
@@ -1410,7 +1107,7 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
     inject_hybrid_mapping(target_file, args.hybrid_mapping_file)
     set_hybrid_control_mode(target_file, args.hybrid_preprod_activation_stage)
     set_stage_label(target_file, stage_label)
-    inject_particles_table(up_file=target_file, martini_h5=args.particle_h5)
+    inject_particles_table(up_file=target_file, martini_h5=args.martini_h5)
     if stage_label == "production":
         inject_hybrid_interface_nodes(args, target_file, "production", "production")
     else:
@@ -1461,90 +1158,6 @@ def output_restart_state_valid(up_file: Path):
         return int(h5["/output/mom"].attrs.get("restart_final_state_valid", 0)) != 0
 
 
-def promote_cgl_gle_aux_momentum(h5):
-    if "/input/cgl_gle" not in h5 or "/output/cgl_gle_aux_momentum" not in h5:
-        return
-    aux_out = h5["/output/cgl_gle_aux_momentum"]
-    if aux_out.shape[0] == 0:
-        return
-    if aux_out.ndim != 4:
-        raise ValueError("output/cgl_gle_aux_momentum must have shape n_frame x n_mode x n_cgl x 3")
-    last_aux_all_modes = np.asarray(aux_out[-1], dtype=np.float32)
-    last_aux = last_aux_all_modes[0] if last_aux_all_modes.shape[0] == 1 else last_aux_all_modes
-    gle = h5["/input/cgl_gle"]
-    if "aux_momentum" in gle:
-        del gle["aux_momentum"]
-    gle.create_dataset("aux_momentum", data=last_aux)
-    gle.attrs["aux_momentum_restart_source"] = "output/cgl_gle_aux_momentum[-1]"
-    restart_temperature = read_last_output_temperature(h5)
-    if restart_temperature is not None:
-        gle.attrs["aux_momentum_restart_temperature"] = np.float32(restart_temperature)
-
-
-def read_last_output_temperature(h5):
-    if "/output/temperature" not in h5 or h5["/output/temperature"].shape[0] == 0:
-        return None
-    last_temperature = np.asarray(h5["/output/temperature"][-1], dtype=np.float32).reshape(-1)
-    if last_temperature.size == 0:
-        return None
-    return float(last_temperature[0])
-
-
-def promote_cgl_compaction_state(h5):
-    compaction_in_path = "/input/potential/cgl_compaction_state"
-    if compaction_in_path not in h5:
-        return
-
-    compaction_grp = h5[compaction_in_path]
-    restart_temperature = read_last_output_temperature(h5)
-
-    if "/output/cgl_compaction" in h5 and h5["/output/cgl_compaction"].shape[0] > 0:
-        last_value = np.asarray(h5["/output/cgl_compaction"][-1, 0, :], dtype=np.float32)
-        if "value" in compaction_grp:
-            del compaction_grp["value"]
-        compaction_grp.create_dataset("value", data=last_value)
-        compaction_grp.attrs["value_restart_source"] = "output/cgl_compaction[-1]"
-
-    if "/output/cgl_compaction_mom" in h5 and h5["/output/cgl_compaction_mom"].shape[0] > 0:
-        last_mom = np.asarray(h5["/output/cgl_compaction_mom"][-1, 0, :], dtype=np.float32)
-        if "/input/cgl_compaction_mom" in h5:
-            del h5["/input/cgl_compaction_mom"]
-        mom = h5.create_dataset("/input/cgl_compaction_mom", data=last_mom)
-        mom.attrs["restart_source"] = "output/cgl_compaction_mom[-1]"
-        if restart_temperature is not None:
-            mom.attrs["restart_temperature"] = np.float32(restart_temperature)
-
-
-def promote_cgl_orientation_state(h5):
-    orient_in_path = "/input/potential/cgl_orientation_state"
-    if orient_in_path not in h5:
-        return
-
-    orient_grp = h5[orient_in_path]
-    restart_temperature = read_last_output_temperature(h5)
-    if "/output/cgl_orientation" in h5 and h5["/output/cgl_orientation"].shape[0] > 0:
-        last_direction = np.asarray(h5["/output/cgl_orientation"][-1, 0, :, :], dtype=np.float32)
-        if "direction" in orient_grp:
-            del orient_grp["direction"]
-        orient_grp.create_dataset("direction", data=last_direction)
-        orient_grp.attrs["direction_restart_source"] = "output/cgl_orientation[-1]"
-
-    if "/output/cgl_orientation_mom" in h5 and h5["/output/cgl_orientation_mom"].shape[0] > 0:
-        last_mom = np.asarray(h5["/output/cgl_orientation_mom"][-1, 0, :, :], dtype=np.float32)
-        if "/input/cgl_orientation_mom" in h5:
-            del h5["/input/cgl_orientation_mom"]
-        mom = h5.create_dataset("/input/cgl_orientation_mom", data=last_mom)
-        mom.attrs["restart_source"] = "output/cgl_orientation_mom[-1]"
-        if restart_temperature is not None:
-            mom.attrs["restart_temperature"] = np.float32(restart_temperature)
-
-
-def promote_cgl_restart_state(h5):
-    promote_cgl_compaction_state(h5)
-    promote_cgl_gle_aux_momentum(h5)
-    promote_cgl_orientation_state(h5)
-
-
 def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
     import h5py
 
@@ -1566,7 +1179,6 @@ def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
         h5["/output/mom"].attrs["restart_time_step"] = float(dt)
         h5["/output/mom"].attrs["restart_public_time_step"] = public_dt
         h5["/output/mom"].attrs["restart_final_time"] = final_time
-        promote_cgl_restart_state(h5)
 
 
 def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int, preserve_stage: bool = False):
@@ -1615,57 +1227,6 @@ def promote_minimized_state_to_input(up_file: Path):
             data=np.zeros(last_pos.shape, dtype=last_pos.dtype),
         )
         mom.attrs["restart_valid"] = np.int8(0)
-
-        if "/output/cgl_compaction" in h5 and h5["/output/cgl_compaction"].shape[0] > 0:
-            compaction_path = "/input/potential/cgl_compaction_state"
-            if compaction_path in h5:
-                compaction_grp = h5[compaction_path]
-                last_compaction = np.asarray(
-                    h5["/output/cgl_compaction"][-1, 0, :],
-                    dtype=np.float32,
-                )
-                if "value" in compaction_grp:
-                    del compaction_grp["value"]
-                compaction_grp.create_dataset("value", data=last_compaction)
-                compaction_grp.attrs["value_restart_source"] = "minimized_output/cgl_compaction[-1]"
-        if "/input/cgl_compaction_mom" in h5:
-            compaction_mom_shape = h5["/input/cgl_compaction_mom"].shape
-            del h5["/input/cgl_compaction_mom"]
-            compaction_mom = h5.create_dataset(
-                "/input/cgl_compaction_mom",
-                data=np.zeros(compaction_mom_shape, dtype=np.float32),
-            )
-            compaction_mom.attrs["restart_source"] = "zero_after_minimization"
-
-        if "/output/cgl_orientation" in h5 and h5["/output/cgl_orientation"].shape[0] > 0:
-            orientation_path = "/input/potential/cgl_orientation_state"
-            if orientation_path in h5:
-                orientation_grp = h5[orientation_path]
-                last_orientation = np.asarray(
-                    h5["/output/cgl_orientation"][-1, 0, :, :],
-                    dtype=np.float32,
-                )
-                if "direction" in orientation_grp:
-                    del orientation_grp["direction"]
-                orientation_grp.create_dataset("direction", data=last_orientation)
-                orientation_grp.attrs["direction_restart_source"] = "minimized_output/cgl_orientation[-1]"
-        if "/input/cgl_orientation_mom" in h5:
-            orientation_mom_shape = h5["/input/cgl_orientation_mom"].shape
-            del h5["/input/cgl_orientation_mom"]
-            orientation_mom = h5.create_dataset(
-                "/input/cgl_orientation_mom",
-                data=np.zeros(orientation_mom_shape, dtype=np.float32),
-            )
-            orientation_mom.attrs["restart_source"] = "zero_after_minimization"
-
-        if "/input/cgl_gle/aux_momentum" in h5:
-            aux_shape = h5["/input/cgl_gle/aux_momentum"].shape
-            del h5["/input/cgl_gle/aux_momentum"]
-            aux = h5.create_dataset(
-                "/input/cgl_gle/aux_momentum",
-                data=np.zeros(aux_shape, dtype=np.float32),
-            )
-            aux.attrs["restart_source"] = "zero_after_minimization"
 
         last_box = None
         if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
@@ -1739,7 +1300,6 @@ def promote_md_output_state_to_input(up_file: Path, elapsed_steps: int):
 
         last_pos = h5["/output/pos"][-1, 0, :, :][:, :, np.newaxis]
         last_mom = h5["/output/mom"][-1, 0, :, :][:, :, np.newaxis]
-        promote_cgl_restart_state(h5)
         if "/input/pos" in h5:
             del h5["/input/pos"]
         if "/input/mom" in h5:
@@ -1800,8 +1360,6 @@ def extract_stage_vtf(args, stage_label: str, stage_file: Path, mode: str):
         args.runtime_pdb_id,
         "--mode",
         mode,
-        "--cg-lipid-display",
-        args.cg_lipid_vtf_display,
         "--split-segments",
     ]
     run_checked(cmd)
@@ -1850,26 +1408,7 @@ def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_l
             "a validated final restart state. Regenerate the previous production stage with the current workflow."
     )
     handoff_initial_position(args, source_file, output_file, "production_restart", args.prod_time_step)
-    import h5py
-    with h5py.File(output_file, "r+") as h5:
-        promote_cgl_restart_state(h5)
-        cgl_compaction_restart = (
-            np.asarray(h5["/input/potential/cgl_compaction_state/value"][:], dtype=np.float32)
-            if "/input/potential/cgl_compaction_state/value" in h5
-            else None
-        )
     inject_hybrid_interface_nodes(args, output_file, "production", "production")
-    if cgl_compaction_restart is not None:
-        with h5py.File(output_file, "r+") as h5:
-            compaction_path = "/input/potential/cgl_compaction_state"
-            if compaction_path in h5:
-                compaction_grp = h5[compaction_path]
-                if "value" in compaction_grp:
-                    del compaction_grp["value"]
-                compaction_grp.create_dataset("value", data=cgl_compaction_restart)
-                compaction_grp.attrs["value_restart_source"] = (
-                    "output/cgl_compaction[-1]_after_forcefield_refresh"
-                )
     if not input_momentum_restart_valid(output_file):
         raise ValueError(
             "Production continuation requires restart-valid /output/mom in the source stage. "
@@ -1890,11 +1429,8 @@ def normalize_hybrid_workflow_args(args):
     args.hybrid_mapping_file = args.hybrid_prep_dir / "hybrid_mapping.h5"
     args.hybrid_packed_pdb = args.hybrid_prep_dir / "hybrid_packed.MARTINI.pdb"
     args.upside_executable = args.upside_home / "obj" / "upside"
-    args.martini_ff_dir = args.upside_home / "parameters" / "dryMARTINI"
-    args.mass_ff_file = args.martini_ff_dir / "dry_martini_v2.1.itp"
-    args.particle_h5 = args.martini_ff_dir / "particle.h5"
-    args.sidechain_h5 = args.martini_ff_dir / "sidechain.h5"
-    args.dopc_h5 = workflow_path(args.dopc_h5).resolve() if args.dopc_h5 else args.martini_ff_dir / "dopc.h5"
+    args.itp_dir = args.upside_home / "example" / "16.MARTINI" / "dryMARTINI_itp"
+    args.martini_h5 = args.upside_home / "parameters" / "ff_2.1" / "martini.h5"
     args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
     args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
     args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
@@ -1976,20 +1512,15 @@ def _detect_has_bonded_environment_particles(up_file: Path) -> bool:
             env_mask = np.ones(atom_types.shape[0], dtype=bool)
 
         bonded_env_pairs = []
-        ignored_orientation_bonds = 0
         for raw_i, raw_j in bonds[:, :2]:
             i = int(raw_i)
             j = int(raw_j)
             if i < 0 or j < 0 or i >= atom_types.shape[0] or j >= atom_types.shape[0]:
                 continue
             pair_types = {str(atom_types[i]).strip().upper(), str(atom_types[j]).strip().upper()}
-            if pair_types == {"CGL", "CGLD"}:
-                ignored_orientation_bonds += 1
-                continue
             if bool(env_mask[i]) and bool(env_mask[j]):
                 bonded_env_pairs.append((i, j, tuple(sorted(pair_types))))
 
-    print(f"  Ignored synthetic CGL-CGLD orientation bonds: {ignored_orientation_bonds}")
     print(f"  Real bonded dry-MARTINI environment pairs: {len(bonded_env_pairs)}")
     if bonded_env_pairs:
         preview = ", ".join(
@@ -2001,64 +1532,18 @@ def _detect_has_bonded_environment_particles(up_file: Path) -> bool:
 
 
 def ensure_martini_parameter_libraries(args):
-    """Check all four pre-generated .h5 files exist under parameters/dryMARTINI/.
+    """Check that the consolidated force-field file exists.
 
-    If any are missing, print a clear error telling the user to run the
+    If it is missing, print a clear error telling the user to run the
     generation script.
     """
-    required = [
-        (args.particle_h5, "particle.h5"),
-        (args.sidechain_h5, "sidechain.h5"),
-    ]
-    lipid_res = getattr(args, "lipid_resolution", "coarse")
-    if lipid_res != "full":
-        required.append((args.dopc_h5, "dopc.h5"))
-    missing = []
-    for path, name in required:
-        if not path.exists():
-            missing.append(name)
-    if missing:
+    if not args.martini_h5.exists():
         raise RuntimeError(
-            f"MARTINI parameter files not found under {args.martini_ff_dir}: "
-            + ", ".join(missing)
+            f"MARTINI force-field file not found: {args.martini_h5}"
             + "\nRun 'python py/martini_gen_params.py --upside-home "
-            + str(args.upside_home) + "' to generate them."
+            + str(args.upside_home) + "' to generate it."
         )
-    print("MARTINI parameter libraries found:")
-    for _, name in required:
-        print(f"  {name}")
-
-
-def cgl_wrapped_z_outliers(up_file: Path, max_abs_z: float = 30.0):
-    import h5py
-
-    with h5py.File(up_file, "r") as h5:
-        cgl_path = "/input/potential/compose_vector6d/elem_index"
-        if cgl_path not in h5:
-            return []
-        cgl_idx = h5[cgl_path][:].astype(np.int32)
-        if cgl_idx.size == 0:
-            return []
-        if "/output/pos" in h5 and h5["/output/pos"].shape[0] > 0:
-            pos = np.asarray(h5["/output/pos"][-1, 0, :, :], dtype=np.float32)
-        else:
-            pos = np.asarray(h5["/input/pos"][:, :, 0], dtype=np.float32)
-        z = pos[cgl_idx, 2].astype(np.float64)
-        box_z = None
-        if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
-            last_box = np.asarray(h5["/output/box"][-1]).reshape(-1)
-            if last_box.size >= 3 and last_box[2] > 0.0:
-                box_z = float(last_box[2])
-        if box_z is None and "/input/potential/martini_potential" in h5:
-            pot = h5["/input/potential/martini_potential"]
-            if "z_len" in pot.attrs and float(pot.attrs["z_len"]) > 0.0:
-                box_z = float(pot.attrs["z_len"])
-        if box_z is not None:
-            z_check = z - box_z * np.round(z / box_z)
-        else:
-            z_check = z
-        bad = np.where(np.abs(z_check) > float(max_abs_z))[0]
-        return [(int(i), float(z[i]), float(z_check[i])) for i in bad]
+    print(f"MARTINI force-field library found: {args.martini_h5}")
 
 
 def add_hybrid_workflow_arguments(parser):
@@ -2069,11 +1554,6 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--protein-aa-pdb", default=env_default("PROTEIN_AA_PDB", None))
     parser.add_argument("--bilayer-pdb", default=env_default("BILAYER_PDB", None))
     parser.add_argument("--extract-vtf-script", default=env_default("EXTRACT_VTF_SCRIPT", str(PY_DIR / "martini_extract_vtf.py")))
-    parser.add_argument(
-        "--cg-lipid-vtf-display",
-        choices=["rod", "center"],
-        default=env_default("CGL_VTF_DISPLAY_MODE", "rod"),
-    )
     parser.add_argument("--salt-molar", type=float, default=env_float("SALT_MOLAR", 0.15))
     parser.add_argument("--explicit-ions", type=int, choices=[0, 1], default=env_int("EXPLICIT_IONS", 1))
     parser.add_argument("--protein-lipid-cutoff", type=float, default=env_float("PROTEIN_LIPID_CUTOFF", 0.0))
@@ -2089,18 +1569,6 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--protein-lipid-cutoff-max", type=float, default=env_float("PROTEIN_LIPID_CUTOFF_MAX", 8.0))
     parser.add_argument("--temperature", type=float, default=env_float("TEMPERATURE", 0.8647))
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
-    parser.add_argument("--cg-lipid-mass-scale", type=float, default=env_float("CG_LIPID_MASS_SCALE", DEFAULT_CGL_MASS_SCALE))
-    parser.add_argument("--cgl-gle-memory-taus", default=env_default("CGL_GLE_MEMORY_TAUS", DEFAULT_CGL_GLE_MEMORY_TAUS))
-    parser.add_argument("--cgl-gle-couplings", default=env_default("CGL_GLE_COUPLINGS", DEFAULT_CGL_GLE_COUPLINGS))
-    parser.add_argument("--cgl-gle-temperature-grid", default=env_default("CGL_GLE_TEMPERATURE_GRID", ""))
-    parser.add_argument("--cgl-gle-coupling-scales", default=env_default("CGL_GLE_COUPLING_SCALES", ""))
-    parser.add_argument("--cgl-gle-memory-tau-scales", default=env_default("CGL_GLE_MEMORY_TAU_SCALES", ""))
-    parser.add_argument(
-        "--cgl-gle-replace-markovian",
-        type=int,
-        choices=[0, 1],
-        default=env_int("CGL_GLE_REPLACE_MARKOVIAN", 1),
-    )
     parser.add_argument("--thermostat-interval", type=int, default=env_int("THERMOSTAT_INTERVAL", -1))
     parser.add_argument("--strict-stage-handoff", type=int, default=env_int("STRICT_STAGE_HANDOFF", 1))
     parser.add_argument("--min-60-max-iter", type=int, default=env_int("MIN_60_MAX_ITER", 500))
@@ -2138,8 +1606,8 @@ def add_hybrid_workflow_arguments(parser):
             DEFAULT_STAGE_70_RELEASE_SC_ENV_PO4_Z_HOLD_STEPS,
         ),
     )
-    parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", MARTINI_CGL_TIME_STEP))
-    parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", MARTINI_CGL_TIME_STEP))
+    parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", MARTINI_MD_TIME_STEP))
+    parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", MARTINI_MD_TIME_STEP))
     parser.add_argument("--eq-frame-steps", type=int, default=env_int("EQ_FRAME_STEPS", 1000))
     parser.add_argument("--prod-frame-steps", type=int, default=env_int("PROD_FRAME_STEPS", 50))
     parser.add_argument("--prod-70-npt-enable", type=int, default=env_int("PROD_70_NPT_ENABLE", 0))
@@ -2148,13 +1616,6 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--continue-stage-70-from", default=env_default("CONTINUE_STAGE_70_FROM", ""))
     parser.add_argument("--continue-stage-70-output", default=env_default("CONTINUE_STAGE_70_OUTPUT", ""))
     parser.add_argument("--continue-stage-70-label", default=env_default("CONTINUE_STAGE_70_LABEL", ""))
-    parser.add_argument(
-        "--lipid-resolution",
-        choices=["coarse", "full"],
-        default=env_default("LIPID_RESOLUTION", "coarse"),
-        help="DOPC lipid representation: coarse (single CGL particle) or full (14-bead ITP topology)",
-    )
-    parser.add_argument("--dopc-h5", default=env_default("DOPC_H5", ""))
 
 
 def parse_hybrid_workflow_args(argv):
@@ -2193,16 +1654,6 @@ def validate_hybrid_workflow_args(args):
     ]:
         if not required.exists():
             raise FileNotFoundError(required)
-    if args.lipid_resolution == "coarse":
-        for label, dt in (
-            ("equilibration", args.eq_time_step),
-            ("production", args.prod_time_step),
-        ):
-            if abs(float(dt) - MARTINI_CGL_TIME_STEP) > 1.0e-12:
-                raise ValueError(
-                    f"Coarse CGL {label} must use the Upside backbone timestep "
-                    f"{MARTINI_CGL_TIME_STEP:g} T_up (40 ps); got {float(dt):.12g}"
-                )
 
 
 def workflow_stage_files(args):
@@ -2239,48 +1690,22 @@ def print_hybrid_workflow_summary(args, source=None, output=None):
 
 
 def run_stage60_relaxation(args, files):
-    max_stage60_attempts = 1
-    if args.lipid_resolution == "coarse":
-        max_stage60_attempts = max(1, Config.integer("UPSIDE_CG_LIPID_STAGE6_RETRY_ATTEMPTS", 3))
-    base_prep_seed = int(args.prep_seed)
-    base_seed = int(args.seed)
-    stage60_outliers = []
-    for attempt in range(max_stage60_attempts):
-        if attempt:
-            args.prep_seed = base_prep_seed + attempt
-            args.seed = base_seed + attempt
-            print(
-                "Retrying stage 6.0 with new seeds after CGL geometry rejection: "
-                f"prep_seed={args.prep_seed} seed={args.seed}"
-            )
-        prepare_workflow_hybrid_artifacts(args)
-        print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
-        prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, 0, "minimization")
-        shutil.copy2(files["prepared_60"], files["stage_60"])
-        inject_protein_position_restraints(files["stage_60"])
-        run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
-        remove_protein_position_restraints(files["stage_60"])
-        run_md_stage(
-            args,
-            "6.0",
-            files["stage_60"],
-            files["stage_60"],
-            args.eq_60_nsteps,
-            args.eq_time_step,
-            args.eq_frame_steps,
-        )
-        stage60_outliers = cgl_wrapped_z_outliers(files["stage_60"])
-        if not stage60_outliers:
-            break
-        print(
-            "Rejected stage 6.0 CGL geometry: "
-            f"{len(stage60_outliers)} wrapped-z outlier(s), first={stage60_outliers[:5]}"
-        )
-    if stage60_outliers:
-        raise RuntimeError(
-            "Stage 6.0 CGL geometry failed after "
-            f"{max_stage60_attempts} attempt(s): {stage60_outliers[:10]}"
-        )
+    prepare_workflow_hybrid_artifacts(args)
+    print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
+    prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, 0, "minimization")
+    shutil.copy2(files["prepared_60"], files["stage_60"])
+    inject_protein_position_restraints(files["stage_60"])
+    run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
+    remove_protein_position_restraints(files["stage_60"])
+    run_md_stage(
+        args,
+        "6.0",
+        files["stage_60"],
+        files["stage_60"],
+        args.eq_60_nsteps,
+        args.eq_time_step,
+        args.eq_frame_steps,
+    )
     extract_stage_vtf(args, "6.0", files["stage_60"], "1")
     return files["stage_60"]
 

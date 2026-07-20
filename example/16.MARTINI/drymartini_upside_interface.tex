@@ -1,0 +1,536 @@
+\documentclass{article}
+\usepackage{amsmath,amssymb,booktabs,array}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\usepackage{url}
+
+% ============================================================================
+% Manuscript: a hybrid machine-learned (Upside) / physical (dry-MARTINI) model
+% for membrane-protein THERMODYNAMICS. Supersedes the abandoned single-particle
+% coarse-grained-lipid (CGL) model and the earlier "effective-time-factor recovers
+% diffusion" framing. Thesis: couple a data-rich machine-learned protein force
+% field to a transferable physical membrane so that membrane-protein free-energy
+% questions can be studied WITHOUT membrane-protein training data. The rigorous
+% domain is thermodynamics / conformational sampling (structure, mechanics, local
+% stability -> HDX); lipid and coupled-protein DYNAMICS are effective, not
+% physical, which is the correct trade for the equilibrium observables targeted.
+%
+% Status legend:
+%   [VALIDATED]  reproduced and cross-checked
+%   [EFFECTIVE]  correct ensemble, but on a non-physical (nominal) time axis
+%   [OPEN]       under validation
+% ============================================================================
+
+\title{A Hybrid Machine-Learned/Physical Model for Membrane-Protein
+Thermodynamics: Coupling the Upside Protein Force Field to a Full-Resolution
+dry-MARTINI Membrane}
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+Membrane proteins are the archetype of a data-sparse regime: structures and
+thermodynamic measurements are scarce relative to soluble proteins, so
+data-hungry models are hard to train directly on them. We take the opposite
+route from training a membrane-protein-specific potential. We couple two
+components that are each already well determined on their own footing---a
+\emph{machine-learned} residue-level protein force field (Upside), trained on the
+abundant soluble-protein record, and a \emph{physical}, transferable
+implicit-solvent lipid force field (dry-MARTINI), parameterized from lipid
+physics---through their raw, unmodified cross-interactions. Because neither the
+protein model, the membrane model, nor their coupling is fit to
+membrane-protein data, the hybrid reaches systems for which little combined data
+exists. The technical obstacle is a timescale mismatch: a hard-core dry-MARTINI
+bilayer is numerically stable only to tens of femtoseconds, far below Upside's
+coarse step. We resolve it by advancing every lipid bead with a single
+Gr\o{}nbech-Jensen--Farago (g-JF) inertial-Langevin step, which is
+unconditionally stable at the coarse step and---critically---samples the
+\emph{correct Boltzmann distribution} with the excluded-volume core intact, so
+bilayer structure and mechanics are those of the force field, not of the
+integrator. The protein keeps its native Upside representation and force field
+(with a Langevin friction added only to thermostat it in the coupled system) and is
+held in the membrane by the raw dry-MARTINI field alone. We are explicit about what the model
+does and does not deliver. Its rigorous domain is \emph{thermodynamics}:
+validated bilayer structure (area per lipid, hydrophobic thickness, chain order)
+and mechanics (area compressibility via a Monte-Carlo barostat), and---for the
+protein---equilibrium conformational ensembles and local stabilities. Its lipid
+\emph{dynamics} are sub-diffusive and admit no single physical time mapping;
+coupled protein--lipid \emph{kinetics} are correspondingly effective, not
+physical. We argue this is the right trade for the questions the tool targets:
+enhanced-sampling free-energy calculations and, in particular, hydrogen-deuterium
+exchange (HDX), whose protection factors report an \emph{equilibrium} opening
+constant rather than a rate and therefore fall squarely in the trustworthy domain.
+Finally, the same compose-by-physical-coupling principle generalizes beyond lipids
+to other data-sparse composite systems, such as nanoparticles.
+\end{abstract}
+
+\section{Introduction}
+
+\subsection{The data problem, and two responses}
+
+Machine-learned force fields are powerful exactly where data is abundant. Upside
+represents each residue by a few interaction sites, evaluates a learned force
+field through pre-tabulated splines, and propagates the chain at a comparatively
+large timestep; trained against the large soluble-protein record, it delivers
+folding and conformational thermodynamics at low cost. Membrane proteins are the
+opposite regime: experimental structures and stabilities are comparatively few,
+and the environment (the bilayer) is an active thermodynamic participant that a
+protein-only model does not contain.
+
+There are two ways to extend a protein model into the membrane. The first is to
+\emph{learn} an implicit membrane term from membrane-protein data---an approach a
+previous effort in our group pursued, training an implicit-membrane potential
+against on the order of forty membrane proteins. Such a model is only as broad as
+its training set: forty proteins is a thin basis for a universal
+membrane-protein potential, and a learned implicit term risks encoding the
+idiosyncrasies of the training proteins rather than transferable membrane physics.
+
+The second route---ours---adds \emph{no} membrane-protein training data at all.
+We keep the machine-learned protein force field where it is strong (protein
+internal energetics, learned from abundant soluble data) and supply the membrane
+from a \emph{physical}, transferable lipid model (dry-MARTINI), whose parameters
+come from lipid thermodynamics, not from protein structures. The protein and the
+membrane are then coupled through the \emph{raw} dry-MARTINI cross-interactions,
+with a single geometric projection to reconcile the one genuine resolution
+mismatch (multi-bead side chain vs.\ single Upside site). Nothing in the
+protein model, the membrane model, or their coupling is fit to membrane-protein
+data. The power of the combination is precisely that it composes a data-rich
+learned model with a transferable physical model, so it can be applied where the
+\emph{combined} system has little data---which is the membrane-protein regime, and,
+as we note in the outlook, other composite systems such as nanoparticles.
+
+\subsection{What must be true, and what we claim}
+
+For this composition to be useful it must be (i) faithful in the domain it is used
+for, (ii) universal (one force field for all proteins; no per-system tuning), and
+(iii) affordable at Upside's coarse step. We are deliberately precise about (i):
+the hybrid is a \emph{thermodynamic} instrument. It reproduces the equilibrium
+ensemble---bilayer structure and mechanics, and the protein's conformational and
+local-stability distributions in the membrane---because the underlying dynamics,
+whatever their rate, are constructed to sample the correct Boltzmann distribution.
+It does \emph{not} reproduce physical lipid or coupled-protein kinetics, and we
+show below that it cannot be made to: the coarse-grained lipid is intrinsically
+sub-diffusive and no single time factor maps it to physical dynamics. This is not
+a defect for the target applications. Free-energy methods (replica exchange,
+metadynamics) deliberately distort dynamics to accelerate sampling, so they need
+correct statics, not correct kinetics; and hydrogen-deuterium exchange, our
+flagship observable, measures an equilibrium quantity (Sec.~\ref{sec:hdx}).
+
+The contributions are: (1) a full-resolution dry-MARTINI membrane inside Upside
+with every pair interaction served from a spline table (Sec.~\ref{sec:membrane});
+(2) a single-step g-JF lipid integrator that is unconditionally stable at the
+coarse step and Boltzmann-correct with the hard core intact
+(Sec.~\ref{sec:langevin}); (3) a design-space analysis showing that correct
+diffusion, a single coarse step, and a hard core are mutually exclusive, and that
+even relaxing the single-step constraint does not recover a clean lipid timescale
+(Secs.~\ref{sec:designspace},~\ref{sec:timescale}); (4) a validated
+static/thermodynamic characterization of the membrane---structure and mechanics,
+the latter via a Monte-Carlo barostat that samples the correct area fluctuations
+(Sec.~\ref{sec:mechanics}); and (5) a raw-force-field protein--membrane interface
+that confines an embedded protein without any added potential
+(Sec.~\ref{sec:interface}), enabling equilibrium and HDX observables
+(Sec.~\ref{sec:hdx}).
+
+\section{Theory and Methods}
+
+\subsection{Units, timestep, and per-step decomposition}
+\label{sec:units}
+
+Upside uses reduced units: energy $E_\mathrm{up}=2.9150$~kJ/mol, length in
+{\AA}ngstr\"om, mass $m_\mathrm{up}=12$~g/mol, and temperature
+$1.0\,T_\mathrm{up}=350.59$~K. We use Upside's \emph{standard} step,
+$dt=0.009\,T_\mathrm{up}$; protein and lipids share this single outer step, and it
+is never enlarged to make the coupled system behave---slowing the step would only
+mask instabilities that reappear at the standard step. The calibration reference
+state is $t_\mathrm{ref}=0.8647\,T_\mathrm{up}$ ($303$~K), where
+$k_BT=0.8647\,E_\mathrm{up}$. All native dry-MARTINI parameters (nm, kJ/mol, $e$)
+are converted to Upside units once, at spline-table build time; no conversion
+constants are baked into the force-field artifacts, and the C++ engine performs no
+unit conversion at run time.
+
+At each outer step both species advance \emph{once} under a \emph{single} g-JF
+integrator (Eq.~\ref{eq:gjf}) with a per-bead friction scale, so protein and lipids
+share one consistent integrator---a genuinely mixed g-JF(lipid)/Verlet(protein)
+coupling would exchange the shared interface force inconsistently and inject energy
+at the stiff hard core, destabilizing the run. Both species carry Langevin friction,
+but at different scales: lipids at the calibrated value (Sec.~\ref{sec:langevin}),
+and the protein at a \emph{larger} per-bead friction that thermostats it locally.
+This last point is essential and was learned the hard way. A \emph{frictionless}
+protein (friction scale zero, i.e.\ plain velocity Verlet relying only on the weak
+global thermostat) is a Hamiltonian body coupled to the noisy g-JF lipid bath across
+the stiff interface; it cannot dissipate the finite-step interface energy it
+receives, so it heats to $k_BT\!\approx\!1.5$--$2\,E_\mathrm{up}$ (well above the
+target $0.86$, while the lipids stay correctly thermostatted) and its secondary
+structure melts. Giving the protein its own Langevin dissipation---a per-bead
+friction roughly two orders of magnitude larger than the lipid value---restores the
+fluctuation--dissipation balance and holds the protein at temperature with its fold
+intact. Because Langevin friction is Boltzmann-correct, this thermostat coupling
+sets the temperature and the (effective) protein kinetics but does \emph{not} bias
+the equilibrium ensemble, so equilibrium observables remain correct
+(Sec.~\ref{sec:hdx}). The two species couple through the interface interactions of
+Sec.~\ref{sec:interface}, evaluated on the shared spline tables.
+
+\subsection{The full-resolution dry-MARTINI membrane in Upside}
+\label{sec:membrane}
+
+Each DOPC lipid is its fourteen dry-MARTINI beads. Intramolecular connectivity is
+taken from the dry-MARTINI topology: harmonic bonds (equilibrium lengths
+$0.37$--$0.48$~nm, force constant $1250$~kJ\,mol$^{-1}$nm$^{-2}$) and harmonic
+angles (force constants $25$--$45$~kJ\,mol$^{-1}$rad$^{-2}$), as Upside
+\texttt{dist\_spring} and \texttt{angle\_spring} nodes. We adopt the
+full-resolution lipid rather than a further-reduced single-particle lipid because
+a reduced lipid cannot simultaneously reproduce packing, hydrophobic thickness,
+and the orientational response that sets transmembrane tilt; an earlier
+single-particle model (documented separately, now abandoned) failed there.
+
+Nonbonded interactions---dry-MARTINI Lennard-Jones from the
+\texttt{[nonbond\_params]} matrix, plus the shifted Coulomb term for charged
+head-group beads---are \emph{not} evaluated analytically at run time. Following
+Upside's spline-table convention, every pair interaction is written to an HDF5
+spline table (\texttt{combined\_energy\_grids}) ahead of the run and read back
+through a single \texttt{martini\_potential} node with a cell-list neighbour
+search. The hard $r^{-12}$ core is kept exactly as parameterized---no capping, no
+softening---which is essential for correct bilayer packing and mechanics, for the
+transport analysis of Sec.~\ref{sec:timescale}, and for confining an embedded
+protein (Sec.~\ref{sec:interface}).
+
+\subsection{Single-step g-JF Langevin lipid dynamics}
+\label{sec:langevin}
+
+At the coarse step a naive inertial integrator cannot resolve the stiff bonds and
+$r^{-12}$ core. We advance each lipid bead by one Gr\o{}nbech-Jensen--Farago (g-JF)
+Langevin step, constructed to give correct configurational (Boltzmann) statistics
+at \emph{any} timestep and to remain stable far beyond the naive limit. For bead
+$i$ of mass $m_i$, friction $\alpha_i=\gamma\,s_i$ ($s_i$ a per-bead scale), and
+force $\mathbf{f}=-\nabla_i U$,
+\begin{align}
+b_i &= \Big(1+\tfrac{\alpha_i dt}{2m_i}\Big)^{-1}, \qquad
+a_i = \Big(1-\tfrac{\alpha_i dt}{2m_i}\Big) b_i, \\
+\mathbf{x}_i^{\,n+1} &= \mathbf{x}_i^{\,n} + b_i dt\,\mathbf{v}_i^{\,n}
+  + \tfrac{b_i dt^2}{2m_i}\mathbf{f}_i^{\,n}
+  + \tfrac{b_i dt}{2m_i}\boldsymbol{\beta}_i^{\,n+1}, \\
+\mathbf{v}_i^{\,n+1} &= a_i\mathbf{v}_i^{\,n}
+  + \tfrac{dt}{2m_i}\big(a_i\mathbf{f}_i^{\,n}+\mathbf{f}_i^{\,n+1}\big)
+  + \tfrac{b_i}{m_i}\boldsymbol{\beta}_i^{\,n+1},
+\label{eq:gjf}
+\end{align}
+with $\boldsymbol{\beta}_i^{\,n+1}=\sqrt{2\alpha_i k_BT\,dt}\,\boldsymbol{\xi}$ the
+discrete thermal impulse ($\boldsymbol{\xi}$ standard Gaussian, the same
+$\boldsymbol{\beta}$ in both updates). One force evaluation per outer step supplies
+$\mathbf{f}^{\,n+1}$; $\mathbf{f}^{\,n}$ is carried from the previous step. Bead
+masses are the dry-MARTINI values. The per-bead scale $s_i$ sets each species'
+dissipation: lipids use $s_i=1$ (the calibrated friction), while protein sites use a
+much larger $s_i$ so the protein is thermostatted locally (Sec.~\ref{sec:units}); the
+limit $s_i=0$ recovers plain velocity Verlet but is \emph{not} used for the protein,
+because a frictionless protein coupled to the lipid bath overheats.
+
+The g-JF step buys two things at the coarse step: unconditional stability of the
+stiff interactions, and---the property the whole thermodynamic claim rests on---the
+\emph{correct static structure}, because g-JF preserves the Boltzmann distribution
+independent of $dt$. What it does not preserve is the \emph{rate} of motion; that
+limitation is quantified in Sec.~\ref{sec:timescale}.
+
+\subsection{Design space: correct diffusion, single step, hard core---choose two}
+\label{sec:designspace}
+
+One might hope to keep a single coarse step \emph{and} exact diffusion \emph{and}
+the hard core by tuning friction or softening the core. One cannot. Correct
+lateral diffusion fixes the mobility; a single overdamped step then fixes the
+per-bead thermal displacement at $\sqrt{2k_BT\,dt/\gamma}\approx2$~\AA{} per
+component, of order the bead radius, which drives beads into the $r^{-12}$ wall
+(the update is stable only where $\mathrm{mob}\cdot U''<2$, but the wall curvature
+gives $\mathrm{mob}\cdot U''\gg2$). Softening the wall enough to remove the
+overshoot---for a Beutler soft core, $\alpha\approx1$---drives the contact energy
+$4\varepsilon(\alpha^{-2}-\alpha^{-1})\to0$, so beads overlap at no cost and the
+excluded volume that maintains area and thickness is destroyed. Since diffusion
+and noise share the same mobility, no Markovian single-step integrator can shrink
+the kick without shrinking $D$. The three requirements are mutually exclusive.
+
+This leaves two corners. \emph{(i) Relax the single step:} advance the lipids with
+$M$ overdamped inner sub-steps small enough to stay below $\sigma$ (a hard-core
+bilayer needs $M\approx90$); exact per the mobility, at $M$-fold cost. \emph{(ii)
+Relax exact single-step diffusion:} keep the single coarse step and the hard core
+with the g-JF integrator, and accept a lipid dynamics that is too slow. We choose
+corner~(ii) because it preserves Upside's native protein dynamics and single-step
+economy while keeping the membrane force field untouched. Corner~(i) is retained in
+the code as a reference. Crucially, though, corner~(i) does \emph{not} rescue a
+physical lipid timescale either, for the reason given next.
+
+\subsection{The lipid timescale is effective, not physical}
+\label{sec:timescale}
+
+We initially hoped a single ``effective-time factor'' would map the too-slow g-JF
+diffusion onto experiment, in the spirit of MARTINI's factor-4 convention. Direct
+measurement shows this is not tenable, and the reason is physical rather than a
+tuning failure.
+
+\emph{The lipid is sub-diffusive.} On the accessible window the phosphate
+mean-squared displacement grows as $\mathrm{MSD}\propto t^{\,\alpha}$ with the
+local exponent \emph{falling} from $\alpha\approx0.5$ to $\alpha\approx0.3$ rather
+than approaching the Fickian $\alpha=1$; there is no diffusive plateau, so no
+single diffusion coefficient exists to be rescaled. Any apparent match of a
+rescaled $D$ to experiment is a transient crossing of a falling curve, not a
+recovered constant.
+
+\emph{It is a property of the regime, not of the g-JF integrator.} The
+exact-diffusion overdamped reference of corner~(i), run in the same box, is
+\emph{also} sub-diffusive over the same window (comparable exponent). The
+sub-diffusion therefore reflects the small, dense bilayer patch and the
+short-to-intermediate-time regime---where real membranes are themselves
+sub-diffusive until $\sim$$10$--$100$~ns---rather than the single-step
+approximation. A clean Fickian $D$ for \emph{either} integrator would require a
+much larger patch and far longer sampling.
+
+\emph{The clock is mode-dependent.} Matching the g-JF director reorientation
+autocorrelation to an all-atom CHARMM36 DOPC reference does not overlay with a
+single time scaling (the curve \emph{shapes} differ, because the atomistic
+director carries fast acyl-tail flexibility the stiff coarse tail lacks), and the
+scaling it does favour differs from the diffusion-implied one. Different
+observables imply different, incompatible time factors. We therefore report lipid
+time as a \emph{nominal} sampling coordinate, not physical time, and make no
+quantitative kinetic claim from the membrane clock. \textbf{[EFFECTIVE]}
+
+What \emph{is} robust in the dynamics is the temperature \emph{trend}: across
+$T_\mathrm{up}=0.5$--$1.5$ the g-JF bilayer is stable at every temperature and the
+apparent diffusion increases monotonically with $T$ in an Arrhenius manner, so
+\emph{relative} statements across temperature or condition are reliable even though
+the absolute rate is not. This is what makes the model safe to use across a
+replica-exchange temperature ladder.
+
+\subsection{Membrane mechanics from a Monte-Carlo barostat}
+\label{sec:mechanics}
+
+Area compressibility $K_A$ and, through it, the bending modulus require sampling
+the equilibrium area \emph{fluctuations}, $K_A=k_BT\langle A\rangle/\mathrm{Var}(A)$.
+A weak-coupling (Berendsen- or damped-piston-style) barostat relaxes the box but
+suppresses its fluctuations, so it cannot yield $K_A$. We therefore use a
+\emph{Monte-Carlo} barostat: at fixed intervals, trial isotropic-in-plane and
+normal box rescalings are applied by scaling lipid \emph{centre-of-mass} positions
+(internal geometry preserved, so $\Delta U$ is intermolecular and reflects area
+elasticity rather than bond stiffness) and accepted with the exact
+constant-pressure Metropolis weight
+$\exp\!\big[-\beta(\Delta U+P\Delta V)\big]\,(V'/V)^{N_\mathrm{mol}}$. Being a
+Monte-Carlo move, it samples the correct isothermal--isobaric ensemble by
+construction, independent of any coupling constant, and restores physical area
+fluctuations. Consistent with the sub-diffusive lipid dynamics, the area
+decorrelates slowly, so a converged $K_A$ requires long sampling; the barostat is
+correct, the convergence is the cost. \textbf{[VALIDATED (method); OPEN (converged
+$K_A$)]}
+
+\subsection{The protein--membrane interface}
+\label{sec:interface}
+
+The protein keeps its native Upside representation and force field and is advanced
+once per outer step; it is not rescaled or placed in any lipid-specific loop. Its
+integrator carries the added Langevin friction of Sec.~\ref{sec:units} (a thermostat
+coupling, not a force-field change) so it holds temperature against the lipid bath. It
+couples to the membrane through the unmodified dry-MARTINI force field.
+
+\paragraph{SC-env (side chain $\leftrightarrow$ lipid).} Upside resolves a side
+chain into one directional site, dry-MARTINI into several beads. This one genuine
+resolution mismatch is bridged by a potential of mean force: for each residue
+type, the multi-bead side chain is projected onto its single Upside site by a
+Boltzmann average over the eliminated conformations,
+\begin{equation}
+U_\mathrm{SC\text{-}env}(\mathbf{r}) = -k_BT\,\ln\Big\langle
+  \exp\!\big[-U_\mathrm{MARTINI}(\mathbf{r};\Omega)/k_BT\big]\Big\rangle_{\Omega},
+\end{equation}
+giving a smooth, orientation-resolved spline table (\texttt{sc\_table}). This is
+the only PMF in the interface.
+
+\paragraph{BB-env (backbone $\leftrightarrow$ lipid).} The backbone is a single
+site in both models, so nothing is integrated out: BB-env is the \emph{raw}
+dry-MARTINI Lennard-Jones (plus Coulomb) interaction, from the same
+\texttt{martini\_potential} spline as lipid--lipid. No softening, no PMF, no
+capping. An early softened BB-env was tried and found to \emph{cause} the protein
+to drift out of the bilayer (Sec.~\ref{sec:hybrid}); the raw field is retained.
+
+\paragraph{Protein confinement.} No term keeps the protein in the membrane; its
+equilibrium depth and orientation follow from the raw force field, as they should
+from a correct force field rather than a restraint. There is no $z$-restraint and
+no implicit-membrane solvation potential.
+
+\subsection{Enhanced sampling and simulation protocol}
+\label{sec:protocol}
+
+Because both the intended observables and the slow, sub-diffusive intrinsic
+dynamics point the same way, the model is used with enhanced sampling. Temperature
+replica exchange is supported natively (coordinate-swap convention: temperatures
+are pinned to slots and the per-slot temperature is applied to the lipid
+integrator, so each slot is a canonical ensemble); the lipid potential enters the
+exchange criterion, and no momentum rescaling is needed. Well-tempered
+metadynamics on a collective variable is available as a native bias node (a
+history-dependent Gaussian bias read off a coordinate node, its gradient
+propagated to the atoms), depositing on the true simulation-round clock. Both are
+equilibrium-sampling methods: they require correct statics, which the model
+provides, and they are what converge the rare events (e.g.\ local helix opening)
+that the slow intrinsic dynamics would otherwise under-sample.
+
+Systems: a pure DOPC bilayer (structure, mechanics, transport), and transmembrane
+proteins 1RKL (Ost4p) and 1AFO (glycophorin~A dimer). Lateral diffusion is
+measured from the phosphate in-plane MSD with centre-of-mass drift removed;
+protein tilt is measured backbone-only.
+
+\section{Results}
+
+\subsection{Bilayer structure and mechanics (the rigorous domain)}
+\label{sec:structure}
+
+Under the single g-JF step the bilayer is stable and fluid, and---because g-JF is
+Boltzmann-correct---its structure is that of the force field. Measured against
+DOPC: area per lipid $\approx65$~\AA$^2$ (exp.\ $\approx67$), hydrophobic
+thickness (first-tail-bead separation) $\approx2.78$~nm (exp.\ $2.7$--$2.9$),
+chain order parameter $\approx0.30$ (MARTINI range), and a fluid director
+distribution (mean tilt $\approx22^\circ$, order $S\approx0.74$). The
+phosphate--phosphate distance reads slightly thick ($\approx43$~\AA{}) but the
+excess is head-group projection; the functionally decisive hydrophobic thickness,
+to which a transmembrane protein matches, is on target. A zero-tension
+Monte-Carlo-barostat run relaxes the area to a somewhat more condensed value than
+the fixed-box state, indicating the force field is marginally over-cohesive---a
+force-field fidelity note, reported and not tuned away. \textbf{[VALIDATED]}
+
+\subsection{The single-step barrier and the effective clock, demonstrated}
+\label{sec:barrier}
+
+The design-space analysis is borne out: at the correct mobility a single overdamped
+step drives the raw core into overshoot (energy spikes, disintegration), while the
+minimum softening that stabilizes it collapses the excluded volume; the g-JF step
+is stable at $M=1$ with the hard core intact and yields the correct structure. The
+timescale analysis of Sec.~\ref{sec:timescale} is likewise borne out numerically:
+the phosphate MSD is sub-diffusive with a falling exponent for both g-JF and the
+overdamped reference, and the rotational-autocorrelation curve-match to all-atom
+DOPC does not overlay under any single time scaling. The membrane clock is thus
+demonstrably effective, and the temperature trend demonstrably Arrhenius.
+\textbf{[VALIDATED (statics); EFFECTIVE (dynamics)]}
+
+\subsection{The raw force field confines the protein}
+\label{sec:hybrid}
+
+Whether the dry-MARTINI field alone holds a protein embedded is a force-field
+question, not an integrator one. A rigid 1RKL (internal geometry frozen, free to
+translate and rotate) under the raw field stays embedded, settling a few
+{\aa}ngstr\"om and plateauing while the surrounding bilayer keeps its thickness; a
+flexible 1RKL likewise stays folded (backbone radius of gyration constant) and
+embedded, with no sustained drift. \textbf{[VALIDATED]} Replacing the raw BB-env
+with a smoothed PMF instead drives the protein out. The earlier ``impulsive kick''
+that had motivated softening was traced to under-resolved lipids (a too-small
+sub-step count firing a safeguard displacement cap and injecting energy) compounded
+by a non-standard reduced timestep; at the standard step with the g-JF integrator
+the raw field needs no help, and softening only degrades the confinement it was
+meant to protect.
+
+\subsection{Application: hydrogen-deuterium exchange}
+\label{sec:hdx}
+
+The motivating application is HDX-MS, which probes the local opening (``breaking'')
+and re-forming of backbone hydrogen bonds---the helix stability that reports on
+folding and on the membrane's protective effect. This is exactly the kind of
+observable the model is built for, because HDX measures a \emph{thermodynamic}
+quantity. In the common EX2 regime the exchange rate factorizes,
+\begin{equation}
+k_\mathrm{HDX} = \frac{k_\mathrm{op}}{k_\mathrm{cl}}\,k_\mathrm{chem}
+= K_\mathrm{op}\,k_\mathrm{chem} = e^{-\Delta G_\mathrm{op}/k_BT}\,k_\mathrm{chem},
+\end{equation}
+so the protection factor and $\Delta G_\mathrm{op}$ depend on the \emph{equilibrium
+opening constant} $K_\mathrm{op}$---the fraction of time each amide is open---and
+the individual opening and closing \emph{rates} cancel into their ratio. The
+effective, non-physical kinetics of the coupled model therefore never enter an EX2
+protection factor: what is required is the correct equilibrium open probability,
+which the Boltzmann-correct sampling provides. The analysis pipeline computes
+residue $\Delta G$ and uptake from ensemble-averaged (MBAR-reweighted) per-frame
+protection states, i.e.\ from equilibrium populations, consistent with this.
+
+Four conditions attach. (1) The learned protein force field must give the correct
+local helical stability, and the membrane its correct modulation---the former is
+Upside's strength, the latter enters thermodynamically. (2) The protein must be held
+at the correct \emph{temperature}: because $K_\mathrm{op}=e^{-\Delta G_\mathrm{op}/
+k_BT}$ is exponentially sensitive to $T$, an inadequately thermostatted protein
+biases every protection factor. In the coupled system this requires the protein to
+carry its own Langevin dissipation (Sec.~\ref{sec:units}); the frictionless
+velocity-Verlet protein overheats to $k_BT\!\approx\!1.5$--$2$ and grossly inflates
+$K_\mathrm{op}$ (spurious over-exchange), whereas at the protein friction that holds
+$k_BT\!=\!0.86$ the H-bond populations are stable and still fluctuating (opening is
+sampled). The friction is Boltzmann-correct, so once $T$ is matched it does not
+otherwise bias $K_\mathrm{op}$. (3) The rare open states must be \emph{converged},
+which is why replica exchange and metadynamics are integral rather than optional; the
+slow lipid dynamics lengthens convergence but does not change the converged $\Delta
+G$. (4) A membrane-specific point: in a dry
+(waterless) membrane an amide can be hydrogen-bond-broken yet still buried in the
+lipid core and thus not exchange-competent, so the protection criterion must be
+``open \emph{and} water-accessible'' (approximating accessibility from bilayer
+depth), not open alone; otherwise transmembrane segments are scored as exchanging
+when the membrane in fact protects them. With these, membrane-protein HDX sits
+squarely in the model's rigorous domain. \textbf{[OPEN, in progress]}
+
+\subsection{Transmembrane helix tilt: a coupled-kinetics limit}
+\label{sec:tilt}
+
+In the hybrid at the standard step, 1RKL stays folded and embedded but its backbone
+tilt remains near its $\sim$$40^\circ$ insertion value with only
+$\pm0.2$--$0.4^\circ$ fluctuation, versus $\pm5$--$6^\circ$ in all-atom and
+wet-MARTINI references that relax to $\sim$$10$--$22^\circ$. Because the same lipid
+chemistry (wet MARTINI) does relax the tilt, the frozen hybrid tilt is a
+\emph{kinetic} failure to relax---annular lipids rearranging too slowly---not a
+force-field equilibrium at $40^\circ$. It is the sharpest instance of the
+coupled-kinetics limitation, and the correct remedy is enhanced sampling of the
+tilt coordinate (metadynamics), not a force-field change. \textbf{[OPEN]}
+
+\section{Discussion}
+
+The model composes a data-rich machine-learned protein force field with a
+transferable physical membrane, coupled through raw interactions, so that
+membrane-protein thermodynamics can be studied without membrane-protein training
+data. Its scope follows directly from how it is built. Statics are rigorous: the
+g-JF integrator and the Monte-Carlo barostat both sample the correct Boltzmann and
+isothermal--isobaric ensembles, so bilayer structure and mechanics, and the
+protein's conformational and local-stability distributions, are those of the force
+field. Dynamics are effective: the coarse lipid is intrinsically sub-diffusive with
+a mode-dependent, non-physical clock, and coupled protein--lipid kinetics inherit
+this. The honest boundary is therefore between \emph{equilibrium} observables
+(trustworthy) and \emph{rates} of lipid-coupled processes (not). HDX protection
+factors are equilibrium quantities and lie inside the boundary; a helix-tilt
+relaxation \emph{rate} lies outside it. Relative statements across temperature or
+condition remain reliable because the temperature trend is Arrhenius even though
+the absolute rate is not.
+
+Two methodological lessons generalize. First, enhanced sampling is not an add-on
+here but a requirement: it both matches the equilibrium target of the tool and
+supplies the ergodicity that the slow intrinsic dynamics cannot. Second, before
+adding any corrective term one must rule out setup artifacts---timestep and
+integrator resolution above all; the softened BB-env ``fixed'' a problem that was
+really an under-resolved lipid at a non-standard step, and the fix was itself the
+source of the drift.
+
+\section{Outlook}
+
+The principle---compose individually well-determined components through their
+physical coupling, rather than train a bespoke potential for the combined
+system---is not specific to lipids. Any system in which the parts are parameterized
+but the \emph{combination} is data-poor is a candidate: a learned protein or
+polymer model together with a physical model of an inorganic or engineered phase,
+coupled by their raw cross-interactions. Nanoparticles are a concrete example---a
+protein or membrane interacting with a nanoparticle whose surface chemistry is
+physically describable but for which little protein-binding data exists. In every
+such case the same scope applies: the composite model is a thermodynamic and
+conformational-sampling instrument, rigorous for equilibrium observables and
+explicit about its effective dynamics.
+
+\section{Conclusions}
+
+A membrane protein and a full-resolution dry-MARTINI bilayer can be propagated
+together at Upside's standard step by advancing the lipids with a single
+Boltzmann-correct g-JF Langevin step and coupling the protein through the raw force
+field, so that the machine-learned protein model and the physical membrane model
+combine without any membrane-protein training data. The model's rigorous domain is
+thermodynamics: validated bilayer structure and mechanics, and---via enhanced
+sampling---protein conformational ensembles and local stabilities, with HDX
+protection factors as the flagship equilibrium observable. Its lipid and
+coupled-protein dynamics are effective, not physical, which we demonstrate
+(sub-diffusive lipid, mode-dependent clock) and which is the correct trade for
+those equilibrium targets. The same compose-by-physical-coupling strategy extends
+the reach of the model to other data-sparse systems such as nanoparticles.
+
+\end{document}

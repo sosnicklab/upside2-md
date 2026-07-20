@@ -33,7 +33,6 @@ export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
 export PATH="${PROJECT_ROOT}/obj:$PATH"
 
 export PDB_ID="${PDB_ID:-1afo}"
-export LIPID_RESOLUTION="${LIPID_RESOLUTION:-full}"
 export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_hybrid_full}"
 export RUN_DIR="${RUN_DIR:-outputs/martini_1afo_hybrid_full}"
 export PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/1AFO.pdb}"

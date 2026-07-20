@@ -918,7 +918,34 @@ def write_plumed(fasta, plumedFile, T=0.9, stepsize=0.009, just_print=False ):
     create_array(g, 'plumedFile', obj=np.array([plumedFile]))
 
 #=========================================================================
-#                               contact 
+#                            metadynamics
+#=========================================================================
+
+def write_metadynamics(cv_node, sigma, height, deposit_period,
+                       grid_min, grid_max, grid_bins,
+                       bias_factor=-1.0, cv_dim=0, cv_elem=0):
+    '''Well-tempered metadynamics bias on a scalar collective variable.
+
+    cv_node        name of an existing CoordNode whose (cv_dim, cv_elem) entry is the CV
+    sigma, height  Gaussian width (CV units) and initial height (E_up)
+    deposit_period rounds between Gaussian depositions
+    grid_min/max/bins  CV range for the logged bias profile (last frame = converged bias)
+    bias_factor    well-tempered gamma (>1); <=1 gives standard metadynamics
+    '''
+    g = t.create_group(t.root.input.potential, 'metadynamics')
+    g._v_attrs.arguments      = np.array([cv_node.encode()])
+    g._v_attrs.cv_dim         = int(cv_dim)
+    g._v_attrs.cv_elem        = int(cv_elem)
+    g._v_attrs.sigma          = float(sigma)
+    g._v_attrs.height         = float(height)
+    g._v_attrs.bias_factor    = float(bias_factor)
+    g._v_attrs.deposit_period = int(deposit_period)
+    g._v_attrs.grid_min       = float(grid_min)
+    g._v_attrs.grid_max       = float(grid_max)
+    g._v_attrs.grid_bins      = int(grid_bins)
+
+#=========================================================================
+#                               contact
 #=========================================================================
 
 

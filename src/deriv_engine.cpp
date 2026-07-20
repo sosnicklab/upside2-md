@@ -346,8 +346,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
 
     for(int stage=0; stage<3; ++stage) {
         compute(DerivMode);   // compute derivatives
-        martini_cg_lipid::integrate_dynamic_orientation(this, dt*mom_update[stage]);
-        martini_cg_lipid::integrate_dynamic_compaction(this, dt*mom_update[stage]);
         Timer timer(string("integration"));
         
         // Check if MARTINI masses are available and use mass-aware integrator
@@ -401,10 +399,14 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
+    // Overdamped (Brownian) lipid beads are advanced once per cycle (on stage 0) and are
+    // skipped by the inertial Verlet update below.
+    bool has_brownian = martini_brownian::has_brownian(this);
+    const auto& brownian_mask = martini_brownian::brownian_mask(this);
+
     for(int stage=0; stage<3; ++stage) {
         compute(DerivMode);   // compute derivatives
-        martini_cg_lipid::integrate_dynamic_orientation(this, dt);
-        martini_cg_lipid::integrate_dynamic_compaction(this, dt);
+        if(stage==0 && has_brownian) martini_brownian::apply_brownian_step(this, mom, dt);
         Timer timer(string("integration"));
 
         // Check if MARTINI masses are available and use mass-aware integrator
@@ -415,6 +417,7 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
                     store_vec(mom, na, make_zero<3>());
                     continue;
                 }
+                if(has_brownian && brownian_mask[static_cast<size_t>(na)]) continue;
                 bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
 
                 // Get mass for this atom from MARTINI mass storage
@@ -440,6 +443,7 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
                     store_vec(mom, na, make_zero<3>());
                     continue;
                 }
+                if(has_brownian && brownian_mask[static_cast<size_t>(na)]) continue;
                 bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
 
                 auto d = load_vec<3>(pos->sens, na);
@@ -464,9 +468,7 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
     compute(DerivMode, 1);
-    martini_cg_lipid::integrate_dynamic_orientation(this, inner_step*dt);
-    martini_cg_lipid::integrate_dynamic_compaction(this, inner_step*dt);
-    
+
     // Check if MARTINI masses are available and use mass-aware integrator
     if(martini_masses::has_masses(this)) {
         // Use MARTINI mass-aware integrator for slow level
@@ -487,8 +489,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         // calculate acceleration, update velocity for fast level
         for(int i=0;i<inner_step;i++) {
             compute(DerivMode, 0);
-            martini_cg_lipid::integrate_dynamic_orientation(this, dt);
-            martini_cg_lipid::integrate_dynamic_compaction(this, dt);
             for(int na=0; na < pos->n_atom; ++na) {
                 if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
                     store_vec(mom, na, make_zero<3>());
@@ -529,8 +529,6 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
         // calculate acceleration, update velocity for fast level
         for(int i=0;i<inner_step;i++) {
             compute(DerivMode, 0);
-            martini_cg_lipid::integrate_dynamic_orientation(this, dt);
-            martini_cg_lipid::integrate_dynamic_compaction(this, dt);
             for(int na=0; na < pos->n_atom; ++na) {
                 if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
                     store_vec(mom, na, make_zero<3>());

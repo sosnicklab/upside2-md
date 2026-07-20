@@ -26,7 +26,7 @@ set (ENGINE_SRC
     martini_masses.cpp
     martini_potential.cpp
     martini_stage_params.cpp
-    martini_cg_lipid.cpp
+    martini_brownian.cpp
     box.cpp
     environment.cpp
     hbond.cpp 
@@ -40,6 +40,7 @@ set (ENGINE_SRC
     spline.cpp
     spring.cpp
     tension.cpp
+    metadynamics.cpp
     sigmoid_energy.cpp
     deriv_engine.cpp 
     sidechain_radial.cpp

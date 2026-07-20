@@ -1,21 +1,15 @@
 #include "martini_internal.h"
 #include "deriv_engine.h"
-#include "timing.h"
-#include "state_logger.h"
 #include <mutex>
-#include "spline.h"
-#include <iostream>
-#include <H5Apublic.h> // for H5Aexists
-#include <cmath> // For pow, cosf, sinf, acosf
+#include <H5Apublic.h>
+#include <cmath>
 #include <cctype>
 #include <cstdint>
-#include <set> // For std::set
+#include <set>
 #include <array>
 #include <vector>
 #include <algorithm>
-#include <unordered_map>
 #include <limits>
-#include "box.h" // For PBC minimum_image function
 
 using namespace h5;
 using namespace std;
@@ -46,11 +40,6 @@ static std::vector<int> active_protein_proxy_fixed_atoms(const HybridRuntimeStat
     return atoms;
 }
 
-static inline int direct_ca_atom_for_bb_proxy(const HybridRuntimeState& st, int bb_proxy_atom) {
-    if(bb_proxy_atom < 0 || bb_proxy_atom >= static_cast<int>(st.bb_proxy_to_ca_atom.size())) return -1;
-    return st.bb_proxy_to_ca_atom[static_cast<size_t>(bb_proxy_atom)];
-}
-
 int bb_map_index_for_proxy(const HybridRuntimeState& st, int bb_proxy_atom) {
     if(bb_proxy_atom < 0 || bb_proxy_atom >= static_cast<int>(st.bb_proxy_to_map_index.size())) return -1;
     return st.bb_proxy_to_map_index[static_cast<size_t>(bb_proxy_atom)];
@@ -77,30 +66,6 @@ void project_bb_proxy_gradient_if_active(
         if(!site_is_carrier && atom_idx == bb_proxy_atom) continue;
         update_vec<3>(pos_sens, atom_idx, w * grad);
     }
-}
-
-static inline bool mapped_bb_site_position_if_active(
-        const HybridRuntimeState& st,
-        VecArray pos,
-        int n_atom,
-        int bb_site_atom,
-        Vec<3>& site_pos) {
-    int map_idx = bb_map_index_for_proxy(st, bb_site_atom);
-    if(map_idx < 0 || map_idx >= static_cast<int>(st.n_bb)) return false;
-    Vec<3> com = make_zero<3>();
-    float wsum = 0.f;
-    for(int d = 0; d < 4; ++d) {
-        if(st.atom_mask[static_cast<size_t>(map_idx)][d] == 0) continue;
-        int atom_idx = st.atom_indices[static_cast<size_t>(map_idx)][d];
-        float w = st.weights[static_cast<size_t>(map_idx)][d];
-        if(atom_idx < 0 || atom_idx >= n_atom || w == 0.f) continue;
-        com += w * load_vec<3>(pos, atom_idx);
-        wsum += w;
-    }
-    if(!(wsum > 0.f)) return false;
-    if(fabsf(wsum - 1.f) > 1e-6f) com *= (1.f / wsum);
-    site_pos = com;
-    return true;
 }
 
 static void refresh_backbone_o_positions_if_active(const HybridRuntimeState& st, VecArray pos, int n_atom);
@@ -832,24 +797,11 @@ bool is_hybrid_enabled(const DerivEngine& engine) {
     return it != g_hybrid_state.end() && it->second && it->second->has_config;
 }
 
-bool is_hybrid_active(const DerivEngine& engine) {
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
-    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
-    return it != g_hybrid_state.end() && it->second && it->second->active;
-}
-
 double get_last_bb_env_interface_potential(const DerivEngine& engine) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
     if(it == g_hybrid_state.end() || !it->second) return 0.0;
     return static_cast<double>(it->second->bb_env_interface_potential);
-}
-
-bool preproduction_requires_rigid(const DerivEngine& engine) {
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
-    auto it = g_hybrid_state.find(const_cast<DerivEngine*>(&engine));
-    if(it == g_hybrid_state.end() || !it->second) return false;
-    return it->second->preprod_rigid;
 }
 
 std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& coord) {
@@ -859,38 +811,9 @@ std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& c
     return it->second;
 }
 
-bool project_bb_proxy_gradient_for_coord(
-        const CoordNode& coord,
-        VecArray pos_sens,
-        int n_atom,
-        int atom_idx,
-        const Vec<3>& grad) {
-    auto st = get_state_for_coord(coord);
-    if(!st || !st->active) return false;
-    if(atom_role_class_at(*st, atom_idx) != ROLE_BB) return false;
-    if(atom_is_backbone_carrier_at(*st, atom_idx)) return false;
-    if(bb_map_index_for_proxy(*st, atom_idx) < 0) return false;
-
-    Vec<3> routed_grad = compute_sc_backbone_feedback_mix(*st) * grad;
-    project_bb_proxy_gradient_if_active(*st, pos_sens, n_atom, atom_idx, routed_grad);
-    return true;
-}
-
 bool skip_pair_if_intra_protein(const HybridRuntimeState& st, int i, int j) {
     if(!st.active || !st.exclude_intra_protein_martini) return false;
     return !allow_intra_protein_pair_if_active(st, i, j);
 }
 
-void clear_hybrid_for_engine(DerivEngine* engine) {
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
-    if(engine) {
-        martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
-        martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
-        martini_fix_rigid::clear_dynamic_rigid_groups(*engine);
-    }
-    if(engine && engine->pos) {
-        g_hybrid_state_by_coord.erase(static_cast<const CoordNode*>(engine->pos));
-    }
-    g_hybrid_state.erase(engine);
-}
 } // namespace martini_hybrid

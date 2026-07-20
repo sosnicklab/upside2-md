@@ -3,6 +3,7 @@
 #include "h5_support.h"
 #include <cmath>
 #include <vector>
+#include <random>
 
 namespace simulation_box {
 
@@ -20,13 +21,12 @@ inline void minimum_image_scalar(float& dx, float& dy, float& dz, float box_x, f
     if(box_z > 0.f) dz -= box_z * roundf(dz / box_z);
 }
 
-void wrap_positions(VecArray pos, int n_atom, float box_x, float box_y, float box_z);
-
 namespace npt {
 
 enum class BarostatType {
     Berendsen,
-    ParrinelloRahman
+    ParrinelloRahman,
+    MonteCarlo
 };
 
 struct BarostatSettings {
@@ -40,6 +40,10 @@ struct BarostatSettings {
     float compressibility_z = 4.5e-5f;  // 1/pressure normal to bilayer
     float compressibility = 4.5e-5f;
     bool  prefer_shrink_first = true; // on first application, avoid any expansion
+    // Monte-Carlo barostat: max fractional box-length step per trial move
+    float    mc_dmax_xy = 0.004f;
+    float    mc_dmax_z  = 0.004f;
+    unsigned mc_seed    = 20240719u;
 };
 
 struct BarostatState {
@@ -53,6 +57,12 @@ struct BarostatState {
     float last_scale_z = 1.0f;
     float box_vel_xy = 0.0f;  // box velocity for lateral dimensions
     float box_vel_z = 0.0f;   // box velocity for normal dimension
+    // Monte-Carlo barostat: molecule grouping (COM scaling) + RNG + acceptance stats
+    std::vector<std::vector<int>> mc_mol_atoms;  // atoms of each scaled molecule
+    std::mt19937_64 mc_rng;
+    bool mc_init = false;
+    long mc_attempt[2] = {0, 0};   // [0]=lateral (xy), [1]=normal (z)
+    long mc_accept[2]  = {0, 0};
 };
 
 using NodeBoxUpdater = void (*)(DerivEngine& engine, float scale_xy, float scale_z);
@@ -67,6 +77,7 @@ void maybe_apply_barostat(DerivEngine& engine,
                           uint64_t round_num,
                           float dt,
                           int inner_step,
+                          float temperature,
                           int verbose,
                           bool print_now);
 

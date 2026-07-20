@@ -1,11 +1,9 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """ITP readers used by the dry-MARTINI workflow."""
-
-from __future__ import annotations
 
 import importlib.util
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 CANONICAL_RESIDUES = (
     "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY",
@@ -106,6 +104,23 @@ def parse_dry_forcefield(
             pair_params[(type_i, type_j)] = payload
             pair_params[(type_j, type_i)] = payload
     return atomtypes, pair_params
+
+
+def _pair_param(pair_params: dict, type_i: str, type_j: str) -> dict | None:
+    return pair_params.get((type_i, type_j)) or pair_params.get((type_j, type_i))
+
+
+def dopc_max_sigma_nm(bead_types: Iterable[str], pair_params: dict) -> float:
+    sigmas = []
+    types = list(bead_types)
+    for ti in types:
+        for tj in types:
+            params = _pair_param(pair_params, ti, tj)
+            if params is not None:
+                sigmas.append(float(params["sigma_nm"]))
+    if not sigmas:
+        raise ValueError("No dry-MARTINI nonbonded sigmas found for DOPC bead types")
+    return max(sigmas)
 
 
 def parse_itp_atomtype_masses(ff_path: str | Path) -> Dict[str, float]:

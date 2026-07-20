@@ -1,22 +1,16 @@
 #include "martini_internal.h"
 #include "deriv_engine.h"
 #include "timing.h"
-#include "state_logger.h"
-#include <mutex>
 #include "spline.h"
-#include <iostream>
-#include <H5Apublic.h> // for H5Aexists
-#include <cmath> // For pow, cosf, sinf, acosf
-#include <cctype>
+#include <H5Apublic.h>
+#include <cmath>
 #include <cstdint>
-#include <set> // For std::set
 #include <array>
 #include <vector>
 #include <algorithm>
 #include <unordered_map>
-#include <memory>
 #include <limits>
-#include "box.h" // For PBC minimum_image function
+#include "box.h"
 
 using namespace h5;
 using namespace std;
@@ -129,13 +123,10 @@ struct DihedralSpring : public PotentialNode
             Float4 x_orig[4];
             for(int na: range(4)) x_orig[na] = Float4(posc + 4*params[nt].atom[na]);
 
-            // Apply minimum image convention for periodic boundaries
-            // Reconstruct chain: use atom 1 as reference, apply PBC to get other atoms
+            // Reconstruct the unbroken chain (0-1-2-3) across PBC using atom 1 as reference
             Float4 x[4];
-            x[1] = x_orig[1]; // Use atom 1 as reference
+            x[1] = x_orig[1];
             
-            // Apply PBC minimum image to reconstruct unbroken chain
-            // Atom 0 relative to atom 1
             float dx0 = x_orig[0].x() - x_orig[1].x();
             float dy0 = x_orig[0].y() - x_orig[1].y();
             float dz0 = x_orig[0].z() - x_orig[1].z();
@@ -145,7 +136,6 @@ struct DihedralSpring : public PotentialNode
                 x[0] = x[1] + Float4(disp0);
             }
             
-            // Atom 2 relative to atom 1
             float dx2 = x_orig[2].x() - x_orig[1].x();
             float dy2 = x_orig[2].y() - x_orig[1].y();
             float dz2 = x_orig[2].z() - x_orig[1].z();
@@ -155,7 +145,7 @@ struct DihedralSpring : public PotentialNode
                 x[2] = x[1] + Float4(disp2);
             }
             
-            // Atom 3 relative to atom 2 (chain: 0-1-2-3)
+            // atom 3 hangs off atom 2, not atom 1
             float dx3 = x_orig[3].x() - x_orig[2].x();
             float dy3 = x_orig[3].y() - x_orig[2].y();
             float dz3 = x_orig[3].z() - x_orig[2].z();
@@ -233,33 +223,24 @@ struct MartiniPotential : public PotentialNode
     CoordNode& pos;
 
     struct PairParam {
-        float eps;
-        float sig;
-        float qi;
-        float qj;
-        float qq;
         const LayeredClampedSpline1D<1>* combined_spline;
 
-        PairParam():
-            eps(0.f), sig(0.f), qi(0.f), qj(0.f), qq(0.f),
-            combined_spline(nullptr) {}
+        PairParam(): combined_spline(nullptr) {}
     };
 
     vector<PairParam> param_table;
     vector<uint32_t> pair_param_index;
     vector<pair<int,int>> pairs;
     
-    float epsilon, sigma, lj_cutoff, coul_cutoff;
-    float energy_conversion_kj_per_eup;
-    float length_conversion_angstrom_per_nm;
-    float coulomb_constant_native_kj_mol_nm_e2;
-    float coulomb_k;
+    float cutoff;
 
     // Box dimensions used for minimum-image pair displacements under PBC/NPT.
     float box_x, box_y, box_z;
-    
-    // Combined LJ+Coulomb spline, one spline per (eps, sig, qq) triple.
-    std::map<std::tuple<float, float, float>, LayeredClampedSpline1D<1>> combined_splines;
+
+    // Combined LJ+Coulomb spline, one per unique coefficient row (indexed by ip).
+    std::vector<LayeredClampedSpline1D<1>> combined_splines;
+    // Per-coefficient-row flag: true iff all four raw coefficient values are zero.
+    std::vector<char> coeff_is_zero;
 
     float r_min, r_max;
     float r_shift, r_scale;
@@ -272,6 +253,52 @@ struct MartiniPotential : public PotentialNode
     float cached_box_z;
     vector<float> cached_pos;
     vector<int32_t> active_pair_indices;
+
+    // CSR adjacency over the precomputed non-zero-coefficient pairs, used by the
+    // O(N) cell-list rebuild. Row a holds (neighbor b, pair index np) for every
+    // stored pair {a,b} with a<b and non-zero coefficients. Pairs are written
+    // first-ascending then second-ascending, so a counting fill leaves each row
+    // sorted by neighbor -> binary-search lookup.
+    vector<int32_t> adj_row_start;
+    vector<int32_t> adj_neighbor;
+    vector<int32_t> adj_pair_index;
+
+    // Scratch for the cell-list rebuild, reused across calls to avoid reallocation.
+    // Atoms are counting-sorted into cells so the neighbour search reads positions
+    // sequentially (cache-friendly).
+    vector<int> atom_cell, cell_start, cell_fill, cell_atoms;
+    vector<float> sort_x, sort_y, sort_z;
+
+    // Distinct neighbor cell indices (self +/-1) along one axis, wrapping under
+    // PBC and clamping otherwise; dedups collapsed cells for small grids.
+    static inline int neighbor_cells(int c, int n_cells, bool periodic, int out[3]) {
+        int cand[3];
+        if(periodic) { cand[0] = (c - 1 + n_cells) % n_cells; cand[1] = c; cand[2] = (c + 1) % n_cells; }
+        else         { cand[0] = c - 1;                       cand[1] = c; cand[2] = c + 1; }
+        int m = 0;
+        for(int k = 0; k < 3; ++k) {
+            int v = cand[k];
+            if(v < 0 || v >= n_cells) continue;
+            bool dup = false;
+            for(int t = 0; t < m; ++t) if(out[t] == v) { dup = true; break; }
+            if(!dup) out[m++] = v;
+        }
+        return m;
+    }
+
+    // Return the precomputed pair index of {a,b} (a<b, non-zero coeff) or -1.
+    inline int32_t lookup_pair_index(int a, int b) const {
+        int lo = adj_row_start[a];
+        int hi = adj_row_start[a + 1];
+        while(lo < hi) {
+            int mid = (lo + hi) >> 1;
+            int v = adj_neighbor[mid];
+            if(v < b) lo = mid + 1;
+            else if(v > b) hi = mid;
+            else return adj_pair_index[mid];
+        }
+        return -1;
+    }
 
     inline bool pairlist_needs_rebuild(const VecArray& pos1) const {
         if(!pairlist_valid) return true;
@@ -297,24 +324,107 @@ struct MartiniPotential : public PotentialNode
         Timer timer(string("martini_pairlist_rebuild"));
         float active_cutoff = pairlist_cutoff + std::max(0.f, cache_buffer);
         float active_cutoff2 = sqr(active_cutoff);
+        bool periodic = box_x > 0.f && box_y > 0.f && box_z > 0.f;
 
         active_pair_indices.clear();
         active_pair_indices.reserve(std::min<size_t>(pairs.size(), size_t(1u << 20)));
 
-        for(size_t np = 0; np < pairs.size(); ++np) {
-            const auto& param = param_table[pair_param_index[np]];
-            if(param.eps == 0.f && param.sig == 0.f && param.qi == 0.f && param.qj == 0.f) continue;
-
-            int i = pairs[np].first;
-            int j = pairs[np].second;
-            auto dr = load_vec<3>(pos1, i) - load_vec<3>(pos1, j);
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
+        // Grid origin/extent: the periodic box when set, otherwise the coordinate span.
+        float origin_x = 0.f, origin_y = 0.f, origin_z = 0.f;
+        float extent_x = box_x, extent_y = box_y, extent_z = box_z;
+        if(!periodic) {
+            origin_x = origin_y = origin_z = std::numeric_limits<float>::max();
+            float hi_x = std::numeric_limits<float>::lowest();
+            float hi_y = std::numeric_limits<float>::lowest();
+            float hi_z = std::numeric_limits<float>::lowest();
+            for(int a = 0; a < n_atom; ++a) {
+                origin_x = std::min(origin_x, pos1(0, a)); hi_x = std::max(hi_x, pos1(0, a));
+                origin_y = std::min(origin_y, pos1(1, a)); hi_y = std::max(hi_y, pos1(1, a));
+                origin_z = std::min(origin_z, pos1(2, a)); hi_z = std::max(hi_z, pos1(2, a));
             }
-            if(mag2(dr) < active_cutoff2) {
-                active_pair_indices.push_back(int32_t(np));
+            extent_x = n_atom > 0 ? std::max(0.f, hi_x - origin_x) : 0.f;
+            extent_y = n_atom > 0 ? std::max(0.f, hi_y - origin_y) : 0.f;
+            extent_z = n_atom > 0 ? std::max(0.f, hi_z - origin_z) : 0.f;
+            if(n_atom == 0) origin_x = origin_y = origin_z = 0.f;
+        }
+
+        // Cell edge >= active_cutoff so any in-cutoff pair sits in one of the 27
+        // neighbouring cells.
+        int ncx = std::max(1, int(extent_x / active_cutoff));
+        int ncy = std::max(1, int(extent_y / active_cutoff));
+        int ncz = std::max(1, int(extent_z / active_cutoff));
+        float sx = extent_x > 0.f ? extent_x / ncx : 1.f;
+        float sy = extent_y > 0.f ? extent_y / ncy : 1.f;
+        float sz = extent_z > 0.f ? extent_z / ncz : 1.f;
+
+        int n_cells = ncx * ncy * ncz;
+        atom_cell.resize(n_atom);
+        cell_atoms.resize(n_atom);
+        sort_x.resize(n_atom); sort_y.resize(n_atom); sort_z.resize(n_atom);
+        cell_start.assign(n_cells + 1, 0);
+        for(int a = 0; a < n_atom; ++a) {
+            float rx = pos1(0, a) - origin_x;
+            float ry = pos1(1, a) - origin_y;
+            float rz = pos1(2, a) - origin_z;
+            if(periodic) {
+                rx -= box_x * floorf(rx / box_x);
+                ry -= box_y * floorf(ry / box_y);
+                rz -= box_z * floorf(rz / box_z);
+            }
+            int cx = int(rx / sx); if(cx < 0) cx = 0; if(cx >= ncx) cx = ncx - 1;
+            int cy = int(ry / sy); if(cy < 0) cy = 0; if(cy >= ncy) cy = ncy - 1;
+            int cz = int(rz / sz); if(cz < 0) cz = 0; if(cz >= ncz) cz = ncz - 1;
+            int c = (cx * ncy + cy) * ncz + cz;
+            atom_cell[a] = c;
+            cell_start[c + 1]++;
+        }
+        for(int c = 0; c < n_cells; ++c) cell_start[c + 1] += cell_start[c];
+        cell_fill.assign(cell_start.begin(), cell_start.end());
+        for(int a = 0; a < n_atom; ++a) {
+            int slot = cell_fill[atom_cell[a]]++;
+            cell_atoms[slot] = a;
+            sort_x[slot] = pos1(0, a);
+            sort_y[slot] = pos1(1, a);
+            sort_z[slot] = pos1(2, a);
+        }
+
+        for(int cx = 0; cx < ncx; ++cx) {
+            int nxs[3]; int mx = neighbor_cells(cx, ncx, periodic, nxs);
+            for(int cy = 0; cy < ncy; ++cy) {
+                int nys[3]; int my = neighbor_cells(cy, ncy, periodic, nys);
+                for(int cz = 0; cz < ncz; ++cz) {
+                    int home = (cx * ncy + cy) * ncz + cz;
+                    int hlo = cell_start[home], hhi = cell_start[home + 1];
+                    if(hlo == hhi) continue;
+                    int nzs[3]; int mz = neighbor_cells(cz, ncz, periodic, nzs);
+                    for(int ix = 0; ix < mx; ++ix)
+                    for(int iy = 0; iy < my; ++iy)
+                    for(int iz = 0; iz < mz; ++iz) {
+                        int nc = (nxs[ix] * ncy + nys[iy]) * ncz + nzs[iz];
+                        int nlo = cell_start[nc], nhi = cell_start[nc + 1];
+                        for(int k = hlo; k < hhi; ++k) {
+                            int a = cell_atoms[k];
+                            if(adj_row_start[a] == adj_row_start[a + 1]) continue;  // no pair with b>a
+                            float ax = sort_x[k], ay = sort_y[k], az = sort_z[k];
+                            for(int m = nlo; m < nhi; ++m) {
+                                int b = cell_atoms[m];
+                                if(b <= a) continue;  // handle each unordered pair once (b>a)
+                                float dx = ax - sort_x[m], dy = ay - sort_y[m], dz = az - sort_z[m];
+                                if(periodic) simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
+                                if(dx*dx + dy*dy + dz*dz < active_cutoff2) {
+                                    int32_t np = lookup_pair_index(a, b);
+                                    if(np >= 0) active_pair_indices.push_back(np);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
+
+        // Match the old scan's ascending-np order so energy/force accumulation is
+        // bit-for-bit identical.
+        std::sort(active_pair_indices.begin(), active_pair_indices.end());
 
         for(int na = 0; na < n_atom; ++na) {
             cached_pos[3*na + 0] = pos1(0, na);
@@ -341,32 +451,10 @@ struct MartiniPotential : public PotentialNode
         check_size(grp, "charges", n_atom);
         check_size(grp, "/input/type", n_atom);
         
-        epsilon     = read_attribute<float>(grp, ".", "epsilon");
-        sigma       = read_attribute<float>(grp, ".", "sigma");  
-        lj_cutoff   = read_attribute<float>(grp, ".", "lj_cutoff");
-        coul_cutoff = read_attribute<float>(grp, ".", "coul_cutoff");
+        cutoff       = read_attribute<float>(grp, ".", "cutoff");
         cache_buffer = read_attribute<float>(grp, ".", "cache_buffer", 1.f);
         if(cache_buffer < 0.f) cache_buffer = 0.f;
-        pairlist_cutoff = max(lj_cutoff, coul_cutoff);
-        if(!attribute_exists(grp, ".", "energy_conversion_kj_per_eup") ||
-           !attribute_exists(grp, ".", "length_conversion_angstrom_per_nm") ||
-           !attribute_exists(grp, ".", "coulomb_constant_native_kj_mol_nm_e2")) {
-            throw string("martini_potential requires explicit unit-conversion attrs: "
-                         "energy_conversion_kj_per_eup, length_conversion_angstrom_per_nm, "
-                         "coulomb_constant_native_kj_mol_nm_e2");
-        }
-        energy_conversion_kj_per_eup =
-            read_attribute<float>(grp, ".", "energy_conversion_kj_per_eup");
-        length_conversion_angstrom_per_nm =
-            read_attribute<float>(grp, ".", "length_conversion_angstrom_per_nm");
-        coulomb_constant_native_kj_mol_nm_e2 =
-            read_attribute<float>(grp, ".", "coulomb_constant_native_kj_mol_nm_e2");
-        if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
-            throw string("martini_potential unit-conversion attrs must be positive");
-        }
-        coulomb_k =
-            coulomb_constant_native_kj_mol_nm_e2 *
-            (length_conversion_angstrom_per_nm / energy_conversion_kj_per_eup);
+        pairlist_cutoff = cutoff;
 
         // Read box dimensions for minimum-image displacements.
         if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
@@ -424,17 +512,8 @@ struct MartiniPotential : public PotentialNode
         }
 
         if(n_pair == 0) {
+            build_pair_adjacency();  // valid empty CSR so rebuild never indexes an empty row
             return;
-        }
-        
-        // Find all epsilon/sigma pairs for separate LJ splines
-        std::set<std::pair<float, float>> unique_lj_params;
-        for(const auto& c : unique_coeff) {
-            float eps = c[0];
-            float sig = c[1];
-            if(eps != 0.f && sig != 0.f) {
-                unique_lj_params.insert({eps, sig});
-            }
         }
 
         // Combined spline domain [0, 12] Angstroms, 1000 points
@@ -443,7 +522,8 @@ struct MartiniPotential : public PotentialNode
         r_shift = -r_min;
         r_scale = 999.0f / (r_max + r_shift);
 
-        // Load combined LJ+Coulomb energy grids from injected per-run martini table
+        // Fit one combined LJ+Coulomb spline per unique coefficient row, looking up
+        // its energy grid in the injected per-run martini table by (eps, sig, qq).
         {
             auto dims = get_dset_size(2, grp, "combined_energy_grids");
             size_t n_triples = dims[0];
@@ -469,12 +549,13 @@ struct MartiniPotential : public PotentialNode
             for (size_t i = 0; i < n_triples; ++i)
                 h5_index[{h5_eps[i], h5_sig[i], h5_qq[i]}] = i;
 
+            combined_splines.clear();
+            combined_splines.reserve(unique_coeff.size());
             for (const auto& c : unique_coeff) {
                 float eps = c[0];
                 float sig = c[1];
                 float qq  = c[2] * c[3];
-                auto key = std::make_tuple(eps, sig, qq);
-                auto it = h5_index.find(key);
+                auto it = h5_index.find(std::make_tuple(eps, sig, qq));
                 if (it == h5_index.end()) {
                     // Fallback: nearest match within tolerance
                     for (size_t i = 0; i < n_triples; ++i) {
@@ -489,27 +570,45 @@ struct MartiniPotential : public PotentialNode
                 if (it == h5_index.end())
                     throw string("Combined params (" + to_string(eps) + ", " + to_string(sig) + ", " + to_string(qq) + ") not found in martini table");
 
-                size_t row = it->second;
-                auto inserted = combined_splines.emplace(std::piecewise_construct,
-                                                        std::forward_as_tuple(eps, sig, qq),
-                                                        std::forward_as_tuple(LayeredClampedSpline1D<1>(1, 1000)));
-                if (inserted.second)
-                    inserted.first->second.fit_spline(all_grids.data() + row * 1000);
+                combined_splines.emplace_back(1, 1000);
+                combined_splines.back().fit_spline(all_grids.data() + it->second * 1000);
             }
         }
 
         param_table.resize(unique_coeff.size());
+        coeff_is_zero.resize(unique_coeff.size());
         for(size_t ip = 0; ip < unique_coeff.size(); ++ip) {
-            auto& param = param_table[ip];
-            param.eps = unique_coeff[ip][0];
-            param.sig = unique_coeff[ip][1];
-            param.qi  = unique_coeff[ip][2];
-            param.qj  = unique_coeff[ip][3];
-            param.qq  = param.qi * param.qj;
-            auto it = combined_splines.find(std::make_tuple(param.eps, param.sig, param.qq));
-            if(it != combined_splines.end()) param.combined_spline = &it->second;
+            param_table[ip].combined_spline = &combined_splines[ip];
+            const auto& c = unique_coeff[ip];
+            coeff_is_zero[ip] = (c[0] == 0.f && c[1] == 0.f && c[2] == 0.f && c[3] == 0.f);
         }
 
+        build_pair_adjacency();
+    }
+
+    // CSR adjacency over the non-zero-coefficient pairs, keyed by the lower atom.
+    // Zero-coefficient pairs are dropped (the old scan skipped them), so any
+    // lookup hit is an active-eligible pair.
+    void build_pair_adjacency() {
+        adj_row_start.assign(n_atom + 1, 0);
+        auto is_nonzero = [&](size_t np) {
+            return !coeff_is_zero[pair_param_index[np]];
+        };
+        for(size_t np = 0; np < pairs.size(); ++np)
+            if(is_nonzero(np)) adj_row_start[pairs[np].first + 1]++;
+        for(int a = 0; a < n_atom; ++a)
+            adj_row_start[a + 1] += adj_row_start[a];
+
+        int total = adj_row_start[n_atom];
+        adj_neighbor.resize(total);
+        adj_pair_index.resize(total);
+        vector<int32_t> cursor(adj_row_start.begin(), adj_row_start.end());
+        for(size_t np = 0; np < pairs.size(); ++np) {
+            if(!is_nonzero(np)) continue;
+            int slot = cursor[pairs[np].first]++;
+            adj_neighbor[slot]  = pairs[np].second;
+            adj_pair_index[slot] = int32_t(np);
+        }
     }
 
     virtual void compute_value(ComputeMode mode) override {
@@ -555,7 +654,6 @@ struct MartiniPotential : public PotentialNode
             pair_potential = 0.f;
             pair_force = make_zero<3>();
 
-            float cutoff = max(lj_cutoff, coul_cutoff);
             if(dist > cutoff) return false;
 
             if(param.combined_spline) {
@@ -688,8 +786,6 @@ struct MartiniScTablePotential : public PotentialNode
     vector<int> env_atom_index;
     vector<int> env_target_index;
 
-    float energy_conversion_kj_per_eup;
-    float length_conversion_angstrom_per_nm;
     float box_x;
     float box_y;
     float box_z;
@@ -776,45 +872,13 @@ struct MartiniScTablePotential : public PotentialNode
         dVdcoord = (value_hi - value_lo) / cos_step;
     }
 
-    inline void evaluate_angular_profile_and_deriv(
-            float& value,
-            float& dVdcoord,
-            int layer,
-            float angular_coord,
-            const vector<float>& profile_table) const {
-        if(n_angle <= 1) {
-            value = profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-        if(angular_coord <= cos_start) {
-            value = profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-        if(angular_coord >= cos_end) {
-            value = profile_table[profile_index(layer, n_angle - 1)];
-            dVdcoord = 0.f;
-            return;
-        }
-        float angle_coord = (angular_coord - cos_start) / cos_step;
-        int angle_idx = int(floorf(angle_coord));
-        if(angle_idx < 0) angle_idx = 0;
-        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
-        float frac = angle_coord - float(angle_idx);
-        float value_lo = profile_table[profile_index(layer, angle_idx)];
-        float value_hi = profile_table[profile_index(layer, angle_idx + 1)];
-        value = (1.f - frac) * value_lo + frac * value_hi;
-        dVdcoord = (value_hi - value_lo) / cos_step;
-    }
-
     MartiniScTablePotential(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
         PotentialNode(),
         n_cb(get_dset_size(1, grp, "cb_index")[0]),
         n_env(get_dset_size(1, grp, "env_atom_index")[0]),
-        n_restype(get_dset_size(3, grp, "radial_energy_kj_mol")[0]),
-        n_target(get_dset_size(3, grp, "radial_energy_kj_mol")[1]),
-        n_grid(get_dset_size(3, grp, "radial_energy_kj_mol")[2]),
+        n_restype(get_dset_size(3, grp, "radial_energy_eup")[0]),
+        n_target(get_dset_size(3, grp, "radial_energy_eup")[1]),
+        n_grid(get_dset_size(3, grp, "radial_energy_eup")[2]),
         n_layer(n_restype * n_target),
         pos(pos_),
         cb_pos(cb_pos_),
@@ -822,8 +886,6 @@ struct MartiniScTablePotential : public PotentialNode
         residue_table_index(n_cb),
         env_atom_index(n_env),
         env_target_index(n_env),
-        energy_conversion_kj_per_eup(read_attribute<float>(grp, ".", "energy_conversion_kj_per_eup")),
-        length_conversion_angstrom_per_nm(read_attribute<float>(grp, ".", "length_conversion_angstrom_per_nm")),
         box_x(read_attribute<float>(grp, ".", "x_len")),
         box_y(read_attribute<float>(grp, ".", "y_len")),
         box_z(read_attribute<float>(grp, ".", "z_len")),
@@ -847,14 +909,11 @@ struct MartiniScTablePotential : public PotentialNode
 
         check_size(grp, "residue_table_index", n_cb);
         check_size(grp, "env_target_index", n_env);
-        check_size(grp, "grid_nm", n_grid);
+        check_size(grp, "grid_ang", n_grid);
         check_size(grp, "cos_theta_grid", n_angle);
-        check_size(grp, "angular_energy_kj_mol", n_restype, n_target, n_grid);
+        check_size(grp, "angular_energy_eup", n_restype, n_target, n_grid);
         check_size(grp, "angular_profile", n_restype, n_target, n_angle);
 
-        if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
-            throw string("martini_sc_table_potential unit-conversion attrs must be positive");
-        }
         if(n_restype <= 0 || n_target <= 0 || n_grid < 2 || n_angle < 1) {
             throw string("martini_sc_table_potential requires non-empty residue/target/grid dimensions");
         }
@@ -864,26 +923,25 @@ struct MartiniScTablePotential : public PotentialNode
         traverse_dset<1,int>(grp, "env_atom_index", [&](size_t i, int x) { env_atom_index[i] = x; });
         traverse_dset<1,int>(grp, "env_target_index", [&](size_t i, int x) { env_target_index[i] = x; });
 
-        vector<float> grid_nm(n_grid, 0.f);
-        traverse_dset<1,float>(grp, "grid_nm", [&](size_t i, float x) { grid_nm[i] = x; });
+        vector<float> grid_ang(n_grid, 0.f);
+        traverse_dset<1,float>(grp, "grid_ang", [&](size_t i, float x) { grid_ang[i] = x; });
         vector<float> cos_theta_grid(n_angle, 0.f);
         traverse_dset<1,float>(grp, "cos_theta_grid", [&](size_t i, float x) { cos_theta_grid[i] = x; });
 
-        float grid_step_nm = grid_nm[1] - grid_nm[0];
-        if(!(grid_step_nm > 0.f)) {
-            throw string("martini_sc_table_potential grid_nm must be strictly increasing");
+        grid_step_ang = grid_ang[1] - grid_ang[0];
+        if(!(grid_step_ang > 0.f)) {
+            throw string("martini_sc_table_potential grid_ang must be strictly increasing");
         }
         for(int i = 2; i < n_grid; ++i) {
-            float step = grid_nm[i] - grid_nm[i-1];
-            if(fabsf(step - grid_step_nm) > 1e-4f * std::max(1.f, fabsf(grid_step_nm))) {
+            float step = grid_ang[i] - grid_ang[i-1];
+            if(fabsf(step - grid_step_ang) > 1e-4f * std::max(1.f, fabsf(grid_step_ang))) {
                 throw string("martini_sc_table_potential requires a uniform radial grid");
             }
         }
-        grid_start_ang = grid_nm[0] * length_conversion_angstrom_per_nm;
-        grid_step_ang = grid_step_nm * length_conversion_angstrom_per_nm;
-        cutoff_ang = grid_nm[n_grid-1] * length_conversion_angstrom_per_nm;
+        grid_start_ang = grid_ang[0];
+        cutoff_ang = grid_ang[n_grid-1];
         if(!(grid_step_ang > 0.f) || !(cutoff_ang > grid_start_ang)) {
-            throw string("martini_sc_table_potential converted radial grid is invalid");
+            throw string("martini_sc_table_potential radial grid is invalid");
         }
 
         if(n_angle > 1) {
@@ -921,26 +979,26 @@ struct MartiniScTablePotential : public PotentialNode
             }
         }
 
-        vector<float> radial_native(n_layer * n_grid, 0.f);
-        vector<float> angular_native(n_layer * n_grid, 0.f);
-        traverse_dset<3,float>(grp, "radial_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-            radial_native[radial_index(int(ir * n_target + it), int(ig))] = x;
+        vector<float> radial_eup(n_layer * n_grid, 0.f);
+        vector<float> angular_eup(n_layer * n_grid, 0.f);
+        traverse_dset<3,float>(grp, "radial_energy_eup", [&](size_t ir, size_t it, size_t ig, float x) {
+            radial_eup[radial_index(int(ir * n_target + it), int(ig))] = x;
         });
-        traverse_dset<3,float>(grp, "angular_energy_kj_mol", [&](size_t ir, size_t it, size_t ig, float x) {
-            angular_native[radial_index(int(ir * n_target + it), int(ig))] = x;
+        traverse_dset<3,float>(grp, "angular_energy_eup", [&](size_t ir, size_t it, size_t ig, float x) {
+            angular_eup[radial_index(int(ir * n_target + it), int(ig))] = x;
         });
         traverse_dset<3,float>(grp, "angular_profile", [&](size_t ir, size_t it, size_t ia, float x) {
             angular_profile_table[profile_index(int(ir * n_target + it), int(ia))] = x;
         });
 
         for(int layer = 0; layer < n_layer; ++layer) {
-            float radial_tail = radial_native[radial_index(layer, n_grid - 1)];
-            float angular_tail = angular_native[radial_index(layer, n_grid - 1)];
+            float radial_tail = radial_eup[radial_index(layer, n_grid - 1)];
+            float angular_tail = angular_eup[radial_index(layer, n_grid - 1)];
             for(int ig = 0; ig < n_grid; ++ig) {
                 radial_table[radial_index(layer, ig)] =
-                    (radial_native[radial_index(layer, ig)] - radial_tail) / energy_conversion_kj_per_eup;
+                    radial_eup[radial_index(layer, ig)] - radial_tail;
                 angular_table[radial_index(layer, ig)] =
-                    (angular_native[radial_index(layer, ig)] - angular_tail) / energy_conversion_kj_per_eup;
+                    angular_eup[radial_index(layer, ig)] - angular_tail;
             }
             radial_left_value[layer] = radial_table[radial_index(layer, 0)];
             radial_left_slope[layer] =
@@ -1055,8 +1113,6 @@ struct MartiniScTableOneBody : public CoordNode
     vector<int> env_target_index;
     vector<int> rotamer_count;
 
-    float energy_conversion_kj_per_eup;
-    float length_conversion_angstrom_per_nm;
     float box_x;
     float box_y;
     float box_z;
@@ -1242,38 +1298,6 @@ struct MartiniScTableOneBody : public CoordNode
         dVdcoord = (value_hi - value_lo) / cos_step;
     }
 
-    inline void evaluate_angular_profile_and_deriv(
-            float& value,
-            float& dVdcoord,
-            int layer,
-            float angular_coord,
-            const vector<float>& profile_table) const {
-        if(n_angle <= 1) {
-            value = profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-        if(angular_coord <= cos_start) {
-            value = profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-        if(angular_coord >= cos_end) {
-            value = profile_table[profile_index(layer, n_angle - 1)];
-            dVdcoord = 0.f;
-            return;
-        }
-        float angle_coord = (angular_coord - cos_start) / cos_step;
-        int angle_idx = int(floorf(angle_coord));
-        if(angle_idx < 0) angle_idx = 0;
-        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
-        float frac = angle_coord - float(angle_idx);
-        float value_lo = profile_table[profile_index(layer, angle_idx)];
-        float value_hi = profile_table[profile_index(layer, angle_idx + 1)];
-        value = (1.f - frac) * value_lo + frac * value_hi;
-        dVdcoord = (value_hi - value_lo) / cos_step;
-    }
-
     inline void evaluate_full_tensor_value_and_deriv(
             float& value,
             float& dVdr,
@@ -1327,10 +1351,10 @@ struct MartiniScTableOneBody : public CoordNode
         CoordNode(get_dset_size(1, grp, "row_residue_index")[0], 1),
         n_row(get_dset_size(1, grp, "row_residue_index")[0]),
         n_env(get_dset_size(1, grp, "env_atom_index")[0]),
-        n_restype(get_dset_size(4, grp, "rotamer_radial_energy_kj_mol")[0]),
-        n_rotamer_max(get_dset_size(4, grp, "rotamer_radial_energy_kj_mol")[1]),
-        n_target(get_dset_size(4, grp, "rotamer_radial_energy_kj_mol")[2]),
-        n_grid(get_dset_size(4, grp, "rotamer_radial_energy_kj_mol")[3]),
+        n_restype(get_dset_size(4, grp, "rotamer_radial_energy_eup")[0]),
+        n_rotamer_max(get_dset_size(4, grp, "rotamer_radial_energy_eup")[1]),
+        n_target(get_dset_size(4, grp, "rotamer_radial_energy_eup")[2]),
+        n_grid(get_dset_size(4, grp, "rotamer_radial_energy_eup")[3]),
         n_layer(n_restype * n_rotamer_max * n_target),
         pos(pos_),
         cb_pos(cb_pos_),
@@ -1341,8 +1365,6 @@ struct MartiniScTableOneBody : public CoordNode
         env_atom_index(n_env),
         env_target_index(n_env),
         rotamer_count(n_restype, 0),
-        energy_conversion_kj_per_eup(read_attribute<float>(grp, ".", "energy_conversion_kj_per_eup")),
-        length_conversion_angstrom_per_nm(read_attribute<float>(grp, ".", "length_conversion_angstrom_per_nm")),
         box_x(read_attribute<float>(grp, ".", "x_len")),
         box_y(read_attribute<float>(grp, ".", "y_len")),
         box_z(read_attribute<float>(grp, ".", "z_len")),
@@ -1360,7 +1382,7 @@ struct MartiniScTableOneBody : public CoordNode
         angular_left_value(n_layer, 0.f),
         angular_left_slope(n_layer, 0.f),
         angular_profile_table(n_layer * n_angle, 0.f),
-        use_full_tensor(h5_exists(grp, "rotamer_full_energy_kj_mol")),
+        use_full_tensor(h5_exists(grp, "rotamer_full_energy_eup")),
         full_table(n_layer * n_grid * n_angle, 0.f),
         cache_buffer(read_attribute<float>(grp, ".", "cache_buffer", 1.f)),
         active_contacts_valid(false),
@@ -1377,18 +1399,15 @@ struct MartiniScTableOneBody : public CoordNode
         check_size(grp, "row_rotamer_index", n_row);
         check_size(grp, "row_residue_table_index", n_row);
         check_size(grp, "env_target_index", n_env);
-        check_size(grp, "grid_nm", n_grid);
+        check_size(grp, "grid_ang", n_grid);
         check_size(grp, "cos_theta_grid", n_angle);
         check_size(grp, "rotamer_count", n_restype);
-        check_size(grp, "rotamer_angular_energy_kj_mol", n_restype, n_rotamer_max, n_target, n_grid);
+        check_size(grp, "rotamer_angular_energy_eup", n_restype, n_rotamer_max, n_target, n_grid);
         check_size(grp, "rotamer_angular_profile", n_restype, n_rotamer_max, n_target, n_angle);
         if(use_full_tensor) {
-            check_size(grp, "rotamer_full_energy_kj_mol", n_restype, n_rotamer_max, n_target, n_grid, n_angle);
+            check_size(grp, "rotamer_full_energy_eup", n_restype, n_rotamer_max, n_target, n_grid, n_angle);
         }
 
-        if(!(energy_conversion_kj_per_eup > 0.f) || !(length_conversion_angstrom_per_nm > 0.f)) {
-            throw string("martini_sc_table_1body unit-conversion attrs must be positive");
-        }
         if(n_restype <= 0 || n_rotamer_max <= 0 || n_target <= 0 || n_grid < 2 || n_angle < 1) {
             throw string("martini_sc_table_1body requires non-empty residue/rotamer/target/grid dimensions");
         }
@@ -1412,26 +1431,25 @@ struct MartiniScTableOneBody : public CoordNode
             row_group_count[i] = (it == group_counts.end() || it->second < 1) ? 1 : it->second;
         }
 
-        vector<float> grid_nm(n_grid, 0.f);
-        traverse_dset<1,float>(grp, "grid_nm", [&](size_t i, float x) { grid_nm[i] = x; });
+        vector<float> grid_ang(n_grid, 0.f);
+        traverse_dset<1,float>(grp, "grid_ang", [&](size_t i, float x) { grid_ang[i] = x; });
         vector<float> cos_theta_grid(n_angle, 0.f);
         traverse_dset<1,float>(grp, "cos_theta_grid", [&](size_t i, float x) { cos_theta_grid[i] = x; });
 
-        float grid_step_nm = grid_nm[1] - grid_nm[0];
-        if(!(grid_step_nm > 0.f)) {
-            throw string("martini_sc_table_1body grid_nm must be strictly increasing");
+        grid_step_ang = grid_ang[1] - grid_ang[0];
+        if(!(grid_step_ang > 0.f)) {
+            throw string("martini_sc_table_1body grid_ang must be strictly increasing");
         }
         for(int i = 2; i < n_grid; ++i) {
-            float step = grid_nm[i] - grid_nm[i-1];
-            if(fabsf(step - grid_step_nm) > 1e-4f * std::max(1.f, fabsf(grid_step_nm))) {
+            float step = grid_ang[i] - grid_ang[i-1];
+            if(fabsf(step - grid_step_ang) > 1e-4f * std::max(1.f, fabsf(grid_step_ang))) {
                 throw string("martini_sc_table_1body requires a uniform radial grid");
             }
         }
-        grid_start_ang = grid_nm[0] * length_conversion_angstrom_per_nm;
-        grid_step_ang = grid_step_nm * length_conversion_angstrom_per_nm;
-        cutoff_ang = grid_nm[n_grid - 1] * length_conversion_angstrom_per_nm;
+        grid_start_ang = grid_ang[0];
+        cutoff_ang = grid_ang[n_grid - 1];
         if(!(grid_step_ang > 0.f) || !(cutoff_ang > grid_start_ang)) {
-            throw string("martini_sc_table_1body converted radial grid is invalid");
+            throw string("martini_sc_table_1body radial grid is invalid");
         }
 
         if(n_angle > 1) {
@@ -1473,15 +1491,15 @@ struct MartiniScTableOneBody : public CoordNode
             }
         }
 
-        vector<float> radial_native(n_layer * n_grid, 0.f);
-        vector<float> angular_native(n_layer * n_grid, 0.f);
-        traverse_dset<4,float>(grp, "rotamer_radial_energy_kj_mol",
+        vector<float> radial_eup(n_layer * n_grid, 0.f);
+        vector<float> angular_eup(n_layer * n_grid, 0.f);
+        traverse_dset<4,float>(grp, "rotamer_radial_energy_eup",
                 [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
-                    radial_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+                    radial_eup[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
                 });
-        traverse_dset<4,float>(grp, "rotamer_angular_energy_kj_mol",
+        traverse_dset<4,float>(grp, "rotamer_angular_energy_eup",
                 [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
-                    angular_native[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+                    angular_eup[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
                 });
         traverse_dset<4,float>(grp, "rotamer_angular_profile",
                 [&](size_t ir, size_t iro, size_t it, size_t ia, float x) {
@@ -1489,30 +1507,30 @@ struct MartiniScTableOneBody : public CoordNode
                 });
 
         if(use_full_tensor) {
-            vector<float> full_native(n_layer * n_grid * n_angle, 0.f);
-            traverse_dset<5,float>(grp, "rotamer_full_energy_kj_mol",
+            vector<float> full_eup(n_layer * n_grid * n_angle, 0.f);
+            traverse_dset<5,float>(grp, "rotamer_full_energy_eup",
                     [&](size_t ir, size_t iro, size_t it, size_t ig, size_t ia, float x) {
-                        full_native[full_index(layer_index(int(ir), int(iro), int(it)), int(ig), int(ia))] = x;
+                        full_eup[full_index(layer_index(int(ir), int(iro), int(it)), int(ig), int(ia))] = x;
                     });
             for(int layer = 0; layer < n_layer; ++layer) {
                 for(int ia = 0; ia < n_angle; ++ia) {
-                    float tail = full_native[full_index(layer, n_grid - 1, ia)];
+                    float tail = full_eup[full_index(layer, n_grid - 1, ia)];
                     for(int ig = 0; ig < n_grid; ++ig) {
                         full_table[full_index(layer, ig, ia)] =
-                            (full_native[full_index(layer, ig, ia)] - tail) / energy_conversion_kj_per_eup;
+                            full_eup[full_index(layer, ig, ia)] - tail;
                     }
                 }
             }
         }
 
         for(int layer = 0; layer < n_layer; ++layer) {
-            float radial_tail = radial_native[radial_index(layer, n_grid - 1)];
-            float angular_tail = angular_native[radial_index(layer, n_grid - 1)];
+            float radial_tail = radial_eup[radial_index(layer, n_grid - 1)];
+            float angular_tail = angular_eup[radial_index(layer, n_grid - 1)];
             for(int ig = 0; ig < n_grid; ++ig) {
                 radial_table[radial_index(layer, ig)] =
-                    (radial_native[radial_index(layer, ig)] - radial_tail) / energy_conversion_kj_per_eup;
+                    radial_eup[radial_index(layer, ig)] - radial_tail;
                 angular_table[radial_index(layer, ig)] =
-                    (angular_native[radial_index(layer, ig)] - angular_tail) / energy_conversion_kj_per_eup;
+                    angular_eup[radial_index(layer, ig)] - angular_tail;
             }
             radial_left_value[layer] = radial_table[radial_index(layer, 0)];
             radial_left_slope[layer] =
@@ -1949,7 +1967,6 @@ struct AngleSpring : public PotentialNode
                 continue;
             }
             
-            // Step 1: Load atomic positions
             auto x_orig1 = load_vec<3>(posc, p.atom[0]);
             auto x_orig2 = load_vec<3>(posc, p.atom[1]);
             auto x_orig3 = load_vec<3>(posc, p.atom[2]);
@@ -1958,7 +1975,6 @@ struct AngleSpring : public PotentialNode
             auto x1 = x_orig1;
             auto x3 = x_orig3;
 
-            // Step 2: Calculate vectors with PBC minimum image convention
             auto disp1 = simulation_box::minimum_image(x1 - x2, box_x, box_y, box_z);
             auto disp2 = simulation_box::minimum_image(x3 - x2, box_x, box_y, box_z);
 
@@ -1972,7 +1988,7 @@ struct AngleSpring : public PotentialNode
             float dp = dot_p / (norm1 * norm2); // This is cos(theta)
             dp = std::max(-1.0f, std::min(1.0f, dp)); // Clamp for safety
 
-            // Step 3: Calculate potential and derivative based on V = 1/2 * k * (cos(theta) - cos(theta_0))^2
+            // V = 1/2 * k * (cos(theta) - cos(theta_0))^2
             // Convert equilibrium angle from degrees to radians, then to cosine
             float equil_angle_rad = p.equil_angle_deg * M_PI / 180.0f;
             float cos_theta0 = cosf(equil_angle_rad);
@@ -1980,7 +1996,7 @@ struct AngleSpring : public PotentialNode
 
             if (pot) *pot += 0.5f * p.spring_constant * delta_cos * delta_cos;
 
-            // Step 4: Calculate forces using the chain rule: F = -dV/dx = -(dV/d(cos(theta))) * (d(cos(theta))/dx)
+            // Forces via chain rule: F = -dV/dx = -(dV/d(cos(theta))) * (d(cos(theta))/dx)
             float dV_dcos = p.spring_constant * delta_cos;
             
             // Use standard formulas to get forces on atoms from dV/d(cos(theta))
@@ -2143,44 +2159,7 @@ void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_
 
 struct MartiniNodeRegistrar {
     MartiniNodeRegistrar() {
-        auto& m = node_creation_map();
         simulation_box::npt::register_node_box_updater(update_martini_node_boxes);
-        if(m.find("martini_potential") == m.end()) {
-            add_node_creation_function("martini_potential", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,1);
-                return new MartiniPotential(grp, *args[0]);
-            });
-        }
-        if(m.find("martini_sc_table_potential") == m.end()) {
-            add_node_creation_function("martini_sc_table_potential", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,2);
-                return new MartiniScTablePotential(grp, *args[0], *args[1]);
-            });
-        }
-        if(m.find("martini_sc_table_1body") == m.end()) {
-            add_node_creation_function("martini_sc_table_1body", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,2);
-                return new MartiniScTableOneBody(grp, *args[0], *args[1]);
-            });
-        }
-        if(m.find("dist_spring") == m.end()) {
-            add_node_creation_function("dist_spring", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,1);
-                return new DistSpring(grp, *args[0]);
-            });
-        }
-        if(m.find("angle_spring") == m.end()) {
-            add_node_creation_function("angle_spring", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,1);
-                return new AngleSpring(grp, *args[0]);
-            });
-        }
-        if(m.find("dihedral_spring") == m.end()) {
-            add_node_creation_function("dihedral_spring", [](hid_t grp, const ArgList& args) {
-                check_arguments_length(args,1);
-                return new DihedralSpring(grp, *args[0]);
-            });
-        }
     }
 };
 static MartiniNodeRegistrar s_martini_node_registrar;

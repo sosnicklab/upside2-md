@@ -145,5 +145,5 @@ Training artifacts under `SC-training/` stay in native dry-MARTINI units.
 * Implementation rules:
 * Training outputs and forcefield parameters are authored in native dry-MARTINI units (`nm`, `kJ/mol`, `e`).
 * The simulation code must not bake dry-MARTINI to Upside conversion numbers into the training artifacts.
-* The simulation code must receive the required unit-conversion factors as explicit parameters or attributes when converting native dry-MARTINI quantities into Upside runtime units.
+* The native dry-MARTINI to Upside unit conversion happens ONCE, at h5-build time in Python, which receives the required conversion factors as explicit parameters. The runtime h5 force-field files and configs therefore store Upside-unit values (energies in `E_up`, lengths in Angstrom), and the simulation code (C++ engine) performs NO unit conversion — it reads the pre-converted spline tables directly.
 

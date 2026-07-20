@@ -25,6 +25,7 @@
 #endif
 
 #include "box.h"
+#include "metadynamics.h"
 
 using namespace std;
 using namespace h5;
@@ -205,14 +206,6 @@ static inline bool is_sc_env_interface_term_name(const std::string& name) {
            is_prefix("martini_sc_table_potential", name);
 }
 
-static inline bool is_cg_lipid_term_name(const std::string& name) {
-    return is_prefix("cg_lipid_pair", name) ||
-           is_prefix("cg_lipid_compaction_self", name) ||
-           is_prefix("cg_lipid_density", name) ||
-           is_prefix("cg_lipid_sc", name) ||
-           is_prefix("cg_lipid_target", name);
-}
-
 struct HybridProteinPotentialComponents {
     double upside_protein_potential = 0.0;
     double sc_env_interface_potential = 0.0;
@@ -232,7 +225,7 @@ static HybridProteinPotentialComponents compute_hybrid_protein_potential_compone
             out.sc_env_interface_potential += p;
             continue;
         }
-        if(is_dry_martini_term_name(n.name) || is_cg_lipid_term_name(n.name)) continue;
+        if(is_dry_martini_term_name(n.name)) continue;
         out.upside_protein_potential += p;
     }
     out.bb_env_interface_potential = martini_hybrid::get_last_bb_env_interface_potential(engine);
@@ -645,7 +638,7 @@ try {
     ValueArg<string> integrator_arg("", "integrator", 
             "Use this option to control which Integrator are used.  Available levels are v(verlet) or mv(multi-step verlet). "
             "Default is verlet.",
-            false, "", "v, mv", cmd);
+            false, "", "v, mv ", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
     SwitchArg enable_min_arg("", "minimize", "Run an energy minimization before MD", cmd, false);
     ValueArg<int> min_max_iter_arg("", "min-max-iter", "Minimization max iterations", false, 1000, "int", cmd);
@@ -714,15 +707,18 @@ try {
 
 
         float dt = time_step_arg.getValue();
-        int inner_step = 1;
-        if  (integrator_arg.getValue() == "mv" )
-            inner_step = inner_step_arg.getValue();
-
         double duration = duration_arg.getValue();
         int duration_steps = duration_steps_arg.getValue();
         double time_lim = time_lim_arg.getValue();
         bool passed_time_lim = false;
         bool use_duration_steps = duration_steps >= 0;
+
+        int inner_step = 3;
+        if  (integrator_arg.getValue() == "mv" )
+            inner_step = inner_step_arg.getValue();
+        else if(use_duration_steps)
+            inner_step = 1;  // MARTINI advances one lipid (g-JF/Brownian) step per round
+
         uint64_t n_round = 0;
         if(use_duration_steps) {
             n_round = static_cast<uint64_t>(duration_steps);
@@ -933,11 +929,8 @@ try {
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
             // Register hybrid MARTINI/Upside metadata for this engine (read from H5)
             martini_hybrid::register_hybrid_for_engine(sys->config.get(), sys->engine);
-            martini_cg_lipid::register_dynamic_compaction_for_engine(
-                    &sys->engine, sys->config.get(), sys->random_seed);
-            martini_cg_lipid::register_dynamic_orientation_for_engine(
-                    &sys->engine, sys->config.get(), sys->random_seed);
-            martini_cg_lipid::register_cgl_gle_for_engine(
+            // Overdamped (Brownian) integrator for full-resolution MARTINI lipid beads
+            martini_brownian::register_brownian_for_engine(
                     &sys->engine, sys->config.get(), sys->random_seed);
             sys->martini_hybrid_progress = martini_hybrid::is_hybrid_enabled(sys->engine);
             if(sys->martini_hybrid_progress) {
@@ -977,17 +970,9 @@ try {
                     1.,
                     1e8);
             sys->set_temperature(sys->initial_temperature);
+            martini_brownian::set_brownian_temperature(&sys->engine, sys->temperature);
             sys->thermostat.set_delta_t(thermostat_interval*inner_step*dt);  // set true thermostat interval  //  FIXME inner_step
             sys->thermostat.set_atom_timescale(read_atom_thermostat_timescales(sys->config.get(), sys->n_atom));
-            martini_cg_lipid::set_dynamic_compaction_temperature(&sys->engine, sys->temperature);
-            martini_cg_lipid::set_dynamic_compaction_thermostat_delta_t(
-                    &sys->engine, thermostat_interval*inner_step*dt);
-            martini_cg_lipid::set_dynamic_orientation_temperature(&sys->engine, sys->temperature);
-            martini_cg_lipid::set_dynamic_orientation_thermostat_delta_t(
-                    &sys->engine, thermostat_interval*inner_step*dt);
-            martini_cg_lipid::set_cgl_gle_temperature(&sys->engine, sys->temperature);
-            martini_cg_lipid::set_cgl_gle_delta_t(
-                    &sys->engine, thermostat_interval*inner_step*dt);
 
             sys->mom.reset(3, sys->n_atom);
             if (restart_using_momentum_arg.getValue()) { // initialize momentum using input.mom if requested
@@ -1009,9 +994,6 @@ try {
             else {
                 for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
                 sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine); // initial thermalization if it's a fresh start
-                martini_cg_lipid::apply_dynamic_compaction_thermostat(&sys->engine);
-                martini_cg_lipid::apply_dynamic_orientation_thermostat(&sys->engine);
-                martini_cg_lipid::apply_cgl_gle_thermostat(&sys->engine, sys->mom);
             }
 
             // Hybrid virtual BB proxy atoms are position-overwritten from the
@@ -1036,12 +1018,6 @@ try {
                         });
                 
             }
-            martini_cg_lipid::add_dynamic_compaction_loggers(
-                    &sys->engine, *sys->logger, record_momentum_arg.getValue());
-            martini_cg_lipid::add_dynamic_orientation_loggers(
-                    &sys->engine, *sys->logger, record_momentum_arg.getValue());
-            martini_cg_lipid::add_cgl_gle_loggers(
-                    &sys->engine, *sys->logger, record_momentum_arg.getValue());
             sys->logger->add_logger<double>("kinetic", {1}, [sys](double* kin_buffer) {
                     kin_buffer[0] = compute_logged_kinetic_energy(sys);
                     });
@@ -1143,35 +1119,35 @@ try {
         }
         if(verbose) printf("\n");
 
-            if(verbose) printf("Initial potential energy:");
+        if(verbose) printf("Initial potential energy:");
         for(System& sys: systems) {
             sys.engine.compute(PotentialAndDerivMode);
-            if(verbose) printf(" % .2f", sys.engine.potential);
+            if(verbose) printf(" %.2f", sys.engine.potential);
         }
         if(verbose) printf("\n");
 
-            // Optional pre-run minimization
-            if(enable_min_arg.getValue()) {
-                int it = min_max_iter_arg.getValue();
-                double etol = min_energy_tol_arg.getValue();
-                double ftol = min_force_tol_arg.getValue();
-                double mstep = min_step_arg.getValue();
-                if(verbose) printf("\nMINIMIZATION: starting...\n");
-                for(System& sys: systems) {
-                    const std::string stage_before_min =
-                        martini_stage_params::get_current_stage(&sys.engine);
-                    if(!minimize_preserve_stage_arg.getValue())
-                        martini_stage_params::switch_simulation_stage(&sys.engine, "minimization");
-                    martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
-                    if(!minimize_preserve_stage_arg.getValue())
-                        martini_stage_params::switch_simulation_stage(&sys.engine, stage_before_min);
-                    // Save a frame immediately after minimization so downstream stages can pick it up
-                    // This ensures /output/pos exists even if duration is 0
-                    sys.engine.compute(PotentialAndDerivMode);
-                    sys.logger->collect_samples();
-                }
-                if(verbose) printf("MINIMIZATION: done\n\n");
+        // Optional pre-run minimization
+        if(enable_min_arg.getValue()) {
+            int it = min_max_iter_arg.getValue();
+            double etol = min_energy_tol_arg.getValue();
+            double ftol = min_force_tol_arg.getValue();
+            double mstep = min_step_arg.getValue();
+            if(verbose) printf("\nMINIMIZATION: starting...\n");
+            for(System& sys: systems) {
+                const std::string stage_before_min =
+                    martini_stage_params::get_current_stage(&sys.engine);
+                if(!minimize_preserve_stage_arg.getValue())
+                    martini_stage_params::switch_simulation_stage(&sys.engine, "minimization");
+                martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
+                if(!minimize_preserve_stage_arg.getValue())
+                    martini_stage_params::switch_simulation_stage(&sys.engine, stage_before_min);
+                // Save a frame immediately after minimization so downstream stages can pick it up
+                // This ensures /output/pos exists even if duration is 0
+                sys.engine.compute(PotentialAndDerivMode);
+                sys.logger->collect_samples();
             }
+            if(verbose) printf("MINIMIZATION: done\n\n");
+        }
 
 
         // Install signal handlers to dump state only when the simulation has really started.  This is intended to prevent
@@ -1259,13 +1235,8 @@ try {
                         // Handle simulated annealing if applicable
                         if(anneal_factor != 1.)
                             sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
-                        martini_cg_lipid::set_dynamic_compaction_temperature(&sys.engine, sys.temperature);
-                        martini_cg_lipid::set_dynamic_orientation_temperature(&sys.engine, sys.temperature);
-                        martini_cg_lipid::set_cgl_gle_temperature(&sys.engine, sys.temperature);
+                        martini_brownian::set_brownian_temperature(&sys.engine, sys.temperature);
                         sys.thermostat.apply(sys.mom, sys.n_atom, &sys.engine);
-                        martini_cg_lipid::apply_dynamic_compaction_thermostat(&sys.engine);
-                        martini_cg_lipid::apply_dynamic_orientation_thermostat(&sys.engine);
-                        martini_cg_lipid::apply_cgl_gle_thermostat(&sys.engine, sys.mom);
                     }
 
                     // Enforce fixed-in-space constraints before integration so fixed atoms
@@ -1280,7 +1251,10 @@ try {
 
                     // Apply fix rigid constraints after integration
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
-                    
+
+                    // Metadynamics: deposit a Gaussian on the CV if this round is due (once per round).
+                    metadynamics::maybe_deposit(sys.engine, nr, sys.temperature);
+
                     // Apply stage-specific parameters
                     martini_stage_params::apply_stage_bond_params(sys.engine);
                     martini_stage_params::apply_stage_angle_params(sys.engine);
@@ -1289,7 +1263,7 @@ try {
                     if(nr > 0) {
                         bool print_baro = do_print;  // Print barostat info at same frequency as frame output
                         simulation_box::npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
-                                                                   nr, dt, inner_step,
+                                                                   nr, dt, inner_step, sys.temperature,
                                                                    verbose, print_baro);
                     }
 
@@ -1313,7 +1287,8 @@ try {
         }
 
 
-        if(n_round > 0) {
+        if(use_duration_steps && n_round > 0) {
+            // MARTINI step-count runs may end off a frame boundary; capture the final frame.
             for(System& sys: systems) {
                 if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
                 sys.engine.compute(PotentialAndDerivMode);
@@ -1324,11 +1299,7 @@ try {
 
         if(received_signal!=NO_SIGNAL) {fprintf(stderr, "Received early termination signal\n");}
         if(passed_time_lim) {fprintf(stderr, "Passed time limit\n");}
-        for(auto& sys: systems) {
-            sys.logger = shared_ptr<H5Logger>(); // release shared_ptr, which also flushes data during destructor
-            martini_cg_lipid::clear_dynamic_compaction_for_engine(&sys.engine);
-            martini_cg_lipid::clear_dynamic_orientation_for_engine(&sys.engine);
-        }
+        for(auto& sys: systems) sys.logger = shared_ptr<H5Logger>(); // release shared_ptr, which also flushes data during destructor
 
         auto elapsed = chrono::duration<double>(std::chrono::high_resolution_clock::now() - tstart).count();
         if(verbose)

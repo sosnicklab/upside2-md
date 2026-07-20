@@ -75,6 +75,32 @@ Set `runner=slurm` in `analysis.sh` and adjust `slurm_*` settings. The driver su
 - dG and stability plots, COF summaries
 - experiment-simulation comparison plots (if exp data available)
 
+## REMD and Metadynamics analysis
+
+Two standalone helpers analyze enhanced-sampling runs (independent of the HX-MS pipeline):
+
+**Temperature-REMD** — `helpers/analyze_remd.py`. Upside REMD writes one `.up` per slot at a fixed
+temperature (`output/temperature`, in Upside units so kT equals that value in E_up). The tool reads all
+replicas, tabulates per-temperature observables, and reconstructs `F(CV)` at a target temperature by
+MBAR-reweighting the pooled samples (falls back to a per-temperature histogram if `pymbar` is absent).
+
+```bash
+python helpers/analyze_remd.py 'outputs/sim/prot.run.*.up' results/prot --cv rg --target-kT 0.8647
+python helpers/analyze_remd.py 'outputs/sim/prot.run.*.up' results/prot --cv dist --cv-atoms 12 87
+```
+
+Outputs `*_remd_obs.csv` (T, ⟨E⟩, ⟨CV⟩), `*_remd_fes.npy` (cv, F), `*_remd.png`.
+
+**Metadynamics** — `helpers/analyze_metadynamics.py`. Reconstructs the free-energy surface from the
+metadynamics node's logged bias. The last frame of `output/metadynamics_bias` is the converged bias
+`V(s)`; the FES is `-(γ/(γ-1))·V(s)` for well-tempered runs (γ = `bias_factor`), else `-V(s)`.
+
+```bash
+python helpers/analyze_metadynamics.py outputs/sim/prot.run.0.up results/prot --target-kT 0.8647
+```
+
+Outputs `*_fes.npy` (cv, F in E_up), `*_cv.npy` (CV time series), `*_metad.png`.
+
 ## Using Other MD Software
 
 Steps 1–3 are Upside-specific. Steps 4–6 only need `.npy` arrays in `results/`. To use trajectories from another MD engine, produce these files with matching names and shapes:
