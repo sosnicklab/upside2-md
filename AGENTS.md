@@ -126,6 +126,31 @@ bash "$PROJECT_ROOT/example/16.MARTINI/run_sim_1rkl_outlipid.sh"
 
 ```
 
+### Compiling Upside on midway3 (login node)
+
+To (re)compile the C++ core on the RCC midway3 login node, from the repo root:
+
+```bash
+# 1. Load build modules (names verified on midway3)
+module load cmake
+module load openmpi
+module load hdf5/1.14.3
+
+# 2. Provide EIGEN_HOME (and PATH/PYTHONPATH) by sourcing the repo's source_sh
+source source_sh
+
+# 3. Build: install.sh copies source_sh -> source.sh, then runs cmake + make
+./install.sh
+```
+
+Notes:
+* `install.sh` runs `cmake ../src/ -DEIGEN3_INCLUDE_DIR=$EIGEN_HOME && make` in `obj/`, so
+  `EIGEN_HOME` (set by `source_sh`, e.g. `/software/eigen-3.4-el8-x86_64/include/eigen3`) must
+  resolve to a valid Eigen 3.4 include directory before building.
+* The build is Python-independent; only C++ recompilation requires these steps. `UPSIDE_HOME`
+  in `source_sh` is unrelated to compilation (cmake uses the repo's own `src/`).
+* This compiles on the login node (no Slurm job needed); it is CPU-only and takes a few minutes.
+
 ### Upside Unit Conversions
 
 | Quantity | Upside Unit | Standard Equivalent |

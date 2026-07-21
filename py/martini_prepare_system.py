@@ -608,7 +608,6 @@ PROTEIN_RESIDUES = {
     "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP",
     "TYR", "VAL", "HID", "HIE", "HIP", "HSD", "HSE", "HSP", "CYX",
 }
-LIPID_RESIDUES = {"DOP", "DOPC"}
 SC_LIBRARY_REQUIRED_DATASETS = [
     "grid_ang",
     "cos_theta_grid",
@@ -736,7 +735,7 @@ def pdb_min_protein_lipid_distance(pdb_file: Path):
             xyz = (float(line[30:38]), float(line[38:46]), float(line[46:54]))
             if resname in PROTEIN_RESIDUES:
                 protein_xyz.append(xyz)
-            elif resname in LIPID_RESIDUES:
+            elif lipid_resname(resname):
                 lipid_xyz.append(xyz)
     if not protein_xyz or not lipid_xyz:
         return float("nan")
