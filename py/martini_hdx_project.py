@@ -7,6 +7,8 @@ import shutil
 import numpy as np
 import tables as tb
 
+import upside_engine as ue
+
 
 def output_group_names(h5):
     names = []
@@ -58,6 +60,30 @@ def copy_projected_positions(source, destination_group, atom_indices, filters):
     copy_attributes(source, output)
 
 
+def write_projected_potential(engine, source_pos, atom_indices, destination_group, filters):
+    """Re-score the protein-only Upside potential for each projected frame.
+
+    The hybrid /output/potential is the total (protein + lipid + ion) energy, which is
+    dominated by the lipid bath and nearly temperature-independent. HDX temperature
+    reweighting needs the protein subsystem energy, so it is recomputed here with the
+    protein-only HDX engine on the projected backbone atoms.
+    """
+    n_frame = source_pos.shape[0]
+    output = destination_group._v_file.create_carray(
+        destination_group,
+        'potential',
+        atom=tb.Float32Atom(),
+        shape=(n_frame, 1),
+        filters=filters,
+    )
+    chunk = max(1, min(64, n_frame))
+    for start in range(0, n_frame, chunk):
+        stop = min(start + chunk, n_frame)
+        frames = source_pos[start:stop, 0][:, atom_indices]
+        for offset in range(stop - start):
+            output[start + offset, 0] = engine.energy(frames[offset])
+
+
 def validate_mapping(source, destination):
     if not hasattr(source.root.input, 'hybrid_bb_map'):
         raise ValueError('hybrid trajectory is missing /input/hybrid_bb_map')
@@ -101,9 +127,11 @@ def project(hdx_topology, hybrid_trajectory, output_path, overwrite=False):
     if os.path.exists(temporary_path):
         os.remove(temporary_path)
 
+    engine = ue.Upside(hdx_topology)
+
     shutil.copyfile(hdx_topology, temporary_path)
     filters = tb.Filters(complevel=5, complib='zlib', shuffle=True)
-    required_arrays = ('potential', 'hbond', 'temperature', 'time')
+    copied_arrays = ('hbond', 'temperature', 'time')
 
     try:
         with tb.open_file(hybrid_trajectory, 'r') as source, tb.open_file(temporary_path, 'a') as destination:
@@ -117,7 +145,7 @@ def project(hdx_topology, hybrid_trajectory, output_path, overwrite=False):
 
             for name in group_names:
                 source_group = source.get_node('/' + name)
-                missing = [array for array in required_arrays if not hasattr(source_group, array)]
+                missing = [array for array in copied_arrays if not hasattr(source_group, array)]
                 if missing:
                     raise ValueError('{} is missing {}'.format(source_group._v_pathname, ', '.join(missing)))
                 if source_group.pos.ndim != 4 or source_group.pos.shape[1] != 1:
@@ -127,7 +155,8 @@ def project(hdx_topology, hybrid_trajectory, output_path, overwrite=False):
                 destination_group = destination.create_group('/', name)
                 copy_attributes(source_group, destination_group)
                 copy_projected_positions(source_group.pos, destination_group, atom_indices, filters)
-                for array_name in required_arrays:
+                write_projected_potential(engine, source_group.pos, atom_indices, destination_group, filters)
+                for array_name in copied_arrays:
                     copy_array(getattr(source_group, array_name), destination_group, array_name, filters)
                 if hasattr(source_group, 'replica_index'):
                     copy_array(source_group.replica_index, destination_group, 'replica_index', filters)
