@@ -15,7 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
-from martini_itp_reader import dopc_max_sigma_nm, parse_dopc_from_itp, parse_dry_forcefield
+from martini_itp_reader import lipid_max_sigma_nm, parse_dry_forcefield, parse_itp_file, parse_lipid_from_itp
 from martini_prepare_system_lib import (
     build_backbone_with_virtual_bb,
     center_of_mass,
@@ -24,11 +24,11 @@ from martini_prepare_system_lib import (
     coords,
     estimate_salt_pairs,
     extract_protein_backbone_atoms_from_aa,
-    infer_effective_ion_volume_fraction_from_template,
     infer_protein_charge_from_residues,
     inject_particles_table,
     inject_stage7_sc_table_nodes,
     lipid_resname,
+    set_active_lipid_name,
     map_backbone_types_from_martinize_fallback,
     map_backbone_types_from_structure,
     parse_pdb,
@@ -61,13 +61,27 @@ MARTINI_MD_INTEGRATOR = "v"
 MARTINI_MD_TIME_STEP = 0.009
 
 
-def derive_dopc_contact_clearance_angstrom(upside_home: Path) -> float:
+def find_lipid_itp_path(ff_dir: Path, lipid_name: str) -> Path:
+    """Return the ITP under *ff_dir* that defines the *lipid_name* moleculetype."""
+    target = lipid_name.strip().upper()
+    for itp in sorted(Path(ff_dir).glob("*.itp")):
+        try:
+            topology = parse_itp_file(itp)
+        except Exception:
+            continue
+        if any(mol.upper() == target for mol in topology.get("molecules", {})):
+            return itp
+    raise FileNotFoundError(
+        f"Lipid molecule '{lipid_name}' not found in any ITP under '{ff_dir}'."
+    )
+
+
+def derive_lipid_contact_clearance_angstrom(upside_home: Path, lipid_name: str) -> float:
     ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
     dry_ff_path = ff_dir / "dry_martini_v2.1.itp"
-    lipids_itp_path = ff_dir / "dry_martini_v2.1_lipids.itp"
     _atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
-    dopc = parse_dopc_from_itp(lipids_itp_path)
-    max_sigma_nm = dopc_max_sigma_nm(dopc["bead_types"], pair_params)
+    lipid = parse_lipid_from_itp(find_lipid_itp_path(ff_dir, lipid_name), lipid_name)
+    max_sigma_nm = lipid_max_sigma_nm(lipid["bead_types"], pair_params)
     return float((2.0 ** (1.0 / 6.0)) * max_sigma_nm * DEFAULT_MARTINI_LENGTH_CONVERSION)
 
 
@@ -86,7 +100,10 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--stage", default=None, help="stage name for UPSIDE input conversion")
     parser.add_argument("--run-dir", default="outputs/martini_test")
 
-    parser.add_argument("--bilayer-pdb", default=str(REPO_ROOT / "parameters" / "dryMARTINI" / "DOPC.pdb"))
+    parser.add_argument("--lipid-name", required=True,
+                        help="Membrane lipid moleculetype name (e.g. DOPC, DDM); topology read from the input ITP files")
+    parser.add_argument("--bilayer-pdb", default=None,
+                        help="Bilayer/detergent slab PDB (default: parameters/dryMARTINI/<lipid-name>.pdb)")
     parser.add_argument("--protein-aa-pdb", default=None)
     parser.add_argument("--hybrid-mapping-output", default=None)
     parser.add_argument("--hybrid-bb-map-json-output", default=None)
@@ -314,11 +331,6 @@ def prepare_mixed_structure(args, runtime_pdb):
         center_lipid_in_z=True,
     )
 
-    effective_vol_frac = infer_effective_ion_volume_fraction_from_template(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        salt_molar=float(args.salt_molar),
-    )
     protein_charge = (
         int(args.protein_net_charge)
         if args.protein_net_charge is not None
@@ -328,7 +340,6 @@ def prepare_mixed_structure(args, runtime_pdb):
         salt_pairs = estimate_salt_pairs(
             box_lengths=box_lengths,
             salt_molar=float(args.salt_molar),
-            effective_volume_fraction=effective_vol_frac,
         )
         n_na = int(salt_pairs + max(0, -protein_charge))
         n_cl = int(salt_pairs + max(0, protein_charge))
@@ -468,16 +479,10 @@ def prepare_bilayer_structure(args, runtime_pdb):
         center_lipid_in_z=True,
     )
 
-    effective_vol_frac = infer_effective_ion_volume_fraction_from_template(
-        bilayer_atoms=bilayer_atoms,
-        bilayer_box=bilayer_box,
-        salt_molar=float(args.salt_molar),
-    )
     if int(args.explicit_ions):
         salt_pairs = estimate_salt_pairs(
             box_lengths=box_lengths,
             salt_molar=float(args.salt_molar),
-            effective_volume_fraction=effective_vol_frac,
         )
         rng = np.random.default_rng(int(args.seed))
         ion_atoms = place_ions(
@@ -545,6 +550,9 @@ def write_summary(path: Path, payload):
 
 def run_prepare_command(argv):
     args = parse_prepare_args(argv)
+    set_active_lipid_name(args.lipid_name)
+    if args.bilayer_pdb is None:
+        args.bilayer_pdb = str(REPO_ROOT / "parameters" / "dryMARTINI" / f"{args.lipid_name}.pdb")
     runtime_pdb = runtime_paths(args)
     runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
 
@@ -763,6 +771,7 @@ def prepare_workflow_hybrid_artifacts(args):
                 "--protein-aa-pdb", str(workflow_path(args.protein_aa_pdb).resolve()),
                 "--hybrid-mapping-output", str(args.hybrid_mapping_file),
                 "--hybrid-bb-map-json-output", str(args.hybrid_prep_dir / "hybrid_bb_map.json"),
+                "--lipid-name", args.lipid_name,
                 "--bilayer-pdb", str(workflow_path(args.bilayer_pdb).resolve()),
                 "--salt-molar", str(args.salt_molar),
                 "--explicit-ions", str(args.explicit_ions),
@@ -1077,6 +1086,7 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
         run_prepare_command(
             [
                 "--mode", args.universal_prep_mode,
+                "--lipid-name", args.lipid_name,
                 "--pdb-id", args.runtime_pdb_id,
                 "--runtime-pdb-output", str(args.runtime_pdb_file),
                 "--prepare-structure", "0",
@@ -1600,6 +1610,8 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--upside-home", default=env_default("UPSIDE_HOME", str(REPO_ROOT)))
     parser.add_argument("--run-dir", default=env_default("RUN_DIR", "outputs/martini_test_1rkl_hybrid"))
     parser.add_argument("--protein-aa-pdb", default=env_default("PROTEIN_AA_PDB", None))
+    parser.add_argument("--lipid-name", default=env_default("LIPID_NAME", None),
+                        help="Membrane lipid moleculetype name (e.g. DOPC, DDM)")
     parser.add_argument("--bilayer-pdb", default=env_default("BILAYER_PDB", None))
     parser.add_argument("--extract-vtf-script", default=env_default("EXTRACT_VTF_SCRIPT", str(PY_DIR / "martini_extract_vtf.py")))
     parser.add_argument("--salt-molar", type=float, default=env_float("SALT_MOLAR", 0.15))
@@ -1650,13 +1662,16 @@ def parse_hybrid_workflow_args(argv):
         args.runtime_pdb_id = f"{args.pdb_id}_hybrid"
     if args.protein_aa_pdb is None:
         args.protein_aa_pdb = f"pdb/{args.pdb_id}.pdb"
+    if not args.lipid_name or not str(args.lipid_name).strip():
+        raise ValueError("A lipid name is required (--lipid-name, e.g. DOPC or DDM)")
+    set_active_lipid_name(args.lipid_name)
     if args.bilayer_pdb is None:
-        args.bilayer_pdb = str(Path(args.upside_home) / "parameters" / "dryMARTINI" / "DOPC.pdb")
+        args.bilayer_pdb = str(Path(args.upside_home) / "parameters" / "dryMARTINI" / f"{args.lipid_name}.pdb")
     args.prep_seed = int(args.prep_seed) if args.prep_seed not in (None, "") else None
     args.seed = int(args.seed) if args.seed not in (None, "") else None
     args = normalize_hybrid_workflow_args(args)
     if args.protein_lipid_cutoff <= 0.0 or args.protein_lipid_min_gap <= 0.0:
-        contact_clearance = derive_dopc_contact_clearance_angstrom(args.upside_home)
+        contact_clearance = derive_lipid_contact_clearance_angstrom(args.upside_home, args.lipid_name)
         if args.protein_lipid_cutoff <= 0.0:
             args.protein_lipid_cutoff = contact_clearance
         if args.protein_lipid_min_gap <= 0.0:

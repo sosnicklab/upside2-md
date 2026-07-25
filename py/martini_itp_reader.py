@@ -110,7 +110,7 @@ def _pair_param(pair_params: dict, type_i: str, type_j: str) -> dict | None:
     return pair_params.get((type_i, type_j)) or pair_params.get((type_j, type_i))
 
 
-def dopc_max_sigma_nm(bead_types: Iterable[str], pair_params: dict) -> float:
+def lipid_max_sigma_nm(bead_types: Iterable[str], pair_params: dict) -> float:
     sigmas = []
     types = list(bead_types)
     for ti in types:
@@ -119,7 +119,7 @@ def dopc_max_sigma_nm(bead_types: Iterable[str], pair_params: dict) -> float:
             if params is not None:
                 sigmas.append(float(params["sigma_nm"]))
     if not sigmas:
-        raise ValueError("No dry-MARTINI nonbonded sigmas found for DOPC bead types")
+        raise ValueError("No dry-MARTINI nonbonded sigmas found for lipid bead types")
     return max(sigmas)
 
 
@@ -397,33 +397,34 @@ def parse_itp_file(
     return topology
 
 
-def parse_dopc_from_itp(
-    lipids_itp_path: str | Path,
+def parse_lipid_from_itp(
+    lipid_itp_path: str | Path,
+    molname: str,
 ) -> dict:
-    """Parse the DOPC molecule definition from the lipids ITP.
+    """Parse a lipid molecule definition from an ITP file.
 
     Returns a dict with keys:
       ``atom_names`` (list[str]), ``bead_types`` (list[str]),
       ``bead_charges`` (list[float]), ``bonds`` (list[tuple]),
       ``angles`` (list[tuple]).
     """
-    topology = parse_itp_file(lipids_itp_path, "DOPC")
-    dopc_atoms = topology["atoms"]
-    dopc_bonds = [
+    topology = parse_itp_file(lipid_itp_path, molname)
+    lipid_atoms = topology["atoms"]
+    lipid_bonds = [
         (bond["i"], bond["j"], bond["r0"], bond["k"])
         for bond in topology["bonds"]
     ]
-    dopc_angles = [
+    lipid_angles = [
         (angle["i"], angle["j"], angle["k"], angle["theta0"], angle["force_k"])
         for angle in topology["angles"]
     ]
 
     return {
-        "atom_names": [a["atom"] for a in dopc_atoms],
-        "bead_types": [a["type"] for a in dopc_atoms],
-        "bead_charges": [a["charge"] for a in dopc_atoms],
-        "bonds": dopc_bonds,
-        "angles": dopc_angles,
+        "atom_names": [a["atom"] for a in lipid_atoms],
+        "bead_types": [a["type"] for a in lipid_atoms],
+        "bead_charges": [a["charge"] for a in lipid_atoms],
+        "bonds": lipid_bonds,
+        "angles": lipid_angles,
     }
 
 

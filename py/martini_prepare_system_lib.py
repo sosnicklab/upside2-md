@@ -193,31 +193,27 @@ def center_of_mass(xyz):
     return np.mean(xyz, axis=0)
 
 
-# Membrane molecule selection. Default DOPC (bilayer). Set UPSIDE_MARTINI_LIPID=DDM
-# to use the DDM detergent (MARTINI2 topology + dry-MARTINI nonbonded interactions).
-_LIPID_SPEC = {
-    "DOPC": {"aliases": ("DOPC", "DOP"), "itp": "dry_martini_v2.1_lipids.itp", "molname": "DOPC"},
-    "DDM":  {"aliases": ("DDM",),        "itp": "dry_martini_v2.1_DDM.itp",    "molname": "DDM"},
-}
+# Membrane molecule selection. The lipid identity is supplied by the caller
+# (--lipid-name); its topology is read from the input ITP files. No lipid type,
+# ITP filename, or residue name is hardcoded here.
+_ACTIVE_LIPID_NAME = None
+
+
+def set_active_lipid_name(name) -> None:
+    global _ACTIVE_LIPID_NAME
+    if name is None or not str(name).strip():
+        raise ValueError("Lipid name must be provided (--lipid-name)")
+    _ACTIVE_LIPID_NAME = str(name).strip()
 
 
 def active_lipid_name() -> str:
-    name = os.environ.get("UPSIDE_MARTINI_LIPID", "DOPC").strip().upper()
-    return name if name in _LIPID_SPEC else "DOPC"
-
-
-def active_lipid_spec() -> dict:
-    return _LIPID_SPEC[active_lipid_name()]
+    if _ACTIVE_LIPID_NAME is None:
+        raise ValueError("Active lipid name is not set; call set_active_lipid_name() (--lipid-name)")
+    return _ACTIVE_LIPID_NAME
 
 
 def lipid_resname(resname: str) -> bool:
-    return resname.upper() in active_lipid_spec()["aliases"]
-
-
-def canonical_lipid_resname(resname: str) -> str:
-    if lipid_resname(resname):
-        return active_lipid_name()
-    return resname
+    return resname.strip().upper() == active_lipid_name().upper()
 
 
 def infer_protein_charge_from_residues(protein_atoms):
@@ -553,7 +549,6 @@ def tile_and_crop_bilayer_lipids(
                 gcopy = []
                 for atom in group:
                     a = deepcopy(atom)
-                    a["resname"] = canonical_lipid_resname(a["resname"])
                     a["x"] = float(a["x"] + shift[0])
                     a["y"] = float(a["y"] + shift[1])
                     gcopy.append(a)
@@ -595,7 +590,6 @@ def tile_and_crop_bilayer_lipids(
             atom["chain"] = chain
             atom["icode"] = icode
             atom["resseq"] = next_resseq
-            atom["resname"] = canonical_lipid_resname(atom["resname"])
             atom["segid"] = "MEMB"
             out_atoms.append(atom)
         next_resseq += 1
@@ -679,37 +673,11 @@ def set_box_from_lipid_xy(
     return np.array([box_x, box_y, box_z], dtype=float)
 
 
-def estimate_salt_pairs(box_lengths, salt_molar, effective_volume_fraction=1.0):
-    volume_a3 = float(box_lengths[0] * box_lengths[1] * box_lengths[2])
-    volume_a3 *= float(max(0.0, min(1.0, effective_volume_fraction)))
-    volume_l = volume_a3 * 1e-27
+def estimate_salt_pairs(box_lengths, salt_molar):
+    # Ion count from concentration and box volume only (no water in the system).
+    volume_l = float(box_lengths[0] * box_lengths[1] * box_lengths[2]) * 1e-27
     pairs = int(round(salt_molar * NA_AVOGADRO * volume_l))
     return max(0, pairs)
-
-
-def infer_effective_ion_volume_fraction_from_template(
-    bilayer_atoms,
-    bilayer_box,
-    salt_molar,
-):
-    # Calibrate effective ion-accessible volume from the template system ions.
-    # This avoids overestimating ion count by using full geometric box volume.
-    if bilayer_box is None or salt_molar <= 0.0:
-        return 1.0
-
-    n_na = sum(1 for a in bilayer_atoms if a["resname"].upper() == "NA")
-    n_cl = sum(1 for a in bilayer_atoms if a["resname"].upper() == "CL")
-    base_pairs = min(n_na, n_cl)
-    if base_pairs <= 0:
-        return 1.0
-
-    base_volume_l = float(bilayer_box[0] * bilayer_box[1] * bilayer_box[2]) * 1e-27
-    expected_pairs = salt_molar * NA_AVOGADRO * base_volume_l
-    if expected_pairs <= 0.0:
-        return 1.0
-
-    frac = float(base_pairs) / float(expected_pairs)
-    return float(max(0.0, min(1.0, frac)))
 
 
 def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
@@ -1038,7 +1006,7 @@ def build_hybrid_mass_array_up(atom_types, particle_class, martini_masses):
 
 
 def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
-    """Read the dry MARTINI force field, DOPC/ion/water topologies and masses."""
+    """Read the dry MARTINI force field, lipid/ion/water topologies and masses."""
     def pick_ff_file(name, required=True):
         path = os.path.join(ff_path, name)
         if os.path.exists(path):
@@ -1057,36 +1025,45 @@ def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
 
     print("Protein runtime representation: N/CA/C carriers; regenerated O/BB virtual sites")
 
-    lipid_spec = active_lipid_spec()
-    dopc_param_file = pick_ff_file(lipid_spec["itp"])
+    lipid_name = active_lipid_name()
     lipid_preproc_defs = {}
     if stage_lipidhead_fc > 0.0:
         lipid_preproc_defs['BILAYER_LIPIDHEAD_FC'] = stage_lipidhead_fc
-    full_topology = parse_itp_file(dopc_param_file, preprocessor_defines=lipid_preproc_defs)
 
-    target_molname = lipid_spec["molname"].upper()
-    dopc_molecule = None
-    for mol_name in full_topology['molecules'].keys():
-        if mol_name.upper() == target_molname:
-            dopc_molecule = mol_name
+    # Locate the ITP that defines the requested lipid moleculetype (no hardcoded filename).
+    lipid_param_file = None
+    full_topology = None
+    for ff_name in ff_files:
+        if not ff_name.lower().endswith(".itp"):
+            continue
+        candidate = pick_ff_file(ff_name)
+        try:
+            candidate_topology = parse_itp_file(candidate, preprocessor_defines=lipid_preproc_defs)
+        except Exception:
+            continue
+        if any(mol.upper() == lipid_name.upper() for mol in candidate_topology.get('molecules', {})):
+            lipid_param_file = candidate
+            full_topology = candidate_topology
             break
-
-    if dopc_molecule:
-        dopc_topology = parse_itp_file(
-            dopc_param_file, dopc_molecule, preprocessor_defines=lipid_preproc_defs
-        )
-    else:
-        available_molecules = list(full_topology['molecules'].keys())
+    if lipid_param_file is None:
+        available_itps = [f for f in ff_files if f.lower().endswith(".itp")]
         raise ValueError(
-            f"Lipid molecule '{lipid_spec['molname']}' not found in '{dopc_param_file}'. "
-            f"Available molecules: {available_molecules}"
+            f"Lipid molecule '{lipid_name}' not found in any ITP under '{ff_path}'. "
+            f"Available ITP files: {available_itps}"
         )
 
-    dopc_bead_types = [atom['type'] for atom in dopc_topology['atoms']]
-    dopc_charges = [atom['charge'] for atom in dopc_topology['atoms']]
-    dopc_atom_to_type = {atom['atom']: atom['type'] for atom in dopc_topology['atoms']}
-    dopc_atom_to_charge = {atom['atom']: atom['charge'] for atom in dopc_topology['atoms']}
-    print(f"Read {dopc_molecule} topology: {len(dopc_bead_types)} bead types from {dopc_param_file}")
+    lipid_molecule = next(
+        mol for mol in full_topology['molecules'].keys() if mol.upper() == lipid_name.upper()
+    )
+    lipid_topology = parse_itp_file(
+        lipid_param_file, lipid_molecule, preprocessor_defines=lipid_preproc_defs
+    )
+
+    lipid_bead_types = [atom['type'] for atom in lipid_topology['atoms']]
+    lipid_charges = [atom['charge'] for atom in lipid_topology['atoms']]
+    lipid_atom_to_type = {atom['atom']: atom['type'] for atom in lipid_topology['atoms']}
+    lipid_atom_to_charge = {atom['atom']: atom['charge'] for atom in lipid_topology['atoms']}
+    print(f"Read {lipid_molecule} topology: {len(lipid_bead_types)} bead types from {lipid_param_file}")
 
     ion_param_file = pick_ff_file("dry_martini_v2.1_ions.itp", required=False)
     if ion_param_file:
@@ -1118,37 +1095,37 @@ def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
     martini_masses = read_martini_masses(martini_param_file)
     print(f"Read {len(martini_masses)} atom type masses from force field file")
 
-    dopc_bonds = [(bond['i'], bond['j']) for bond in dopc_topology['bonds']]
-    dopc_bond_lengths = [bond['r0'] for bond in dopc_topology['bonds']]
-    dopc_bond_force_constants = [bond['k'] for bond in dopc_topology['bonds']]
+    lipid_bonds = [(bond['i'], bond['j']) for bond in lipid_topology['bonds']]
+    lipid_bond_lengths = [bond['r0'] for bond in lipid_topology['bonds']]
+    lipid_bond_force_constants = [bond['k'] for bond in lipid_topology['bonds']]
 
-    dopc_angles = [(angle['i'], angle['j'], angle['k']) for angle in dopc_topology['angles']]
-    dopc_angle_equil_deg = [angle['theta0'] for angle in dopc_topology['angles']]
-    dopc_angle_force_constants = [angle['force_k'] for angle in dopc_topology['angles']]
-    dopc_position_restraints = dopc_topology.get('position_restraints', [])
+    lipid_angles = [(angle['i'], angle['j'], angle['k']) for angle in lipid_topology['angles']]
+    lipid_angle_equil_deg = [angle['theta0'] for angle in lipid_topology['angles']]
+    lipid_angle_force_constants = [angle['force_k'] for angle in lipid_topology['angles']]
+    lipid_position_restraints = lipid_topology.get('position_restraints', [])
 
-    print(f"Read {dopc_molecule} connectivity: {len(dopc_bonds)} bonds, {len(dopc_angles)} angles")
+    print(f"Read {lipid_molecule} connectivity: {len(lipid_bonds)} bonds, {len(lipid_angles)} angles")
 
-    if not dopc_bonds:
-        raise ValueError(f"No DOPC bonds found in topology from '{dopc_param_file}'")
+    if not lipid_bonds:
+        raise ValueError(f"No {lipid_name} bonds found in topology from '{lipid_param_file}'")
 
-    if not dopc_angles:
-        raise ValueError(f"No DOPC angles found in topology from '{dopc_param_file}'")
+    if not lipid_angles:
+        raise ValueError(f"No {lipid_name} angles found in topology from '{lipid_param_file}'")
 
     return {
         'martini_table': martini_table,
         'martini_masses': martini_masses,
-        'dopc_bead_types': dopc_bead_types,
-        'dopc_charges': dopc_charges,
-        'dopc_atom_to_type': dopc_atom_to_type,
-        'dopc_atom_to_charge': dopc_atom_to_charge,
-        'dopc_bonds': dopc_bonds,
-        'dopc_bond_lengths': dopc_bond_lengths,
-        'dopc_bond_force_constants': dopc_bond_force_constants,
-        'dopc_angles': dopc_angles,
-        'dopc_angle_equil_deg': dopc_angle_equil_deg,
-        'dopc_angle_force_constants': dopc_angle_force_constants,
-        'dopc_position_restraints': dopc_position_restraints,
+        'lipid_bead_types': lipid_bead_types,
+        'lipid_charges': lipid_charges,
+        'lipid_atom_to_type': lipid_atom_to_type,
+        'lipid_atom_to_charge': lipid_atom_to_charge,
+        'lipid_bonds': lipid_bonds,
+        'lipid_bond_lengths': lipid_bond_lengths,
+        'lipid_bond_force_constants': lipid_bond_force_constants,
+        'lipid_angles': lipid_angles,
+        'lipid_angle_equil_deg': lipid_angle_equil_deg,
+        'lipid_angle_force_constants': lipid_angle_force_constants,
+        'lipid_position_restraints': lipid_position_restraints,
         'na_bead_types': na_bead_types,
         'na_charges': na_charges,
         'cl_bead_types': cl_bead_types,
@@ -1160,15 +1137,15 @@ def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
 
 def _parse_runtime_pdb_atoms(input_pdb_file, topo):
     """Parse the runtime PDB, map each atom to its MARTINI bead type, read the box."""
-    dopc_atom_to_type = topo['dopc_atom_to_type']
-    dopc_atom_to_charge = topo['dopc_atom_to_charge']
+    lipid_atom_to_type = topo['lipid_atom_to_type']
+    lipid_atom_to_charge = topo['lipid_atom_to_charge']
     water_bead_types = topo['water_bead_types']
     water_charges = topo['water_charges']
     na_bead_types = topo['na_bead_types']
     na_charges = topo['na_charges']
     cl_bead_types = topo['cl_bead_types']
     cl_charges = topo['cl_charges']
-    dopc_bead_types = topo['dopc_bead_types']
+    lipid_bead_types = topo['lipid_bead_types']
 
     print("Reading PDB structure")
     initial_positions = []
@@ -1214,7 +1191,7 @@ def _parse_runtime_pdb_atoms(input_pdb_file, topo):
             atom_names.append(atom_name)
             residue_id = int(line[22:26])
             residue_ids.append(residue_id)
-            # Read 4-character residue field to support DOPC while preserving
+            # Read 4-character residue field to support 4-char lipid resnames while preserving
             # standard 3-letter protein residues (e.g., " ASN" -> "ASN").
             residue_name = line[17:21].strip().upper()
             residue_names.append(residue_name)
@@ -1241,15 +1218,15 @@ def _parse_runtime_pdb_atoms(input_pdb_file, topo):
                 martini_type = bb_type_by_residue.get(res_key, "P5")
                 charge = float(BB_TYPE_CHARGE.get(martini_type, 0.0))
             elif lipid_resname(residue_name):
-                # Membrane molecule (DOPC or DDM): use the topology from the parameter file
-                if atom_name in dopc_atom_to_type:
-                    martini_type = dopc_atom_to_type[atom_name]
-                    charge = dopc_atom_to_charge[atom_name]
+                # Membrane molecule: use the topology parsed from the input ITP.
+                if atom_name in lipid_atom_to_type:
+                    martini_type = lipid_atom_to_type[atom_name]
+                    charge = lipid_atom_to_charge[atom_name]
                 else:
-                    available_atom_names = sorted(dopc_atom_to_type.keys())
+                    available_atom_names = sorted(lipid_atom_to_type.keys())
                     raise ValueError(
-                        f"Unknown DOPC atom '{atom_name}' in residue '{residue_name}'. "
-                        f"Available DOPC atom names: {available_atom_names}"
+                        f"Unknown {active_lipid_name()} atom '{atom_name}' in residue '{residue_name}'. "
+                        f"Available {active_lipid_name()} atom names: {available_atom_names}"
                     )
             elif residue_name == 'W':
                 if not water_bead_types:
@@ -1269,7 +1246,7 @@ def _parse_runtime_pdb_atoms(input_pdb_file, topo):
             else:
                 raise ValueError(
                     f"Unknown residue type '{residue_name}' for atom '{atom_name}'. "
-                    "Supported residue types: PROTEIN, DOPC, W, NA, CL"
+                    f"Supported residue types: PROTEIN, {active_lipid_name()}, W, NA, CL"
                 )
 
             atom_types.append(martini_type)
@@ -1285,8 +1262,8 @@ def _parse_runtime_pdb_atoms(input_pdb_file, topo):
     seg_ids = np.array(seg_ids)
     n_atoms = len(initial_positions)
 
-    n_lipid_atoms = int(np.sum(np.isin(residue_names, list(active_lipid_spec()["aliases"]))))
-    n_lipid_mols = n_lipid_atoms // len(dopc_bead_types) if dopc_bead_types else 0
+    n_lipid_atoms = int(np.sum([lipid_resname(r) for r in residue_names]))
+    n_lipid_mols = n_lipid_atoms // len(lipid_bead_types) if lipid_bead_types else 0
     print(f"Full-resolution mode: keeping all {n_lipid_mols} {active_lipid_name()} molecules "
           f"({n_lipid_atoms} beads) as individual particles")
 
@@ -1338,8 +1315,7 @@ def _group_atoms_into_molecules(residue_ids, residue_names, atom_names, chain_id
         if resname in protein_residues:
             mol_type = 'PROTEIN'
         else:
-            # Normalize membrane-molecule resnames (e.g. DOP -> DOPC) for reporting/selection
-            mol_type = canonical_lipid_resname(resname) if lipid_resname(resname) else resname
+            mol_type = resname
 
         # Start new molecule if protein chain changes or residue ID/name changes for non-proteins
         chain_id = pick_chain_id(i) if mol_type == 'PROTEIN' else ""
@@ -1409,29 +1385,29 @@ def _group_atoms_into_molecules(residue_ids, residue_names, atom_names, chain_id
         protein_chains = mol_counts.get('PROTEIN', 0)
         mol_counts['PROTEIN'] = f"{protein_chains} chain(s) ({protein_residue_count} residues)"
 
-    dopc_count = mol_counts.get(active_lipid_name(), 0)
+    lipid_count = mol_counts.get(active_lipid_name(), 0)
     water_count = mol_counts.get('W', 0)
 
     print("\nMolecule summary")
     for moltype, count in mol_counts.items():
         print(f"{moltype}: {count} molecules")
 
-    return molecules, molecule_ids, protein_sequence, dopc_count, water_count
+    return molecules, molecule_ids, protein_sequence, lipid_count, water_count
 
 
 def _build_bonded_terms(molecules, topo, initial_positions,
                         bond_conversion, angle_conversion, dihedral_conversion,
                         protein_bonds, protein_angles, protein_dihedrals,
                         protein_constraints, protein_position_restraints):
-    """Build DOPC and protein bonds/angles/dihedrals plus lipid position restraints."""
-    dopc_bead_types = topo['dopc_bead_types']
-    dopc_bonds = topo['dopc_bonds']
-    dopc_bond_lengths = topo['dopc_bond_lengths']
-    dopc_bond_force_constants = topo['dopc_bond_force_constants']
-    dopc_angles = topo['dopc_angles']
-    dopc_angle_equil_deg = topo['dopc_angle_equil_deg']
-    dopc_angle_force_constants = topo['dopc_angle_force_constants']
-    dopc_position_restraints = topo['dopc_position_restraints']
+    """Build lipid and protein bonds/angles/dihedrals plus lipid position restraints."""
+    lipid_bead_types = topo['lipid_bead_types']
+    lipid_bonds = topo['lipid_bonds']
+    lipid_bond_lengths = topo['lipid_bond_lengths']
+    lipid_bond_force_constants = topo['lipid_bond_force_constants']
+    lipid_angles = topo['lipid_angles']
+    lipid_angle_equil_deg = topo['lipid_angle_equil_deg']
+    lipid_angle_force_constants = topo['lipid_angle_force_constants']
+    lipid_position_restraints = topo['lipid_position_restraints']
 
     print("\nCreating connectivity")
 
@@ -1449,25 +1425,25 @@ def _build_bonded_terms(molecules, topo, initial_positions,
     lipid_restraint_ref_pos = []
     lipid_restraint_spring_xyz = []
 
-    dopc_molecules = [mol for mol in molecules if mol[0] == active_lipid_name()]
-    for mol_idx, (_, atom_names_mol, atom_indices) in enumerate(dopc_molecules):
+    lipid_molecules = [mol for mol in molecules if mol[0] == active_lipid_name()]
+    for mol_idx, (_, atom_names_mol, atom_indices) in enumerate(lipid_molecules):
         name_to_idx = {name: idx for name, idx in zip(atom_names_mol, atom_indices)}
 
-        for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds):
-            if bond_idx1 < len(dopc_bead_types) and bond_idx2 < len(dopc_bead_types):
+        for i, (bond_idx1, bond_idx2) in enumerate(lipid_bonds):
+            if bond_idx1 < len(lipid_bead_types) and bond_idx2 < len(lipid_bead_types):
                 atom1_name = atom_names_mol[bond_idx1]
                 atom2_name = atom_names_mol[bond_idx2]
                 atom1 = name_to_idx[atom1_name]
                 atom2 = name_to_idx[atom2_name]
                 bonds_list.append([atom1, atom2])
-                bond_lengths_list.append(dopc_bond_lengths[i] * 10.0)
+                bond_lengths_list.append(lipid_bond_lengths[i] * 10.0)
                 bond_force_constants_list.append(
-                    dopc_bond_force_constants[i] * bond_conversion
+                    lipid_bond_force_constants[i] * bond_conversion
                 )
 
-        for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(dopc_angles):
-            if (angle_idx1 < len(dopc_bead_types) and angle_idx2 < len(dopc_bead_types) and
-                angle_idx3 < len(dopc_bead_types)):
+        for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(lipid_angles):
+            if (angle_idx1 < len(lipid_bead_types) and angle_idx2 < len(lipid_bead_types) and
+                angle_idx3 < len(lipid_bead_types)):
                 atom1_name = atom_names_mol[angle_idx1]
                 atom2_name = atom_names_mol[angle_idx2]
                 atom3_name = atom_names_mol[angle_idx3]
@@ -1475,12 +1451,12 @@ def _build_bonded_terms(molecules, topo, initial_positions,
                 atom2 = name_to_idx[atom2_name]
                 atom3 = name_to_idx[atom3_name]
                 angles_list.append([atom1, atom2, atom3])
-                angle_equil_deg_list.append(dopc_angle_equil_deg[i])
+                angle_equil_deg_list.append(lipid_angle_equil_deg[i])
                 angle_force_constants_list.append(
-                    dopc_angle_force_constants[i] * angle_conversion
+                    lipid_angle_force_constants[i] * angle_conversion
                 )
 
-        for restraint in dopc_position_restraints:
+        for restraint in lipid_position_restraints:
             local_idx = restraint['i']
             if 0 <= local_idx < len(atom_indices):
                 atom_idx = atom_indices[local_idx]
@@ -1494,9 +1470,9 @@ def _build_bonded_terms(molecules, topo, initial_positions,
 
     n_lipid_bonds = len(bonds_list)
     n_lipid_angles = len(angles_list)
-    print(f"Full-resolution mode: created {n_lipid_bonds} DOPC bonds, "
+    print(f"Full-resolution mode: created {n_lipid_bonds} {active_lipid_name()} bonds, "
           f"{n_lipid_angles} angles, {len(lipid_restraint_indices)} restraints "
-          f"across {len(dopc_molecules)} lipids")
+          f"across {len(lipid_molecules)} lipids")
 
     protein_bond_count = 0
     protein_angle_count = 0
@@ -1800,7 +1776,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
      residue_names, chain_ids, seg_ids, n_atoms, x_len, y_len, z_len) = \
         _parse_runtime_pdb_atoms(input_pdb_file, topo)
     
-    molecules, molecule_ids, protein_sequence, dopc_count, water_count = \
+    molecules, molecule_ids, protein_sequence, lipid_count, water_count = \
         _group_atoms_into_molecules(
             residue_ids, residue_names, atom_names, chain_ids, seg_ids, n_atoms
         )
@@ -2039,7 +2015,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             brownian_grp._v_attrs.protein_time_ps_per_step = np.float64(protein_time_ps)
             brownian_grp._v_attrs.martini_time_factor = np.float64(martini_time_factor)
             brownian_grp._v_attrs.raw_martini_time_ps_per_step = np.float64(raw_martini_time_ps)
-            brownian_grp._v_attrs.target_dopc_diffusion_um2_s = np.float64(target_diffusion)
+            brownian_grp._v_attrs.target_lipid_diffusion_um2_s = np.float64(target_diffusion)
             brownian_grp._v_attrs.raw_target_diffusion_um2_s = np.float64(raw_target_diffusion)
             brownian_grp._v_attrs.reference_temperature_up = np.float64(reference_temperature)
             brownian_grp._v_attrs.dynamics_phase = dynamics_phase.encode()
@@ -2218,7 +2194,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         f.write(f"Protein constraints: {protein_constraint_count}\n")
         f.write(f"Protein angles: {protein_angle_count}\n")
         f.write(f"Protein dihedrals: {protein_dihedral_count}\n")
-        f.write(f"{active_lipid_name()} molecules: {dopc_count}\n")
+        f.write(f"{active_lipid_name()} molecules: {lipid_count}\n")
         f.write(f"Water molecules: {water_count}\n")
         f.write(f"1-2 exclusions (nrexcl=1): {excluded_12_count}\n")
         f.write(f"Additional exclusions: {excluded_additional_count}\n")
