@@ -1,135 +1,69 @@
-# Progress
+# Progress — glpG HDX: REMD-system fix + lipid de-hardcode (2026-07-25)
 
-## Production-freeze correction (2026-07-20)
+## Goal
+Metad denatures glpG (both CVs) → deprioritized; REMD is the working HDX method.
+Fix the REMD prep system, then run 36 h REMD for 4 glpG variants, then investigate metad.
 
-- Reproduced the user-visible freeze in both stage-7 VTF files. DOPC molecular COM motion was only
-  `0.0081 A` per saved frame and `0.17--0.24 A` net RMS over 1,001 frames.
-- Identified the cause: production `tau_up=.0036` produced mass-6 friction `1666.7` and
-  `alpha*dt/(2m)=1.25`, suppressing coordinates despite an apparently normal kinetic temperature.
-- Rejected native-damping, old low-friction, and direct protein bare-friction controls because they moved
-  DOPC but overheated the interface or reduced 1RKL helicity.
-- Implemented the factor-four-corrected bare-particle mobility clock (`alpha_bead=0.1691804`) at the shared
-  `.009` timestep, with no lipid substeps. Protein N/CA/C carriers receive additive friction from DOPC beads
-  inside the existing 12 A spline cutoff; zero-contact carriers retain the Upside OU bath.
-- Recompute static contact counts from actual coordinates after stage handoff, minimization promotion, and
-  continuation. SC-env, BB-env, hard cores, virtual-site force projection, and spline tables are unchanged.
-- Kept preparation separate from the kinetic claim: softened stages use native damping and full-core
-  stages use strong FDT overlap-settling damping; production alone uses the particle clock.
-- Two 50,000-step regressions completed. DOPC COM net RMS was `3.43 A` (1AFO) and `3.72 A` (1RKL), molecular
-  D was `0.0132` and `0.0152 um^2/s` (still below target), and total kinetic energy was within 1% of target.
-  1AFO retained 54/54 helical residues; the 1RKL transmembrane core at residues 10--29 remained helical.
-- Physically valid fresh 1AFO and 1RKL workflows completed minimization, equilibration, burn-in, production,
-  and VTF extraction with finite moving coordinates and the expected phase/contact friction metadata.
-- Updated the workflow description and manuscript to state the verified particle-level observable and the
-  unmatched molecular diffusion explicitly.
+## Done
+- **Ion count = molarity × box volume** (removed the template `effective_volume_fraction`
+  fudge; deleted `infer_effective_ion_volume_fraction_from_template`). No-op for DDM (795
+  pairs / 1596 ions), verified on-cluster. Box kept at 3× (user decision); clustering accepted.
+- **Lipid de-hardcode (full):** removed `_LIPID_SPEC` + `UPSIDE_MARTINI_LIPID` env gate;
+  lipid identity now via `--lipid-name` CLI; topology discovered by moleculetype name across
+  the input ITPs (no hardcoded filename); `--bilayer-pdb` defaults to `dryMARTINI/<lipid>.pdb`;
+  `dopc_*`→`lipid_*`; `parse_dopc_from_itp`→`parse_lipid_from_itp(path,molname)`;
+  `dopc_max_sigma_nm`→`lipid_max_sigma_nm`. Drivers pass `--lipid-name DDM`.
+  (Left `UPSIDE_DOPC_*` diffusion env vars — kinetics calibration, not lipid-type selection.)
+- **Clearance bug fixed:** `derive_lipid_contact_clearance_angstrom` reads the ACTIVE lipid's
+  ITP → DDM corrected 6.96 Å (DOPC-derived, wrong) → 5.28 Å.
+- Validated locally: compile clean, no leftover DOPC symbols, topology parity (DDM/DOPC bead
+  types+bonds+angles identical), per-lipid clearance, CLI threading, structure build
+  (795 pairs, charge-neutral). Synced 3 files to cluster (md5 match).
 
-Files modified: `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.py`,
-`example/16.MARTINI/run_sim_hybrid.sh`, `example/16.MARTINI/drymartini_upside_interface.tex`, `plan.md`,
-`findings.md`, and `progress.md`.
+## Preps run LOCALLY (caslake congested), uploaded, REMD-only on Slurm
+- 4 preps built locally with corrected code (clearance target 5.28 Å confirmed in logs; folded
+  production hbonds~200, 795 ions). `.up` at `example/16.MARTINI/scratchpad/local_preps/<V>/checkpoints/`.
+- Uploaded to cluster; load-tested + faithful reseed+50-step run on cluster obj/upside → folded/finite
+  (locally-built `.up` is cluster-compatible).
+- **REMD submitted (caslake, 48cpu exclusive, 35:45:00, no prep queue, self-resubmit ≤12 blocks):**
+  79HIS=52647003, 79HIS_S115T=52647004, 79ALA=52647005, 79ALA_S115T=52647006 (pending, Resources).
+- Monitor running to confirm first block folded once they start.
 
-## HDX workflow audit (2026-07-20)
+## DDM box-fill fix (2026-07-27) — CURRENT
+User saw DDM "aggregated with gaps" in the REMD VTF. Root cause: the tiler filled only the
+crop window (~3× span COM extent) at native density, but `set_box_from_lipid_xy` set the box to
+the DDM **molecule extent** (~187 Å, since molecule tails reach ~30 Å past their COMs) → a sparse
+tail-only outer ring; being under-dense, the detergent then contracts → gaps. NOT a viz artifact.
+- User decision: keep the box large (≥3× span), add more DDM to fill it.
+- Fix (dev-only `martini_prepare_system{,_lib}.py`, not in master): round the tiling window up to
+  whole template tiles; add `force_xy_box` to `set_box_from_lipid_xy` so the box = the fill window
+  (not molecule extent), COM-centered (tails wrap under PBC). Belt radius `r_lipid` computed
+  min-image so PBC-split template molecules don't inflate it (was 67→315 Å box bug; now 2.7→189 Å).
+- Verified (structure build, 79HIS): box 189×189 (4.6× span, ≥3×, ≈ old 187), DDM 621 mols (was
+  235; "more DDM"), midplane density FLAT 0.074–0.078 to the edge (uniform, no gap/belt).
+- In progress: full local prep (min→eq→40k burn-in→prod) to confirm no MD contraction, then re-prep
+  all 4 variants locally, upload `.up`, re-run REMD.
 
-- Traced the full structural-protection-to-uptake path. It MBAR-averages binary protected states and uses an
-  EX2-like analytic rate model; simulation time is not used as the uptake clock.
-- Confirmed that the standard protein-only extractor cannot load hybrid trajectories (coordinate-count mismatch)
-  and that the available hybrid-aware extractor is not wired into the analysis driver.
-- Verified saturation of the current hybrid membrane rule on stage-6.6: all 29 1RKL donors are always protected,
-  while 65.5% are H-bond-open; downstream uptake would therefore be dominated by the `k_chem/1000` floor.
-- Found no hybrid `PS.npy`, percentD, or HDX artifacts in `example/16.MARTINI`; there is no existing calculated
-  hybrid HDX result to validate.
-- Reassessment: lipid/protein clock mismatch is indirect for this equilibrium estimator, but frozen or short,
-  poorly decorrelated trajectories remain unsuitable. Current outputs support qualitative structural inspection,
-  not quantitative HDX prediction.
+## Metadynamics REMOVED from branch (2026-07-27)
+Metad confirmed ineffective (denatures glpG; fundamental CV/observable mismatch). Removed from the
+branch: deleted `src/metadynamics.{cpp,h}` + both CMake entries; removed the `#include` +
+`maybe_deposit` call from main.cpp; removed `write_metadynamics` from advanced_config.py; deleted
+`analyze_metadynamics.py`. KEPT (not metad): the NaN blow-up guard (REMD robustness), all
+hybrid/MARTINI code, and the PLUMED interface (`write_plumed` is in master). Rebuilt clean; hybrid
+runs folded (hbonds 194.5, Rg 20.4, finite) — metad code was dormant for the hybrid, so parity holds.
+- **coord_operator.cpp Sum-node change REVERTED to master.** It is a genuine gradient bug
+  (`weight[id_pos[i]]` — wrong index + OOB read when id_pos is a subset; inconsistent with
+  compute_value's `weight[i]`), but LATENT: no real config builds a Sum node (verified 0 Sum nodes in
+  stage_7.0.up; only the metad CV did). Reverting restores C++ core parity, zero behavioral change.
+  Latent upstream bug — fix separately in master if the Sum node is ever used.
+- **DDM "lipids bend a lot" = physical MARTINI, NOT a bug.** AngleSpring uses the exact MARTINI type-2
+  form V=½k(cosθ−cosθ0)² (martini_potential.cpp:1975); k converted by /2.91495; stiff angles sit on
+  θ0 (2-4-7: 152.5°/149.7°, 5-4-2: 70.9°/70°). The cosine angle has ZERO restoring force/curvature at
+  θ0=180°, so the C12 tail angles (k=11, 77) are floppy by design; DDM itp has no dihedrals. Stiffening
+  would violate the no-twisting rule. FF is faithful; CG detergent just looks floppy. No re-run needed.
 
-Files modified for this audit: `plan.md`, `findings.md`, and `progress.md` only.
-
-## 1RKL temperature and hybrid-HDX reassessment (2026-07-20)
-
-- Confirmed production `T_up=0.8647` equals 303.15 K and is passed consistently to g-JF and OU baths. Last-window
-  protein/lipid kinetic temperatures are within 1.1%/0.3% of target, excluding a temperature-conversion error.
-- Recomputed DSSP over all 1,001 stage-7 frames. The 10--29 core averages 84.5% helix occupancy, briefly drops to
-  four helical residues near 1.09 us, and ends at 19/20; core CA RMSD stays below 1.58 A.
-- Corrected the prior physical-duration arithmetic: 50,000 numerical steps at the declared 40 ps/step are 2 us,
-  not 18 ns.
-- Identified timestep convergence—not integrator-specific temperature scaling—as the unresolved numerical check;
-  prior evidence favors `.00225` over `.009` for the coupled hard interface.
-- Defined the HDX adapter: map hybrid N/CA/C into a protein-only HDX analysis engine, preserve full-system energy
-  and temperature for ensemble weighting, and treat membrane water accessibility as a separately calibrated term.
-- Found a workflow documentation hazard: `T.npy` must contain Upside `kT`, not Kelvin as stated in the README.
-
-Files modified for this reassessment: `plan.md`, `findings.md`, and `progress.md` only.
-
-## HDX reuse architecture correction (2026-07-20)
-
-- Recast the hybrid path as one H5 projection adapter rather than a separate HDX implementation.
-- The adapter will map hybrid N/CA/C into a standard protein-only trajectory view while retaining full-system
-  potential and Upside temperature for the existing MBAR analysis.
-- `example/04.HDX` remains the method reference; `example/00.AnalysisScripts` remains the maintained uptake and
-  experiment-comparison pipeline. Existing steps run unchanged after projection.
-- Any membrane accessibility correction remains a transparent postprocessing layer with the stock PS retained.
-
-## Hybrid HDX implementation and verification (2026-07-20)
-
-- Added a hybrid H5 projector and optional calibrated water-accessibility combiner; stock protein PS is retained.
-- Wired hybrid configuration through `00.AnalysisScripts` and added `16.MARTINI/run_hdx_analysis.sh`.
-- Kept steps 1--6 and the `04.HDX` MBAR/EX2 method as the analysis path; fixed scalar-temperature handling and
-  numerically stable log-weight normalization reached by the single-replica hybrid case.
-- Verified exact mapped coordinates and exact full potential/H-bond/temperature/time preservation for 1,001
-  frames. The full temperature-matched 1RKL workflow completed uptake, stability, and summary generation.
-- Quantitative trust gate failed: first/second-half PS differs by up to `0.621`, minimum effective sample count is
-  `3.74`, DOPC diffusion is `0.0152` versus `11.5 um^2/s`, and no calibrated membrane water accessibility exists.
-
-Files added: `py/martini_hdx_project.py`, `py/combine_hdx_protection.py`, and
-`example/16.MARTINI/run_hdx_analysis.sh`. Updated the `00.AnalysisScripts` driver, steps 2--4, stability helper,
-both READMEs, `plan.md`, `findings.md`, and `progress.md`.
-## 2026-07-20 — 1RKL temperature/BB-force audit paused for rerun
-
-- Verified that the cited stage-7 trajectory ran at `T_up=.8647`, not `.80`; the current script's `.80` default
-  was applied after that output was generated.
-- Compared particle--BB tables, type wiring, pair admission, spline derivative, and virtual-site force propagation
-  with `b1041bb`; found no raw pair-force regression and identified the then-current full-Jacobian route and
-  historical timestep as material differences. The later correction restores the historical partial route.
-- Made no physics or workflow-code changes. Per user direction, the next gate is a fresh `.80` simulation and
-  residue-wise DSSP/provenance check.
-
-## 2026-07-20 — Friction calibration and trust manuscript rewrite
-
-- Rewrote drymartini_upside_interface.tex around one code-matched calibration derivation, including the
-  factor-four mapping, numerical bead mobility/friction, contact-local protein drag, H5 audit fields, and
-  preparation-versus-production distinction.
-- Replaced broad thermodynamic/HDX trust claims with an evidence table and explicit implementation,
-  configurational, and kinetic validation layers. Documented the molecular-diffusion failure, unvalidated protein
-  friction, timestep/cutoff concerns, and current HDX convergence/accessibility failures.
-- Corrected the Coulomb description from shifted to abruptly truncated and identified its quantitative validation
-  consequence.
-- Verification passed: exact arithmetic assertions, manuscript consistency checks, two-pass warning-free
-  pdflatex, chktex, and git diff --check.
-- Detected and re-audited freshly replaced stage-7 outputs. Updated the manuscript to the unified $T_\mathrm{up}=.8$
-  artifacts and their new kinetic-temperature, DOPC COM diffusion, and DSSP diagnostics.
-
-## 2026-07-20 — Unified hybrid temperature configuration
-
-- Changed `run_sim_hybrid.sh` to define one `TEMPERATURE` and use it for both the Upside thermostat and DOPC
-  friction calibration; removed the independent bilayer reference-temperature default/override.
-- Left particle--BB forces, timestep, conservative tables, and all interface interactions unchanged pending the
-  fresh `.80` simulation.
-- Verification passed: `bash -n`, `git diff --check`, a static single-source contract assertion, and an execution
-  trace showing `TEMPERATURE=.77` overrides a conflicting reference setting and exports the reference as `.77`.
-
-## 2026-07-20 — 1RKL BB-force and stage-7 handoff correction
-
-- Restored the historical BB reverse route required by Upside's regenerated-O cycle: N/CA/C receive
-  14/54, 12/54, and 12/54 of the BB gradient, while sensitivities on regenerated O and BB are discarded.
-- Replaced the unprotected/fixed-plus-spring handoff with one rigid `production_handoff`: SC-env and BB-env
-  are active while the complete protein remains a rigid body through minimization and burn-in. Flexible dynamics
-  start only after the explicit `production` relabel.
-- Full corrected 1RKL and 1AFO runs resolve the structural gate. DSSP first/final/minimum/mean counts are
-  `23/23/16/21.88` and `54/51/48/50.77`; 1RKL residues 10--28 have 96.5--100% helical occupancy.
-- Rewrote the manuscript around the final construct as a single method narrative, including explicit forward and
-  reverse BB equations, rigid-handoff lifecycle, current structural evidence, and unchanged kinetic/HDX limits.
-- Final verification passed: H5 provenance/result assertions, obsolete-claim scan, two-pass warning-free TeX
-  compilation, `chktex`, and `git diff --check`.
-
-Files modified for this correction: `src/martini_hybrid.cpp`, `py/martini_prepare_system.py`,
-`example/16.MARTINI/run_sim_hybrid.sh`, `example/16.MARTINI/readme.md`,
-`example/16.MARTINI/drymartini_upside_interface.tex`, `plan.md`, `findings.md`, and `progress.md`.
+## Prior state (context)
+- REMD is the reliable HDX method.
+- REMD crashed at 2/12 blocks (replica instability → NaN frames). ΔG re-run (stageBC, NaN-sanitized)
+  jobs 52689487/88/89 running. Sum-node `coord_operator.cpp` fix kept LOCAL only, parity-proven.
+  ← these REMD runs used the OLD (gappy) DDM box; superseded by the box-fill re-run.

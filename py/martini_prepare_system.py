@@ -249,6 +249,26 @@ def prepare_mixed_structure(args, runtime_pdb):
     bmax = bilayer_xyz.max(axis=0)
     base_side = max(float(bmax[0] - bmin[0]), float(bmax[1] - bmin[1]))
 
+    # Max lipid-molecule COM-to-edge radius (xy): the tail overhang that the periodic tiling
+    # wraps, and the belt width the box must add around the protein on each side.
+    _lip_groups = {}
+    for _a in bilayer_lipid_atoms:
+        _lip_groups.setdefault((_a["chain"], _a["resseq"], _a["icode"]), []).append(_a)
+    _bx = float(bilayer_box[0]) if bilayer_box is not None else None
+    _by = float(bilayer_box[1]) if bilayer_box is not None else None
+    r_lipid = 0.0
+    for _g in _lip_groups.values():
+        _gx = np.array([[_a["x"], _a["y"]] for _a in _g], dtype=float)
+        if _bx and _by:
+            # Unwrap molecules split across the template's periodic edge (min-image to bead 0)
+            # so the radius is the true xy footprint, not an inflated cross-box span.
+            _d = _gx - _gx[0]
+            _d[:, 0] -= _bx * np.round(_d[:, 0] / _bx)
+            _d[:, 1] -= _by * np.round(_d[:, 1] / _by)
+            _gx = _gx[0] + _d
+        _com = _gx.mean(axis=0)
+        r_lipid = max(r_lipid, float(np.sqrt(((_gx - _com) ** 2).sum(axis=1)).max()))
+
     if args.protein_placement_mode == "embed" and args.protein_orientation_mode == "input":
         protein_center = center_of_mass(protein_xyz_raw)
         shift = bilayer_center - protein_center
@@ -260,8 +280,13 @@ def prepare_mixed_structure(args, runtime_pdb):
         pspan = pmax - pmin
         pcenter_xy = 0.5 * (pmin[:2] + pmax[:2])
 
-        min_required_xy = 3.0 * pspan[:2] + 2.0 * float(args.box_padding_xy)
+        min_required_xy = 3.0 * pspan[:2] + 2.0 * (float(args.box_padding_xy) + r_lipid)
         target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
+        # Round the tiling window up to a whole number of template tiles so the lipid tiles
+        # seamlessly and fills the box at its native lateral density (no lateral gaps / no
+        # detergent contraction), rather than a sparse cropped patch inside an oversized box.
+        tile_xy = float(bilayer_box[0]) if bilayer_box is not None else base_side
+        target_side = float(np.ceil(target_side / tile_xy) * tile_xy)
         target_xy_min = np.array(
             [pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side],
             dtype=float,
@@ -282,8 +307,13 @@ def prepare_mixed_structure(args, runtime_pdb):
         pmax = protein_xyz_oriented.max(axis=0)
         pspan = pmax - pmin
 
-        min_required_xy = 3.0 * pspan[:2] + 2.0 * float(args.box_padding_xy)
+        min_required_xy = 3.0 * pspan[:2] + 2.0 * (float(args.box_padding_xy) + r_lipid)
         target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
+        # Round the tiling window up to a whole number of template tiles so the lipid tiles
+        # seamlessly and fills the box at its native lateral density (no lateral gaps / no
+        # detergent contraction), rather than a sparse cropped patch inside an oversized box.
+        tile_xy = float(bilayer_box[0]) if bilayer_box is not None else base_side
+        target_side = float(np.ceil(target_side / tile_xy) * tile_xy)
         target_xy_min = np.array(
             [bilayer_center[0] - 0.5 * target_side, bilayer_center[1] - 0.5 * target_side],
             dtype=float,
@@ -329,6 +359,7 @@ def prepare_mixed_structure(args, runtime_pdb):
         force_square_xy=True,
         min_box_z=min_box_z_target,
         center_lipid_in_z=True,
+        force_xy_box=target_side,
     )
 
     protein_charge = (

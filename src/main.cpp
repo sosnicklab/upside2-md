@@ -25,7 +25,6 @@
 #endif
 
 #include "box.h"
-#include "metadynamics.h"
 
 using namespace std;
 using namespace h5;
@@ -774,6 +773,7 @@ try {
         int duration_steps = duration_steps_arg.getValue();
         double time_lim = time_lim_arg.getValue();
         bool passed_time_lim = false;
+        bool blew_up = false; int blew_up_ns = -1; long long blew_up_round = -1;
         bool use_duration_steps = duration_steps >= 0;
 
         int inner_step = 3;
@@ -1270,6 +1270,19 @@ try {
                         sys.engine.compute(PotentialAndDerivMode);
                         sys.logger->collect_samples();
 
+                        // Blow-up guard: a non-finite potential or kinetic energy means the
+                        // integration diverged (transient clash / too-large timestep, typically at
+                        // high temperature). The kinetic check also catches diverging momenta even
+                        // when non-finite pair forces are masked out of the potential. Stop
+                        // immediately so the NaN is not logged, exchanged between replicas by
+                        // replica-exchange swaps, or promoted into a restart.
+                        if(!std::isfinite(sys.engine.potential) ||
+                           !std::isfinite(compute_logged_kinetic_energy(&sys))) {
+                            #pragma omp critical
+                            { blew_up = true; blew_up_ns = ns; blew_up_round = (long long)nr; }
+                            break;
+                        }
+
                         if(verbose) {
                             double display_elapsed = nr*double(dt*inner_step);
                             if(sys.martini_hybrid_progress) {
@@ -1326,9 +1339,6 @@ try {
                     // Apply fix rigid constraints after integration
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
 
-                    // Metadynamics: deposit a Gaussian on the CV if this round is due (once per round).
-                    metadynamics::maybe_deposit(sys.engine, nr, sys.temperature);
-
                     // Apply stage-specific parameters
                     martini_stage_params::apply_stage_bond_params(sys.engine);
                     martini_stage_params::apply_stage_angle_params(sys.engine);
@@ -1354,10 +1364,21 @@ try {
             // Here we are running in serial again
             if(received_signal!=NO_SIGNAL) break;
             if(passed_time_lim) break;
+            if(blew_up) break;
 
             if(replica_interval && !(systems[0].round_num % replica_interval))
                 replex->attempt_swaps(base_random_seed, systems[0].round_num, systems, exchange_criterion);
 
+        }
+
+        if(blew_up) {
+            for(auto& sys: systems) sys.logger = shared_ptr<H5Logger>();  // flush finite frames before aborting
+            fprintf(stderr,
+                "\nFATAL: non-finite potential (NaN/Inf) in system %d at round %lld -- the simulation "
+                "diverged (transient clash / too-large timestep, typically at high temperature).\n"
+                "Aborting so the blow-up is not logged, swapped between replicas, or promoted into a restart.\n",
+                blew_up_ns, blew_up_round);
+            return 1;
         }
 
 

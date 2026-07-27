@@ -54,7 +54,6 @@ set(ENGINE_SRC
     spline.cpp
     spring.cpp
     tension.cpp
-    metadynamics.cpp
     sigmoid_energy.cpp
     deriv_engine.cpp 
     sidechain_radial.cpp

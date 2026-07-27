@@ -630,6 +630,7 @@ def set_box_from_lipid_xy(
     force_square_xy=True,
     min_box_z=None,
     center_lipid_in_z=True,
+    force_xy_box=None,
 ):
     all_xyz = coords(all_atoms)
     lip_xyz = coords(lipid_atoms)
@@ -647,6 +648,11 @@ def set_box_from_lipid_xy(
         box_y = square_side
     if span_x <= 0.0 or span_y <= 0.0:
         raise ValueError("Invalid lipid XY span while defining box edges.")
+    # When an explicit XY box is given (a whole-tile fill window), the box equals that window
+    # (the lipid molecule COMs fill it; molecule tails wrap under PBC) rather than the molecule
+    # extent, so the membrane fills the box laterally with no sparse-tail ring / contraction.
+    if force_xy_box is not None:
+        box_x = box_y = float(force_xy_box)
 
     min_z = float(all_xyz[:, 2].min())
     max_z = float(all_xyz[:, 2].max())
@@ -661,8 +667,15 @@ def set_box_from_lipid_xy(
         box_z = float(max(box_z, needed_z))
 
     shift = np.array([0.0, 0.0, 0.0], dtype=float)
-    shift[0] = -lip_min[0]
-    shift[1] = -lip_min[1]
+    if force_xy_box is not None:
+        # Center the lipid COM in the forced box so the periodic slab is symmetric; molecule
+        # tails past the box edge are the periodic images (the tiling repeats at box/n_tiles).
+        lip_com = lip_xyz.mean(axis=0)
+        shift[0] = 0.5 * box_x - float(lip_com[0])
+        shift[1] = 0.5 * box_y - float(lip_com[1])
+    else:
+        shift[0] = -lip_min[0]
+        shift[1] = -lip_min[1]
     if center_lipid_in_z:
         shift[2] = 0.5 * box_z - lip_mid_z
     else:
