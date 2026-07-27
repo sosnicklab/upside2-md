@@ -1,3 +1,24 @@
+# CURRENT PHASE (2026-07-27): cheaper HDX sampling — thin ladder + REST2
+
+Metadynamics REMOVED from the branch (fundamental CV/observable mismatch; denatures glpG). REMD is
+the reliable HDX method; goal is to make it cheaper without losing rigor.
+- MEASURED: 48-replica T-REMD (T=0.70–0.90) exchange acceptance = **68%** (optimal ~25%) → ladder is
+  **2.5–3× over-provisioned**.
+- Lever 1 (free): thin plain T-REMD to ~16–20 replicas (re-space same range for ~25% accept) → ~2.4×.
+- Lever 2 (REST2): SHELVED (2026-07-27, user decision). Every implementation path adds complexity the
+  user does not want: engine-side λ hook touches ~4 MASTER-CORE files (hbond/rama/spring/sidechain), and
+  config-side needs delicate per-node energy-dataset scaling (hbond mixes well-depth+geometry). Not worth
+  it. (For the record: it IS feasible — Upside's exchange already supports Hamiltonian exchange,
+  `exchange_criterion==0`, main.cpp:489-508 — the blocker is complexity, not feasibility.)
+
+## Decision: use Lever 1 (thin the ladder) — zero code, no added complexity
+- Chosen cost lever: reduce `REMD_NREP` 48 → ~16–24 and re-space the T=0.70–0.90 ladder for ~25%
+  acceptance (currently 68%) → ~2.4× cheaper, same sampling, MBAR pipeline unchanged. Only edits
+  `remd_config.env`. Do a short acceptance check to pin the exact count before the next production round.
+- Current 48-replica jobs keep running (usable ΔG); thinned ladder applies to the next round.
+
+---
+
 # Project Goal
 
 dryMARTINI hybrid membrane in Upside. Full-resolution 14-bead DOPC + protein with a timestep
