@@ -1,4 +1,77 @@
-# Progress — glpG HDX: REMD-system fix + lipid de-hardcode (2026-07-25)
+# Progress — dryMARTINI hybrid prep redesign (2026-07-30)
+
+Approved plan: CHARMM-GUI-only bilayer + martinize + OPM orientation; xy-only tensionless MC-barostat
+NPT; solvent-volume ions. Done so far:
+- **box.cpp/box.h** (subagent): removed broken Berendsen/PR barostat + virial + shrink guards; MC
+  barostat is now the sole path (COM-based, energy-based, freezes z via mc_dmax_z=0). Clean compile
+  (+23/−313). master untouched.
+- **py prep rewrite**: `read_charmm_gui_membrane` (strip water, drop ions, CRYST1 required, count
+  cross-check); `martinize_protein_cg`; `orient_protein_to_opm` (Biopython BLOSUM62 + Kabsch + ≤4Å
+  refine); rewrote `prepare_mixed_structure` (unified OPM orient → same rigid transform to backbone +
+  CG envelope → tile → **overlap vs CG envelope** → box → solvent-volume ions in slabs); CLI
+  `--charmm-gui-dir/--membrane-pdb/--membrane-top/--protein-cg-pdb/--opm-reference/--protein-pbc-margin`;
+  removed retry loop + placement/surface-gap/min-gap/cutoff-step-max dead args.
+- **barostat config** (py): equilibration stages write MC attrs (target_p=0 tensionless,
+  compressibility_z=0, mc_dmax_z=0 xy-only, mc_dmax_xy, mc_seed); removed dead `type`/`barostat_type`
+  threading + `stage_npt_targets`; production NVT (run.py prod_70_npt_enable 1→0).
+- **ions**: `estimate_salt_pairs(box, molar, membrane_thickness_z, protein_volume)` = molarity ×
+  solvent volume; `place_ions(..., exclude_z=)` restricts to solvent slabs.
+- **Verified**: regression_lipid_box_fill PASSES (mode=bilayer byte-identical). Smoke test on 79HIS:
+  OPM 163/186 Cα core, box 100×100×153.6 (was 200²), 446 DDM, **106 ion pairs (was 795), 0 ions in
+  membrane**, TM in slab (63–91) + soluble domain in solvent (15–62), no water. martinize 487 beads OK.
+
+- **P6 DONE (awaiting user review)**: full local run-hybrid-workflow on 79HIS completed rc=0
+  (6.0→6.6→7.0, "Workflow Complete", no NaN). MC barostat: xy 100.0→100.8 across stages, **z frozen
+  153.63, no collapse**. DDM relaxed 33→48.8 Å (physical DDM bilayer thickness — NPT did real work).
+  Protein stayed folded (hbonds ~200, Rg 20.2). Staged to ~/Downloads: preproduction_6.6.pdb +
+  .vtf + packed_initial.pdb. GATE: awaiting user OK before P8.
+- Watch items for review: DDM thickening 33→49 Å (physical? eyeball belt); ions started 0-in-membrane
+  but ~20/218 diffused into the DDM z-band during MD (near heads vs core?).
+
+- **Review-feedback fixes (2026-07-30)**:
+  - "ions xy outside bilayer" = my review PDB dumped Upside's *unwrapped* MD coords. Fixed with
+    per-molecule min-image wrapping to the membrane center; verified 0/218 ions outside the DDM
+    footprint, 0 in the hydrophobic core (near-membrane ions sit at the polar heads). Not a sim bug.
+  - Ion concentration was exactly 0.15 M at prep, but (a) box z was oversized (stacked
+    box_padding_z=20 + pbc_margin=15 = 70 A margin) and (b) the membrane relaxes 33->49 A, so the
+    realized concentration drifted to ~0.17 M. Fix: box_padding_z default 0 (z-margin = pbc_margin
+    only) -> box_z 153.6->123.7; and new `--membrane-thickness-angstrom` counts ions against the
+    EQUILIBRATED thickness (48.8 A for DDM) so production realizes 0.1496 M. Ions 218->136.
+  - readme.md rewritten as one coherent prep guide; run.py updated to the new CHARMM-GUI+OPM
+    interface (was passing removed args).
+  - Confirming local re-run (out2) in progress: prep confirms box 123.7 + 65 pairs; equilibration
+    folded, no NaN.
+
+- **Rigid-protein check (user request)**: CONFIRMED protein holds rigid through pre-production.
+  Mechanism: hybrid_control preprod_protein_mode="rigid_body" -> martini_hybrid.cpp preprod_rigid;
+  enforce_preprod_rigid_stage = preprod_rigid && (stage!="production") -> set_dynamic_rigid_groups
+  for all 6.0-6.6 + 7.0 handoff/burn-in; released only at "production" relabel. Empirical: hbonds
+  194.5 / Rg 20.4 exactly constant across 6.0-6.6, moves only in 7.0.
+- **Confirming re-run (out2) COMPLETE**: box 100.7x100.7x123.7, 65 ion pairs, realized 0.154 M
+  (equilibrated DDM t=52.1 A; used 48.8 for count -> ~3% high; use ~52 for exact 0.15), 0/136 ions
+  outside DDM footprint, 0/136 in hydrophobic core, folded. Wrapped review PDB re-staged to ~/Downloads.
+
+TODO: P8 (after user OK on the wrapped review PDB) re-run 4 glpG variants on cluster.
+
+---
+## Prior — box-fix DDM REMD: extract VTF+ΔG, repair disk-full corruption (2026-07-30)
+
+Box-fix REMD (4 DDM variants) ran ~33 h (26/27 chunks) then died rc=1 on a full /project disk.
+Raws intact (~2.28 TB). Extraction job 52780633 (raws kept) COMPLETED with mixed results:
+- **79HIS**: VTF ✅ (227 MB) + ΔG ✅ — clean.
+- **79ALA**: VTF ✅ (329 MB) + ΔG ✗ (`zero-size array` — NaN final chunk).
+- **79HIS_S115T**: VTF ✗ + ΔG ✗ (`NaN in frame 0 of /output`).
+- **79ALA_S115T**: VTF ✗ + ΔG ✅.
+Root cause: the disk-full death left NaN in the last (interrupted) `/output` chunk of some
+replicas, breaking the VTF extractor and the protection/MBAR. The ~26 completed chunks are fine.
+
+Downloaded the 4 GOOD outputs to `~/Downloads` (79HIS VTF+ΔG, 79ALA VTF, 79ALA_S115T ΔG).
+Submitted repair+re-extract **52828371** (caslake, 16 cpu, 14 h): per replica drop any output
+group with non-finite pos (guaranteeing a valid `/output`), then re-do VTF+ΔG for the 3 affected
+variants (79ALA, 79HIS_S115T, 79ALA_S115T). Raws NOT deleted — awaiting user verification.
+No simulation physics or C++ changed.
+
+## Prior phase summary — glpG HDX: REMD-system fix + lipid de-hardcode (2026-07-25)
 
 ## Goal
 Metad denatures glpG (both CVs) → deprioritized; REMD is the working HDX method.

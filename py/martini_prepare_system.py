@@ -37,6 +37,7 @@ from martini_prepare_system_lib import (
     set_initial_position,
     set_box_from_lipid_xy,
     set_coords,
+    read_charmm_gui_membrane,
     tile_and_crop_bilayer_lipids,
     validate_hybrid_mapping,
     write_hybrid_mapping_h5,
@@ -52,13 +53,17 @@ DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS = 200
 DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
 DEFAULT_NPT_TAU = 4.0
 DEFAULT_NPT_INTERVAL = 10
-DEFAULT_PROD_70_BAROSTAT_TYPE = 1
+# Monte-Carlo barostat lateral step: exp(+-mc_dmax_xy) per trial (~1% box change), tuned for a
+# reasonable acceptance rate on a dry-MARTINI membrane.
+DEFAULT_NPT_MC_DMAX_XY = 0.01
 DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
 DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
-DEFAULT_BAR_1_TO_EUP_PER_A3 = 0.000020659477
 DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
 MARTINI_MD_INTEGRATOR = "v"
 MARTINI_MD_TIME_STEP = 0.009
+# Mean amino-acid excluded volume (partial specific volume 0.73 cm^3/g, <MW> ~110 Da) used to
+# subtract the protein from the solvent-accessible volume when counting ions.
+PROTEIN_RESIDUE_VOLUME_A3 = 130.0
 
 
 def find_lipid_itp_path(ff_dir: Path, lipid_name: str) -> Path:
@@ -80,9 +85,28 @@ def derive_lipid_contact_clearance_angstrom(upside_home: Path, lipid_name: str) 
     ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
     dry_ff_path = ff_dir / "dry_martini_v2.1.itp"
     _atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
-    lipid = parse_lipid_from_itp(find_lipid_itp_path(ff_dir, lipid_name), lipid_name)
-    max_sigma_nm = lipid_max_sigma_nm(lipid["bead_types"], pair_params)
-    return float((2.0 ** (1.0 / 6.0)) * max_sigma_nm * DEFAULT_MARTINI_LENGTH_CONVERSION)
+    # For a mixed bilayer take the largest per-lipid clearance so the packing cutoff clears
+    # the bulkiest bead of any lipid type.
+    clearance = 0.0
+    for name in (part.strip() for part in str(lipid_name).split(",") if part.strip()):
+        lipid = parse_lipid_from_itp(find_lipid_itp_path(ff_dir, name), name)
+        max_sigma_nm = lipid_max_sigma_nm(lipid["bead_types"], pair_params)
+        clearance = max(clearance, (2.0 ** (1.0 / 6.0)) * max_sigma_nm * DEFAULT_MARTINI_LENGTH_CONVERSION)
+    return float(clearance)
+
+
+def derive_lipid_net_charges(upside_home: Path, lipid_name: str) -> dict:
+    """Per-lipid net charge (electrons) keyed by upper-case residue name, read from the ITPs.
+
+    Anionic lipids such as POPG carry a net charge that counterions must neutralize; neutral
+    lipids (DOPC, DDM, POPE) return 0, leaving the single-lipid ion count unchanged.
+    """
+    ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
+    charges = {}
+    for name in (part.strip() for part in str(lipid_name).split(",") if part.strip()):
+        lipid = parse_lipid_from_itp(find_lipid_itp_path(ff_dir, name), name)
+        charges[name.upper()] = int(round(sum(lipid["bead_charges"])))
+    return charges
 
 
 def parse_prepare_args(argv=None):
@@ -101,16 +125,31 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--run-dir", default="outputs/martini_test")
 
     parser.add_argument("--lipid-name", required=True,
-                        help="Membrane lipid moleculetype name (e.g. DOPC, DDM); topology read from the input ITP files")
+                        help="Membrane lipid moleculetype name(s), comma-separated for a mixed bilayer "
+                             "(e.g. DOPC, DDM, or POPE,POPG); topology read from the input ITP files")
     parser.add_argument("--bilayer-pdb", default=None,
-                        help="Bilayer/detergent slab PDB (default: parameters/dryMARTINI/<lipid-name>.pdb)")
+                        help="Bilayer slab PDB for mode=bilayer (default: parameters/dryMARTINI/<lipid-name>.pdb)")
+    parser.add_argument("--charmm-gui-dir", default=None,
+                        help="CHARMM-GUI Martini job dir (mode=both): membrane read from "
+                             "gromacs/step5_charmm2gmx.pdb + gromacs/system.top")
+    parser.add_argument("--membrane-pdb", default=None,
+                        help="CHARMM-GUI membrane CG PDB (overrides --charmm-gui-dir); must carry a CRYST1 box")
+    parser.add_argument("--membrane-top", default=None,
+                        help="CHARMM-GUI system.top for the lipid-count cross-check (overrides --charmm-gui-dir)")
+    parser.add_argument("--protein-cg-pdb", default=None,
+                        help="martinize MARTINI22 CG PDB of the protein (BB+SC envelope; prep-time geometric aid only)")
+    parser.add_argument("--opm-reference", default=None,
+                        help="OPM membrane-oriented reference PDB for --protein-orientation-mode opm")
     parser.add_argument("--protein-aa-pdb", default=None)
     parser.add_argument("--hybrid-mapping-output", default=None)
     parser.add_argument("--hybrid-bb-map-json-output", default=None)
 
     parser.add_argument("--xy-scale", type=float, default=1.0)
     parser.add_argument("--box-padding-xy", type=float, default=0.0)
-    parser.add_argument("--box-padding-z", type=float, default=20.0)
+    parser.add_argument("--box-padding-z", type=float, default=0.0)
+    parser.add_argument("--membrane-thickness-angstrom", type=float, default=0.0,
+                        help="Equilibrated membrane thickness for the ion count; 0 = measure from the "
+                             "packed lipids (use the equilibrated dry-MARTINI value so production is 0.15 M)")
     parser.add_argument("--salt-molar", type=float, default=0.15)
     parser.add_argument("--explicit-ions", type=int, choices=[0, 1], default=1)
     parser.add_argument("--ion-cutoff", type=float, default=4.0)
@@ -119,22 +158,18 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--protein-lipid-cutoff", type=float, default=3.0)
     parser.add_argument("--protein-net-charge", type=int, default=None)
     parser.add_argument(
-        "--protein-placement-mode",
-        choices=["embed", "outside-top", "outside-bottom"],
-        default="embed",
-        help="How to place the protein relative to the bilayer during mixed-system preparation.",
-    )
-    parser.add_argument(
         "--protein-orientation-mode",
-        choices=["input", "lay-flat"],
+        choices=["input", "lay-flat", "opm"],
         default="input",
-        help="Whether to keep the input protein orientation or rotate it so its thinnest axis becomes the bilayer normal.",
+        help="input: keep the input orientation; lay-flat: PCA thinnest axis -> bilayer normal; "
+             "opm: superpose onto an OPM membrane-oriented reference (--opm-reference).",
     )
     parser.add_argument(
-        "--protein-surface-gap",
+        "--protein-pbc-margin",
         type=float,
-        default=6.0,
-        help="Requested minimum gap in Angstrom between the protein surface and the lipid surface for outside-of-bilayer placement.",
+        default=15.0,
+        help="Minimum solvent/lipid belt (Angstrom) added around the protein on each side so it "
+             "does not interact with its periodic image (>= the dry-MARTINI nonbonded cutoff).",
     )
     parser.add_argument("--summary-json", default=None)
     return parser.parse_args(argv)
@@ -191,167 +226,212 @@ def lay_flat_rotation_basis(protein_xyz):
     return basis
 
 
-def orient_protein_xyz(protein_xyz, orientation_mode):
-    protein_center = center_of_mass(protein_xyz)
-    centered = protein_xyz - protein_center
-    if orientation_mode == "input":
-        return centered
-    if orientation_mode == "lay-flat":
-        return centered @ lay_flat_rotation_basis(protein_xyz)
-    raise ValueError(f"Unsupported protein orientation mode: {orientation_mode}")
+THREE_TO_ONE = {
+    "ALA": "A", "ARG": "R", "ASN": "N", "ASP": "D", "CYS": "C", "GLN": "Q", "GLU": "E",
+    "GLY": "G", "HIS": "H", "ILE": "I", "LEU": "L", "LYS": "K", "MET": "M", "PHE": "F",
+    "PRO": "P", "SER": "S", "THR": "T", "TRP": "W", "TYR": "Y", "VAL": "V",
+    "HID": "H", "HIE": "H", "HIP": "H", "HSD": "H", "HSE": "H", "HSP": "H", "CYX": "C", "MSE": "M",
+}
 
 
-def place_protein_xyz(protein_xyz_centered, bilayer_xyz, bilayer_center, placement_mode, surface_gap):
-    if placement_mode == "embed":
-        return protein_xyz_centered + bilayer_center
+def _ordered_ca_seq_xyz(atoms):
+    """Return (one-letter sequence, CA xyz array) in residue order for standard-AA CA atoms."""
+    seq, xyz, seen = [], [], set()
+    for atom in atoms:
+        if atom["name"].strip().upper() != "CA":
+            continue
+        one = THREE_TO_ONE.get(atom["resname"].strip().upper())
+        if one is None:
+            continue
+        key = (atom["chain"], atom["resseq"], atom["icode"])
+        if key in seen:
+            continue
+        seen.add(key)
+        seq.append(one)
+        xyz.append([atom["x"], atom["y"], atom["z"]])
+    return "".join(seq), np.asarray(xyz, dtype=float)
 
-    translation = np.array([float(bilayer_center[0]), float(bilayer_center[1]), 0.0], dtype=float)
-    if placement_mode == "outside-top":
-        translation[2] = float(bilayer_xyz[:, 2].max()) + float(surface_gap) - float(
-            protein_xyz_centered[:, 2].min()
+
+def _kabsch(P, Q):
+    """Optimal rigid transform (R, t) minimizing ||R.P_i + t - Q_i||; apply as xyz @ R.T + t."""
+    Pc, Qc = P.mean(axis=0), Q.mean(axis=0)
+    H = (P - Pc).T @ (Q - Qc)
+    U, _s, Vt = np.linalg.svd(H)
+    d = 1.0 if np.linalg.det(Vt.T @ U.T) >= 0.0 else -1.0
+    R = Vt.T @ np.diag([1.0, 1.0, d]) @ U.T
+    return R, Qc - R @ Pc
+
+
+def orient_protein_to_opm(protein_backbone_atoms, opm_reference_pdb):
+    """Rigid transform aligning the protein onto an OPM membrane-oriented reference.
+
+    Superposes matched Cα atoms (BLOSUM62 global alignment of the shared fold, then Kabsch with
+    iterative <=4 A core refinement so flexible loops don't skew the TM-core rotation). The OPM
+    reference has its membrane midplane at z=0, so the returned transform places the protein at its
+    physical membrane depth/orientation. Returns (R, t); apply as xyz @ R.T + t.
+    """
+    from Bio import Align
+    from Bio.Align import substitution_matrices
+
+    ref_atoms, _ = parse_pdb(Path(opm_reference_pdb))
+    ref_seq, ref_xyz = _ordered_ca_seq_xyz(ref_atoms)
+    our_seq, our_xyz = _ordered_ca_seq_xyz(protein_backbone_atoms)
+    if our_xyz.shape[0] < 3 or ref_xyz.shape[0] < 3:
+        raise ValueError("Too few Cα atoms for OPM alignment.")
+
+    aligner = Align.PairwiseAligner()
+    aligner.substitution_matrix = substitution_matrices.load("BLOSUM62")
+    aligner.open_gap_score = -10.0
+    aligner.extend_gap_score = -0.5
+    aligner.mode = "global"
+    alignment = aligner.align(our_seq, ref_seq)[0]
+
+    our_idx, ref_idx = [], []
+    for (s1, e1), (s2, e2) in zip(alignment.aligned[0], alignment.aligned[1]):
+        for k in range(e1 - s1):
+            our_idx.append(s1 + k)
+            ref_idx.append(s2 + k)
+    if len(our_idx) < 3:
+        raise ValueError("OPM sequence alignment produced too few matched residues.")
+
+    P, Q = our_xyz[our_idx], ref_xyz[ref_idx]
+    R, t = _kabsch(P, Q)
+    for _ in range(5):
+        mask = np.linalg.norm(P @ R.T + t - Q, axis=1) < 4.0
+        if int(mask.sum()) < 3:
+            break
+        R, t = _kabsch(P[mask], Q[mask])
+    n_core = int((np.linalg.norm(P @ R.T + t - Q, axis=1) < 4.0).sum())
+    print(
+        f"OPM orientation: {len(our_idx)} aligned Cα, {n_core} within 4 A after Kabsch "
+        f"(reference {Path(opm_reference_pdb).name})"
+    )
+    return R, t
+
+
+def apply_rigid_transform(atoms, R, t):
+    set_coords(atoms, coords(atoms) @ np.asarray(R, dtype=float).T + np.asarray(t, dtype=float))
+
+
+def compute_protein_orientation(protein_backbone_atoms, args):
+    """Rigid transform (R, t) to orient the protein for membrane insertion (apply as xyz @ R.T + t).
+
+    opm: superpose onto the OPM reference (physical depth/orientation).
+    lay-flat: PCA thinnest axis -> z, centered at the origin.
+    input: keep orientation, centered at the origin.
+    """
+    mode = args.protein_orientation_mode
+    if mode == "opm":
+        if not args.opm_reference:
+            raise ValueError("--protein-orientation-mode opm requires --opm-reference")
+        return orient_protein_to_opm(
+            protein_backbone_atoms, Path(args.opm_reference).expanduser().resolve()
         )
-        return protein_xyz_centered + translation
-    if placement_mode == "outside-bottom":
-        translation[2] = float(bilayer_xyz[:, 2].min()) - float(surface_gap) - float(
-            protein_xyz_centered[:, 2].max()
-        )
-        return protein_xyz_centered + translation
+    com = center_of_mass(coords(protein_backbone_atoms))
+    if mode == "lay-flat":
+        R = lay_flat_rotation_basis(coords(protein_backbone_atoms)).T
+    elif mode == "input":
+        R = np.eye(3, dtype=float)
+    else:
+        raise ValueError(f"Unsupported protein orientation mode: {mode}")
+    return R, -R @ com
 
-    raise ValueError(f"Unsupported protein placement mode: {placement_mode}")
+
+def martinize_protein_cg(venv_python, martinize_script, protein_aa_pdb, out_dir):
+    """Coarse-grain the all-atom protein to a MARTINI22 CG PDB (BB+SC) via martinize.py.
+
+    The CG beads are used ONLY as a prep-time geometric envelope for insertion + overlap removal;
+    the runtime protein stays on the Upside force field. All-coil SS is fine (bead coordinates are
+    center-of-mass mappings, independent of the SS assignment)."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cg_pdb = out_dir / "protein_cg.pdb"
+    cg_top = out_dir / "protein_cg.top"
+    run_checked(
+        [str(venv_python), str(martinize_script), "-f", str(protein_aa_pdb),
+         "-x", str(cg_pdb), "-o", str(cg_top), "-ff", "martini22"],
+        cwd=out_dir,
+    )
+    if not cg_pdb.exists():
+        raise FileNotFoundError(f"martinize did not produce a CG PDB: {cg_pdb}")
+    return cg_pdb
 
 
 def prepare_mixed_structure(args, runtime_pdb):
     if not args.protein_aa_pdb:
         raise ValueError("--protein-aa-pdb is required for mode=both")
-    if not args.bilayer_pdb:
-        raise ValueError("--bilayer-pdb is required for mode=both")
+    if not args.membrane_pdb:
+        raise ValueError("--membrane-pdb (or --charmm-gui-dir) is required for mode=both")
+    if not args.protein_cg_pdb:
+        raise ValueError("--protein-cg-pdb (martinize CG envelope) is required for mode=both")
 
     protein_aa_pdb = Path(args.protein_aa_pdb).expanduser().resolve()
-    bilayer_pdb = Path(args.bilayer_pdb).expanduser().resolve()
-    if not protein_aa_pdb.exists():
-        raise FileNotFoundError(f"Protein AA PDB not found: {protein_aa_pdb}")
-    if not bilayer_pdb.exists():
-        raise FileNotFoundError(f"Bilayer PDB not found: {bilayer_pdb}")
+    membrane_pdb = Path(args.membrane_pdb).expanduser().resolve()
+    membrane_top = Path(args.membrane_top).expanduser().resolve() if args.membrane_top else None
+    protein_cg_pdb = Path(args.protein_cg_pdb).expanduser().resolve()
+    for required in (protein_aa_pdb, membrane_pdb, protein_cg_pdb):
+        if not required.exists():
+            raise FileNotFoundError(required)
 
     protein_aa_atoms, _ = parse_pdb(protein_aa_pdb)
     if not protein_aa_atoms:
         raise ValueError(f"No atoms found in protein AA PDB: {protein_aa_pdb}")
     protein_backbone_atoms, _ = extract_protein_backbone_atoms_from_aa(protein_aa_atoms)
-    bilayer_atoms, bilayer_box = parse_pdb(bilayer_pdb)
-    bilayer_lipid_atoms = [a for a in bilayer_atoms if lipid_resname(a["resname"])]
-    if not bilayer_lipid_atoms:
-        raise ValueError("No lipid residues found in bilayer template.")
+    cg_atoms, _ = parse_pdb(protein_cg_pdb)
+    if not cg_atoms:
+        raise ValueError(f"No atoms found in martinize CG PDB: {protein_cg_pdb}")
+    lipid_template, bilayer_box = read_charmm_gui_membrane(membrane_pdb, membrane_top)
 
-    protein_xyz_raw = coords(protein_backbone_atoms)
-    bilayer_xyz = coords(bilayer_lipid_atoms)
-    bilayer_center = center_of_mass(bilayer_xyz)
-    bmin = bilayer_xyz.min(axis=0)
-    bmax = bilayer_xyz.max(axis=0)
-    base_side = max(float(bmax[0] - bmin[0]), float(bmax[1] - bmin[1]))
+    # Orient the protein as a rigid body; apply the SAME transform to the runtime backbone AND the
+    # martinize CG envelope (both share the input-PDB frame) so insertion + overlap removal stay
+    # geometrically consistent.
+    R, t = compute_protein_orientation(protein_backbone_atoms, args)
+    apply_rigid_transform(protein_backbone_atoms, R, t)
+    apply_rigid_transform(cg_atoms, R, t)
+    prot_xyz = coords(protein_backbone_atoms)
+    cg_xyz = coords(cg_atoms)
 
-    # Max lipid-molecule COM-to-edge radius (xy): the tail overhang that the periodic tiling
-    # wraps, and the belt width the box must add around the protein on each side.
-    _lip_groups = {}
-    for _a in bilayer_lipid_atoms:
-        _lip_groups.setdefault((_a["chain"], _a["resseq"], _a["icode"]), []).append(_a)
-    _bx = float(bilayer_box[0]) if bilayer_box is not None else None
-    _by = float(bilayer_box[1]) if bilayer_box is not None else None
-    r_lipid = 0.0
-    for _g in _lip_groups.values():
-        _gx = np.array([[_a["x"], _a["y"]] for _a in _g], dtype=float)
-        if _bx and _by:
-            # Unwrap molecules split across the template's periodic edge (min-image to bead 0)
-            # so the radius is the true xy footprint, not an inflated cross-box span.
-            _d = _gx - _gx[0]
-            _d[:, 0] -= _bx * np.round(_d[:, 0] / _bx)
-            _d[:, 1] -= _by * np.round(_d[:, 1] / _by)
-            _gx = _gx[0] + _d
-        _com = _gx.mean(axis=0)
-        r_lipid = max(r_lipid, float(np.sqrt(((_gx - _com) ** 2).sum(axis=1)).max()))
+    # Slide the bilayer template in z so its midplane meets the protein's membrane center (opm: z=0
+    # by construction; otherwise embed the protein COM in the slab).
+    lip_xyz = coords(lipid_template)
+    lip_mid_z = 0.5 * float(lip_xyz[:, 2].min() + lip_xyz[:, 2].max())
+    membrane_center_z = 0.0 if args.protein_orientation_mode == "opm" else float(prot_xyz[:, 2].mean())
+    for atom in lipid_template:
+        atom["z"] = float(atom["z"] + (membrane_center_z - lip_mid_z))
 
-    if args.protein_placement_mode == "embed" and args.protein_orientation_mode == "input":
-        protein_center = center_of_mass(protein_xyz_raw)
-        shift = bilayer_center - protein_center
-        protein_xyz = protein_xyz_raw + shift
-        set_coords(protein_backbone_atoms, protein_xyz)
+    # xy fill window: the protein CG-envelope footprint + a PBC-safe belt on each side, rounded up to
+    # a whole number of template tiles so the bilayer tiles seamlessly (no lateral gaps/contraction).
+    fmin = cg_xyz.min(axis=0)
+    fmax = cg_xyz.max(axis=0)
+    pspan = fmax - fmin
+    pcenter_xy = 0.5 * (fmin[:2] + fmax[:2])
+    belt = float(args.box_padding_xy) + float(args.protein_pbc_margin)
+    tile_xy = float(bilayer_box[0])
+    base_side = tile_xy
+    target_side = max(tile_xy, float(np.max(pspan[:2] + 2.0 * belt)) * max(1.0, float(args.xy_scale)))
+    target_side = float(np.ceil(target_side / tile_xy) * tile_xy)
+    target_xy_min = np.array([pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side], dtype=float)
+    target_xy_max = np.array([pcenter_xy[0] + 0.5 * target_side, pcenter_xy[1] + 0.5 * target_side], dtype=float)
+    bilayer_lipids = tile_and_crop_bilayer_lipids(
+        bilayer_atoms=lipid_template,
+        bilayer_box=bilayer_box,
+        target_xy_min=target_xy_min,
+        target_xy_max=target_xy_max,
+    )
 
-        pmin = protein_xyz.min(axis=0)
-        pmax = protein_xyz.max(axis=0)
-        pspan = pmax - pmin
-        pcenter_xy = 0.5 * (pmin[:2] + pmax[:2])
-
-        min_required_xy = 3.0 * pspan[:2] + 2.0 * (float(args.box_padding_xy) + r_lipid)
-        target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
-        # Round the tiling window up to a whole number of template tiles so the lipid tiles
-        # seamlessly and fills the box at its native lateral density (no lateral gaps / no
-        # detergent contraction), rather than a sparse cropped patch inside an oversized box.
-        tile_xy = float(bilayer_box[0]) if bilayer_box is not None else base_side
-        target_side = float(np.ceil(target_side / tile_xy) * tile_xy)
-        target_xy_min = np.array(
-            [pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side],
-            dtype=float,
-        )
-        target_xy_max = np.array(
-            [pcenter_xy[0] + 0.5 * target_side, pcenter_xy[1] + 0.5 * target_side],
-            dtype=float,
-        )
-        bilayer_lipids = tile_and_crop_bilayer_lipids(
-            bilayer_atoms=bilayer_atoms,
-            bilayer_box=bilayer_box,
-            target_xy_min=target_xy_min,
-            target_xy_max=target_xy_max,
-        )
-    else:
-        protein_xyz_oriented = orient_protein_xyz(protein_xyz_raw, args.protein_orientation_mode)
-        pmin = protein_xyz_oriented.min(axis=0)
-        pmax = protein_xyz_oriented.max(axis=0)
-        pspan = pmax - pmin
-
-        min_required_xy = 3.0 * pspan[:2] + 2.0 * (float(args.box_padding_xy) + r_lipid)
-        target_side = max(base_side * float(max(1.0, args.xy_scale)), float(np.max(min_required_xy)))
-        # Round the tiling window up to a whole number of template tiles so the lipid tiles
-        # seamlessly and fills the box at its native lateral density (no lateral gaps / no
-        # detergent contraction), rather than a sparse cropped patch inside an oversized box.
-        tile_xy = float(bilayer_box[0]) if bilayer_box is not None else base_side
-        target_side = float(np.ceil(target_side / tile_xy) * tile_xy)
-        target_xy_min = np.array(
-            [bilayer_center[0] - 0.5 * target_side, bilayer_center[1] - 0.5 * target_side],
-            dtype=float,
-        )
-        target_xy_max = np.array(
-            [bilayer_center[0] + 0.5 * target_side, bilayer_center[1] + 0.5 * target_side],
-            dtype=float,
-        )
-        bilayer_lipids = tile_and_crop_bilayer_lipids(
-            bilayer_atoms=bilayer_atoms,
-            bilayer_box=bilayer_box,
-            target_xy_min=target_xy_min,
-            target_xy_max=target_xy_max,
-        )
-
-        bilayer_lipid_atoms_cropped = [a for a in bilayer_lipids if lipid_resname(a["resname"])]
-        if not bilayer_lipid_atoms_cropped:
-            raise ValueError("No lipid residues remained after bilayer tiling/cropping.")
-        bilayer_xyz_cropped = coords(bilayer_lipid_atoms_cropped)
-        protein_xyz = place_protein_xyz(
-            protein_xyz_centered=protein_xyz_oriented,
-            bilayer_xyz=bilayer_xyz_cropped,
-            bilayer_center=center_of_mass(bilayer_xyz_cropped),
-            placement_mode=args.protein_placement_mode,
-            surface_gap=args.protein_surface_gap,
-        )
-        set_coords(protein_backbone_atoms, protein_xyz)
+    # Overlap removal against the CG envelope (BB+SC), not the backbone: whole lipids clashing with
+    # the protein's true girth (including where the sidechain rotamers are rebuilt) are deleted.
     lipid_residues, keep_nonlipid = compute_lipid_residue_indices(bilayer_lipids)
     bilayer_kept, removed_lipids = remove_overlapping_lipids(
         bilayer_atoms=bilayer_lipids,
-        protein_atoms=protein_backbone_atoms,
+        protein_atoms=cg_atoms,
         lipid_residues=lipid_residues,
         keep_nonlipid=keep_nonlipid,
         cutoff=float(args.protein_lipid_cutoff),
     )
 
     packed_atoms = protein_backbone_atoms + bilayer_kept
-    min_box_z_target = float(3.0 * pspan[2])
+    min_box_z_target = float(pspan[2] + 2.0 * (float(args.box_padding_z) + float(args.protein_pbc_margin)))
     box_lengths = set_box_from_lipid_xy(
         all_atoms=packed_atoms,
         lipid_atoms=bilayer_kept,
@@ -367,13 +447,49 @@ def prepare_mixed_structure(args, runtime_pdb):
         if args.protein_net_charge is not None
         else int(infer_protein_charge_from_residues(protein_backbone_atoms))
     )
+    # Charged lipids (e.g. POPG) contribute a net membrane charge that counterions must
+    # neutralize alongside the protein; neutral bilayers add nothing.
+    lipid_net_charges = derive_lipid_net_charges(
+        Path(os.environ.get("UPSIDE_HOME", str(REPO_ROOT))), args.lipid_name
+    )
+    membrane_charge = 0
+    seen_lipid_molecules = set()
+    for atom in bilayer_kept:
+        resname = atom["resname"].upper()
+        if resname not in lipid_net_charges:
+            continue
+        key = (atom["chain"], atom["resseq"], atom["icode"])
+        if key in seen_lipid_molecules:
+            continue
+        seen_lipid_molecules.add(key)
+        membrane_charge += lipid_net_charges[resname]
+    system_charge = protein_charge + membrane_charge
+
+    # Ions occupy the solvent-accessible volume only (implicit solvent), and are placed in the
+    # solvent slabs outside the measured membrane band.
+    kept_lipid_xyz = coords([a for a in bilayer_kept if lipid_resname(a["resname"])])
+    membrane_z_lo = float(kept_lipid_xyz[:, 2].min())
+    membrane_z_hi = float(kept_lipid_xyz[:, 2].max())
+    packed_thickness_z = membrane_z_hi - membrane_z_lo
+    # Count ions against the EQUILIBRATED membrane thickness (the dry-MARTINI membrane relaxes
+    # from the compressed CHARMM-GUI start), so the realized concentration is 0.15 M in production.
+    # Ions are still placed in the packed-time solvent slabs (outside the current membrane extent).
+    count_thickness_z = (
+        float(args.membrane_thickness_angstrom)
+        if float(args.membrane_thickness_angstrom) > 0.0
+        else packed_thickness_z
+    )
+    n_protein_residues = len({(a["chain"], a["resseq"], a["icode"]) for a in protein_backbone_atoms})
+    protein_volume_a3 = float(n_protein_residues) * PROTEIN_RESIDUE_VOLUME_A3
     if int(args.explicit_ions):
         salt_pairs = estimate_salt_pairs(
             box_lengths=box_lengths,
             salt_molar=float(args.salt_molar),
+            membrane_thickness_z=count_thickness_z,
+            protein_volume_a3=protein_volume_a3,
         )
-        n_na = int(salt_pairs + max(0, -protein_charge))
-        n_cl = int(salt_pairs + max(0, protein_charge))
+        n_na = int(salt_pairs + max(0, -system_charge))
+        n_cl = int(salt_pairs + max(0, system_charge))
         rng = np.random.default_rng(int(args.seed))
         ion_atoms = place_ions(
             atoms=packed_atoms,
@@ -382,6 +498,7 @@ def prepare_mixed_structure(args, runtime_pdb):
             n_cl=n_cl,
             cutoff=float(args.ion_cutoff),
             rng=rng,
+            exclude_z=(membrane_z_lo, membrane_z_hi),
         )
     else:
         salt_pairs = 0
@@ -442,16 +559,19 @@ def prepare_mixed_structure(args, runtime_pdb):
     summary = {
         "mode": "both",
         "input_protein_aa_pdb": str(protein_aa_pdb),
-        "input_bilayer_pdb": str(bilayer_pdb),
+        "input_membrane_pdb": str(membrane_pdb),
+        "input_protein_cg_pdb": str(protein_cg_pdb),
         "runtime_pdb": str(runtime_pdb),
-        "protein_placement_mode": str(args.protein_placement_mode),
         "protein_orientation_mode": str(args.protein_orientation_mode),
-        "protein_surface_gap_requested_angstrom": float(args.protein_surface_gap),
+        "opm_reference": str(args.opm_reference) if args.opm_reference else None,
         "xy_scale": float(args.xy_scale),
         "base_xy_side_angstrom": float(base_side),
         "target_xy_side_angstrom": float(target_side),
         "box_angstrom": [float(v) for v in box_lengths],
+        "membrane_thickness_z_angstrom": float(packed_thickness_z),
+        "ion_count_thickness_z_angstrom": float(count_thickness_z),
         "protein_charge_used": int(protein_charge),
+        "membrane_charge": int(membrane_charge),
         "explicit_ions": int(args.explicit_ions),
         "salt_pairs_target": int(salt_pairs),
         "na_added": int(n_na),
@@ -511,9 +631,12 @@ def prepare_bilayer_structure(args, runtime_pdb):
     )
 
     if int(args.explicit_ions):
+        lipid_z = coords(bilayer_lipid_atoms)[:, 2]
+        membrane_thickness_z = float(lipid_z.max() - lipid_z.min())
         salt_pairs = estimate_salt_pairs(
             box_lengths=box_lengths,
             salt_molar=float(args.salt_molar),
+            membrane_thickness_z=membrane_thickness_z,
         )
         rng = np.random.default_rng(int(args.seed))
         ion_atoms = place_ions(
@@ -523,6 +646,7 @@ def prepare_bilayer_structure(args, runtime_pdb):
             n_cl=int(salt_pairs),
             cutoff=float(args.ion_cutoff),
             rng=rng,
+            exclude_z=(float(lipid_z.min()), float(lipid_z.max())),
         )
     else:
         salt_pairs = 0
@@ -579,11 +703,25 @@ def write_summary(path: Path, payload):
         f.write("\n")
 
 
+def resolve_charmm_gui_membrane_paths(args):
+    """Fill --membrane-pdb/--membrane-top from --charmm-gui-dir (explicit paths win)."""
+    if args.charmm_gui_dir:
+        gmx = Path(args.charmm_gui_dir).expanduser() / "gromacs"
+        if args.membrane_pdb is None:
+            args.membrane_pdb = str(gmx / "step5_charmm2gmx.pdb")
+        if args.membrane_top is None:
+            args.membrane_top = str(gmx / "system.top")
+    if args.membrane_pdb is None:
+        raise ValueError("mode=both requires --charmm-gui-dir or --membrane-pdb")
+
+
 def run_prepare_command(argv):
     args = parse_prepare_args(argv)
     set_active_lipid_name(args.lipid_name)
-    if args.bilayer_pdb is None:
+    if args.mode == "bilayer" and args.bilayer_pdb is None:
         args.bilayer_pdb = str(REPO_ROOT / "parameters" / "dryMARTINI" / f"{args.lipid_name}.pdb")
+    if args.mode == "both" and args.prepare_structure:
+        resolve_charmm_gui_membrane_paths(args)
     runtime_pdb = runtime_paths(args)
     runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
 
@@ -790,52 +928,51 @@ def pdb_min_protein_lipid_distance(pdb_file: Path):
 
 def prepare_workflow_hybrid_artifacts(args):
     print("=== Stage 0: Hybrid Packing + Mapping Export ===")
-    cutoff = float(args.protein_lipid_cutoff)
-    while True:
-        print(f"Hybrid packing attempt with protein-lipid cutoff: {cutoff:.3f} A")
-        run_prepare_command(
-            [
-                "--mode", "both",
-                "--pdb-id", args.runtime_pdb_id,
-                "--runtime-pdb-output", str(args.hybrid_packed_pdb),
-                "--prepare-structure", "1",
-                "--protein-aa-pdb", str(workflow_path(args.protein_aa_pdb).resolve()),
-                "--hybrid-mapping-output", str(args.hybrid_mapping_file),
-                "--hybrid-bb-map-json-output", str(args.hybrid_prep_dir / "hybrid_bb_map.json"),
-                "--lipid-name", args.lipid_name,
-                "--bilayer-pdb", str(workflow_path(args.bilayer_pdb).resolve()),
-                "--salt-molar", str(args.salt_molar),
-                "--explicit-ions", str(args.explicit_ions),
-                "--protein-lipid-cutoff", f"{cutoff:.6g}",
-                "--ion-cutoff", str(args.ion_cutoff),
-                "--xy-scale", str(args.xy_scale),
-                "--box-padding-xy", str(args.box_padding_xy),
-                "--box-padding-z", str(args.box_padding_z),
-                "--protein-placement-mode", args.protein_placement_mode,
-                "--protein-orientation-mode", args.protein_orientation_mode,
-                "--protein-surface-gap", str(args.protein_surface_gap),
-                "--seed", str(args.prep_seed),
-                "--summary-json", str(args.hybrid_prep_dir / "hybrid_prep_summary.json"),
-            ]
-        )
-        if not args.hybrid_packed_pdb.exists():
-            raise FileNotFoundError(args.hybrid_packed_pdb)
-        min_gap = pdb_min_protein_lipid_distance(args.hybrid_packed_pdb)
-        if np.isfinite(min_gap) and min_gap >= float(args.protein_lipid_min_gap):
-            print(
-                f"Hybrid packing accepted: min protein-lipid distance {min_gap:.6f} A "
-                f"(target >= {args.protein_lipid_min_gap} A)"
-            )
-            break
-        if cutoff >= float(args.protein_lipid_cutoff_max):
-            raise RuntimeError(
-                "Hybrid packing still overpacked near protein.\n"
-                f"  Observed min protein-lipid distance: {min_gap:.6f} A\n"
-                f"  Target min distance: {args.protein_lipid_min_gap} A\n"
-                f"  Reached cutoff limit: {args.protein_lipid_cutoff_max} A"
-            )
-        cutoff += float(args.protein_lipid_cutoff_step)
-        print(f"Hybrid packing too tight near protein. Retrying with cutoff {cutoff:.3f} A.")
+    cg_pdb = martinize_protein_cg(
+        args.venv_python,
+        args.martinize_script,
+        workflow_path(args.protein_aa_pdb).resolve(),
+        args.hybrid_prep_dir,
+    )
+    run_prepare_command(
+        [
+            "--mode", "both",
+            "--pdb-id", args.runtime_pdb_id,
+            "--runtime-pdb-output", str(args.hybrid_packed_pdb),
+            "--prepare-structure", "1",
+            "--protein-aa-pdb", str(workflow_path(args.protein_aa_pdb).resolve()),
+            "--protein-cg-pdb", str(cg_pdb),
+            "--hybrid-mapping-output", str(args.hybrid_mapping_file),
+            "--hybrid-bb-map-json-output", str(args.hybrid_prep_dir / "hybrid_bb_map.json"),
+            "--lipid-name", args.lipid_name,
+            "--membrane-pdb", str(args.membrane_pdb),
+            "--membrane-top", str(args.membrane_top),
+            "--protein-orientation-mode", args.protein_orientation_mode,
+            "--opm-reference", str(args.opm_reference),
+            "--protein-pbc-margin", str(args.protein_pbc_margin),
+            "--salt-molar", str(args.salt_molar),
+            "--explicit-ions", str(args.explicit_ions),
+            "--protein-lipid-cutoff", f"{float(args.protein_lipid_cutoff):.6g}",
+            "--ion-cutoff", str(args.ion_cutoff),
+            "--xy-scale", str(args.xy_scale),
+            "--box-padding-xy", str(args.box_padding_xy),
+            "--box-padding-z", str(args.box_padding_z),
+            "--membrane-thickness-angstrom", str(args.membrane_thickness_angstrom),
+            "--seed", str(args.prep_seed),
+            "--summary-json", str(args.hybrid_prep_dir / "hybrid_prep_summary.json"),
+        ]
+    )
+    if not args.hybrid_packed_pdb.exists():
+        raise FileNotFoundError(args.hybrid_packed_pdb)
+    # Overlap removal against the CG envelope is the packing guarantee; the backbone-lipid distance
+    # is a sanity log (it can sit near the clearance since a BB bead may be the closest CG bead).
+    min_gap = pdb_min_protein_lipid_distance(args.hybrid_packed_pdb)
+    print(
+        f"Hybrid packing: min protein(backbone)-lipid distance {min_gap:.3f} A "
+        f"(CG-envelope clearance {float(args.protein_lipid_cutoff):.3f} A)"
+    )
+    if np.isfinite(min_gap) and min_gap < 2.0:
+        raise RuntimeError(f"Hybrid packing left a hard protein-lipid clash ({min_gap:.3f} A).")
 
     if not args.hybrid_mapping_file.exists():
         raise FileNotFoundError(args.hybrid_mapping_file)
@@ -953,14 +1090,6 @@ def set_hybrid_production_controls(up_file: Path, args):
         grp.attrs["sc_env_po4_z_hold_steps"] = np.int32(args.sc_env_po4_z_hold_steps)
 
 
-def set_barostat_type(up_file: Path, barostat_type: int):
-    import tables as tb
-
-    with tb.open_file(up_file, "r+") as t:
-        if "/input/barostat" in t:
-            t.root.input.barostat._v_attrs.type = int(barostat_type)
-
-
 def ensure_sc_martini_library(args):
     import h5py
 
@@ -1053,16 +1182,7 @@ def assert_hybrid_stage_active(
     print(f"Hybrid activation verified: stage={expected_stage}, activation_stage={expected_activation}")
 
 
-def stage_npt_targets(stage_label: str, args):
-    if stage_label in {"6.0", "6.1"}:
-        return 0.0, 0.0
-    if stage_label in {"6.2", "6.3", "6.4", "6.5", "6.6"}:
-        return float(args.bar_1_to_eup_per_a3), float(args.bar_1_to_eup_per_a3)
-    return 0.0, 0.0
-
-
 def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable: int, lipidhead_fc: float):
-    target_pxy, target_pz = stage_npt_targets(stage_label, args)
     if stage_label in {"production", "production_handoff"}:
         dynamics_phase = "production"
     elif prepare_stage == "npt_prod":
@@ -1077,14 +1197,19 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         "UPSIDE_SIMULATION_STAGE": prepare_stage,
         "UPSIDE_MARTINI_DYNAMICS_PHASE": dynamics_phase,
         "UPSIDE_NPT_ENABLE": str(int(npt_enable)),
-        "UPSIDE_NPT_TARGET_PXY": str(target_pxy),
-        "UPSIDE_NPT_TARGET_PZ": str(target_pz),
+        # Tensionless (zero lateral pressure) dry-MARTINI membrane barostat.
+        "UPSIDE_NPT_TARGET_PXY": "0.0",
+        "UPSIDE_NPT_TARGET_PZ": "0.0",
         "UPSIDE_NPT_TAU": str(args.npt_tau),
         "UPSIDE_NPT_COMPRESSIBILITY": str(args.compressibility_3e4_bar_inv_to_a3_per_eup),
         "UPSIDE_NPT_COMPRESSIBILITY_XY": str(args.compressibility_3e4_bar_inv_to_a3_per_eup),
         "UPSIDE_NPT_COMPRESSIBILITY_Z": "0.0",
         "UPSIDE_NPT_INTERVAL": str(args.npt_interval),
         "UPSIDE_NPT_SEMI": "1",
+        # Monte-Carlo barostat steps: couple xy, freeze z (mc_dmax_z=0).
+        "UPSIDE_NPT_MC_DMAX_XY": str(args.npt_mc_dmax_xy),
+        "UPSIDE_NPT_MC_DMAX_Z": "0.0",
+        "UPSIDE_NPT_MC_SEED": str(args.prep_seed),
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
         "THERMOSTAT_TIMESCALE": str(args.thermostat_timescale),
     }
@@ -1111,7 +1236,7 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
     )
 
 
-def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: int, barostat_type: int, lipidhead_fc: float, stage_label: str):
+def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: int, lipidhead_fc: float, stage_label: str):
     start = time.perf_counter()
     with temporary_env(stage_conversion_env(args, stage_label, prepare_stage, npt_enable, lipidhead_fc)):
         run_prepare_command(
@@ -1144,8 +1269,6 @@ def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: 
             stage_label,
             args.hybrid_preprod_activation_stage,
     )
-    if npt_enable:
-        set_barostat_type(target_file, barostat_type)
     elapsed = time.perf_counter() - start
     print(
         f"[workflow timing] stage {stage_label} preparation/injection finished "
@@ -1524,6 +1647,8 @@ def normalize_hybrid_workflow_args(args):
     args.hybrid_mapping_file = args.hybrid_prep_dir / "hybrid_mapping.h5"
     args.hybrid_packed_pdb = args.hybrid_prep_dir / "hybrid_packed.MARTINI.pdb"
     args.upside_executable = args.upside_home / "obj" / "upside"
+    args.venv_python = args.upside_home / ".venv" / "bin" / "python"
+    args.martinize_script = PY_DIR / "martinize.py"
     args.itp_dir = args.upside_home / "example" / "16.MARTINI" / "dryMARTINI_itp"
     args.martini_h5 = args.upside_home / "parameters" / "ff_2.1" / "martini.h5"
     args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
@@ -1537,10 +1662,9 @@ def normalize_hybrid_workflow_args(args):
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
     args.npt_tau = DEFAULT_NPT_TAU
     args.npt_interval = DEFAULT_NPT_INTERVAL
-    args.prod_70_barostat_type = DEFAULT_PROD_70_BAROSTAT_TYPE
+    args.npt_mc_dmax_xy = DEFAULT_NPT_MC_DMAX_XY
     args.martini_energy_conversion = DEFAULT_MARTINI_ENERGY_CONVERSION
     args.martini_length_conversion = DEFAULT_MARTINI_LENGTH_CONVERSION
-    args.bar_1_to_eup_per_a3 = DEFAULT_BAR_1_TO_EUP_PER_A3
     args.compressibility_3e4_bar_inv_to_a3_per_eup = DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP
     args.extract_vtf_script = workflow_path(args.extract_vtf_script).resolve()
     args.continue_stage_70_from = workflow_path(args.continue_stage_70_from).resolve() if args.continue_stage_70_from else None
@@ -1642,8 +1766,14 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--run-dir", default=env_default("RUN_DIR", "outputs/martini_test_1rkl_hybrid"))
     parser.add_argument("--protein-aa-pdb", default=env_default("PROTEIN_AA_PDB", None))
     parser.add_argument("--lipid-name", default=env_default("LIPID_NAME", None),
-                        help="Membrane lipid moleculetype name (e.g. DOPC, DDM)")
-    parser.add_argument("--bilayer-pdb", default=env_default("BILAYER_PDB", None))
+                        help="Membrane lipid moleculetype name(s), comma-separated for a mixed "
+                             "bilayer (e.g. DOPC, DDM, or POPE,POPG)")
+    parser.add_argument("--charmm-gui-dir", default=env_default("CHARMM_GUI_DIR", None),
+                        help="CHARMM-GUI Martini job dir; membrane read from gromacs/step5_charmm2gmx.pdb + system.top")
+    parser.add_argument("--membrane-pdb", default=env_default("MEMBRANE_PDB", None))
+    parser.add_argument("--membrane-top", default=env_default("MEMBRANE_TOP", None))
+    parser.add_argument("--opm-reference", default=env_default("OPM_REFERENCE", None),
+                        help="OPM membrane-oriented reference PDB (for --protein-orientation-mode opm)")
     parser.add_argument("--extract-vtf-script", default=env_default("EXTRACT_VTF_SCRIPT", str(PY_DIR / "martini_extract_vtf.py")))
     parser.add_argument("--salt-molar", type=float, default=env_float("SALT_MOLAR", 0.15))
     parser.add_argument("--explicit-ions", type=int, choices=[0, 1], default=env_int("EXPLICIT_IONS", 1))
@@ -1651,13 +1781,12 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--ion-cutoff", type=float, default=env_float("ION_CUTOFF", 10.0))
     parser.add_argument("--xy-scale", type=float, default=env_float("XY_SCALE", 1.0))
     parser.add_argument("--box-padding-xy", type=float, default=env_float("BOX_PADDING_XY", 0.0))
-    parser.add_argument("--box-padding-z", type=float, default=env_float("BOX_PADDING_Z", 20.0))
-    parser.add_argument("--protein-placement-mode", choices=["embed", "outside-top", "outside-bottom"], default=env_default("PROTEIN_PLACEMENT_MODE", "embed"))
-    parser.add_argument("--protein-orientation-mode", choices=["input", "lay-flat"], default=env_default("PROTEIN_ORIENTATION_MODE", "input"))
-    parser.add_argument("--protein-surface-gap", type=float, default=env_float("PROTEIN_SURFACE_GAP", 6.0))
-    parser.add_argument("--protein-lipid-min-gap", type=float, default=env_float("PROTEIN_LIPID_MIN_GAP", 0.0))
-    parser.add_argument("--protein-lipid-cutoff-step", type=float, default=env_float("PROTEIN_LIPID_CUTOFF_STEP", 0.5))
-    parser.add_argument("--protein-lipid-cutoff-max", type=float, default=env_float("PROTEIN_LIPID_CUTOFF_MAX", 8.0))
+    parser.add_argument("--box-padding-z", type=float, default=env_float("BOX_PADDING_Z", 0.0))
+    parser.add_argument("--membrane-thickness-angstrom", type=float, default=env_float("MEMBRANE_THICKNESS_ANGSTROM", 0.0),
+                        help="Equilibrated dry-MARTINI membrane thickness for the ion count "
+                             "(0 = measure from the compressed packed lipids)")
+    parser.add_argument("--protein-orientation-mode", choices=["input", "lay-flat", "opm"], default=env_default("PROTEIN_ORIENTATION_MODE", "opm"))
+    parser.add_argument("--protein-pbc-margin", type=float, default=env_float("PROTEIN_PBC_MARGIN", 15.0))
     parser.add_argument("--temperature", type=float, default=env_float("TEMPERATURE", 0.8647))
     parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
     parser.add_argument("--thermostat-interval", type=int, default=env_int("THERMOSTAT_INTERVAL", -1))
@@ -1696,34 +1825,42 @@ def parse_hybrid_workflow_args(argv):
     if not args.lipid_name or not str(args.lipid_name).strip():
         raise ValueError("A lipid name is required (--lipid-name, e.g. DOPC or DDM)")
     set_active_lipid_name(args.lipid_name)
-    if args.bilayer_pdb is None:
-        args.bilayer_pdb = str(Path(args.upside_home) / "parameters" / "dryMARTINI" / f"{args.lipid_name}.pdb")
+    if args.charmm_gui_dir:
+        gmx = Path(args.charmm_gui_dir).expanduser() / "gromacs"
+        if args.membrane_pdb is None:
+            args.membrane_pdb = str(gmx / "step5_charmm2gmx.pdb")
+        if args.membrane_top is None:
+            args.membrane_top = str(gmx / "system.top")
+    if args.membrane_pdb is None:
+        raise ValueError("A CHARMM-GUI membrane is required (--charmm-gui-dir or --membrane-pdb)")
+    if args.protein_orientation_mode == "opm" and not args.opm_reference:
+        raise ValueError("--protein-orientation-mode opm requires --opm-reference")
     args.prep_seed = int(args.prep_seed) if args.prep_seed not in (None, "") else None
     args.seed = int(args.seed) if args.seed not in (None, "") else None
     args = normalize_hybrid_workflow_args(args)
-    if args.protein_lipid_cutoff <= 0.0 or args.protein_lipid_min_gap <= 0.0:
-        contact_clearance = derive_lipid_contact_clearance_angstrom(args.upside_home, args.lipid_name)
-        if args.protein_lipid_cutoff <= 0.0:
-            args.protein_lipid_cutoff = contact_clearance
-        if args.protein_lipid_min_gap <= 0.0:
-            args.protein_lipid_min_gap = contact_clearance
-
+    if args.protein_lipid_cutoff <= 0.0:
+        args.protein_lipid_cutoff = derive_lipid_contact_clearance_angstrom(args.upside_home, args.lipid_name)
     return args
 
 
 def validate_hybrid_workflow_args(args):
     if not args.upside_executable.exists():
         raise FileNotFoundError(args.upside_executable)
-    for required in [
+    required = [
         workflow_path(args.protein_aa_pdb).resolve(),
-        workflow_path(args.bilayer_pdb).resolve(),
+        Path(args.membrane_pdb).expanduser().resolve(),
+        args.venv_python,
+        args.martinize_script,
         args.upside_rama_library,
         args.upside_hbond_energy,
         args.upside_reference_state_rama,
         args.extract_vtf_script,
-    ]:
-        if not required.exists():
-            raise FileNotFoundError(required)
+    ]
+    if args.opm_reference:
+        required.append(Path(args.opm_reference).expanduser().resolve())
+    for path in required:
+        if not path.exists():
+            raise FileNotFoundError(path)
 
 
 def workflow_stage_files(args):
@@ -1762,7 +1899,7 @@ def print_hybrid_workflow_summary(args, source=None, output=None):
 def run_stage60_relaxation(args, files):
     prepare_workflow_hybrid_artifacts(args)
     print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
-    prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, 0, "minimization")
+    prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, "minimization")
     shutil.copy2(files["prepared_60"], files["stage_60"])
     inject_protein_position_restraints(files["stage_60"])
     run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
@@ -1786,7 +1923,6 @@ def run_stage70_handoff(args, files, source_stage: Path):
         files["prepared_70"],
         "npt_prod",
         args.prod_70_npt_enable,
-        args.prod_70_barostat_type,
         0,
         "production_handoff",
     )
@@ -1812,36 +1948,36 @@ def run_stage70_handoff(args, files, source_stage: Path):
 def run_pre70_equilibration(args, files):
     print("=== Bonded dry-MARTINI environment detected -> running extended pre-7.0 equilibrium ===")
 
-    prepare_stage_file(args, files["prepared_61"], "npt_prod", 1, 0, 0, "minimization")
+    prepare_stage_file(args, files["prepared_61"], "npt_prod", 1, 0, "minimization")
     shutil.copy2(files["prepared_61"], files["stage_61"])
     handoff_initial_position(args, files["stage_60"], files["stage_61"])
     run_minimization_stage(args, "6.1", files["stage_61"], args.min_61_max_iter)
     extract_stage_vtf(args, "6.1", files["stage_61"], "1")
 
-    prepare_stage_file(args, files["stage_62"], "npt_equil", 1, 0, 200, "minimization")
+    prepare_stage_file(args, files["stage_62"], "npt_equil", 1, 200, "minimization")
     handoff_initial_position(args, files["stage_61"], files["stage_62"])
     run_md_stage(args, "6.2", files["stage_62"], files["stage_62"], args.eq_62_nsteps, args.eq_time_step, args.eq_frame_steps)
     extract_stage_vtf(args, "6.2", files["stage_62"], "1")
 
-    prepare_stage_file(args, files["prepared_63"], "npt_equil_reduced", 1, 0, 100, "minimization")
+    prepare_stage_file(args, files["prepared_63"], "npt_equil_reduced", 1, 100, "minimization")
     shutil.copy2(files["prepared_63"], files["stage_63"])
     handoff_initial_position(args, files["stage_62"], files["stage_63"])
     run_md_stage(args, "6.3", files["stage_63"], files["stage_63"], args.eq_63_nsteps, args.eq_time_step, args.eq_frame_steps)
     extract_stage_vtf(args, "6.3", files["stage_63"], "1")
 
-    prepare_stage_file(args, files["prepared_64"], "npt_prod", 1, 0, 50, "minimization")
+    prepare_stage_file(args, files["prepared_64"], "npt_prod", 1, 50, "minimization")
     shutil.copy2(files["prepared_64"], files["stage_64"])
     handoff_initial_position(args, files["stage_63"], files["stage_64"])
     run_md_stage(args, "6.4", files["stage_64"], files["stage_64"], args.eq_64_nsteps, args.eq_time_step, args.eq_frame_steps)
     extract_stage_vtf(args, "6.4", files["stage_64"], "1")
 
-    prepare_stage_file(args, files["prepared_65"], "npt_prod", 1, 0, 20, "minimization")
+    prepare_stage_file(args, files["prepared_65"], "npt_prod", 1, 20, "minimization")
     shutil.copy2(files["prepared_65"], files["stage_65"])
     handoff_initial_position(args, files["stage_64"], files["stage_65"])
     run_md_stage(args, "6.5", files["stage_65"], files["stage_65"], args.eq_65_nsteps, args.eq_time_step, args.eq_frame_steps)
     extract_stage_vtf(args, "6.5", files["stage_65"], "1")
 
-    prepare_stage_file(args, files["prepared_66"], "npt_prod", 1, 0, 10, "minimization")
+    prepare_stage_file(args, files["prepared_66"], "npt_prod", 1, 10, "minimization")
     shutil.copy2(files["prepared_66"], files["stage_66"])
     handoff_initial_position(args, files["stage_65"], files["stage_66"])
     run_md_stage(args, "6.6", files["stage_66"], files["stage_66"], args.eq_66_nsteps, args.eq_time_step, args.eq_frame_steps)

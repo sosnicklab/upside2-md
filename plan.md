@@ -1,21 +1,50 @@
-# CURRENT PHASE (2026-07-27): cheaper HDX sampling — thin ladder + REST2
+# CURRENT PHASE (2026-07-28): audit glpG 79HIS REMD HDX ΔG-by-residue
 
-Metadynamics REMOVED from the branch (fundamental CV/observable mismatch; denatures glpG). REMD is
-the reliable HDX method; goal is to make it cheaper without losing rigor.
-- MEASURED: 48-replica T-REMD (T=0.70–0.90) exchange acceptance = **68%** (optimal ~25%) → ladder is
-  **2.5–3× over-provisioned**.
-- Lever 1 (free): thin plain T-REMD to ~16–20 replicas (re-space same range for ~25% accept) → ~2.4×.
-- Lever 2 (REST2): SHELVED (2026-07-27, user decision). Every implementation path adds complexity the
-  user does not want: engine-side λ hook touches ~4 MASTER-CORE files (hbond/rama/spring/sidechain), and
-  config-side needs delicate per-node energy-dataset scaling (hbond mixes well-depth+geometry). Not worth
-  it. (For the record: it IS feasible — Upside's exchange already supports Hamiltonian exchange,
-  `exchange_criterion==0`, main.cpp:489-508 — the blocker is complexity, not feasibility.)
+## Project Goal
 
-## Decision: use Lever 1 (thin the ladder) — zero code, no added complexity
-- Chosen cost lever: reduce `REMD_NREP` 48 → ~16–24 and re-space the T=0.70–0.90 ladder for ~25%
-  acceptance (currently 68%) → ~2.4× cheaper, same sampling, MBAR pipeline unchanged. Only edits
-  `remd_config.env`. Do a short acceptance check to pin the exact count before the next production round.
-- Current 48-replica jobs keep running (usable ΔG); thinned ladder applies to the next round.
+Explain why residues 30--50 appear only as a small feature in
+`~/Downloads/glpG-RKRK-79HIS_DDM_REMD_HDX_dG_vs_residue.png` despite the stable helix shown by
+`glpG-RKRK-79HIS_DDM_REMD_T0.70.vtf` and `secondary_structure_analysis.png`, and correct the
+calculation or plot if it is wrong.
+
+## Architecture & Key Decisions
+
+- Audit the existing calculation before changing code: trace plot pixels to numeric arrays, scripts,
+  source trajectories, temperature/replica assignment, residue numbering, and ΔG definition.
+- Compare HDX protection inputs directly against secondary-structure occupancy for residues 30--50.
+  Helicity and HDX stability are related but not interchangeable; solvent exposure/contact terms and
+  sign/reference conventions must be checked explicitly.
+- Reproduce the relevant calculation on midway3 using the exact run artifacts. Do not modify or disable
+  SC-env, BB-env, or any other physical interaction.
+- Git remains read-only. Any correction stays unstaged and uncommitted.
+
+## Execution Phases
+
+- [x] Identify local plot/trajectory provenance and the script/data used to generate the figure.
+- [x] Audit residue indexing, ΔG definition/sign, NaN filtering, MBAR/temperature weights, and plotting.
+- [x] Establish/reuse the midway3 ControlMaster session and locate the exact 79HIS REMD artifacts.
+- [x] Recompute residue-level intermediates and compare residues 30--50 with structure/H-bond exposure.
+- [x] Generate and visually verify a corrected, censored diagnostic plot from the exact downloaded VTF.
+- [x] Document the evidence, tests, and remaining scientific interpretation limits.
+
+## Known Errors / Blockers
+
+- The downloaded PNG has no embedded run/data provenance. Cluster timestamps and logs identify it with the
+  first, NaN-contaminated REMD/HDX generation, but the exact deleted numeric array cannot be hashed back to it.
+- The corrected-box REMD job `52690836` is still running. A new production five-temperature profile must be
+  generated only after that ensemble is complete and finite-frame/convergence gates pass.
+
+## Review
+
+- The July 23 profile is invalid for quantitative interpretation: the source REMD continuation started with
+  NaN energies in all 48 slots, the HDX extractor had no finite-frame filter, and the attempted MBAR fit did
+  not converge.
+- The plot also uses zero-based donor IDs as residue labels and renders saturated protection as off-scale
+  `+inf`/1000-kcal spikes joined to finite points.
+- Exact re-scoring of all 478 downloaded T=0.70 VTF frames with the stock HDX criterion gives no observed
+  openings for 16 of residues 30--50. The helix is therefore strongly protected in the trajectory; the old
+  figure is the inconsistent artifact.
+- No simulation physics or force-field settings were changed.
 
 ---
 

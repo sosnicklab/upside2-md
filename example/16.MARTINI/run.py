@@ -8,34 +8,38 @@ upside_utils_dir = upside_path / "py"
 sys.path.insert(0, str(upside_utils_dir))
 
 #----------------------------------------------------------------------
-## General Settings and Path
+## Inputs (edit these)
 #----------------------------------------------------------------------
 
-pdb_id             = "1rkl"
-pdb_dir            = "./pdb"
-opm_pdb            = "{}/{}.pdb".format(pdb_dir, pdb_id)
+pdb_id             = "glpG-RKRK-79HIS"
+protein_aa_pdb     = os.path.expanduser("~/Downloads/glpG-RKRK-79HIS.pdb")        # all-atom protein
+lipid_name         = "DDM"                                                        # moleculetype in dryMARTINI_itp/
+charmm_gui_dir     = os.path.expanduser("~/Downloads/charmm-gui-8543403667")      # CHARMM-GUI Martini membrane job
+opm_reference      = os.path.expanduser("~/Downloads/2nr9.pdb")                   # OPM membrane-oriented reference
+membrane_thickness = 48.8   # equilibrated dry-MARTINI membrane thickness (A) for the ion count (measure once)
+
 sim_id             = "martini_{}_hybrid".format(pdb_id)
 work_dir           = "./"
 
-lipid_composition  = dict(DOPC=1.0)
+#----------------------------------------------------------------------
+## Preparation and run settings
+#----------------------------------------------------------------------
 
 salt_molar         = 0.15
-protein_lipid_cutoff = 4.5
-protein_lipid_min_gap = 4.5
+protein_lipid_cutoff = 0.0   # 0 -> derive the LJ contact clearance from the lipid ITP
 ion_cutoff         = 10.0
 xy_scale           = 1.0
 box_padding_xy     = 0.0
-box_padding_z      = 20.0
-protein_placement_mode = "embed"
-protein_orientation_mode = "input"
-protein_surface_gap = 6.0
+box_padding_z      = 0.0     # z solvent padding beyond the PBC margin
+protein_pbc_margin = 15.0    # PBC-safe belt around the protein (>= dry-MARTINI nonbonded cutoff)
+protein_orientation_mode = "opm"
 
 temperature        = 0.8647
 eq_time_step       = 0.009
 prod_time_step     = 0.009
 eq_frame_steps     = 1000
 prod_frame_steps   = 50
-prod_70_npt_enable = 1
+prod_70_npt_enable = 0       # NVT production at the NPT-equilibrated box
 
 min_60_max_iter    = 500
 min_61_max_iter    = 0
@@ -75,18 +79,20 @@ for direc in (run_dir, log_dir, slurm_dir):
     if not direc.exists():
         direc.mkdir(parents=True)
 
-if set(lipid_composition) != {"DOPC"} or abs(lipid_composition["DOPC"] - 1.0) > 1e-6:
-    raise ValueError("This example currently supports only 100% DOPC lipid composition")
-
 runtime_pdb_id = "{}_hybrid".format(pdb_id)
-bilayer_pdb = upside_path / "parameters" / "dryMARTINI" / "DOPC.pdb"
 prep_script = upside_path / "py" / "martini_prepare_system.py"
 param_script = upside_path / "py" / "martini_gen_params.py"
 extract_vtf_script = upside_path / "py" / "martini_extract_vtf.py"
 
-opm_pdb_path = (script_dir / opm_pdb).resolve()
-if not opm_pdb_path.exists():
-    raise FileNotFoundError("OPM-style input PDB not found: {}".format(opm_pdb_path))
+protein_aa_pdb_path = Path(protein_aa_pdb).expanduser().resolve()
+if not protein_aa_pdb_path.exists():
+    raise FileNotFoundError("Protein all-atom PDB not found: {}".format(protein_aa_pdb_path))
+opm_reference_path = Path(opm_reference).expanduser().resolve()
+if protein_orientation_mode == "opm" and not opm_reference_path.exists():
+    raise FileNotFoundError("OPM reference PDB not found: {}".format(opm_reference_path))
+charmm_gui_dir_path = Path(charmm_gui_dir).expanduser().resolve()
+if not charmm_gui_dir_path.exists():
+    raise FileNotFoundError("CHARMM-GUI membrane directory not found: {}".format(charmm_gui_dir_path))
 
 
 #----------------------------------------------------------------------
@@ -118,19 +124,20 @@ workflow_cmd = [
     "--runtime-pdb-id", runtime_pdb_id,
     "--upside-home", str(upside_path),
     "--run-dir", str(run_dir),
-    "--protein-aa-pdb", str(opm_pdb_path),
-    "--bilayer-pdb", str(bilayer_pdb),
+    "--protein-aa-pdb", str(protein_aa_pdb_path),
+    "--lipid-name", lipid_name,
+    "--charmm-gui-dir", str(charmm_gui_dir_path),
+    "--protein-orientation-mode", protein_orientation_mode,
+    "--opm-reference", str(opm_reference_path),
+    "--membrane-thickness-angstrom", str(membrane_thickness),
     "--extract-vtf-script", str(extract_vtf_script),
     "--salt-molar", str(salt_molar),
     "--protein-lipid-cutoff", str(protein_lipid_cutoff),
-    "--protein-lipid-min-gap", str(protein_lipid_min_gap),
     "--ion-cutoff", str(ion_cutoff),
     "--xy-scale", str(xy_scale),
     "--box-padding-xy", str(box_padding_xy),
     "--box-padding-z", str(box_padding_z),
-    "--protein-placement-mode", protein_placement_mode,
-    "--protein-orientation-mode", protein_orientation_mode,
-    "--protein-surface-gap", str(protein_surface_gap),
+    "--protein-pbc-margin", str(protein_pbc_margin),
     "--temperature", str(temperature),
     "--min-60-max-iter", str(min_60_max_iter),
     "--min-61-max-iter", str(min_61_max_iter),
@@ -153,8 +160,9 @@ workflow_cmd = [
 ]
 
 print("MARTINI hybrid example")
-print("  OPM PDB: {}".format(opm_pdb_path))
-print("  lipid composition: {}".format(lipid_composition))
+print("  protein: {}".format(protein_aa_pdb_path))
+print("  lipid: {}   CHARMM-GUI: {}".format(lipid_name, charmm_gui_dir_path))
+print("  orientation: {}   OPM ref: {}".format(protein_orientation_mode, opm_reference_path))
 print("  run directory: {}".format(run_dir))
 
 if submit_slurm:

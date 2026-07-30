@@ -1,5 +1,26 @@
 # Findings
 
+## glpG 79HIS REMD HDX figure audit (2026-07-28)
+
+- The downloaded July 23 ΔG plot belongs to the first REMD/HDX generation. Its block-2 continuation
+  (`52519397`) starts with NaN potential energies in all 48 slots and remains NaN. The HDX extractor and
+  plotting path did not reject non-finite source frames, and the MBAR attempt failed to converge.
+- The downloaded 478-frame T=0.70 VTF is structurally finite. Exact stock-HDX re-scoring gives zero observed
+  openings for 16 of construct residues 30--50; finite examples are residue 47 at `p=0.9393`,
+  residue 48 at `p=0.9665`, residue 49 at `p=0.7929`, and residue 50 at `p=0.1862`.
+- ΔG is `RT log(p/(1-p))`, not helix occupancy. At `T_up=0.70`, even 2, 3, and 5 kcal/mol mean roughly
+  98.4%, 99.79%, and 99.9965% protection.
+- Donor IDs stored in `.resid` are zero-based but the VTF/PDB is one-based. Plot x=29 is construct residue
+  30. The construct has a 19-residue N-terminal tag, so native GlpG numbering has another offset.
+- Exact `p=1` from a finite trajectory is censored, not a measured 1000-kcal/mol value. A defensible plot must
+  separate censored markers from finite ΔG points and must not connect them with off-scale line segments.
+- Stock PS is backbone H-bond OR acidic side-chain contact OR protein burial. It is not DSSP helicity, and the
+  dry-DDM workflow has no calibrated water-accessibility correction. Do not enable a global membrane flag as
+  a substitute.
+- Temperature MBAR for the coupled hybrid requires the full sampled Hamiltonian. The current protein-only
+  re-scoring in `martini_hdx_project.py` is unsuitable for hybrid MBAR; direct per-temperature estimates at
+  actually sampled ladder temperatures avoid this extra weighting problem.
+
 ## Root Cause of Protein Tilt-to-Vertical (2026-07-16)
 
 The tilt bug is caused by DOPC lipids adjacent to the protein collapsing their

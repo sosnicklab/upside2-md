@@ -23,15 +23,8 @@ inline void minimum_image_scalar(float& dx, float& dy, float& dz, float box_x, f
 
 namespace npt {
 
-enum class BarostatType {
-    Berendsen,
-    ParrinelloRahman,
-    MonteCarlo
-};
-
 struct BarostatSettings {
     bool  semi_isotropic = true;
-    BarostatType type = BarostatType::Berendsen;
     int   interval = 0;           // steps between applications
     float target_p_xy = 1.0f;     // UP units
     float target_p_z  = 1.0f;     // UP units
@@ -39,7 +32,6 @@ struct BarostatSettings {
     float compressibility_xy = 4.5e-5f; // 1/pressure in bilayer plane
     float compressibility_z = 4.5e-5f;  // 1/pressure normal to bilayer
     float compressibility = 4.5e-5f;
-    bool  prefer_shrink_first = true; // on first application, avoid any expansion
     // Monte-Carlo barostat: max fractional box-length step per trial move
     float    mc_dmax_xy = 0.004f;
     float    mc_dmax_z  = 0.004f;
@@ -49,14 +41,10 @@ struct BarostatSettings {
 struct BarostatState {
     BarostatSettings settings;
     float box_x = 0.f, box_y = 0.f, box_z = 0.f;
-    std::vector<float> masses;
-    bool has_applied_once = false;
     float last_pxy_inst = 0.0f;
     float last_pz_inst = 0.0f;
     float last_scale_xy = 1.0f;
     float last_scale_z = 1.0f;
-    float box_vel_xy = 0.0f;  // box velocity for lateral dimensions
-    float box_vel_z = 0.0f;   // box velocity for normal dimension
     // Monte-Carlo barostat: molecule grouping (COM scaling) + RNG + acceptance stats
     std::vector<std::vector<int>> mc_mol_atoms;  // atoms of each scaled molecule
     std::mt19937_64 mc_rng;

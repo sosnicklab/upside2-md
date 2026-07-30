@@ -58,28 +58,24 @@ STAGE_PARAMS = {
         "lj_alpha": 0.2,
         "coulomb_soften": 1,
         "slater_alpha": 2.0,
-        "barostat_type": 0,
     },
     "npt_equil": {
         "lj_soften": 1,
         "lj_alpha": 0.2,
         "coulomb_soften": 1,
         "slater_alpha": 2.0,
-        "barostat_type": 0,
     },
     "npt_equil_reduced": {
         "lj_soften": 1,
         "lj_alpha": 0.05,
         "coulomb_soften": 1,
         "slater_alpha": 0.5,
-        "barostat_type": 0,
     },
     "npt_prod": {
         "lj_soften": 0,
         "lj_alpha": 0.0,
         "coulomb_soften": 0,
         "slater_alpha": 0.0,
-        "barostat_type": 1,
     },
 }
 
@@ -194,26 +190,35 @@ def center_of_mass(xyz):
 
 
 # Membrane molecule selection. The lipid identity is supplied by the caller
-# (--lipid-name); its topology is read from the input ITP files. No lipid type,
-# ITP filename, or residue name is hardcoded here.
-_ACTIVE_LIPID_NAME = None
+# (--lipid-name, comma-separated for a mixed bilayer); each type's topology is read
+# from the input ITP files. No lipid type, ITP filename, or residue name is hardcoded
+# here. Names are stored uppercased so residue-name comparisons are case-insensitive.
+_ACTIVE_LIPID_NAMES = ()
 
 
 def set_active_lipid_name(name) -> None:
-    global _ACTIVE_LIPID_NAME
-    if name is None or not str(name).strip():
+    global _ACTIVE_LIPID_NAMES
+    if name is None:
         raise ValueError("Lipid name must be provided (--lipid-name)")
-    _ACTIVE_LIPID_NAME = str(name).strip()
+    parts = str(name).split(",") if isinstance(name, str) else [str(p) for p in name]
+    names = tuple(dict.fromkeys(p.strip().upper() for p in parts if p.strip()))
+    if not names:
+        raise ValueError("Lipid name must be provided (--lipid-name)")
+    _ACTIVE_LIPID_NAMES = names
+
+
+def active_lipid_names() -> tuple:
+    if not _ACTIVE_LIPID_NAMES:
+        raise ValueError("Active lipid name is not set; call set_active_lipid_name() (--lipid-name)")
+    return _ACTIVE_LIPID_NAMES
 
 
 def active_lipid_name() -> str:
-    if _ACTIVE_LIPID_NAME is None:
-        raise ValueError("Active lipid name is not set; call set_active_lipid_name() (--lipid-name)")
-    return _ACTIVE_LIPID_NAME
+    return "/".join(active_lipid_names())
 
 
 def lipid_resname(resname: str) -> bool:
-    return resname.strip().upper() == active_lipid_name().upper()
+    return resname.strip().upper() in active_lipid_names()
 
 
 def infer_protein_charge_from_residues(protein_atoms):
@@ -506,6 +511,82 @@ def residue_group_atoms(atoms):
     return groups
 
 
+CHARMM_GUI_WATER_RESNAMES = {"W", "WF"}
+CHARMM_GUI_ION_RESNAMES = {"NA", "CL", "SOD", "CLA", "ION"}
+
+
+def _parse_top_molecule_counts(top_path: Path):
+    """Return {RESNAME: count} from the [ molecules ] section of a GROMACS system.top."""
+    counts = {}
+    in_molecules = False
+    with Path(top_path).open("r", encoding="utf-8") as f:
+        for line in f:
+            text = line.split(";", 1)[0].strip()
+            if not text:
+                continue
+            if text.startswith("["):
+                in_molecules = text.replace(" ", "").lower() == "[molecules]"
+                continue
+            if in_molecules:
+                parts = text.split()
+                if len(parts) >= 2:
+                    counts[parts[0].upper()] = counts.get(parts[0].upper(), 0) + int(parts[1])
+    return counts
+
+
+def read_charmm_gui_membrane(membrane_pdb, membrane_top=None):
+    """Read a CHARMM-GUI Martini membrane as the bilayer input for the hybrid system.
+
+    Keeps only the active-lipid residues; water (implicit solvent in dry-MARTINI) is stripped and
+    CHARMM-GUI ions are dropped (ions are regenerated from concentration during packing). A CRYST1
+    box is required (the gromacs/step5_charmm2gmx.pdb carries it; step5_assembly.pdb does not).
+    When a system.top is given, the per-lipid molecule counts are cross-checked against its
+    [ molecules ] section. Returns (lipid_atoms, box).
+    """
+    atoms, box = parse_pdb(Path(membrane_pdb))
+    if box is None:
+        raise ValueError(
+            f"CHARMM-GUI membrane PDB has no CRYST1 box: {membrane_pdb}. "
+            "Use the gromacs/step5_charmm2gmx.pdb (it carries the box), not step5_assembly.pdb."
+        )
+    lipid_atoms = []
+    unexpected = set()
+    for atom in atoms:
+        resname = atom["resname"].strip().upper()
+        if lipid_resname(resname):
+            lipid_atoms.append(atom)
+        elif resname in CHARMM_GUI_WATER_RESNAMES or resname in CHARMM_GUI_ION_RESNAMES:
+            continue
+        else:
+            unexpected.add(resname)
+    if unexpected:
+        raise ValueError(
+            f"Unexpected residues {sorted(unexpected)} in CHARMM-GUI membrane {membrane_pdb}. "
+            f"Only active lipids {list(active_lipid_names())}, water, and ions are supported."
+        )
+    if not lipid_atoms:
+        raise ValueError(
+            f"No active-lipid residues {list(active_lipid_names())} found in {membrane_pdb}."
+        )
+    if membrane_top is not None:
+        expected = _parse_top_molecule_counts(membrane_top)
+        got = {}
+        prev_key = None
+        for atom in lipid_atoms:
+            key = (atom["chain"], atom["resseq"], atom["icode"])
+            if key != prev_key:
+                resname = atom["resname"].strip().upper()
+                got[resname] = got.get(resname, 0) + 1
+                prev_key = key
+        for name in active_lipid_names():
+            if name in expected and expected[name] != got.get(name, 0):
+                raise ValueError(
+                    f"Lipid count mismatch for {name}: {membrane_pdb} has {got.get(name, 0)} "
+                    f"molecules but {membrane_top} [ molecules ] declares {expected[name]}."
+                )
+    return lipid_atoms, box
+
+
 def tile_and_crop_bilayer_lipids(
     bilayer_atoms,
     bilayer_box,
@@ -686,14 +767,20 @@ def set_box_from_lipid_xy(
     return np.array([box_x, box_y, box_z], dtype=float)
 
 
-def estimate_salt_pairs(box_lengths, salt_molar):
-    # Ion count from concentration and box volume only (no water in the system).
-    volume_l = float(box_lengths[0] * box_lengths[1] * box_lengths[2]) * 1e-27
-    pairs = int(round(salt_molar * NA_AVOGADRO * volume_l))
+def estimate_salt_pairs(box_lengths, salt_molar, membrane_thickness_z, protein_volume_a3=0.0):
+    # dry-MARTINI is implicit-solvent, so ions occupy only the solvent-accessible volume: the box
+    # minus the membrane slab (A_xy * thickness) and the protein excluded volume. Using the full box
+    # would massively overcount (the box is mostly lipid slab + the protein's soluble-domain space).
+    area_xy = float(box_lengths[0]) * float(box_lengths[1])
+    solvent_z = max(0.0, float(box_lengths[2]) - float(membrane_thickness_z))
+    volume_a3 = max(0.0, area_xy * solvent_z - float(protein_volume_a3))
+    pairs = int(round(salt_molar * NA_AVOGADRO * volume_a3 * 1e-27))
     return max(0, pairs)
 
 
-def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
+def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng, exclude_z=None):
+    # exclude_z=(lo, hi): reject trial positions with lo <= z <= hi so ions land only in the
+    # solvent slabs (outside the membrane), never in the hydrophobic core.
     existing = coords(atoms)
     placed = []
     cutoff2 = cutoff * cutoff
@@ -703,6 +790,8 @@ def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
         accepted = False
         for _ in range(20000):
             trial = rng.uniform([0, 0, 0], box)
+            if exclude_z is not None and float(exclude_z[0]) <= trial[2] <= float(exclude_z[1]):
+                continue
             if existing.size:
                 d2 = np.sum(_minimum_image_delta(existing - trial, box) ** 2, axis=1)
                 if np.min(d2) < cutoff2:
@@ -1038,45 +1127,67 @@ def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
 
     print("Protein runtime representation: N/CA/C carriers; regenerated O/BB virtual sites")
 
-    lipid_name = active_lipid_name()
     lipid_preproc_defs = {}
     if stage_lipidhead_fc > 0.0:
         lipid_preproc_defs['BILAYER_LIPIDHEAD_FC'] = stage_lipidhead_fc
 
-    # Locate the ITP that defines the requested lipid moleculetype (no hardcoded filename).
-    lipid_param_file = None
-    full_topology = None
+    # Parse every ITP once, then resolve each requested lipid moleculetype (single lipid or a
+    # comma-separated mix) against them. Each type's bead types, charges and bonded connectivity
+    # are stored keyed by residue name so a mixed bilayer maps and bonds every molecule correctly.
+    parsed_itps = []
     for ff_name in ff_files:
         if not ff_name.lower().endswith(".itp"):
             continue
         candidate = pick_ff_file(ff_name)
         try:
-            candidate_topology = parse_itp_file(candidate, preprocessor_defines=lipid_preproc_defs)
+            parsed_itps.append((candidate, parse_itp_file(candidate, preprocessor_defines=lipid_preproc_defs)))
         except Exception:
             continue
-        if any(mol.upper() == lipid_name.upper() for mol in candidate_topology.get('molecules', {})):
-            lipid_param_file = candidate
-            full_topology = candidate_topology
-            break
-    if lipid_param_file is None:
-        available_itps = [f for f in ff_files if f.lower().endswith(".itp")]
-        raise ValueError(
-            f"Lipid molecule '{lipid_name}' not found in any ITP under '{ff_path}'. "
-            f"Available ITP files: {available_itps}"
+
+    lipids = {}
+    for lipid_name in active_lipid_names():
+        lipid_param_file = None
+        lipid_molecule = None
+        for candidate, candidate_topology in parsed_itps:
+            match = next((mol for mol in candidate_topology.get('molecules', {})
+                          if mol.upper() == lipid_name.upper()), None)
+            if match is not None:
+                lipid_param_file = candidate
+                lipid_molecule = match
+                break
+        if lipid_param_file is None:
+            available_itps = [f for f in ff_files if f.lower().endswith(".itp")]
+            raise ValueError(
+                f"Lipid molecule '{lipid_name}' not found in any ITP under '{ff_path}'. "
+                f"Available ITP files: {available_itps}"
+            )
+
+        lipid_topology = parse_itp_file(
+            lipid_param_file, lipid_molecule, preprocessor_defines=lipid_preproc_defs
         )
+        lipid_bonds = [(bond['i'], bond['j']) for bond in lipid_topology['bonds']]
+        lipid_angles = [(angle['i'], angle['j'], angle['k']) for angle in lipid_topology['angles']]
+        if not lipid_bonds:
+            raise ValueError(f"No {lipid_name} bonds found in topology from '{lipid_param_file}'")
+        if not lipid_angles:
+            raise ValueError(f"No {lipid_name} angles found in topology from '{lipid_param_file}'")
 
-    lipid_molecule = next(
-        mol for mol in full_topology['molecules'].keys() if mol.upper() == lipid_name.upper()
-    )
-    lipid_topology = parse_itp_file(
-        lipid_param_file, lipid_molecule, preprocessor_defines=lipid_preproc_defs
-    )
-
-    lipid_bead_types = [atom['type'] for atom in lipid_topology['atoms']]
-    lipid_charges = [atom['charge'] for atom in lipid_topology['atoms']]
-    lipid_atom_to_type = {atom['atom']: atom['type'] for atom in lipid_topology['atoms']}
-    lipid_atom_to_charge = {atom['atom']: atom['charge'] for atom in lipid_topology['atoms']}
-    print(f"Read {lipid_molecule} topology: {len(lipid_bead_types)} bead types from {lipid_param_file}")
+        bead_types = [atom['type'] for atom in lipid_topology['atoms']]
+        lipids[lipid_molecule.upper()] = {
+            'bead_types': bead_types,
+            'charges': [atom['charge'] for atom in lipid_topology['atoms']],
+            'atom_to_type': {atom['atom']: atom['type'] for atom in lipid_topology['atoms']},
+            'atom_to_charge': {atom['atom']: atom['charge'] for atom in lipid_topology['atoms']},
+            'bonds': lipid_bonds,
+            'bond_lengths': [bond['r0'] for bond in lipid_topology['bonds']],
+            'bond_force_constants': [bond['k'] for bond in lipid_topology['bonds']],
+            'angles': lipid_angles,
+            'angle_equil_deg': [angle['theta0'] for angle in lipid_topology['angles']],
+            'angle_force_constants': [angle['force_k'] for angle in lipid_topology['angles']],
+            'position_restraints': lipid_topology.get('position_restraints', []),
+        }
+        print(f"Read {lipid_molecule} topology: {len(bead_types)} bead types from {lipid_param_file}")
+        print(f"Read {lipid_molecule} connectivity: {len(lipid_bonds)} bonds, {len(lipid_angles)} angles")
 
     ion_param_file = pick_ff_file("dry_martini_v2.1_ions.itp", required=False)
     if ion_param_file:
@@ -1108,37 +1219,10 @@ def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
     martini_masses = read_martini_masses(martini_param_file)
     print(f"Read {len(martini_masses)} atom type masses from force field file")
 
-    lipid_bonds = [(bond['i'], bond['j']) for bond in lipid_topology['bonds']]
-    lipid_bond_lengths = [bond['r0'] for bond in lipid_topology['bonds']]
-    lipid_bond_force_constants = [bond['k'] for bond in lipid_topology['bonds']]
-
-    lipid_angles = [(angle['i'], angle['j'], angle['k']) for angle in lipid_topology['angles']]
-    lipid_angle_equil_deg = [angle['theta0'] for angle in lipid_topology['angles']]
-    lipid_angle_force_constants = [angle['force_k'] for angle in lipid_topology['angles']]
-    lipid_position_restraints = lipid_topology.get('position_restraints', [])
-
-    print(f"Read {lipid_molecule} connectivity: {len(lipid_bonds)} bonds, {len(lipid_angles)} angles")
-
-    if not lipid_bonds:
-        raise ValueError(f"No {lipid_name} bonds found in topology from '{lipid_param_file}'")
-
-    if not lipid_angles:
-        raise ValueError(f"No {lipid_name} angles found in topology from '{lipid_param_file}'")
-
     return {
         'martini_table': martini_table,
         'martini_masses': martini_masses,
-        'lipid_bead_types': lipid_bead_types,
-        'lipid_charges': lipid_charges,
-        'lipid_atom_to_type': lipid_atom_to_type,
-        'lipid_atom_to_charge': lipid_atom_to_charge,
-        'lipid_bonds': lipid_bonds,
-        'lipid_bond_lengths': lipid_bond_lengths,
-        'lipid_bond_force_constants': lipid_bond_force_constants,
-        'lipid_angles': lipid_angles,
-        'lipid_angle_equil_deg': lipid_angle_equil_deg,
-        'lipid_angle_force_constants': lipid_angle_force_constants,
-        'lipid_position_restraints': lipid_position_restraints,
+        'lipids': lipids,
         'na_bead_types': na_bead_types,
         'na_charges': na_charges,
         'cl_bead_types': cl_bead_types,
@@ -1150,15 +1234,13 @@ def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
 
 def _parse_runtime_pdb_atoms(input_pdb_file, topo):
     """Parse the runtime PDB, map each atom to its MARTINI bead type, read the box."""
-    lipid_atom_to_type = topo['lipid_atom_to_type']
-    lipid_atom_to_charge = topo['lipid_atom_to_charge']
+    lipids = topo['lipids']
     water_bead_types = topo['water_bead_types']
     water_charges = topo['water_charges']
     na_bead_types = topo['na_bead_types']
     na_charges = topo['na_charges']
     cl_bead_types = topo['cl_bead_types']
     cl_charges = topo['cl_charges']
-    lipid_bead_types = topo['lipid_bead_types']
 
     print("Reading PDB structure")
     initial_positions = []
@@ -1231,15 +1313,16 @@ def _parse_runtime_pdb_atoms(input_pdb_file, topo):
                 martini_type = bb_type_by_residue.get(res_key, "P5")
                 charge = float(BB_TYPE_CHARGE.get(martini_type, 0.0))
             elif lipid_resname(residue_name):
-                # Membrane molecule: use the topology parsed from the input ITP.
-                if atom_name in lipid_atom_to_type:
-                    martini_type = lipid_atom_to_type[atom_name]
-                    charge = lipid_atom_to_charge[atom_name]
+                # Membrane molecule: use the per-residue topology parsed from the input ITP.
+                lipid_rec = lipids[residue_name]
+                if atom_name in lipid_rec['atom_to_type']:
+                    martini_type = lipid_rec['atom_to_type'][atom_name]
+                    charge = lipid_rec['atom_to_charge'][atom_name]
                 else:
-                    available_atom_names = sorted(lipid_atom_to_type.keys())
+                    available_atom_names = sorted(lipid_rec['atom_to_type'].keys())
                     raise ValueError(
-                        f"Unknown {active_lipid_name()} atom '{atom_name}' in residue '{residue_name}'. "
-                        f"Available {active_lipid_name()} atom names: {available_atom_names}"
+                        f"Unknown {residue_name} atom '{atom_name}' in residue '{residue_name}'. "
+                        f"Available {residue_name} atom names: {available_atom_names}"
                     )
             elif residue_name == 'W':
                 if not water_bead_types:
@@ -1276,7 +1359,11 @@ def _parse_runtime_pdb_atoms(input_pdb_file, topo):
     n_atoms = len(initial_positions)
 
     n_lipid_atoms = int(np.sum([lipid_resname(r) for r in residue_names]))
-    n_lipid_mols = n_lipid_atoms // len(lipid_bead_types) if lipid_bead_types else 0
+    n_lipid_mols = 0
+    for name, rec in lipids.items():
+        beads = len(rec['bead_types'])
+        if beads:
+            n_lipid_mols += int(np.sum(residue_names == name)) // beads
     print(f"Full-resolution mode: keeping all {n_lipid_mols} {active_lipid_name()} molecules "
           f"({n_lipid_atoms} beads) as individual particles")
 
@@ -1398,7 +1485,7 @@ def _group_atoms_into_molecules(residue_ids, residue_names, atom_names, chain_id
         protein_chains = mol_counts.get('PROTEIN', 0)
         mol_counts['PROTEIN'] = f"{protein_chains} chain(s) ({protein_residue_count} residues)"
 
-    lipid_count = mol_counts.get(active_lipid_name(), 0)
+    lipid_count = sum(mol_counts.get(name, 0) for name in active_lipid_names())
     water_count = mol_counts.get('W', 0)
 
     print("\nMolecule summary")
@@ -1413,14 +1500,7 @@ def _build_bonded_terms(molecules, topo, initial_positions,
                         protein_bonds, protein_angles, protein_dihedrals,
                         protein_constraints, protein_position_restraints):
     """Build lipid and protein bonds/angles/dihedrals plus lipid position restraints."""
-    lipid_bead_types = topo['lipid_bead_types']
-    lipid_bonds = topo['lipid_bonds']
-    lipid_bond_lengths = topo['lipid_bond_lengths']
-    lipid_bond_force_constants = topo['lipid_bond_force_constants']
-    lipid_angles = topo['lipid_angles']
-    lipid_angle_equil_deg = topo['lipid_angle_equil_deg']
-    lipid_angle_force_constants = topo['lipid_angle_force_constants']
-    lipid_position_restraints = topo['lipid_position_restraints']
+    lipids = topo['lipids']
 
     print("\nCreating connectivity")
 
@@ -1438,8 +1518,18 @@ def _build_bonded_terms(molecules, topo, initial_positions,
     lipid_restraint_ref_pos = []
     lipid_restraint_spring_xyz = []
 
-    lipid_molecules = [mol for mol in molecules if mol[0] == active_lipid_name()]
-    for mol_idx, (_, atom_names_mol, atom_indices) in enumerate(lipid_molecules):
+    active_lipids = set(active_lipid_names())
+    lipid_molecules = [mol for mol in molecules if mol[0] in active_lipids]
+    for mol_idx, (mol_type, atom_names_mol, atom_indices) in enumerate(lipid_molecules):
+        lipid_rec = lipids[mol_type]
+        lipid_bead_types = lipid_rec['bead_types']
+        lipid_bonds = lipid_rec['bonds']
+        lipid_bond_lengths = lipid_rec['bond_lengths']
+        lipid_bond_force_constants = lipid_rec['bond_force_constants']
+        lipid_angles = lipid_rec['angles']
+        lipid_angle_equil_deg = lipid_rec['angle_equil_deg']
+        lipid_angle_force_constants = lipid_rec['angle_force_constants']
+        lipid_position_restraints = lipid_rec['position_restraints']
         name_to_idx = {name: idx for name, idx in zip(atom_names_mol, atom_indices)}
 
         for i, (bond_idx1, bond_idx2) in enumerate(lipid_bonds):
@@ -1915,9 +2005,12 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         barostat_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '0'))
         if barostat_enable:
             print("\nCreating NPT barostat configuration")
+            # Semi-isotropic Monte-Carlo barostat for the waterless (implicit-solvent) membrane:
+            # xy is coupled to zero lateral tension; z is frozen (mc_dmax_z=0) because there is no
+            # solvent to set the box normal. COM-based moves preserve the rigid protein.
             barostat_grp = t.create_group(input_grp, 'barostat')
-            barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
-            barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
+            barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.0'))
+            barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.0'))
             barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
             base_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
             barostat_grp._v_attrs.compressibility = base_compressibility
@@ -1925,18 +2018,17 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(base_compressibility))
             )
             barostat_grp._v_attrs.compressibility_z = float(
-                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_Z', str(base_compressibility))
+                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_Z', '0.0')
             )
             barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
             barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
-            barostat_grp._v_attrs.type = params['barostat_type']
-            print(f"  Enabled: {barostat_enable}")
-            print(f"  Type: {'Parrinello-Rahman' if barostat_grp._v_attrs.type == 1 else 'Berendsen'}")
-            print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy} E_up/Angstrom^3 (~1 bar)")
-            print(f"  Target Pz: {barostat_grp._v_attrs.target_p_z} E_up/Angstrom^3 (~1 bar)")
+            barostat_grp._v_attrs.mc_dmax_xy = float(os.environ.get('UPSIDE_NPT_MC_DMAX_XY', '0.01'))
+            barostat_grp._v_attrs.mc_dmax_z = float(os.environ.get('UPSIDE_NPT_MC_DMAX_Z', '0.0'))
+            barostat_grp._v_attrs.mc_seed = int(os.environ.get('UPSIDE_NPT_MC_SEED', '2026'))
+            print("\nSemi-isotropic Monte-Carlo barostat (xy coupled to zero tension, z frozen)")
+            print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy} E_up/Angstrom^3 (tensionless)")
             print(f"  Compressibility XY: {barostat_grp._v_attrs.compressibility_xy} Angstrom^3/E_up")
-            print(f"  Compressibility Z: {barostat_grp._v_attrs.compressibility_z} Angstrom^3/E_up")
-            print(f"  Tau_p: {barostat_grp._v_attrs.tau_p}")
+            print(f"  MC dmax xy/z: {barostat_grp._v_attrs.mc_dmax_xy} / {barostat_grp._v_attrs.mc_dmax_z}")
             print(f"  Interval: {barostat_grp._v_attrs.interval} steps")
         else:
             print("\nNPT barostat disabled (NVT mode)")
