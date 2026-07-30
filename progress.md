@@ -51,7 +51,23 @@ NPT; solvent-volume ions. Done so far:
   (equilibrated DDM t=52.1 A; used 48.8 for count -> ~3% high; use ~52 for exact 0.15), 0/136 ions
   outside DDM footprint, 0/136 in hydrophobic core, folded. Wrapped review PDB re-staged to ~/Downloads.
 
-TODO: P8 (after user OK on the wrapped review PDB) re-run 4 glpG variants on cluster.
+## P8 — 4 glpG-DDM REMD re-runs SUBMITTED (2026-07-30)
+
+Old 4 REMD runs (wrong-config packing) + repair job cancelled; 2.28 TB freed (/project 98%->39%).
+Prepared all 4 locally with the corrected prep (box 124, 0.15M solvent-volume ions, OPM orient,
+rigid-protein pre-prod, xy-only MC NPT). Uploaded only the production-ready stage_7.0.up seeds to
+/home/yinhanw/project/glpG_DDM_REMD/seeds/ (NO CHARMM-GUI/prep inputs on the cluster).
+
+Run split (user directive): run in ~/project, call the beagle3 Upside binary
+(/home/yinhanw/beagle3/yinhan/upside2-md, martini-dev @0d4a1c5; project/upside2-md-dev is now empty).
+Binary needs `module load hdf5/1.14.3` at runtime. Reconstructed the REMD launcher (deleted with the
+old dirs): run_remd.py + remd.sbatch + submit_remd.sh + env.sh in glpG_DDM_REMD/. 48 replicas, ladder
+linspace(sqrt0.70,sqrt0.90,48)^2, --exchange-criterion 0, --swap-set even/odd, --replica-interval 0.09,
+dt 0.009, thermostat 5.0, self-resubmit <=12 blocks, 35:45 wall, caslake 48 cpu. Validated: 4-replica
+run inits exchange + finite/folded + .up runs on beagle3 binary.
+
+Jobs (PENDING, caslake): 52832557 (79HIS), 52832591 (79HIS_S115T), 52832592 (79ALA), 52832593
+(79ALA_S115T). TODO: verify each block-1 health when it starts (48 replicas, calibration finite, no OOM).
 
 ---
 ## Prior — box-fix DDM REMD: extract VTF+ΔG, repair disk-full corruption (2026-07-30)
