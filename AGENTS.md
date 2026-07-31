@@ -30,6 +30,13 @@ The rules for **Backward Compatibility**, **Function Signatures**, and **Depreca
 
 **CRITICAL RULE FOR DIFFED FILES:** Keep the actively modified or newly added interface files impeccably clean. Do not build layers of disabled code, do not leave commented-out legacy blocks, and do not write wrapper functions for old implementations. You must completely remove old or unused code and write the new implementations directly.
 
+### Coherence of Edits
+**All edits must be coherent.** Every change to a C++, Python, or Markdown file must leave that file reading as a single, unified, logical whole — not layers of patches on patches, disabled toggles, commented-out legacy blocks, or wrappers around old implementations. When you fix or extend something, overwrite or delete the old implementation and write the new one directly, so the file reads as though authored in one pass. This applies equally to source (`.cpp`/`.h`), Python (`.py`), and documentation (`.md`).
+
+Two exceptions only:
+1. **Master parity takes precedence.** Do not refactor for coherence when doing so would change code that must remain identical to the `master` branch. Where a coherent rewrite would break master parity, keep master parity and leave that code alone.
+2. **Temporary debugging scaffolding.** Incoherent, throwaway edits (scaffolding, probes, temporary toggles) are allowed *while actively debugging*, but must be removed and the code returned to a coherent state before the task is considered complete.
+
 ### Environment Setup
 Crucial: You must run these commands from the project root before running anything in this project:
 ```bash
