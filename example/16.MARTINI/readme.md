@@ -82,13 +82,15 @@ The preparation is a standard membrane-protein insertion:
 8. **Produce (NVT)** at the equilibrated box (stage 7.0). The whole protein is one rigid body through
    the 7.0 minimization + burn-in, then relabeled `production` for flexible dynamics.
 
-Edit the inputs/settings at the top of `run.py`, then:
+`run.py` drives both stages. Edit the inputs/settings at its top and run:
 
 ```bash
 python run.py
 ```
 
-or call the workflow directly:
+With `continue_sim = False` it builds the seed (Stage 1) and submits the REMD job (Stage 2); re-run
+with `continue_sim = True` to extend production. To run **only** the Stage-1 preparation — e.g. to
+inspect the packed system before committing to production — call the workflow directly:
 
 ```bash
 python ../../py/martini_prepare_system.py run-hybrid-workflow \
@@ -114,48 +116,41 @@ Outputs land under `outputs/<run>/`: `hybrid_prep/` (packed PDB + mapping), `che
 ## 3. Stage 2 — Temperature-REMD production
 
 REMD samples the opening/closing events HDX depends on and gives MBAR the multi-temperature data it
-needs. One OpenMP `upside` process advances **all replicas together**, attempting temperature swaps
-between neighbours.
+needs. `run.py` copies the Stage-1 seed into `n_rep` replicas and submits one OpenMP `upside` process
+that advances **all replicas together**, attempting temperature swaps between neighbours. This follows
+the standard Upside REMD driver (see `example/04.HDX`).
 
 **Temperature ladder.** 48 replicas spanning 0.70–0.90 T_up (≈ 245–316 K; the physiological target
 0.8647 T_up = 303 K sits near the top). Spacing is uniform in √T so the exchange acceptance is roughly
-constant along the ladder:
+constant along the ladder — `run.py` builds it with `np.linspace(√T_low, √T_high, n_rep)**2` and the
+neighbour swap sets with `ru.swap_table2d`.
 
-```python
-import numpy as np
-N, T_lo, T_hi = 48, 0.70, 0.90
-ladder = np.linspace(np.sqrt(T_lo), np.sqrt(T_hi), N) ** 2     # the --temperature list
-SET_A  = ",".join("%d-%d" % (i, i+1) for i in range(0, N-1, 2))  # even pairs 0-1,2-3,...
-SET_B  = ",".join("%d-%d" % (i, i+1) for i in range(1, N-1, 2))  # odd  pairs 1-2,3-4,...
-```
+**Frame recording (keeps the disk bounded).** Output is written at `frame_interval = 100` upside time
+units (~2000 frames per replica over `duration = 200000`) — the Upside standard — and **momentum is
+not recorded**; restarts (`continue_sim = True`) reseed **position only** and re-thermalize velocities.
+Each replica therefore stays ~120 MB (all four variants ≈ 23 GB), instead of the multi-hundred-GB
+growth that an over-dense, momentum-recording, self-accumulating output would produce. Do **not**
+add `--record-momentum` or shrink `frame_interval` toward per-step recording.
 
-**Run.** Copy the Stage-1 seed to `<id>.run.{0..47}.up`, then advance a chunk with:
+The submitted command is, in effect:
 
 ```bash
-upside <id>.run.0.up ... <id>.run.47.up \
-  --temperature <ladder>              \  # the 48 comma-separated T values
-  --replica-interval 0.09 --exchange-criterion 0 \  # attempt T-swaps; 0 = temperature exchange
-  --swap-set <SET_A> --swap-set <SET_B> \           # alternate even/odd neighbour pairs
-  --time-step 0.009 --integrator v \
-  --thermostat-timescale 5.0 --thermostat-interval -1 --seed 1 \
-  --duration-steps <n> --frame-interval <dt> \
-  --disable-recentering --record-momentum --restart-using-momentum
+OMP_NUM_THREADS=<n_rep> upside <id>.run.0.up ... <id>.run.47.up \
+  --duration 200000 --frame-interval 100 --temperature <ladder> \
+  --time-step 0.009 --integrator v --thermostat-timescale 5.0 --thermostat-interval -1 \
+  --seed 1 --disable-recentering \
+  --replica-interval 10 --swap-set <even pairs> --swap-set <odd pairs>
 ```
 
-**Continuation.** A wall-guarded driver runs this in chunks and resubmits itself before the wall. Each
-chunk: reseed every replica's `/input` pos+momentum from its own last `/output` frame
-(`restart_valid`), rename `/output` → `output_previous_K` so per-replica history accumulates in one
-file, then run the next chunk. It calibrates ms/step from a short first chunk, sizes chunks to ~2 h,
-and stops at a `STOP` file or a max-block cap. Because replicas restart from momenta, temperature
-exchange and restarts are seamless.
+**Slurm (RCC midway3/beagle3).** `run.py` submits one node, `--cpus-per-task=n_rep`,
+`OMP_NUM_THREADS=n_rep`, `--partition=caslake --account=<acct>`, `--time=35:45:00` (under the 36 h QOS
+cap). Run from `/project` space and load `hdf5/1.14.3` at runtime (the binary needs `libhdf5.so.310`);
+see the Slurm setup in the repo `CLAUDE.md`. To extend a run, re-run `run.py` with `continue_sim = True`
+(it archives each replica's `/output` to `output_previous_N` and restarts from the last frame). Submit
+one job per protein variant.
 
-**Slurm (RCC midway3/beagle3).** One node, one task, `--cpus-per-task=48`, `OMP_NUM_THREADS=48`,
-`--partition=caslake --account=<acct>`, `--time=35:45:00` (under the 36 h QOS cap). Run from
-`/project` space and load `hdf5/1.14.3` at runtime (the binary needs `libhdf5.so.310`); see the Slurm
-setup in the repo `CLAUDE.md`. Submit one job per protein variant.
-
-The result is 48 per-replica `.up` files per variant, each with the accumulated
-`output_previous_*` history.
+The result is 48 per-replica `.up` files per variant, each with the accumulated `output_previous_*`
+history.
 
 ---
 
