@@ -595,21 +595,79 @@ A quantitative membrane-protein HDX result requires all of the following:
   blocking, and independent replicas or replica exchange;
   \item the coupled force field reproduces the relevant local helix-opening
   thermodynamics;
-  \item an open amide is also water-accessible. Because dry-MARTINI has no water,
-  accessibility must come from a calibrated local depth/water-activity model or
-  an explicit-water reference.
+  \item an open amide is also water-accessible. Because dry-MARTINI carries no
+  explicit water, this accessibility must be supplied separately---from a
+  calibrated local depth/water-activity model, an explicit-water reference, or,
+  as developed in Section~\ref{sec:hdx-access}, from the explicit lipid retained
+  in the coupled trajectory.
 \end{enumerate}
 The corrected 1RKL trajectory now supplies a mechanically credible folded source:
 the interface no longer creates a false opening population by deforming the helix
 before production. That repair is necessary for HDX, but it is not sufficient.
 The source is still one finite trajectory, timestep convergence of opening events
 is unresolved, the lipid ensemble has not reached a clean diffusive regime, and
-no calibrated membrane-water accessibility is available. Protection-state block
+the membrane-water accessibility term of Section~\ref{sec:hdx-access} is a
+first-order lipid-contact definition that has not been independently calibrated. Protection-state block
 convergence and effective sample size must be recomputed for the corrected source
 before interpreting any uptake. Current HDX outputs should therefore be used to
 verify workflow wiring and for clearly labelled qualitative sensitivity analyses,
 not as quantitative protection factors, residue opening free energies, or peptide
 uptake predictions.
+
+\subsection{A lipid-contact accessibility term and the GlpG transmembrane-helix test}
+\label{sec:hdx-access}
+
+Requirement (iv) of Section~\ref{sec:hdx} is not optional for a membrane protein.
+The maintained protection model scores a backbone amide as protected when it is
+intramolecularly hydrogen bonded or buried by other protein atoms; it carries no
+lipid term. A transmembrane amide facing the bilayer is shielded from water by
+lipid yet is not buried by protein, so in the protein-only projection it leaves
+the protected state whenever its backbone hydrogen bond momentarily breaks. The
+continuous protection expected of a non-exchanging transmembrane helix then
+fragments into an unphysical alternation along the helix, tracking the
+periodicity with which residues turn toward the lipid rather than the protein
+core.
+
+We recover the missing term from the coupled trajectory itself, which---unlike
+the projected protein-only view---retains the explicit lipid. Per frame, a
+backbone amide nitrogen is marked water-inaccessible when at least a threshold
+number of lipid hydrophobic-tail beads lie within a fixed cutoff of it; the
+resulting accessibility $a\in\{0,1\}$ gates the exchange-competent population, so
+Eq.~\ref{eq:hdx_proxy} becomes
+$k_\mathrm{obs}=k_\mathrm{chem}\,(1-p_\mathrm{protected})\,a$. This is the
+explicit-lipid analogue of the implicit-membrane protection term used for
+lipid-embedded proteins, in which a transmembrane-surface score marks lipid-facing
+amides as protected: the two treatments share both intent and underlying
+physics---local lipid excludes water---and differ only in how ``facing lipid'' is
+measured. The contact cutoff and count are physical, but they are a first-order
+definition that should be recalibrated against explicit-water MARTINI, all-atom
+simulation, or experiment, and re-examined for a dense bilayer rather than a
+detergent belt.
+
+We tested this on catalytically inactivated \emph{E.\ coli} GlpG (the S201T
+nucleophile mutant) solvated by a dodecyl-maltoside (DDM) belt. With the
+accessibility term the transmembrane helices recover the expected continuous
+protection, and one helix remains conspicuously mobile: transmembrane helix~4
+(TM4), which carries the catalytic serine Ser201 at its amino terminus. This is
+largely consistent with the known enzyme rather than an interface artefact. TM4
+is a short helix that does not span the bilayer; it begins deep within the
+membrane at Ser201 and is flanked by the conserved helix-breaking glycines
+Gly198, Gly199, and Gly202, making it intrinsically the least regular of the six
+transmembrane segments~\cite{Wang2006,BenShem2007}, and the active-site
+hydrogen-bond network it organises is energetically weak~\cite{Gaffney2019}.
+Greater mobility in detergent than in a bilayer is also expected, since rhomboids
+are measurably less stable and less active in detergent than in a lipid bilayer
+or nanodisc~\cite{Barniol2018,Sawczyc2024}. The canonical dynamic element of
+GlpG---the TM5/L5 gate that regulates lateral substrate access~\cite{Shi2019,%
+Bohg2023}---remained comparatively ordered in the coupled run, so the mobility
+localises to the intrinsically irregular catalytic helix rather than the
+functional gate. We therefore read the TM4 dynamics as predominantly
+physiological, with two reservations: the coupled fold is somewhat looser overall
+than an implicit-bilayer reference, and transient near-complete local unwinding
+sits at the upper end of what the architecture alone predicts. The discriminating
+test is environmental---propagating the identical protein in a bilayer rather
+than a detergent belt should order TM4 if the detergent is responsible, and leave
+it disordered if the coupled force field over-destabilises it.
 
 \subsection{Transmembrane helix tilt: a coupled-kinetics limit}
 \label{sec:tilt}
@@ -689,5 +747,51 @@ hydrodynamic friction is not established. The resolved interface is ready for
 controlled equilibrium and HDX sampling studies, but absolute membrane-coupled
 kinetics and quantitative HDX still require their independent convergence and
 water-accessibility validations.
+
+\begin{thebibliography}{9}
+
+\bibitem{Wang2006}
+Wang Y, Zhang Y, Ha Y.
+Crystal structure of a rhomboid family intramembrane protease.
+\emph{Nature} \textbf{444}, 179--180 (2006).
+
+\bibitem{BenShem2007}
+Ben-Shem A, Fass D, Bibi E.
+Structural basis for intramembrane proteolysis by rhomboid serine proteases.
+\emph{Proc.\ Natl.\ Acad.\ Sci.\ USA} \textbf{104}, 462--466 (2007).
+
+\bibitem{Gaffney2019}
+Gaffney KA, Hong H.
+The rhomboid protease GlpG has weak interaction energies in its active site
+hydrogen bond network.
+\emph{J.\ Gen.\ Physiol.} \textbf{151}, 282--291 (2019).
+
+\bibitem{Shi2019}
+Shi C, \"{O}ster C, Bohg C, Li L, Lange S, Chevelkov V, Lange A.
+Structure and dynamics of the rhomboid protease GlpG in liposomes studied by
+solid-state NMR.
+\emph{J.\ Am.\ Chem.\ Soc.} \textbf{141}, 17314--17321 (2019).
+
+\bibitem{Bohg2023}
+Bohg C, \"{O}ster C, Turkaydin B, Lisurek M, Sanchez-Carranza P, Lange S,
+Utesch T, Sun H, Lange A.
+The opening dynamics of the lateral gate regulates the activity of rhomboid
+proteases.
+\emph{Sci.\ Adv.} \textbf{9}, eadh3858 (2023).
+
+\bibitem{Barniol2018}
+Barniol-Xicota M, Verhelst SHL.
+Stable and functional rhomboid proteases in lipid nanodiscs by using
+diisobutylene/maleic acid copolymers.
+\emph{J.\ Am.\ Chem.\ Soc.} \textbf{140}, 14557--14561 (2018).
+
+\bibitem{Sawczyc2024}
+Sawczyc H, Tatsuta T, \"{O}ster C, Kosteletos S, Lange S, Bohg C, Langer T,
+Lange A.
+Lipid-polymer nanoparticles to probe the native-like environment of
+intramembrane rhomboid protease GlpG and its activity.
+\emph{Nat.\ Commun.} \textbf{15}, 7533 (2024).
+
+\end{thebibliography}
 
 \end{document}
