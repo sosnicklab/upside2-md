@@ -178,9 +178,21 @@ HYBRID_SOURCE_PATTERN='<id>.run.{replica}.up' \
 HDX_WORK_DIR=/path/to/hdx_analysis bash run_hdx_analysis.sh
 ```
 
-`results/*_PS_protein.npy` is the Upside protein protection state; `results/*_PS.npy` is identical
-unless calibrated water-accessibility arrays are supplied via `WATER_ACCESSIBILITY_DIR` /
-`WATER_ACCESSIBILITY_PATTERN`.
+`results/*_PS_protein.npy` is the stock Upside protein-only protection state (H-bonded **or** buried by
+other protein atoms). `results/*_PS.npy` is that folded with the **membrane-accessibility correction**
+(below) via `combine_hdx_protection.py --water-accessibility`. A calibrated external accessibility array
+can instead be supplied via `WATER_ACCESSIBILITY_DIR` / `WATER_ACCESSIBILITY_PATTERN`.
+
+**Membrane-accessibility correction (required for membrane proteins).** The protein-only protection has
+no lipid term, so a transmembrane amide facing the bilayer — shielded from water by lipid tails but not
+buried by protein — drops out of the protected state whenever its backbone H-bond momentarily breaks,
+fragmenting the continuous +∞ ΔG that a non-exchanging TM helix must show. `martini_hdx_membrane_accessibility.py`
+recovers the missing term from the **full hybrid trajectory** (which still has the lipid): per frame, an
+amide backbone N is marked water-**inaccessible** if ≥ `--min-contacts` lipid hydrophobic-tail beads lie
+within `--cutoff` (defaults 5 beads / 8 Å, calibrated for DDM). Those amides then read as protected, so
+lipid-facing TM residues rejoin the continuous +∞ while genuinely solvent-exposed loops stay exchangeable.
+The `--cutoff`/`--min-contacts` are physical (lipid locally excludes water) and should be re-checked for a
+denser bilayer or a different lipid.
 
 ---
 
@@ -208,10 +220,11 @@ center — otherwise molecules that crossed the periodic boundary appear scatter
 
 ## 6. Caveats
 
-- **Membrane accessibility.** dry-MARTINI has no explicit water, so a membrane-accessibility correction
-  (calibrated against explicit-water MARTINI, atomistic simulation, or experiment) must be applied
-  after the stock protection calculation — otherwise every amide inside the membrane reads as fully
-  protected.
+- **Membrane accessibility.** dry-MARTINI has no explicit water, and the stock protection is protein-only,
+  so without the correction in §4 a lipid-facing TM amide (water-shielded by lipid but not protein-buried)
+  reads as *exposed* whenever its H-bond flickers, breaking the +∞ continuity of non-exchanging TM helices.
+  The lipid-tail-contact correction fixes this; its `--cutoff`/`--min-contacts` are a first-order physical
+  definition and are best re-calibrated against explicit-water MARTINI, atomistics, or experiment.
 - **Timescale.** HDX uses equilibrium open probabilities, not simulated time, as the labeling clock;
   the dry-MARTINI lipid-diffusion / protein-timescale mismatch does not multiply the uptake time but
   can still block convergence.
