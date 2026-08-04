@@ -1,50 +1,53 @@
-# CURRENT PHASE (2026-07-28): audit glpG 79HIS REMD HDX ΔG-by-residue
+# CURRENT PHASE (2026-08-04): NP-1AO6 rebuild with corrected ions, then diagnose the blow-up
 
 ## Project Goal
 
-Explain why residues 30--50 appear only as a small feature in
-`~/Downloads/glpG-RKRK-79HIS_DDM_REMD_HDX_dG_vs_residue.png` despite the stable helix shown by
-`glpG-RKRK-79HIS_DDM_REMD_T0.70.vtf` and `secondary_structure_analysis.png`, and correct the
-calculation or plot if it is wrong.
+Rebuild the six 1AO6 + 5 nm MPA-AuNP faces with the corrected ion/box prep, verify them through
+pre-production locally, emit a PDB of the final configuration for review, then run a production-length
+local segment to find out whether the backbone still tears at dt=0.005.
 
 ## Architecture & Key Decisions
 
-- Audit the existing calculation before changing code: trace plot pixels to numeric arrays, scripts,
-  source trajectories, temperature/replica assignment, residue numbering, and ΔG definition.
-- Compare HDX protection inputs directly against secondary-structure occupancy for residues 30--50.
-  Helicity and HDX stability are related but not interchangeable; solvent exposure/contact terms and
-  sign/reference conventions must be checked explicitly.
-- Reproduce the relevant calculation on midway3 using the exact run artifacts. Do not modify or disable
-  SC-env, BB-env, or any other physical interaction.
-- Git remains read-only. Any correction stays unstaged and uncommitted.
+- Ion prep corrected 2026-08-03 (see `findings.md`): fixed 284 A box for all six faces (was 232--284,
+  orientation-dependent) and counterions spent FROM the salt budget as the reference does (was added on
+  top). Result per face: 2053 pairs, K+ 2053 / Cl- 1835, 3888 ions, excess +218 cancels MPA+protein.
+- `build_system` now asserts achieved ionic strength and exact neutrality from the PLACED ion counts and
+  rejects a box too small for the orientation. All three guards negative-tested. This is the check that
+  was missing while the ion count was silently re-derived on every rebuild.
+- The ion fix is independent of the blow-up. Free salt lands at 0.134 M (I=0.142 M) under the reference
+  convention because 218 counterions are a bigger slice of 284^3 than of the reference's 400^3; the
+  one-line alternative (counterions on top) gives 4324 ions / I=0.158 M.
+- Pre-production = 4-stage soft-core LJ ramp (0.20 -> 0, minimize + 1000 steps MD each) then a 2000-step
+  stability MD. Production is dt=0.005, `--integrator v`, thermostat interval -1 (effectively NVE).
+- Do not modify or disable SC-env / BB-env or any other physical interaction. Git stays read-only;
+  `py/` stays byte-identical (all changes live in `scratchpad/NP-footprinting/`, gitignored).
 
 ## Execution Phases
 
-- [x] Identify local plot/trajectory provenance and the script/data used to generate the figure.
-- [x] Audit residue indexing, ΔG definition/sign, NaN filtering, MBAR/temperature weights, and plotting.
-- [x] Establish/reuse the midway3 ControlMaster session and locate the exact 79HIS REMD artifacts.
-- [x] Recompute residue-level intermediates and compare residues 30--50 with structure/H-bond exposure.
-- [x] Generate and visually verify a corrected, censored diagnostic plot from the exact downloaded VTF.
-- [x] Document the evidence, tests, and remaining scientific interpretation limits.
+- [x] Correct the ion/box prep and add build-time assertions (`np_hybrid.py`, `build_all.py`).
+- [ ] Rebuild all six faces + pre-production locally (`build_all.py`).
+- [ ] Emit a PDB of the final post-equilibration configuration for user review.
+- [ ] Run a production-length local segment past t~105 to test for backbone tearing.
+- [ ] Decide the integrator/dt change based on what that segment shows.
 
 ## Known Errors / Blockers
 
-- The downloaded PNG has no embedded run/data provenance. Cluster timestamps and logs identify it with the
-  first, NaN-contaminated REMD/HDX generation, but the exact deleted numeric array cannot be hashed back to it.
-- The corrected-box REMD job `52690836` is still running. A new production five-temperature profile must be
-  generated only after that ensemble is complete and finite-frame/convergence gates pass.
+- The cluster still holds the OLD systems (orientation-dependent boxes, counterions on top). No re-run
+  until the corrected builds are uploaded.
+- All six previous production faces are destroyed; run.1 was finite but physically torn (Rg 26.5->76.7 A,
+  peptide C-N to 56 A). Judge health by Rg / peptide C-N / sign of the potential, never by isfinite.
+- Root cause of the tearing is unresolved. dt 0.009 -> 0.005 plus a soft-core ramp only slowed it.
 
-## Review
+---
 
-- The July 23 profile is invalid for quantitative interpretation: the source REMD continuation started with
-  NaN energies in all 48 slots, the HDX extractor had no finite-frame filter, and the attempted MBAR fit did
-  not converge.
-- The plot also uses zero-based donor IDs as residue labels and renders saturated protection as off-scale
-  `+inf`/1000-kcal spikes joined to finite points.
-- Exact re-scoring of all 478 downloaded T=0.70 VTF frames with the stock HDX criterion gives no observed
-  openings for 16 of residues 30--50. The helix is therefore strongly protected in the trajectory; the old
-  figure is the inconsistent artifact.
-- No simulation physics or force-field settings were changed.
+# ARCHIVED (2026-07-28): glpG 79HIS REMD HDX dG-by-residue audit — COMPLETE
+
+The July 23 profile was invalid: the source REMD continuation began with NaN energies in all 48 slots,
+the HDX extractor had no finite-frame filter, and the MBAR fit did not converge. The plot also used
+zero-based donor IDs as residue labels and rendered saturated protection as off-scale +inf spikes joined
+to finite points. Exact re-scoring of all 478 T=0.70 VTF frames gives no observed openings for 16 of
+residues 30--50, so the helix is strongly protected and the old figure was the artifact. No physics or
+force-field settings were changed.
 
 ---
 

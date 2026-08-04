@@ -1,5 +1,60 @@
 # Findings
 
+## NP-1AO6 ion build: box was oversized, now counterions only (2026-08-04)
+
+- FINAL: **neutralizing counterions only, no bulk salt** (user decision 2026-08-04). 218 K+, 0 Cl-,
+  cancelling MPA (-203) + protein (-15). System is 4198 particles (was 7868). `salt_molar`,
+  `estimate_salt_pairs`, and the free-salt assertion are removed from the NP path entirely.
+- Salt molarity was never the defect. Every build measured 0.148--0.150 M, matching both references.
+  The defect was **box volume**: `box_len` was derived from the rotated protein's reach *about the gold
+  COM*, and because the frozen NP was pinned at the box centre while the protein adsorbs to one side,
+  that doubles the protein's lever arm. Boxes came out 232--284 A for a complex only 122--148 A across.
+  Correct ion density x inflated volume = too many ions. Now: **complex-centred, fixed 200 A** for all
+  six faces (tightest is 180-0-0 at 198.1 needed). `write_up` had to change too -- it previously pinned
+  the gold at the origin and wrapped to +/-box/2, which would wrap-split the protein in a 200 A box.
+- The two references disagree on counterion bookkeeping, which matters at small box size:
+  `hernandez.onedrive/scripts/lib.py:482` (the paper, LAMMPS) spends counterions **from** the salt
+  budget (`N_ion_pairs -= 1` each); CHARMM-GUI dry-MARTINI (`step4.3_ion.out:604`,
+  `calc npos = @npos + int(@conc*6.021e-4*@volumn)`) adds them **on top**. In a 400^3 box the choice is
+  invisible (0.144 vs 0.150 M); in a 200^3 box it is 0.104 vs 0.150 M. Moot now that salt is dropped,
+  but record it before reintroducing salt.
+- The paper's own simulation is **wet and fully salted**: `0-0-0/input.data` has 519,306 W beads, 5781
+  K+, 5548 Cl- (net charge -233; note its MARTINI 1AO6 carries -30, not the -15 our residue-based
+  `infer_protein_charge_from_residues` returns). Ions are 2.1% of its particles vs ~49% of ours at the
+  same molarity -- that ratio, not the molarity, is what made the ported system look wrong.
+- Why it survived repeated rebuilds: nothing asserted the *built* composition, so every rebuild
+  re-derived the count correctly from an unexamined premise and no check ever fired. `build_system` now
+  asserts exact charge neutrality and zero salt pairs from the placed ion counts, and rejects a box too
+  small for the complex. All guards negative-tested.
+
+## NP-1AO6 dt=0.005 re-run blew up on all 6 faces (2026-08-03)
+
+- The dt 0.009 → 0.005 reduction plus the graded soft-core ramp did **not** fix the backbone tearing. All
+  six orientations are unusable; the failure is the same surface-driven one, only slower.
+- `isfinite` is not a health check. `np.run.1.up` is finite for all 52,511 frames yet is physically
+  destroyed: protein Rg drifts 26.5 → 76.7 A, max peptide C--N bond reaches 56 A with ~300 bonds over
+  2 A, and the potential goes from -12,000 to +10^5. Screen on Rg, peptide C--N, and the sign of the
+  potential instead.
+- Output-group order in a restarted `.up` is **ascending**, not descending. `run_np_prod.py` renames
+  `output` into the lowest free `output_previous_N`, so `output_previous_0` is oldest and `output` is
+  newest. `prod/onset.py` scans `previous_1..17` and therefore skips `output_previous_0`.
+- Every face had already died inside block 1 (job 52852032, which exited COMPLETED). Job 52881141 then
+  ran 25 h on destroyed systems. The adaptive chunk size collapsing from 394.9 to 76.0 time units is the
+  cheap tell -- blown-up coordinates wreck the neighbour lists and steps/second craters. Gate the
+  self-resubmit on a physical health check so a dead run stops instead of chaining.
+- NOT an unthermostatted-NVE drift. `main.cpp:795` computes
+  `thermostat_interval = max(1., round(arg / (inner_step*dt)))`, so `--thermostat-interval -1` clamps to
+  **1 -- the thermostat fires every step**. Production and pre-production use identical thermostat
+  settings, and the stability run reports `avg_kinetic_energy/1.5kT = 0.970`. The energy injection is
+  therefore not escaping for lack of a thermostat.
+- Pre-production passes only because it is far too short. `run_stability` does 2000 steps (t=10) while
+  the tearing starts at t~79--105, i.e. 15,800--21,000 steps. Any local gate has to run past t~150 to
+  have a chance of reproducing the failure.
+- **Pick the face by its historical onset, not arbitrarily.** Cumulative time to first tearing differs
+  by 16x across the six: 90-0-0 t~115, 0-270-0 t~269, 270-0-0 t~948, 0-90-0 t~1059, 180-0-0 t~1134,
+  0-0-0 t~1873. A t=400 run on 0-0-0 passing proves almost nothing (it needed ~1873); the same run on
+  **90-0-0** is 3.5x past its onset and is the cheap decisive test. Cost this mistake once already.
+
 ## glpG 79HIS REMD HDX figure audit (2026-07-28)
 
 - The downloaded July 23 ΔG plot belongs to the first REMD/HDX generation. Its block-2 continuation
