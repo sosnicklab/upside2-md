@@ -2004,3 +2004,307 @@ deletes and regenerates one of the mapped atoms. Audit which force shares surviv
 through every pre-production minimization and MD segment, and release it only at the explicit production handoff.
 Once that construct passes a full run, rewrite the primary documentation around the final design and remove the
 superseded debugging narrative rather than accumulating successive correction notes.
+
+## Update 76 (2026-08-04): glpG-79HIS TM4 unfolding is a DDM-slab hydrophobic-mismatch artifact
+
+The hybrid glpG-RKRK-79HIS DDM runs lose TM4 while the implicit-membrane runs keep it. The implicit result is
+the correct one, and the hybrid failure is a preparation defect, not protein-force-field behaviour.
+
+Construct mapping (verified against UniProt P09391 and the experimental HDX file, whose protein field reads
+`GLPG_S201T_TM`): construct index + 66 = E. coli GlpG numbering. The base construct is already the catalytically
+dead S201T (construct 135). `79HIS`/`79ALA` is WT H145 vs H145A; `S115T` is S181T. Helices from the input PDB:
+TM1 25-47, L1 48-76, TM2 81-100, TM3 104-126, **TM4 134-153 (WT 200-219)**, TM5 160-176, TM6 184-208.
+
+Measured on `glpG-RKRK-79HIS_local_T0.8647_prod.vtf` (401 frames, 210 residues, 425 DDM, 100.8 A box):
+TM4 is the only helix that fails -- O(i)..N(i+4) helicity 0.90 in the first decile to 0.17 in the last, internal
+RMSD 4.45 A, against 0.84-0.96 helicity and 1.6-2.5 A for TM1/TM2/TM3/TM5/TM6. TM4 is also the most buried
+helix (22.6 other-helix CA within 12 A; 6-16 for the rest), consistent with the literature statement that five
+helices surround a short TM4 that begins deep in the membrane at S201.
+
+The failure runs through the TM4:TM6 interface -- the GxxxGxxxA/GxxxAxxG heterotypic packing whose disruption
+(G261V) costs 28.1 C of Tm. CA-CA<10 A contacts fall 127 -> 50-60 by frame 60, with 0 -> 19-25 DDM beads having
+three or more TM helices within 8 A. Detergent intercalation precedes the helix loss (interface eroded by frame
+60, helicity collapse at ~frame 270).
+
+Root cause: a DDM *lamellar* slab cannot solvate GlpG. The CHARMM-GUI template (`charmm-gui-8543403667`,
+500 DDM in 100x100 A, 40 A^2/DDM) has a C1-C3 tail core of only 11 A; in the run it is 12.7-13.9 A against a
+28-30 A protein TM belt, and 50% of TM backbone CA have a polar maltose bead as their nearest detergent bead.
+Every residue that unwinds sits at or beyond the edge of that 14 A core (TM4 WT 208-219 at z = -5 to -21 versus
+a core of -4.6..+9.3; also construct 50-57, 96-98, 176, 185); no residue inside the core unwinds. This is not
+tunable: lamellar thickness = 2*V_tail/APL, and V(C12) ~ 324 A^3 means a 28 A core needs APL ~ 23 A^2, which a
+maltose head (>= 40 A^2) cannot reach. DDM forms micelles for exactly this reason. Note also that
+`--membrane-thickness-angstrom` does not set slab geometry -- it is only read for ion counting
+(`py/martini_prepare_system.py:477-480`), so the 48.8/52 A values passed had no geometric effect.
+
+Second, smaller defect in the diagnostic run: production began before the insertion void healed. Whole-DDM
+deletion at the 5.276 A CG-envelope clearance emptied the first solvation shell -- 14 DDM beads in the 3-6 A
+shell at frame 0 versus 213 at the end, mean nearest-DDM over TM CA 11.7 A -> 5.6 A -- and with min 500 /
+eq 500x6 / burn-in 0 that shell refilled during the analysed segment, partly through the protein interior.
+
+Contrast with the earlier `glpG-RKRK-79HIS_DDM_REMD_T0.70` system, which is a *micelle*: 235 DDM in a 186.8 A
+box, xy r95 = 45 A against box/2 = 93 A, tail core 31.5 A matched to the 28 A belt. There TM4 only degrades
+0.85 -> 0.69. Not a controlled comparison (T = 0.70 versus 0.8647), but the direction is unambiguous.
+
+Experiment settles which result is right. In `glpG-RKRK-79HIS_rawuptake_HXMS.csv` (pD 9) the TM4 peptide 140-144
+(ALMGY = WT 206-210) is 4.6% deuterated at 12 min, 17% at 1 h, 50% at 24 h, 97% at 20 d, i.e. dG_op ~ 10-11
+kcal/mol -- matching the ~10-13 kcal/mol the implicit-membrane run reports there. TM3 109-118 shows essentially
+no exchange even after 20 days, which is why it goes off-scale implicitly. A trajectory that unwinds TM4 within
+a sub-microsecond segment is inconsistent with both. The hybrid REMD dG profile is globally 0-7 kcal/mol against
+10-15+ experimentally, so every hybrid glpG HDX number inherits this defect.
+
+Lesson: before trusting any hybrid membrane-protein run, gate the preparation on two geometric measurements
+rather than on the requested parameters -- (1) the environment's tail-bead hydrophobic thickness measured *at the
+protein* against the protein's own TM belt span, and (2) first-shell occupancy (nearest environment bead per TM
+CA ~ 4.5-5.5 A) at the start of the analysed segment. A detergent whose packing parameter favours micelles must
+be built as a micelle; asking CHARMM-GUI's Bilayer Builder for it yields a slab that is mostly headgroup.
+
+## Update 77 (2026-08-04): DDM rebuilt as a micelle -- what the construction actually requires
+
+Implementation of the findings-76 fix. `derive_environment_morphology` counts acyl chains as connected
+components of the apolar (`C1`-`C5`) bond subgraph in the lipid ITP: one tail -> micelle, two or more ->
+bilayer. DDM -> micelle, DOPC/POPC/POPG -> bilayer, detergent+lipid mixtures rejected. Deriving it from
+topology rather than a name table or a CLI flag makes the unphysical combination unreachable, and matches the
+module's existing rule that no lipid identity is hardcoded. Note `parse_lipid_from_itp` already returns
+**0-based** bead indices; subtracting 1 again silently split DDM's single tail into two and reported it as a
+bilayer.
+
+`build_detergent_micelle` wraps a monolayer on the belt (tails in, heads out), belt span from the OPM
+reference's own thickness REMARK. Three construction facts, each found by measurement:
+
+* **Seed from the shell VOLUME, not a surface.** Seeding from convex-hull support points gave 32 molecules
+  (653 A^2 per molecule against a 40 A^2 template) with 25 bald belt beads -- the hull has few vertices, so
+  one monomer per vertex is a sparse shell. Filling the shell volume gives 186.
+* **Fill innermost outward.** Random-order tail-tip seeding let molecules seeded far out block the contact
+  layer: tails smeared over 63 A and coverage got *worse* despite 304 molecules. Sorting seeds by distance
+  to the belt packs tails against the protein and pushes heads outward -- the actual PDC organization.
+* **The template is not a density reference.** The CHARMM-GUI step5 assembly is PRE-minimization and contains
+  bead pairs 0.24 A apart. Measuring an intermolecular contact distance from it produced a 0.237 A packing
+  threshold, which accepted 861 mutually overlapping molecules. The force field's own contact distance
+  (2^(1/6) sigma_max = 5.276 A for DDM) is the correct spacing, and the 6.0-6.6 ladder condenses from there.
+
+Exposure must be defined the same way the coverage is enforced, or the gate is unsatisfiable. "A free cell
+within contact range" wrongly marked *buried* beads exposed (the 79 flagged beads had burial 68-105 protein
+neighbours within 12 A against a median of 67, i.e. core beads like TM4's). The correct test is that some
+free outside cell at contact range has THAT bead as its own nearest protein bead -- anything shielded never
+wins the nearest lookup. That cut 317 belt beads to 106 genuinely exposed, of which 105 are tail-covered.
+
+**A packed-state thickness span cannot be gated on.** The first gate compared the environment's 5-95
+percentile tail-bead z span with OPM's hydrophobic thickness. It fails DOPC (20.4 A), POPE/POPG (20.6 A) and
+DDM (11.0 A) alike against a 22.9 A limit, because CHARMM-GUI templates are laterally compressed and a
+clipped percentile is not the same quantity as a relaxed hydrophobic thickness. Gating on it would have
+broken the validated lamellar path. What ships instead is `assert_environment_solvation` at the production
+handoff, on equilibrated coordinates and per belt residue: hard-fail on vacuum (any belt site with no
+environment bead within 2x the contact distance), and REPORT acyl-tail reach plus the local tail-core
+thickness. The report is deliberately not a gate, because on a post-damage snapshot both recover -- detergent
+floods the cavity a stripped helix leaves -- so they diagnose rather than decide. The contrast is still
+unambiguous: micelle seed 45.1 A local tail core, 0 sites beyond tail reach; old lamellar replica 13.9 A,
+2 sites; belt 28.2 A.
+
+Validated 79HIS micelle: 186 DDM, aggregate r95 43 A in a 137 A cube (compact, not spread), tail-z span 45 A
+over the 28.2 A belt, first-shell distance tightening 7.04 -> 5.76 A, all six TM helices 0.97-1.00 helicity
+including TM4, box fixed throughout (barostat off, as a finite aggregate requires).
+
+Lesson: when a build-time gate and the thing it guards are measured differently, the gate is worthless --
+either measure both on the same state (equilibrated, local, per residue) or demote it to a report. And check
+a new geometric criterion against the paths it must NOT break before shipping it, not only against the case
+that motivated it.
+
+The DOPC bilayer regression confirms the lamellar path survived the refactor: morphology resolves to
+`bilayer`, the xy-only tensionless barostat is still live (box 200.2 -> 213.3 A laterally with z pinned at
+123.697), tile/carve insertion runs, ions come out at 287 pairs -> 287 Na / 293 Cl neutralising the +6
+protein, and the solvation gate passes with 0 bare sites, 0 beyond acyl-tail reach and a 23.0 A local tail
+core against the 28.2 A belt -- correctly NOT warned, since that is ordinary lipid/protein adaptation rather
+than mismatch. Ion parity was also asserted numerically: for the recorded slab inputs the refactored
+excluded-volume form returns the same 65 pairs as the old `A_xy*(L_z - t) - V_protein` expression.
+
+## Update 78 (2026-08-05): NP-1AO6 job 53032366 -- the tear is NOT a gold-core collision
+
+Job 53032366 ended its own chain after its health check found `np.run.1` at peptide C-N 5.29 A (limit 2.5).
+Diagnosed from the trajectory; the mechanism is different from the documented one.
+
+* **Single-step onset.** For 2559 of 2974 frames every face was thermal (max C-N 1.67-1.88 A, zero bonds
+  over 2.5 A). Between frame 2559 and 2560 -- one recorded frame, ~38 steps -- face 1 jumped to 14.29 A at
+  res550. Not gradual stretching: res551's N moved 10.21 A in that interval while the median atom moved
+  0.35 A (99th percentile 1.07 A), a ~30x outlier confined to res550-551 backbone plus the res550 `BB`
+  virtual site.
+* **Not an environment collision.** With the protein mask applied, res550/551 sit **~40 A from the nearest
+  GOLD bead** and 36-38 A from MPA at onset; nearest ION 5.2-5.7 A; nearest non-local protein atom 2.4-2.8 A
+  before and 3.5 A after. Nothing was in contact.
+* **Gold contact elsewhere was stable all run.** Minimum protein-GOLD distance stayed 3.0-4.3 A from frame
+  400 to the end (residues 76-92 and 467-494 in persistent contact) with zero bond breakage. So the earlier
+  hypothesis -- backbone tears when a segment creeps into the gold LJ core -- does NOT explain this run.
+* **Propagation.** By the last frame 22 bonds exceed 2.5 A, scattered in 1-3 residue fragments over
+  res 526-575 (HSA domain III). CA(i)-CA(i+1) there averages 5.96 A against 4.00 A elsewhere and 3.8 A
+  native, so the local backbone geometry is genuinely distorted, not just the C-N term. Rg stays
+  27.6 -> 31.1 A and the other five faces ended at 1.73-1.83 A.
+
+This is a different failure from the Aug-2 dt=0.009 blow-up, which was global (~350 bonds at 12-17 A, C-N
+minima collapsed to 0.2-0.6 A, reaching NaN). Here one localized impulse appears in an otherwise healthy
+system with no proximate partner, which points at the bonded/interface force path rather than a steric
+event -- the `BB` virtual site moving with the break is the reason to look there first, since env force is
+evaluated at that site and redistributed to N/CA/C. Unconfirmed from trajectory data alone; the next step is
+to instrument per-term forces on res549-552 around the onset, not to lower dt again.
+
+Two analysis traps hit while doing this, both worth remembering. Selecting `residue_ids == r` without the
+`particle_class == "PROTEIN"` mask picks up GOLD/MPA/ION beads that share residue numbering, which reported a
+protein-gold distance of exactly 0.00 A (a gold bead measured against itself). And taking "distance to gold"
+at the *argmax-C-N* residue per frame is meaningless while the argmax wanders -- it gave 36-61 A for the
+wrong reason. Pin the residue first, then track it.
+
+Separately: all six faces carry **218 K+ and zero Cl-**, which matches the CURRENT builder -- `np_hybrid.py`
+asserts counterions-only and 203 MPA(-1) + protein(-15) = -218 exactly. The `plan.md` note of "2053 pairs,
+K+ 2053 / Cl- 1835, 3888 ions" describes a SUPERSEDED convention. The running systems are therefore not a
+stale build, but the two conventions differ physically: counterions-only means no bulk ionic strength at all,
+whereas the earlier intent was 0.15 M. Which is wanted is a modelling decision for the user, not a bug.
+
+## Update 79 (2026-08-05): glpG micelle REMD -- one runaway replica takes the whole ladder down
+
+The four micelle REMD jobs started 2026-08-05T00:43. After ~11.5 h, **two of four are dead** and two are
+healthy:
+
+| variant | state | first NaN |
+|---|---|---|
+| glpG-RKRK-79HIS | NaN, all 48 replicas | step 12190 |
+| glpG-RKRK-79HIS_S115T | NaN, all 48 replicas | step 6624 |
+| glpG-RKRK-79ALA | healthy at step 9338 | -- |
+| glpG-RKRK-79ALA_S115T | healthy at step 10755 | -- |
+
+**The mechanism is single-replica runaway plus REMD propagation, not a systematic instability.** At step
+12144 in 79HIS, 47 of 48 replicas were perfectly healthy (hbonds 178-212, Rg 19.2-19.9, protein_potential
+-2168 to -2549, total -8447 to -9440). At the same step `system 16` had **Rg 935,837 A and
+protein_potential 9.6e15**, and `system 17` was already positive at +7581. One replica diverged; the next
+exchange sweep carried a non-finite energy into the Metropolis test and poisoned all 48 within one step.
+Temperature is not the trigger: systems 16/17 sit at T=0.77, mid-ladder, not at the 0.90 top.
+
+Transient positive `protein_potential` excursions are common and normally recover -- the two surviving runs
+peaked at +36,450 (79ALA, step 13064) and +41,012 (79ALA_S115T, step 720) with hbonds 195-202 and Rg
+18.5-20.0 throughout, i.e. structurally fine. So the rare event is not the spike itself but a spike that
+fails to recover. With 48 replicas x 4 variants x many chunks the chance of at least one runaway is high,
+which is why half the batch died while the other half looks pristine.
+
+Two separable defects, and the second is the one that turned a 1-replica problem into a 48-replica loss:
+
+1. **Numerics:** a rare non-recovering force spike at dt=0.009. Cause not yet localized. The 400-step
+   single-replica smoke test on the seed could never have caught this -- it needs ~10^4 steps across 48
+   replicas, so seed smoke tests bound loading and setup, NOT stability.
+2. **`run_remd.py` has no finiteness guard.** It exchanges on whatever energy it reads, so one NaN replica
+   destroys the ladder, and because the driver reseeds `/input` from the last output frame the corrupted
+   state is then written back and the chain self-resubmits onto it. This is the same "isfinite is not a
+   health check" lesson already learned on the NP track (`health()` there checks peptide C-N), except the
+   REMD driver never got the equivalent. It should test every replica for finiteness (and a sane Rg /
+   sign-of-potential) before each exchange sweep, and drop or halt a bad replica rather than swap with it.
+
+Both NaN jobs were stopped (STOP file then scancel 53036661, 53036664) so they could not keep resubmitting
+onto corrupted state; 53036667 and 53036669 were left running, since their data is clean -- but they carry
+the same exposure until the guard exists.
+
+## Update 80 (2026-08-05): the spline table was NOT dry-MARTINI -- bare cutoff instead of reaction field
+
+Hunting the glpG runaway (findings 79) by elimination. Everything below was checked against the prepared
+79HIS micelle seed and the engine source, and is CLEAN:
+
+* **Table indexing** -- `coefficient_indices` span 0-21 over a 22-row table, all rows used, none out of range.
+* **Intra-protein exclusion** -- `skip_pair_if_intra_protein` does fire. It has to: the pair list contains
+  550,725 PROTEIN-PROTEIN entries including 390 below 1 A, because the `BB` virtual site is coincident with
+  the backbone atoms it is built from (closest 0.704 A, a backbone C against its own BB proxy).
+* **Contact distances at production start** -- every CROSS-class minimum is healthy: ION-ION 5.64,
+  ION-LIPID 4.12, ION-PROTEIN 5.01, LIPID-LIPID 4.11, LIPID-PROTEIN 3.26 A, and zero pairs below 3 A. The
+  physically active protein-env set is BB-vs-env only (protein-env pairs are skipped unless the protein
+  side is a derived BB proxy), and its minimum is 4.35 A with 3 pairs under 4.5 A.
+* **Masses** -- env 6.0 m_up (72 Da, a MARTINI bead) and protein 1.0 m_up (12 Da, one heavy atom). Correct.
+* **Pair list** -- a textbook Verlet scheme: built to `cutoff + cache_buffer` = 14 A, rebuilt when any atom
+  moves more than `0.5*cache_buffer` = 1.0 A. Two atoms closing 2 A between rebuilds cannot cross the
+  12 A cutoff undetected, so no tunnelling.
+* **Spline evaluation** -- `LayeredClampedSpline1D::evaluate_value_and_deriv` clamps both ends (`x>=nx-1`
+  and `x<=0` return the clamped value with zero derivative) and `x_bin` indexes `nx-1` segments safely.
+  No out-of-bounds read.
+* **Spline ringing** -- despite the grid spanning 12 orders of magnitude at 0.012 A spacing, only 3 of 81
+  rows show a wrong-sign derivative inside the repulsive core and only at ~1e-2 dE/dx; overshoot at the
+  minimum is 2.6e-5 E_up. Not a force-sign error.
+* **Thermostat** -- and a documentation correction: `--thermostat-interval -1` does NOT mean NVE.
+  `max(1., round(-1/(inner_step*dt)))` evaluates to **1**, so the thermostat fires EVERY step. The note in
+  `progress.md` describing it as "effectively NVE" was wrong.
+
+**The one real defect: the spline table was not the dry-MARTINI potential.** It stored bare LJ plus bare
+`1/r` Coulomb, hard-truncated at 1.2 nm. Published dry Martini is run with `coulombtype = reaction-field`,
+`epsilon_r = 15`, `epsilon_rf = 0` (infinite -> conducting) and `vdw-modifier = Potential-shift`, so both
+terms reach the cutoff smoothly. The stored table therefore had a step at r_c of `k*qq/r_c` = **2.65 E_up
+for a charged pair, about 3.4 kT** -- verified analytically (LJ -0.057 + Coulomb -2.648 = -2.705, matching
+the stored -2.7049 exactly). This is the correction flagged as outstanding back in findings 75.
+
+Fixed in `py/martini_build_tables.py`, in BOTH nonbonded builders (the particle-particle grids and the
+SC-env/BB-env `_pair_energy_and_grads`, which had the same bare form including its analytic gradient).
+`scratchpad/verify_table_matches_drymartini.py` now asserts equivalence by rebuilding the reference in
+native kJ/mol + nm and converting:
+
+| table | max deviation from the reference form | rows non-zero at the cutoff |
+|---|---|---|
+| old (`martini.h5.bak.pre-reactionfield`) | **3.95 E_up** | 81 / 81 |
+| regenerated | 2.2e-11 E_up (round-off) | **0 / 81** |
+
+Note the neutral pairs change by a constant only (forces bit-identical); charged pairs change by 3.1-3.9
+E_up across the sampled range, because the reaction field is a genuine r-dependent term. So this alters
+results for anything with charges -- ions, PC/PG headgroups, charged residues. DDM itself is neutral.
+
+**Causation is NOT yet established, and one attempt to establish it failed.** A near-NVE drift comparison
+was inconclusive: both tables drifted DOWN by a similar amount (-332 vs -418 E_up over 20,000 steps) with
+identical kinetic ratios (1.033 vs 1.036). That measurement was dominated by ongoing structural relaxation,
+not by conservation error, and 20 frames is far too coarse to separate them. Reasoning it through: a step in
+ENERGY at the cutoff breaks conservation but applies no large FORCE, so it should cause gradual heating
+rather than the single ~1e15 kick actually observed. An A/B reproduction (12 seeds per arm, 16,000 steps at
+T=0.77, the temperature and step range where both losses occurred) is the test that decides it.
+
+**A/B result: NULL, and underpowered by design.** 12 seeds x 16,000 steps at T=0.77 per arm: 0 diverged,
+0 NaN, worst Rg 20.6 A (old) and 20.8 A (new) against a native ~19-20 A. So it distinguishes nothing.
+The arithmetic I should have done first: the observed failure rate is ~2 events across 4 variants x 48
+replicas x ~1e4 steps, i.e. ~2 per 2e6 replica-steps. Each arm here was 1.9e5 replica-steps -- about a 10%
+chance of a single event even in the defective arm. A powered local A/B would need ~48 runs x 16,000 steps
+per arm just to expect ~1 event, which is a poor way to spend the compute.
+
+**Where that leaves the fix.** The table correction stands on its own: the user's requirement is that the
+spline table BE the original dry-MARTINI potential after unit conversion, and it demonstrably was not
+(3.95 E_up deviation, 81/81 rows discontinuous at the cutoff). That is fixed and verified independently of
+the NaN question. But it must NOT be reported as the proven cause of the runaway -- it is an unproven
+contributor, and the mechanism argues against it being the direct trigger (an energy step applies no large
+force).
+
+The efficient way to settle causation is the natural experiment we owe anyway: re-prep and re-run all four
+glpG variants on the corrected table and compare the failure rate against the observed 2/4. If a replica
+still diverges, capture it with dense output around the onset rather than trying to reproduce a 1-in-1e6
+event locally.
+
+Lesson: compute the expected event count BEFORE running an A/B on a rare stochastic failure. Two tests were
+spent here without discriminating power -- one confounded by structural relaxation, one 10x under-exposed.
+
+## Update 81 (2026-08-05): guards removed from the engine; NO GUARDS is now a standing rule
+
+User directive: no guard, anywhere, for any numerical problem. Recorded as a **NO GUARDS** rule in
+`AGENTS.md` alongside a companion rule that a spline table must BE the published potential, not a variant.
+
+Factual note for the record: the `src/main.cpp` blow-up guard was **not** added in this session -- no C++
+file was touched while diagnosing findings 79-80 (`git status src/` was clean, so the guard was already
+committed on `martini-dev`). Master has neither it nor `martini_potential.cpp`.
+
+Removed, and the engine rebuilt clean:
+* `src/main.cpp` -- the blow-up guard that aborted the run on a non-finite potential or kinetic energy, plus
+  its `blew_up` / `blew_up_ns` / `blew_up_round` state, the loop break, and the FATAL block.
+  `compute_logged_kinetic_energy` stays: it is still used for ordinary logging.
+* `src/martini_potential.cpp` -- three silent-skip masks, which were the harmful ones. The pair loop's
+  `if(isfinite(pot) && isfinite(force_mag))` dropped non-finite pair contributions outright; the main.cpp
+  comment even admitted this by noting its kinetic check existed to catch "diverging momenta even when
+  non-finite pair forces are masked out of the potential". The SC-env path had the same pattern twice
+  (`!isfinite(value) || !isfinite(dVdr) || !isfinite(dVdcoord)) continue`).
+* Kept in `update_martini_node_boxes`: `!(scale_xy > 0.f) || !(scale_z > 0.f)`. A box length being positive
+  is a domain precondition, not a masked numerical error. The `isfinite` clause beside it was removed.
+
+**Operational consequence, stated plainly:** a divergence now propagates instead of being stopped. NaN will
+enter the log, be exchanged between replicas, and be written into restarts. That is the intended trade --
+the evidence survives instead of the run -- but it means a bad run must be caught by monitoring, and the
+`glpG` 11-hour NaN propagation becomes expected behaviour rather than a stale-binary symptom (which makes
+the question of whether the cluster binary carried the guard moot).
+
+**Three existing checks are arguably in scope and were left alone pending a ruling**, because none masks a
+numerical error: `assert_environment_solvation` (prep-time, fails a build whose belt faces vacuum), the
+`np_hybrid.py` ion assertions (neutrality and salt composition of a built system), and `run_np_prod.py`'s
+`health()` peptide C-N check, which ends a chain rather than propagate a torn system. The last of these is
+the closest to a guard under the new rule and is the one most worth a decision.

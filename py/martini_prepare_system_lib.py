@@ -677,6 +677,379 @@ def tile_and_crop_bilayer_lipids(
     return out_atoms
 
 
+def _rotation_between(a, b):
+    """Minimal rotation taking unit vector `a` onto unit vector `b`."""
+    a = a / np.linalg.norm(a)
+    b = b / np.linalg.norm(b)
+    v = np.cross(a, b)
+    c = float(np.dot(a, b))
+    s = float(np.linalg.norm(v))
+    if s < 1e-12:
+        if c > 0.0:
+            return np.eye(3)
+        # Antiparallel: rotate by pi about any axis orthogonal to a.
+        axis = np.array([1.0, 0.0, 0.0])
+        if abs(a[0]) > 0.9:
+            axis = np.array([0.0, 1.0, 0.0])
+        axis = np.cross(a, axis)
+        axis /= np.linalg.norm(axis)
+        K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        return np.eye(3) + 2.0 * (K @ K)
+    K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + K + K @ K * ((1.0 - c) / (s * s))
+
+
+def _axis_spin(axis, angle):
+    axis = axis / np.linalg.norm(axis)
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    return np.eye(3) + np.sin(angle) * K + (1.0 - np.cos(angle)) * (K @ K)
+
+
+def detergent_template_geometry(template_atoms, template_box, apolar_bead_indices):
+    """Per-molecule geometry of an amphiphile, measured from its own lamellar template.
+
+    Returns the monomer conformer, its head->tail axis and length, and the interfacial area per
+    molecule. Nothing about the detergent is hardcoded or fitted here.
+
+    Note that the CHARMM-GUI step5 assembly is PRE-minimization and does contain hard clashes (bead
+    pairs as close as 0.24 A), so it is not a usable packing-density reference. The builder spaces
+    molecules by the force field's own contact distance instead, and the equilibration ladder condenses
+    the aggregate to its true density.
+    """
+    groups = list(residue_group_atoms(template_atoms).values())
+    if not groups:
+        raise ValueError("Detergent template contains no residues.")
+    n_molecules = len(groups)
+    conformer = groups[0]
+    xyz = coords(conformer)
+    apolar = np.zeros(len(conformer), dtype=bool)
+    for i in apolar_bead_indices:
+        if 0 <= i < len(conformer):
+            apolar[i] = True
+    if not apolar.any() or apolar.all():
+        raise ValueError(
+            "Detergent template conformer has no head/tail split; check the ITP apolar bead types."
+        )
+    head_centroid = xyz[~apolar].mean(axis=0)
+    tail_tip = xyz[apolar][int(np.argmax(np.linalg.norm(xyz[apolar] - head_centroid, axis=1)))]
+    axis_vec = tail_tip - head_centroid
+    axis_len = float(np.linalg.norm(axis_vec))
+    if axis_len <= 0.0:
+        raise ValueError("Detergent template conformer has zero head-to-tail length.")
+
+    lateral_area = float(template_box[0]) * float(template_box[1])
+    return {
+        "axis": axis_vec / axis_len,
+        "axis_length": axis_len,
+        # A lamellar template has two leaflets, so the interfacial area per molecule is the lateral
+        # area over half the molecules.
+        "area_per_molecule": lateral_area / (0.5 * n_molecules),
+        "conformer": conformer,
+        "apolar_mask": apolar,
+    }
+
+
+def build_detergent_micelle(
+    template_atoms,
+    template_box,
+    protein_cg_atoms,
+    belt_half_thickness,
+    contact_clearance,
+    apolar_bead_indices,
+    rng,
+    grid_spacing=2.0,
+):
+    """Wrap a detergent monolayer around the protein's hydrophobic belt: tails in, heads out.
+
+    A single-tailed amphiphile with a bulky head cannot solvate a transmembrane domain as a bilayer:
+    its lamellar hydrophobic core is 2*V_tail/APL (~14 A for DDM) against a ~28 A protein belt, and a
+    maltose head cannot reach the ~23 A^2 area per molecule that 28 A would require. The physical
+    aggregate is a protein-detergent complex, so monomers are placed ONTO the protein's hydrophobic
+    surface rather than by carving a hole in a slab -- which also removes the first-shell void that
+    whole-molecule deletion leaves behind.
+
+    The DENSITY reference is the equilibrated lamellar template: the monomer conformer, the interfacial
+    area per molecule and the molecular volume are all measured from it, so the local packing matches a
+    relaxed dry-MARTINI DDM phase instead of a geometric guess.
+
+    Coverage is then completed and verified, because the failure mode of a hand-built micelle is a
+    correct-looking shell with a bald patch that leaves part of the protein in vacuum:
+      1. seed from support points of the belt along equidistant directions (conformal to the protein,
+         never forced into an interhelical groove), keeping the template's interfacial head spacing;
+      2. audit every solvent-EXPOSED belt bead -- the beads that are outermost along some direction, so
+         buried core beads like glpG TM4 are correctly exempt;
+      3. refill toward each uncovered exposed bead, ignoring the spacing preference but never the
+         clash tests, until coverage closes or no placement is geometrically possible.
+    A bead counts as covered when a tail bead sits within 2x the contact clearance: one contact
+    distance is touching, twice leaves room for exactly one more bead, and beyond that the gap is a
+    vacuum pocket. Residual uncovered beads are returned so the caller can fail the build.
+    """
+    from scipy.spatial import cKDTree
+    from scipy.ndimage import label
+
+    geom = detergent_template_geometry(template_atoms, template_box, apolar_bead_indices)
+    conformer_xyz = coords(geom["conformer"])
+    apolar = geom["apolar_mask"]
+    head_local = conformer_xyz[~apolar].mean(axis=0)
+    monomer_length = float(geom["axis_length"])
+
+    protein_xyz = coords(protein_cg_atoms)
+    belt = protein_xyz[np.abs(protein_xyz[:, 2]) <= float(belt_half_thickness)]
+    if belt.shape[0] < 3:
+        raise ValueError(
+            f"Protein has fewer than 3 CG beads inside the hydrophobic belt "
+            f"(|z| <= {belt_half_thickness:.2f} A); check the OPM orientation."
+        )
+    # Both the protein-detergent and detergent-detergent spacings are the force field's own contact
+    # distance (2^(1/6) * sigma_max, the LJ minimum), so the start structure is dense but clash-free.
+    clearance = float(contact_clearance)
+    packing_contact = clearance
+    coverage_radius = 2.0 * clearance
+
+    # Grid the region a monolayer can occupy, then keep only cells that are OUTSIDE the protein:
+    # the largest connected run of free cells reaching the region boundary. Interior cavities are a
+    # separate component and are dropped, so detergent can never be seeded into the protein core.
+    spacing = float(grid_spacing)
+    reach = clearance + monomer_length + spacing
+    lo = belt.min(axis=0) - reach
+    hi = belt.max(axis=0) + reach
+    axes = [np.arange(lo[k], hi[k] + spacing, spacing) for k in range(3)]
+    grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+    shape = grid.shape[:3]
+    flat = grid.reshape(-1, 3)
+
+    protein_tree = cKDTree(protein_xyz)
+    d_all, nearest_all = protein_tree.query(flat)
+    belt_tree = cKDTree(belt)
+    d_belt, nearest_belt = belt_tree.query(flat)
+    # Tail tips may only sit within one acyl-chain reach of the protein; beyond that a tail bead would
+    # leave a hydrophobic gap behind it. Heads then project further out on their own.
+    conformer_apolar = conformer_xyz[apolar]
+    apolar_extent = float(
+        np.max(np.linalg.norm(conformer_apolar[:, None, :] - conformer_apolar[None, :, :], axis=2))
+    )
+
+    free = (d_all >= clearance).reshape(shape)
+    components, _ = label(free)
+    boundary = set(np.unique(np.concatenate([
+        components[0, :, :].ravel(), components[-1, :, :].ravel(),
+        components[:, 0, :].ravel(), components[:, -1, :].ravel(),
+        components[:, :, 0].ravel(), components[:, :, -1].ravel(),
+    ])))
+    boundary.discard(0)
+    outside = np.isin(components, sorted(boundary)).reshape(-1)
+
+    shell = outside & (d_belt <= clearance + monomer_length)
+    seeds = np.where(outside & (d_belt <= clearance + apolar_extent))[0]
+    if seeds.size == 0:
+        raise RuntimeError("Detergent micelle construction found no shell volume around the belt.")
+
+    accepted_groups = []
+    accepted_centres = []
+
+    def try_place(tail_tip_target, u, packing=None):
+        """Seat one monomer with its tail tip at `tail_tip_target`, head pointing outward along u.
+
+        `packing` overrides the detergent-detergent spacing. Clearing the PROTEIN is a hard geometric
+        constraint; detergent-detergent spacing is only a packing preference that minimization relaxes,
+        so the refill stage is allowed to crowd neighbours rather than leave the protein against vacuum.
+        """
+        packing = packing_contact if packing is None else float(packing)
+        R = _axis_spin(u, float(rng.uniform(0.0, TWOPI))) @ _rotation_between(geom["axis"], -u)
+        placed = (conformer_xyz - head_local) @ R.T
+        tail_tip_now = placed[apolar][int(np.argmax(np.linalg.norm(placed[apolar], axis=1)))]
+        placed = placed + (tail_tip_target - tail_tip_now)
+
+        if float(protein_tree.query(placed)[0].min()) < clearance:
+            return False
+        if accepted_centres:
+            centres = np.array(accepted_centres)
+            centre = placed.mean(axis=0)
+            near = np.where(np.linalg.norm(centres - centre, axis=1) < 2.5 * monomer_length)[0]
+            if near.size:
+                neighbours = np.concatenate([accepted_groups[i] for i in near])
+                gap = float(np.min(np.linalg.norm(placed[:, None, :] - neighbours[None, :, :], axis=2)))
+                if gap < packing:
+                    return False
+        accepted_centres.append(placed.mean(axis=0))
+        accepted_groups.append(placed)
+        return True
+
+    # Sequential adsorption over the whole shell VOLUME, tail tips first, working INNERMOST OUTWARD.
+    # Seeding tips anywhere in the shell lets tails reach into surface grooves instead of leaving a
+    # sparse single layer with bald patches, but the order matters: filling the contact layer first
+    # packs tails against the protein and pushes heads outward, which is the physical organization of a
+    # protein-detergent complex. Filling in random order instead lets molecules seeded far out block the
+    # contact layer, which both smears the tails and leaves the belt bare. Density is capped only by the
+    # force field's contact distance, so the shell fills as densely as it can.
+    order = seeds[np.argsort(d_belt[seeds] + rng.uniform(0.0, spacing, size=seeds.size))]
+    for idx in order:
+        u = flat[idx] - belt[nearest_belt[idx]]
+        norm = float(np.linalg.norm(u))
+        if norm < 1e-9:
+            continue
+        try_place(flat[idx], u / norm)
+    if not accepted_groups:
+        raise RuntimeError("Detergent micelle construction accepted no monomers.")
+
+    # A protein bead is solvent-exposed exactly when some free outside cell at contact range has THAT
+    # bead as its own nearest protein bead: anything shielded by another bead never wins the nearest
+    # lookup, so buried core beads (glpG TM4 among them) are correctly exempt from needing detergent.
+    contact_cells = outside & (d_all <= clearance + spacing)
+    exposed_protein = np.unique(nearest_all[contact_cells])
+    belt_index = np.where(np.abs(protein_xyz[:, 2]) <= float(belt_half_thickness))[0]
+    exposed = protein_xyz[np.intersect1d(exposed_protein, belt_index)]
+    if exposed.shape[0] == 0:
+        raise RuntimeError("No solvent-exposed hydrophobic-belt beads found; check the OPM orientation.")
+    outside_tree = cKDTree(flat[outside])
+
+    def uncovered_exposed():
+        """Exposed belt beads with no acyl tail within reach (quality metric driving the refill)."""
+        tails = np.concatenate([g[apolar] for g in accepted_groups])
+        return np.where(cKDTree(tails).query(exposed)[0] > coverage_radius)[0]
+
+    def vacuum_exposed():
+        """Exposed belt beads with NO environment bead at all within reach: protein facing vacuum."""
+        allbeads = np.concatenate(accepted_groups)
+        return np.where(cKDTree(allbeads).query(exposed)[0] > coverage_radius)[0]
+
+    # Close the remaining gaps, crowding neighbours progressively harder rather than leaving a bald
+    # patch. Several orientations are tried per candidate cell because a rigid monomer often only fits
+    # a surface crevice one way.
+    refills = 0
+    outside_xyz = flat[outside]
+    for packing in (packing_contact, 0.9 * packing_contact, 0.8 * packing_contact):
+        for _ in range(4):
+            gaps = uncovered_exposed()
+            if gaps.size == 0:
+                break
+            progress = False
+            for idx in gaps:
+                target = exposed[idx]
+                cells = outside_tree.query_ball_point(target, clearance + 3.0 * spacing)
+                placed_one = False
+                for c in cells:
+                    u = outside_xyz[c] - target
+                    norm = float(np.linalg.norm(u))
+                    if norm < 1e-9:
+                        continue
+                    for _spin in range(6):
+                        if try_place(outside_xyz[c], u / norm, packing=packing):
+                            refills += 1
+                            progress = placed_one = True
+                            break
+                    if placed_one:
+                        break
+            if not progress:
+                break
+        if uncovered_exposed().size == 0:
+            break
+
+    out_atoms = []
+    for resseq, placed in enumerate(accepted_groups, start=1):
+        for atom, xyz in zip(geom["conformer"], placed):
+            a = deepcopy(atom)
+            a["x"], a["y"], a["z"] = float(xyz[0]), float(xyz[1]), float(xyz[2])
+            a["chain"] = "M"
+            a["icode"] = ""
+            a["resseq"] = resseq
+            a["segid"] = "MEMB"
+            out_atoms.append(a)
+
+    micelle_xyz = coords(out_atoms)
+    residual = uncovered_exposed()
+    built_nn = _nearest_intermolecular_distances(micelle_xyz, out_atoms)
+    n_mol = len(accepted_groups)
+    diagnostics = {
+        "n_detergent": int(n_mol),
+        "n_refilled": int(refills),
+        "template_area_per_molecule_a2": float(geom["area_per_molecule"]),
+        "packing_contact_a": packing_contact,
+        "min_intermolecular_a": float(built_nn.min()),
+        "median_intermolecular_a": float(np.median(built_nn)),
+        # Monolayer volume: the shell cells it occupies, from the same grid used to build it.
+        "aggregate_volume_a3": float(np.count_nonzero(shell) * spacing ** 3),
+        "belt_half_thickness_a": float(belt_half_thickness),
+        "belt_cg_beads": int(belt.shape[0]),
+        "exposed_belt_beads": int(exposed.shape[0]),
+        "uncovered_exposed_belt_beads": int(residual.size),
+        "vacuum_exposed_belt_beads": int(vacuum_exposed().size),
+        "coverage_radius_a": float(coverage_radius),
+        "min_protein_detergent_distance_a": float(cKDTree(protein_xyz).query(micelle_xyz)[0].min()),
+    }
+    return out_atoms, diagnostics
+
+
+def _nearest_intermolecular_distances(xyz, atoms):
+    """Per-molecule distance to the closest bead of a DIFFERENT molecule (exact)."""
+    from scipy.spatial import cKDTree
+
+    molecule_id = np.zeros(len(atoms), dtype=int)
+    prev_key = None
+    current = -1
+    for i, atom in enumerate(atoms):
+        key = (atom["chain"], atom["resseq"], atom["icode"])
+        if key != prev_key:
+            current += 1
+            prev_key = key
+        molecule_id[i] = current
+    out = []
+    for m in range(current + 1):
+        mine = molecule_id == m
+        if not mine.any() or mine.all():
+            continue
+        out.append(float(cKDTree(xyz[~mine]).query(xyz[mine])[0].min()))
+    return np.array(out, dtype=float)
+
+
+def set_box_for_micelle(all_atoms, pad):
+    """Centre a finite aggregate in a cubic box with `pad` of vacuum on every side.
+
+    Cubic so the aggregate can reorient without its periodic image changing shape, and large enough
+    that it never contacts that image. There is no lateral tension to relax, so the box is fixed and
+    the barostat stays off for every stage.
+    """
+    xyz = coords(all_atoms)
+    span = float(np.max(xyz.max(axis=0) - xyz.min(axis=0)))
+    side = span + 2.0 * float(pad)
+    centre = 0.5 * (xyz.max(axis=0) + xyz.min(axis=0))
+    set_coords(all_atoms, xyz + (0.5 * side - centre))
+    return np.array([side, side, side], dtype=float)
+
+
+def measure_belt_hydrophobic_coverage(protein_backbone_atoms, env_atoms, apolar_bead_names, belt_half_thickness):
+    """Gate G1: is the protein's hydrophobic belt actually against acyl tails?
+
+    Returns the belt-residue fraction whose nearest environment bead is a polar head bead, and the
+    tail-bead hydrophobic span. A lamellar DDM slab fails this badly (~14 A span, half the belt facing
+    maltose), which is what unfolded glpG TM4.
+    """
+    env_xyz = coords(env_atoms)
+    is_tail = np.array([a["name"].strip() in apolar_bead_names for a in env_atoms], dtype=bool)
+    if not is_tail.any():
+        raise ValueError("No apolar environment beads found while measuring belt coverage.")
+
+    belt_ca = np.array(
+        [
+            [a["x"], a["y"], a["z"]]
+            for a in protein_backbone_atoms
+            if a["name"].strip() == "CA" and abs(float(a["z"])) <= float(belt_half_thickness)
+        ],
+        dtype=float,
+    )
+    if belt_ca.shape[0] == 0:
+        raise ValueError("No backbone CA inside the hydrophobic belt while measuring coverage.")
+
+    nearest = np.argmin(np.linalg.norm(belt_ca[:, None, :] - env_xyz[None, :, :], axis=2), axis=1)
+    tail_z = env_xyz[is_tail][:, 2]
+    return {
+        "belt_residues": int(belt_ca.shape[0]),
+        "belt_polar_contact_fraction": float(np.mean(~is_tail[nearest])),
+        "tail_hydrophobic_span_a": float(np.percentile(tail_z, 95) - np.percentile(tail_z, 5)),
+        "belt_span_a": 2.0 * float(belt_half_thickness),
+    }
+
+
 def remove_overlapping_lipids(
     bilayer_atoms,
     protein_atoms,
@@ -767,20 +1140,50 @@ def set_box_from_lipid_xy(
     return np.array([box_x, box_y, box_z], dtype=float)
 
 
-def estimate_salt_pairs(box_lengths, salt_molar, membrane_thickness_z, protein_volume_a3=0.0):
+def estimate_salt_pairs(box_lengths, salt_molar, excluded_volume_a3):
     # dry-MARTINI is implicit-solvent, so ions occupy only the solvent-accessible volume: the box
-    # minus the membrane slab (A_xy * thickness) and the protein excluded volume. Using the full box
-    # would massively overcount (the box is mostly lipid slab + the protein's soluble-domain space).
-    area_xy = float(box_lengths[0]) * float(box_lengths[1])
-    solvent_z = max(0.0, float(box_lengths[2]) - float(membrane_thickness_z))
-    volume_a3 = max(0.0, area_xy * solvent_z - float(protein_volume_a3))
+    # minus whatever the amphiphile aggregate and the protein exclude. Using the full box would
+    # massively overcount (the box is mostly aggregate + the protein's soluble-domain space).
+    box_volume_a3 = float(box_lengths[0]) * float(box_lengths[1]) * float(box_lengths[2])
+    volume_a3 = max(0.0, box_volume_a3 - float(excluded_volume_a3))
     pairs = int(round(salt_molar * NA_AVOGADRO * volume_a3 * 1e-27))
     return max(0, pairs)
 
 
-def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng, exclude_z=None):
-    # exclude_z=(lo, hi): reject trial positions with lo <= z <= hi so ions land only in the
-    # solvent slabs (outside the membrane), never in the hydrophobic core.
+def membrane_slab_excluded_volume(box_lengths, membrane_thickness_z, protein_volume_a3):
+    """Volume ions cannot occupy in a lamellar system: the slab (A_xy * thickness) plus the protein."""
+    area_xy = float(box_lengths[0]) * float(box_lengths[1])
+    return area_xy * float(membrane_thickness_z) + float(protein_volume_a3)
+
+
+def reject_inside_slab(z_lo, z_hi):
+    """Ion veto for a lamellar membrane: no ion between the two headgroup planes."""
+    def reject(trial):
+        return float(z_lo) <= float(trial[2]) <= float(z_hi)
+    return reject
+
+
+def reject_inside_aggregate(tail_xyz, head_xyz, box_lengths):
+    """Ion veto for a finite aggregate, which has no z band to exclude.
+
+    An ion is inside the hydrophobic interior exactly when it is closer to a tail bead than to any
+    interfacial head bead, so that comparison replaces the slab's z window and needs no shape model.
+    """
+    tail_xyz = np.asarray(tail_xyz, dtype=float)
+    head_xyz = np.asarray(head_xyz, dtype=float)
+    box = np.asarray(box_lengths, dtype=float)
+
+    def reject(trial):
+        d_tail = np.min(np.sum(_minimum_image_delta(tail_xyz - trial, box) ** 2, axis=1))
+        d_head = np.min(np.sum(_minimum_image_delta(head_xyz - trial, box) ** 2, axis=1))
+        return d_tail < d_head
+
+    return reject
+
+
+def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng, reject=None):
+    # reject(trial_xyz) -> bool vetoes a trial that lands in the amphiphile's hydrophobic interior;
+    # dry-MARTINI has no explicit water, so nothing else keeps ions out of it.
     existing = coords(atoms)
     placed = []
     cutoff2 = cutoff * cutoff
@@ -790,7 +1193,7 @@ def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng, exclude_z=None):
         accepted = False
         for _ in range(20000):
             trial = rng.uniform([0, 0, 0], box)
-            if exclude_z is not None and float(exclude_z[0]) <= trial[2] <= float(exclude_z[1]):
+            if reject is not None and reject(trial):
                 continue
             if existing.size:
                 d2 = np.sum(_minimum_image_delta(existing - trial, box) ** 2, axis=1)

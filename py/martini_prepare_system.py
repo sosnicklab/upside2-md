@@ -18,6 +18,7 @@ import numpy as np
 from martini_itp_reader import lipid_max_sigma_nm, parse_dry_forcefield, parse_itp_file, parse_lipid_from_itp
 from martini_prepare_system_lib import (
     build_backbone_with_virtual_bb,
+    build_detergent_micelle,
     center_of_mass,
     convert_stage,
     compute_lipid_residue_indices,
@@ -28,13 +29,18 @@ from martini_prepare_system_lib import (
     inject_particles_table,
     inject_stage7_sc_table_nodes,
     lipid_resname,
+    measure_belt_hydrophobic_coverage,
+    membrane_slab_excluded_volume,
     set_active_lipid_name,
     map_backbone_types_from_martinize_fallback,
     map_backbone_types_from_structure,
     parse_pdb,
     place_ions,
+    reject_inside_aggregate,
+    reject_inside_slab,
     remove_overlapping_lipids,
     set_initial_position,
+    set_box_for_micelle,
     set_box_from_lipid_xy,
     set_coords,
     read_charmm_gui_membrane,
@@ -93,6 +99,93 @@ def derive_lipid_contact_clearance_angstrom(upside_home: Path, lipid_name: str) 
         max_sigma_nm = lipid_max_sigma_nm(lipid["bead_types"], pair_params)
         clearance = max(clearance, (2.0 ** (1.0 / 6.0)) * max_sigma_nm * DEFAULT_MARTINI_LENGTH_CONVERSION)
     return float(clearance)
+
+
+def _apolar_bead_indices(lipid: dict) -> list:
+    """0-based indices of the truly hydrophobic beads (MARTINI apolar class C1-C5)."""
+    return [i for i, t in enumerate(lipid["bead_types"]) if re.fullmatch(r"C[1-5]", str(t).strip())]
+
+
+def _count_hydrophobic_tails(lipid: dict) -> int:
+    """Number of separate acyl chains, from the apolar subgraph of the molecule's bonds."""
+    apolar = set(_apolar_bead_indices(lipid))
+    adjacency = {i: set() for i in apolar}
+    for bond in lipid["bonds"]:
+        # parse_lipid_from_itp already returns 0-based bead indices.
+        i, j = int(bond[0]), int(bond[1])
+        if i in apolar and j in apolar:
+            adjacency[i].add(j)
+            adjacency[j].add(i)
+    seen = set()
+    tails = 0
+    for start in sorted(apolar):
+        if start in seen:
+            continue
+        tails += 1
+        stack = [start]
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            stack.extend(adjacency[node] - seen)
+    return tails
+
+
+def derive_environment_morphology(upside_home: Path, lipid_name: str) -> str:
+    """"micelle" for a single-tailed amphiphile, "bilayer" otherwise, read from the ITP topology.
+
+    A one-chain amphiphile with a bulky head has a packing parameter far below 1, so it forms micelles,
+    not lamellae: forcing it into a slab pins the area per molecule at the head's cross-section and
+    starves the hydrophobic core (DDM: ~14 A against a ~28 A transmembrane belt). Deriving this from
+    tail count rather than a name table keeps the rule universal and makes the unphysical combination
+    impossible to request.
+    """
+    ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
+    tails = {}
+    for name in (part.strip() for part in str(lipid_name).split(",") if part.strip()):
+        lipid = parse_lipid_from_itp(find_lipid_itp_path(ff_dir, name), name)
+        tails[name.upper()] = _count_hydrophobic_tails(lipid)
+    if not tails:
+        raise ValueError("Lipid name must be provided (--lipid-name)")
+    single = {n for n, t in tails.items() if t <= 1}
+    if single and len(single) != len(tails):
+        raise ValueError(
+            f"Cannot mix detergents {sorted(single)} with bilayer-forming lipids "
+            f"{sorted(set(tails) - single)}: the aggregate morphology is ambiguous. Tails per "
+            f"molecule: {tails}."
+        )
+    return "micelle" if single else "bilayer"
+
+
+def derive_lipid_apolar_bead_names(upside_home: Path, lipid_name: str) -> set:
+    """Bead NAMES of the hydrophobic beads, for tail-vs-head tests on packed coordinates."""
+    ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
+    names = set()
+    for name in (part.strip() for part in str(lipid_name).split(",") if part.strip()):
+        lipid = parse_lipid_from_itp(find_lipid_itp_path(ff_dir, name), name)
+        names.update(lipid["atom_names"][i].strip() for i in _apolar_bead_indices(lipid))
+    return names
+
+
+def read_opm_hydrophobic_half_thickness(opm_reference_pdb: Path) -> float:
+    """Half of the hydrophobic thickness from the OPM reference's own REMARK.
+
+    OPM publishes this per entry ("1/2 of bilayer thickness: 14.1" for the rhomboid fold, i.e. a 28.2 A
+    belt, which matches glpG's measured 28.2 A span). Taking it from the reference keeps the belt
+    definition a published measurement rather than a tunable input.
+    """
+    pattern = re.compile(r"1/2\s+of\s+bilayer\s+thickness:\s*([0-9.]+)", re.IGNORECASE)
+    for line in Path(opm_reference_pdb).read_text().splitlines():
+        if not line.startswith("REMARK"):
+            continue
+        match = pattern.search(line)
+        if match:
+            return float(match.group(1))
+    raise ValueError(
+        f"No '1/2 of bilayer thickness' REMARK in {opm_reference_pdb}. A micelle build needs the "
+        "protein's hydrophobic belt; use an OPM-oriented reference PDB (opm.phar.umich.edu)."
+    )
 
 
 def derive_lipid_net_charges(upside_home: Path, lipid_name: str) -> dict:
@@ -357,6 +450,194 @@ def martinize_protein_cg(venv_python, martinize_script, protein_aa_pdb, out_dir)
     return cg_pdb
 
 
+def pack_bilayer_environment(args, lipid_template, bilayer_box, protein_backbone_atoms, cg_atoms, prot_xyz, cg_xyz):
+    """Insert the protein into a periodic lamellar slab by deleting the lipids it overlaps."""
+    # Slide the bilayer template in z so its midplane meets the protein's membrane center (opm: z=0
+    # by construction; otherwise embed the protein COM in the slab).
+    lip_xyz = coords(lipid_template)
+    lip_mid_z = 0.5 * float(lip_xyz[:, 2].min() + lip_xyz[:, 2].max())
+    membrane_center_z = 0.0 if args.protein_orientation_mode == "opm" else float(prot_xyz[:, 2].mean())
+    for atom in lipid_template:
+        atom["z"] = float(atom["z"] + (membrane_center_z - lip_mid_z))
+
+    # xy fill window: the protein CG-envelope footprint + a PBC-safe belt on each side, rounded up to
+    # a whole number of template tiles so the bilayer tiles seamlessly (no lateral gaps/contraction).
+    fmin = cg_xyz.min(axis=0)
+    fmax = cg_xyz.max(axis=0)
+    pspan = fmax - fmin
+    pcenter_xy = 0.5 * (fmin[:2] + fmax[:2])
+    belt = float(args.box_padding_xy) + float(args.protein_pbc_margin)
+    tile_xy = float(bilayer_box[0])
+    target_side = max(tile_xy, float(np.max(pspan[:2] + 2.0 * belt)) * max(1.0, float(args.xy_scale)))
+    target_side = float(np.ceil(target_side / tile_xy) * tile_xy)
+    target_xy_min = np.array([pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side], dtype=float)
+    target_xy_max = np.array([pcenter_xy[0] + 0.5 * target_side, pcenter_xy[1] + 0.5 * target_side], dtype=float)
+    bilayer_lipids = tile_and_crop_bilayer_lipids(
+        bilayer_atoms=lipid_template,
+        bilayer_box=bilayer_box,
+        target_xy_min=target_xy_min,
+        target_xy_max=target_xy_max,
+    )
+
+    # Overlap removal against the CG envelope (BB+SC), not the backbone: whole lipids clashing with
+    # the protein's true girth (including where the sidechain rotamers are rebuilt) are deleted.
+    lipid_residues, keep_nonlipid = compute_lipid_residue_indices(bilayer_lipids)
+    bilayer_kept, removed_lipids = remove_overlapping_lipids(
+        bilayer_atoms=bilayer_lipids,
+        protein_atoms=cg_atoms,
+        lipid_residues=lipid_residues,
+        keep_nonlipid=keep_nonlipid,
+        cutoff=float(args.protein_lipid_cutoff),
+    )
+
+    # Measure belt coverage BEFORE the box shift, while z=0 is still the membrane midplane.
+    coverage = measure_belt_hydrophobic_coverage(
+        protein_backbone_atoms=protein_backbone_atoms,
+        env_atoms=bilayer_kept,
+        apolar_bead_names=derive_lipid_apolar_bead_names(
+            Path(os.environ.get("UPSIDE_HOME", str(REPO_ROOT))), args.lipid_name
+        ),
+        belt_half_thickness=(
+            read_opm_hydrophobic_half_thickness(Path(args.opm_reference).expanduser().resolve())
+            if args.opm_reference
+            else 0.5 * float(coords([a for a in bilayer_kept if lipid_resname(a["resname"])])[:, 2].ptp())
+        ),
+    )
+
+    packed_atoms = protein_backbone_atoms + bilayer_kept
+    min_box_z_target = float(pspan[2] + 2.0 * (float(args.box_padding_z) + float(args.protein_pbc_margin)))
+    box_lengths = set_box_from_lipid_xy(
+        all_atoms=packed_atoms,
+        lipid_atoms=bilayer_kept,
+        pad_z=float(args.box_padding_z),
+        force_square_xy=True,
+        min_box_z=min_box_z_target,
+        center_lipid_in_z=True,
+        force_xy_box=target_side,
+    )
+
+    kept_lipid_xyz = coords([a for a in bilayer_kept if lipid_resname(a["resname"])])
+    membrane_z_lo = float(kept_lipid_xyz[:, 2].min())
+    membrane_z_hi = float(kept_lipid_xyz[:, 2].max())
+    packed_thickness_z = membrane_z_hi - membrane_z_lo
+    # Count ions against the EQUILIBRATED membrane thickness (the dry-MARTINI membrane relaxes from
+    # the compressed CHARMM-GUI start), so the realized concentration is 0.15 M in production. Ions
+    # are still placed in the packed-time solvent slabs, outside the current membrane extent.
+    count_thickness_z = (
+        float(args.membrane_thickness_angstrom)
+        if float(args.membrane_thickness_angstrom) > 0.0
+        else packed_thickness_z
+    )
+    # The belt is the protein's own hydrophobic band: the OPM reference publishes it, otherwise fall
+    # back to the packed slab's extent.
+    belt_half_thickness = (
+        read_opm_hydrophobic_half_thickness(Path(args.opm_reference).expanduser().resolve())
+        if args.opm_reference
+        else 0.5 * packed_thickness_z
+    )
+    geometry = {
+        "morphology": "bilayer",
+        "lipid_residues_removed": int(removed_lipids),
+        "belt_half_thickness_a": float(belt_half_thickness),
+        "belt_coverage": coverage,
+        "base_xy_side_angstrom": tile_xy,
+        "target_xy_side_angstrom": target_side,
+        "membrane_thickness_z_angstrom": packed_thickness_z,
+        "ion_count_thickness_z_angstrom": count_thickness_z,
+        "protein_span_angstrom": [float(v) for v in pspan],
+        "excluded_volume_a3": membrane_slab_excluded_volume(
+            box_lengths, count_thickness_z, 0.0
+        ),
+        "ion_reject": lambda box: reject_inside_slab(membrane_z_lo, membrane_z_hi),
+    }
+    return bilayer_kept, box_lengths, geometry
+
+
+def pack_micelle_environment(args, lipid_template, bilayer_box, protein_backbone_atoms, cg_atoms, upside_home):
+    """Wrap the protein's hydrophobic belt in a detergent monolayer (tails in, heads out)."""
+    if not args.opm_reference:
+        raise ValueError(
+            "A micelle build needs --opm-reference: the protein's hydrophobic belt comes from the "
+            "reference's OPM thickness REMARK."
+        )
+    if float(args.membrane_thickness_angstrom) > 0.0:
+        raise ValueError(
+            "--membrane-thickness-angstrom is a lamellar ion-counting input and does not apply to a "
+            "micelle; the aggregate's own volume is measured instead."
+        )
+    belt_half_thickness = read_opm_hydrophobic_half_thickness(
+        Path(args.opm_reference).expanduser().resolve()
+    )
+    ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
+    first_lipid = next(part.strip() for part in str(args.lipid_name).split(",") if part.strip())
+    lipid = parse_lipid_from_itp(find_lipid_itp_path(ff_dir, first_lipid), first_lipid)
+
+    micelle_atoms, diagnostics = build_detergent_micelle(
+        template_atoms=lipid_template,
+        template_box=bilayer_box,
+        protein_cg_atoms=cg_atoms,
+        belt_half_thickness=belt_half_thickness,
+        contact_clearance=float(args.protein_lipid_cutoff),
+        apolar_bead_indices=_apolar_bead_indices(lipid),
+        rng=np.random.default_rng(int(args.seed)),
+    )
+    tail_covered = diagnostics["exposed_belt_beads"] - diagnostics["uncovered_exposed_belt_beads"]
+    print(
+        f"Micelle packing: {diagnostics['n_detergent']} {first_lipid} "
+        f"({diagnostics['n_refilled']} refilled) around a {2.0 * belt_half_thickness:.1f} A "
+        f"hydrophobic belt; {tail_covered}/{diagnostics['exposed_belt_beads']} exposed belt beads "
+        f"tail-covered, {diagnostics['vacuum_exposed_belt_beads']} facing vacuum; bead spacing "
+        f"min {diagnostics['min_intermolecular_a']:.2f} / median "
+        f"{diagnostics['median_intermolecular_a']:.2f} A; min protein-detergent distance "
+        f"{diagnostics['min_protein_detergent_distance_a']:.2f} A"
+    )
+    # Residual bald spots are REPORTED here, not fatal: a rigid conformer cannot always reach into a
+    # deeply recessed site that a flexible chain would, and refining the grid only surfaces more such
+    # sites rather than filling them. The authoritative solvation check is
+    # assert_environment_solvation(), run on the equilibrated coordinates that actually enter
+    # production -- by then the ladder has closed single-bead voids, and anything still bare is real.
+    if diagnostics["vacuum_exposed_belt_beads"] > 0:
+        print(
+            f"  note: {diagnostics['vacuum_exposed_belt_beads']} exposed belt bead(s) start beyond "
+            f"{diagnostics['coverage_radius_a']:.2f} A of any detergent bead; equilibration must close "
+            "this, and the stage-7.0 solvation gate will verify it."
+        )
+
+    apolar_names = derive_lipid_apolar_bead_names(upside_home, args.lipid_name)
+    # Measure belt coverage BEFORE the box shift, while z=0 is still the membrane midplane.
+    coverage = measure_belt_hydrophobic_coverage(
+        protein_backbone_atoms=protein_backbone_atoms,
+        env_atoms=micelle_atoms,
+        apolar_bead_names=apolar_names,
+        belt_half_thickness=belt_half_thickness,
+    )
+
+    packed_atoms = protein_backbone_atoms + micelle_atoms
+    box_lengths = set_box_for_micelle(
+        packed_atoms, float(args.box_padding_z) + float(args.protein_pbc_margin)
+    )
+    tail_xyz = np.array(
+        [[a["x"], a["y"], a["z"]] for a in micelle_atoms if a["name"].strip() in apolar_names],
+        dtype=float,
+    )
+    head_xyz = np.array(
+        [[a["x"], a["y"], a["z"]] for a in micelle_atoms if a["name"].strip() not in apolar_names],
+        dtype=float,
+    )
+    cg_span = coords(cg_atoms).max(axis=0) - coords(cg_atoms).min(axis=0)
+    geometry = {
+        "morphology": "micelle",
+        "lipid_residues_removed": 0,
+        "belt_half_thickness_a": float(belt_half_thickness),
+        "belt_coverage": coverage,
+        "protein_span_angstrom": [float(v) for v in cg_span],
+        "excluded_volume_a3": diagnostics["aggregate_volume_a3"],
+        "ion_reject": lambda box: reject_inside_aggregate(tail_xyz, head_xyz, box),
+    }
+    geometry.update({f"micelle_{k}": v for k, v in diagnostics.items()})
+    return micelle_atoms, box_lengths, geometry
+
+
 def prepare_mixed_structure(args, runtime_pdb):
     if not args.protein_aa_pdb:
         raise ValueError("--protein-aa-pdb is required for mode=both")
@@ -391,55 +672,31 @@ def prepare_mixed_structure(args, runtime_pdb):
     prot_xyz = coords(protein_backbone_atoms)
     cg_xyz = coords(cg_atoms)
 
-    # Slide the bilayer template in z so its midplane meets the protein's membrane center (opm: z=0
-    # by construction; otherwise embed the protein COM in the slab).
-    lip_xyz = coords(lipid_template)
-    lip_mid_z = 0.5 * float(lip_xyz[:, 2].min() + lip_xyz[:, 2].max())
-    membrane_center_z = 0.0 if args.protein_orientation_mode == "opm" else float(prot_xyz[:, 2].mean())
-    for atom in lipid_template:
-        atom["z"] = float(atom["z"] + (membrane_center_z - lip_mid_z))
-
-    # xy fill window: the protein CG-envelope footprint + a PBC-safe belt on each side, rounded up to
-    # a whole number of template tiles so the bilayer tiles seamlessly (no lateral gaps/contraction).
-    fmin = cg_xyz.min(axis=0)
-    fmax = cg_xyz.max(axis=0)
-    pspan = fmax - fmin
-    pcenter_xy = 0.5 * (fmin[:2] + fmax[:2])
-    belt = float(args.box_padding_xy) + float(args.protein_pbc_margin)
-    tile_xy = float(bilayer_box[0])
-    base_side = tile_xy
-    target_side = max(tile_xy, float(np.max(pspan[:2] + 2.0 * belt)) * max(1.0, float(args.xy_scale)))
-    target_side = float(np.ceil(target_side / tile_xy) * tile_xy)
-    target_xy_min = np.array([pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side], dtype=float)
-    target_xy_max = np.array([pcenter_xy[0] + 0.5 * target_side, pcenter_xy[1] + 0.5 * target_side], dtype=float)
-    bilayer_lipids = tile_and_crop_bilayer_lipids(
-        bilayer_atoms=lipid_template,
-        bilayer_box=bilayer_box,
-        target_xy_min=target_xy_min,
-        target_xy_max=target_xy_max,
-    )
-
-    # Overlap removal against the CG envelope (BB+SC), not the backbone: whole lipids clashing with
-    # the protein's true girth (including where the sidechain rotamers are rebuilt) are deleted.
-    lipid_residues, keep_nonlipid = compute_lipid_residue_indices(bilayer_lipids)
-    bilayer_kept, removed_lipids = remove_overlapping_lipids(
-        bilayer_atoms=bilayer_lipids,
-        protein_atoms=cg_atoms,
-        lipid_residues=lipid_residues,
-        keep_nonlipid=keep_nonlipid,
-        cutoff=float(args.protein_lipid_cutoff),
-    )
-
+    upside_home = Path(os.environ.get("UPSIDE_HOME", str(REPO_ROOT)))
+    morphology = derive_environment_morphology(upside_home, args.lipid_name)
+    print(f"Environment morphology: {morphology} (from acyl-tail count in the lipid ITP)")
+    if morphology == "micelle":
+        bilayer_kept, box_lengths, env_geometry = pack_micelle_environment(
+            args, lipid_template, bilayer_box, protein_backbone_atoms, cg_atoms, upside_home
+        )
+    else:
+        bilayer_kept, box_lengths, env_geometry = pack_bilayer_environment(
+            args, lipid_template, bilayer_box, protein_backbone_atoms, cg_atoms, prot_xyz, cg_xyz
+        )
     packed_atoms = protein_backbone_atoms + bilayer_kept
-    min_box_z_target = float(pspan[2] + 2.0 * (float(args.box_padding_z) + float(args.protein_pbc_margin)))
-    box_lengths = set_box_from_lipid_xy(
-        all_atoms=packed_atoms,
-        lipid_atoms=bilayer_kept,
-        pad_z=float(args.box_padding_z),
-        force_square_xy=True,
-        min_box_z=min_box_z_target,
-        center_lipid_in_z=True,
-        force_xy_box=target_side,
+    removed_lipids = env_geometry["lipid_residues_removed"]
+
+    # Gate G1: the protein's hydrophobic belt must sit against acyl tails, not headgroups. A lamellar
+    # DDM slab fails this (~14 A tail span, half the belt facing maltose), which is what unfolded TM4.
+    # Reported, not gated: CHARMM-GUI templates are pre-minimization and laterally compressed, so a
+    # packed-state span reads low for every lipid (DOPC 20 A, POPE/POPG 21 A) and cannot be compared with
+    # OPM's relaxed hydrophobic thickness. assert_environment_solvation() does the real check per belt
+    # residue on equilibrated coordinates, which is both local and like-for-like.
+    coverage = env_geometry.pop("belt_coverage")
+    print(
+        f"Hydrophobic coverage (packed state): tail span {coverage['tail_hydrophobic_span_a']:.1f} A, "
+        f"belt {coverage['belt_span_a']:.1f} A, {coverage['belt_polar_contact_fraction']:.2f} of "
+        f"{coverage['belt_residues']} belt residues nearest a polar bead"
     )
 
     protein_charge = (
@@ -465,28 +722,15 @@ def prepare_mixed_structure(args, runtime_pdb):
         membrane_charge += lipid_net_charges[resname]
     system_charge = protein_charge + membrane_charge
 
-    # Ions occupy the solvent-accessible volume only (implicit solvent), and are placed in the
-    # solvent slabs outside the measured membrane band.
-    kept_lipid_xyz = coords([a for a in bilayer_kept if lipid_resname(a["resname"])])
-    membrane_z_lo = float(kept_lipid_xyz[:, 2].min())
-    membrane_z_hi = float(kept_lipid_xyz[:, 2].max())
-    packed_thickness_z = membrane_z_hi - membrane_z_lo
-    # Count ions against the EQUILIBRATED membrane thickness (the dry-MARTINI membrane relaxes
-    # from the compressed CHARMM-GUI start), so the realized concentration is 0.15 M in production.
-    # Ions are still placed in the packed-time solvent slabs (outside the current membrane extent).
-    count_thickness_z = (
-        float(args.membrane_thickness_angstrom)
-        if float(args.membrane_thickness_angstrom) > 0.0
-        else packed_thickness_z
-    )
+    # Ions occupy the solvent-accessible volume only (implicit solvent): the box minus whatever the
+    # amphiphile aggregate and the protein exclude, and never inside the hydrophobic interior.
     n_protein_residues = len({(a["chain"], a["resseq"], a["icode"]) for a in protein_backbone_atoms})
     protein_volume_a3 = float(n_protein_residues) * PROTEIN_RESIDUE_VOLUME_A3
     if int(args.explicit_ions):
         salt_pairs = estimate_salt_pairs(
             box_lengths=box_lengths,
             salt_molar=float(args.salt_molar),
-            membrane_thickness_z=count_thickness_z,
-            protein_volume_a3=protein_volume_a3,
+            excluded_volume_a3=env_geometry["excluded_volume_a3"] + protein_volume_a3,
         )
         n_na = int(salt_pairs + max(0, -system_charge))
         n_cl = int(salt_pairs + max(0, system_charge))
@@ -498,7 +742,7 @@ def prepare_mixed_structure(args, runtime_pdb):
             n_cl=n_cl,
             cutoff=float(args.ion_cutoff),
             rng=rng,
-            exclude_z=(membrane_z_lo, membrane_z_hi),
+            reject=env_geometry["ion_reject"](box_lengths),
         )
     else:
         salt_pairs = 0
@@ -565,11 +809,7 @@ def prepare_mixed_structure(args, runtime_pdb):
         "protein_orientation_mode": str(args.protein_orientation_mode),
         "opm_reference": str(args.opm_reference) if args.opm_reference else None,
         "xy_scale": float(args.xy_scale),
-        "base_xy_side_angstrom": float(base_side),
-        "target_xy_side_angstrom": float(target_side),
         "box_angstrom": [float(v) for v in box_lengths],
-        "membrane_thickness_z_angstrom": float(packed_thickness_z),
-        "ion_count_thickness_z_angstrom": float(count_thickness_z),
         "protein_charge_used": int(protein_charge),
         "membrane_charge": int(membrane_charge),
         "explicit_ions": int(args.explicit_ions),
@@ -581,14 +821,13 @@ def prepare_mixed_structure(args, runtime_pdb):
         "lipid_residues_removed": int(removed_lipids),
         "ion_atoms_added": int(len(ion_atoms)),
         "total_atoms": int(len(all_atoms)),
-        "protein_span_angstrom": [float(v) for v in pspan],
         "protein_final_z_min": float(protein_xyz_final[:, 2].min()),
         "protein_final_z_max": float(protein_xyz_final[:, 2].max()),
         "lipid_final_z_min": float(bilayer_xyz_final[:, 2].min()),
         "lipid_final_z_max": float(bilayer_xyz_final[:, 2].max()),
-        "protein_top_clearance_angstrom": float(protein_xyz_final[:, 2].min() - bilayer_xyz_final[:, 2].max()),
-        "protein_bottom_clearance_angstrom": float(bilayer_xyz_final[:, 2].min() - protein_xyz_final[:, 2].max()),
     }
+    summary.update({k: v for k, v in env_geometry.items() if k != "ion_reject"})
+    summary.update({f"belt_{k}": v for k, v in coverage.items()})
     summary.update(mapping_summary)
     return summary
 
@@ -1189,6 +1428,10 @@ def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable:
         dynamics_phase = "overlap_settling"
     else:
         dynamics_phase = "early_equilibration"
+    # A finite aggregate has no lateral tension to relax, so box scaling is not a degree of freedom:
+    # a tensionless xy barostat would just squeeze the box down onto the micelle. NVT throughout.
+    if args.environment_morphology == "micelle":
+        npt_enable = 0
     return {
         "UPSIDE_HOME": str(args.upside_home),
         "UPSIDE_MARTINI_FF_DIR": str(args.itp_dir),
@@ -1861,6 +2104,19 @@ def validate_hybrid_workflow_args(args):
     for path in required:
         if not path.exists():
             raise FileNotFoundError(path)
+    # The aggregate morphology follows from the amphiphile's tail count and decides whether the
+    # barostat has any meaning, so resolve it once here and carry it on args.
+    args.environment_morphology = derive_environment_morphology(args.upside_home, args.lipid_name)
+    if args.environment_morphology == "micelle" and not args.opm_reference:
+        raise ValueError(
+            f"{args.lipid_name} is a single-tailed detergent, so the environment is built as a micelle, "
+            "which needs --opm-reference for the protein's hydrophobic belt."
+        )
+    args.belt_half_thickness_a = (
+        read_opm_hydrophobic_half_thickness(Path(args.opm_reference).expanduser().resolve())
+        if args.opm_reference
+        else 0.0
+    )
 
 
 def workflow_stage_files(args):
@@ -1917,6 +2173,87 @@ def run_stage60_relaxation(args, files):
     return files["stage_60"]
 
 
+def assert_environment_solvation(args, up_file: Path):
+    """Gate G2: the protein must be properly solvated in the state that actually enters production.
+
+    Run on the equilibrated stage-7.0 coordinates, because that is the configuration production samples,
+    and per belt residue rather than as a global thickness, because that is the only like-for-like
+    comparison (a packed-state span reads low for every lipid). Two distinct failures are caught:
+
+      * vacuum -- a belt site with no environment bead at all in reach. This is what an unhealed
+        insertion void looks like; the lamellar glpG build entered production with the first shell empty
+        (mean nearest environment bead 11.7 A over transmembrane CA).
+      * headgroup solvation -- a belt site whose only company is polar. This is the hydrophobic-mismatch
+        failure that unfolded TM4: the DDM slab's 14 A tail core left half the belt against maltose, and
+        it is invisible to a vacuum test because the headgroups are right there.
+
+    The limit for both is the derived coverage radius the builder uses: twice the force field's contact
+    distance, i.e. a gap wide enough for another bead to sit in.
+    """
+    import h5py
+    from scipy.spatial import cKDTree
+
+    clearance = float(args.protein_lipid_cutoff)
+    coverage_radius = 2.0 * clearance
+    with h5py.File(up_file, "r") as h5:
+        pos = np.array(h5["/input/pos"])[:, :, 0]
+        env_index = np.array(h5["/input/hybrid_env_topology/env_atom_indices"])
+        bb_index = np.array(h5["/input/hybrid_bb_map/bb_atom_index"])
+        atom_names = np.array([n.decode().strip() for n in np.array(h5["/input/atom_names"])])
+    env_xyz = pos[env_index]
+    apolar_names = derive_lipid_apolar_bead_names(args.upside_home, args.lipid_name)
+    is_tail = np.isin(atom_names[env_index], sorted(apolar_names))
+    if not is_tail.any():
+        raise RuntimeError(
+            f"No apolar environment beads {sorted(apolar_names)} found in {up_file.name}; cannot verify "
+            "hydrophobic solvation."
+        )
+    # The aggregate defines its own midplane; a finite micelle is free to drift off the box centre.
+    bb_xyz = pos[bb_index]
+    belt = bb_xyz[np.abs(bb_xyz[:, 2] - env_xyz[:, 2].mean()) <= float(args.belt_half_thickness_a)]
+    if belt.shape[0] == 0:
+        raise RuntimeError("Stage-7.0 solvation gate found no backbone sites inside the belt.")
+
+    d_any = cKDTree(env_xyz).query(belt)[0]
+    d_tail = cKDTree(env_xyz[is_tail]).query(belt)[0]
+    bare = int(np.count_nonzero(d_any > coverage_radius))
+    dry = int(np.count_nonzero(d_tail > coverage_radius))
+    # Local hydrophobic thickness: the z-extent of tail beads in a cylinder around the protein, i.e. the
+    # core the belt actually sits in, measured after equilibration so it is not the compressed template.
+    lateral = np.linalg.norm(env_xyz[:, :2] - belt[:, :2].mean(axis=0), axis=1)
+    local_tails = env_xyz[is_tail & (lateral <= np.linalg.norm(belt[:, :2].std(axis=0)) + 3.0 * clearance)]
+    local_span = (
+        float(np.percentile(local_tails[:, 2], 95) - np.percentile(local_tails[:, 2], 5))
+        if local_tails.shape[0] > 10
+        else float("nan")
+    )
+    belt_span = 2.0 * float(args.belt_half_thickness_a)
+    print(
+        f"Stage-7.0 solvation gate: {belt.shape[0]} belt sites; nearest environment bead mean "
+        f"{d_any.mean():.2f} / max {d_any.max():.2f} A ({bare} bare); nearest acyl tail mean "
+        f"{d_tail.mean():.2f} / max {d_tail.max():.2f} A ({dry} beyond reach); local tail core "
+        f"{local_span:.1f} A vs {belt_span:.1f} A belt; limit {coverage_radius:.2f} A"
+    )
+    # Only the vacuum test gates. Tail reach and local core thickness are reported because both are
+    # ambiguous on a post-equilibration snapshot: once a helix has already been stripped, detergent flows
+    # into the cavity and the statistics recover, so they diagnose rather than decide. Promoting the
+    # thickness check to a hard gate needs the DOPC/POPC bilayer regression first (plan.md P7) -- a
+    # packed-state span reads ~20 A for every lipid, so an unvalidated threshold would break the
+    # lamellar path.
+    if bare:
+        raise RuntimeError(
+            f"{bare} of {belt.shape[0]} hydrophobic-belt sites enter production with no environment bead "
+            f"within {coverage_radius:.2f} A. The belt would sample against vacuum; lengthen "
+            "equilibration or check the environment build."
+        )
+    if dry or (local_span == local_span and local_span < belt_span - clearance):
+        print(
+            f"  WARNING: {dry} belt site(s) beyond acyl-tail reach and a {local_span:.1f} A local tail "
+            f"core against a {belt_span:.1f} A belt. This is the hydrophobic-mismatch signature that "
+            "unfolded glpG TM4 in the lamellar DDM slab; inspect before trusting the run."
+        )
+
+
 def run_stage70_handoff(args, files, source_stage: Path):
     prepare_stage_file(
         args,
@@ -1933,6 +2270,7 @@ def run_stage70_handoff(args, files, source_stage: Path):
     run_stage70_burnin(args, files["stage_70"])
     set_stage_label(files["stage_70"], "production")
     assert_hybrid_stage_active(files["stage_70"], "production", "production")
+    assert_environment_solvation(args, files["stage_70"])
     run_md_stage(
         args,
         "7.0",

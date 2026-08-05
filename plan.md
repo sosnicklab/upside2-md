@@ -1,4 +1,157 @@
-# CURRENT PHASE (2026-08-04): NP-1AO6 rebuild with corrected ions, then diagnose the blow-up
+# CURRENT PHASE (2026-08-05): NP full-ion rebuild + 6-face stability; glpG micelle REMD half-lost to NaN
+
+## Project Goal
+
+Two tracks running at once. (1) Rebuild the six 1AO6 + MPA-AuNP faces with **0.15 M bulk salt** instead of
+counterions-only, because the counterion convention carried no ionic strength at all and leaves the
+protein-NP electrostatics unscreened; establish whether all six are stable. (2) Deal with the glpG micelle
+REMD batch, half of which died of a single-replica runaway that replica exchange spread to all 48 slots.
+
+## Architecture & Key Decisions
+
+- **NP ions**: `build_ions` now takes `salt_molar` + the solvent-accessible volume and spends the
+  neutralizing excess FROM the salt budget rather than adding it on top (adding on top would inflate ionic
+  strength by the entire 218-charge MPA+protein excess). `salt_molar = 0` reproduces counterions-only, so
+  there is one config value and no dead toggle. Realized per face: **K+ 706 / Cl- 488, net +218**
+  (neutralizing protein -15 + MPA -203), solvent 7.82e6 A^3 in the 200 A box.
+  *Caveat to settle:* spending from the budget puts the achieved **ionic strength at 0.127 M, not 0.15 M**,
+  because the fixed 218 excess is a large fraction of a 706-pair budget. Hitting I = 0.15 M exactly would
+  need K+ 815 / Cl- 597. The old 284 A box reached I = 0.142 M for the same reason (bigger budget, same
+  excess). User decision which target matters.
+- The counterion builds and their trajectories are **preserved, not deleted**: local
+  `scratchpad/NP-footprinting/counterion_backup/` (1.0 GB) and cluster
+  `/home/yinhanw/project/NP-1AO6/prod_counterion/` (3.2 GB), so the salt-vs-no-salt comparison stays
+  possible.
+- **Stability cannot be judged by a short check.** `build_all.py`'s built-in probe is 2000 steps; the
+  counterion failure appeared at ~step 97,000 of a 112,966-step chunk, and the glpG REMD seed passed a
+  400-step smoke test then died at step 12,190. Seed smoke tests bound loading and setup, NOT stability.
+  The 6-face probe therefore runs a full chunk-equivalent (112,966 steps at dt=0.005) per face.
+- **glpG REMD needs a finiteness guard before any further submission.** `run_remd.py` exchanges on whatever
+  energy it reads, so one diverged replica poisons all 48 in a single sweep, and because the driver reseeds
+  `/input` from the last output frame the corruption is written back and self-resubmitted. The NP driver
+  already does this correctly (`health()` on peptide C-N, ends the chain rather than propagating); the REMD
+  driver never got the equivalent.
+
+## Execution Phases
+
+- [x] N1 Full-salt ion path in `np_hybrid.py` + `salt_molar` in `build_all.py`; arithmetic verified.
+- [x] N2 All six faces rebuilt: finite, no blow-up, gold_shift 0.00, Rg 26.0-27.2 with drift <= 0.5 A.
+- [x] N3 Counterion builds/trajectories preserved; six full-salt seeds uploaded and verified on the cluster
+      (5174 atoms, K+ 706 / Cl- 488, net +218, finite); production submitted as **job 53080076**.
+- [ ] N4 6-face long stability probe (112,966 steps each, concurrent) -- per-frame peptide C-N + Rg.
+- [ ] N5 Report stability per face; decide the ionic-strength target.
+- [x] G1 glpG micelle REMD: 79ALA (53036667) and 79ALA_S115T (53036669) healthy and left running; 79HIS
+      (53036661) and 79HIS_S115T (53036664) NaN, stopped with STOP + scancel (findings 79).
+- [ ] G2 Add the finiteness guard to `run_remd.py`, then re-run the two lost variants from the clean seeds
+      (still held locally, md5-verified).
+- [ ] G3 Localize the runaway: rerun 79HIS from its clean seed with dense output to catch the divergence.
+
+## Known Errors / Blockers
+
+- Two of four glpG micelle variants are lost to NaN. The two survivors carry the same exposure until G2
+  lands: they have already shown transient protein_potential spikes of +36,450 and +41,012 that recovered.
+- Do not compare the counterion and full-salt NP runs as if the ionic strength were the only difference
+  until the 0.127-vs-0.15 M question above is settled.
+
+---
+
+# PREVIOUS PHASE (2026-08-04): rebuild the DDM environment as a micelle, then re-run the glpG REMD
+
+## Project Goal
+
+Replace the DDM *lamellar slab* environment with a physical detergent **micelle**, because DDM is a micelle
+under the experimental HDX condition and the slab's 11--14 A hydrophobic core unfolds glpG TM4 (findings 76).
+Then re-prepare all four glpG-RKRK variants and re-run the midway3 REMD jobs so the HDX dG profiles rest on a
+physically correct environment.
+
+## Architecture & Key Decisions
+
+- **Morphology is derived from the ITP, not a CLI flag and not a name table.** `derive_environment_morphology`
+  counts acyl chains as connected components of the apolar (MARTINI `C1`-`C5`) bond subgraph: one tail ->
+  micelle, two or more -> bilayer. DDM -> micelle; DOPC/POPC/POPG -> bilayer; a detergent+lipid mixture is
+  rejected as ambiguous. No user-facing knob can select the unphysical combination.
+- **`build_detergent_micelle()`** replaces tile/crop/carve for micelle morphology. Inputs are all measured,
+  never tuned: the oriented protein CG envelope (OPM frame, midplane z=0); the monomer conformer read from the
+  existing template PDB; and the hydrophobic half-thickness from the OPM reference REMARK
+  (`1/2 of bilayer thickness: 14.1` -> 28.2 A, matching glpG's measured 28.2 A belt span).
+- The shell hugs the protein's hydrophobic belt only (tails inward, heads outward), leaving the polar caps
+  bare -- a protein-detergent complex, not a closed vesicle. Monomers are seeded by random sequential
+  adsorption over the shell VOLUME, **innermost first**, spaced by the force field's contact distance
+  (2^(1/6) sigma_max). N therefore follows from belt geometry + the force field: 186 DDM for glpG, in the
+  experimental PDC range. Two earlier attempts are recorded so they are not retried: seeding from convex-hull
+  support points gave a sparse 32-molecule shell with bald patches, and seeding tail tips in random order
+  smeared tails across the shell (63 A span, worse coverage).
+- The CHARMM-GUI step5 assembly is **pre-minimization and contains hard clashes** (bead pairs 0.24 A apart), so
+  it cannot serve as a packing-density reference. The force field's contact distance is used instead and the
+  6.0-6.6 ladder condenses the aggregate.
+- **No barostat for micelle morphology** (`npt_enable = 0` at every stage). A micelle in implicit solvent has no
+  lateral tension, so the xy-only tensionless barostat is meaningless and would squeeze the box onto the
+  micelle. Box = protein+micelle extent plus vacuum padding, fixed.
+- Ions: solvent volume = box minus protein minus *measured micelle volume* (not `A_xy x thickness`), placed
+  outside the aggregate. `estimate_salt_pairs` takes an excluded volume so both morphologies share one
+  formula (bit-identical arithmetic for the bilayer). `place_ions` takes one `reject(trial)` predicate
+  instead of `exclude_z`: the z-band for a bilayer, nearer-to-tail-than-head for a micelle.
+- `--membrane-thickness-angstrom` is KEPT: it has a real job (count ions against the equilibrated thickness,
+  not the compressed CHARMM-GUI start). Only its help text was misleading. It is rejected in micelle mode,
+  where the aggregate volume is measured instead. Renaming it would touch the DOPC path for no gain.
+- Micelle-frame analysis convention: a finite aggregate has no fixed normal (measured: asphericity fluctuates
+  0.19-0.33, long axis drifts 6.4 -> 14.6 deg off box z, while the periodic slab is pinned at 0.21 / <3 deg).
+  Depth and tilt must be measured against the aggregate's instantaneous short principal axis, never box z, or
+  environment wobble reads as protein bending. HDX dG itself is normal-independent, so the wobble is harmless
+  for the deliverable.
+- **Gating, revised after measurement.** The build-time span check was DROPPED as a hard gate: a packed-state
+  5-95 percentile tail span reads ~20 A for *every* lipid (DOPC 20.4, POPE/POPG 20.6, DDM 11.0) because
+  CHARMM-GUI templates are compressed, so comparing it with OPM's relaxed thickness would have falsely failed
+  the DOPC path too. What ships instead:
+  * `assert_environment_solvation` runs at the production handoff on **equilibrated** coordinates and per belt
+    residue -- the only like-for-like comparison. It HARD-FAILS on vacuum (any belt site with no environment
+    bead within 2x the contact distance). That catches the diag run's unhealed insertion void (mean 11.7 A).
+  * Acyl-tail reach and the **local** equilibrated tail-core thickness are REPORTED with a loud warning, not
+    gated, because on a post-damage snapshot they recover: once a helix is stripped, detergent floods the
+    cavity. Measured contrast is still stark -- micelle seed 45.1 A local tail core / 0 sites beyond tail
+    reach, old lamellar replica 13.9 A / 2 sites, against a 28.2 A belt.
+  * Build-time residual bald spots are reported, not fatal: a rigid conformer cannot always reach a deep
+    recess, and refining the grid only surfaces more such sites (1.5 A -> 116 exposed, 1.25 A -> 122).
+  Promoting the thickness check to a hard gate requires P7 first.
+- The bilayer path must keep master parity. The refactor is arithmetically identity-preserving
+  (`excluded = A_xy*thickness + V_protein`, so `box_volume - excluded` equals the old
+  `A_xy*(box_z - thickness) - V_protein`; the `reject` predicate applies the same z-band test at the same
+  point in the RNG stream), but P7 verifies it end-to-end.
+- The DDM itp has no `[ position_restraints ]`, so the `lipidhead_fc` ladder is already inert for DDM; the
+  6.0-6.6 LJ-softening ladder is retained as the annealing schedule.
+
+## Execution Phases
+
+- [x] P1 Tail-count-derived morphology + `build_detergent_micelle()`; barostat off for a micelle.
+- [x] P2 Gates G1 (build-time span) and G2 (post-equilibration solvation) + summary fields.
+- [x] P3 Local validation: short 79HIS micelle run -- 186 DDM, r95 43 A micelle, tail span 45 A over the
+      28 A belt, first shell 7.04 -> 5.76 A, TM4 helicity 0.97-1.00, box fixed.
+- [x] P4 All four variants prepared through stage 7.0; every one passed the solvation gate with 0 bare and
+      0 sites beyond acyl-tail reach, local tail core 45.1-47.5 A against the 28.2 A belt.
+- [x] P5a Cancel the slab REMD jobs (52970530-533) with STOP files first; NP job untouched.
+- [x] P5b Free 74 GB of invalid slab trajectories; keep the slab seeds + hdx_results.
+- [x] P5c New cluster base `glpG_DDM_micelle_REMD`; prep code synced to the cluster UPSIDE_HOME.
+- [x] P5d Seeds uploaded (md5-verified local vs cluster) and four 48-replica REMD jobs submitted:
+      **53036661** 79HIS, **53036664** 79HIS_S115T, **53036667** 79ALA, **53036669** 79ALA_S115T.
+      All PENDING; cancelling the running slab jobs forfeited their queue position, so expect a wait.
+- [ ] P6 Re-run the HDX analysis; compare per-residue dG against the pD 9 HXMS data.
+- [x] P7 DOPC bilayer regression PASSED (rc=0, glpG in DOPC): morphology `bilayer`; xy-only barostat still
+      live (box 200.2 -> 213.3 A in xy, z pinned at 123.697); tile/carve ran (64 lipids removed, 15176 lipid
+      atoms kept); ions 287 pairs -> 287 Na / 293 Cl, neutralising the +6 protein; solvation gate 0 bare and
+      0 beyond tail reach, local tail core 23.0 A vs 28.2 A belt with no warning (correct -- that is normal
+      lipid/protein adaptation, not mismatch). Ion-count parity asserted numerically: the refactored
+      excluded-volume formula returns 65 pairs for the recorded slab inputs, identical to the pre-refactor
+      formula and to the logged `na_added`.
+
+## Known Errors / Blockers
+
+- Every glpG-DDM hybrid HDX dG result from the lamellar prep is invalid (findings 76). Do not compare the old
+  and new profiles as if both were meaningful.
+- Reaching midway3 needs the user to approve a Duo push; P5 cannot run unattended.
+
+---
+
+# PAUSED PARALLEL TRACK (2026-08-04): NP-1AO6 rebuild with corrected ions, then diagnose the blow-up
 
 ## Project Goal
 
@@ -32,11 +185,20 @@ local segment to find out whether the backbone still tears at dt=0.005.
 
 ## Known Errors / Blockers
 
-- The cluster still holds the OLD systems (orientation-dependent boxes, counterions on top). No re-run
-  until the corrected builds are uploaded.
-- All six previous production faces are destroyed; run.1 was finite but physically torn (Rg 26.5->76.7 A,
-  peptide C-N to 56 A). Judge health by Rg / peptide C-N / sign of the potential, never by isfinite.
-- Root cause of the tearing is unresolved. dt 0.009 -> 0.005 plus a soft-core ramp only slowed it.
+- **Ion convention is unsettled and must be decided.** `np_hybrid.py` currently enforces *counterions only*
+  (hard assertion that no salt pair is placed), and the six running faces match it exactly: 218 K+, 0 Cl-,
+  since 203 MPA(-1) + protein(-15) = -218. The earlier note in this plan of "2053 pairs, K+ 2053 / Cl- 1835,
+  3888 ions at 0.15 M" is a SUPERSEDED convention. These are physically different systems -- counterions-only
+  carries no bulk ionic strength -- so for a corona-footprinting study the choice matters. User decision.
+- Judge health by Rg / peptide C-N / sign of the potential, never by isfinite: a torn backbone stays finite
+  for a long time (the Aug-2 chain resubmitted for 25 h onto already-destroyed systems).
+- **Tearing root cause still unresolved, but the gold-LJ-core hypothesis is now excluded** for job 53032366
+  (findings 78): the onset was a single ~38-step impulse at res550-551 sitting ~40 A from the nearest gold
+  bead, while residues in genuine 3.0-4.3 A gold contact all run never broke. Next step is to instrument
+  per-term forces on res549-552 across the onset frame, NOT to lower dt again -- dt 0.009 -> 0.005 plus a
+  soft-core ramp only delayed it, and this failure has no steric trigger to blame.
+- Job 53032366 ended its own chain correctly and does NOT self-resubmit; 5 of 6 faces finished healthy
+  (C-N 1.73-1.83 A). Nothing is queued for this track.
 
 ---
 
@@ -502,6 +664,10 @@ CURRENT BASELINE: production uses the factor-four-corrected bare-particle mobili
   regressions, DSSP/mobility analysis, and manuscript compilation pass.
 
 # Known Errors / Blockers
+- The CHARMM-GUI DDM *lamellar* template cannot solvate glpG: its tail core is 11-14 A against a 28-30 A
+  protein TM belt, which unfolds TM4 through the TM4:TM6 interface. DDM must be built as a micelle (or the
+  lamellar environment must use a bilayer-forming lipid). All glpG-DDM hybrid HDX dG results produced from the
+  redesigned CHARMM-GUI prep are invalid until this is fixed (findings 76).
 - Molecular DOPC diffusion is not matched at 40 ps/step; the fallback is explicitly particle-level.
 - The additive contact friction is not a quantitative hydrodynamic resistance tensor. Such a tensor
   would require independent parallel, normal, and rotational reference data and a momentum-conserving model.

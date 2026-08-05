@@ -664,11 +664,9 @@ struct MartiniPotential : public PotentialNode
                 float coord_scale = 999.0f / (r_max - r_min);
                 float dE_dr = deriv_spline * coord_scale;
                 float force_mag = -dE_dr;
-                if(std::isfinite(pot) && std::isfinite(force_mag)) {
-                    Vec<3> force = (force_mag/dist) * dr;
-                    pair_potential += pot;
-                    pair_force += force;
-                }
+                Vec<3> force = (force_mag/dist) * dr;
+                pair_potential += pot;
+                pair_force += force;
             }
             return !(pair_potential == 0.f && mag2(pair_force) == 0.f);
         };
@@ -1049,7 +1047,6 @@ struct MartiniScTablePotential : public PotentialNode
                 dVdr = radial_dVdr + ang1_value * angular_dVdr;
                 dVdcoord = dAng1dcoord * angular_value;
 
-                if(!std::isfinite(value) || !std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
                 potential += value;
 
                 if(dist <= 1.0e-6f) continue;
@@ -1654,8 +1651,6 @@ struct MartiniScTableOneBody : public CoordNode
                 dVdr = radial_dVdr + ang1_value * angular_dVdr;
                 dVdcoord = dAng1dcoord * angular_value;
             }
-            if(!std::isfinite(dVdr) || !std::isfinite(dVdcoord)) continue;
-
             Vec<3> point_grad = row_scale * (
                 dVdr * displace_unitvec +
                 (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec));
@@ -2076,8 +2071,7 @@ static RegisterNodeType<PositionRestraint, 1> position_restraint_node("restraint
 
 namespace {
 void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
-    if(!std::isfinite(scale_xy) || !std::isfinite(scale_z)) return;
-    if(!(scale_xy > 0.f) || !(scale_z > 0.f)) return;
+    if(!(scale_xy > 0.f) || !(scale_z > 0.f)) return;   // domain precondition: a box length is positive
 
     for(auto& n : engine.nodes) {
         if(!n.computation) continue;

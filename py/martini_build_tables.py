@@ -503,20 +503,39 @@ def _build_particles_group(
     grids: List[np.ndarray] = []
     coulomb_k_eup = COULOMB_K_DRY_KJ_NM * length_conv / energy_conv
 
+    # MARTINI 2 nonbonded contract: BOTH terms must reach the cutoff smoothly.
+    #
+    # A bare truncation leaves a step in the energy at r_c, and for a charged pair that step is
+    # k*qq/r_c = 2.65 E_up at r_c = 12 A -- about 3.5 kT. Every time such a pair crosses the cutoff the
+    # integrator gains or loses that much, so energy is not conserved and the error accumulates in
+    # whichever degrees of freedom keep crossing. With hundreds of mobile ions in an implicit-solvent box
+    # that is a continuous stochastic energy source, and it is what let a glpG micelle replica run away
+    # (findings 79-80). This is the correction flagged as outstanding in findings 75.
+    #
+    # Coulomb -> reaction field with a conducting boundary (eps_rf -> infinity), the MARTINI convention:
+    #     E(r) = k*qq * [ 1/r + k_rf*r^2 - c_rf ],  k_rf = 1/(2 r_c^3),  c_rf = 3/(2 r_c)
+    # which gives E(r_c) = 0 AND dE/dr(r_c) = 0 exactly. eps_r = 15 is already folded into coulomb_k_eup.
+    # LJ -> potential-shift (GROMACS `vdw-modifier = Potential-shift`): subtract E_LJ(r_c). The residual
+    # force at r_c is ~1e-2 E_up/A, three orders below the Coulomb step being removed.
+    r_c = float(PARTICLES_R_MAX_A)
+    k_rf = 1.0 / (2.0 * r_c ** 3)
+    c_rf = 3.0 / (2.0 * r_c)
+
     for eps, sig in eps_sig_list:
+        sig6 = sig ** 6
+        sig12 = sig6 * sig6
+        lj_shift = 4.0 * eps * (sig12 / r_c ** 12 - sig6 / r_c ** 6)
         for qq in qq_set:
             grid = np.zeros(PARTICLES_GRID_N, dtype=np.float64)
             for i in range(PARTICLES_GRID_N):
                 r = PARTICLES_R_MIN_A + i * (PARTICLES_R_MAX_A - PARTICLES_R_MIN_A) / (PARTICLES_GRID_N - 1)
                 r = max(r, 0.1 * sig)
-                r2 = r * r
-                r3 = r2 * r
-                r6 = r3 * r3
-                sig2 = sig * sig
-                sig6 = sig2 * sig2 * sig2
-                sig12 = sig6 * sig6
-                lj = 4.0 * eps * (sig12 / (r6 * r6) - sig6 / r6)
-                coul = coulomb_k_eup * qq / max(r, 1.0e-6) if abs(qq) > 1e-10 else 0.0
+                r6 = r ** 6
+                lj = 4.0 * eps * (sig12 / (r6 * r6) - sig6 / r6) - lj_shift
+                if abs(qq) > 1e-10:
+                    coul = coulomb_k_eup * qq * (1.0 / r + k_rf * r * r - c_rf)
+                else:
+                    coul = 0.0
                 grid[i] = lj + coul
             triples.append((eps, sig, qq))
             grids.append(grid)
@@ -964,10 +983,17 @@ def _compute_pair_energy_and_gradient(
             sigma_nm = params["sigma_nm"]
             epsilon_kj = params["epsilon_kj_mol"]
 
+            # Same MARTINI 2 nonbonded contract as the particle-particle grids: LJ potential-shift and
+            # reaction-field Coulomb, so energy and force both reach the cutoff smoothly. Truncating
+            # bare leaves a step of k*q1q2/r_c at r_c -- ~3.5 kT for a charged pair at 1.2 nm -- which
+            # breaks energy conservation every time a pair crosses (findings 75, 79-80).
             sr = sigma_nm / eff_dist
             sr2 = sr * sr
             sr6 = sr2 * sr2 * sr2
             lj = 4.0 * epsilon_kj * (sr6 * sr6 - sr6)
+            if cutoff_nm is not None:
+                src6 = (sigma_nm / float(cutoff_nm)) ** 6
+                lj -= 4.0 * epsilon_kj * (src6 * src6 - src6)
             total_energy += lj
 
             if dist > 1e-10:
@@ -980,9 +1006,17 @@ def _compute_pair_energy_and_gradient(
             q2 = bead_charges2[j]
             if q1 and q2 and dist > 1e-10:
                 coul_eff = max(dist, dist_min_nm)
-                coul = COULOMB_K_DRY_KJ_NM * q1 * q2 / coul_eff
+                kq = COULOMB_K_DRY_KJ_NM * q1 * q2
+                if cutoff_nm is not None:
+                    r_c = float(cutoff_nm)
+                    k_rf = 1.0 / (2.0 * r_c ** 3)
+                    c_rf = 3.0 / (2.0 * r_c)
+                    coul = kq * (1.0 / coul_eff + k_rf * coul_eff * coul_eff - c_rf)
+                    dcoul_dr = kq * (-1.0 / (coul_eff * coul_eff) + 2.0 * k_rf * coul_eff)
+                else:
+                    coul = kq / coul_eff
+                    dcoul_dr = -kq / (coul_eff * coul_eff)
                 total_energy += coul
-                dcoul_dr = -COULOMB_K_DRY_KJ_NM * q1 * q2 / (coul_eff * coul_eff)
                 unit = dx / dist
                 grad1[i] -= dcoul_dr * unit
                 grad2[j] += dcoul_dr * unit

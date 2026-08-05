@@ -68,19 +68,37 @@ The preparation is a standard membrane-protein insertion:
    shared fold, then Kabsch with iterative core refinement). The membrane normal becomes z and the
    transmembrane region is centered on the midplane. The *same* rigid transform is applied to the
    runtime backbone and to the CG envelope, so they stay consistent.
-3. **Read the CHARMM-GUI membrane**, stripping water and discarding its ions (both regenerated below),
-   and **tile/crop** it in-plane to the protein footprint plus a PBC-safe belt.
-4. **Insert** the protein and **remove overlapping lipids** — any lipid clashing with the CG envelope
-   (backbone *and* side chains) is deleted, so lipids never pack into the space the rotamers occupy.
-5. **Size the box**: in-plane = protein span + PBC margin (rounded to whole membrane tiles);
-   z = protein span + PBC margin. Only as large as PBC safety requires.
-6. **Add ions** at `--salt-molar` (default 0.15 M) over the *solvent-accessible* volume, placed in the
-   solvent slabs outside the membrane (see §5 — ions).
-7. **Equilibrate (NPT)**: a minimization then a graded release of the lipid-head restraint (stages
-   6.0 → 6.6) under a **semi-isotropic, xy-only, tensionless Monte-Carlo barostat** (see §5 —
-   pressure). This relaxes the membrane area; the CHARMM-GUI box is *not* trusted as-is.
+3. **Pick the aggregate morphology** from the amphiphile's own topology. `derive_environment_morphology`
+   counts acyl chains as connected components of the apolar (`C1`–`C5`) bond subgraph in the lipid ITP:
+   **one tail → micelle**, **two or more → bilayer**. So `DDM` builds a micelle and `DOPC`/`POPC`/`POPG`
+   build a bilayer; mixing a detergent with a bilayer-former is rejected as ambiguous. This is not a
+   user-selectable flag — a single-tailed detergent with a bulky head cannot form a lamellar phase that
+   solvates a TM domain (see §5 — morphology), so the unphysical combination must be unreachable.
+4. **Build the environment.**
+   * *Bilayer*: **tile/crop** the CHARMM-GUI membrane in-plane to the protein footprint plus a PBC-safe
+     belt, then **insert** the protein and **remove overlapping lipids** — any lipid clashing with the CG
+     envelope (backbone *and* side chains) is deleted, so lipids never pack into the rotamer space.
+   * *Micelle*: **wrap** a monolayer onto the protein's hydrophobic belt, tails inward and heads out. The
+     belt comes from the OPM reference's own `1/2 of bilayer thickness` REMARK. Monomers fill the shell
+     volume by random sequential adsorption, **innermost first**, spaced by the force field's contact
+     distance; the count follows from the geometry (186 DDM for glpG). Nothing is deleted, so there is no
+     first-shell void to heal.
+5. **Size the box**: bilayer — in-plane = protein span + PBC margin (rounded to whole membrane tiles),
+   z = protein span + PBC margin. Micelle — a cube around protein + aggregate plus vacuum padding, so the
+   aggregate can reorient without its periodic image changing shape.
+6. **Add ions** at `--salt-molar` (default 0.15 M) over the *solvent-accessible* volume — the box minus
+   what the aggregate and protein exclude — and never inside the hydrophobic interior (see §5 — ions).
+7. **Equilibrate**: a minimization then a graded release of the lipid-head restraint (stages 6.0 → 6.6).
+   For a **bilayer** this runs under a **semi-isotropic, xy-only, tensionless Monte-Carlo barostat**
+   (see §5 — pressure), relaxing the membrane area; the CHARMM-GUI box is *not* trusted as-is. For a
+   **micelle** the barostat is **off at every stage**: a finite aggregate has no lateral tension to
+   relax, so box scaling is not a degree of freedom and a tensionless xy barostat would simply squeeze
+   the box onto the micelle.
 8. **Produce (NVT)** at the equilibrated box (stage 7.0). The whole protein is one rigid body through
-   the 7.0 minimization + burn-in, then relabeled `production` for flexible dynamics.
+   the 7.0 minimization + burn-in, then relabeled `production` for flexible dynamics. Immediately before
+   production, `assert_environment_solvation` verifies on the **equilibrated** coordinates that every
+   hydrophobic-belt site has an environment bead within twice the contact distance, and reports acyl-tail
+   reach and the local tail-core thickness against the belt (see §5 — morphology).
 
 `run.py` drives both stages. Edit the inputs/settings at its top and run:
 
@@ -99,9 +117,12 @@ python ../../py/martini_prepare_system.py run-hybrid-workflow \
   --lipid-name DDM \
   --charmm-gui-dir ~/Downloads/charmm-gui-<jobid> \
   --protein-orientation-mode opm --opm-reference ~/Downloads/2nr9.pdb \
-  --membrane-thickness-angstrom 48.8 \
   --run-dir outputs/glpG-RKRK-79HIS
 ```
+
+`--opm-reference` is **required** for a micelle: the detergent belt is placed on the protein's published
+hydrophobic band. `--membrane-thickness-angstrom` is a lamellar ion-counting input only and is rejected in
+micelle mode, where the aggregate's own volume is measured instead.
 
 Common knobs (CLI flags or the matching `UPPER_CASE` environment variables): `--salt-molar`,
 `--protein-pbc-margin`, `--eq-6*-nsteps`, `--prod-70-nsteps`, `--temperature`, `--prep-seed`, `--seed`.
@@ -198,20 +219,39 @@ denser bilayer or a different lipid.
 
 ## 5. Physical model and key parameters
 
+**Aggregate morphology (why DDM is a micelle).** A lamellar phase's hydrophobic thickness is
+`2·V_tail/APL`, and the area per molecule is set by the head. DDM has one C12 tail and a bulky maltose
+head (APL ≈ 40 Å²), giving a tail core of only **≈ 11–14 Å** — while glpG's hydrophobic belt is **28.2 Å**
+(OPM). Reaching 28 Å would need APL ≈ 23 Å², which a maltose head cannot approach, so **no DDM bilayer can
+ever fit a TM domain**; that is exactly why DDM micellizes. Curvature resolves it: on a micelle the heads
+spread over a *larger outer* surface while the tails fill an inner core set by the chain length, and the
+coverage the protein feels is the belt extent those tails wrap — set by the protein, not by APL.
+
+Building DDM as a slab anyway put half of glpG's belt against maltose headgroups and unfolded TM4 by
+letting detergent into its TM4:TM6 GxxxG interface (`findings.md` Update 76). Hence the morphology is
+derived from tail count, not chosen. `assert_environment_solvation` hard-fails on any belt site facing
+vacuum and warns on the mismatch signature — measured contrast: micelle **45.1 Å** local tail core with 0
+sites beyond tail reach, versus **13.9 Å** and 2 sites for the old slab, against a 28.2 Å belt. Note that a
+*packed-state* span is not a usable test: CHARMM-GUI templates are pre-minimization and compressed, so
+every lipid reads ≈ 20 Å (DOPC 20.4, POPE/POPG 20.6) regardless.
+
 **Pressure control (waterless membrane).** dry-MARTINI has no explicit solvent, so nothing sets the
-box normal — the barostat must be **xy-only**. Equilibration uses Upside's **Monte-Carlo barostat**
-(`box.cpp`): it scales molecule centers of mass (the rigid protein is never distorted), accepts on the
-exact NPT weight (no virial — correct for a vacuum-containing box), freezes z (`mc_dmax_z = 0`), and
-targets **zero lateral tension** (`target_p_xy = 0`), the correct state for a dry membrane.
-Compressibility is 3×10⁻⁴ bar⁻¹. Production is NVT at the equilibrated box. This mirrors the
+box normal — for a **bilayer** the barostat must be **xy-only**. Equilibration uses Upside's
+**Monte-Carlo barostat** (`box.cpp`): it scales molecule centers of mass (the rigid protein is never
+distorted), accepts on the exact NPT weight (no virial — correct for a vacuum-containing box), freezes z
+(`mc_dmax_z = 0`), and targets **zero lateral tension** (`target_p_xy = 0`), the correct state for a dry
+membrane. Compressibility is 3×10⁻⁴ bar⁻¹. Production is NVT at the equilibrated box. This mirrors the
 dry-MARTINI CHARMM-GUI protocol (semi-isotropic, `compressibility 3e-4 0.0`, `ref_p 0 0`, then
-`Pcoupl = no` for production).
+`Pcoupl = no` for production). For a **micelle** the barostat is off at every stage — a finite aggregate
+has no lateral tension, so there is nothing for box scaling to relax.
 
 **Ion concentration.** Ions represent 0.15 M ionic strength in the *solvent* region, so the count is
-`molarity × N_A × [A_xy·(L_z − t_membrane) − V_protein]`, not the whole box. `t_membrane` is the
-**equilibrated** dry-MARTINI thickness: run a short pilot equilibration once, measure the relaxed lipid
-z-extent, and pass it as `--membrane-thickness-angstrom` (for DDM ≈ 49 Å). Ions are placed only in the
-solvent slabs, never the hydrophobic core.
+`molarity × N_A × [V_box − V_excluded]`, not the whole box. For a bilayer
+`V_excluded = A_xy·t_membrane + V_protein`, where `t_membrane` is the **equilibrated** dry-MARTINI
+thickness: run a short pilot equilibration once, measure the relaxed lipid z-extent, and pass it as
+`--membrane-thickness-angstrom` (for DDM-as-bilayer ≈ 49 Å). For a micelle the aggregate's own measured
+volume is used and that flag is rejected. Ions never land in the hydrophobic interior: outside a slab's
+headgroup planes, and for an aggregate never closer to a tail bead than to an interfacial head bead.
 
 **Reviewing a prepared structure.** Upside stores unwrapped coordinates, so to inspect a stage
 `.up`/`.vtf` in VMD, wrap coordinates **per molecule** with the minimum image relative to the membrane
@@ -225,6 +265,11 @@ center — otherwise molecules that crossed the periodic boundary appear scatter
   reads as *exposed* whenever its H-bond flickers, breaking the +∞ continuity of non-exchanging TM helices.
   The lipid-tail-contact correction fixes this; its `--cutoff`/`--min-contacts` are a first-order physical
   definition and are best re-calibrated against explicit-water MARTINI, atomistics, or experiment.
+- **A micelle has no fixed normal.** Unlike a periodic slab (pinned by PBC: asphericity 0.21, normal within
+  3° of box *z*), a finite aggregate fluctuates in shape and orientation — measured 0.19–0.33 asphericity
+  with its long axis drifting 6° → 15° off *z*. Any depth or tilt analysis must therefore use the
+  aggregate's **instantaneous short principal axis**, never box *z*, or environment wobble reads as protein
+  bending. HDX ΔG is normal-independent, so the wobble does not affect that deliverable.
 - **Timescale.** HDX uses equilibrium open probabilities, not simulated time, as the labeling clock;
   the dry-MARTINI lipid-diffusion / protein-timescale mismatch does not multiply the uptake time but
   can still block convergence.
