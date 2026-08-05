@@ -38,8 +38,29 @@ REMD batch, half of which died of a single-replica runaway that replica exchange
 - [x] N2 All six faces rebuilt: finite, no blow-up, gold_shift 0.00, Rg 26.0-27.2 with drift <= 0.5 A.
 - [x] N3 Counterion builds/trajectories preserved; six full-salt seeds uploaded and verified on the cluster
       (5174 atoms, K+ 706 / Cl- 488, net +218, finite); production submitted as **job 53080076**.
-- [ ] N4 6-face long stability probe (112,966 steps each, concurrent) -- per-frame peptide C-N + Rg.
-- [ ] N5 Report stability per face; decide the ionic-strength target.
+- [~] N4 6-face long stability probe: reached ~40-44k of 112,966 steps on ALL six with no tear, then stopped
+      because the force-field table was found defective mid-probe. Valid as an old-table baseline only.
+- [ ] N5 Report stability per face; decide the ionic-strength target (0.127 M achieved vs 0.15 M nominal).
+
+## Force-field correction (2026-08-05) -- the reason everything is being rebuilt
+
+The spline table was NOT the dry-MARTINI potential: bare LJ + bare 1/r hard-truncated at 1.2 nm, giving a
+2.65 E_up (~3.4 kT) energy step at the cutoff for every charged pair. Published dry Martini uses
+reaction-field electrostatics (eps_r 15, eps_rf 0) + potential-shifted LJ, both reaching zero at the cutoff.
+Fixed in both nonbonded builders in `py/martini_build_tables.py`; verified by
+`scratchpad/verify_table_matches_drymartini.py` (old 3.95 E_up deviation and 81/81 rows discontinuous ->
+new 2.2e-11 and 0/81). Findings 80. NOT proven to be the NaN cause -- two attempts to show that were
+uninformative (one confounded by relaxation, one 10x under-exposed); the powered test is the production
+re-run's failure rate against the observed 2/4.
+
+- [x] F1 Corrected both table builders; regenerated `martini.h5` (old backed up as
+      `martini.h5.bak.pre-reactionfield`); equivalence asserted against the analytic form.
+- [x] F2 All guards removed from the engine per the standing NO GUARDS rule now in AGENTS.md: the
+      `main.cpp` blow-up abort and three silent-skip finiteness masks in `martini_potential.cpp`. Rebuilt
+      clean locally; user rebuilt the cluster binary (13:08, 0 guard refs in cluster source).
+      Consequence: divergences now propagate into logs, exchanges and restarts by design.
+- [ ] F3 Rebuild every seed on the corrected table -- 4 glpG variants (`prepared_rf/`) + 6 NP faces -- then
+      resubmit both chains. The defective-table builds are kept alongside for provenance.
 - [x] G1 glpG micelle REMD: 79ALA (53036667) and 79ALA_S115T (53036669) healthy and left running; 79HIS
       (53036661) and 79HIS_S115T (53036664) NaN, stopped with STOP + scancel (findings 79).
 - [ ] G2 Add the finiteness guard to `run_remd.py`, then re-run the two lost variants from the clean seeds

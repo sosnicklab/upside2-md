@@ -2308,3 +2308,86 @@ numerical error: `assert_environment_solvation` (prep-time, fails a build whose 
 `np_hybrid.py` ion assertions (neutrality and salt composition of a built system), and `run_np_prod.py`'s
 `health()` peptide C-N check, which ends a chain rather than propagate a torn system. The last of these is
 the closest to a guard under the new rule and is the one most worth a decision.
+
+## Update 82 (2026-08-05): CLC-ec1 (Robertson eLife 2021) -- blocked on a POPE/POPG bead-model mismatch
+
+Scoped as equilibrium monomer + dimer with a lipid-solvation comparison (their dimerization dG needs
+free-energy machinery this pipeline does not have, and metadynamics was already rejected on glpG).
+
+What works, and is worth keeping:
+* Their `step8_production.mdp` independently confirms Update 80: `coulombtype = reaction-field`,
+  `epsilon_r = 15`, `epsilon_rf = 0`, `vdw-modifier = Potential-shift-verlet`, `rvdw = rcoulomb = 1.2`.
+  Their `ref_t = 303.15 K` is exactly our 0.8647 T_up.
+* Protein input: their deposited PDBs are coarse-grained, so 1OTS is needed instead. 1OTS is CLC-ec1 **plus
+  a Fab complex** -- chains A/B are the transporter, C-F must be stripped. The OPM-oriented copy carries
+  `1/2 of bilayer thickness: 14.9` (a 29.8 A belt) and contains only A/B. Monomer = chain A (444 residues),
+  dimer = A+B (885). Multi-chain is supported (`derive_chain_break_metadata`), and OPM orientation came out
+  perfect (444/444 and 885/885 Ca within 4 A, since the input already came from the OPM frame).
+* Box sizing is solvable. Their 292 A box would be ~37,700 particles / 7e8 all-pairs entries (~12 GB), which
+  the all-pairs list cannot carry. The prep floors the box at one template tile, so the tile has to shrink:
+  cropping their bilayer to a 150 A tile from its densest region gave 719 lipids at 62.6 A^2/leaflet against
+  their 61.7 bulk and a composition of exactly 2.00:1 -- i.e. representative, not the protein-shaped hole.
+  That lands the dimer at 13,053 particles and the monomer at 10,848, both tractable.
+* Hydrophobic match is good: packed tail span 28.2 A against the 29.8 A OPM belt.
+
+**The blocker: POPE/POPG bead models disagree, so POPE/POPG has never actually run through this pipeline.**
+
+| source | POPE beads | tails |
+|---|---|---|
+| Robertson `last_frame.pdb` | 12: NH3 PO4 GL1 GL2 C1A **D2A** C3A C4A / C1B C2B C3B C4B | 4 + 4, unsaturation in tail A |
+| CHARMM-GUI Martini Maker | 12: identical to the above | 4 + 4 |
+| our `dry_martini_v2.1_lipids.itp` | 13: NH3 PO4 GL1 GL2 C1A C2A C3A C4A / C1B C2B **D3B** C4B C5B | 4 + 5, unsaturation in tail B |
+
+Different bead count, different tail lengths, different unsaturation position -- not a renaming. DOPC matches
+exactly between CHARMM-GUI and our itp (14 beads, same names), which is why DOPC and DDM work today and
+POPE/POPG silently never did. A 2:1 mixture built by substituting our own POPG headgroup (`GL0`, P4, q=0)
+for POPE's (`NH3`, Qd, q=+1) is exact -- our POPE and POPG differ in atom 1 only -- but it does not help,
+because the CHARMM-GUI template it starts from is already the 12-bead model.
+
+Options, in preference order: (1) write a 13-bead POPE/POPG bilayer builder matching our itp, in the style of
+`scratchpad/build_ddm_slab.py` for DDM -- the itp is the authority and the coordinates must be generated for
+it; reusable for any dry-MARTINI lipid. (2) Add the 12-bead POPE/POPG to the itp -- rejected: it means
+running a lipid the force field was not parameterised for, against the rule that a table must be the
+published form. (3) Substitute DOPC -- rejected: the paper's result is specifically about POPE/POPG
+composition, so the membrane cannot be swapped.
+
+Lesson: a lipid being present in the ITP does not mean the pipeline can build it. Check that the bead names
+in the membrane template and the ITP agree BEFORE sizing boxes and fetching structures -- one `diff` of the
+two name lists would have found this in the first minute rather than after the orientation, cropping and
+composition work.
+
+## Update 83 (2026-08-05): POPE/POPG builder -- rigid-rod conformers cannot start at the target area
+
+Wrote `scratchpad/build_popepopg_bilayer.py` to generate the 13-bead POPE/POPG bilayer our ITP needs
+(Update 82). What is correct: geometry is read from the ITP and bond lengths are exact (worst deviation
+0.0011 A), composition is exactly 2.00:1, the arrangement is a proper bilayer (tails inside heads), and the
+tile loads back through `read_charmm_gui_membrane` with its `[ molecules ]` cross-check passing.
+
+What is wrong: the starting packing is ~2.2x too tight. Measured against the paper's own equilibrated
+bilayer, per-molecule nearest intermolecular bead distance (minimum-image in xy):
+
+| | min | median | p90 | APL |
+|---|---|---|---|---|
+| Robertson equilibrated, 12-bead | 4.21 | 4.60 | 4.71 A | 61.7 A^2 |
+| this build, pre-equilibration | 0.20 | 2.05 | 2.46 A | 69.4 A^2 |
+
+Their median of 4.60 A is essentially the MARTINI sigma of 4.7 A, achieved at a TIGHTER area than ours. The
+cause is structural, not a tunable: at 69.4 A^2 the lipid axes are 8.33 A apart while a rigid conformer with
+both tails at fixed lateral offsets is ~6 A wide at every height, leaving ~2.3 A -- exactly the median
+observed. A real lipid spreads its beads along z with tilt and disorder, so neighbours interleave rather than
+confront at the same height. Four attempts to fix it inside the rigid-rod picture all failed: reducing the
+tail splay 12 -> 5 deg and GL2 20 -> 60 deg (no change), first-bond-only splay plus jitter-only spin
+(min 0.39 -> 1.72, median unchanged), z-stagger (made min WORSE, 1.61 -> 0.20), and wider spacing.
+
+Correct route, and it doubles as the deliverable the user actually asked for: start deliberately LOOSE and
+condense with a pure-bilayer run under the xy barostat -- the same two-step the DDM slab template used --
+then use the equilibrated tile as the template for the protein systems. That equilibration IS the lipid
+validation: compare the condensed APL, bilayer thickness and this packing statistic against Robertson's
+61.7 A^2 / 4.60 A. Note the loose-start trick only works for a PURE bilayer, where the box is free to shrink;
+in a protein system the box is pinned by the protein footprint, so the lipid count must already suit the
+area, which is why the template has to be condensed first and measured second.
+
+Lesson: I had the reference bilayer in hand the whole time and spent four iterations tuning against
+intuition instead of measuring the target statistic on it first. When reproducing someone's system, compute
+the comparison metric on THEIR data before touching your own builder -- it converts guesswork into a
+one-line pass/fail.
