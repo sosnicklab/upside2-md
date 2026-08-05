@@ -875,17 +875,30 @@ def prepare_bilayer_structure(args, runtime_pdb):
         salt_pairs = estimate_salt_pairs(
             box_lengths=box_lengths,
             salt_molar=float(args.salt_molar),
-            membrane_thickness_z=membrane_thickness_z,
+            excluded_volume_a3=membrane_slab_excluded_volume(box_lengths, membrane_thickness_z, 0.0),
         )
+        # An anionic lipid (POPG) leaves the membrane charged, so the counterions have to come from the
+        # salt budget here too -- otherwise a pure POPG-containing bilayer is built non-neutral.
+        lipid_net_charges = derive_lipid_net_charges(
+            Path(os.environ.get("UPSIDE_HOME", str(REPO_ROOT))), args.lipid_name
+        )
+        membrane_charge = 0
+        seen = set()
+        for atom in bilayer_lipid_atoms:
+            key = (atom["chain"], atom["resseq"], atom["icode"])
+            if key in seen:
+                continue
+            seen.add(key)
+            membrane_charge += lipid_net_charges.get(atom["resname"].upper(), 0)
         rng = np.random.default_rng(int(args.seed))
         ion_atoms = place_ions(
             atoms=bilayer_lipid_atoms,
             box_lengths=box_lengths,
-            n_na=int(salt_pairs),
-            n_cl=int(salt_pairs),
+            n_na=int(salt_pairs + max(0, -membrane_charge)),
+            n_cl=int(salt_pairs + max(0, membrane_charge)),
             cutoff=float(args.ion_cutoff),
             rng=rng,
-            exclude_z=(float(lipid_z.min()), float(lipid_z.max())),
+            reject=reject_inside_slab(float(lipid_z.min()), float(lipid_z.max())),
         )
     else:
         salt_pairs = 0
