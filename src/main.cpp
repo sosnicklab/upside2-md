@@ -467,9 +467,24 @@ struct ReplicaExchange {
             return result;
         };
 
-        // swap coordinates and the associated system indices
+        // Swap coordinates AND momenta, rescaling the momenta for the temperature each configuration is
+        // moving to. Swapping positions alone leaves every replica holding another configuration's
+        // coordinates with its own velocity field, so velocities become uncorrelated with positions --
+        // wrong for the canonical ensemble, and not washed out by the thermostat: at timescale 5.0 with
+        // dt 0.009 the Ornstein-Uhlenbeck refresh is ~0.998 per step, so the mismatch persists for
+        // hundreds of steps. The sqrt(T_dest/T_src) rescaling is the standard temperature-REMD treatment
+        // and keeps each replica's kinetic energy at its own target.
         auto coord_swap = [&](int ns1, int ns2) {
             swap(systems[ns1].engine.pos->output, systems[ns2].engine.pos->output);
+            swap(systems[ns1].mom, systems[ns2].mom);
+            const float scale1 = sqrtf(systems[ns1].temperature / systems[ns2].temperature);
+            const float scale2 = sqrtf(systems[ns2].temperature / systems[ns1].temperature);
+            for(int ns: {ns1, ns2}) {
+                const float scale = (ns == ns1) ? scale1 : scale2;
+                VecArray m = systems[ns].mom;
+                for(int na = 0; na < systems[ns].n_atom; ++na)
+                    for(int d = 0; d < 3; ++d) m(d, na) *= scale;
+            }
             swap(replica_indices[ns1], replica_indices[ns2]);
         };
 
