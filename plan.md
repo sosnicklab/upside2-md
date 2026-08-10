@@ -1,4 +1,40 @@
-# CURRENT PHASE (2026-08-05): NP full-ion rebuild + 6-face stability; glpG micelle REMD half-lost to NaN
+# CURRENT PHASE (2026-08-10): fix the hybrid interface force propagation (findings 88)
+
+The glpG/NP instability is not a timestep or mass problem. `HybridPositionNode::propagate_deriv`
+(src/martini_hybrid.cpp:189) discards the O site's sensitivity entirely and drops BB's fourth (O) weight,
+and `_write_nonbonded_pairs` (py/martini_prepare_system_lib.py:2077) puts all five backbone sites
+(N, CA, C, O, BB) in the MARTINI pair list when dry-MARTINI defines one BB bead per residue. Net effect:
+3590 E_up/A of one-sided force per step acting on the ENVIRONMENT, 6.2% `--potential-deriv-agreement`
+error, and a dt-independent +2-3% kinetic excess. Fix scope is the dryMARTINI interface only -- **no Upside
+core change**: the N/CA/C/O representation, `infer_H_O`, springs, rama, hbond, rotamer and the integrator
+are all untouched.
+
+**Status 2026-08-10:** P1 and P2 implemented; 1rkl/DOPC runs 20000 steps stable (bilayer intact, backbone
+intact, 0 non-finite). G1 is unusable as a gate (round-off dominated -- see findings 88 correction) and
+**G2 FAILED**: the kinetic excess is still +2.1%, so a second cause remains unidentified. Example 16's
+documented workflow needs external inputs (CHARMM-GUI dir + OPM reference) not in the repo.
+
+- [x] **P1 (py, prep)** Restrict the protein side of the MARTINI pair list to BB. Removes O-env entirely
+      (so the discarded-force bug becomes moot for the pair term), removes 5909 E_up/A of spurious
+      N/CA/C force, and makes backbone-env match dry-MARTINI's one-bead-per-residue definition.
+      *This is the one model decision in the plan; BB is the mass-weighted COM of N/CA/C/O and carries the
+      secondary-structure-dependent MARTINI BB type, so BB is the backbone bead.*
+- [x] **P2 (C++, martini_hybrid.cpp)** Complete BB's gradient: BB depends on O with weight 16/54 = 0.2963,
+      so route that term through dO/dx of `O = C - L*normalize(normalize(CA-C) + normalize(N_next-C))` to
+      the carrier atoms. Also propagate (not drop) any sensitivity landing on the O site, so the node is
+      correct regardless of what puts force there.
+- [ ] **G1 gate** `--potential-deriv-agreement` must fall from 6.2% to ~1e-5. Built-in, decisive, cheap.
+- [ ] **G2 gate** Falsifiable prediction: the +2-3% `avg_kinetic_energy/1.5kT` excess should go to ~1.000.
+      If it does not, a second cause remains and must be found before production restarts.
+- [ ] **P3** Re-measure omega*dt over the real DOFs AFTER the fix, then and only then revisit dt/masses.
+      The earlier omega*dt numbers are void -- they measured O-site contacts that exert no force.
+- [ ] **P4** Rebuild the four glpG variant seeds and the NP seed from the text inputs (P1 changes the h5
+      pair list, so existing `.up` seeds are stale). P2 alone is recompile-only.
+
+Do NOT: change dt, change masses, widen `destroyed()` thresholds, or add any guard. dt and friction are
+mutually calibrated (src/martini_brownian.cpp:99) and the evidence points at a code defect, not a parameter.
+
+# PREVIOUS PHASE (2026-08-05): NP full-ion rebuild + 6-face stability; glpG micelle REMD half-lost to NaN
 
 ## Project Goal
 
@@ -26,7 +62,9 @@ REMD batch, half of which died of a single-replica runaway that replica exchange
   counterion failure appeared at ~step 97,000 of a 112,966-step chunk, and the glpG REMD seed passed a
   400-step smoke test then died at step 12,190. Seed smoke tests bound loading and setup, NOT stability.
   The 6-face probe therefore runs a full chunk-equivalent (112,966 steps at dt=0.005) per face.
-- **glpG REMD: the runaway had a root cause, and it is fixed -- no guard.** `coord_swap` in `src/main.cpp`
+- **glpG REMD: the coord_swap momenta fix below was real but NOT sufficient** -- blow-ups continued after it
+  (79HIS and 79HIS_S115T, 2026-08-09/10). The remaining cause is the hybrid force-propagation defect in the
+  CURRENT PHASE above (findings 88). `coord_swap` in `src/main.cpp`
   exchanged positions between replicas but left each replica's momenta in place, so after every accepted swap
   a configuration carried velocities drawn at the *other* replica's temperature. The kinetic energy injected
   scales as `T_hi/T_lo - 1` per swap and accumulates over sweeps, which is the runaway. Repaired by swapping

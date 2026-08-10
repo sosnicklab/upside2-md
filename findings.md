@@ -2564,3 +2564,195 @@ while leaving the cause -- sizing a periodic box from a coordinate extent -- in 
 Lesson: when a fix works by making a wrong input look right (wrapping so the extent matches the box), the
 cause is still there and will resurface on the first input that breaks the coincidence. Fix the derivation,
 not the input.
+
+## Update 87 (2026-08-10): the glpG-DDM REMD blow-ups are a timestep failure at protein-lipid contacts
+
+Both 79HIS variants ended their chains reporting Slurm `COMPLETED`, `ExitCode 0:0`. 79HIS_S115T logged
+`42/48 replicas destroyed`, 79HIS `1/48`. The 42/48 is not 42 failures: every destroyed slot reports
+`replica_index == 5`, and the first-bad frame marches 68, 69, 70 ... 75 up the ladder to slot 47 then back
+down 76 ... 86 to slot 0. One walker diverged and exchange random-walked it through 42 of the 48
+temperature-pinned files, one slot per frame. Chunk-wide scanning in `run_remd.py` already anticipates this;
+the per-slot count is a contamination count, not an incidence.
+
+The epicentre is the mutation site. The five non-finite particles are all `PROTEIN` type `P5`, indices
+312-315 plus BB 918; with four backbone atoms per residue (840) followed by 210 BB beads that is residue
+index 78 = **position 79**, whose sequence entry is HIS. Residues 76-77 carry the next-largest
+displacements (1e5-1e8 A), i.e. neighbours dragged by the backbone springs. Frame 67 is pristine
+(V = -7750, KE/1.5kT = 1.0008, closest protein-lipid contact 3.10 A) and frame 68 is NaN, so the whole
+event fits inside one 46-step frame interval.
+
+Ruled out, by measurement rather than by argument:
+
+* **Bonded terms.** Stiffest effective spring is `dist_spring` k = 102.9 E_up/A^2; with protein mass
+  1.0 m_up that is omega = 14.4/t_up, so dt = 0.009 sits at dt/T = 0.02 with ~15x margin to 2/omega.
+* **The pair tables.** `martini_potential` reproduces the analytic dry-MARTINI form to 1e-13 E_up for all
+  18 neutral pair types, and the four charged types match once `epsilon_rf = 0` is read in the GROMACS
+  sense (0 *means* infinity, krf = 1/(2 rc^3)): analytic 5.749 vs tabulated 5.7477 E_up at 3.303 A. The
+  grids span r = 0 to 12 A, so this term never extrapolates. Reading `epsilon_rf = 0` literally as a zero
+  dielectric produces a spurious 1.8 E_up "discrepancy" -- it is not one.
+* **The SC-env rotamer tables.** These do hold up to 1.08e9 E_up with edge slopes to 6.05e9 E_up/A at a
+  grid inner edge of 2.5 A, below which `evaluate_component_value_and_deriv` substitutes a linear ramp at
+  `radial_left_slope` (constant force). That construct would be instantly fatal if reached, but the logged
+  `rotamer_1body_energy0/1` never exceed ~4 E_up anywhere in the chunk (HIS79 peaks at 2.456), so this
+  path was not exercised. Worth fixing on its own terms; not the cause here.
+
+What is left is the timestep. Evaluating omega*dt = dt*sqrt(|V''(r)|/mu) over the pairs the engine actually
+integrates -- intra-protein pairs are excluded by design, since Upside's trained FF owns intra-protein
+physics, and including them reports limits for pairs that are never evaluated -- gives median 0.80 and a
+maximum of 2.37 over the destroyed replica's 68 healthy frames, with **every** worst pair being
+PROTEIN-LIPID at mu = 0.857 (protein 1.0 m_up against lipid 6.0 m_up), never LIPID-LIPID at mu = 3.0. A
+replica that *survived* the same chunk (slot 46, 300 frames) reaches median 0.798 and crosses omega*dt = 2
+three times. At r = 3.10 A with sigma = 4.7 A and eps = 1.20 E_up the stiffest contact has a period of only
+~6 steps; explicit Verlet needs 20+, and is unconditionally unstable past omega*dt = 2. The runs live at the
+limit and cross it during ordinary thermal fluctuation, so survival is luck. dt = 0.009 t_up = 1.83 fs is
+defensible for a 12 g/mol particle in isolation; it was never co-calibrated against MARTINI bead cores.
+
+Two negative results worth keeping. The +3.37% `avg_kinetic_energy/1.5kT` excess seen in every production
+replica is **not** discretization error: across dt = 0.009 / 0.0045 / 0.00225 (friction rescaled with dt
+through the prep calibration, so the 11.5 um^2/s target is preserved) the excess is 2.43 / 2.16 / 2.18 %,
+ratios 1.12 and 0.99 rather than the ~4x per halving a second-order scheme requires. It is a
+thermostat/equipartition artifact and a separate question. And the reproduction arm of that scan was
+useless for incidence: 0/8 blew up at every dt, because 8 trials x 1000 steps is ~8e3 replica-steps against
+the ~6e5 replica-steps per observed event, ~75x underpowered. Closing the case properly needs ~1e6
+replica-steps per arm.
+
+Note `src/martini_brownian.cpp:99` hard-locks runtime dt to `/input/brownian numerical_time_step` because
+friction is proportional to dt at fixed diffusion target; dt cannot be varied by passing `--time-step`
+alone, and overwriting the attribute without rescaling friction would silently invalidate the transport
+calibration.
+
+Lesson: when a symptom is spread across many units, check whether the units are independent before
+counting them -- 42/48 replicas "destroyed" was one event wearing 42 hats, and reporting it as 42 would have
+sent the search toward a systemic force-field fault instead of a single contact. And a table being exactly
+right is not evidence that integrating it is stable.
+
+## Update 88 (2026-08-10): the hybrid interface discards most of its own force -- Update 87's verdict is withdrawn
+
+Update 87 concluded the glpG blow-ups were a timestep failure at protein-lipid contacts. **That verdict is
+wrong.** It rested on omega*dt computed for the closest protein-lipid contacts, and every one of those
+contacts turned out to be an O site -- a site whose force the engine throws away. The stiffness I measured
+was the stiffness of pairs that exert no force at all.
+
+`HybridPositionNode` (src/martini_hybrid.cpp:146) rebuilds both the O and the BB site from the three
+carrier atoms (N, CA, C) every step, so neither is an independent degree of freedom. `propagate_deriv`
+(line 189) then marks both as `derived`, which excludes them from the pass-through loop, and redistributes
+only `bb_idx`'s gradient to the carriers. **The O site's sensitivity is neither passed through nor
+redistributed: every O-environment force is silently discarded.** Separately, `map_backbone_sites` builds
+BB from *four* weighted components (N, CA, C, O; `d < 4`, weights summing to 1) while `propagate_deriv`
+redistributes over only *three* (`carrier < 3`), so BB's O weight, 16/54 = 0.2963, is dropped as well.
+
+Measured at frame 67 of the 79HIS_S115T chunk, summing the analytic martini pair force per site:
+
+| site | n | sum abs F (E_up/A) | max abs F |
+|---|---|---|---|
+| O (discarded) | 210 | 12537 | 2600 |
+| N/CA/C (transmitted) | 630 | 5909 | 363 |
+| BB (29.6% under-transmitted) | 210 | 482 | 15 |
+
+More force is thrown away than delivered: ratio 2.12. The full pair force sums to 1e-12 as it must, but
+with the O contribution removed the residual is **3590 E_up/A of net force**, i.e. spurious momentum
+injected every step. The largest single discarded force is 2600 E_up/A (7577 kJ/mol/A) on THR115's O,
+seven times the largest force the protein actually feels.
+
+**Correction (same day):** I cited the engine's `--potential-deriv-agreement` (6.2% on the glpG chunk) as
+corroboration. It is not evidence of anything. The metric is
+`sqrt(sum (fd-analytic)^2 / sum fd^2)` with an FD step of 1e-3 A against a float-precision total potential
+of order 1e4 E_up, so the per-component FD signal (~1e-3*F) is comparable to float round-off on the total
+(~2e-3), and the number is round-off dominated at this system size. Measured on the *same* 1rkl file, the
+pre-fix and post-fix binaries give **0.41960 and 0.41959** -- identical. Do not use this flag as a gate on
+a system this large; it is a developer probe and its own help says so. The dropped-O-force defect stands on
+the code path and on the analytically summed pair forces above, not on this number.
+
+This unifies two things Update 87 left unexplained. Non-conservative forces do net work regardless of
+step size, which is exactly why the `avg_kinetic_energy/1.5kT` excess measured 2.43 / 2.16 / 2.18 % across
+a 4x dt range instead of falling ~4x per halving. And energy pumped into specific degrees of freedom is a
+far better candidate for a blow-up localised on one residue's backbone than a marginal stability limit:
+the O of a peptide unit absorbs a force its own neighbours never feel, so the local force balance is broken
+and the springs tear.
+
+A third finding, which needs a decision on intent rather than a bug fix. All five backbone sites
+(N, CA, C, O, BB) appear in the martini pair list with **identical env pair counts (442260 each)**, the
+same MARTINI type per residue, and full-strength epsilon (1.201 E_up = 3.50 kJ/mol, the same values the
+lipid-lipid pairs use -- not divided down). Dry-MARTINI represents a residue backbone as ONE BB bead, and
+N, CA, C, O are precisely the atoms that bead stands for, so representing them both as individual
+sigma = 4.7 A beads and as a BB bead counts the backbone-environment interaction five times over. Either
+only BB should be in the pair list, or the per-site epsilon should be partitioned; which one is a model
+question. `_write_nonbonded_pairs` (py/martini_prepare_system_lib.py:2077) builds all unique i<j pairs with
+only nrexcl=1 and ITP exclusions, so nothing ever restricted the protein side to BB.
+
+In ENERGY the over-count is much milder than five-fold, because the four atom sites cancel: at frame 67
+N/CA/C sum to -2295.7 E_up while O contributes **+2117.5** (its geometric placement lands it inside env
+repulsive cores), giving a backbone-env total of -1368.9 against -1190.6 for BB alone -- a **1.15x**
+over-count, a -182.7 E_up (-533 kJ/mol) shift if the four sites are removed. An earlier draft of this entry
+called it fivefold; that is wrong for the energy.
+
+The FORCE damage does not cancel, which is where the harm is: 12537 E_up/A discarded on O, 5909 E_up/A of
+spurious-but-delivered force on N/CA/C, and 3590 E_up/A of net one-sided force per step. Note its
+direction -- the env partner's sensitivity IS passed through while the protein's is dropped, so the
+one-sided force acts ON THE ENVIRONMENT. That matches the blow-up's first measurable symptom, which was
+`lipid_kinetic` reaching 2.487e16 at frame 68 while the protein kinetic energy was merely NaN.
+
+Consequence to face squarely: every glpG-DDM and NP-1AO6 run made with this code has a partially
+disconnected protein-environment interface and a non-conservative force. CLAUDE.md requires that BB-env
+never be turned off, and roughly two-thirds of it has been off. Results from those runs should not be
+interpreted until the gradient is fixed, and the mass and timestep questions cannot be answered
+meaningfully before then, because fixing the gradient changes every force in the system.
+
+Lesson: when the stiffest interaction in a diagnosis is also the most suspicious one, check that it is
+connected to the dynamics at all before building a theory on its magnitude. I measured omega*dt for 210
+sites for two rounds without asking whether their forces reached the protein -- the answer was that they
+did not, and the real defect was one level below where I was looking.
+
+## Update 89 (2026-08-10): example 16 was unrunnable, and two of its defects were silent
+
+Running example 16 to check stability after the interface fix (findings 88) required repairing four
+independent pre-existing faults. None were caused by the interface change; the example had simply been left
+behind by the CHARMM-GUI prep redesign.
+
+1. **Stale CLI in `run_sim_hybrid.sh`.** It passed `--bilayer-pdb`, `--protein-placement-mode`,
+   `--protein-surface-gap`, `--protein-lipid-min-gap`, `--protein-lipid-cutoff-step` and
+   `--protein-lipid-cutoff-max`, none of which exist any more. The membrane now comes from
+   `--membrane-pdb` + `--lipid-name`; `parameters/dryMARTINI/DOPC.pdb` is itself a CHARMM-GUI product
+   (CRYST1 50.09 x 50.09 x 85.0) and works directly, with its water and ions stripped on read.
+2. **`str(None)` forwarded as an argument.** `prepare_workflow_hybrid_artifacts` forwarded
+   `--membrane-top str(args.membrane_top)` and `--opm-reference str(args.opm_reference)` unconditionally, so
+   an unset optional became the literal string `"None"` and the child opened a file named `None`.
+   Optional arguments are now appended only when set.
+3. **NumPy 2.** `ndarray.ptp()` was removed in NumPy 2.0 and the venv is on 2.4.6.
+4. **The stage-7.0 solvation gate was unsatisfiable without `--opm-reference`.** `belt_half_thickness_a`
+   fell back to `0.0`, so `|z - midplane| <= 0` selected nothing and the gate raised "found no backbone
+   sites inside the belt" on a *correctly inserted* protein -- 26 of 31 BB sites were within 15 A of the
+   midplane at the time it fired. The belt is the protein's published hydrophobic band, so it does not
+   exist without an OPM reference: the fallback is now `None`, the gate reports that it was skipped and
+   that solvation was NOT verified, and the genuine empty-belt error now names the half-thickness, the
+   midplane, the closest BB offset and the BB span so it is diagnosable. Micelle mode still requires
+   `--opm-reference` up front, as before.
+
+Separately, **every VTF the workflow has ever written mislabelled the environment.** The metadata lookup was
+hardcoded to `example/16.MARTINI/pdb/<id>.MARTINI.pdb`, but the workflow writes that file to
+`<run_dir>/hybrid_prep/`, so it was never found and all 3612 lipid beads came out as `UNK` -- silently, with
+positions intact, so the trajectory looked fine while being unselectable by lipid in a viewer.
+`find_martini_metadata_pdb` now searches the run directories implied by the `.up` paths passed in, every
+candidate derived from an explicit argument so no system can inherit another's labels.
+
+Stability after the findings-88 interface fix, 20000 steps at dt = 0.009 and T = 0.8 T_up (280.5 K),
+from the stage-7.0 coordinates of each build:
+
+| | 1rkl | 1AFO |
+|---|---|---|
+| non-finite / abs(V) > 1e6 frames | 0 / 0 | 0 / 0 |
+| potential | -18234 -> -19789 | -18208 -> -19412 |
+| Rg(CA) | 12.76 -> 13.03 A | 15.86 -> 14.40 A |
+| worst peptide C-N | 1.62 A, 0 above 2 A | 1.66 A, 0 above 2 A |
+| KE/1.5kT mean | 1.021 | 1.032 |
+
+For 1rkl the bilayer was checked directly: two leaflets with exactly 258/258 headgroups, peaks at +16.8 and
+-15.4 A, thickness relaxing 34.6 -> 30.5 A, and zero lipids leaving. The large `|pos|max` in the
+environment is unwrapped **ion** diffusion, not lipid loss -- worth knowing before reading it as evaporation.
+
+The kinetic excess is still +2 to +3%, so the findings-88 prediction that it would collapse to 1.000 is
+**refuted**: the one-sided O force was not its cause and the real one is still unidentified.
+
+Lesson: a silent fallback is worse than a missing input. Both the `0.0` belt half-thickness and the
+unfound metadata PDB produced confident, wrong behaviour -- one an error that accused the geometry, the
+other a trajectory that looked complete. Neither said "the thing I needed was not there."

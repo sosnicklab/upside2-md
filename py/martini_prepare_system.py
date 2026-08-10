@@ -500,7 +500,7 @@ def pack_bilayer_environment(args, lipid_template, bilayer_box, protein_backbone
         belt_half_thickness=(
             read_opm_hydrophobic_half_thickness(Path(args.opm_reference).expanduser().resolve())
             if args.opm_reference
-            else 0.5 * float(coords([a for a in bilayer_kept if lipid_resname(a["resname"])])[:, 2].ptp())
+            else 0.5 * float(np.ptp(coords([a for a in bilayer_kept if lipid_resname(a["resname"])])[:, 2]))
         ),
     )
 
@@ -1194,6 +1194,13 @@ def prepare_workflow_hybrid_artifacts(args):
         workflow_path(args.protein_aa_pdb).resolve(),
         args.hybrid_prep_dir,
     )
+    # membrane_top and opm_reference are optional; forwarding str(None) makes the child open a file
+    # literally named "None".
+    optional_prep_args = []
+    if args.membrane_top is not None:
+        optional_prep_args += ["--membrane-top", str(args.membrane_top)]
+    if args.opm_reference is not None:
+        optional_prep_args += ["--opm-reference", str(args.opm_reference)]
     run_prepare_command(
         [
             "--mode", "both",
@@ -1206,9 +1213,8 @@ def prepare_workflow_hybrid_artifacts(args):
             "--hybrid-bb-map-json-output", str(args.hybrid_prep_dir / "hybrid_bb_map.json"),
             "--lipid-name", args.lipid_name,
             "--membrane-pdb", str(args.membrane_pdb),
-            "--membrane-top", str(args.membrane_top),
+            *optional_prep_args,
             "--protein-orientation-mode", args.protein_orientation_mode,
-            "--opm-reference", str(args.opm_reference),
             "--protein-pbc-margin", str(args.protein_pbc_margin),
             "--salt-molar", str(args.salt_molar),
             "--explicit-ions", str(args.explicit_ions),
@@ -2137,10 +2143,14 @@ def validate_hybrid_workflow_args(args):
             f"{args.lipid_name} is a single-tailed detergent, so the environment is built as a micelle, "
             "which needs --opm-reference for the protein's hydrophobic belt."
         )
+    # The belt is the protein's published hydrophobic band, so it only exists if an OPM reference was
+    # given. Substituting 0.0 makes every |z - midplane| <= 0 test empty, which turned a missing input into
+    # a downstream "no backbone sites inside the belt" failure on a correctly inserted protein. None means
+    # undefined, and the solvation gate reports that it could not run rather than failing or passing.
     args.belt_half_thickness_a = (
         read_opm_hydrophobic_half_thickness(Path(args.opm_reference).expanduser().resolve())
         if args.opm_reference
-        else 0.0
+        else None
     )
 
 
@@ -2218,6 +2228,15 @@ def assert_environment_solvation(args, up_file: Path):
     import h5py
     from scipy.spatial import cKDTree
 
+    if args.belt_half_thickness_a is None:
+        print(
+            "Stage-7.0 solvation gate SKIPPED: the protein's hydrophobic belt is undefined without "
+            "--opm-reference, so hydrophobic solvation was NOT verified for this build. Pass "
+            "--opm-reference (a membrane-oriented homolog, midplane at z=0) to enable the check.",
+            flush=True,
+        )
+        return
+
     clearance = float(args.protein_lipid_cutoff)
     coverage_radius = 2.0 * clearance
     with h5py.File(up_file, "r") as h5:
@@ -2235,9 +2254,18 @@ def assert_environment_solvation(args, up_file: Path):
         )
     # The aggregate defines its own midplane; a finite micelle is free to drift off the box centre.
     bb_xyz = pos[bb_index]
-    belt = bb_xyz[np.abs(bb_xyz[:, 2] - env_xyz[:, 2].mean()) <= float(args.belt_half_thickness_a)]
+    half_thickness = float(args.belt_half_thickness_a)
+    midplane = env_xyz[:, 2].mean()
+    offset = np.abs(bb_xyz[:, 2] - midplane)
+    belt = bb_xyz[offset <= half_thickness]
     if belt.shape[0] == 0:
-        raise RuntimeError("Stage-7.0 solvation gate found no backbone sites inside the belt.")
+        raise RuntimeError(
+            f"Stage-7.0 solvation gate found no backbone sites inside the belt: no BB site lies within "
+            f"{half_thickness:.2f} A of the environment midplane z={midplane:.2f} A. Closest BB site is "
+            f"{offset.min():.2f} A away and the BB span is z={bb_xyz[:, 2].min():.2f}..{bb_xyz[:, 2].max():.2f}, "
+            "so the protein is not inserted where the OPM reference says its hydrophobic belt is; check the "
+            "orientation and insertion depth."
+        )
 
     d_any = cKDTree(env_xyz).query(belt)[0]
     d_tail = cKDTree(env_xyz[is_tail]).query(belt)[0]

@@ -98,24 +98,113 @@ static inline bool build_frame_from_three(
     return true;
 }
 
+// Mat3 rows are indexed [row][col]; M[d][e] holds d(component d)/d(carrier coordinate e).
+typedef float Mat3[3][3];
+
+static inline void mat_zero(Mat3 M) {
+    for(int d = 0; d < 3; ++d) for(int e = 0; e < 3; ++e) M[d][e] = 0.f;
+}
+
+static inline void mat_add_identity(Mat3 M, float s) {
+    for(int d = 0; d < 3; ++d) M[d][d] += s;
+}
+
+static inline void mat_add_scaled(Mat3 M, const Mat3 A, float s) {
+    for(int d = 0; d < 3; ++d) for(int e = 0; e < 3; ++e) M[d][e] += s*A[d][e];
+}
+
+// d(normalize(u))/du = (I - uhat uhat^T)/|u|, applied to an existing Jacobian: out = N(u) * in.
+static inline void mat_apply_normalize(const std::array<float,3>& uhat, float inv_mag,
+                                       const Mat3 in, Mat3 out) {
+    for(int e = 0; e < 3; ++e) {
+        float proj = 0.f;
+        for(int d = 0; d < 3; ++d) proj += uhat[d]*in[d][e];
+        for(int d = 0; d < 3; ++d) out[d][e] = (in[d][e] - uhat[d]*proj) * inv_mag;
+    }
+}
+
+// out = (a x) * in, i.e. left-multiply by the skew matrix of a.
+static inline void mat_apply_cross(const std::array<float,3>& a, const Mat3 in, Mat3 out) {
+    for(int e = 0; e < 3; ++e) {
+        out[0][e] = a[1]*in[2][e] - a[2]*in[1][e];
+        out[1][e] = a[2]*in[0][e] - a[0]*in[2][e];
+        out[2][e] = a[0]*in[1][e] - a[1]*in[0][e];
+    }
+}
+
+// Jacobians of a site rigidly placed in the (p0,p1,p2) frame with local offset lo, with respect to each
+// of the three carrier atoms. The frame is e1 = norm(p1-p0), e3 = norm(e1 x (p2-p0)), e2 = e3 x e1, and
+// the site is p1 + F*lo, so the site rotates with the frame and the rotational terms below are exactly
+// what a constant-weight redistribution omits.
+static bool frame_site_jacobian(
+        const std::array<float,3>& p0,
+        const std::array<float,3>& p1,
+        const std::array<float,3>& p2,
+        const std::array<float,3>& lo,
+        Mat3 J[3]) {
+    auto a = vec_sub(p1, p0);
+    float a_mag = vec_norm(a);
+    if(a_mag <= 1e-8f) return false;
+    auto e1 = vec_scale(a, 1.f/a_mag);
+    auto v2 = vec_sub(p2, p0);
+    auto c = vec_cross(e1, v2);
+    float c_mag = vec_norm(c);
+    if(c_mag <= 1e-8f) return false;
+    auto e3 = vec_scale(c, 1.f/c_mag);
+
+    // da/dp and dv2/dp for p in {p0,p1,p2}
+    Mat3 da[3], dv2[3];
+    for(int atom = 0; atom < 3; ++atom) { mat_zero(da[atom]); mat_zero(dv2[atom]); }
+    mat_add_identity(da[1], 1.f);   mat_add_identity(da[0], -1.f);
+    mat_add_identity(dv2[2], 1.f);  mat_add_identity(dv2[0], -1.f);
+
+    for(int atom = 0; atom < 3; ++atom) {
+        Mat3 de1, dc, de3, de2, tmp_a, tmp_b;
+        mat_apply_normalize(e1, 1.f/a_mag, da[atom], de1);
+
+        // dc = e1 x dv2 - v2 x de1
+        mat_apply_cross(e1, dv2[atom], tmp_a);
+        mat_apply_cross(v2, de1, tmp_b);
+        for(int d = 0; d < 3; ++d) for(int e = 0; e < 3; ++e) dc[d][e] = tmp_a[d][e] - tmp_b[d][e];
+        mat_apply_normalize(e3, 1.f/c_mag, dc, de3);
+
+        // de2 = e3 x de1 - e1 x de3
+        mat_apply_cross(e3, de1, tmp_a);
+        mat_apply_cross(e1, de3, tmp_b);
+        for(int d = 0; d < 3; ++d) for(int e = 0; e < 3; ++e) de2[d][e] = tmp_a[d][e] - tmp_b[d][e];
+
+        mat_zero(J[atom]);
+        if(atom == 1) mat_add_identity(J[atom], 1.f);   // the site is anchored on p1
+        mat_add_scaled(J[atom], de1, lo[0]);
+        mat_add_scaled(J[atom], de2, lo[1]);
+        mat_add_scaled(J[atom], de3, lo[2]);
+    }
+    return true;
+}
+
+// Local-frame offset of the reference O, the quantity map_backbone_sites places in the current frame.
+static bool reference_local_o(const HybridRuntimeState& st, size_t k, std::array<float,3>& local_o) {
+    const auto& ref = st.bb_reference_atom_coords[k];
+    float F_ref[3][3];
+    if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref)) return false;
+    auto ref_local_o = vec_sub(ref[3], ref[1]);
+    local_o = std::array<float,3>{{0.f, 0.f, 0.f}};
+    for(int basis = 0; basis < 3; ++basis) {
+        for(int d = 0; d < 3; ++d) local_o[basis] += F_ref[d][basis] * ref_local_o[d];
+    }
+    return true;
+}
+
 static bool map_backbone_sites(
         const HybridRuntimeState& st,
         size_t k,
         const std::array<std::array<float,3>,3>& carrier,
         std::array<float,3>& mapped_o,
         std::array<float,3>& mapped_bb) {
-    const auto& ref = st.bb_reference_atom_coords[k];
-    float F_ref[3][3], F_cur[3][3];
-    if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref) ||
+    float F_cur[3][3];
+    std::array<float,3> local_o;
+    if(!reference_local_o(st, k, local_o) ||
        !build_frame_from_three(carrier[0], carrier[1], carrier[2], F_cur)) return false;
-
-    auto ref_local_o = vec_sub(ref[3], ref[1]);
-    std::array<float,3> local_o{{0.f, 0.f, 0.f}};
-    for(int basis = 0; basis < 3; ++basis) {
-        for(int d = 0; d < 3; ++d) {
-            local_o[basis] += F_ref[d][basis] * ref_local_o[d];
-        }
-    }
 
     for(int d = 0; d < 3; ++d) {
         mapped_o[d] = carrier[1][d];
@@ -206,13 +295,52 @@ struct HybridPositionNode : public CoordNode {
                 update_vec<3>(source.sens, atom, load_vec<3>(sens, atom));
             }
         }
+        // Both derived sites are rigid functions of the three carrier atoms, so their sensitivities have
+        // to reach the carriers through the placement Jacobian. BB additionally depends on the O site it
+        // is built from (weight 16/54), whose rotational terms a constant-weight redistribution drops.
+        VecArray source_pos = source.output;
         for(size_t k = 0; k < st->n_bb; ++k) {
+            const auto& atom_idx = st->bb_reference_runtime_atom_indices[k];
+            int o_idx = atom_idx[3];
             int bb_idx = st->bb_atom_index[k];
-            Vec<3> grad = load_vec<3>(sens, bb_idx);
-            for(int carrier = 0; carrier < 3; ++carrier) {
-                int atom_idx = st->atom_indices[k][carrier];
-                float weight = st->weights[k][carrier];
-                update_vec<3>(source.sens, atom_idx, weight * grad);
+
+            std::array<std::array<float,3>,3> carrier;
+            for(int atom = 0; atom < 3; ++atom) {
+                auto value = load_vec<3>(source_pos, atom_idx[atom]);
+                carrier[atom] = std::array<float,3>{{value[0], value[1], value[2]}};
+            }
+            std::array<float,3> local_o;
+            Mat3 J_o[3];
+            if(!reference_local_o(*st, k, local_o) ||
+               !frame_site_jacobian(carrier[0], carrier[1], carrier[2], local_o, J_o)) {
+                throw string("Hybrid position node encountered a singular BB frame in propagate_deriv");
+            }
+
+            float wsum = 0.f;
+            for(int d = 0; d < 4; ++d) {
+                if(st->atom_mask[k][d] == 0) continue;
+                wsum += st->weights[k][d];
+            }
+            if(wsum <= 0.f) throw string("Hybrid BB COM weights sum to zero");
+            const float inv_wsum = 1.f/wsum;
+            const float w_o = (st->atom_mask[k][3] != 0) ? st->weights[k][3]*inv_wsum : 0.f;
+
+            Vec<3> grad_bb = load_vec<3>(sens, bb_idx);
+            Vec<3> grad_o  = load_vec<3>(sens, o_idx);
+            // Sensitivity reaching the O site, directly and through BB's dependence on it.
+            Vec<3> grad_o_total = grad_o + w_o * grad_bb;
+
+            for(int carrier_i = 0; carrier_i < 3; ++carrier_i) {
+                float w_direct = (st->atom_mask[k][carrier_i] != 0)
+                        ? st->weights[k][carrier_i]*inv_wsum : 0.f;
+                Vec<3> contrib = w_direct * grad_bb;
+                // J^T grad, since sens holds dV/dx and J holds d(site)/d(carrier).
+                for(int e = 0; e < 3; ++e) {
+                    float acc = 0.f;
+                    for(int d = 0; d < 3; ++d) acc += J_o[carrier_i][d][e] * grad_o_total[d];
+                    contrib[e] += acc;
+                }
+                update_vec<3>(source.sens, atom_idx[carrier_i], contrib);
             }
         }
     }

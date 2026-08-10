@@ -2050,8 +2050,15 @@ def _build_bonded_terms(molecules, topo, initial_positions,
 
 def _write_nonbonded_pairs(t, martini_potential, n_atoms, atom_types, charges,
                            bonds_list, protein_exclusions, martini_table,
-                           energy_conversion, length_conversion):
-    """Write the optimized non-bonded pair table (pairs + coefficient indices)."""
+                           energy_conversion, length_conversion, martini_site_mask):
+    """Write the optimized non-bonded pair table (pairs + coefficient indices).
+
+    Only the sites in martini_site_mask carry MARTINI non-bonded interactions. On the protein that is the
+    BB bead alone: dry-MARTINI represents a residue backbone as one bead, BB is built as the mass-weighted
+    centre of N/CA/C/O and carries the secondary-structure-dependent BB type, so giving N, CA, C and O
+    their own full-strength bead interactions as well would count the backbone against the environment
+    five times over. Intra-protein physics belongs to the Upside force field and is excluded separately.
+    """
     # Create atom indices and charges arrays for the potential
     t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))
     t.create_array(martini_potential, 'charges', obj=charges)
@@ -2074,10 +2081,12 @@ def _write_nonbonded_pairs(t, martini_potential, n_atoms, atom_types, charges,
             sorted_exclusion = (min(exclusion[0], exclusion[1]), max(exclusion[0], exclusion[1]))
             additional_exclusions.add(sorted_exclusion)
 
-    # Generate all unique pairs (i < j) with proper exclusions (nrexcl=1)
+    # Generate all unique pairs (i < j) over the interacting sites, with nrexcl=1 exclusions
+    active_sites = np.where(np.asarray(martini_site_mask, dtype=bool))[0].astype(np.int32)
     excluded_12_count = 0
     excluded_additional_count = 0
-    total_candidate_pairs = n_atoms * (n_atoms - 1) // 2
+    n_active = active_sites.size
+    total_candidate_pairs = n_active * (n_active - 1) // 2
     total_pairs_written = 0
     unique_coeffs = []
     coeff_to_index = {}
@@ -2145,10 +2154,11 @@ def _write_nonbonded_pairs(t, martini_potential, n_atoms, atom_types, charges,
     for i, j in additional_exclusions:
         additional_by_i[i].add(j)
 
-    for i in range(n_atoms):
-        if i + 1 >= n_atoms:
+    for position in range(n_active):
+        i = int(active_sites[position])
+        js = active_sites[position + 1:]
+        if js.size == 0:
             continue
-        js = np.arange(i + 1, n_atoms, dtype=np.int32)
         bonded_js = bonded_by_i.get(i)
         additional_js = additional_by_i.get(i)
         if bonded_js:
@@ -2184,6 +2194,8 @@ def _write_nonbonded_pairs(t, martini_potential, n_atoms, atom_types, charges,
         coeff_index_array.append(coeff_indices)
         total_pairs_written += int(js.size)
 
+    print(f"MARTINI non-bonded sites: {n_active} of {n_atoms} "
+          f"({n_atoms - n_active} excluded; protein carries BB only)")
     print(f"Excluded {excluded_12_count} 1-2 bonded pairs from non-bonded interactions (nrexcl=1)")
     print(f"Excluded {excluded_additional_count} additional pairs from ITP exclusions")
     print(f"Wrote {total_pairs_written} non-bonded pairs with {len(unique_coeffs)} unique coefficient rows")
@@ -2624,10 +2636,14 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         # Periodic boundary potential removed - using NVT ensemble without boundaries
 
 
+        # The protein presents one MARTINI site per residue, the BB bead. N, CA, C and O are the atoms BB
+        # is built from, so they carry no bead interaction of their own with the environment.
+        martini_site_mask = (particle_class != b"PROTEIN") | np.isin(
+            atom_names, np.array(["BB"], dtype=atom_names.dtype))
         excluded_12_count, excluded_additional_count = _write_nonbonded_pairs(
             t, martini_potential, n_atoms, atom_types, charges,
             bonds_list, protein_exclusions, topo['martini_table'],
-            energy_conversion, length_conversion,
+            energy_conversion, length_conversion, martini_site_mask,
         )
 
         # Add bonded potentials mirroring original run_martini.py

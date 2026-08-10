@@ -64,6 +64,32 @@ def infer_pdb_id(input_file, user_pdb_id):
     return None
 
 
+def find_martini_metadata_pdb(pdb_id, *up_files):
+    """Locate <pdb_id>.MARTINI.pdb, which supplies lipid and ion residue labels for the VTF.
+
+    The workflow writes it to <run_dir>/hybrid_prep/, not to the example's pdb/ directory, so looking only
+    in pdb/ silently drops every environment resname to UNK and makes the trajectory unselectable by lipid
+    in a viewer. Search the run directories implied by the .up files actually passed in, then pdb/. Every
+    candidate is derived from an explicit argument, so no system's metadata can be attached to another's.
+    """
+    if not pdb_id:
+        return ""
+    name = f"{pdb_id}.MARTINI.pdb"
+    candidates = []
+    for up in up_files:
+        if not up:
+            continue
+        up_dir = Path(up).expanduser().resolve().parent
+        candidates.append(up_dir.parent / "hybrid_prep" / name)
+        candidates.append(up_dir / "hybrid_prep" / name)
+        candidates.append(up_dir / name)
+    candidates.append(WORKFLOW_DIR / "pdb" / name)
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return ""
+
+
 def normalize_frame(pos, n_particles):
     arr = np.asarray(pos)
     while arr.ndim > 2:
@@ -767,7 +793,7 @@ def main():
     pdb_id = infer_pdb_id(input_file, args.pdb_id)
     mode = args.mode
 
-    pdb_file = str(WORKFLOW_DIR / "pdb" / f"{pdb_id}.MARTINI.pdb") if pdb_id else ""
+    pdb_file = find_martini_metadata_pdb(pdb_id, input_file, structure_file)
 
     with h5py.File(input_file, "r") as t, h5py.File(structure_file, "r") as s:
         input_pos = normalize_input_positions(s["input/pos"][:])
