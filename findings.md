@@ -1,5 +1,31 @@
 # Findings
 
+## Health gates: CN_MAX removed from BOTH jobs; count broken bonds instead (2026-08-09)
+
+Measured on a forced NP tear (270-0-0 at dt=0.01), recording when each candidate criterion first fires:
+
+```
+FIRST FIRING TIME PER CRITERION
+   maxCN (>3.5 A)                   t=168.0
+   count (>=5 bonds >2 A)           t=168.0
+   potential (non-finite or >1e6)   never
+   |coord| (>1e4 A)                 never
+```
+
+- **`maxCN` is redundant** — the count fires at the identical frame, so the worst-bond threshold buys
+  nothing, and it is the fragile one (healthy max 2.659 A vs torn 3.93 A is a knife-edge; at 2.5 A it
+  false-fired on a healthy chunk and cost a 6 h glpG block).
+- **An energy test can never guard NP.** In the same tear the protein reached 431 broken bonds with the
+  potential still finite at +3e5, so anything keyed on non-finite or large energy never fires.
+  Conversely glpG's blow-up goes fully NaN within one 46-step interval, so there `isfinite` suffices.
+  The two jobs need different detectors — another reason not to transfer settings between them.
+- **The count is a robust discriminant, not a tuned knob:** healthy frames have 0-2 stretched bonds
+  (verified: all six NP systems and healthy glpG give 0), a torn one has 279-431. Any cut between 3 and
+  200 behaves identically.
+- Both drivers now carry **no invented magnitudes** — `CN_MAX`, `POT_MAX`, `COORD_MAX` deleted.
+  NP: non-finite positions OR >=5 stretched bonds. glpG: non-finite potential scanned over the whole
+  chunk OR >=5 stretched bonds in the final frame.
+
 ## Core audit: spline table is CORRECT; one real defect — zero-force hole below 0.1*sigma (2026-08-09)
 
 Audited the MARTINI core after the NP/glpG blow-ups. Most of it checks out; one genuine defect.

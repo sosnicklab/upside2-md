@@ -7,6 +7,29 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 * **No "Debugging" Exclusions**: Do not disable or bypass these hybrid interface interactions to circumvent crashes, optimize performance, or troubleshoot workflow scripts. Disabling them completely breaks the physical model of the Upside simulation.
 * **Strict Adherence**: Any generated script, parameter modification, or configuration must 100% respect this physical model.
 
+## Purpose: Make The Result RIGHT, Not Make It "Run"
+
+**The objective is always a correct scientific result, never a job that merely completes.** A run that
+finishes, exits 0, or stops producing errors is not evidence of anything. Judge every change by whether
+the physics is right, and report a job as working only after checking the observables that would reveal
+it is not.
+
+* **A green exit code means nothing.** Slurm has reported `COMPLETED` on runs whose every replica was
+  destroyed. `isfinite` has passed on coordinates of 1e12 A. Check the physical observables — Rg,
+  peptide C-N bond lengths, the sign and trend of the potential, `avg_kinetic_energy/1.5kT` — not the
+  return code.
+* **Never make something "work" by weakening the test.** Do not widen a threshold, disable a check,
+  skip a frame, or relax a tolerance so a run proceeds. If a check fires, first establish whether it is
+  right. Recalibrate a detection threshold only from measured data on the system it guards, and say so.
+* **Never make something "work" by adjusting physics.** Timesteps, friction, masses, ion counts, box
+  sizes and force-field parameters are determined by the model, not chosen to avoid a crash. Several
+  are calibrated against each other (glpG's dt is locked to `/input/brownian` because the friction is
+  tuned against it for a target lipid diffusion) — changing one silently invalidates the other.
+* **Do not transfer settings, thresholds or analysis between different simulations.** They are separate
+  systems with separate methods and integrators. A number derived from one is not evidence for another.
+* **Diagnose before concluding.** Measure the mechanism; do not assert one by analogy. State plainly
+  when a cause is unproven, and correct the record when a claim turns out to be wrong.
+
 ## Development Rules
 * **Backward Compatibility**: Modifications to C++ source files must not break existing function calls or the Python-to-C++ interface.
 * **Function Signatures**: When adding parameters to an existing function, the additional parameters must be optional (i.e., provide default values).
