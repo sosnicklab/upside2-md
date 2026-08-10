@@ -1,7 +1,8 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-08-09 23:20 CDT**. Written so a fresh session can pick up cold. Everything needed to
-connect, check health correctly, and react to a failure is here.
+Snapshot: **2026-08-10 15:05 CDT**. Written so a fresh session can pick up cold. Everything needed to
+connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
+are not listed, only summarised in §8 where they carry a lesson.
 
 ---
 
@@ -21,18 +22,34 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ---
 
-## 1. Current jobs (all RUNNING as of the snapshot)
+## 1. Current jobs
 
-| JobID | Name | Campaign | Started | Elapsed | Node | Block |
+All five were submitted 2026-08-10 after the hybrid-interface fix (findings 88) and are **block 1 of a
+fresh chain** — nothing here continues a pre-fix trajectory.
+
+| JobID | Name | Campaign | Submitted | Wall | dt | Seed built |
 |---|---|---|---|---|---|---|
-| 53137729 | `np_1AO6_prod` | **NP** | 08-08 17:44 | 1-05:36 | midway3-0080 | 1/8 |
-| 53166591 | `remd_glpG-RKRK-79ALA_S115T` | **glpG** | 08-09 14:44 | 8:36 | midway3-0066 | 2/12 |
-| 53167136 | `remd_glpG-RKRK-79HIS_S115T` | **glpG** | 08-09 14:44 | 8:36 | midway3-0087 | 2/12 |
-| 53172920 | `remd_glpG-RKRK-79ALA` | **glpG** | 08-09 14:44 | 8:36 | midway3-0097 | 2/12 |
-| 53195377 | `remd_glpG-RKRK-79HIS` | **glpG** | 08-09 22:45 | 0:35 | midway3-0154 | 3/12 |
+| 53233848 | `remd_glpG-RKRK-79HIS` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | 08-10 14:47 |
+| 53233849 | `remd_glpG-RKRK-79HIS_S115T` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | 08-10 14:48 |
+| 53233851 | `remd_glpG-RKRK-79ALA` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | 08-10 14:48 |
+| 53233852 | `remd_glpG-RKRK-79ALA_S115T` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | 08-10 14:48 |
+| 53234804 | `np_1AO6_prod` | **NP** | 08-10 15:04 | 36:00:00 | **0.005** | 08-10 14:39–14:59 |
 
-All time limits `1-11:45:00` (35 h 45 m). Health at snapshot: **0 NaN, 0 gate trips, all clean.**
-Disk: NP-1AO6 40 G, glpG_DDM_micelle_REMD 48 G (4 x 48 replicas, ~12 G each).
+Wall is now the caslake QOS ceiling: `MaxWall = 1-12:00:00`, and `sbatch --time=36:00:00` is accepted
+exactly on caslake (the "equal to the cap gets remapped" trap is gpu-partition-only). Each driver's
+internal guard was raised to match (`WALL_SEC=129600`, was 35:45:00), keeping its 35-min MARGIN.
+
+Verified before launch — all four glpG seeds and all six NP faces: protein presents **BB only**
+(N/CA/C/O env pairs = 0), glpG aspect 0.67–0.96 so every environment is a **micelle** not a slab, and all
+four glpG solvation gates passed (142–143 belt sites, 0 bare, 0 beyond reach, tail core 46.9–48.0 A
+against a 28.2 A belt).
+
+Disk after cleanup: `/project/trsosnic/yinhan` **5.0 G** (was 119 G).
+
+```bash
+squeue -u yinhanw -o "%.10i %.30j %.9T %.11M %.12l %R"
+sacct -u yinhanw -S 2026-08-10 -X -o "JobID%12,JobName%30,State%22,Elapsed,Timelimit,Start%17,End%17,ExitCode"
+```
 
 ```bash
 squeue -u yinhanw -o "%.10i %.28j %.9T %.11M %.11l %R"
@@ -61,7 +78,7 @@ healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis betwe
 ## 3. NP campaign — `np_1AO6_prod`
 
 **Dir** `~/project/NP-1AO6/` — `prod/` holds `np.run.{0..5}.up` + `np.<jobid>.out`, `block_count`.
-**Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.001`) · **submit** `submit_np.sh`
+**Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.005`, see §8) · **submit** `submit_np.sh`
 **Orientation map** (verify by checksum if ever re-uploading — a zsh 1-indexing bug shifted it once):
 
 ```
@@ -79,7 +96,7 @@ stays intact (0 broken bonds). Caveat worth revisiting: on `run.3` the unfolded 
 
 **Status check:**
 ```bash
-f=~/project/NP-1AO6/prod/np.53137729.out
+f=$(ls -t ~/project/NP-1AO6/prod/np.*.out | head -1)   # newest block log
 grep "^\[np\]" $f | tail -20          # driver trace + per-chunk bond counts
 grep -ic nan $f                        # expect 0
 ```
@@ -197,20 +214,32 @@ NP equivalent: `run_np_prod.py` `reseed()` is idempotent, so a config with no `/
   Fixed by `NP_DT=0.001`. Also rebuilt: fixed 200 Å complex-centred box (was 232–284, orientation-
   dependent) and counterions only (218 ions, was 2442–4324).
 - Aug 5 (`53089047`): gate caught a tear on `np.run.3` and correctly stopped the chain.
+- **Aug 10: `NP_DT` raised 0.001 → 0.005, and the Aug-2 result above no longer applies.** That dt limit
+  was set by a 2.84 A closest protein-environment approach made by the **O sites**, which findings 88
+  removed from the pair table. Re-measured on a rebuilt face over 50 t_up at dt=0.001: closest approach
+  now **4.072 A** (BB↔K⁺), stiffest contact omega*dt = 0.0067, implying a hard limit near dt=0.3. A
+  like-for-like A/B on face 0-0-0 at dt=0.005 over the same 50 t_up kept the backbone **intact**
+  (0 of 577 peptide bonds past 2 A, potential finite, −9841..−7273) — i.e. the exact dt that tore it in
+  August now survives. 0.005 is a deliberately conservative 5× speedup, not the measured ceiling.
+  **Caveat: 50 t_up is short and the protein has not fully adsorbed**, so the tightest contacts of a long
+  run may not be sampled yet. Re-measure the sampled approach on block 1 before raising further.
 
 **glpG**
-- Aug 9 (`53088898`, 79ALA): real blow-up. First explosion `output_previous_4` frame 220, **slot 47 =
-  the hottest replica (T=0.90)**, t=91.08. Rolled back to `output_previous_3` (~5 chunks / 625 t.u.
-  discarded); contaminated trajectories were deleted, so the raw evidence is gone. The job log
-  `remd.53088898.out` survives.
-- **Mechanism is OPEN.** An earlier claim of "same dt root cause as NP, 8.3× over the limit" was wrong
-  twice over: it applied NP's velocity-Verlet analysis to a Brownian-majority system, and the number
-  itself was miscomputed (per-pair it is ~0.56× of the harmonic limit — marginal at worst).
-  A local single-replica stress at **T=1.30 for t=1080 at fixed dt=0.009 stayed completely stable**, so
-  temperature alone does not reproduce it. Leading untested hypothesis: **replica exchange itself**
-  (glpG stores no momentum; velocities are re-thermalized each chunk, so how they are handled when a
-  configuration moves between temperature slots is a candidate). Next step would be a minimal 2–4
-  replica exchange test locally.
+- Aug 9 (`53088898`, 79ALA): real blow-up, rolled back; contaminated trajectories deleted, job log survives.
+- **Mechanism RESOLVED Aug 10 (findings 88), and it was never the timestep.**
+  `HybridPositionNode::propagate_deriv` discarded the O site's sensitivity entirely and dropped BB's
+  fourth (O) weight, while all five backbone sites (N, CA, C, O, BB) sat in the MARTINI pair table. Net
+  effect: **more force thrown away than delivered** (12537 vs 5909 E_up/A) and **3590 E_up/A of
+  one-sided force per step acting on the environment**, since the env partner's sensitivity was passed
+  through while the protein's was not. That is non-conservative, does net work regardless of step size,
+  and explains a blow-up localised on one residue's backbone. Fixed by (a) restricting the protein side
+  of the pair table to BB and (b) propagating O/BB sensitivities through the placement Jacobian.
+  Two earlier dt claims are both withdrawn: the "8.3× over the limit" figure, and a later omega*dt
+  analysis of mine that measured O-site contacts which exert no force at all.
+  Still open: a **dt-independent +2–3% `avg_kinetic_energy/1.5kT` excess** (2.43/2.16/2.18% across a 4×
+  dt range, so not discretisation error). Present in 1rkl/1AFO after the fix too. Cause unidentified.
+  Do **not** use `--potential-deriv-agreement` as a gate on these systems: with a 1e-3 A step against a
+  ~1e4 E_up float potential it is round-off dominated and returns 0.4196 both before and after the fix.
 - Aug 9 (`53166153`, 79HIS): **false positive**, my fault. A `CN_MAX=2.5 Å` threshold borrowed from NP
   fired at 2.52 Å on a perfectly healthy chunk and cost a 6 h block. Healthy glpG reaches 2.659 Å.
   `CN_MAX` has since been removed from both drivers in favour of the broken-bond count.
