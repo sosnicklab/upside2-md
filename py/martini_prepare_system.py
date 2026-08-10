@@ -513,7 +513,7 @@ def pack_bilayer_environment(args, lipid_template, bilayer_box, protein_backbone
         force_square_xy=True,
         min_box_z=min_box_z_target,
         center_lipid_in_z=True,
-        force_xy_box=target_side,
+        force_xy_box=(target_side, target_side),
     )
 
     kept_lipid_xyz = coords([a for a in bilayer_kept if lipid_resname(a["resname"])])
@@ -845,15 +845,22 @@ def prepare_bilayer_structure(args, runtime_pdb):
     if not bilayer_lipid_atoms:
         raise ValueError("No lipid residues found in bilayer template.")
 
+    # The template is a periodic tile, so its CRYST1 record IS the lateral box. Sizing from the coordinate
+    # extent instead is wrong twice over: it loses the sub-bead gap between the outermost bead and the tile
+    # edge, and it squares a rectangular tile up to its longer edge (measured 84.41 x 73.10 -> 84.26 x 84.26),
+    # which opens a vacuum stripe along the shorter edge and changes the area per lipid by 15%.
+    if bilayer_box is None:
+        raise ValueError(f"Bilayer template {bilayer_pdb} has no CRYST1 record: the periodic tile's box "
+                         "cannot be recovered from the coordinates alone.")
     lipid_xyz = coords(bilayer_lipid_atoms)
     bmin = lipid_xyz.min(axis=0)
     bmax = lipid_xyz.max(axis=0)
-    base_side = max(float(bmax[0] - bmin[0]), float(bmax[1] - bmin[1]))
-    target_side = base_side * float(max(1.0, args.xy_scale))
-    if target_side > base_side * 1.000001:
+    tile_xy = np.array([float(bilayer_box[0]), float(bilayer_box[1])], dtype=float)
+    target_xy = tile_xy * float(max(1.0, args.xy_scale))
+    if float(args.xy_scale) > 1.000001:
         center_xy = 0.5 * (bmin[:2] + bmax[:2])
-        target_xy_min = center_xy - 0.5 * target_side
-        target_xy_max = center_xy + 0.5 * target_side
+        target_xy_min = center_xy - 0.5 * target_xy
+        target_xy_max = center_xy + 0.5 * target_xy
         bilayer_lipid_atoms = tile_and_crop_bilayer_lipids(
             bilayer_atoms=bilayer_atoms,
             bilayer_box=bilayer_box,
@@ -865,8 +872,9 @@ def prepare_bilayer_structure(args, runtime_pdb):
         all_atoms=bilayer_lipid_atoms,
         lipid_atoms=bilayer_lipid_atoms,
         pad_z=float(args.box_padding_z),
-        force_square_xy=True,
+        force_square_xy=False,
         center_lipid_in_z=True,
+        force_xy_box=target_xy,
     )
 
     if int(args.explicit_ions):
@@ -912,8 +920,8 @@ def prepare_bilayer_structure(args, runtime_pdb):
         "input_bilayer_pdb": str(bilayer_pdb),
         "runtime_pdb": str(runtime_pdb),
         "xy_scale": float(args.xy_scale),
-        "base_xy_side_angstrom": float(base_side),
-        "target_xy_side_angstrom": float(target_side),
+        "template_tile_xy_angstrom": [float(v) for v in tile_xy],
+        "target_xy_angstrom": [float(v) for v in target_xy],
         "box_angstrom": [float(v) for v in box_lengths],
         "explicit_ions": int(args.explicit_ions),
         "salt_pairs_target": int(salt_pairs),

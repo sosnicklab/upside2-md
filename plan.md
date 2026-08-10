@@ -26,11 +26,13 @@ REMD batch, half of which died of a single-replica runaway that replica exchange
   counterion failure appeared at ~step 97,000 of a 112,966-step chunk, and the glpG REMD seed passed a
   400-step smoke test then died at step 12,190. Seed smoke tests bound loading and setup, NOT stability.
   The 6-face probe therefore runs a full chunk-equivalent (112,966 steps at dt=0.005) per face.
-- **glpG REMD needs a finiteness guard before any further submission.** `run_remd.py` exchanges on whatever
-  energy it reads, so one diverged replica poisons all 48 in a single sweep, and because the driver reseeds
-  `/input` from the last output frame the corruption is written back and self-resubmitted. The NP driver
-  already does this correctly (`health()` on peptide C-N, ends the chain rather than propagating); the REMD
-  driver never got the equivalent.
+- **glpG REMD: the runaway had a root cause, and it is fixed -- no guard.** `coord_swap` in `src/main.cpp`
+  exchanged positions between replicas but left each replica's momenta in place, so after every accepted swap
+  a configuration carried velocities drawn at the *other* replica's temperature. The kinetic energy injected
+  scales as `T_hi/T_lo - 1` per swap and accumulates over sweeps, which is the runaway. Repaired by swapping
+  `mom` alongside `pos` and rescaling each by `sqrt(T_dest/T_src)`, which is the standard T-REMD velocity
+  rescale. An energy-finiteness check in `run_remd.py` would have hidden exactly this bug, and is forbidden
+  by the NO GUARDS rule; it is not being added.
 
 ## Execution Phases
 
@@ -63,14 +65,68 @@ re-run's failure rate against the observed 2/4.
       resubmit both chains. The defective-table builds are kept alongside for provenance.
 - [x] G1 glpG micelle REMD: 79ALA (53036667) and 79ALA_S115T (53036669) healthy and left running; 79HIS
       (53036661) and 79HIS_S115T (53036664) NaN, stopped with STOP + scancel (findings 79).
-- [ ] G2 Add the finiteness guard to `run_remd.py`, then re-run the two lost variants from the clean seeds
-      (still held locally, md5-verified).
+- [x] G2 Root-caused the runaway to the momentum-swap bug in `coord_swap` and fixed it in `src/main.cpp`
+      (no guard). All four variants resubmitted from clean seeds on the corrected table + fixed binary.
 - [ ] G3 Localize the runaway: rerun 79HIS from its clean seed with dense output to catch the divergence.
+
+## Robertson CLC-ec1 reproduction (2026-08-05): membranes run NVT at a set area
+
+### Revised Decisions -- no barostat for dry-MARTINI membranes
+
+Supersedes the "xy-only tensionless MC barostat" decision from the prep redesign (which existed only because
+the CHARMM-GUI box was not trustworthy). Membranes built by us are built at a **target area per lipid and run
+NVT**; the MC barostat is not used for them. Three independent reasons, all pointing the same way:
+
+1. **A defect is a stress sink.** Lateral tension relaxes through a pore or an under-filled patch instead of
+   through the lipid area, so zero measured tension stops marking the intact bilayer's equilibrium and the
+   barostat compresses the intact regions past it. CLC-ec1 dimerization is *about* lipid-depleted states, so
+   this is a hazard in the systems we are about to build, not a hypothetical.
+2. **Implicit solvent has no solvent virial.** Dry MARTINI carries no water, so the lateral pressure the
+   barostat reads is missing the solvent contribution and is not the physical one. Robertson et al. could use
+   semiisotropic Parrinello-Rahman legitimately because *their system is wet* (`tc-grps = membrane
+   water_and_ions Protein`); the water is merely stripped from the frames they distributed. Dry Martini
+   (Arnarez et al., JCTC 2015) is specified NVT for this reason.
+3. **We have a better source for the area than a barostat**: their own equilibrated APL for this exact
+   composition and temperature, 61.7 A^2 per lipid per leaflet.
+
+Consequence for the validation: APL becomes a matched *input*, not an output, so "does the lipid behave like
+theirs" is tested on the area-sensitive structural observables at their area -- tail-core and head-head
+thickness, packing -- not on APL itself.
+
+Confirmed from their `step8_production.mdp`, both matching us already: **T = 303.15 K** (= 0.8647 T_up, our
+value) and `reaction-field / epsilon_r 15 / epsilon_rf 0 / Potential-shift / rvdw = rcoulomb = 1.2`, which is
+independent confirmation of the corrected spline tables (F1).
+
+- [x] R1 Built the 13-bead 2:1 POPE:POPG tile matching our ITP (their 12-bead model is not a renaming):
+      exactly 2.00:1, bond deviation 0.0010 A.
+- [x] R2 Condensed under the barostat as a *diagnostic*: box 74.87 -> 58.7 A, APL 91.1 -> 56.0 A^2, i.e.
+      **9.4% denser than their 61.7**, with tail core +1.6% and head-head +0.9% -- the signature of
+      over-compression. No pore (0% empty bins, continuous midplane), so in this run it is the barostat and
+      the small periodic tile, not a stress sink. This run is superseded by R3, not a result.
+- [x] R3 Rebuilt at APL 61.7 A^2 exactly (triangular lattice at the target density + greedy azimuth; RSA
+      cannot reach it) and NVT-relaxed 200,000 steps at 303.1 K. Bilayer stays intact (0% empty bins,
+      min 3/bin). **At their area: tail core 26.4 vs 28.1 A (-5.9%), head-head 46.9 vs 50.3 (-6.7%), packing
+      median 4.35 vs 4.60 (-5.4%).** So the lipid packs like theirs to ~5% but sits ~6% THINNER at equal area.
+      Consistent across the two runs: tail-core x APL is 1629 A^3 for us vs 1734 for them (-6%), i.e. our
+      13-bead tails are more disordered, not smaller (we have 9 tail beads to their 8).
+      *Open question, stated as such:* 61.7 A^2 is the equilibrium area of THEIR 12-bead wet-Martini lipid,
+      not necessarily of our 13-bead dry one, and with no valid barostat we cannot measure ours directly. A
+      published dry-Martini APL for POPE/POPG would settle whether the 6% is a model difference or a
+      wrong-area artifact. Using their area is still the right choice for reproducing their system.
+- [ ] R4 CLC-ec1 monomer + dimer on the validated bilayer; then a dimerization animation from a proximal
+      start.
 
 ## Known Errors / Blockers
 
-- Two of four glpG micelle variants are lost to NaN. The two survivors carry the same exposure until G2
-  lands: they have already shown transient protein_potential spikes of +36,450 and +41,012 that recovered.
+- Two of four glpG micelle variants were lost to NaN before the momentum-swap fix. Whether the fix removes it
+  is **not yet proven** -- the powered test is the resubmitted batch's failure rate against the observed 2/4.
+- **Scope of the NVT decision, stated honestly.** The barostat is *not* being ripped out, because the
+  CHARMM-GUI-derived hybrid systems (DOPC, and any protein-in-bilayer built from their coordinates) still rely
+  on it to correct a box we do not trust, and disabling it there without a trustworthy target APL for those
+  lipids would replace one wrong box with another. Reasoning 2 above (no solvent virial) applies to them too,
+  so migrating them to target-APL construction is real follow-up work; it needs a reference APL per lipid
+  first. Until then `npt_enable` stays live for that path and NVT is used for membranes we build ourselves.
+  Nothing currently queued is affected: glpG is a micelle (already NVT) and the NP system has no membrane.
 - Do not compare the counterion and full-salt NP runs as if the ionic strength were the only difference
   until the 0.127-vs-0.15 M question above is settled.
 

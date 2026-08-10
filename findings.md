@@ -1,5 +1,97 @@
 # Findings
 
+## Core audit: spline table is CORRECT; one real defect — zero-force hole below 0.1*sigma (2026-08-09)
+
+Audited the MARTINI core after the NP/glpG blow-ups. Most of it checks out; one genuine defect.
+
+**Verified correct (do not re-litigate):**
+- The spline table **equals the analytic dry-MARTINI form**: potential-shifted LJ + reaction-field
+  Coulomb, both zero at 12 A. Max relative error **3.6e-11 across all 23 (eps, sigma, qq) triples**
+  over r=2.5--11.9 A. This satisfies the "Spline Tables Must Be The Original Potential" assertion.
+- Watch the convention: GROMACS `epsilon_rf = 0` means **infinity** (conducting boundary), so
+  `(eps_rf - eps_r)/(2 eps_rf + eps_r) = 1/2`, NOT -1. Taking the 0 literally makes the charged triples
+  look ~100% wrong at large r. That was my error, not the table's.
+- No force caps, no NaN-skipping, no energy clamping in the pair-force path (`martini_potential.cpp`
+  `eval_pair_force`). The `kMinDistance` values (1e-6 / 1e-8 A) are divide-by-zero epsilons for exactly
+  coincident particles, not physics guards.
+
+**REAL DEFECT — `py/martini_build_tables.py:532`: `r = max(r, 0.1 * sig)`**
+- The builder floors the radius at `0.1*sigma` before evaluating LJ, so the tabulated potential is
+  **constant and the force is exactly ZERO** below 0.47 A (sigma=4.7), 0.60 A (6.0), 0.62 A (6.2).
+  Measured: first nonzero slope at r=0.589 A for the sigma=6.0 triple; true LJ there is 7.6e20 vs a
+  tabulated 3.16e12.
+- This is a hole in the repulsive core and a deviation from the published functional form.
+- **UNRELATED to the NP/glpG blow-ups — tested, not assumed.** In healthy dynamics the max per-step
+  displacement is ~0.045 A and the closest evaluated pair is 2.403 A, so reaching the hole means
+  crossing **1.80 A (~40 steps)** of correctly-tabulated 1e5--1e8 E_up repulsion. Unreachable from a
+  healthy state. It only becomes accessible after a cascade has already injected far-above-thermal
+  velocities, by which point the configuration is destroyed regardless. If anything the true un-floored
+  LJ (U~1e16 at 0.3 A) would eject harder. I earlier called it a "plausible amplifier" — that was
+  speculation and is retracted.
+- Still worth fixing on spline-fidelity grounds: tabulate the true form down to r->0 (large but finite
+  in float64), or state and justify the floor rather than hard-coding it silently. Do not expect it to
+  change blow-up behaviour.
+
+## glpG REMD is NOT the same job as NP — stop transferring analysis between them (2026-08-09)
+
+**NP and glpG are different simulations and must be analysed separately.** Conflating them cost a
+healthy 6 h glpG block (a threshold borrowed from NP false-positived) and produced a wrong root-cause
+writeup.
+
+| | NP (`np_1AO6_prod`) | glpG (`remd_glpG-*`) |
+|---|---|---|
+| method | regular MD, 6 independent trajectories, single T=0.8647 | **REMD**, 48 replicas T=0.70-0.90 with configuration exchange |
+| purpose | NP adsorption footprinting (K190) | **HDX** protection factors |
+| integrator | **pure velocity-Verlet**, no `/input/brownian` | **MIXED**: 2736 atoms (ION 432 + LIPID 1674 + PROTEIN 630) overdamped **Brownian**; only 420 protein atoms velocity-Verlet |
+| timestep | free; fixed by changing 0.005 -> 0.001 | **hard-locked 0.009** (`martini_brownian.cpp:100` throws on mismatch); friction tuned against it for lipid D=11.5 um2/s. A calibrated quantity — do not change |
+
+- **The glpG mechanism is OPEN.** The earlier claim of "same root cause, dt 8.3x over the limit" applied
+  NP's velocity-Verlet stability analysis to a system whose environment is overdamped Brownian. It does
+  not transfer. The 8.3x number was independently wrong too (max over all 23 grids and mu=0.5 for pairs
+  the engine never evaluates; per-pair it is ~0.56x of the harmonic limit, i.e. marginal at worst).
+- What IS solid for glpG: the 79ALA blow-up was real; REMD exchange **recirculates** the destroyed
+  configuration indefinitely so it contaminates whichever slot it occupies (1, later 2 configs walking
+  the ladder, not "4 failed replicas"); and `isfinite` misses it because env coords reach +/-4.65e12 A
+  while staying finite.
+- Old, superseded reasoning retained below for context only:
+- The blow-ups were hidden because **REMD exchange launders them**: `run_remd.py:59` reseeds from
+  `output/pos[-1]` (the destroyed frame), then a swap brings a healthy configuration in from a
+  neighbouring slot, so the trajectory looks finite from frame 1 and the bad slot walks (3->13->23->33).
+- Two traps this cost me, both worth remembering: (a) the environment coordinates at the failed frame
+  are `+/-4.65e12 A` -- numerically **finite**, physically destroyed, so `isfinite` passes; (b) it looks
+  like a chunk-teardown logging artifact but is not -- potential/kinetic/hbond/rama are all NaN at that
+  frame. Use an exploded-coordinate test (`abs(pos).max() > 1e4`) alongside peptide C-N.
+- Only 79ALA showed NaN at scan time; the other three variants are equally over the limit and must not
+  be assumed safe.
+- Fix is a timestep reduction (0.0006 for NP-equivalent margin = 15x cost) and is **not yet applied** --
+  it needs a cost decision, and it is worth first checking whether 2.64 A contacts mean the micelle is
+  over-compressed. Full record, diagnostics and resume steps: `glpG_REMD_blowup_debug.md`.
+
+## NP-1AO6 blow-up ROOT CAUSE: dt exceeds the MARTINI LJ-core stability limit (2026-08-08)
+
+- Velocity-Verlet is stable only for `dt < 2/omega`. Taking `omega = sqrt(U''/mu)` from the **tabulated**
+  grid curvature (not an analytic fit), the limit collapses as pairs approach:
+  `dt_max = 0.0209 @ 4.0 A, 0.00808 @ 3.5 A, 0.00430 @ 3.2 A, 0.00278 @ 3.0 A, 0.00186 @ 2.84 A`.
+- The closest protein-environment approach the system actually samples is **2.84 A** (1st pct 2.88,
+  median 3.54; 40% of frames below 3.5 A). So **dt=0.005 was 2.7x over the limit**, and over it for any
+  approach closer than ~3.25 A. Failure is therefore stochastic, which explains the 16x spread in onset
+  across faces, why 5/6 survived while one tore, and why 0.009 -> 0.005 only slowed it.
+- Proven by an A/B restart from the identical pre-tear frame (same seed, only dt differs):
+  dt=0.005 -> 42 broken bonds and Epot -7988 -> +9130 by t=19.8, avg KE/1.5kT = 5.34;
+  dt=0.001 -> 0 broken bonds, Epot -7988 -> -8146, avg KE/1.5kT = 1.006.
+- **FIX: dt = 0.001** (`NP_DT` in `np_prod.sbatch`; `build_all.py` MD dict with step counts x5 to hold
+  physical time). ~1,765 time units per 36 h block.
+- Ruled out, each with evidence: PBC wrap (min-image distances identical to raw); bond-spring stiffness
+  (`dt/dt_max = 0.035`, 29x margin -- the springs are NOT the constraint); anomalous close contacts
+  (protein-ION/GOLD/MPA all steady ~4 A across the failure). The tearing bond was **68 A from the gold**,
+  so this is not the "protein enters the gold LJ core" story assumed earlier.
+- Do not diagnose the nonbonded term by summing the `pairs` dataset offline: that gives 1.58e14 against a
+  logged -8020, because the engine does not evaluate intra-protein pairs (Upside's own FF handles those).
+  The backbone O(i)-N(i+1) pairs sitting at 0.1-0.2 A are a **red herring** for the same reason.
+- Underlying tension worth remembering: Upside protein atoms are mass 1.0 m_up vs MARTINI beads at 6.0,
+  and `dt_max ~ sqrt(mu)`, so the light all-atom backbone is what forces the small timestep. Mass
+  repartitioning would buy ~1.9x but changes kinetics -- not done.
+
 ## NP-1AO6 ion build: box was oversized, now counterions only (2026-08-04)
 
 - FINAL: **neutralizing counterions only, no bulk salt** (user decision 2026-08-04). 218 K+, 0 Cl-,
@@ -2391,3 +2483,58 @@ Lesson: I had the reference bilayer in hand the whole time and spent four iterat
 intuition instead of measuring the target statistic on it first. When reproducing someone's system, compute
 the comparison metric on THEIR data before touching your own builder -- it converts guesswork into a
 one-line pass/fail.
+
+## Update 85 (2026-08-05): dry-MARTINI membranes are NVT -- a barostat cannot find the area without solvent
+
+User's objection, and it is right: with holes expected in a bilayer, a tensionless barostat is the wrong
+ensemble. Three independent reasons converge, and the second is the one that settles it generally.
+
+1. **A defect is a stress sink.** Lateral tension relaxes through a pore or an under-filled patch instead of
+   through the lipid area, so zero measured tension stops marking the intact bilayer's equilibrium; the
+   barostat compresses the intact regions past it. CLC-ec1 dimerization is *about* lipid-depleted states.
+2. **Implicit solvent has no solvent virial.** Dry MARTINI carries no water, so the lateral pressure the
+   barostat reads is missing the solvent contribution entirely and is not the physical one. Dry Martini
+   (Arnarez et al., JCTC 2015) is specified NVT for exactly this reason.
+3. Robertson et al. used semiisotropic Parrinello-Rahman legitimately because **their system is wet** --
+   `tc-grps = membrane water_and_ions Protein`, `energygrps ... water_and_ions` in `step8_production.mdp`.
+   The water is merely stripped from the frames they deposited (`compressed-x-grps = membrane Protein`),
+   which is why the frames look solvent-free and invited the wrong inference.
+
+Measured consequence, our own tile run both ways: under the tensionless xy barostat it condensed to
+**APL 56.0 A^2 against their 61.7 (-9.4%)**, with tail core +1.6% and head-head +0.9% -- over-compressed and
+correspondingly thicker/tighter, which is the signature. Not a pore artifact in that run (0% empty bins,
+continuous midplane density), just the barostat in a small periodic tile.
+
+So the area is now an **input matched to theirs**, taken from an equilibrated simulation of the same lipids at
+the same temperature, and the validation moves to the area-sensitive structural observables measured AT that
+area. Their `step8_production.mdp` also confirmed two things we already had right: **T = 303.15 K** (= 0.8647
+T_up, our value) and `reaction-field / eps_r 15 / eps_rf 0 / Potential-shift / rvdw = rcoulomb = 1.2`, i.e.
+independent confirmation of the corrected spline tables (Update 80).
+
+Their deposited composition is 1814 POPE : 959 POPG = **1.892:1**, not the nominal 2:1 they describe -- worth
+knowing before treating an exact 2.00 ratio as a fidelity requirement.
+
+Lesson: before adopting an ensemble from a paper you are reproducing, check whether their system has the
+degrees of freedom that make it valid. "They ran NPT" does not transfer to an implicit-solvent model, and the
+frames they deposit may have had the solvent stripped, hiding the difference.
+
+## Update 86 (2026-08-05): the bilayer prep squared up every tile, silently
+
+`prepare_bilayer_structure` parsed the template's CRYST1 box into `bilayer_box`, used it only for tiling, and
+then sized the actual box from the **lipid coordinate extent** with `force_square_xy=True`. For a rectangular
+periodic tile that squares the box up to the longer edge: my 84.41 x 73.10 A tile became **84.26 x 84.26**,
+a 15% stretch along y that both opens a vacuum stripe in the membrane and changes the area per lipid from the
+61.70 A^2 it was built at to 71.0. It also loses the sub-bead gap between the outermost bead and the tile edge
+even for square tiles (84.41 -> 84.26).
+
+Fixed by using the CRYST1 record as the lateral box (`force_xy_box=target_xy`, `force_square_xy=False`) and
+by letting `force_xy_box` be an (x, y) pair rather than a single edge. A periodic tile's box is the tile; it
+is not recoverable from the coordinates, so a template without CRYST1 is now a hard error.
+
+This is the same bug class as the earlier "box inflated to 83.3 A for a 75 A tile", which I had patched by
+wrapping molecules into the tile so that extent ~= box. Wrapping made the symptom vanish for square tiles
+while leaving the cause -- sizing a periodic box from a coordinate extent -- in place.
+
+Lesson: when a fix works by making a wrong input look right (wrapping so the extent matches the box), the
+cause is still there and will resurface on the first input that breaks the coincidence. Fix the derivation,
+not the input.

@@ -1105,8 +1105,10 @@ def set_box_from_lipid_xy(
     # When an explicit XY box is given (a whole-tile fill window), the box equals that window
     # (the lipid molecule COMs fill it; molecule tails wrap under PBC) rather than the molecule
     # extent, so the membrane fills the box laterally with no sparse-tail ring / contraction.
+    # It may be a single edge (square) or an (x, y) pair: a periodic tile need not be square, and
+    # squaring a rectangular one up to its longer edge opens a vacuum stripe along the shorter one.
     if force_xy_box is not None:
-        box_x = box_y = float(force_xy_box)
+        box_x, box_y = (float(v) for v in np.broadcast_to(np.asarray(force_xy_box, dtype=float), (2,)))
 
     min_z = float(all_xyz[:, 2].min())
     max_z = float(all_xyz[:, 2].max())
