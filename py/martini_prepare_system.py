@@ -2024,10 +2024,10 @@ def ensure_martini_parameter_libraries(args):
 
 
 def add_hybrid_workflow_arguments(parser):
-    parser.add_argument("--pdb-id", default=env_default("PDB_ID", "1rkl"))
+    parser.add_argument("--pdb-id", default=env_default("PDB_ID", None))
     parser.add_argument("--runtime-pdb-id", default=env_default("RUNTIME_PDB_ID", None))
     parser.add_argument("--upside-home", default=env_default("UPSIDE_HOME", str(REPO_ROOT)))
-    parser.add_argument("--run-dir", default=env_default("RUN_DIR", "outputs/martini_test_1rkl_hybrid"))
+    parser.add_argument("--run-dir", default=env_default("RUN_DIR", None))
     parser.add_argument("--protein-aa-pdb", default=env_default("PROTEIN_AA_PDB", None))
     parser.add_argument("--lipid-name", default=env_default("LIPID_NAME", None),
                         help="Membrane lipid moleculetype name(s), comma-separated for a mixed "
@@ -2082,6 +2082,10 @@ def parse_hybrid_workflow_args(argv):
     parser = argparse.ArgumentParser(description="Run the hybrid dry-MARTINI workflow.")
     add_hybrid_workflow_arguments(parser)
     args = parser.parse_args(argv)
+    if not args.pdb_id or not str(args.pdb_id).strip():
+        raise ValueError("A PDB id is required (--pdb-id or PDB_ID, e.g. 1rkl or glpG-RKRK-79HIS)")
+    if args.run_dir is None:
+        args.run_dir = f"outputs/martini_{args.pdb_id}_hybrid"
     if args.runtime_pdb_id is None:
         args.runtime_pdb_id = f"{args.pdb_id}_hybrid"
     if args.protein_aa_pdb is None:

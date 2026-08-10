@@ -51,12 +51,17 @@ def decode_str_array(dset):
 
 
 def infer_pdb_id(input_file, user_pdb_id):
+    """Select the optional pdb/<id>.MARTINI.pdb that supplies residue and chain labels.
+
+    Never guess a specific protein here: falling back to one silently relabels every other system's
+    residues with that protein's metadata. Return None when no id is given and none can be derived,
+    and let the caller skip the metadata rather than attach the wrong protein's."""
     if user_pdb_id:
         return user_pdb_id
     base = os.path.basename(input_file).lower()
     if "bilayer" in base:
         return "bilayer"
-    return "1rkl"
+    return None
 
 
 def normalize_frame(pos, n_particles):
@@ -673,7 +678,7 @@ def extract_trajectory(
     print(f"Structure source: {structure_file}")
     print(f"Output: {output_file}")
     print(f"Mode: {mode}")
-    print(f"PDB ID: {pdb_id}")
+    print(f"PDB ID: {pdb_id if pdb_id else '(none - no PDB metadata)'}")
     print(f"Trajectory group: {output_group}")
 
     if output_group == "input":
@@ -762,7 +767,7 @@ def main():
     pdb_id = infer_pdb_id(input_file, args.pdb_id)
     mode = args.mode
 
-    pdb_file = str(WORKFLOW_DIR / "pdb" / f"{pdb_id}.MARTINI.pdb")
+    pdb_file = str(WORKFLOW_DIR / "pdb" / f"{pdb_id}.MARTINI.pdb") if pdb_id else ""
 
     with h5py.File(input_file, "r") as t, h5py.File(structure_file, "r") as s:
         input_pos = normalize_input_positions(s["input/pos"][:])
