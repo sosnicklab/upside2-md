@@ -24,27 +24,21 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-All five were submitted 2026-08-10 after the hybrid-interface fix (findings 88) and are **block 1 of a
-fresh chain** — nothing here continues a pre-fix trajectory.
-
-| JobID | Name | Campaign | Submitted | Wall | dt | Seed built |
+| JobID | Name | Campaign | Submitted | Wall | dt | Notes |
 |---|---|---|---|---|---|---|
-| 53233848 | `remd_glpG-RKRK-79HIS` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | 08-10 14:47 |
-| 53233849 | `remd_glpG-RKRK-79HIS_S115T` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | 08-10 14:48 |
-| 53233851 | `remd_glpG-RKRK-79ALA` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | 08-10 14:48 |
-| 53233852 | `remd_glpG-RKRK-79ALA_S115T` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | 08-10 14:48 |
-| 53234804 | `np_1AO6_prod` | **NP** | 08-10 15:04 | 36:00:00 | **0.005** | 08-10 14:39–14:59 |
+| 53233848 | `remd_glpG-RKRK-79HIS` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | PENDING |
+| 53233849 | `remd_glpG-RKRK-79HIS_S115T` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | PENDING |
+| 53233851 | `remd_glpG-RKRK-79ALA` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | PENDING |
+| 53233852 | `remd_glpG-RKRK-79ALA_S115T` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | PENDING |
+| 53251911 | `np_1AO6_prod` | **NP** | 08-11 | 36:00:00 | **0.001** | block 2; runs 1&4 reset to block-0 end |
 
-Wall is now the caslake QOS ceiling: `MaxWall = 1-12:00:00`, and `sbatch --time=36:00:00` is accepted
-exactly on caslake (the "equal to the cap gets remapped" trap is gpu-partition-only). Each driver's
-internal guard was raised to match (`WALL_SEC=129600`, was 35:45:00), keeping its 35-min MARGIN.
+Wall is the caslake QOS ceiling: `MaxWall = 1-12:00:00`. Each driver's internal guard:
+`WALL_SEC=129600` (35-min MARGIN).
 
-Verified before launch — all four glpG seeds and all six NP faces: protein presents **BB only**
+Verified before launch (08-10) — all four glpG seeds and all six NP faces: protein presents **BB only**
 (N/CA/C/O env pairs = 0), glpG aspect 0.67–0.96 so every environment is a **micelle** not a slab, and all
 four glpG solvation gates passed (142–143 belt sites, 0 bare, 0 beyond reach, tail core 46.9–48.0 A
 against a 28.2 A belt).
-
-Disk after cleanup: `/project/trsosnic/yinhan` **5.0 G** (was 119 G).
 
 ```bash
 squeue -u yinhanw -o "%.10i %.30j %.9T %.11M %.12l %R"
@@ -214,15 +208,17 @@ NP equivalent: `run_np_prod.py` `reseed()` is idempotent, so a config with no `/
   Fixed by `NP_DT=0.001`. Also rebuilt: fixed 200 Å complex-centred box (was 232–284, orientation-
   dependent) and counterions only (218 ions, was 2442–4324).
 - Aug 5 (`53089047`): gate caught a tear on `np.run.3` and correctly stopped the chain.
-- **Aug 10: `NP_DT` raised 0.001 → 0.005, and the Aug-2 result above no longer applies.** That dt limit
-  was set by a 2.84 A closest protein-environment approach made by the **O sites**, which findings 88
-  removed from the pair table. Re-measured on a rebuilt face over 50 t_up at dt=0.001: closest approach
-  now **4.072 A** (BB↔K⁺), stiffest contact omega*dt = 0.0067, implying a hard limit near dt=0.3. A
-  like-for-like A/B on face 0-0-0 at dt=0.005 over the same 50 t_up kept the backbone **intact**
-  (0 of 577 peptide bonds past 2 A, potential finite, −9841..−7273) — i.e. the exact dt that tore it in
-  August now survives. 0.005 is a deliberately conservative 5× speedup, not the measured ceiling.
-  **Caveat: 50 t_up is short and the protein has not fully adsorbed**, so the tightest contacts of a long
-  run may not be sampled yet. Re-measure the sampled approach on block 1 before raising further.
+- Aug 10 (`53234804`): `NP_DT` raised 0.001 → 0.005 based on a 50 t_u test. Runs 1 (90-0-0) and
+  4 (0-90-0) destroyed at t≈250 (block 1); runs 0,2,3,5 healthy. Root cause confirmed: **backbone
+  spring bonds (k=48 E_up/Å², ω=9.8 rad/t_u) become unstable during protein unfolding on the NP
+  surface.** Protein unfolding drives backbone bonds to 3–7× thermal oscillation amplitude by t=250.
+  At dt=0.005 the integration has too few force evaluations per half-period (≈1.2 frames/half-period)
+  to track the rapid force reversal when bond amplitude is large, allowing a coincident force alignment
+  at frame 935 to inject 12 E_up of kinetic energy into a single backbone C atom in 0.27 t_u.
+  Note: the MARTINI BB-env LJ is NOT the culprit here (BB closest approach 4.1 Å throughout;
+  blow-up 70+ Å from NP surface; residues 119-122). The limiting factor is backbone spring accuracy
+  at large amplitude, not small-oscillation stability (ω×dt=0.049 << 2 is met throughout).
+  Fixed: reverted `NP_DT=0.001`; deleted /output from destroyed runs; resubmitted as job 53251911.
 
 **glpG**
 - Aug 9 (`53088898`, 79ALA): real blow-up, rolled back; contaminated trajectories deleted, job log survives.

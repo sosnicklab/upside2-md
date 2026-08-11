@@ -118,6 +118,45 @@ writeup.
   and `dt_max ~ sqrt(mu)`, so the light all-atom backbone is what forces the small timestep. Mass
   repartitioning would buy ~1.9x but changes kinetics -- not done.
 
+## NP-1AO6 blow-up at dt=0.005 after findings-88 fix: backbone spring instability at large amplitude during unfolding (2026-08-11)
+
+Job 53234804 ran with `NP_DT=0.005` after findings 88 removed O sites from the MARTINI pair table.
+Runs 1 (90-0-0) and 4 (0-90-0) were destroyed at block 1, t≈250; runs 0,2,3,5 healthy.
+
+**Root cause: backbone spring bonds at large oscillation amplitude during unfolding, not MARTINI LJ.**
+
+Evidence and mechanism:
+- Blow-up localised at residues 119–122 (MET-CYS-THR-ALA-PHE), which are 70+ Å from the NP surface.
+  No MARTINI BB-env pair is close: nearest ion is 8.6+ Å throughout the failure window.
+- At frames 920–935 (t=248–252), backbone bonds (CA-C, C-N, N-CA) oscillate at amplitudes 0.3–0.5 Å
+  — 2–3× the thermal amplitude sqrt(kT/k)=sqrt(1.0/48)=0.14 Å — as protein unfolding transfers
+  energy into backbone spring modes.
+- The spring bond linear stability criterion (ω×dt = sqrt(48/0.5) × 0.005 = 0.049 << 2) is satisfied
+  throughout. But accuracy at large amplitude requires much smaller dt: at amplitude 0.5 Å, the bond
+  force reverses sign over a half-period of ≈0.32 t_u (1.2 frame intervals at 0.27 t_u per frame).
+  With only 54 force evaluations per frame interval, the reversal is tracked too coarsely.
+- At frame 935, a coincident alignment of spring forces (CA-C compressed + C-N stretched) produces
+  ≈14.4 E_up/Å sustained force on C(121). Over 54 steps of dt=0.005, this injects 12 E_up of kinetic
+  energy into C(121) (velocity jumps from 0.96 to 4.96 Å/t_u), stretching CA(121)-C(121) to 2.58 Å.
+  A cascading wild oscillation follows; final blow-up at frame 944 (t=254.88).
+
+**Key distinction from the Aug-2 blow-up (findings §96):**
+- Aug-2: MARTINI LJ core instability at O-site approaches of 2.84 Å (ω×dt = 2.7× over the limit).
+  Fix: remove O from pair table (findings 88).
+- Aug-11: Backbone spring at large amplitude during unfolding. MARTINI is irrelevant. The linear
+  stability criterion is met. The failure is from integration accuracy at large displacement.
+- The old claim "the springs are NOT the constraint; dt/dt_max = 0.035" (findings §111) applies only
+  to small-amplitude (thermal) oscillations. It does not hold when unfolding drives bonds to 3-7× thermal.
+
+**Fix:** `NP_DT=0.001`. This gives 270 force evaluations per 0.27 t_u interval — sufficient to track
+the force reversal as atoms move. Runs 1 and 4: `/output` (blown-up block 1) deleted; `/input/mom`
+has `restart_valid=1` (set at block 1 start from block 0's last frame), so the driver restarts cleanly
+from the block-0 endpoint. Resubmitted as job 53251911.
+
+**Do not raise dt above 0.001 for NP.** Even though the MARTINI contact limit allows dt≈0.3, protein
+unfolding creates a secondary constraint: backbone spring accuracy at large amplitude. The 50 t_u
+validation test is too short to sample the full unfolding regime (failure occurs at t>250).
+
 ## NP-1AO6 ion build: box was oversized, now counterions only (2026-08-04)
 
 - FINAL: **neutralizing counterions only, no bulk salt** (user decision 2026-08-04). 218 K+, 0 Cl-,
