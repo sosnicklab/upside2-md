@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-08-10 15:05 CDT**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-08-12 CDT**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -24,16 +24,21 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-| JobID | Name | Campaign | Submitted | Wall | dt | Notes |
+| JobID | Name | Campaign | State | Block | Node | Notes |
 |---|---|---|---|---|---|---|
-| 53233848 | `remd_glpG-RKRK-79HIS` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | PENDING |
-| 53233849 | `remd_glpG-RKRK-79HIS_S115T` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | PENDING |
-| 53233851 | `remd_glpG-RKRK-79ALA` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | PENDING |
-| 53233852 | `remd_glpG-RKRK-79ALA_S115T` | **glpG** | 08-10 14:48 | 36:00:00 | 0.009 | PENDING |
-| 53251911 | `np_1AO6_prod` | **NP** | 08-11 | 36:00:00 | **0.001** | block 2; runs 1&4 reset to block-0 end |
+| 53294511 | `remd_glpG-RKRK-79HIS` | **glpG** | PENDING | 3 | — | resubmitted 08-12 with rollback driver |
+| 53233849 | `remd_glpG-RKRK-79HIS_S115T` | **glpG** | RUNNING | 2 | midway3-0183 | step ~11590/18259 (63%), Rg 18.6–18.9 Å |
+| 53233851 | `remd_glpG-RKRK-79ALA` | **glpG** | RUNNING | 2 | midway3-0184 | step ~12028/18463 (65%), Rg 18.6–18.9 Å |
+| 53233852 | `remd_glpG-RKRK-79ALA_S115T` | **glpG** | RUNNING | 2 | midway3-0185 | step ~14460/18118 (80%), Rg 18.6–18.8 Å |
+| 53251911 | `np_1AO6_prod` | **NP** | RUNNING | 3 | midway3-0201 | — |
 
 Wall is the caslake QOS ceiling: `MaxWall = 1-12:00:00`. Each driver's internal guard:
 `WALL_SEC=129600` (35-min MARGIN).
+
+**glpG run_remd.py updated 2026-08-12**: NaN rollback is now automated (see §6 and §7). All three
+running glpG variants still have the old driver (edits take effect at the next block). 79HIS block 3
+was submitted with the new driver after manual fixup of 45 NaN-infected files (last output frame
+overwritten from `output_previous_0/pos[-1]`).
 
 Verified before launch (08-10) — all four glpG seeds and all six NP faces: protein presents **BB only**
 (N/CA/C/O env pairs = 0), glpG aspect 0.67–0.96 so every environment is a **micelle** not a slab, and all
@@ -160,41 +165,55 @@ Also useful: protein Rg, and `avg_kinetic_energy/1.5kT` at the end of a log (hea
 
 ---
 
-## 6. The detection gate (what "DESTROYED" in a log means)
+## 6. The detection gate and rollback (what "DESTROYED" / "ROLLBACK" in a log means)
 
-Both drivers check after every chunk and **end the chain instead of resubmitting** if a system is
-destroyed. It does not prevent blow-ups; it stops silent contamination. It never touches the physics.
+- NP `health()`: non-finite positions OR `n_stretched >= NP_CN_COUNT` (5) → **ends the chain**
+- glpG `destroyed()`: non-finite potential anywhere in the chunk OR `n_stretched >= REMD_CN_COUNT` (5) → **rolls back that replica** (as of 2026-08-12 driver)
 
-- NP `health()`: non-finite positions OR `n_stretched >= NP_CN_COUNT` (5)
-- glpG `destroyed()`: non-finite potential anywhere in the chunk OR `n_stretched >= REMD_CN_COUNT` (5)
+**NP**: a gate trip looks like `[np] DESTROYED ...` followed by `no resubmit`; job exits rc=0/COMPLETED
+short of its wall limit. A COMPLETED job that did not resubmit means the gate fired — check the log.
 
-A gate trip looks like `[np] DESTROYED ...` / `[remd] DESTROYED ...` followed by `no resubmit`, and the
-job exits **rc=0 / COMPLETED**. So a COMPLETED job that ran far short of its time limit and did not
-resubmit means the gate fired — check the log before assuming success.
+**glpG (updated driver)**: a rollback looks like `[remd] ROLLBACK #N filename: reason` followed by
+`rolled back M/48 replicas; continuing chain`. The chain does NOT terminate. The NaN output is rotated
+to `output_previous_N` as normal history; the rolled-back replica restarts the next chunk from its
+pre-chunk positions. A replica that repeatedly blows up gets rolled back repeatedly; it does not get
+dropped from the ladder. Watch for high rollback counts on the same file — that indicates a replica with
+a persistent physics problem that won't self-correct.
 
-**These driver scripts are NOT in git.** They live on the cluster with a gitignored local copy at
-`scratchpad/np_slurm/run_np_prod.py` and `scratchpad/np_slurm/run_remd_micelle.py` (the latter deploys
-to `run_remd.py`). No version history exists for them. Edit the local copy, then `scp` to deploy.
+**Rollback mechanism**: before each chunk `run_remd.py` snapshots `/input/pos` (3.6 MB total for 48
+replicas). On NaN detection it overwrites the last `output/pos` frame and `output/potential[-1]` with
+the pre-chunk values so that `reseed()` on the next iteration picks up the clean state.
+
+**These driver scripts are NOT in git.** They live on the cluster at
+`~/project/glpG_DDM_micelle_REMD/run_remd.py` and `~/project/NP-1AO6/run_np_prod.py`.
+No version history exists for them. Edit directly on the cluster.
 A running job keeps the version it loaded at start; edits take effect at the **next block**.
 
 ---
 
-## 7. If the gate fires — rollback procedure (glpG)
+## 7. If the chain terminates — manual rollback procedure
 
-Done once already for 79ALA. Verify the target chunk is clean **before** deleting anything.
+**glpG (old driver, or gate fired before rollback logic):** patch last output frame of each NaN file
+with the last finite frame from `output_previous_0` (end of block 1), then resubmit.
 
 ```python
-# 1. find the last fully clean chunk across ALL 48 replicas (cheap: scan scalar potential)
-# 2. then, per replica:
-with h5py.File(f, "r+") as h:
-    v = np.asarray(h["output_previous_3"]["potential"][:]).reshape(-1)
-    if (~np.isfinite(v)).any(): raise SystemExit("target not clean, ABORT")
-    for g in ("output","output_previous_4","output_previous_5","output_previous_6","output_previous_7"):
-        if g in h: del h[g]
-    h.move("output_previous_3", "output")
-# 3. resubmit:  bash ~/project/glpG_DDM_micelle_REMD/submit_remd.sh <variant>
+import h5py, numpy as np
+from pathlib import Path
+run_dir = Path("~/project/glpG_DDM_micelle_REMD/<variant>").expanduser()
+for fn in sorted(run_dir.glob("*.run.*.up")):
+    with h5py.File(str(fn), "r") as h5:
+        n_bad = int((~np.isfinite(np.asarray(h5["/output/potential"][:]))).sum())
+        has_prev = "output_previous_0" in h5
+    if n_bad:
+        with h5py.File(str(fn), "r+") as h5:
+            prev_pos = np.asarray(h5["/output_previous_0/pos"][-1, 0, :, :])
+            last = h5["/output/pos"].shape[0] - 1
+            h5["/output/pos"][last, 0, :, :] = prev_pos
+            h5["/output/potential"][last, 0] = 0.0
+# then: bash ~/project/glpG_DDM_micelle_REMD/submit_remd.sh <variant>
 ```
-NP equivalent: `run_np_prod.py` `reseed()` is idempotent, so a config with no `/output` but a valid
+
+**NP**: `run_np_prod.py` `reseed()` is idempotent, so a config with no `/output` but a valid
 `/input/mom` (`restart_valid=1`) restarts fine. To reset a chain: `echo 0 > prod/block_count`, `rm -f prod/STOP`.
 
 ---
@@ -222,6 +241,19 @@ NP equivalent: `run_np_prod.py` `reseed()` is idempotent, so a config with no `/
 
 **glpG**
 - Aug 9 (`53088898`, 79ALA): real blow-up, rolled back; contaminated trajectories deleted, job log survives.
+- Aug 11 (`53233848`, 79HIS block 2): 45/48 replicas DESTROYED at step 18476/18534 (99.7% through).
+  Root cause: **replica 11 physics blow-up** (7 protein atoms went NaN at t=52.45 ps, frame 94/300 of
+  the chunk). Replica 11 then spread full NaN (all 1050 protein atoms) to 44 other slots via REMD
+  exchange over the next ~50 ps. Contributing factor: **ion escape from seed** — all four variant seeds
+  already had ions at 24.9–185.6 Å from the protein centroid before any simulation. Ions beyond the
+  12 Å dry-MARTINI cutoff experience zero force → free Brownian diffusion outward. This is a preparation
+  design issue in `place_ions` (large virtual box, no PBC, no confinement); ions contribute zero
+  energy/force once escaped, but ionic screening is absent. Silent for many blocks because protein and
+  micelle remain physically correct. Did NOT cause the blow-up directly; underlying replica 11 failure
+  cause still unidentified.
+  Fixed: (1) `run_remd.py` updated with NaN rollback (automated per-chunk rollback rather than chain
+  termination); (2) 45 NaN-infected `.up` files manually patched with block-1 final positions;
+  (3) resubmitted as job 53294511 (block 3).
 - **Mechanism RESOLVED Aug 10 (findings 88), and it was never the timestep.**
   `HybridPositionNode::propagate_deriv` discarded the O site's sensitivity entirely and dropped BB's
   fourth (O) weight, while all five backbone sites (N, CA, C, O, BB) sat in the MARTINI pair table. Net
