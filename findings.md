@@ -1628,3 +1628,101 @@ The kinetic excess is still +2 to +3%, so the findings-88 prediction that it wou
 Lesson: a silent fallback is worse than a missing input. Both the `0.0` belt half-thickness and the
 unfound metadata PDB produced confident, wrong behaviour -- one an error that accused the geometry, the
 other a trajectory that looked complete. Neither said "the thing I needed was not there."
+
+## Update 90 (2026-08-13): the NaN trigger is still unidentified; the LJ core table has a zero-force plateau
+
+The four glpG-DDM micelle REMD variants all died at block 2--3 of 12. What the trajectories show, and
+what each measurement rules in or out.
+
+**The event.** Located the origin by scanning all 48 slots of `glpG-RKRK-79HIS_S115T` for the earliest
+non-finite frame: slot 45 (T = 0.890978, near the top of the ladder), group `output`, frame 129. It then
+appears one frame later in slot 38, then 32, 26, 20, 14, 8, 2, then back up through 3 and 9 -- the wreck
+random-walking the ladder by exchange, destroying every slot it lands in. That is why 48/48 replicas end
+up destroyed from a single event, and why a slot looks healthy again the frame after it went NaN.
+
+It is a **single-frame catastrophe from a fully healthy state**. Slot 45 frame 128: potential -7070,
+protein/lipid KE 1.51/1.37, max|pos| 489 A. Frame 129: positions non-finite, `lipid_kinetic` = 6.246e18.
+Frames are ~60 steps apart, so the whole event fits inside 60 steps. `lipid_kinetic` blowing up while the
+protein KE is merely NaN is the same signature as Update 88, but that cause is excluded below.
+
+**Ruled out, each by measurement rather than argument.**
+
+* *The Update-88 five-fold backbone over-count.* Both the local `fixcheck_1rkl` build and the actual
+  cluster seeds carry **only BB** in `martini_potential.pairs` (31 and 210 sites, one per residue). The
+  fix is in these runs. Corollary: the backbone `O` site being the closest protein atom to the
+  environment (2.97--3.32 A, vs 4.0--4.4 A for BB, and all 8 closest protein-env contacts are O-to-tail)
+  is *expected*, not a defect -- O carries no MARTINI interaction, so nothing repels it. An earlier draft
+  of this entry read that proximity as the cause; that was wrong.
+* *A stale pair list.* `cache_buffer` = 2.0 A and `pairlist_needs_rebuild` is called before every force
+  evaluation, so the list is at most one step old and the skin covers 2 x 1.0 A of approach.
+* *Minimum image.* `simulation_box::minimum_image` uses `roundf(dr/box)`, which is correct for
+  arbitrarily large separations -- relevant because positions run to 489 A in a 137.4 A box (unwrapped
+  ion diffusion, `--disable-recentering`), i.e. 3.5 box lengths, which a single-shift implementation
+  would have got wrong.
+* *The table build formula.* The tabulated grid reproduces its own analytic expression (potential-shifted
+  LJ + reaction-field Coulomb, `roundf`-free) to a max relative deviation of **2.3e-12**.
+* *Timestep instability in the sampled range.* At the tabulated forces, one-step displacement at
+  dt = 0.009 for a 72 m_up lipid bead is **0.0058 A at r = 3 A** and **1.2e-4 A at r = 4 A**. Nothing
+  marginal there.
+* *Thermal access to the catastrophic region.* Reaching r = 3 A against 4*eps*[(sig/r)^12 - (sig/r)^6]
+  costs ~450 E_up, about 500 kT at T = 0.89; r = 1 A costs ~6.5e8 E_up. Unreachable.
+* *Reproduction from the last healthy state.* 4000 steps locally, single replica, from slot 45 frame 128
+  at T = 0.890978 and dt = 0.009: stable, KE/1.5kT = 1.065. This test is **weak** and does not exonerate
+  anything -- the trajectory stores no momenta (`run_remd.py` re-thermalises each chunk), so the exact
+  microstate cannot be rebuilt, and the frame-129 configuration arrived from another slot anyway.
+
+**What the table does contain.** `py/martini_build_tables.py:533` floors the radius,
+`r = max(r, 0.1 * sig)`, over a grid that starts at `PARTICLES_R_MIN_A = 0.0`. Consequences, measured on
+a real build (sigma up to 6.0 A, 1000 points, dr = 0.0120 A):
+
+* 50 grid points are inside the floor, tabulating a **constant** 3.16e12 E_up -- so the force is
+  **exactly zero for r < 0.1*sig** (0.47--0.60 A). A pair that gets inside feels no restoring force at
+  all, which turns a recoverable close approach into free interpenetration.
+* Grid maximum **6.18e12 E_up**, and the steepest tabulated force is **1.10e14 E_up/A at r = 0.48 A**,
+  giving a one-step displacement of **1.2e8 A** for a lipid bead at dt = 0.009.
+
+This violates two explicit rules: the spline table must equal the published functional form exactly, and
+no arbitrary capping. It is a genuine defect and it is what converts a close approach into a 1e18
+kinetic energy. **It is not, however, demonstrated to be the trigger** -- nothing measured explains how
+a pair crosses from the thermally accessible region (>= 3 A, ~500 kT of margin) into it. Fixing the
+floor is a change to the force-field table's domain and spacing, so it needs a decision rather than a
+unilateral edit: removing the floor alone puts an infinity at r = 0, and simply raising `r_min` moves the
+zero-force plateau to the new inner knot, because the clamped spline returns a constant with zero
+derivative below its domain.
+
+Open, and the honest state of it: the trigger is unknown. The next measurement that would settle it is
+per-step instrumentation inside a running REMD ladder (max |force| and min interacting-pair distance per
+step, per slot), because the 60-step frame interval and the missing momenta make the stored trajectories
+unable to resolve the onset.
+
+## Update 91 (2026-08-13): MBAR silently returns uniform weights for a hybrid coupled potential
+
+`helpers/calc_hdx_ht.py` and `4.calc_D_uptake.py` built `beta[l] * cE0[k]` from the raw energies with no
+reference subtraction. For the protein-only potentials they were written against, O(1e2--1e3), that is
+fine. `00.AnalysisScripts/README.md` requires a hybrid trajectory's `Energy.npy` to be the full
+coupled-system potential, which for a protein plus a DDM micelle is ~-7.6e3 E_up: `beta*U` reaches
+-1.2e4, `exp(-u)` overflows, and the solver never leaves `f_k = 0`.
+
+Measured on `glpG-RKRK-79HIS_S115T` (48 states, 423 frames): raw gave f_k spread **0.000**, neighbour
+overlap **0.0000**, and **0/423** columns carrying weight at every target temperature except the bottom
+rung; mean-subtracted gave f_k spread **71.07** rising monotonically, neighbour overlap 0.115--0.128, all
+423 columns weighted, ESS 671--3378 of 20304, dG median 2.2--3.8 kcal/mol.
+
+The failure mode is the dangerous part: `f_k = 0` makes every weight equal, so the estimator returns an
+unweighted average over the whole pooled ladder while reporting it as a reweighted ensemble at one
+temperature. It raises nothing. Tell-tales are a gradient norm of exactly `sqrt(n_rep-1) * n_frames`,
+`max_delta` of exactly 0, and ESS of exactly `n_rep * n_frames`. Two of the four variants had already
+produced plausible-looking dG plots this way.
+
+Fixed in both files by referencing `cE0` to its pooled mean, which is exact (f_k shifts by -beta_k*C and
+the exp(beta_target*C) on each weight cancels in the normalisation) and leaves the protein-only path
+numerically identical. `03.TrajectoryAnalysis/2.mbar_meltingCurve_freeEnergy.py` and
+`04.HDX/4.calc_HDX.py` have the same construction but are byte-identical to master and are only ever fed
+protein-only energies, so they were left alone under master parity.
+
+Also note for anyone reading those solver messages: passing the pymbar-3 style 3D `u_kln` under the
+installed **pymbar 4.0.3** is *not* a bug -- 3D and 2D give identical `f_k` (max abs difference 0).
+
+Lesson: when a solver reports a gradient that is an exact function of the array shape
+(`sqrt(K-1) * N` here) rather than of the data, it has not solved anything. Check that before reading any
+number downstream of it.

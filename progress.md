@@ -27,3 +27,20 @@ Reverted to dt=0.001; /output from destroyed runs deleted; resubmitted as job 53
   against the aggregate's instantaneous short principal axis, never box z.
 - Cancelling a job is not always a no-op — a 9-second run was enough for reseed() to consume /output
   on all six NP configs and strand the next job.
+
+## 2026-08-13
+- **NaN investigation (glpG-DDM micelle REMD).** Located the blow-up origin (slot 45, T=0.890978,
+  frame 129) and showed it propagates through the ladder by exchange, which is why 48/48 replicas die
+  from one event. Ruled out by measurement: the Update-88 backbone over-count (seeds carry BB only),
+  stale pair list, minimum image, the table-build formula (2.3e-12 vs analytic), timestep margin in the
+  sampled range (one-step dx 0.0058 A at r=3 A), and thermal access to the core (~500 kT). Found a real
+  defect in the table -- `r = max(r, 0.1*sig)` gives a constant 3.16e12 E_up plateau, i.e. exactly zero
+  force below 0.47--0.60 A, with a peak tabulated force of 1.10e14 E_up/A. **Trigger still unidentified**;
+  fixing the floor needs a domain/spacing decision. See findings 90.
+- **Fixed: MBAR returned uniform weights for hybrid coupled potentials.** Referenced `cE0` to its pooled
+  mean in `00.AnalysisScripts/helpers/calc_hdx_ht.py` and `4.calc_D_uptake.py`. Exact transformation;
+  protein-only path unchanged. Left the two master-identical MBAR sites alone. See findings 91.
+- Files modified: `example/00.AnalysisScripts/helpers/calc_hdx_ht.py`,
+  `example/00.AnalysisScripts/4.calc_D_uptake.py`, `findings.md`, `plan.md`, `progress.md`.
+- Delivered the four-variant HDX dG-vs-residue plots to ~/Downloads (all four MBAR solves converged
+  after the fix); cancelled the stuck 79HIS job 53294511.

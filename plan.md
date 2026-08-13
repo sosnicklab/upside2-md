@@ -62,6 +62,19 @@ widen destroyed() thresholds, or add any guard.
 - NP run.3 protein now spans 246 Å in a 200 Å box — can interact with its own periodic image in the
   most extended conformation.
 - R4 (CLC-ec1 monomer+dimer on the validated bilayer) is deferred; not scheduled.
+- **NaN trigger unidentified (blocker for all glpG-DDM production).** Blow-up origin located and the
+  propagation mechanism explained, but nothing measured accounts for a pair crossing from >= 3 A (~500 kT
+  margin) into the catastrophic core region. Needs per-step instrumentation inside a running ladder;
+  stored trajectories cannot resolve it (60-step frames, no momenta). See findings 90.
+- **LJ core table floor needs a decision.** `martini_build_tables.py` floors `r` at `0.1*sig` on a grid
+  starting at r=0, giving zero force below 0.47--0.60 A and a 6.18e12 E_up table maximum. Violates the
+  spline-equals-published-form and no-capping rules. Removing the floor alone puts an infinity at r=0;
+  raising r_min moves the zero-force plateau to the new inner knot (clamped spline clamps to a constant).
+- **`martini_hdx_project.py` energy contract conflicts with the workflow README.** The projector
+  re-scores protein-only energy; the README requires the full coupled potential for hybrid Energy.npy.
+  Measured, the projector's stated rationale is backwards (coupled spans 4300-5100 reduced units across
+  the ladder vs 69-182 protein-only). Needs a decision on which is intended.
+
 
 ---
 

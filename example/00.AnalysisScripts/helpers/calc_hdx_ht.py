@@ -55,7 +55,21 @@ dGhx_NMR_MS = load_optional_numeric_csv('{}/{}_NMR_MS.csv'.format(paths['pdb_dir
 
 kB = 1.0
 beta = T ** -1
+
+# Reference the energies to their pooled mean before building the reduced potentials. MBAR is exactly
+# invariant to one constant C shared by every state: it shifts f_k by -beta_k*C and multiplies both the
+# numerator and the denominator of each reweighting weight by exp(beta_target*C), which cancels in the
+# normalisation. The subtraction is required rather than cosmetic for a hybrid trajectory, whose
+# Energy.npy is the full coupled-system potential: a protein plus a lipid environment sits near
+# -7.6e3 E_up, so beta*U lands near -1.2e4, exp(-u) overflows, and the solver never leaves its initial
+# guess -- measured on a 48-replica glpG-DDM ladder, f_k spread 0.000, neighbour overlap 0.0000, and the
+# weights underflowing to zero at every target temperature but the lowest rung. That failure is silent:
+# f_k = 0 makes every weight equal, so an unweighted average over the whole pooled ladder is returned
+# as though it were a reweighted ensemble. With the reference subtracted the same data gives f_k spread
+# 71.07 and neighbour overlap 0.115-0.128. Protein-only energies are O(1e2-1e3) and unaffected either
+# way, so this leaves the ordinary Upside path numerically identical.
 cE0 = Pot[:, start_frame:]
+cE0 = cE0 - float(np.mean(cE0))
 FN = cE0[0].size
 FNs = np.zeros([n_rep], np.int32) + FN
 reduced_pot = np.zeros([n_rep, n_rep, FN], np.float32)

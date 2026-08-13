@@ -5,6 +5,8 @@
 #include <H5Apublic.h>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <array>
 #include <vector>
 #include <algorithm>
@@ -643,7 +645,8 @@ struct MartiniPotential : public PotentialNode
                                    const Vec<3>& pb,
                                    const PairParam& param,
                                    float& pair_potential,
-                                   Vec<3>& pair_force) -> bool {
+                                   Vec<3>& pair_force,
+                                   float& out_dist) -> bool {
             auto dr = pa - pb;
             if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
                 dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
@@ -652,6 +655,7 @@ struct MartiniPotential : public PotentialNode
             auto dist = sqrtf(max(dist2, kMinDistance));
             pair_potential = 0.f;
             pair_force = make_zero<3>();
+            out_dist = dist;
 
             if(dist > cutoff) return false;
 
@@ -674,6 +678,26 @@ struct MartiniPotential : public PotentialNode
         if(pairlist_needs_rebuild(pos1)) {
             rebuild_pairlist(pos1);
         }
+
+        // TEMPORARY per-evaluation pair diagnostics (findings 90): the stored trajectories cannot resolve
+        // the blow-up onset -- frames are ~60 steps apart and no momenta are kept -- so the closest
+        // approach and the largest delivered force are reported here. Enabled by
+        // UPSIDE_MARTINI_PAIR_DIAG and free when unset. Reporting is thresholded so a long run stays
+        // readable: every evaluation whose closest approach is under UPSIDE_MARTINI_PAIR_DIAG_DIST
+        // (default 3.0 A, against a healthy 4.03 A) or whose largest force exceeds
+        // UPSIDE_MARTINI_PAIR_DIAG_FORCE (default 500 E_up/A, against a healthy 35), plus a heartbeat
+        // every UPSIDE_MARTINI_PAIR_DIAG_EVERY evaluations. These thresholds only decide what is
+        // PRINTED -- no force, energy or coordinate is altered. Remove once the trigger is identified.
+        static const bool diag_on = std::getenv("UPSIDE_MARTINI_PAIR_DIAG") != nullptr;
+        static const float diag_dist_thresh = std::getenv("UPSIDE_MARTINI_PAIR_DIAG_DIST")
+            ? atof(std::getenv("UPSIDE_MARTINI_PAIR_DIAG_DIST")) : 3.0f;
+        static const float diag_force_thresh = std::getenv("UPSIDE_MARTINI_PAIR_DIAG_FORCE")
+            ? atof(std::getenv("UPSIDE_MARTINI_PAIR_DIAG_FORCE")) : 500.0f;
+        static const uint64_t diag_every = std::getenv("UPSIDE_MARTINI_PAIR_DIAG_EVERY")
+            ? strtoull(std::getenv("UPSIDE_MARTINI_PAIR_DIAG_EVERY"), nullptr, 10) : 20000ull;
+        static uint64_t diag_step = 0;
+        float diag_min_dist = 1.0e30f, diag_max_force = 0.f;
+        int diag_min_i = -1, diag_min_j = -1, diag_max_i = -1, diag_max_j = -1;
 
         for(int32_t active_idx : active_pair_indices) {
             size_t np = size_t(active_idx);
@@ -721,8 +745,14 @@ struct MartiniPotential : public PotentialNode
 
             Vec<3> force = make_zero<3>();
             float pair_pot = 0.f;
-            if(!eval_pair_force(p1, p2, param, pair_pot, force)) {
+            float pair_dist = 0.f;
+            if(!eval_pair_force(p1, p2, param, pair_pot, force, pair_dist)) {
                 continue;
+            }
+            if(diag_on) {
+                if(pair_dist < diag_min_dist) { diag_min_dist = pair_dist; diag_min_i = i; diag_min_j = j; }
+                float fm = sqrtf(mag2(force));
+                if(fm > diag_max_force) { diag_max_force = fm; diag_max_i = i; diag_max_j = j; }
             }
             if(pot) *pot += pair_pot;
             if(mutable_hybrid && (i_is_protein != j_is_protein)) {
@@ -741,6 +771,22 @@ struct MartiniPotential : public PotentialNode
             update_vec<3>(pos1_sens, j, gj);
         }
 
+        if(diag_on && (diag_min_dist < diag_dist_thresh || diag_max_force > diag_force_thresh ||
+                       !std::isfinite(diag_max_force) || (diag_step % diag_every) == 0)) {
+            auto klass_of = [&](int a) {
+                if(!hybrid_state || a < 0 ||
+                   a >= (int)hybrid_state->protein_membership.size()) return 'e';
+                return hybrid_state->protein_membership[a] >= 0 ? 'p' : 'e';
+            };
+            printf("[pairdiag] step %llu min_dist %.4f (%d%c-%d%c) max_force %.6g (%d%c-%d%c) pot %.6g\n",
+                   (unsigned long long)diag_step, diag_min_dist,
+                   diag_min_i, klass_of(diag_min_i), diag_min_j, klass_of(diag_min_j),
+                   diag_max_force,
+                   diag_max_i, klass_of(diag_max_i), diag_max_j, klass_of(diag_max_j),
+                   pot ? *pot : 0.f);
+            fflush(stdout);
+        }
+        ++diag_step;
     }
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");

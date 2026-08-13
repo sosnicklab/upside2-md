@@ -997,7 +997,15 @@ else:
     T_mean = np.mean(T_arr[:, start_frame:], axis=1)
 beta = kB * T_mean ** (-1)
 
+# Reference the energies to their pooled mean before building the reduced potentials. MBAR is exactly
+# invariant to one constant C shared by every state (f_k shifts by -beta_k*C, and the exp(beta_target*C)
+# picked up by each weight cancels in the normalisation), but the subtraction is required for a hybrid
+# trajectory: its Energy.npy is the full coupled-system potential, ~-7.6e3 E_up for a protein plus a
+# lipid environment, so beta*U reaches ~-1.2e4, exp(-u) overflows and the solver silently returns its
+# initial guess f_k = 0 -- which makes every weight equal, so a flat average over the pooled ladder is
+# reported as a reweighted ensemble. Protein-only energies are O(1e2-1e3) and unaffected.
 cE0 = Pot[:, start_frame:]
+cE0 = cE0 - float(np.mean(cE0))
 
 FN = cE0[0].size
 FNs = np.zeros([n_rep], np.int32) + FN
