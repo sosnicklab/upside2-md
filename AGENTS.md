@@ -150,6 +150,23 @@ bash "$PROJECT_ROOT/example/16.MARTINI/run_sim_1rkl_outlipid.sh"
 
 ```
 
+### Remote Job Records
+
+**All remote job recording goes into `remote_jobs.md`, and nowhere else.** It is the single source of
+truth for what is running on midway3: job ids, what each job is, its submit script, its log path, its
+data directory, and the next action each one is waiting on. Do not record jobs in `plan.md`,
+`progress.md` or `findings.md` — those track technical direction, execution history and knowledge
+respectively, and a job table duplicated across them goes stale silently and then misleads.
+
+Maintenance rules:
+* Update the snapshot date and the job table whenever jobs are submitted, finish, or are cancelled.
+* **Delete stale rows.** A finished or cancelled job is removed from the current-jobs table; it is kept
+  only as a one-line entry under history if it carries a lesson worth reusing. A table listing jobs that
+  no longer exist is worse than no table.
+* Record the log path and data directory for every job, so a cold session can check it without guessing.
+* Record what must not be forgotten alongside the jobs (STOP files, binaries carrying temporary
+  instrumentation, undecided policy questions), since those are what break a resumed session.
+
 ### Installation & Build
 
 ```bash
