@@ -26,6 +26,18 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 Snapshot **2026-08-13 07:30 CDT**.
 
+> **BLOCKED 2026-08-13 (later): midway3's main GPFS is down — job state below is UNVERIFIED.**
+> `/home`, `/project` and `/software` are all unreachable from login5 and login6 (`Stale file handle`;
+> `/gpfs/midway3/cap/project` lists but `trsosnic` under it fails). Slurm is not installed on the login
+> nodes themselves (`rpm -q slurm` → not installed; nothing in `/usr/bin`) — the clients live on
+> `/software`, so `squeue`/`sacct` do not exist while the filesystem is out. `/gpfs/beagle3` and
+> `/gpfs/midway2` are fine, so this is midway3_cap specifically.
+> Consequence: job status cannot be read, logs cannot be read, and nothing can be resubmitted until RCC
+> restores it. Any job that was running had its working directory vanish under it, so expect the six
+> jobs below to have died regardless of their own merits. **Recheck from step 1 of "Next actions" once
+> `ls /project/trsosnic/yinhanw` succeeds.**
+
+
 | JobID | Name | Campaign | State | What it is |
 |---|---|---|---|---|
 | 53324867 | `nanhunt_glpG-RKRK-79HIS_S115T` | **NaN hunt** | PENDING | 48 replicas on the production ladder (T 0.70–0.90, dt 0.009), 340k steps, **exchange removed** so a blow-up stays in the slot that made it. `UPSIDE_MARTINI_PAIR_DIAG=1`, reporting when min pair distance < 3.0 Å or max force > 500 E_up/Å, heartbeat every 20000 evals. 36 h wall. |
@@ -94,6 +106,14 @@ healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis betwe
 ---
 
 ## 3. NP campaign — `np_1AO6_prod`
+
+**Unfolding is the expected result, not a failure.** 1AO6 albumin spreads on the MPA-AuNP surface —
+that is the phenomenon the footprinting measures (K190 exposure). Protein Rg of 38–154 Å against a
+native ~27–30 Å is therefore normal for this campaign and must **not** be reported as a blow-up or a
+health problem. Judge NP health on non-finite frames, peptide C–N bonds and `avg_kinetic_energy/1.5kT`,
+not on Rg or H-bond loss. (Contrast the glpG campaign, where the protein *must* stay folded and Rg
+~19 Å is the health signal.)
+
 
 **Dir** `~/project/NP-1AO6/` — `prod/` holds `np.run.{0..5}.up` + `np.<jobid>.out`, `block_count`.
 **Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.005`, see §8) · **submit** `submit_np.sh`
