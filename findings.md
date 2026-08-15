@@ -1816,3 +1816,168 @@ the grid geometry is now declared once by `py/martini_build_tables.py` and carri
 
 Lesson: a diagnostic that cannot report is worse than no diagnostic. Two of these three were only findable
 because the pair instrumentation was still on -- the crash itself said nothing at all.
+
+## Update 94 (2026-08-15): the BB proxy is now a derived site, and the old placement is gone
+
+Update 88 fixed the hybrid interface by propagating the O/BB sensitivities through a hand-written
+placement Jacobian. That worked but was fragile, and the user's preference was the other route: build the
+BB proxy out of nodes Upside already differentiates. That is now what happens, and the hand-rolled path
+has been deleted rather than left as a fallback.
+
+**What the proxy is now.** `HybridPositionNode` takes two arguments, `pos` and `infer_H_O`, and BB is the
+mass-weighted centre of N/CA/C/O with weights [14,12,12,16]/54, where the O is *Upside's own derived
+carbonyl O* rather than one rebuilt from a stored local frame. Because every term is then a linear
+combination of node outputs, `propagate_deriv` is a constant-weight split: the N/CA/C shares go to
+`pos.sens`, the O share goes into `infer_H_O`'s sensitivity, and infer_H_O's own chain rule carries it
+back to CA, C and the next residue's N. That is where the frame's rotational dependence lives, so no
+placement Jacobian is needed here at all -- 184 lines of frame/Jacobian helpers were removed.
+
+**The counter-force is not special-cased.** `martini_potential` runs on the hybrid node's output, which is
+a pass-through copy of `pos` with only the BB and O slots overwritten. So an environment particle's
+sensitivity is returned to `pos.sens` unchanged (the `derived[]` test in `propagate_deriv`), while the
+protein side is redistributed by weights that sum to 1. Newton's third law therefore holds by
+construction. Measured on 1rkl: force remaining on the BB slots and the O slots is exactly **0**, and the
+total force sums to **1.69e-09** of the largest single force.
+
+**The C-terminal residue has no acceptor.** `infer_H_O` builds a carbonyl O from the *next* residue's N,
+so it emits `n_res - 1` acceptors. That one BB is the N/CA/C mass centre with the weights renormalised,
+and its O slot is left as it came in. This is not a guard -- there is genuinely no such site -- and no
+MARTINI term reads that slot.
+
+**Also fixed: the Python engine computed a different model than the binary.** `engine_c_library.cpp` never
+called `load_masses_for_engine` / `register_fix_rigid_for_engine` / `register_stage_params_for_engine` /
+`register_hybrid_for_engine`, which `main.cpp` does. Any analysis through `upside_engine` was therefore
+evaluating a system with the hybrid interface inactive: **-12827 vs -18172 E_up** on the same
+coordinates. Every `get_output`/`energy` result taken through the Python engine before this is suspect.
+
+**Deployment has a compatibility cost, and it is not optional.** A two-argument node cannot load a config
+that declares one, so every existing `.up` on the cluster became unloadable the moment the binary was
+replaced. `py/martini_upgrade_hybrid_args.py` rewrites that attribute in place; it refuses a file with no
+`infer_H_O` rather than producing a config that cannot load. Lesson: when a node's arity changes, the
+migration is part of the change, not a follow-up -- and a config held open by a running job can only be
+migrated in the gap before the next block, so the migration has to live in that job's submit script.
+
+## Update 95 (2026-08-15): the NP footprint answers the albumin lysine claim, but only for one orientation
+
+Testing Carlson et al. 2025 against the 1AO6 / 5 nm MPA-AuNP runs (12 262 frames sampled from ~1.33 M
+across six orientations, CB-anchored contact at 8 A, burial as CB coordination within 10 A on the native
+first frame). The paper's albumin claims are decreased labelling at **K12, K73, K190, K525** in water and
+**K190, K525, K541** in TES, a common site "around K190 (Subunit II)", and a preference to "open and expose
+its center". Construct index = HSA number - 5; all five map to lysines.
+
+**The window decides the answer, so it has to be chosen before looking.** Albumin does not merely deform
+here, it unravels: Rg goes 26.3 A -> 39 / 50 / 86 / 103 / 152 / 172 A across the six orientations. Once
+spread, contact stops discriminating anything -- core and surface mean contact are 0.272 vs 0.261, i.e.
+equal -- so a whole-trajectory average would "support" almost any site claim. Restricted to adsorbed and
+still-compact frames (Rg < 1.25x native) the same measure separates properly: core 0.128 vs surface 0.245.
+Only **393 of 12 262 frames (3.2%)** are in that window.
+
+* **K190 is not supported.** In the compact window its contact is **0.000**, in every orientation
+  separately. In the spread state it is 19th percentile of 58 lysines and *further* from the particle than
+  most (72nd percentile by mean minimum distance). Its measured burial is 18.3, the **50th percentile** --
+  so the "in the core" premise is itself weak for 1AO6 by CB coordination.
+* **K525 and K541 are supported**: contact 0.545 (81st percentile) and 0.690 (91st) in the compact window.
+  The paper already says of K525 that it "better agrees with the computational projects", and this agrees.
+* **"Open and expose its center" is supported**, and not merely as a by-product of unravelling: even
+  within the compact window core residues lose **9.19** CB neighbours against **0.37** at the surface.
+* **The site evidence is one orientation.** The compact window is 71% orientation 2, and the contacting
+  patch -- a contiguous C-terminal run K536/K538/K541/K545/K557/K560/K573/K574 plus THR566, CYS567,
+  ALA569, GLU570/571, ASP563 -- scores 0.96-1.00 in orientation 2 and **0.00 in all five others**. This is
+  one binding pose, not a demonstrated preference.
+
+**Independent cross-check.** Orientation 2 is 180-0-0, and the group's earlier BSA(3V03) MARTINI/DPD run
+recorded for that same orientation "LYS535 and LYS537 facing NP". A different protein and a different
+model land on the same face, which is real corroboration of the pose rather than of the K190 claim.
+
+**Caveat that limits all of it:** the experiment labels albumin whose CD still shows its secondary
+structure, and these runs go far past that. Orientations 1 and 3 reach Rg 152 and 172 A in a **200 A box**,
+so they self-interact through the periodic image and are unusable for any structural conclusion. Testing
+site preference properly needs sampling of the adsorbed-but-folded state, which these runs barely visit.
+
+Method note: contact is scored at CB because that is where `martini_sc_table_1body` anchors the
+sidechain-environment term, and the reconstruction (Kabsch fit of the stored `affine_alignment` reference
+onto N/CA/C, then the fixed CB offset) matches the engine to **1.5e-4 A**. A CB cutoff under-counts lysine
+relative to short residues by ~6 A of sidechain, so rankings are taken lysine-against-lysine.
+
+## Update 96 (2026-08-15): the flat HDX profile was an analysis ceiling, not undersampling
+
+Retracts the diagnosis in the same session's earlier note that the glpG dG profile was limited by sampled
+amide opening events. It was limited by a threshold in `calc_hdx_ht.py`.
+
+`residue_dg_profile_with_error` has two conventions. `residue_dg_from_pf_jscripts` sends only
+`mean_pf >= 1.0` to the +1000 sentinel; `residue_dg_from_pf_step6_plot` sends everything above
+**0.99999**. Since dG = 0.001987 * temp_scale * ln(pf/(1-pf)), that second clip is a hard ceiling of
+0.001987 * 298 * ln(99999) = **6.82 kcal/mol** at T = 0.85. The T-slice was calling it -- even though the
+jscripts helper's own comment says it is "the legacy jscripts residue-dG mean calculation used for
+DG_res_T_slice" -- so the profile could not exceed 6.8 no matter what the data said.
+
+Measured on the POPE/POPG wildtype ladder at 10% of the run, same frames both ways:
+
+| | T = 0.75 | T = 0.85 |
+|---|---|---|
+| clipped path, dG max | 5.94 | 6.31 |
+| jscripts path, dG max | **17.35** | **19.58** |
+| residues with `0.99999 <= pf < 1` (discarded by the clip) | 77 | 44 |
+| residues with `pf == 1.0` exactly | **0** | **0** |
+
+So every "never-exchanging" residue was manufactured by the clip, and the profile's compression to -5..+7
+against a reference peaking at 10-20 was entirely this. Two things made the wrong diagnosis look right:
+the sentinel count did fall with more sampling (65 -> 44 at T = 0.85, because more frames push more
+residues below 0.99999), and the ceiling is close enough to a plausible statistical limit that
+`0.5921 * ln(ESS)` lands in the same range. Neither is evidence for undersampling.
+
+Why pf may legitimately sit far closer to 1 than 1e-5: reweighted MBAR weights span many orders of
+magnitude, so a residue that is unprotected only in high-temperature frames has those frames
+exponentially down-weighted at a low target temperature. The jackknife error bar is what reports how well
+resolved that is; a clip just throws the residue away. Fixed by using the jscripts convention for the
+T-slice, which also makes it consistent with the full-temperature profile that already used it.
+
+**Residual, and genuinely sampling-limited:** 32 residues at T = 0.85 and 75 at T = 0.70 still reach
+`pf == 1.0` in float64 because the unprotected frames underflow to zero weight at the far target
+temperatures. Those are real resolution limits and do improve with more frames -- unlike the clip.
+
+Lesson: when a computed quantity saturates at a suspiciously round value, check the code path for a
+threshold before concluding anything about the physics. Recomputing the same frames both ways cost one
+minute and overturned a diagnosis that had already redirected a weekend of compute.
+
+## Update 97 (2026-08-15): the NaN cascade, caught with diagnostics on -- the sub-0.3 A plateau is the sink, not the source
+
+The local POPE/POPG wildtype ladder lost replica 15 (T = 0.90, the top rung) at step ~145 700 of 1.3 M,
+with the pair diagnostics running. This is the first capture of the whole sequence, and it **revises
+findings 92/93**, which named the table's zero-force core as the trigger.
+
+Causal order, from the diagnostic's own step counter:
+
+| diag_step | min_dist | pair | max_force |
+|---|---|---|---|
+| 5205397 | **1.83 A** | 1191e-1438e (lipid-lipid) | 3.4e6 |
+| 5205403 | 1.59 A | 1022p-3920e (BB proxy-lipid) | 1.2e7, pot 1.86e6 |
+| 5206114 | 1.05 A | 1146e-2701e | 5.5e10 |
+| 5206469 | **0.245 A** | 1155e-3033e | 1.3e12 |
+
+The first sub-0.3 A approach arrives **1072 diag-steps after** the first enormous force. So the flat region
+below the table's inner knot is where the cascade **ends up**, not what starts it. The trigger is two
+**environment** beads reaching 1.83 A -- comfortably inside the valid table domain, where the tabulated
+force is correct and simply huge. Removing the r = 0.1*sig floor (findings 92) was still right, but it was
+never going to prevent this.
+
+The escalation is visible in the logged scalars too: total potential -2.17e4 (frame 2332) -> **+5.4e3**
+(2333) -> recovers -> **+1.98e6** (2428) -> NaN (2429). It oscillates in and out for ~96 frames before
+diverging, which is why a single spot check can miss it.
+
+**Two health checks that both fail on this, and the one that works.** `isfinite` passes for 96 frames after
+the system is destroyed. The documented peptide C-N bond count also passes -- frame 2428 has 2 broken bonds,
+because the protein is intact and the damage is in the lipids. What separates them is the **sign of the
+total potential**: a condensed bilayer plus protein sits near -2.2e4, and a positive total means core
+overlap. That is physics, not a tuned cut. `scratchpad/local_popg_79HIS/reseed.py` applies both, since they
+catch different failures, and picked frame 2425 (-2.18e4) where finiteness alone would have picked the
+destroyed frame 2428 and bond-count alone would have agreed with it.
+
+**Diagnostic reading note.** After the blow-up the diagnostic prints `max_force 0` with pair indices `-1`,
+because every force is NaN and `NaN > diag_max_force` is false, so nothing updates the accumulator. That is
+a post-mortem signature, not a measurement of zero force. Likewise a repeated `min_dist 0.0010 (840p-1050e)`
+is not a physical 0.001 A contact -- the same atoms are 83-96 A apart in the stored coordinates. Do not
+read the diagnostic's post-NaN lines as evidence about the mechanism; only the pre-NaN escalation is.
+
+Restart cost nothing: `reseed.py` rotates `/output` to `output_previous_<n>` and reseeds `/input/pos`, and
+`py/martini_remd_concat.py` joins the segments at analysis time.

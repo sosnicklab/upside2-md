@@ -1,25 +1,41 @@
-# CURRENT PHASE (2026-08-10): hybrid interface force propagation fix (findings 88)
+# CURRENT PHASE (2026-08-15): deliver the glpG HDX ΔG-vs-residue plot before Monday 2026-08-17
 
-The glpG/NP instability root cause: `HybridPositionNode::propagate_deriv` discarded the O site's
-sensitivity entirely and dropped BB's fourth (O) weight, while all five backbone sites (N, CA, C, O, BB)
-sat in the MARTINI pair table. Fixed: (a) restrict the protein side of the pair table to BB; (b) route
-BB's O-weight sensitivity through the placement Jacobian. Fix scope is the dryMARTINI interface only —
-no Upside core change.
+The BB proxy rework (findings 94) is done, deployed and verified; the phase is now the deliverable. Target
+shape is `~/Downloads/79HIS_0.90.png`: six broad peaks reaching ΔG 10–20 kcal/mol at residues ~35–48,
+~85–100, ~110–125, ~135–148, ~165–175, ~190–200.
 
-**Status 2026-08-10/11:** P1, P2, P4 done. Seeds rebuilt, both campaigns running.
-G1 is unusable as a gate (round-off dominated at this potential scale — see findings 88).
-G2 FAILED: kinetic excess still +2.1%; second cause unidentified, not blocking production.
+**The limit is sampled amide opening events, and this is measured, not assumed.** A dry run of the full
+pipeline on the first 5% of the local run gives f_k spread 106.9 and neighbour overlap 0.093–0.268
+(median 0.233, better than the 48-replica DDM ladder), so the thinned ladder reweights fine. What is
+missing is events: 65–112 of 203 amides sit at the p_f = 1 sentinel and ΔG is compressed to −5…+7.
 
-- [x] **P1 (py, prep)** Restrict protein side of MARTINI pair list to BB only.
-- [x] **P2 (C++, martini_hybrid.cpp)** Complete BB's gradient via O-placement Jacobian; propagate O sensitivity.
-- [ ] **G2** Identify the second cause of the +2–3% avg_kinetic_energy/1.5kT excess (dt-independent; present
-      after the fix in 1rkl/1AFO).
-- [x] **P4** Rebuild all seeds on the corrected table; resubmit both campaigns.
-- [ ] **G3** Localize the 79HIS runaway: rerun from clean seed with dense output to catch the divergence.
-      (Low priority — both variants are now running on the fixed binary.)
+- [x] **D1** Rework the BB proxy onto `infer_H_O` + constant-weight split; delete the old placement path.
+- [x] **D2** Deploy to midway3, rebuild, migrate every config (`py/martini_upgrade_hybrid_args.py`).
+      All four glpG jobs and the six NP replicas confirmed loading on the new binary.
+- [x] **D3** Validate the HDX pipeline end-to-end and measure MBAR overlap before committing the weekend.
+- [ ] **D4** Local wildtype REMD, 16 replicas × 1.3 M steps (~40 h, Sunday PM). **Primary source for the
+      wildtype figure.** Analyse at any point.
+- [ ] **D5** Cluster REMD, 4 variants × 48 replicas, block 1 of 12 due Sunday ~13:00. Supplies the other
+      three variants and a 48-rung ladder, not more sampling of the wildtype.
+
+**Measured throughput, which settles which dataset the wildtype figure comes from.** Cluster calibration
+gives 613.7 ms/step for 48 replicas = 12.8 ms per replica-step; the local machine does 9.00 steps/s for 16
+replicas = 6.9 ms per replica-step. So the local run is ~1.9x faster per replica-step and, running 40 h,
+reaches **1.3 M steps/replica against the cluster block's ~206 k — 6.3x longer trajectories**, at
+comparable pooled frames (347 k vs 245 k). Since the sentinel problem is a shortage of sampled opening
+events rather than of ladder rungs (overlap already verified adequate at 16 rungs), trajectory length is
+what matters and the local run wins on it. An earlier note in this file calling the cluster "better data
+by a wide margin" was wrong — it assumed 48 replicas meant proportionally more sampling.
+- [ ] **G2** Identify the second cause of the +2–3% avg_kinetic_energy/1.5kT excess (dt-independent).
 
 Do NOT: change dt for glpG (hard-locked to 0.009; brownian friction tuned against it), change masses,
 widen destroyed() thresholds, or add any guard.
+
+## Secondary: NP footprint — answered, see findings 95
+
+K190 is **not** favoured (0.000 contact whenever the protein is still compact, 50th-percentile burial);
+K525/K541 are, and "opens and exposes its center" holds. But 71% of the compact window is one orientation,
+so it is one binding pose, not a preference. Blocked from going further by over-unfolding, below.
 
 ---
 
@@ -59,21 +75,24 @@ widen destroyed() thresholds, or add any guard.
   in 1rkl/1AFO. Second cause unidentified (G2 open).
 - Molecular DOPC diffusion is not matched at the 40 ps/step clock (measured: 0.015 µm²/s vs 11.5 µm²/s
   target). Fallback is explicitly particle-level friction. Not a blocker for REMD equilibrium sampling.
-- NP run.3 protein now spans 246 Å in a 200 Å box — can interact with its own periodic image in the
-  most extended conformation.
+- **NP albumin over-unfolds past the experimental regime.** Rg 26.3 → 39/50/86/103/152/172 Å across the
+  six orientations, against a CD measurement showing secondary structure largely retained. Orientations 1
+  and 3 (Rg 152/172 Å) exceed the **200 Å box** and self-interact through the periodic image, so they are
+  unusable for structural conclusions. Only 3.2% of frames are adsorbed-and-compact, and 71% of those come
+  from orientation 2 — which is why the footprint can identify a pose but not a site preference. Testing
+  the paper's claim properly needs the adsorbed-but-folded state sampled: a larger box at minimum.
 - R4 (CLC-ec1 monomer+dimer on the validated bilayer) is deferred; not scheduled.
 - **NaN trigger unidentified (blocker for all glpG-DDM production).** Blow-up origin located and the
   propagation mechanism explained, but nothing measured accounts for a pair crossing from >= 3 A (~500 kT
   margin) into the catastrophic core region. Needs per-step instrumentation inside a running ladder;
   stored trajectories cannot resolve it (60-step frames, no momenta). See findings 90.
-- **LJ core table floor needs a decision.** `martini_build_tables.py` floors `r` at `0.1*sig` on a grid
-  starting at r=0, giving zero force below 0.47--0.60 A and a 6.18e12 E_up table maximum. Violates the
-  spline-equals-published-form and no-capping rules. Removing the floor alone puts an infinity at r=0;
-  raising r_min moves the zero-force plateau to the new inner knot (clamped spline clamps to a constant).
-- **`martini_hdx_project.py` energy contract conflicts with the workflow README.** The projector
-  re-scores protein-only energy; the README requires the full coupled potential for hybrid Energy.npy.
-  Measured, the projector's stated rationale is backwards (coupled spans 4300-5100 reduced units across
-  the ladder vs 69-182 protein-only). Needs a decision on which is intended.
+- **LJ core table floor: fixed, with a residual.** The `r = max(r, 0.1*sig)` floor is gone and `r_min` is
+  0.3 Å, asserted against the analytic form (findings 92). Residual: the clamped spline still flattens
+  below the 0.3 Å inner knot, and that domain **was entered** — 6 approaches under 0.3 Å on the corrected
+  table (findings 93). Removing the floor changed the consequence, not the entry mechanism.
+- **`martini_hdx_project.py` energy contract: settled in favour of the README.** `write_hybrid_energy.py`
+  overwrites each replica's `Energy.npy` with the full coupled potential, referenced to the pooled mean.
+  The projector's protein-only re-scoring is left alone for the non-hybrid path.
 
 
 ---

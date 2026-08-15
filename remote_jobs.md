@@ -24,15 +24,45 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-13, after the NaN-hunt diagnostics returned**.
+Snapshot **2026-08-15, after the BB-proxy rework was deployed to the cluster**.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 53334447 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | production REMD, 48 replicas, T 0.70–0.90, dt 0.009, 36 h/block, self-resubmitting |
-| 53334448 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | same |
-| 53334449 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | same |
-| 53334450 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | same |
-| 53332566 | `np_1AO6_prod` | **NP** | RUNNING | block 5, self-resubmitting |
+| 53349015 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | RUNNING | started 2026-08-15 00:53, block 1/12, 48 replicas, T 0.70–0.90, dt 0.009, 36 h/block, self-resubmitting |
+| 53349017 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | RUNNING | same |
+| 53349018 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | RUNNING | same |
+| 53349020 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | RUNNING | same |
+| 53372760 | `np_1AO6_prod` | **NP** | RUNNING | block 6/8, self-resubmitting; ~224 k frames/replica accumulated |
+| 53372772 | `np_footprint` | **NP analysis** | RUNNING | `footprint.sbatch` → `np_frames.npz`; log `np_frames.<jobid>.out` |
+
+**Confirmed loading on the new binary 2026-08-15 00:53**: all four reached `[remd] block 1/12` and
+`calibration 2000 steps x 48` with `n_atom 4949`, no `expected 1 arguments but got 2`. The seed migration
+held.
+
+**These four were verified rather than resubmitted (2026-08-15).** The BB proxy now reads its backbone O
+from `infer_H_O`, so `martini_hybrid_position` takes two arguments and every config written by the older
+prep fails to load. Checked, in order: `env.sh` points `UPSIDE_HOME` at the rebuilt
+`~/beagle3/yinhan/upside2-md`; the four seeds were upgraded in place with
+`py/martini_upgrade_hybrid_args.py` and one was proved to load and run on the new binary; the variant
+directories are empty, so `run_remd.py` materialises replicas from those upgraded seeds and there are no
+stale copies and no `STOP` files; the seeds carry an `/output`, which the first-block `reseed()` requires;
+their stage is `production_handoff`, which `martini_hybrid.cpp:646-647` treats as active, so the SC-env
+interface is on. The 36 h `REMD_WALL_SEC` equals the Slurm limit but the chunk loop guards with
+`remaining() - MARGIN > last_wall*1.25` (35 min plus a chunk), so the chain still has room to reseed and
+resubmit. **No resubmission needed.**
+
+The NP job cannot be patched the same way — it holds its six replicas open for the whole block — so
+`np_prod.sbatch` now runs the same upgrade in the gap before `upside` reopens them. **Confirmed working
+2026-08-15 00:25**: the block rolled over to 53372760, all six reported `upgraded`, and the block then
+loaded every config under the new binary. That line is a one-shot migration — delete it once a block
+reports "already upgraded".
+
+**Reading a `.up` that a running job owns.** `run_np_prod.py` reseeds by renaming `output` to the lowest
+free `output_previous_<n>`, so on a live file that group can vanish between being listed and being read;
+a first footprint attempt died on exactly that (`KeyError: object 'output' doesn't exist`). Rotated blocks
+are never renamed again, so an analysis should read only `output_previous_*` and skip the live group —
+that costs ~1.4% of frames and removes the race. Set `HDF5_USE_FILE_LOCKING=FALSE` to open at all, and
+never let `upside_engine` touch a live file: it opens read-write.
 
 Launcher `popepopg_REMD/{submit_remd.sh,remd.sbatch,run_remd.py,env.sh}`, seeds in `popepopg_REMD/seeds/`,
 logs `popepopg_REMD/logs/remd.<jobid>.out`, data `popepopg_REMD/<variant>/`. Seeds are the stage-7.0
@@ -104,7 +134,8 @@ not on Rg or H-bond loss. (Contrast the glpG campaign, where the protein *must* 
 
 
 **Dir** `~/project/NP-1AO6/` — `prod/` holds `np.run.{0..5}.up` + `np.<jobid>.out`, `block_count`.
-**Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.005`, see §8) · **submit** `submit_np.sh`
+**Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.001`, see §8) · **submit** `submit_np.sh`
+**Footprint analysis** `np_footprint.py` (uploaded 2026-08-15) → `np_footprint.npz`, `np_footprint.log`.
 **Orientation map** (verify by checksum if ever re-uploading — a zsh 1-indexing bug shifted it once):
 
 ```
@@ -139,6 +170,31 @@ grep -ic nan $f                        # expect 0
 
 Config: 48 replicas, T 0.70–0.90, `REMD_DT=0.009`, `--replica-interval 0.09`, `--exchange-criterion 0`,
 swap sets A=(0-1,2-3,…) B=(1-2,3-4,…), 300 frames/chunk, `REMD_MAX_BLOCKS=12`.
+
+### HDX analysis for the POPE/POPG campaign (staged 2026-08-15, not yet run)
+
+`popepopg_REMD/hdx_cluster.sbatch`, one job per variant:
+
+```bash
+B=/home/yinhanw/project/popepopg_REMD
+for V in glpG-RKRK-79HIS glpG-RKRK-79HIS_S115T glpG-RKRK-79ALA glpG-RKRK-79ALA_S115T; do
+  sbatch --job-name=hdx_$V --output=$B/logs/hdx.%j.out --partition=caslake --account=pi-trsosnic \
+    --nodes=1 --ntasks-per-node=1 --cpus-per-task=16 --time=04:00:00 \
+    --export=ALL,PDB_ID=$V $B/hdx_cluster.sbatch
+done
+```
+
+It runs `py/martini_remd_concat.py` first — **required**, because the chained driver rotates `output` to
+`output_previous_<n>` every chunk, so `/output` alone is just the last ~300 frames. The concat joins the
+chunks in restart order, renumbers `time`, and drops whole any chunk with a non-finite potential (a
+rolled-back chunk is not a sample). Verified against a 3-chunk file: boundary frames in place, all 16
+datasets carried, strided output identical to the naive slice. Then the same path as the local run —
+`example/00.AnalysisScripts` + `write_hybrid_energy.py` + `plot_ref_style.py`.
+
+**The cluster copy of the analysis pipeline drifts from the repo.** On 2026-08-15 the cluster's
+`calc_hdx_ht.py` and `4.calc_D_uptake.py` still lacked the reference subtraction from findings 91, so an
+HDX run there would have silently returned uniform MBAR weights. Re-upload the analysis scripts before
+trusting any cluster-side result; only the C++ build is kept current by `install.sh`.
 
 **CRITICAL — exchange recirculates a destroyed configuration.** `run_remd.py` reseeds each replica from
 `output/pos[-1]`. If that frame is destroyed the next chunk starts destroyed, then an exchange swaps a

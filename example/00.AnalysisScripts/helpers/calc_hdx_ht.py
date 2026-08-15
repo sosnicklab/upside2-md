@@ -308,7 +308,16 @@ for t in T:
     dG_hbond.append(g)
 
 dG_hbond = np.asarray(dG_hbond)
-dG_slice_temps, dGhx_slice, dGhx_slice_err = calculate_residue_dg_profiles(plot_target_temps, plot_mode=True)
+# The T-slice uses the jscripts convention its own helper is named for, NOT the step-6 plot one. The
+# difference is a hard ceiling: step-6 sends every residue with mean_pf >= 0.99999 to the +1000 sentinel,
+# which caps dG at 0.001987 * temp_scale * ln(99999) = 6.8 kcal/mol at T = 0.85 and throws the most
+# protected amides off the plot entirely. Measured on the POPE/POPG wildtype ladder, that clip alone
+# accounted for every "never-exchanging" residue -- 44 at T = 0.85 and 77 at T = 0.75, while the number
+# with mean_pf == 1.0 exactly was zero -- and held the profile at 6.3 against a reference figure that
+# peaks at 10-20. On the jscripts path the same data gives 19.6 and all 203 residues resolve. Reweighted
+# weights span many orders of magnitude, so mean_pf legitimately resolves far closer to 1 than 1e-5; the
+# jackknife error bar is what carries how well.
+dG_slice_temps, dGhx_slice, dGhx_slice_err = calculate_residue_dg_profiles(plot_target_temps)
 # Persist the per-temperature profiles. They were computed here and then only ever rendered, so any other
 # view of the same numbers had to recompute MBAR to get at them.
 np.savez('{}/{}_dG_profiles.npz'.format(paths['result_dir'], pdb_id),
