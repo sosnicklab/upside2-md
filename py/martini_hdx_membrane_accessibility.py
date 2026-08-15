@@ -20,6 +20,7 @@ then output) with the same --start/--stride.
 """
 import argparse
 import os
+import re
 
 import numpy as np
 import tables as tb
@@ -66,8 +67,11 @@ def main():
     parser.add_argument("--structure-up", default=None,
                         help="source of the periodic box (default: hybrid_trajectory)")
     parser.add_argument("--lipid-class", default="LIPID", help="(default LIPID) particle_class of lipid beads")
-    parser.add_argument("--tail-bead-names", default="C1,C2,C3",
-                        help="(default C1,C2,C3) comma-separated hydrophobic-tail bead names")
+    parser.add_argument("--tail-bead-names", default="",
+                        help="comma-separated hydrophobic-tail bead names; by default they are detected "
+                             "from the trajectory as the MARTINI apolar naming pattern C<n>/D<n> with an "
+                             "optional chain letter (C1, C3 for a detergent; C1A, D3B, C5B for a "
+                             "two-tailed lipid)")
     parser.add_argument("--cutoff", type=float, default=8.0,
                         help="(default 8.0 A) tail-bead contact radius around each amide N")
     parser.add_argument("--min-contacts", type=int, default=5,
@@ -98,10 +102,25 @@ def main():
         raise ValueError("no backbone N for donor residues {}".format(missing[:10]))
     amide_idx = np.array([res_to_N[int(d)] for d in donor])
 
-    is_tail = (particle_class == args.lipid_class) & np.isin(atom_names, tail_names)
+    is_lipid = particle_class == args.lipid_class
+    if tail_names:
+        is_tail = is_lipid & np.isin(atom_names, tail_names)
+        selected = "names " + ",".join(tail_names)
+    else:
+        # Detect the tails from the trajectory instead of defaulting to one system's bead names. MARTINI
+        # names an apolar tail bead C<n> or D<n> (D marks the unsaturated one), optionally suffixed with a
+        # chain letter: C1/C2/C3 for a single-tailed detergent, C1A..C4A/C1B..C5B and D3B for a
+        # two-tailed lipid. The previous default was the literal DDM set, so any other lipid either
+        # raised here or -- worse, had it happened to share a name -- would have scored the wrong beads.
+        pattern = re.compile(r"^[CD]\d[A-Z]?$")
+        is_tail = is_lipid & np.array([bool(pattern.match(n)) for n in atom_names])
+        selected = "auto-detected " + ",".join(sorted(set(atom_names[is_tail])))
     tail_idx = np.where(is_tail)[0]
     if tail_idx.size == 0:
-        raise ValueError("no lipid tail beads found (class {} names {})".format(args.lipid_class, tail_names))
+        raise ValueError(
+            "no lipid tail beads found (class {}, {}); lipid bead names present: {}".format(
+                args.lipid_class, selected, ",".join(sorted(set(atom_names[is_lipid])))))
+    print("tail beads: {} ({} beads)".format(selected, tail_idx.size))
 
     n_frame = pos.shape[0]
     accessibility = np.ones((n_frame, donor.size), dtype=np.float32)

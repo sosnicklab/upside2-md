@@ -2607,8 +2607,12 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         # Create potential group (required by UPSIDE)
         potential_grp = t.create_group(input_grp, 'potential')
 
+        # The BB proxy is the mass-weighted centre of N/CA/C/O, and O is Upside's own derived site, so the
+        # node consumes infer_H_O rather than rebuilding O from a local frame. That makes the proxy a plain
+        # linear combination of nodes the engine differentiates: the O share of any environment force on BB
+        # is handed back to infer_H_O, which carries it to CA, C and the next residue's N exactly.
         hybrid_position = t.create_group(potential_grp, 'martini_hybrid_position')
-        hybrid_position._v_attrs.arguments = np.array([b'pos'])
+        hybrid_position._v_attrs.arguments = np.array([b'pos', b'infer_H_O'])
         
         # Create MARTINI potential with proper parameters
         martini_potential = t.create_group(potential_grp, 'martini_potential')
@@ -3453,6 +3457,13 @@ def inject_particles_table(up_file: Path, martini_h5: Path):
         qq_arr = pg["unique_charge_product"][:].astype(np.float64)
         combined_grids = pg["combined_energy_grids"][:].astype(np.float64)
         n_triples = len(eps_arr)
+        # Carry the radial domain over from the table that supplied the grids instead of restating it.
+        # It used to be hardcoded to [0, 12] below, so the .up advertised a domain its grids did not have:
+        # once the builder moved its inner edge off zero (findings 92) every prepared system still claimed
+        # r_min = 0 and the engine mapped every distance onto the wrong knot.
+        GRID_N = int(pg.attrs["n_points"])
+        R_MIN = float(pg.attrs["r_min_ang"])
+        R_MAX = float(pg.attrs["r_max_ang"])
 
     has_zero_triple = np.any(
         (np.abs(eps_arr) < 1e-12)
@@ -3469,9 +3480,10 @@ def inject_particles_table(up_file: Path, martini_h5: Path):
         ])
         n_triples = len(eps_arr)
 
-    GRID_N = 1000
-    R_MIN = 0.0
-    R_MAX = 12.0
+    if combined_grids.shape[1] != GRID_N:
+        raise SystemExit(
+            "ERROR: %s declares n_points=%d but its grids have %d columns"
+            % (martini_h5, GRID_N, combined_grids.shape[1]))
 
     with h5py.File(up_file, "r+") as up:
         g = up["/input/potential/martini_potential"]

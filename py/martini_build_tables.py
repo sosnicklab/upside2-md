@@ -27,7 +27,13 @@ DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE = float(
     os.environ.get("UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE", "25.0")
 )
 PARTICLES_GRID_N = 1000
-PARTICLES_R_MIN_A = 0.0
+# The grid starts above zero because the dry-MARTINI pair potential diverges at r = 0 and the table must
+# BE that potential, not a variant of it. 0.3 A is far inside anything reachable: the repulsive core there
+# is ~5e17 E_up/A for the bulkiest bead pair, three orders above any other force in the system. Measured
+# consequence of the previous choice (r_min = 0 with the radius floored at 0.1*sigma, which made the
+# potential CONSTANT and therefore force-free below 0.47-0.60 A): pairs reached 0.0355 A and felt nothing,
+# ~1440 times per 9 h run, while the true LJ force there is 5.8e29 E_up/A. See findings 92.
+PARTICLES_R_MIN_A = 0.3
 PARTICLES_R_MAX_A = 12.0
 DRY_MARTINI_NONBONDED_CUTOFF_NM = PARTICLES_R_MAX_A * ANGSTROM_TO_NM
 NUMERICAL_DISTANCE_GUARD_NM = 1.0e-6
@@ -526,19 +532,38 @@ def _build_particles_group(
         sig12 = sig6 * sig6
         lj_shift = 4.0 * eps * (sig12 / r_c ** 12 - sig6 / r_c ** 6)
         for qq in qq_set:
-            grid = np.zeros(PARTICLES_GRID_N, dtype=np.float64)
-            for i in range(PARTICLES_GRID_N):
-                r = PARTICLES_R_MIN_A + i * (PARTICLES_R_MAX_A - PARTICLES_R_MIN_A) / (PARTICLES_GRID_N - 1)
-                r = max(r, 0.1 * sig)
-                r6 = r ** 6
-                lj = 4.0 * eps * (sig12 / (r6 * r6) - sig6 / r6) - lj_shift
-                if abs(qq) > 1e-10:
-                    coul = coulomb_k_eup * qq * (1.0 / r + k_rf * r * r - c_rf)
-                else:
-                    coul = 0.0
-                grid[i] = lj + coul
+            r = np.linspace(PARTICLES_R_MIN_A, PARTICLES_R_MAX_A, PARTICLES_GRID_N)
+            r6 = r ** 6
+            grid = 4.0 * eps * (sig12 / (r6 * r6) - sig6 / r6) - lj_shift
+            if abs(qq) > 1e-10:
+                grid = grid + coulomb_k_eup * qq * (1.0 / r + k_rf * r * r - c_rf)
+            if not np.isfinite(grid).all():
+                raise ValueError(
+                    "combined grid for (eps=%g, sig=%g, qq=%g) is not finite over [%g, %g] A"
+                    % (eps, sig, qq, PARTICLES_R_MIN_A, PARTICLES_R_MAX_A))
             triples.append((eps, sig, qq))
             grids.append(grid)
+
+    # The spline table is a representation of the dry-MARTINI pair potential, never a variant of it, so
+    # assert the equivalence rather than assume it: every grid point must equal the published functional
+    # form -- potential-shifted LJ plus reaction-field Coulomb -- evaluated at that radius.
+    for (eps, sig, qq), grid in zip(triples, grids):
+        r = np.linspace(PARTICLES_R_MIN_A, PARTICLES_R_MAX_A, PARTICLES_GRID_N)
+        reference = 4.0 * eps * ((sig / r) ** 12 - (sig / r) ** 6) \
+            - 4.0 * eps * ((sig / r_c) ** 12 - (sig / r_c) ** 6)
+        if abs(qq) > 1e-10:
+            reference = reference + coulomb_k_eup * qq * (1.0 / r + k_rf * r * r - c_rf)
+        # Scale the tolerance by the energy scale rather than by |reference| alone: the potential-shifted
+        # LJ crosses zero just inside the cutoff, so a pure relative measure there amplifies float64
+        # round-off (the two algebraically identical spellings of sigma^12/r^12 differ in the last bits)
+        # into an apparent 1e-12 error on a quantity that is itself ~1e-15 E_up.
+        scale = np.maximum(np.abs(reference), max(abs(eps), 1.0))
+        deviation = np.abs(grid - reference) / scale
+        if deviation.max() > 1e-10:
+            raise ValueError(
+                "tabulated grid for (eps=%g, sig=%g, qq=%g) departs from the analytic dry-MARTINI form "
+                "by %.3e (scaled) at r = %.4f A" % (eps, sig, qq, deviation.max(),
+                                                    float(r[int(np.argmax(deviation))])))
 
     n_triples = len(triples)
     g = h5.create_group("particles")

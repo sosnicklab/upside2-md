@@ -355,18 +355,15 @@ def build_backbone_projection_map(struct_h5, input_pos):
         return None
 
     bb = struct_h5["input/hybrid_bb_map"]
-    if "bb_atom_index" not in bb or "bb_residue_index" not in bb or "reference_atom_coords" not in bb:
+    if "bb_atom_index" not in bb or "bb_residue_index" not in bb:
         return None
 
     bb_atom_index_raw = np.asarray(bb["bb_atom_index"][:], dtype=int)
     bb_residue_index = np.asarray(bb["bb_residue_index"][:], dtype=int)
-    ref_coords = np.asarray(bb["reference_atom_coords"][:], dtype=np.float32)
-    if ref_coords.ndim != 3 or ref_coords.shape[1:] != (4, 3):
-        return None
     if bb_atom_index_raw.ndim != 1:
         return None
     n_bb = bb_atom_index_raw.shape[0]
-    if bb_residue_index.shape[0] != n_bb or ref_coords.shape[0] != n_bb:
+    if bb_residue_index.shape[0] != n_bb:
         return None
 
     if "reference_atom_names" in bb:
@@ -403,7 +400,6 @@ def build_backbone_projection_map(struct_h5, input_pos):
     bb_atom_index = np.where(valid_proxy, bb_atom_index_raw, fallback_ca)
     bb_atom_index = bb_atom_index[valid]
     bb_residue_index = bb_residue_index[valid]
-    ref_coords = ref_coords[valid]
     bb_chain_ids = bb_chain_ids[valid]
 
     bb_residue_names = np.array(["UNK"] * bb_residue_index.shape[0], dtype=object)
@@ -424,45 +420,26 @@ def build_backbone_projection_map(struct_h5, input_pos):
                 dtype=object,
             )
 
-    if "weights" in bb:
-        weights = np.asarray(bb["weights"][:], dtype=np.float32)
-        if weights.ndim != 2 or weights.shape != (n_bb, 4):
-            weights = np.full((bb_atom_index.shape[0], 4), 0.25, dtype=np.float32)
-        else:
-            weights = weights[valid]
-    else:
-        weights = np.full((bb_atom_index.shape[0], 4), 0.25, dtype=np.float32)
 
-    wsum = np.sum(weights, axis=1, keepdims=True)
-    safe_wsum = np.where(wsum > 1.0e-8, wsum, 1.0)
-    weights = weights / safe_wsum
-    ref_anchor = np.sum(ref_coords * weights[:, :, None], axis=1)
-
-    runtime_carrier_index = None
-    use_runtime_carriers = False
-    if atom_indices_full is not None:
-        atom_indices = atom_indices_full[valid]
-        if np.all((atom_indices >= 0) & (atom_indices < n_particles)):
-            runtime_carrier_index = atom_indices
-            if "input/atom_roles" in struct_h5:
-                atom_roles = decode_str_array(struct_h5["input/atom_roles"])
-                runtime_roles = atom_roles[runtime_carrier_index]
-                ref_role_row = np.asarray(ref_atom_names, dtype=object).reshape(1, 4)
-                use_runtime_carriers = bool(np.all(runtime_roles == ref_role_row))
-            else:
-                use_runtime_carriers = True
+    if atom_indices_full is None:
+        return None
+    runtime_carrier_index = atom_indices_full[valid]
+    if not np.all((runtime_carrier_index >= 0) & (runtime_carrier_index < n_particles)):
+        return None
+    if "input/atom_roles" in struct_h5:
+        atom_roles = decode_str_array(struct_h5["input/atom_roles"])
+        ref_role_row = np.asarray(ref_atom_names, dtype=object).reshape(1, 4)
+        if not np.all(atom_roles[runtime_carrier_index] == ref_role_row):
+            raise ValueError(
+                "hybrid_bb_map/atom_indices do not point at %s for every residue" % list(ref_atom_names))
 
     return {
         "bb_atom_index": bb_atom_index,
         "bb_residue_index": bb_residue_index,
         "bb_residue_names": bb_residue_names,
         "bb_chain_ids": bb_chain_ids,
-        "ref_coords": ref_coords,
         "ref_atom_names": np.array(ref_atom_names, dtype=object),
-        "weights": weights,
-        "ref_anchor": ref_anchor,
         "runtime_carrier_index": runtime_carrier_index,
-        "use_runtime_carriers": use_runtime_carriers,
     }
 
 
@@ -627,34 +604,30 @@ def mode2_backbone_bonds(start_idx, n_bb, bb_chain_ids=None):
     return bonds
 
 
-def reconstruct_backbone_aa(frame_pos, bb_map, box_lengths=None):
-    runtime_carrier_index = bb_map.get("runtime_carrier_index")
-    if bb_map.get("use_runtime_carriers", False) and runtime_carrier_index is not None:
-        aa_pos = frame_pos[runtime_carrier_index.reshape(-1)]
-        return np.asarray(aa_pos, dtype=np.float32).reshape(-1, 3)
+def reconstruct_backbone_aa(frame_pos, bb_map):
+    """Backbone N/CA/C/O for the VTF, read straight out of the frame.
 
-    bb_cur = frame_pos[bb_map["bb_atom_index"]]
-    delta = bb_cur - bb_map["ref_anchor"]
-    if box_lengths is not None:
-        box = np.asarray(box_lengths, dtype=np.float32).reshape(1, 3)
-        safe_box = np.where(box > 0.0, box, 1.0)
-        delta = delta - safe_box * np.round(delta / safe_box)
-    aa_pos = bb_map["ref_coords"] + delta[:, None, :]
-    aa_pos = aa_pos.reshape(-1, 3)
-    return aa_pos
+    These are real entries in the trajectory, so there is nothing to reconstruct. The previous fallback
+    rigidly translated a stored reference geometry by the BB proxy's displacement, which could not
+    represent any backbone rotation and only existed because the proxy predated the carriers being
+    addressable. A build whose BB map does not resolve all four carriers is a broken build, not a case to
+    approximate around.
+    """
+    carriers = bb_map["runtime_carrier_index"]
+    return np.asarray(frame_pos[carriers.reshape(-1)], dtype=np.float32).reshape(-1, 3)
 
 
 def assemble_mode1_frame(frame_pos, mapping, box_lengths=None):
     martini_pos = frame_pos[mapping["martini_indices"]]
     if not mapping.get("include_aa_backbone", False):
         return martini_pos
-    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
+    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"])
     return np.vstack((martini_pos, aa_pos))
 
 
 def assemble_mode2_frame(frame_pos, mapping, box_lengths=None):
     env_pos = frame_pos[mapping["non_protein_idx"]]
-    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
+    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"])
     return np.vstack((env_pos, aa_pos))
 
 

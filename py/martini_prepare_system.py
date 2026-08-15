@@ -55,7 +55,6 @@ PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
-DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS = 200
 DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
 DEFAULT_NPT_TAU = 4.0
 DEFAULT_NPT_INTERVAL = 10
@@ -1352,7 +1351,6 @@ def set_hybrid_production_controls(up_file: Path, args):
 
     with h5py.File(up_file, "r+") as h5:
         grp = h5.require_group("input").require_group("hybrid_control")
-        grp.attrs["sc_env_backbone_hold_steps"] = np.int32(args.sc_env_backbone_hold_steps)
         grp.attrs["sc_env_po4_z_hold_steps"] = np.int32(args.sc_env_po4_z_hold_steps)
 
 
@@ -1928,7 +1926,6 @@ def normalize_hybrid_workflow_args(args):
     args.universal_prep_mode = "both"
     args.hybrid_validate = True
     args.hybrid_preprod_activation_stage = "minimization"
-    args.sc_env_backbone_hold_steps = DEFAULT_SC_ENV_BACKBONE_HOLD_STEPS
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
     args.npt_tau = DEFAULT_NPT_TAU
     args.npt_interval = DEFAULT_NPT_INTERVAL

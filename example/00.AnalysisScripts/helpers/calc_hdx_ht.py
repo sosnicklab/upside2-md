@@ -309,6 +309,10 @@ for t in T:
 
 dG_hbond = np.asarray(dG_hbond)
 dG_slice_temps, dGhx_slice, dGhx_slice_err = calculate_residue_dg_profiles(plot_target_temps, plot_mode=True)
+# Persist the per-temperature profiles. They were computed here and then only ever rendered, so any other
+# view of the same numbers had to recompute MBAR to get at them.
+np.savez('{}/{}_dG_profiles.npz'.format(paths['result_dir'], pdb_id),
+         res=res, temps=dG_slice_temps, dG=dGhx_slice, dG_err=dGhx_slice_err)
 dG_profile_temps, dGhx_T, dGhx_T_err = calculate_residue_dg_profiles(T)
 
 pf_frame = np.sum(PS[:, start_frame:, :], axis=2).flatten()

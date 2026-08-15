@@ -30,3 +30,5 @@ source.sh
 parameters/dryMARTINI/*.h5
 *.pdf
 *scratchpad*
+backup/*
+

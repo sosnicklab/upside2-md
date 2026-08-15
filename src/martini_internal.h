@@ -24,19 +24,18 @@ struct HybridRuntimeState {
     size_t n_env = 0;
     std::vector<int> bb_residue_index;
     std::vector<int> bb_atom_index;
-    std::vector<int> bb_ca_atom_index;
-    std::vector<int> bb_proxy_to_ca_atom;
     std::vector<int> bb_proxy_to_map_index;
     std::vector<std::array<int,4>> atom_indices;
     std::vector<std::array<int,4>> atom_mask;
     std::vector<std::array<float,4>> weights;
     std::vector<std::array<int,4>> bb_reference_runtime_atom_indices;
-    std::vector<std::array<std::array<float,3>,4>> bb_reference_atom_coords;
+    // Element of the infer_H_O node holding each residue's backbone O. The BB proxy is the mass-weighted
+    // centre of N/CA/C/O, and O is Upside's own derived site, so taking it from that node makes the proxy
+    // an exact linear combination of nodes the engine already differentiates.
+    std::vector<int> bb_o_hbond_elem;
     std::vector<int> protein_membership;
     std::vector<unsigned char> atom_role_class;
     std::vector<unsigned char> atom_bb_source_mask;
-    bool has_prev_bb = false;
-    int sc_env_backbone_hold_steps = 200;
     int sc_env_po4_z_hold_steps = 150;
     uint64_t sc_env_transition_step = 0;
     uint64_t sc_env_transition_step_start = 0;
@@ -45,13 +44,11 @@ struct HybridRuntimeState {
     bool sc_env_po4_z_reference_initialized = false;
     std::vector<int> sc_env_po4_z_hold_atom_indices;
     float bb_env_interface_potential = 0.f;
-    std::vector<std::array<float,3>> prev_bb_pos;
     std::vector<int> preprod_fixed_atom_indices;
     std::vector<int> preprod_z_fixed_atom_indices;
 };
 
 int bb_map_index_for_proxy(const HybridRuntimeState& st, int bb_proxy_atom);
-float compute_sc_backbone_feedback_mix(const HybridRuntimeState& st);
 void initialize_sc_env_po4_z_reference(HybridRuntimeState& st, VecArray pos, int n_atom);
 unsigned char atom_role_class_at(const HybridRuntimeState& st, int i);
 bool atom_is_bb_source_at(const HybridRuntimeState& st, int i);

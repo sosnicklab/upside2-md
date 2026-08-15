@@ -246,6 +246,9 @@ struct MartiniPotential : public PotentialNode
 
     float r_min, r_max;
     float r_shift, r_scale;
+    // Radial points in the combined table. Read from the table rather than assumed: the grid size, like
+    // the radial domain, is declared once by py/martini_build_tables.py and carried through the .up.
+    int n_grid;
 
     float cache_buffer;
     float pairlist_cutoff;
@@ -518,11 +521,21 @@ struct MartiniPotential : public PotentialNode
             return;
         }
 
-        // Combined spline domain [0, 12] Angstroms, 1000 points
-        r_min = 0.0f;
-        r_max = 12.0f;
+        // Combined spline domain, read from the table rather than assumed: the builder writes the radial
+        // range it actually tabulated, and it does not start at zero because the dry-MARTINI pair
+        // potential diverges there. Hardcoding [0, 12] here silently mapped every distance onto the wrong
+        // knot once the builder's domain changed, so the table declares the domain and this honours it.
+        r_min = read_attribute<float>(grp, ".", "r_min_ang");
+        r_max = read_attribute<float>(grp, ".", "r_max_ang");
+        if(!(r_max > r_min) || !(r_min >= 0.f)) {
+            throw string("martini particles table has an invalid radial domain [" +
+                         to_string(r_min) + ", " + to_string(r_max) + "]");
+        }
+        n_grid = read_attribute<int>(grp, ".", "n_points");
+        if(n_grid < 4)
+            throw string("martini particles table declares n_points=" + to_string(n_grid));
         r_shift = -r_min;
-        r_scale = 999.0f / (r_max + r_shift);
+        r_scale = float(n_grid - 1) / (r_max + r_shift);
 
         // Fit one combined LJ+Coulomb spline per unique coefficient row, looking up
         // its energy grid in the injected per-run martini table by (eps, sig, qq).
@@ -530,8 +543,9 @@ struct MartiniPotential : public PotentialNode
             auto dims = get_dset_size(2, grp, "combined_energy_grids");
             size_t n_triples = dims[0];
             size_t n_pts = dims[1];
-            if (n_pts != 1000)
-                throw string("combined_energy_grids has " + to_string(n_pts) + " points, expected 1000");
+            if (int(n_pts) != n_grid)
+                throw string("combined_energy_grids has " + to_string(n_pts) +
+                             " points but the table declares n_points=" + to_string(n_grid));
 
             check_size(grp, "unique_eps_eup", n_triples);
             check_size(grp, "unique_sig_ang", n_triples);
@@ -572,8 +586,8 @@ struct MartiniPotential : public PotentialNode
                 if (it == h5_index.end())
                     throw string("Combined params (" + to_string(eps) + ", " + to_string(sig) + ", " + to_string(qq) + ") not found in martini table");
 
-                combined_splines.emplace_back(1, 1000);
-                combined_splines.back().fit_spline(all_grids.data() + it->second * 1000);
+                combined_splines.emplace_back(1, n_grid);
+                combined_splines.back().fit_spline(all_grids.data() + it->second * size_t(n_grid));
             }
         }
 
@@ -636,10 +650,6 @@ struct MartiniPotential : public PotentialNode
         const bool active_hybrid_startup = (
             hybrid_state &&
             hybrid_state->active);
-        float sc_backbone_feedback_mix = 1.f;
-        if(active_hybrid_startup && mutable_hybrid) {
-            sc_backbone_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*mutable_hybrid);
-        }
 
         auto eval_pair_force = [&](const Vec<3>& pa,
                                    const Vec<3>& pb,
@@ -660,12 +670,12 @@ struct MartiniPotential : public PotentialNode
             if(dist > cutoff) return false;
 
             if(param.combined_spline) {
-                float r_coord = (dist - r_min) / (r_max - r_min) * 999.0f;
+                float r_coord = (dist - r_min) / (r_max - r_min) * float(n_grid - 1);
                 float result[2];
                 param.combined_spline->evaluate_value_and_deriv(result, 0, r_coord);
                 float pot = result[1];
                 float deriv_spline = result[0];
-                float coord_scale = 999.0f / (r_max - r_min);
+                float coord_scale = float(n_grid - 1) / (r_max - r_min);
                 float dE_dr = deriv_spline * coord_scale;
                 float force_mag = -dE_dr;
                 Vec<3> force = (force_mag/dist) * dr;
@@ -759,16 +769,8 @@ struct MartiniPotential : public PotentialNode
                 mutable_hybrid->bb_env_interface_potential += pair_pot;
             }
 
-            auto gi = -force;
-            auto gj = force;
-            if(active_hybrid_startup && i_is_protein && i_role == martini_hybrid::ROLE_BB) {
-                gi *= sc_backbone_feedback_mix;
-            }
-            if(active_hybrid_startup && j_is_protein && j_role == martini_hybrid::ROLE_BB) {
-                gj *= sc_backbone_feedback_mix;
-            }
-            update_vec<3>(pos1_sens, i, gi);
-            update_vec<3>(pos1_sens, j, gj);
+            update_vec<3>(pos1_sens, i, -force);
+            update_vec<3>(pos1_sens, j,  force);
         }
 
         if(diag_on && (diag_min_dist < diag_dist_thresh || diag_max_force > diag_force_thresh ||
@@ -1045,7 +1047,6 @@ struct MartiniScTablePotential : public PotentialNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->active) return;
-        float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;
         VecArray pos_sens = pos.sens;
@@ -1102,7 +1103,7 @@ struct MartiniScTablePotential : public PotentialNode
                 Vec<6> grad_cb_full;
                 store<0,3>(grad_cb_full, point_grad);
                 store<3,6>(grad_cb_full, vector_grad);
-                Vec<6> grad_cb = protein_feedback_mix * grad_cb_full;
+                Vec<6> grad_cb = grad_cb_full;
                 Vec<3> grad_env = -point_grad;
 
                 update_vec<6>(cb_sens, cb_idx, grad_cb);
@@ -1633,7 +1634,6 @@ struct MartiniScTableOneBody : public CoordNode
 
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         if(!hybrid_state || !hybrid_state->active) return;
-        float protein_feedback_mix = martini_hybrid::compute_sc_backbone_feedback_mix(*hybrid_state);
 
         VecArray posc = pos.output;
         VecArray pos_sens = pos.sens;
@@ -1704,7 +1704,7 @@ struct MartiniScTableOneBody : public CoordNode
             Vec<6> grad_cb_full;
             store<0,3>(grad_cb_full, point_grad);
             store<3,6>(grad_cb_full, vector_grad);
-            Vec<6> grad_cb = protein_feedback_mix * grad_cb_full;
+            Vec<6> grad_cb = grad_cb_full;
             Vec<3> grad_env = -point_grad;
 
             update_vec<6>(cb_sens, cb_idx, grad_cb);

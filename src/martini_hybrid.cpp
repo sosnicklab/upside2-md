@@ -8,6 +8,7 @@
 #include <set>
 #include <array>
 #include <vector>
+#include <unordered_map>
 #include <algorithm>
 #include <limits>
 
@@ -48,197 +49,16 @@ int bb_map_index_for_proxy(const HybridRuntimeState& st, int bb_proxy_atom) {
     return st.bb_proxy_to_map_index[static_cast<size_t>(bb_proxy_atom)];
 }
 
-static inline std::array<float,3> vec_sub(const std::array<float,3>& a, const std::array<float,3>& b) {
-    return std::array<float,3>{a[0]-b[0], a[1]-b[1], a[2]-b[2]};
-}
-
-static inline std::array<float,3> vec_scale(const std::array<float,3>& a, float s) {
-    return std::array<float,3>{a[0]*s, a[1]*s, a[2]*s};
-}
-
-static inline float vec_dot(const std::array<float,3>& a, const std::array<float,3>& b) {
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-}
-
-static inline std::array<float,3> vec_cross(const std::array<float,3>& a, const std::array<float,3>& b) {
-    return std::array<float,3>{
-        a[1]*b[2] - a[2]*b[1],
-        a[2]*b[0] - a[0]*b[2],
-        a[0]*b[1] - a[1]*b[0]
-    };
-}
-
-static inline float vec_norm(const std::array<float,3>& a) {
-    return sqrtf(vec_dot(a, a));
-}
-
-static inline std::array<float,3> vec_normalize(const std::array<float,3>& a) {
-    float n = vec_norm(a);
-    if(n <= 1e-8f) return std::array<float,3>{0.f,0.f,0.f};
-    return vec_scale(a, 1.f/n);
-}
-
-static inline bool build_frame_from_three(
-        const std::array<float,3>& p0,
-        const std::array<float,3>& p1,
-        const std::array<float,3>& p2,
-        float F[3][3]) {
-    auto e1 = vec_normalize(vec_sub(p1, p0));
-    auto v2 = vec_sub(p2, p0);
-    auto e3 = vec_cross(e1, v2);
-    float n3 = vec_norm(e3);
-    if(n3 <= 1e-8f) return false;
-    e3 = vec_scale(e3, 1.f/n3);
-    auto e2 = vec_cross(e3, e1);
-
-    // Columns are basis vectors.
-    F[0][0] = e1[0]; F[1][0] = e1[1]; F[2][0] = e1[2];
-    F[0][1] = e2[0]; F[1][1] = e2[1]; F[2][1] = e2[2];
-    F[0][2] = e3[0]; F[1][2] = e3[1]; F[2][2] = e3[2];
-    return true;
-}
-
-// Mat3 rows are indexed [row][col]; M[d][e] holds d(component d)/d(carrier coordinate e).
-typedef float Mat3[3][3];
-
-static inline void mat_zero(Mat3 M) {
-    for(int d = 0; d < 3; ++d) for(int e = 0; e < 3; ++e) M[d][e] = 0.f;
-}
-
-static inline void mat_add_identity(Mat3 M, float s) {
-    for(int d = 0; d < 3; ++d) M[d][d] += s;
-}
-
-static inline void mat_add_scaled(Mat3 M, const Mat3 A, float s) {
-    for(int d = 0; d < 3; ++d) for(int e = 0; e < 3; ++e) M[d][e] += s*A[d][e];
-}
-
-// d(normalize(u))/du = (I - uhat uhat^T)/|u|, applied to an existing Jacobian: out = N(u) * in.
-static inline void mat_apply_normalize(const std::array<float,3>& uhat, float inv_mag,
-                                       const Mat3 in, Mat3 out) {
-    for(int e = 0; e < 3; ++e) {
-        float proj = 0.f;
-        for(int d = 0; d < 3; ++d) proj += uhat[d]*in[d][e];
-        for(int d = 0; d < 3; ++d) out[d][e] = (in[d][e] - uhat[d]*proj) * inv_mag;
-    }
-}
-
-// out = (a x) * in, i.e. left-multiply by the skew matrix of a.
-static inline void mat_apply_cross(const std::array<float,3>& a, const Mat3 in, Mat3 out) {
-    for(int e = 0; e < 3; ++e) {
-        out[0][e] = a[1]*in[2][e] - a[2]*in[1][e];
-        out[1][e] = a[2]*in[0][e] - a[0]*in[2][e];
-        out[2][e] = a[0]*in[1][e] - a[1]*in[0][e];
-    }
-}
-
-// Jacobians of a site rigidly placed in the (p0,p1,p2) frame with local offset lo, with respect to each
-// of the three carrier atoms. The frame is e1 = norm(p1-p0), e3 = norm(e1 x (p2-p0)), e2 = e3 x e1, and
-// the site is p1 + F*lo, so the site rotates with the frame and the rotational terms below are exactly
-// what a constant-weight redistribution omits.
-static bool frame_site_jacobian(
-        const std::array<float,3>& p0,
-        const std::array<float,3>& p1,
-        const std::array<float,3>& p2,
-        const std::array<float,3>& lo,
-        Mat3 J[3]) {
-    auto a = vec_sub(p1, p0);
-    float a_mag = vec_norm(a);
-    if(a_mag <= 1e-8f) return false;
-    auto e1 = vec_scale(a, 1.f/a_mag);
-    auto v2 = vec_sub(p2, p0);
-    auto c = vec_cross(e1, v2);
-    float c_mag = vec_norm(c);
-    if(c_mag <= 1e-8f) return false;
-    auto e3 = vec_scale(c, 1.f/c_mag);
-
-    // da/dp and dv2/dp for p in {p0,p1,p2}
-    Mat3 da[3], dv2[3];
-    for(int atom = 0; atom < 3; ++atom) { mat_zero(da[atom]); mat_zero(dv2[atom]); }
-    mat_add_identity(da[1], 1.f);   mat_add_identity(da[0], -1.f);
-    mat_add_identity(dv2[2], 1.f);  mat_add_identity(dv2[0], -1.f);
-
-    for(int atom = 0; atom < 3; ++atom) {
-        Mat3 de1, dc, de3, de2, tmp_a, tmp_b;
-        mat_apply_normalize(e1, 1.f/a_mag, da[atom], de1);
-
-        // dc = e1 x dv2 - v2 x de1
-        mat_apply_cross(e1, dv2[atom], tmp_a);
-        mat_apply_cross(v2, de1, tmp_b);
-        for(int d = 0; d < 3; ++d) for(int e = 0; e < 3; ++e) dc[d][e] = tmp_a[d][e] - tmp_b[d][e];
-        mat_apply_normalize(e3, 1.f/c_mag, dc, de3);
-
-        // de2 = e3 x de1 - e1 x de3
-        mat_apply_cross(e3, de1, tmp_a);
-        mat_apply_cross(e1, de3, tmp_b);
-        for(int d = 0; d < 3; ++d) for(int e = 0; e < 3; ++e) de2[d][e] = tmp_a[d][e] - tmp_b[d][e];
-
-        mat_zero(J[atom]);
-        if(atom == 1) mat_add_identity(J[atom], 1.f);   // the site is anchored on p1
-        mat_add_scaled(J[atom], de1, lo[0]);
-        mat_add_scaled(J[atom], de2, lo[1]);
-        mat_add_scaled(J[atom], de3, lo[2]);
-    }
-    return true;
-}
-
-// Local-frame offset of the reference O, the quantity map_backbone_sites places in the current frame.
-static bool reference_local_o(const HybridRuntimeState& st, size_t k, std::array<float,3>& local_o) {
-    const auto& ref = st.bb_reference_atom_coords[k];
-    float F_ref[3][3];
-    if(!build_frame_from_three(ref[0], ref[1], ref[2], F_ref)) return false;
-    auto ref_local_o = vec_sub(ref[3], ref[1]);
-    local_o = std::array<float,3>{{0.f, 0.f, 0.f}};
-    for(int basis = 0; basis < 3; ++basis) {
-        for(int d = 0; d < 3; ++d) local_o[basis] += F_ref[d][basis] * ref_local_o[d];
-    }
-    return true;
-}
-
-static bool map_backbone_sites(
-        const HybridRuntimeState& st,
-        size_t k,
-        const std::array<std::array<float,3>,3>& carrier,
-        std::array<float,3>& mapped_o,
-        std::array<float,3>& mapped_bb) {
-    float F_cur[3][3];
-    std::array<float,3> local_o;
-    if(!reference_local_o(st, k, local_o) ||
-       !build_frame_from_three(carrier[0], carrier[1], carrier[2], F_cur)) return false;
-
-    for(int d = 0; d < 3; ++d) {
-        mapped_o[d] = carrier[1][d];
-        for(int basis = 0; basis < 3; ++basis) {
-            mapped_o[d] += F_cur[d][basis] * local_o[basis];
-        }
-    }
-
-    std::array<std::array<float,3>,4> sites{{carrier[0], carrier[1], carrier[2], mapped_o}};
-    mapped_bb = std::array<float,3>{{0.f, 0.f, 0.f}};
-    float wsum = 0.f;
-    for(int d = 0; d < 4; ++d) {
-        if(st.atom_mask[k][d] == 0) continue;
-        float w = st.weights[k][d];
-        if(w == 0.f) continue;
-        for(int coord = 0; coord < 3; ++coord) {
-            mapped_bb[coord] += w * sites[d][coord];
-        }
-        wsum += w;
-    }
-    if(wsum <= 0.f) return false;
-    if(fabsf(wsum - 1.f) > 1e-6f) {
-        for(int d = 0; d < 3; ++d) mapped_bb[d] *= 1.f/wsum;
-    }
-    return true;
-}
-
 struct HybridPositionNode : public CoordNode {
     CoordNode& source;
+    CoordNode& hbond;   // infer_H_O: supplies the backbone O this proxy is partly built from
 
-    HybridPositionNode(hid_t, CoordNode& source_):
+    HybridPositionNode(hid_t, CoordNode& source_, CoordNode& hbond_):
         CoordNode(source_.n_elem, 3),
-        source(source_) {
+        source(source_),
+        hbond(hbond_) {
         check_elem_width_lower_bound(source, 3);
+        check_elem_width_lower_bound(hbond, 3);
     }
 
     virtual void compute_value(ComputeMode) override {
@@ -249,29 +69,45 @@ struct HybridPositionNode : public CoordNode {
 
         auto st = get_state_for_coord(source);
         if(!st || !st->active) return;
-        if(st->bb_reference_atom_coords.size() != st->n_bb ||
-           st->bb_reference_runtime_atom_indices.size() != st->n_bb) {
-            throw string("Hybrid position node requires complete BB reference data");
+        if(st->bb_reference_runtime_atom_indices.size() != st->n_bb) {
+            throw string("Hybrid position node requires a complete BB carrier map");
         }
+        VecArray o_pos = hbond.output;
         for(size_t k = 0; k < st->n_bb; ++k) {
             const auto& atom_idx = st->bb_reference_runtime_atom_indices[k];
-            int o_idx = atom_idx[3];
+            int o_idx  = atom_idx[3];
             int bb_idx = st->bb_atom_index[k];
-            bool valid = o_idx >= 0 && o_idx < n_elem && bb_idx >= 0 && bb_idx < n_elem;
+            int o_elem = st->bb_o_hbond_elem[k];
+            bool valid = o_idx >= 0 && o_idx < n_elem && bb_idx >= 0 && bb_idx < n_elem &&
+                         o_elem < hbond.n_elem;
             for(int d = 0; d < 3; ++d) valid = valid && atom_idx[d] >= 0 && atom_idx[d] < n_elem;
             if(!valid) throw string("Hybrid position node has an invalid BB mapping index");
 
-            std::array<std::array<float,3>,3> carrier;
-            for(int atom = 0; atom < 3; ++atom) {
-                auto value = load_vec<3>(source_pos, atom_idx[atom]);
-                carrier[atom] = std::array<float,3>{{value[0], value[1], value[2]}};
+            // O is Upside's own derived site; take it rather than rebuilding it from a local frame.
+            // The C-terminal residue has no acceptor -- infer_H_O builds a carbonyl O from the NEXT
+            // residue's N, which does not exist there -- so that one BB is the N/CA/C mass centre with the
+            // weights renormalised, and its O slot is left as it came in (no MARTINI term reads it).
+            const bool have_o = o_elem >= 0;
+            auto o = have_o ? load_vec<3>(o_pos, o_elem) : make_vec3(0.f, 0.f, 0.f);
+
+            // BB is the mass-weighted centre of N/CA/C/O. Because O is a node in its own right, this is a
+            // plain linear combination and its derivative needs no placement Jacobian: the O share is
+            // handed to infer_H_O, which already carries the frame's rotational dependence exactly.
+            auto bb = make_vec3(0.f, 0.f, 0.f);
+            float wsum = 0.f;
+            for(int d = 0; d < 4; ++d) {
+                if(st->atom_mask[k][d] == 0) continue;
+                if(d == 3 && !have_o) continue;
+                float w = st->weights[k][d];
+                if(w == 0.f) continue;
+                bb += w * ((d == 3) ? o : load_vec<3>(source_pos, atom_idx[d]));
+                wsum += w;
             }
-            std::array<float,3> mapped_o, mapped_bb;
-            if(!map_backbone_sites(*st, k, carrier, mapped_o, mapped_bb)) {
-                throw string("Hybrid position node encountered a singular BB frame");
-            }
-            store_vec<3>(output, o_idx, make_vec3(mapped_o[0], mapped_o[1], mapped_o[2]));
-            store_vec<3>(output, bb_idx, make_vec3(mapped_bb[0], mapped_bb[1], mapped_bb[2]));
+            if(!(wsum > 0.f)) throw string("Hybrid BB weights sum to zero");
+            if(fabsf(wsum - 1.f) > 1e-6f) bb *= 1.f/wsum;
+
+            if(have_o) store_vec<3>(output, o_idx, o);
+            store_vec<3>(output, bb_idx, bb);
         }
     }
 
@@ -295,58 +131,51 @@ struct HybridPositionNode : public CoordNode {
                 update_vec<3>(source.sens, atom, load_vec<3>(sens, atom));
             }
         }
-        // Both derived sites are rigid functions of the three carrier atoms, so their sensitivities have
-        // to reach the carriers through the placement Jacobian. BB additionally depends on the O site it
-        // is built from (weight 16/54), whose rotational terms a constant-weight redistribution drops.
-        VecArray source_pos = source.output;
+
+        // Both derived sites are linear in nodes the engine already differentiates, so their sensitivity
+        // splits by the same constant weights that build them: the N/CA/C shares go straight to pos, and
+        // the O share goes to infer_H_O, whose own propagate_deriv carries it back to CA, C and the next
+        // residue's N. That is where the frame's rotational dependence lives, so nothing is dropped and no
+        // placement Jacobian is needed here.
+        VecArray o_sens = hbond.sens;
         for(size_t k = 0; k < st->n_bb; ++k) {
             const auto& atom_idx = st->bb_reference_runtime_atom_indices[k];
-            int o_idx = atom_idx[3];
+            int o_idx  = atom_idx[3];
             int bb_idx = st->bb_atom_index[k];
-
-            std::array<std::array<float,3>,3> carrier;
-            for(int atom = 0; atom < 3; ++atom) {
-                auto value = load_vec<3>(source_pos, atom_idx[atom]);
-                carrier[atom] = std::array<float,3>{{value[0], value[1], value[2]}};
+            int o_elem = st->bb_o_hbond_elem[k];
+            if(o_elem >= hbond.n_elem) {
+                throw string("Hybrid position node has an out-of-range infer_H_O element for a BB site");
             }
-            std::array<float,3> local_o;
-            Mat3 J_o[3];
-            if(!reference_local_o(*st, k, local_o) ||
-               !frame_site_jacobian(carrier[0], carrier[1], carrier[2], local_o, J_o)) {
-                throw string("Hybrid position node encountered a singular BB frame in propagate_deriv");
-            }
+            const bool have_o = o_elem >= 0;
 
             float wsum = 0.f;
             for(int d = 0; d < 4; ++d) {
                 if(st->atom_mask[k][d] == 0) continue;
+                if(d == 3 && !have_o) continue;
                 wsum += st->weights[k][d];
             }
-            if(wsum <= 0.f) throw string("Hybrid BB COM weights sum to zero");
+            if(!(wsum > 0.f)) throw string("Hybrid BB weights sum to zero");
             const float inv_wsum = 1.f/wsum;
-            const float w_o = (st->atom_mask[k][3] != 0) ? st->weights[k][3]*inv_wsum : 0.f;
 
-            Vec<3> grad_bb = load_vec<3>(sens, bb_idx);
-            Vec<3> grad_o  = load_vec<3>(sens, o_idx);
-            // Sensitivity reaching the O site, directly and through BB's dependence on it.
-            Vec<3> grad_o_total = grad_o + w_o * grad_bb;
+            auto bb_s = load_vec<3>(sens, bb_idx);
 
-            for(int carrier_i = 0; carrier_i < 3; ++carrier_i) {
-                float w_direct = (st->atom_mask[k][carrier_i] != 0)
-                        ? st->weights[k][carrier_i]*inv_wsum : 0.f;
-                Vec<3> contrib = w_direct * grad_bb;
-                // J^T grad, since sens holds dV/dx and J holds d(site)/d(carrier).
-                for(int e = 0; e < 3; ++e) {
-                    float acc = 0.f;
-                    for(int d = 0; d < 3; ++d) acc += J_o[carrier_i][d][e] * grad_o_total[d];
-                    contrib[e] += acc;
-                }
-                update_vec<3>(source.sens, atom_idx[carrier_i], contrib);
+            // O carries its own sensitivity plus BB's O-weighted share
+            auto o_total = have_o ? load_vec<3>(sens, o_idx) : make_vec3(0.f, 0.f, 0.f);
+            for(int d = 0; d < 4; ++d) {
+                if(st->atom_mask[k][d] == 0) continue;
+                if(d == 3 && !have_o) continue;
+                float w = st->weights[k][d]*inv_wsum;
+                if(w == 0.f) continue;
+                if(d == 3) o_total += w*bb_s;
+                else       update_vec<3>(source.sens, atom_idx[d], w*bb_s);
             }
+            if(have_o) update_vec<3>(o_sens, o_elem, o_total);
+            else       update_vec<3>(source.sens, o_idx, load_vec<3>(sens, o_idx));
         }
     }
 };
 
-static RegisterNodeType<HybridPositionNode, 1> hybrid_position_node("martini_hybrid_position");
+static RegisterNodeType<HybridPositionNode, 2> hybrid_position_node("martini_hybrid_position");
 
 static std::string trim_h5_string(const std::string& in);
 
@@ -417,21 +246,6 @@ static inline bool is_env_po4_atom(const HybridRuntimeState& st, int atom) {
     return atom >= 0 &&
            atom < static_cast<int>(st.sc_env_po4_env_mask.size()) &&
            st.sc_env_po4_env_mask[atom] != 0;
-}
-
-static inline bool active_sc_env_backbone_hold_enabled(const HybridRuntimeState& st) {
-    return st.active &&
-           st.sc_env_backbone_hold_steps > 0 &&
-           st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_backbone_hold_steps);
-}
-
-float compute_sc_backbone_feedback_mix(const HybridRuntimeState& st) {
-    if(!active_sc_env_backbone_hold_enabled(st)) return 1.f;
-    if(st.sc_env_backbone_hold_steps <= 1) return 1.f;
-
-    uint64_t final_hold_step = static_cast<uint64_t>(st.sc_env_backbone_hold_steps - 1);
-    if(st.sc_env_transition_step >= final_hold_step) return 1.f;
-    return float(st.sc_env_transition_step) / float(final_hold_step);
 }
 
 static inline bool active_sc_env_po4_z_hold_enabled(const HybridRuntimeState& st) {
@@ -570,14 +384,11 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.exclude_intra_protein_martini =
         (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid" || out.preprod_mode == "rigid_body");
-    out.sc_env_backbone_hold_steps =
-        read_attribute<int>(ctrl.get(), ".", "sc_env_backbone_hold_steps", out.sc_env_backbone_hold_steps);
     out.sc_env_po4_z_hold_steps =
         read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_hold_steps", out.sc_env_po4_z_hold_steps);
     int transition_start = read_attribute<int>(ctrl.get(), ".", "sc_env_transition_step_start", 0);
     out.sc_env_transition_step_start = static_cast<uint64_t>(std::max(0, transition_start));
     out.sc_env_transition_step = out.sc_env_transition_step_start;
-    if(out.sc_env_backbone_hold_steps < 0) out.sc_env_backbone_hold_steps = 0;
     if(out.sc_env_po4_z_hold_steps < 0) out.sc_env_po4_z_hold_steps = 0;
 
     if(!h5_exists(root, "/input/hybrid_bb_map")) {
@@ -602,19 +413,10 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         out.n_bb = atom_idx_shape[0];
         out.bb_residue_index.assign(out.n_bb, -1);
         out.bb_atom_index.assign(out.n_bb, -1);
-        out.bb_ca_atom_index.assign(out.n_bb, -1);
         out.atom_indices.assign(out.n_bb, std::array<int,4>{{-1,-1,-1,-1}});
         out.atom_mask.assign(out.n_bb, std::array<int,4>{{0,0,0,0}});
         out.weights.assign(out.n_bb, std::array<float,4>{{0.f,0.f,0.f,0.f}});
         out.bb_reference_runtime_atom_indices.assign(out.n_bb, std::array<int,4>{{-1,-1,-1,-1}});
-        out.bb_reference_atom_coords.assign(
-            out.n_bb,
-            std::array<std::array<float,3>,4>{{
-                std::array<float,3>{{0.f,0.f,0.f}},
-                std::array<float,3>{{0.f,0.f,0.f}},
-                std::array<float,3>{{0.f,0.f,0.f}},
-                std::array<float,3>{{0.f,0.f,0.f}},
-            }});
 
         traverse_dset<1,int>(bb.get(), "bb_residue_index", [&](size_t i, int v) {
             out.bb_residue_index[i] = v;
@@ -629,15 +431,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             out.weights[i][j] = v;
         });
         out.bb_reference_runtime_atom_indices = out.atom_indices;
-        if(h5_exists(bb.get(), "reference_atom_coords")) {
-            auto ref_shape = get_dset_size(3, bb.get(), "reference_atom_coords");
-            if(ref_shape[0] != out.n_bb || ref_shape[1] != 4 || ref_shape[2] != 3) {
-                throw string("Hybrid BB reference_atom_coords must have shape (n_bb,4,3)");
-            }
-            traverse_dset<3,float>(bb.get(), "reference_atom_coords", [&](size_t i, size_t j, size_t d, float v) {
-                out.bb_reference_atom_coords[i][j][d] = v;
-            });
-        }
         if(h5_exists(bb.get(), "bb_atom_index")) {
             check_size(bb.get(), "bb_atom_index", out.n_bb);
             traverse_dset<1,int>(bb.get(), "bb_atom_index", [&](size_t i, int v) {
@@ -790,7 +583,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         for(size_t k = 0; k < out.n_bb; ++k) {
             int bb = out.bb_atom_index[k];
             int ca = (out.atom_mask[k][1] != 0) ? out.atom_indices[k][1] : -1;
-            out.bb_ca_atom_index[k] = ca;
             if(bb >= 0) {
                 if(bb >= n_atom) {
                     throw string("Hybrid BB proxy index out of bounds");
@@ -817,24 +609,15 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             }
         }
 
-        out.bb_proxy_to_ca_atom.assign(static_cast<size_t>(n_atom), -1);
         out.bb_proxy_to_map_index.assign(static_cast<size_t>(n_atom), -1);
         for(size_t k = 0; k < out.n_bb; ++k) {
             int bb = out.bb_atom_index[k];
-            int ca = out.bb_ca_atom_index[k];
-            if(bb >= 0 && bb < n_atom && ca >= 0 && ca < n_atom) {
-                out.bb_proxy_to_ca_atom[static_cast<size_t>(bb)] = ca;
-            }
+            int ca = (out.atom_mask[k][1] != 0) ? out.atom_indices[k][1] : -1;
             if(bb >= 0 && bb < n_atom) {
                 out.bb_proxy_to_map_index[static_cast<size_t>(bb)] = static_cast<int>(k);
             }
-            if(ca >= 0 && ca < n_atom) {
-                if(out.bb_proxy_to_ca_atom[static_cast<size_t>(ca)] < 0) {
-                    out.bb_proxy_to_ca_atom[static_cast<size_t>(ca)] = ca;
-                }
-                if(out.bb_proxy_to_map_index[static_cast<size_t>(ca)] < 0) {
-                    out.bb_proxy_to_map_index[static_cast<size_t>(ca)] = static_cast<int>(k);
-                }
+            if(ca >= 0 && ca < n_atom && out.bb_proxy_to_map_index[static_cast<size_t>(ca)] < 0) {
+                out.bb_proxy_to_map_index[static_cast<size_t>(ca)] = static_cast<int>(k);
             }
             for(int d = 0; d < 4; ++d) {
                 if(out.atom_mask[k][d] == 0) continue;
@@ -893,8 +676,6 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
     bool was_active = st->active;
     if(!st->has_config) {
         st->active = false;
-        st->has_prev_bb = false;
-        st->prev_bb_pos.clear();
         st->sc_env_po4_z_reference.clear();
         st->sc_env_po4_z_reference_initialized = false;
         st->bb_env_interface_potential = 0.f;
@@ -906,8 +687,6 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
     }
     st->active = hybrid_interface_active_stage(*st, stage);
     if(st->active != was_active) {
-        st->has_prev_bb = false;
-        st->prev_bb_pos.clear();
         st->sc_env_po4_z_reference.clear();
         st->sc_env_po4_z_reference_initialized = false;
         st->bb_env_interface_potential = 0.f;
@@ -916,8 +695,36 @@ void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
     apply_stage_fixing(*engine, *st, stage);
 }
 
+// Locate each residue's backbone O inside the infer_H_O node. That node emits donors first, then
+// acceptors, and an acceptor is identified by the C atom it hangs off, which is exactly atom_indices[k][2]
+// of the BB map. Resolving the element here keeps the position node free of h5 access.
+static void resolve_bb_o_hbond_elements(hid_t root, HybridRuntimeState& st) {
+    st.bb_o_hbond_elem.assign(st.n_bb, -1);
+    if(!st.has_config || !h5_exists(root, "/input/potential/infer_H_O")) return;
+
+    auto hb  = open_group(root, "/input/potential/infer_H_O");
+    auto don = open_group(hb.get(), "donors");
+    auto acc = open_group(hb.get(), "acceptors");
+    int n_donor    = int(get_dset_size(2, don.get(), "id")[0]);
+    int n_acceptor = int(get_dset_size(2, acc.get(), "id")[0]);
+
+    // acceptor curr atom (column 1) is the carbonyl C
+    std::unordered_map<int,int> c_atom_to_elem;
+    traverse_dset<2,int>(acc.get(), "id", [&](size_t i, size_t j, int x) {
+        if(j == 1) c_atom_to_elem[x] = n_donor + int(i);
+    });
+    if(int(c_atom_to_elem.size()) != n_acceptor) {
+        throw string("infer_H_O acceptors do not have distinct carbonyl C atoms");
+    }
+    for(size_t k = 0; k < st.n_bb; ++k) {
+        auto it = c_atom_to_elem.find(st.atom_indices[k][2]);
+        if(it != c_atom_to_elem.end()) st.bb_o_hbond_elem[k] = it->second;
+    }
+}
+
 void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     auto parsed = read_hybrid_settings(config_root, engine.pos->n_elem);
+    resolve_bb_o_hbond_elements(config_root, parsed);
     auto current_stage = martini_stage_params::get_current_stage(&engine);
     parsed.active = parsed.has_config && hybrid_interface_active_stage(parsed, current_stage);
 

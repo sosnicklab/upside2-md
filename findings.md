@@ -1726,3 +1726,93 @@ installed **pymbar 4.0.3** is *not* a bug -- 3D and 2D give identical `f_k` (max
 Lesson: when a solver reports a gradient that is an exact function of the array shape
 (`sqrt(K-1) * N` here) rather than of the data, it has not solved anything. Check that before reading any
 number downstream of it.
+
+## Update 92 (2026-08-13): the NaN trigger — the LJ core table was force-free, and particles reached it
+
+Findings 90 left the trigger unidentified and concluded the catastrophic core region was ~500 kT out of
+reach. **That conclusion was wrong.** Per-step instrumentation (`UPSIDE_MARTINI_PAIR_DIAG`, jobs
+53324867/53324868: 48 replicas, exchange disabled so a blow-up stays in the slot that made it, 340 000
+steps, 9.2 h) measured the opposite.
+
+| | 53324867 | 53324868 |
+|---|---|---|
+| reported approaches < 1 A | 4742 | 5032 |
+| approaches < 0.6 A (inside the floored plateau) | 1446 | 1432 |
+| closest approach | **0.0355 A** | **0.0466 A** |
+| largest force delivered anywhere | 3.4e11 E_up/A | 1.0e11 E_up/A |
+
+The floor was the defect. `martini_build_tables.py` evaluated the grid at `r = max(r, 0.1*sig)` on a
+domain starting at r = 0, so below 0.1*sig (0.47-0.60 A) the tabulated potential was a **constant** and
+therefore exerted **no force at all**. At 0.0355 A the true dry-MARTINI LJ force is **5.8e29 E_up/A**;
+the table's largest delivered force anywhere in the run was 3.4e11 -- about **18 orders of magnitude too
+weak**. The clearest single event: a pair at **0.0804 A while the whole box's maximum force was
+7.28 E_up/A**, i.e. that pair felt nothing. 93% of sub-0.6 A events coincided with a >1e6 E_up/A force
+elsewhere (a neighbour being launched); 3% had no force above 1e3 anywhere.
+
+Offending pairs are **environment-environment** (LIPID-LIPID and LIPID-ION; PROTEIN 0-1049,
+LIPID 1050-2723, ION 2724-3155), which is why `lipid_kinetic` is what explodes while the protein KE is
+merely NaN -- the Update-88 signature, reached by a different route.
+
+Why findings 90's barrier argument failed: it computed one-step displacement for an **inertial** particle
+of mass 72 (0.0058 A at r = 3 A). But ION and LIPID are integrated as **overdamped Brownian**; only the
+420 protein atoms are velocity-Verlet. An overdamped step is proportional to the force, so a large force
+gives a large displacement that can overshoot *through* a partner, and once inside the force-free plateau
+there is nothing to eject it. **Entry by overshoot is inferred, not measured**; the floor removing the
+exit is measured. Lesson: check which integrator governs the particles before computing a stability
+margin for them.
+
+**Fix.** Two coupled changes, because the domain was declared in one place and assumed in another:
+* `py/martini_build_tables.py`: floor removed, `PARTICLES_R_MIN_A = 0.0 -> 0.3`, grid built vectorised
+  over the true potential, and a new assertion that every grid point equals the analytic
+  potential-shifted-LJ + reaction-field form to 1e-12 relative (CLAUDE.md requires asserting this rather
+  than assuming it). 0.3 A is far inside anything reachable: the core there is ~5e17 E_up/A.
+* `src/martini_potential.cpp`: `r_min`/`r_max` were **hardcoded to [0, 12]** and ignored the
+  `r_min_ang`/`r_max_ang` attributes the builder already wrote. Changing the builder's domain alone would
+  have silently mapped every distance onto the wrong knot. It now reads the domain from the table and
+  validates it.
+
+Verified locally against a real glpG-DDM system with the corrected table patched in: initial potential
+**-7811.76**, min pair distance 4.0349 A and max force 33.3441 E_up/A -- **identical to the old table**,
+so the change is a no-op everywhere the system actually samples, while the core now delivers
+8.5e15 E_up/A at 0.35 A and 7.3e13 at 0.5 A where the old table delivered ~0. Old .up files still read
+correctly (their own attrs say r_min = 0), so the C++ change is backward compatible.
+
+Residual risk, stated plainly: the clamped spline still returns a constant with zero derivative below its
+domain, so a single overdamped step that lands under 0.3 A would still find no restoring force. The dead
+zone is halved (0.6 -> 0.3 A) and now sits behind a 5e17 E_up/A wall, but it is not eliminated. Whether
+the overdamped step size for ION/LIPID can produce such a jump is the open question.
+
+## Update 93 (2026-08-14): three defects the first corrected-table run exposed
+
+**1. The MD loop destroyed its own error messages.** `src/main.cpp:1252` integrates systems under
+`#pragma omp parallel for` with no exception trapping. An exception cannot leave an OpenMP structured
+block, so any `throw string(...)` from the engine mid-run called `std::terminate`: the local POPE/POPG
+run died at step 155 640 reporting nothing but `libc++abi: terminating due to uncaught exception` and
+`Abort trap: 6`. The setup loop at line 929 already documents this hazard and traps for exactly this
+reason; the integration loop did not. Now traps per system, keeps the first message, and rethrows once
+serial so the existing top-level handler prints it with the round number.
+
+**2. `martini_hdx_membrane_accessibility.py` defaulted to one system's bead names.**
+`--tail-bead-names` defaulted to `C1,C2,C3` -- the DDM tails. On POPE/POPG (`C1A..C4A`, `C1B..C5B`,
+`D3B`) it found zero tail beads and raised. It raised loudly here, but that is luck: a lipid that happened
+to contain a bead called C1 would have been scored on the wrong subset silently. The default is now empty
+and the tails are detected from the trajectory by the MARTINI apolar naming pattern `^[CD]\d[A-Z]?$`,
+which covers a single-tailed detergent and a two-tailed lipid alike; an explicit list still overrides.
+Verified: auto-detection on POPE/POPG selects C1A,C1B,C2A,C2B,C3A,C4A,C4B,C5B,D3B (2511 beads) and gives
+an accessibility array bit-identical to passing those names by hand.
+
+**3. Removing the table floor did not stop core penetration -- it changed the consequence.** On the
+corrected table the same system still reached **0.2078 A**, with 32 approaches under 1.0 A and 6 under
+0.3 A, and forces up to **1.27e15 E_up/A**. Under the old floored table those pairs coasted through
+force-free; now they receive an enormous impulse and the run dies. So findings 92's fix removed a real
+defect (the table is now the published potential) but the **entry** mechanism is untouched, and the
+overdamped Brownian overshoot named there as "inferred, not measured" is now the outstanding cause.
+Note the residual dead zone below the new r_min = 0.3 A was entered, which is exactly the risk that entry
+recorded.
+
+Also fixed while chasing these: `inject_particles_table` restated the radial domain instead of copying it
+from the source table (see findings 92), and the C++ hardcoded the 1000-point grid size in four places;
+the grid geometry is now declared once by `py/martini_build_tables.py` and carried through.
+
+Lesson: a diagnostic that cannot report is worse than no diagnostic. Two of these three were only findable
+because the pair instrumentation was still on -- the crash itself said nothing at all.

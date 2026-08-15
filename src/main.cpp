@@ -1249,8 +1249,14 @@ try {
         auto tstart = chrono::high_resolution_clock::now();
         while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
             int last_start = systems[0].round_num;
+            // An exception must not escape an OpenMP structured block: doing so calls std::terminate
+            // and the message is destroyed, which is exactly how a mid-run failure reported nothing but
+            // "Abort trap: 6". Trap per system, keep the first message, and rethrow once serial so the
+            // top-level handler can print why the run died.
+            std::string omp_error;
+            bool omp_failed = false;
             #pragma omp parallel for schedule(static,1)
-            for(int ns=0; ns<int(systems.size()); ++ns) {
+            for(int ns=0; ns<int(systems.size()); ++ns) try {
                 System& sys = systems[ns];
                 for(bool do_break=false; (!do_break) && (sys.round_num<n_round); ++sys.round_num) {
                     int nr = sys.round_num;
@@ -1361,8 +1367,20 @@ try {
 
                     do_break = nr>last_start && replica_interval && !((nr+1)%replica_interval);
                 }
+            } catch(const string &e) {
+                #pragma omp critical
+                if(!omp_failed) { omp_failed = true; omp_error = e; }
+            } catch(const std::exception &e) {
+                #pragma omp critical
+                if(!omp_failed) { omp_failed = true; omp_error = string("std::exception: ") + e.what(); }
+            } catch(...) {
+                #pragma omp critical
+                if(!omp_failed) { omp_failed = true; omp_error = "unknown exception"; }
             }
             // Here we are running in serial again
+            if(omp_failed)
+                throw string("integration failed at round ") + to_string(systems[0].round_num) +
+                      ": " + omp_error;
             if(received_signal!=NO_SIGNAL) break;
             if(passed_time_lim) break;
 
