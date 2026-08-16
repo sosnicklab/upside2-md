@@ -28,12 +28,21 @@ Snapshot **2026-08-15, after the BB-proxy rework was deployed to the cluster**.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 53349015 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | RUNNING | started 2026-08-15 00:53, block 1/12, 48 replicas, T 0.70–0.90, dt 0.009, 36 h/block, self-resubmitting |
-| 53349017 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | RUNNING | same |
-| 53349018 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | RUNNING | same |
-| 53349020 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | RUNNING | same |
+| 53410263 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | **relaunched 2026-08-16 08:35 from CB-corrected seeds** (findings 102); block 1 of 12, 48 replicas, T 0.70–0.90, dt 0.009, 36 h/block, self-resubmitting |
+| 53410264 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | same |
+| 53410265 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | same |
+| 53410266 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | same |
 | 53372760 | `np_1AO6_prod` | **NP** | RUNNING | block 6/8, self-resubmitting; ~224 k frames/replica accumulated |
 | 53372772 | `np_footprint` | **NP analysis** | RUNNING | `footprint.sbatch` → `np_frames.npz`; log `np_frames.<jobid>.out` |
+
+**Superseded 2026-08-16:** jobs 53349015/17/18/20 were cancelled at 16 chunks of block 1 and their data
+moved to `popepopg_REMD/<variant>_pre_cbfix/` (102 G total, deletable). They carried the 0.568 A CB
+placement defect of findings 102. Nothing usable was lost: the protection state has zero variance at that
+point in a chain (48 replicas from one common seed need several blocks to decorrelate), so block 1 was not
+analysable. The four seeds were patched in place and verified, then resubmitted as 53410263-66.
+Verification of the correction before applying it: placing CB by each convention and comparing against the
+**actual crystal CB atoms** over 187 residues gives mean deviation 0.576 A (raw, as shipped) versus
+0.047 A (corrected) -- the corrected placement is right, independent of any code reading.
 
 **Confirmed loading on the new binary 2026-08-15 00:53**: all four reached `[remd] block 1/12` and
 `calibration 2000 steps x 48` with `n_atom 4949`, no `expected 1 arguments but got 2`. The seed migration

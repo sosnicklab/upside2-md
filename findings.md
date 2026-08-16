@@ -1981,3 +1981,260 @@ read the diagnostic's post-NaN lines as evidence about the mechanism; only the p
 
 Restart cost nothing: `reseed.py` rotates `/output` to `output_previous_<n>` and reseeds `/input/pos`, and
 `py/martini_remd_concat.py` joins the segments at analysis time.
+
+## Update 98 (2026-08-15): the production seeds carry an equilibration /output, which would have collapsed the cluster MBAR ladder
+
+Found by running the cluster HDX driver on live block-1 data rather than assuming it worked. It failed
+visibly on an empty-array crash in the plot summary, but the real defect was upstream and silent.
+
+`run_remd.py` materialises replicas by copying the production seed, and **those seeds already contain an
+`/output`** -- 300-400 frames from the equilibration/handoff stage at a single temperature, T = 0.8647.
+That is why the first-block `reseed()` works at all (it requires an `/output` to reseed from). On that
+first reseed the equilibration output is rotated to `output_previous_0`, so **the oldest chunk of every
+replica is equilibration, not production**.
+
+`martini_remd_concat.py` joined chunks oldest-first, so every replica's trajectory began with the
+equilibration chunk. `get_info_from_upside_traj.py` takes the temperature from the first frame, so all 48
+replicas were labelled **T = 0.8647** -- one state, 48 times. pymbar said so out loud ("States 45 and 47
+have the same energies on the dataset") but did not fail, and the reduced potentials
+`reduced_pot[k,l] = beta[l]*cE0[k]` become identical across l, which is precisely the degenerate
+uniform-weight condition of findings 91. It would have produced a plausible-looking dG profile that was an
+unweighted average over the whole ladder.
+
+Fixed in `martini_remd_concat.py`: the production temperature is read from the newest chunk and any chunk
+disagreeing with it is dropped and named in the report. Verified on three replicas spanning the ladder --
+`5 chunks kept at T=0.7000 / 0.7990 / 0.9000, DROPPED off-temperature output_previous_0@0.8647` -- each
+joined file now carrying exactly one temperature.
+
+Two general points this reinforces:
+* **The local run is not affected**, because `warm_start.py` builds replicas from a `seed.up` that has no
+  `/output` at all. The same tool over the same code path was clean locally and broken on the cluster
+  purely because of how the replicas were materialised. Testing one does not test the other.
+* Joining trajectory segments is not safe by construction. Segments can differ in thermodynamic state, and
+  a concatenation that ignores that produces a file which looks well-formed and is physically meaningless.
+  Check the temperature, not just the frame count.
+
+Also fixed: `plot_ref_style.py` crashed with `zero-size array to reduction operation minimum` when every
+residue at a target temperature was off-scale. It now reports that outcome instead, since "the reweighting
+resolved nothing at this temperature" is a result worth printing rather than a traceback.
+
+**Resolution of the all-off-scale result (same test, after the temperature fix).** With the ladder correct
+(48 distinct rungs, zero "same energies" warnings) the pipeline runs to completion but every residue is
+off-scale at every temperature -- 169 at p_f = 1, 34 at p_f = 0, identical at all five targets. That is
+not a defect: the protection state has **exactly zero variance** over 1295 frames x 48 replicas, because
+the H-bond score the protection test reads (`protein_hbond[:,6]`) changes by at most 0.0013 across the
+whole trajectory and the H-bonded count is 124 in every single frame. The coordinates do move (~0.6 nm),
+but as overall translation and rotation, not backbone opening.
+
+The cluster run had reached only ~5 chunks of block 1 = 57 500 steps = **517 t.u.**, and all 48 replicas
+were materialised from one seed, so they are 48 short descendants of a single structure. Measured on the
+local run, opening events occur at roughly **one frame in 2200** even after 1710 t.u.; at 517 t.u. from a
+common ancestor, zero events pooled is the expected outcome. Identical counts across target temperatures
+is the signature -- reweighting cannot create variation in a quantity that never varies.
+
+Consequence for the deliverable: the cluster runs need several blocks before their HDX profile means
+anything, while the local run already produces one. This is independent confirmation that the local
+16-replica run, not the 48-replica cluster ladder, is the right source for the wildtype figure -- it has
+6.3x the per-replica trajectory length, and trajectory length is what generates opening events.
+
+## Update 99 (2026-08-15): two self-inflicted data-handling faults, and the local ladder made self-healing
+
+The local top rung (T = 0.90, system 15) blew up a second time, at step ~226 800 after the first at
+~145 700 -- same replica, same rung, nothing else affected. Recovering it by hand is not viable overnight:
+a NaN replica drags the whole ladder from 33 700 to ~10 800 steps/h and blocks exchange at the top, so
+hours would be lost unattended. `scratchpad/local_popg_79HIS/supervise.sh` now runs the ladder in rounds
+against a wall-clock deadline, reseeding any destroyed replica between rounds -- the same
+rollback-and-continue design `run_remd.py` uses on the cluster. It is recovery, not a guard: nothing is
+clamped, no threshold widened, and the destroyed frames are dropped rather than repaired.
+
+**Fault 1: `| head -3` silently truncated a write.** The 06:15 restart ran
+`python3 reseed.py <16 files> | head -3`. `head` exits after three lines, the pipe closes, and the
+producer takes SIGPIPE -- so **only the first three replicas were reseeded**. The other thirteen restarted
+from their previous `/input/pos`, re-simulating ~41 000 steps instead of continuing. Detected by noticing
+run 0 had three segments where runs 2 and 15 had two. No corruption resulted (every seam checks out at
+max|delta| = 0.0000 A, so the trajectories are continuous), but ~40 min of compute was wasted on thirteen
+replicas. **Never pipe a script that performs writes into `head`** -- use `tail`, which drains its input.
+`supervise.sh` pipes reseed through `tee | tail -2` for this reason.
+
+**Fault 2: dropping destroyed chunks whole would have thrown away most of a good trajectory.**
+`martini_remd_concat.py` discarded any chunk containing a non-finite potential. Run 15's first segment
+blew up 2333 frames into 2448, so that rule would have cost 2332 good frames to remove ~100 bad ones --
+and, worse, it would have removed the segment silently while reporting a plausible frame count. Now
+filtered per frame on the physical criterion (finite AND negative total potential, the same test
+`reseed.py` uses), which keeps 6197 of 6233 frames on the damaged replica and reports the 36 removed.
+
+Also fixed while testing that: the join indexed every dataset in a chunk by frame number, but a chunk
+carries at least one whole-run record that is not per-frame (`replica_swap_partner`, a single row). Those
+are now identified by comparing the first axis against the frame count and left out with a note, rather
+than being indexed into nonsense.
+
+## Update 100 (2026-08-15): what limits glpG HDX protection -- it is tertiary packing, not the integrator, the criterion, or the bilayer prep
+
+Chased by elimination after the dG profile came out spiky and capped near 2 kcal/mol. Each candidate was
+measured, not argued.
+
+**Ruled out.**
+* *Integrator.* `avg_kinetic_energy/1.5kT` excess is +2-3% and dt-independent, far too small to produce a
+  15% unbonded population; covalent geometry is intact (worst C-N 1.78 A, 0 broken); the temperature
+  dependence is weak (H-bond loss 27% -> 16% from 315 K to 245 K, ~1.7x, which is what a ~2 kcal/mol
+  opening free energy predicts); and the same integrator gives 2.6 A core RMSD in DDM.
+* *H-bond assignment.* On the crystal geometry Upside's H-bond score agrees with the DSSP electrostatic
+  criterion to within 8% inside helices (DSSP 86.5% bonded, Upside 78.4%), and the 12 disagreements are
+  marginal (DSSP E -0.53 to -2.10, several 3-10 "G"). ~16% of DSSP-helical amides are helix N-termini with
+  no i-4 partner, so 86.5% is near the ceiling.
+* *Lipid voids / bilayer prep.* Every backbone site has environment beads within 8 A (0 exceptions);
+  nearest-environment distance median 5.2 A, max 7.3 A; coordination 8.86 within 8 A (9.59 in the TM belt).
+  The belt-void failure mode of the earlier prep is absent from these seeds.
+* *Hydrophobic mismatch.* PO4-PO4 thickness 38.0 +- 0.1 A, acyl core 25.4 A against glpG's 28.2 A belt --
+  a mismatch of only -2.8 A.
+* *The burial threshold itself.* Burial failure is almost perfectly nested inside H-bond failure (3.4% vs
+  3.34% of frames), so the cut value is not what is binding; and burial here is computed on the
+  protein-only projection, so lipids do not enter it.
+
+**What it is.** The protein does not hold its tertiary helix packing. Helical-core CA-RMSD from the crystal
+**plateaus at 4.1-4.4 A** in POPE/POPG (3.48 -> 4.67 within the first segment, then flat across two more --
+equilibrium, not drift) against **2.61 A** in DDM. Loosened packing lowers protein self-burial, so both
+protection terms fail together in 3.34% of frames, giving p_f = 0.9666 and **dG = 1.99 kcal/mol** -- which
+reproduces the observed median (1.9-2.0) from the raw terms alone.
+
+| at T = 0.70, crystal-bonded amides | POPE/POPG | DDM |
+|---|---|---|
+| H-bond occupancy (median) | 0.844 | 0.952 |
+| burial fails | 3.4% | 1.2% |
+| both fail -> exposure | 3.34% | 0.93% |
+| implied raw dG_open | 1.99 | 2.76 |
+| helical-core CA-RMSD | 4.15 A | 2.61 A |
+| CA-Rg (crystal 20.43 A) | 20.77 | 18.63 |
+
+**Two cautions on the DDM comparison.** That campaign died at block 2-3, so it had less time to drift and
+its 2.61 A is an upper bound on how good it is. And its Rg is 1.8 A *below* the crystal while POPE/POPG
+matches it (20.77 vs 20.43) -- so DDM is compacted, not simply more faithful. Higher protection in a
+micelle partly reflects that compaction.
+
+**Corrections made along the way, all mine.** I first attributed the flat profile to sampling (wrong -- it
+was the 0.99999 clip, findings 96); then to the burial threshold saturating (wrong -- burial protects
+*more*, and the binding term is exposure); then claimed local stability was "too low by ~10 kcal/mol"
+(wrong -- that compared a raw single-replica exposure statistic against MBAR-reweighted peak values, which
+are not the same quantity; DDM's raw dG_open is also only 2.76). The lesson is to fix what quantity is
+being compared before drawing a mechanism from a gap between two numbers.
+
+## Update 101 (2026-08-15): what the hybrid actually replaced, and the two protein-protein terms nothing replaces
+
+Checked because the missing-node list from findings 100 might have been implicit-bilayer machinery, in
+which case omitting it would be correct. It is not. Two things had to be separated: terms the hybrid
+*replaced by design*, and terms that are simply gone.
+
+**Correctly absent.** Upside's implicit bilayer is `membrane.h5` via `--membrane-potential` /
+`write_membrane_potential{,3,4}` / `write_membrane_lateral_potential`, plus `--membrane-thickness`. None
+of the missing nodes come from those, and an explicit-lipid model should not carry an implicit slab.
+
+**Replaced by design.** The `rotamer` node's 1-body input:
+
+| | rotamer arguments |
+|---|---|
+| standard Upside | `placement_fixed_point_vector_only`, `placement_scalar`, **`hbond_coverage`**, **`hbond_coverage_hydrophobe`** |
+| hybrid | `placement_fixed_point_vector_only`, `placement_fixed_scalar`, **`martini_sc_table_1body`** |
+
+So the sidechain environment field is deliberately swapped from Upside's implicit-solvent coupling to the
+explicit MARTINI SC-env table. That substitution is coherent and is not a defect.
+
+**Absent and NOT replaced -- MARTINI cannot supply either, since it only provides protein-environment
+interactions:**
+* `sigmoid_coupling_environment` <- `environment_coverage_sc`: the many-body **protein self-burial** term.
+  MARTINI's 1-body rewards lipid contact, not helix-helix packing. Nothing rewards the protein burying
+  against itself beyond pairwise rotamer interactions.
+* `bb_sigmoid_coupling_environment` <- `environment_coverage_hb` + `cat_pos_bb_coverage`, and
+  `hb_environment_coverage_hn/oc`: backbone burial coupling.
+* `hbond_coverage` / `hbond_coverage_hydrophobe`: sidechain-to-backbone-H-bond competition, which in
+  standard Upside is solved **inside the rotamer solver**. MARTINI has no H-bond concept at all.
+
+These map onto the two measured deficits (findings 100): helical-core CA-RMSD 4.15 A and backbone H-bond
+occupancy 0.844. Evidence they are core FF rather than niche: **all 24** master example configurations
+pass `environment.h5` + `bb_env.dat`, including **all six** `08.MembraneSimulation` scripts, which use them
+*alongside* `membrane.h5`. (An earlier grep of mine missed the membrane example because it searched only
+the `--environment-potential` CLI form and not the `environment_potential=` kwargs form.)
+
+**Why this is not a flag flip.** Restoring the terms changes the `rotamer` node's arity and requires
+deciding how Upside's protein-burial 1-body composes with MARTINI's lipid 1-body inside the rotamer
+solver -- a C++ interface question, not a prep option. Scale check on real structures: the self-burial
+term disfavours the drifted state by only **8.0 E_up = 5.6 kcal/mol**, so restoring it alone may not close
+the 4.15 -> 2.6 A gap; the H-bond coverage coupling is the likelier dominant piece.
+
+## Update 102 (2026-08-15): the hybrid's CB placement omits the frame-origin subtraction — every sidechain site is 0.568 A off
+
+Found while checking the claim that the hybrid is "Upside core, as in the HDX example, plus
+protein-environment interactions". Most of that claim holds; this part does not.
+
+`affine_alignment` builds each residue frame with its **origin at the centroid of N/CA/C**
+(`src/eig.cpp`: `center = (atom1+atom2+atom3)/3`, atoms centred before the Kabsch fit), and both configs
+store the same centroid-subtracted `ref_geom` (agreeing to 5.5e-8). A point expressed in that frame must
+therefore be given relative to the centroid. `upside_config.write_environment` does exactly that --
+`ref_pos -= ref_pos[:3].mean(axis=0)` before storing `placement_data`. The hybrid prep
+(`martini_prepare_system_lib.CB_PLACEMENT`) stores the **raw** CB coordinate and never subtracts it:
+
+| | placement_data (frame coords) |
+|---|---|
+| standard Upside | `[-0.019807,  1.511741, 1.206801]`  = CB - centroid |
+| hybrid | `[ 0.000000,  0.943756, 1.206801]`  = CB |
+| difference | `[ 0.019807, -0.567985, 0.000000]`  = exactly the centroid |
+
+The frame is orthonormal, so the displacement is **0.568 A in Cartesian space, for every residue**. The
+error is systematic, not random, and it moves the site that anchors the entire sidechain-environment
+term: `martini_sc_table_1body` takes `placement_fixed_point_vector_only_CB` as its sidechain input. At a
+MARTINI bead sigma of 4.7 A this is ~12% of a contact radius, biasing every SC-env energy and force.
+
+Note the direction of the check that found it: comparing the hybrid against a *standard* Upside config of
+the same protein, array by array. The bonded and hydrogen-bonding core came back bit-identical
+(`rama_map_pot`, `hbond_energy`, `protein_hbond`, `backbone_pairs` all max|delta| = 0), which is what made
+the two arrays that did differ worth reading rather than dismissing as index remapping.
+
+**Fixed 2026-08-15 22:40.** `CB_PLACEMENT` now derives from an explicit reference geometry with the frame
+origin subtracted, matching `upside_config.write_environment` to 5.8e-8 (float32 rounding); `CB_VECTOR` is
+unchanged because CB-CA is a difference. `martini_build_tables.py` needs no change -- it uses CB only as a
+relative origin for distance and angle, so the spline tables are unaffected. Measured effect of the
+correction: the total potential of an identical configuration moves by **~+680 E_up**, confirming the
+0.568 A displacement was materially biasing SC-env energetics. The three RD1 arms were rebuilt on the
+corrected placement, stability-tested (KE/1.5kT 1.011-1.021, 0 broken bonds, 0 non-finite), and relaunched;
+the pre-fix configs are kept in `scratchpad/rd1_env_test/pre_cbfix/`.
+
+**Still carrying the defect:** the four cluster REMD chains and their seeds, and the local production seed
+behind the delivered HDX figure. It also partially confounds findings 100/101: some of the fold-fidelity deficit attributed to the missing
+protein-protein terms may instead come from this displacement. The relaunched experiment separates them --
+`base` now isolates the CB correction against the old 4.15 A baseline, while `env`/`envfull` test the
+environment terms on top of a corrected anchor. Note the bilayer-vs-micelle comparison itself remains
+internally valid, since both used the same prep and carried the same displacement.
+
+## Update 103 (2026-08-16): RD1 rejected -- restoring the environment terms does not recover the fold
+
+The three-arm experiment of plan.md RD1, rerun on the CB-corrected placement (findings 102) so the two
+effects were separable, at comparable step counts (750--780 k steps each, single system, T = 0.70, all
+from one identical starting configuration):
+
+| arm | restored | helical-core CA-RMSD (A) | Rg (A) |
+|---|---|---|---|
+| `base` | nothing (CB fix only) | 4.61 +- 0.09 | 20.36 |
+| `env` | protein self-burial | 4.71 +- 0.12 | 20.43 |
+| `envfull` | all non-membrane Upside terms | 4.53 +- 0.08 | 20.16 |
+
+`env - base` is $+0.10$~A and `envfull - base` is $-0.08$~A, both inside the run-to-run scatter. The
+target was a move toward the 2.61 A DDM figure, i.e. roughly $-1.5$~A. **Neither phase closes the gap**,
+and the effect size is bounded far below what would be needed. Rg stays at 20.2--20.4 against a crystal
+value of 20.43 in every arm, so nothing over-compacted either -- the predicted failure mode did not occur,
+but neither did the intended repair.
+
+**The CB correction also did not improve fold fidelity.** It was a genuine bug and had to be fixed
+(the SC-env energy of an identical configuration moved ~680 E_up), but `base` at 4.61 A is no better than
+the 4.15 A previously measured. Those two numbers are not directly comparable -- 4.15 A came from a
+16-replica REMD segment average and 4.61 A from a single 780 k-step trajectory, which is longer and
+therefore further along whatever slow drift exists -- but there is plainly no improvement.
+
+So the cause of the ~4.5 A helical-core deviation remains **unidentified**. Ruled out by measurement so
+far: the integrator, the H-bond assignment, lipid packing/voids, hydrophobic mismatch, the burial
+threshold, the CB placement, and now the absent protein-protein environment terms. What has *not* been
+tested is the rotamer 1-body representation (`placement_fixed_scalar`, fixed rotamer probabilities, versus
+standard Upside's rama-dependent `placement_scalar`) -- the one remaining node-level difference from a
+standard configuration.
+
+Consequence for the deliverable: do **not** add the environment terms to production. The wildtype ladder
+was relaunched on the CB-corrected seed alone, which is a correctness fix rather than an expected
+improvement in the HDX profile.

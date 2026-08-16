@@ -114,3 +114,54 @@ Reverted to dt=0.001; /output from destroyed runs deleted; resubmitted as job 53
   reading `/output` alone would have silently analysed only the newest segment. Verified on the real
   3-segment files: 2448 + 697 - 300 discard = 2845 frames joined, matching exactly.
   `resume.sh [STEPS]` is the one-command recovery after the reboot (or after any blow-up).
+- **Local ladder made self-healing for the unattended overnight window.** System 15 (T=0.90) blew up a
+  second time at step ~226 800; `supervise.sh` now runs rounds against a wall-clock deadline and reseeds
+  destroyed replicas between them. Two of my own data-handling faults fixed alongside (findings 99):
+  `reseed.py | head -3` SIGPIPE'd the writer so only 3 of 16 replicas were reseeded at the 06:15 restart
+  (no corruption -- every seam is continuous at 0.0000 A -- but 13 replicas re-ran ~41 000 steps), and the
+  concat dropped destroyed chunks whole, which would have discarded 2332 good frames from run 15 to remove
+  ~100 bad ones. Now filtered per frame on finite-and-negative potential.
+- **Plot now reproduces the reference structure.** With the healed multi-segment data: 163-179 of 203
+  residues resolve (was 128-171), off-scale down to 24-40, dG -4..+20. Peak/valley positions match the
+  reference (valleys 50-70, 118-133, 150-162, 178-190). Remaining difference is spikiness and the
+  off-scale count, which is genuine sampling refinement.
+- **Local wildtype run stopped at the user's call** with 11 533 frames/replica (~692 k steps, 184 528
+  pooled). Final HDX figure in ~/Downloads: 187/203 residues resolved at T=0.85, 16 off-scale, dG -2.4..+18.6.
+- **Root-caused the residual flatness (findings 100/101).** Ruled out by measurement: integrator, H-bond
+  assignment (agrees with DSSP to 8%), lipid voids (none), hydrophobic mismatch (-2.8 A), burial threshold.
+  It is tertiary packing: helical-core CA-RMSD plateaus at 4.15 A (DDM 2.61 A), so both protection terms
+  fail together 3.34% of frames -> dG 1.99, reproducing the observed median. Localised to three
+  protein-protein terms MARTINI cannot supply (protein self-burial, backbone burial coupling, and the
+  sidechain-backbone H-bond competition solved inside the rotamer node). The sidechain 1-body field was
+  deliberately and correctly replaced by martini_sc_table_1body; membrane.h5 is correctly absent.
+  Proposed remedy documented as plan.md RD1 -- NOT implemented, needs sign-off (changes rotamer arity).
+- **RD1 built and running as a 3-arm experiment** (`scratchpad/rd1_env_test/`): `base` (as shipped), `env`
+  (protein self-burial restored), `envfull` (all non-membrane Upside terms restored; differs from a
+  standard config by one node, `placement_scalar`). Built with Upside's own writers; rotamer arg list
+  extended, no C++ change needed since `RotamerSidechain` sums a variable-length prob_nodes vector.
+  envfull pre-flight 3000 steps: KE/1.5kT 1.009, Rg 19.44->19.62, 0 broken, 0 non-finite.
+  2 M steps each, finishing before the Sunday shutdown; `rd1_resume.sh` recovers from an interruption.
+  First reading is uninformative (all three still at the shared start, envfull only 6 k steps).
+- **Fixed a systematic 0.568 A CB placement error (findings 102).** `affine_alignment` centres each residue
+  frame on the centroid of N/CA/C, so a placement in that frame must be centroid-relative;
+  `martini_prepare_system_lib.CB_PLACEMENT` stored the raw CB. Every sidechain interaction site -- the
+  anchor of the entire SC-env term -- was displaced by exactly the centroid. Found by comparing the hybrid
+  config array-by-array against a standard Upside config of the same protein (the bonded and H-bond core
+  came back bit-identical, which is what made the two differing arrays worth reading). Fixed to match
+  upside_config to 5.8e-8; spline tables unaffected. Identical-configuration potential moves ~+680 E_up.
+  RD1 arms rebuilt on the corrected placement, stability-tested, relaunched at 1.2 M steps.
+- **RD1 rejected (findings 103).** On the CB-corrected placement, restoring the protein-protein
+  environment terms changed helical-core RMSD by +0.10 A (self-burial) and -0.08 A (all terms) against a
+  4.61 A control -- inside scatter, against a ~1.5 A target. The CB fix itself also did not improve fold
+  fidelity, though it was a real bug worth fixing. Cause of the ~4.5 A deviation remains unidentified; the
+  one untested node-level difference is the rotamer 1-body representation (fixed vs rama-dependent).
+  Stopped the arms and relaunched the wildtype ladder on the CB-corrected seed alone (1.4 M steps,
+  `scratchpad/local_popg_cbfix/`), which is the Tuesday deliverable path.
+- **Verified the CB correction against ground truth, then applied it to the cluster.** Placing CB by each
+  convention and comparing to the actual crystal CB atoms (187 residues): raw/as-shipped deviates 0.576 A
+  mean, corrected deviates 0.047 A -- the residual being idealized-geometry error. Independent of any code
+  reading. Then patched the four cluster seeds, cancelled 53349015/17/18/20 at 16 chunks of block 1, moved
+  that data to `<variant>_pre_cbfix/` (102 G, reversible), and resubmitted as 53410263-66 from the
+  corrected seeds. Nothing analysable was lost -- protection-state variance is zero that early in a chain.
+- Local CB-corrected ladder resumed after the shutdown (146 k steps preserved, all 16 replicas readable);
+  running 200 k more, sized to finish ~14:30 before the next expected shutdown.

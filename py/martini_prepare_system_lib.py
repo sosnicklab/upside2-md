@@ -80,8 +80,23 @@ STAGE_PARAMS = {
 }
 
 
-CB_PLACEMENT = np.array([[0.0, 0.94375626, 1.2068012]], dtype=np.float32)
-CB_VECTOR = CB_PLACEMENT / np.linalg.norm(CB_PLACEMENT, axis=1, keepdims=True)
+# CB placement in the affine_alignment frame. That frame's origin is the CENTROID of N/CA/C
+# (src/eig.cpp centres the three atoms before the Kabsch fit, and the stored ref_geom is centred to
+# match), so a point placed in it must be given relative to the centroid -- which is what
+# upside_config.write_environment does. Storing the raw CB instead displaces every sidechain site by the
+# centroid, 0.568 A, and CB is the anchor of the whole SC-env term (martini_sc_table_1body takes
+# placement_fixed_point_vector_only_CB as its sidechain input). The direction vector is CB-CA, a
+# difference, so the centroid cancels there and it is unchanged.
+CB_REFERENCE_GEOMETRY = np.array([
+    [-1.19280531, -0.83127186, 0.0],        # N
+    [ 0.0,         0.0,        0.0],        # CA
+    [ 1.25222632, -0.87268266, 0.0],        # C
+    [ 0.0,         0.94375626, 1.2068012],  # CB
+])
+_cb_frame_origin = CB_REFERENCE_GEOMETRY[:3].mean(axis=0)
+CB_PLACEMENT = (CB_REFERENCE_GEOMETRY[3] - _cb_frame_origin)[None, :].astype(np.float32)
+_cb_direction = CB_REFERENCE_GEOMETRY[3] - CB_REFERENCE_GEOMETRY[1]
+CB_VECTOR = (_cb_direction / np.linalg.norm(_cb_direction))[None, :].astype(np.float32)
 N_BIT_ROTAMER = 4
 LEGACY_STAGE7_NODES = [
     "rotamer",

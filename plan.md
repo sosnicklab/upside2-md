@@ -1,22 +1,34 @@
-# CURRENT PHASE (2026-08-15): deliver the glpG HDX ΔG-vs-residue plot before Monday 2026-08-17
+# CURRENT PHASE (2026-08-16): deliver the glpG HDX ΔG-vs-residue plot before Tuesday 2026-08-18
 
 The BB proxy rework (findings 94) is done, deployed and verified; the phase is now the deliverable. Target
 shape is `~/Downloads/79HIS_0.90.png`: six broad peaks reaching ΔG 10–20 kcal/mol at residues ~35–48,
 ~85–100, ~110–125, ~135–148, ~165–175, ~190–200.
 
-**The limit is sampled amide opening events, and this is measured, not assumed.** A dry run of the full
-pipeline on the first 5% of the local run gives f_k spread 106.9 and neighbour overlap 0.093–0.268
-(median 0.233, better than the 48-replica DDM ladder), so the thinned ladder reweights fine. What is
-missing is events: 65–112 of 203 amides sit at the p_f = 1 sentinel and ΔG is compressed to −5…+7.
+**Ladder is fine; two separate things limited the profile, and both are now understood.** MBAR reweights
+correctly (f_k spread 106.9, neighbour overlap 0.093–0.268, better than the 48-replica DDM ladder). The
+compression to −5…+7 was a 0.99999 clip in `calc_hdx_ht.py`, now fixed (findings 96). The residual
+flatness — helix amides at ΔG ≈ 2 rather than 10–20 — is a model property: the helical core sits ~4.5 Å
+from the crystal, so both protection terms fail together ~3.3% of the time. **Cause still unidentified.**
+Seven candidates eliminated by measurement (integrator, H-bond assignment, lipid packing, hydrophobic
+mismatch, burial threshold, CB placement, and the absent protein–protein terms — RD1, rejected, findings
+103). The one untested node-level difference from a standard Upside config is the rotamer one-body
+representation: fixed (`placement_fixed_scalar`) versus rama-dependent (`placement_scalar`).
 
 - [x] **D1** Rework the BB proxy onto `infer_H_O` + constant-weight split; delete the old placement path.
 - [x] **D2** Deploy to midway3, rebuild, migrate every config (`py/martini_upgrade_hybrid_args.py`).
       All four glpG jobs and the six NP replicas confirmed loading on the new binary.
 - [x] **D3** Validate the HDX pipeline end-to-end and measure MBAR overlap before committing the weekend.
-- [ ] **D4** Local wildtype REMD, 16 replicas × 1.3 M steps (~40 h, Sunday PM). **Primary source for the
-      wildtype figure.** Analyse at any point.
-- [ ] **D5** Cluster REMD, 4 variants × 48 replicas, block 1 of 12 due Sunday ~13:00. Supplies the other
-      three variants and a 48-rung ladder, not more sampling of the wildtype.
+- [x] **D4** Local wildtype REMD, 16 replicas. **Stopped 2026-08-15 at the user's call** with enough
+      sampling: 11 533 frames/replica (~692 k steps), 184 528 pooled, across 4 segments, 0 NaN at stop.
+      Final figure delivered: 187/203 residues resolved at T = 0.85, 16 off-scale, ΔG −2.4…+18.6, six-peak
+      structure matching the reference's positions.
+- [x] **D5** Fixed the 0.568 Å CB placement error (findings 102), verified against real crystal CB atoms
+      (0.047 Å vs 0.576 Å), and deployed it everywhere.
+- [ ] **D6** Local wildtype ladder on the CB-corrected seed — `scratchpad/local_popg_cbfix/`, the Tuesday
+      deliverable. Resumed in segments around the user's shutdowns; ~346 k steps/replica after the segment
+      ending 2026-08-16 14:30.
+- [ ] **D7** Cluster REMD relaunched from CB-corrected seeds 2026-08-16 (53410263–66), back at block 1 of
+      12. Gives the other three variants and a 48-rung cross-check; **not** a Tuesday contributor.
 
 **Measured throughput, which settles which dataset the wildtype figure comes from.** Cluster calibration
 gives 613.7 ms/step for 48 replicas = 12.8 ms per replica-step; the local machine does 9.00 steps/s for 16
@@ -36,6 +48,41 @@ widen destroyed() thresholds, or add any guard.
 K190 is **not** favoured (0.000 contact whenever the protein is still compact, 50th-percentile burial);
 K525/K541 are, and "opens and exposes its center" holds. But 71% of the compact window is one orientation,
 so it is one binding pose, not a preference. Blocked from going further by over-unfolding, below.
+
+---
+
+# How to run, resume, and analyse
+
+The wildtype HDX deliverable. `scratchpad/local_popg_cbfix/` is the CB-corrected ladder (findings 102);
+`scratchpad/local_popg_79HIS/` holds the earlier dataset behind the delivered figure and all the scripts.
+
+```bash
+# resume the ladder after any stop (shutdown, blow-up, or a finished segment)
+python3 scratchpad/local_popg_79HIS/reseed.py scratchpad/local_popg_cbfix/glpG-RKRK-79HIS.run.*.up
+bash scratchpad/local_popg_79HIS/launch_cbfix_ladder.sh <steps>      # ~34 700 steps/h, 16 replicas
+
+# figure from whatever has accumulated; joins all segments itself
+HDX_DATA=scratchpad/local_popg_cbfix HDX_WORK=scratchpad/local_popg_cbfix/hdx \
+  bash scratchpad/local_popg_79HIS/hdx.sh
+```
+
+`reseed.py` rotates each replica's `/output` to the next `output_previous_<n>` and restarts from its last
+healthy frame, so segments accumulate and a resume loses nothing. Add `HDX_LIVE=1` to the analysis only if
+a run might rotate its `/output` mid-analysis. Sizing a segment to a wall-clock deadline is the norm here:
+pick `<steps>` = hours x 34 700 so it ends on its own rather than being killed.
+
+Cluster HDX for all four variants (needs several blocks first — protection-state variance is zero early in
+a chain), and the SSH socket needs a Duo push the user approves:
+
+```bash
+expect scratchpad/mdw3_master.exp                                   # USER approves Duo
+B=/home/yinhanw/project/popepopg_REMD
+for V in glpG-RKRK-79HIS glpG-RKRK-79HIS_S115T glpG-RKRK-79ALA glpG-RKRK-79ALA_S115T; do
+  sbatch --job-name=hdx_$V --output=$B/logs/hdx.%j.out --partition=caslake --account=pi-trsosnic \
+    --nodes=1 --ntasks-per-node=1 --cpus-per-task=16 --time=04:00:00 \
+    --export=ALL,PDB_ID=$V,HDX_LIVE=1 $B/hdx_cluster.sbatch
+done
+```
 
 ---
 
@@ -107,3 +154,68 @@ so it is one binding pose, not a preference. Blocked from going further by over-
 **2026-07-20**: g-JF single-step lipid integrator; BB-env force regression found and fixed (partial BB
   routing 14/54, 12/54, 12/54 to N/CA/C; O share disposable); HDX compatibility layer; manuscript
   rewritten; cell-list pairlist; unit-baking to Python h5-build.
+
+---
+
+# Revised Decisions — proposed, NOT yet implemented
+
+## RD1 (2026-08-15): restore the protein-protein environment terms -- TESTED AND REJECTED (findings 103)
+
+**Status: REJECTED 2026-08-16. Both phases built and tested on the CB-corrected placement; neither
+moved the helical-core RMSD beyond run-to-run scatter (base 4.61, env 4.71, envfull 4.53 A; target ~2.6).
+The production prep is UNCHANGED and should stay that way. See findings 103.** (Architecture Change Rule:
+this alters the rotamer solver's inputs, a core pattern).
+
+**Why.** Measured (findings 100/101): glpG's helical-core CA-RMSD plateaus at 4.15 A in POPE/POPG against
+2.61 A in DDM, and backbone H-bond occupancy is 0.844 where the crystal geometry scores ~1.0. Both
+protection terms then fail together in 3.34% of frames, giving dG = 1.99 kcal/mol -- which reproduces the
+observed HDX median exactly. Ruled out by measurement: integrator, H-bond assignment (agrees with DSSP to
+8%), lipid voids (none), hydrophobic mismatch (-2.8 A), and the burial threshold.
+
+**What is missing.** MARTINI supplies only protein-environment interactions, so three protein-protein
+terms have no substitute: `sigmoid_coupling_environment` (many-body protein self-burial),
+`bb_sigmoid_coupling_environment` + `hb_environment_coverage_hn/oc` (backbone burial coupling), and
+`hbond_coverage` / `hbond_coverage_hydrophobe` (sidechain-backbone H-bond competition, solved inside the
+rotamer node). The sidechain 1-body field, by contrast, was deliberately and correctly replaced by
+`martini_sc_table_1body`. `membrane.h5` is correctly absent -- that is the implicit bilayer.
+
+**The open design question.** Standard Upside feeds `rotamer` two coverage nodes; the hybrid feeds it one
+MARTINI node. Restoring the terms means deciding how the two 1-body fields compose -- summed into one
+input, or the C++ `rotamer` node extended to accept both. Composition must not double-count: Upside
+coverage is over protein CB neighbours, MARTINI over environment beads, so they are disjoint by
+construction, but this needs verifying in the C++ rather than assuming.
+
+**Risk to watch.** `environment.h5` was trained against implicit solvent, so an uncovered residue reads as
+water-exposed; master corrects that in membranes with `membrane.h5`, which the hybrid does not have. The
+failure mode is over-burying the TM surface. Accept the change only if helical-core RMSD moves toward
+2.6 A **without** Rg collapsing below the crystal's 20.4 A (DDM already sits at 18.6 A, i.e. compacted).
+
+**Cheap prior.** The self-burial term disfavours the drifted state by only 8.0 E_up = 5.6 kcal/mol, so it
+is probably not sufficient alone; the H-bond coverage coupling is the likelier dominant piece.
+
+**Test as built** — `scratchpad/rd1_env_test/`, three arms from one identical starting configuration
+(the finished production run's T=0.70 endpoint), 2 M steps each at T=0.70:
+
+| arm | config | nodes restored |
+|---|---|---|
+| `base` | hybrid as shipped | none (control) |
+| `env` | + phase 1 | `weighted_pos`, `environment_coverage_sc`, `sigmoid_coupling_environment` |
+| `envfull` | + phase 2 | also `hbond_coverage`, `hbond_coverage_hydrophobe`, `environment_coverage_hb`, `hb_environment_coverage_hn/oc`, `bb_sigmoid_coupling_environment`, `hbbb_coverage`, `cat_pos_bb_coverage`, `placement_fixed_point_vector_scalar` |
+
+`envfull` differs from a standard Upside config by exactly one node, `placement_scalar`, whose hybrid
+counterpart `placement_fixed_scalar` is present (fixed vs dynamic rotamer probabilities — a rotamer
+representation choice, not an environment term). `membrane.h5` stays out. Built by calling Upside's own
+writers, not reimplementing them; `hbond_coverage`/`hbond_coverage_hydrophobe` are appended to the
+rotamer's argument list, which needs no C++ change because `RotamerSidechain` sums a variable-length
+`prob_nodes` vector.
+
+Pre-flight (envfull, 3000 steps): `avg_kinetic_energy/1.5kT` 1.009, potential -24110 -> -24368, Rg
+19.44 -> 19.62, 0 broken bonds, 0 non-finite. Stable.
+
+Verdict via `compare_arms.py`, which encodes the acceptance rule. **Do not read it before the arms are at
+comparable step counts** — all three start at core-RMSD ~4.3 and the original run needed ~150 k steps to
+reorganise.
+
+**If `envfull` wins**, the follow-on is to move the injection into `martini_prepare_system_lib.py`, rebuild
+the production seeds, and relaunch the REMD ladder. That is roughly a day of sampling, so it only reaches
+a figure by Tuesday if started Sunday night.

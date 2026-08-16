@@ -61,6 +61,12 @@ def main():
         j = int(np.argmin(np.abs(temps - target)))
         y = np.array(dG[j], dtype=float)
         fin = y[np.abs(y) < SENTINEL]
+        if fin.size == 0:
+            # Every amide off-scale means the reweighting resolved nothing at this target temperature,
+            # which is a result worth stating rather than a crash in the summary line.
+            print("  T=%.2f: 0 of %d exchange | ALL residues off-scale (%d at p_f = 1, %d at p_f = 0)"
+                  % (temps[j], y.size, int((y >= SENTINEL).sum()), int((y <= -SENTINEL).sum())))
+            continue
         print("  T=%.2f: %d of %d exchange | dG min %.2f max %.2f median %.2f | never-exchanging %d"
               % (temps[j], fin.size, y.size, fin.min(), fin.max(), np.median(fin),
                  int((y >= SENTINEL).sum())))

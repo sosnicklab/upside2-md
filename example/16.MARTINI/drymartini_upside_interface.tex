@@ -1,46 +1,62 @@
-\documentclass{article}
+\documentclass[journal=jctcce,manuscript=article,layout=twocolumn]{achemso}
+
 \usepackage{amsmath,amssymb,booktabs,array}
 \usepackage[T1]{fontenc}
-\usepackage[margin=1in]{geometry}
 \usepackage{graphicx}
-\usepackage{url}
-\setlength{\emergencystretch}{1em}
 
-% Hybrid Upside/dry-MARTINI interface: method, calibration, and evidence limits.
+% Hybrid Upside/dry-MARTINI interface: construction, exactness, calibration, and
+% the boundary of what the present evidence supports.
 
-\title{A Hybrid Machine-Learned/Physical Model for Membrane-Protein
-Thermodynamics: Coupling the Upside Protein Force Field to a Full-Resolution
-dry-MARTINI Membrane}
-\author{}
-\date{}
+\author{Yinhan Wang}
+\affiliation{Department of Chemistry, The University of Chicago, Chicago, Illinois 60637, United States}
+\alsoaffiliation{Department of Biochemistry and Molecular Biology, The University of Chicago}
+% TODO: complete the author list and affiliations before submission.
+\author{Tobin R. Sosnick}
+\email{trsosnic@uchicago.edu}
+\affiliation{Department of Biochemistry and Molecular Biology, The University of Chicago, Chicago, Illinois 60637, United States}
+
+\title{Composing a Machine-Learned Protein Force Field with a Physical Membrane:
+An Exact Derived-Site Interface Between Upside and Full-Resolution dry-MARTINI}
+
+\abbreviations{MD, molecular dynamics; CG, coarse-grained; HDX, hydrogen--deuterium
+exchange; PMF, potential of mean force; MBAR, multistate Bennett acceptance ratio;
+g-JF, Gr\o{}nbech-Jensen--Farago; RMSD, root-mean-square deviation}
+
+\keywords{coarse-grained simulation, membrane proteins, force-field composition,
+hydrogen--deuterium exchange, dry-MARTINI, Upside}
 
 \begin{document}
-\maketitle
 
 \begin{abstract}
-We couple the machine-learned Upside protein force field to a full-resolution
-dry-MARTINI membrane without fitting the combined model to membrane-protein data.
-All real degrees of freedom use one g-JF force schedule and one system temperature
-for both fluctuation--dissipation noise and friction calibration. The interface
-respects Upside's regenerated-backbone integration cycle. O is reconstructed from
-persistent N/CA/C coordinates, and the dry-MARTINI backbone centre is their
-$14{:}12{:}12{:}16$ mass-weighted N/CA/C/O centre. In the reverse pass, the
-backbone--environment sensitivity is returned to persistent N/CA/C with fractions
-$14/54$, $12/54$, and $12/54$; the $16/54$ O share is not reassigned because O is
-deleted and regenerated rather than integrated. Before flexible production, the
-complete protein is one rigid body while the full BB--environment and
-SC--environment interactions are active, allowing the bilayer to relax around an
-undeformed protein. The rigid constraint is removed only at the explicit
-production transition. This construct resolves the secondary-structure
-regression: in the corrected 50,000-step 1RKL run, DSSP assigns 23 helical
-residues at both the first and final production frames, and residues 10--28 are
-helical in 96.5--100\% of frames. The kinetic calibration remains narrower than
-the structural result. Factor-four-corrected DOPC molecular diffusion is not
-reproduced, so production uses a bare-MARTINI-particle mobility and contact-local
-protein damping as an explicit fallback. Absolute membrane-coupled rates and
-quantitative HDX remain unsupported until molecular transport, timestep and
-ensemble convergence, and membrane water accessibility are independently
-validated.
+Machine-learned protein force fields are accurate where training data is abundant
+and undefined where it is not; membrane proteins are the second case. We avoid
+training an implicit-membrane term by \emph{composing} two independently
+parameterized models---the machine-learned Upside protein force field and a
+full-resolution physical dry-MARTINI bilayer---coupled through their raw
+cross-interactions, with no fitting to membrane-protein data. The technical core is
+the protein--membrane interface. The dry-MARTINI backbone bead is a derived site: a
+mass-weighted $14{:}12{:}12{:}16$ centre of N, C$\alpha$, C, and the carbonyl~O,
+where O is taken from Upside's own \texttt{infer\_H\_O} node rather than rebuilt
+from a stored local frame. Because every term is then a linear combination of nodes
+the engine already differentiates, the reverse pass is a constant-weight split whose
+O share is handed to \texttt{infer\_H\_O} and propagated by its own chain rule. The
+interface is therefore exact rather than a partial route: forces remaining on the
+derived backbone and O sites are identically zero, and total momentum is conserved
+to $1.7\times10^{-9}$ of the largest single force. We report the calibration
+honestly. Every pair interaction is served from a spline table that reproduces the
+published dry-MARTINI functional form---potential-shifted Lennard-Jones and
+reaction-field electrostatics, both vanishing at 1.2~nm---to $10^{-10}$ in native
+units. Whole-molecule DOPC diffusion is \emph{not} reproduced, so production uses an
+explicitly labelled bare-particle mobility. An audit of the composed Hamiltonian shows
+that while the sidechain environment field is correctly replaced by the explicit
+lipid, three \emph{protein--protein} terms of the parent force field have no MARTINI
+counterpart and are absent. We also found and corrected a systematic 0.568~\AA{}
+displacement of the sidechain anchor. Neither, however, explains the model's
+principal remaining limitation: a helical core that sits 4.5~\AA{} from the crystal
+in a bilayer against 2.6~\AA{} in a detergent micelle. Restoring the absent terms
+moves that deviation by less than 0.1~\AA, inside run-to-run scatter, so we report
+the deficit as diagnosed but unexplained, together with the seven candidate causes
+we have eliminated by measurement.
 \end{abstract}
 
 \section{Introduction}
@@ -48,65 +64,59 @@ validated.
 \subsection{The data problem, and two responses}
 
 Machine-learned force fields are powerful exactly where data is abundant. Upside
-represents each residue by a few interaction sites, evaluates a learned force
-field through pre-tabulated splines, and propagates the chain at a comparatively
-large timestep; trained against the large soluble-protein record, it delivers
-folding and conformational thermodynamics at low cost. Membrane proteins are the
-opposite regime: experimental structures and stabilities are comparatively few,
-and the environment (the bilayer) is an active thermodynamic participant that a
+represents each residue by a few interaction sites, evaluates a learned force field
+through pre-tabulated splines, and propagates the chain at a comparatively large
+timestep;\cite{Jumper2018a,Jumper2018b} trained against the large soluble-protein
+record, it delivers folding and conformational thermodynamics at low cost. Membrane
+proteins are the opposite regime: experimental structures and stabilities are
+comparatively few, and the bilayer is an active thermodynamic participant that a
 protein-only model does not contain.
 
 There are two ways to extend a protein model into the membrane. The first is to
 \emph{learn} an implicit membrane term from membrane-protein data---an approach a
 previous effort in our group pursued, training an implicit-membrane potential
 against on the order of forty membrane proteins. Such a model is only as broad as
-its training set: forty proteins is a thin basis for a universal
-membrane-protein potential, and a learned implicit term risks encoding the
-idiosyncrasies of the training proteins rather than transferable membrane physics.
+its training set: forty proteins is a thin basis for a universal membrane-protein
+potential, and a learned implicit term risks encoding the idiosyncrasies of the
+training proteins rather than transferable membrane physics.
 
-The second route---ours---adds \emph{no} membrane-protein training data at all.
-We keep the machine-learned protein force field where it is strong (protein
-internal energetics, learned from abundant soluble data) and supply the membrane
-from a \emph{physical}, transferable lipid model (dry-MARTINI), whose parameters
-come from lipid thermodynamics, not from protein structures. The protein and the
-membrane are then coupled through the \emph{raw} dry-MARTINI cross-interactions,
-with a single geometric projection to reconcile the one genuine resolution
-mismatch (multi-bead side chain vs.\ single Upside site). Nothing in the
-protein model, the membrane model, or their coupling is fit to membrane-protein
-data. The power of the combination is precisely that it composes a data-rich
-learned model with a transferable physical model, so it can be applied where the
-\emph{combined} system has little data---which is the membrane-protein regime, and,
-as we note in the outlook, other composite systems such as nanoparticles.
+The second route---ours---adds \emph{no} membrane-protein training data. We keep the
+machine-learned protein force field where it is strong (protein internal energetics,
+learned from abundant soluble data) and supply the membrane from a physical,
+transferable lipid model, dry-MARTINI,\cite{Arnarez2015} whose parameters come from
+lipid thermodynamics rather than protein structures. Protein and membrane are
+coupled through the \emph{raw} dry-MARTINI cross-interactions, with a single
+geometric projection to reconcile the one genuine resolution mismatch (multi-bead
+sidechain versus single Upside site). Nothing in the protein model, the membrane
+model, or their coupling is fit to membrane-protein data. The power of the
+combination is that it composes a data-rich learned model with a transferable
+physical one, so it can be applied where the \emph{combined} system is data-poor.
 
 \subsection{What must be true, and what we claim}
 
 For this composition to be useful it must be (i) faithful in the domain it is used
-for, (ii) universal (one force field for all proteins; no per-system tuning), and
-(iii) affordable at Upside's coarse step. We are deliberately precise about (i):
-the hybrid is intended as a \emph{thermodynamic} instrument, not as a source of
-absolute membrane-coupled rates. That intent is not itself validation. Every
-equilibrium claim still requires timestep convergence, adequate sampling, and a
-force field appropriate to the observable. The implemented calibration fixes a
-bare-particle mobility and defines a local protein--bilayer friction model; it
-does not reproduce DOPC molecular diffusion. Free-energy methods may remove the
-need for physical kinetics, but they do not remove the need for correct statics
-and converged populations. The same distinction controls the interpretation of
-HDX (Sec.~\ref{sec:hdx}).
+for, (ii) universal---one force field for all proteins, no per-system tuning---and
+(iii) affordable at Upside's coarse step. We are deliberately precise about (i): the
+hybrid is intended as a \emph{thermodynamic} instrument, not a source of absolute
+membrane-coupled rates. That intent is not itself validation.
 
-The contributions are: (1) a full-resolution dry-MARTINI membrane inside Upside
-with every pair interaction served from a spline table (Sec.~\ref{sec:membrane});
-(2) a shared g-JF force update with one stochastic bath per real degree of freedom
-(Sec.~\ref{sec:langevin}); (3) a design-space analysis showing that the tested
-single-step hard-core schemes do not reproduce molecular DOPC diffusion and
-therefore require an explicitly limited particle-mobility fallback
-(Secs.~\ref{sec:designspace},~\ref{sec:timescale}); (4) a validated
-area-sampling algorithm and baseline membrane-structure measurements, whose
-current-configuration convergence remains to be established
-(Sec.~\ref{sec:mechanics}); and (5) a raw-force-field protein--membrane interface
-with regenerated-O-aware BB force routing and a rigid pre-production handoff
-that preserves an embedded protein without any added confining potential
-(Sec.~\ref{sec:interface}), enabling conditional equilibrium and HDX analyses
-(Sec.~\ref{sec:hdx}).
+A composed model has a failure mode that a monolithic one does not, and it organises
+this paper: the composition can be \emph{incomplete}. Replacing part of a trained
+force field with an explicit physical environment silently removes whatever the
+replaced term also did. Section~\ref{sec:audit} audits the composed Hamiltonian term
+by term and finds exactly this, and Section~\ref{sec:fidelity} measures the price.
+
+The contributions are: (1) a full-resolution dry-MARTINI membrane inside Upside with
+every pair interaction served from a spline table that provably equals the published
+functional form (Sec.~\ref{sec:membrane}); (2) a shared g-JF force update with one
+stochastic bath per real degree of freedom (Sec.~\ref{sec:langevin}); (3) an
+\emph{exact} derived-site protein--membrane interface, with measured force closure
+(Secs.~\ref{sec:interface},~\ref{sec:exactness}); (4) an audit of what the
+composition replaces and what it omits, with the measured structural consequence
+(Secs.~\ref{sec:audit},~\ref{sec:fidelity}); and (5) HDX and protein--nanoparticle
+applications together with the numerical and analysis pitfalls encountered
+(Secs.~\ref{sec:hdx}--\ref{sec:np}), summarised as an explicit evidence boundary
+(Table~\ref{tab:evidence}).
 
 \section{Theory and Methods}
 
@@ -114,79 +124,74 @@ that preserves an embedded protein without any added confining potential
 \label{sec:units}
 
 Upside uses reduced units: energy $E_\mathrm{up}=2.9150$~kJ/mol, length in
-{\AA}ngstr\"om, mass $m_\mathrm{up}=12$~g/mol, and temperature
-$1.0\,T_\mathrm{up}=350.59$~K. Protein and lipids share the same numerical step,
-$dt=0.009\,t_\mathrm{up}$, used by the standard Upside examples. Each physical
-particle is advanced once per step; there is no lipid substep or displacement cap.
-There is one system temperature $T$. The workflow passes the same value to the
-Upside thermostat and to the friction calibration, so the $k_BT$ used in the
-Einstein relation is the same $k_BT$ used in the random impulse. The current
-default is $T=0.8\,T_\mathrm{up}=280.47$~K; a different experimental temperature
-must be set through this single variable. All native dry-MARTINI parameters (nm, kJ/mol, $e$)
-are converted to Upside units once, at spline-table build time; no conversion
-constants are baked into the force-field artifacts, and the C++ engine performs no
-unit conversion at run time.
+\AA{}ngstr\"om, mass $m_\mathrm{up}=12$~g/mol, and temperature
+$1.0\,T_\mathrm{up}=350.59$~K. Protein and lipids share one numerical step,
+$dt=0.009\,t_\mathrm{up}$. Each physical particle is advanced once per step; there is
+no lipid substep and no displacement cap. There is a single system temperature $T$,
+passed both to the Upside thermostat and to the friction calibration, so the $k_BT$
+in the Einstein relation is the $k_BT$ in the random impulse. All native dry-MARTINI
+parameters (nm, kJ/mol, $e$) are converted to Upside units once, at spline-table
+build time; no conversion constants are baked into force-field artifacts and the
+engine performs no unit conversion at run time.
 
-At each outer step all real degrees of freedom advance once under a single g-JF
-force schedule (Eq.~\ref{eq:gjf}). Environment particles and membrane-contacting
-protein carriers receive the production frictions derived in
-Sec.~\ref{sec:timescale}. Zero-contact protein carriers retain the standard Upside
-Ornstein--Uhlenbeck (OU) bath, whereas positive-g-JF-friction particles are
-excluded from OU. Regenerated O and backbone-centre sites are not physical degrees
-of freedom and receive neither update nor thermostat. Thus every real degree of
-freedom has one stochastic bath at the same system temperature.
-
-Preparation damping is deliberately separate from the production calibration.
-Softened early stages use native dry-MARTINI damping, and full-core settling uses
-strong FDT damping to dissipate energy released while packing overlaps are
-resolved. Those stages prepare coordinates; their rate of motion has no physical
-interpretation. The particle-mobility calibration is activated only in production.
+At each step all real degrees of freedom advance once under a single g-JF force
+schedule (Eq.~\ref{eq:gjf}). Environment particles and membrane-contacting protein
+carriers receive the production frictions of Sec.~\ref{sec:timescale}; zero-contact
+carriers retain the standard Ornstein--Uhlenbeck bath, and positive-friction
+particles are excluded from it. Derived sites---the regenerated carbonyl~O and the
+backbone centre---are not degrees of freedom and receive neither update nor
+thermostat. Preparation damping is deliberately separate from production
+calibration: softened early stages use native dry-MARTINI damping and full-core
+settling uses strong damping to dissipate the energy released as packing overlaps
+resolve. Those stages prepare coordinates; their rate of motion has no physical
+meaning.
 
 The mechanical unit implied by $E_\mathrm{up}$, \AA, and $m_\mathrm{up}$ is
-$0.20290$~ps. It is used only for unit conversion, not as the hybrid kinetic
-clock. The declared protein clock is 40~ps per numerical step; the factor-four
-MARTINI correction enters exactly once in the mobility calibration below. This
-declared clock is a calibration convention, not evidence that a bonded lipid or a
-membrane-coupled conformational transition evolves on physical time.
-The two species couple through the interface interactions of
-Sec.~\ref{sec:interface}, evaluated on the shared spline tables.
+$0.20290$~ps, used only for unit conversion. The declared protein clock is 40~ps per
+step, and the factor-four MARTINI correction enters exactly once, in the mobility
+calibration below. This declared clock is a calibration convention, not evidence
+that a bonded lipid evolves on physical time.
 
 \subsection{The full-resolution dry-MARTINI membrane in Upside}
 \label{sec:membrane}
 
-Each DOPC lipid is its fourteen dry-MARTINI beads. Intramolecular connectivity is
-taken from the dry-MARTINI topology: harmonic bonds (equilibrium lengths
-$0.37$--$0.48$~nm, force constant $1250$~kJ\,mol$^{-1}$nm$^{-2}$) and harmonic
-angles (force constants $25$--$45$~kJ\,mol$^{-1}$rad$^{-2}$), as Upside
-\texttt{dist\_spring} and \texttt{angle\_spring} nodes. We adopt the
-full-resolution lipid rather than a further-reduced single-particle lipid because
-a reduced lipid cannot simultaneously reproduce packing, hydrophobic thickness,
-and the orientational response that sets transmembrane tilt; an earlier
-single-particle model (documented separately, now abandoned) failed there.
+Each lipid is represented by its full complement of dry-MARTINI beads, with
+intramolecular connectivity taken from the dry-MARTINI topology---harmonic bonds
+(equilibrium lengths $0.37$--$0.48$~nm, force constant
+$1250$~kJ\,mol$^{-1}$nm$^{-2}$) and harmonic angles ($25$--$45$
+kJ\,mol$^{-1}$rad$^{-2}$)---as Upside \texttt{dist\_spring} and
+\texttt{angle\_spring} nodes. We use the full-resolution lipid rather than a further
+reduced one because a single-particle lipid cannot simultaneously reproduce packing,
+hydrophobic thickness, and the orientational response that sets transmembrane tilt;
+an earlier single-particle model failed there and was abandoned.
 
-Nonbonded interactions---dry-MARTINI Lennard-Jones from the
-\texttt{[nonbond\_params]} matrix, plus the Coulomb term for charged head-group
-beads---are \emph{not} evaluated analytically at run time. Following
-Upside's spline-table convention, every pair interaction is written to an HDF5
-spline table (\texttt{combined\_energy\_grids}) ahead of the run and read back
-through a single \texttt{martini\_potential} node with a cell-list neighbour
-search. The hard $r^{-12}$ core is kept exactly as parameterized---no capping, no
-softening---which is essential for correct bilayer packing and mechanics, for the
-transport analysis of Sec.~\ref{sec:timescale}, and for confining an embedded
-protein (Sec.~\ref{sec:interface}). The current Coulomb grid is truncated, not
-shifted or tapered, at the 12~\AA{} neighbour cutoff. The resulting energy and
-force discontinuity is an open numerical issue for charged BB--headgroup contacts
-and must be resolved or shown irrelevant by timestep convergence before
-quantitative protein--membrane equilibrium claims are made.
+Nonbonded interactions are not evaluated analytically at run time. Following
+Upside's convention, every pair interaction is written to an HDF5 spline table ahead
+of the run and read through one \texttt{martini\_potential} node with a cell-list
+neighbour search. A spline table in this framework is a \emph{representation, never
+a variant}: evaluated in native units it must equal the published dry-MARTINI form
+exactly, including how that form reaches its cutoff. Concretely, the tabulated
+energy is potential-shifted Lennard-Jones plus reaction-field electrostatics with
+$\epsilon_r=15$ and $\epsilon_\mathrm{rf}=0$, both vanishing at 1.2~nm. We assert
+this equivalence numerically at build time rather than assuming it: the tabulated
+grid agrees with the analytic expression to a scale-aware tolerance of $10^{-10}$.
+An earlier version of the table truncated the Coulomb term instead of applying the
+reaction field, and separately floored the radial argument at $0.1\sigma$; both are
+corrected here, and the floor in particular is discussed as a numerical failure mode
+in Sec.~\ref{sec:numerics}.
 
-\subsection{Single-step g-JF Langevin lipid dynamics}
+The hard $r^{-12}$ core is kept as parameterized---no capping, no softening---which
+is essential for bilayer packing and mechanics and for confining an embedded protein
+without a restraint.
+
+\subsection{Single-step g-JF Langevin dynamics}
 \label{sec:langevin}
 
-We advance each lipid bead by one Gr\o{}nbech-Jensen--Farago (g-JF) Langevin step.
-For bead $i$ of mass $m_i$, absolute friction $\alpha_i$, and
-force $\mathbf{f}=-\nabla_i U$,
+Each bead is advanced by one Gr\o{}nbech-Jensen--Farago Langevin
+step.\cite{GronbechJensen2013} For bead $i$ of mass $m_i$, absolute friction
+$\alpha_i$, and force $\mathbf{f}=-\nabla_i U$,
 \begin{align}
-b_i &= \Big(1+\tfrac{\alpha_i dt}{2m_i}\Big)^{-1}, \qquad
+b_i &= \Big(1+\tfrac{\alpha_i dt}{2m_i}\Big)^{-1}, \quad
 a_i = \Big(1-\tfrac{\alpha_i dt}{2m_i}\Big) b_i, \\
 \mathbf{x}_i^{\,n+1} &= \mathbf{x}_i^{\,n} + b_i dt\,\mathbf{v}_i^{\,n}
   + \tfrac{b_i dt^2}{2m_i}\mathbf{f}_i^{\,n}
@@ -197,558 +202,601 @@ a_i = \Big(1-\tfrac{\alpha_i dt}{2m_i}\Big) b_i, \\
 \label{eq:gjf}
 \end{align}
 with $\boldsymbol{\beta}_i^{\,n+1}=\sqrt{2\alpha_i k_BT\,dt}\,\boldsymbol{\xi}$ the
-discrete thermal impulse ($\boldsymbol{\xi}$ standard Gaussian, the same
-$\boldsymbol{\beta}$ in both updates). The shared force schedule evaluates
-$\mathbf{f}^{\,n}$ before the update and $\mathbf{f}^{\,n+1}$ after moving the
-g-JF particles. Bead
-masses are the dry-MARTINI values. Positive-$\alpha$ particles are stochastic g-JF
-particles and are excluded from the global OU bath; zero-$\alpha$ protein carriers
-remain in that bath. g-JF has exact configurational statistics for a harmonic
+discrete thermal impulse. g-JF has exact configurational statistics for a harmonic
 oscillator within the Verlet stability limit, not unconditional exactness for an
-arbitrary nonlinear force field. Static results therefore require timestep-halving
-and distributional convergence checks. Its rate of motion is not generally
-physical; that limitation is quantified in Sec.~\ref{sec:timescale}.
+arbitrary nonlinear force field; static results therefore require timestep-halving
+and distributional convergence checks.
 
-\subsection{Why molecular diffusion does not calibrate the one-step run}
+\subsection{Why molecular diffusion does not calibrate a one-step run}
 \label{sec:designspace}
 
-The preferred target is whole-DOPC lateral diffusion,
+The preferred kinetic target is whole-molecule lateral diffusion,
 $D_\mathrm{DOPC}=11.5~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ after the MARTINI
-factor-four correction. At 40~ps of declared protein time per numerical step,
-this corresponds to a two-dimensional molecular-COM increment
-\begin{equation}
-  \left\langle \Delta r_{xy}^{2}\right\rangle
-  =4D_\mathrm{DOPC}(40~\mathrm{ps})=0.184~\text{\AA}^2
-  \quad\text{per step}.
-\end{equation}
-A one-step scan cannot reproduce it. Reducing friction through a free-draining
-molecular estimate and nearly to zero raises the fitted molecular diffusion only
-to approximately $0.175~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$, while the
-low-friction interface heats and loses hydrogen bonds. The molecular motion has
-entered an inertial and collision-limited regime rather than the Einstein
-overdamped regime assumed by a scalar-friction calibration.
+factor-four correction. At 40~ps of declared time per step this is a
+molecular-COM increment of
+$\langle \Delta r_{xy}^{2}\rangle = 4D_\mathrm{DOPC}(40~\mathrm{ps})=0.184~\text{\AA}^2$
+per step. A one-step scan cannot reproduce it. Reducing friction to a free-draining
+molecular estimate and nearly to zero raises fitted molecular diffusion only to
+$\approx0.175~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$, while the low-friction interface
+heats and loses hydrogen bonds: the motion is inertial and collision-limited rather
+than in the overdamped Einstein regime a scalar-friction calibration assumes.
 
-The opposite error is also possible. A rejected mapping used
-$\alpha=1666.67$ for a mass-6 environment bead, giving
-$\alpha dt/(2m)=1.25$. Its momenta appeared thermal, but drift-removed DOPC COMs
-moved only $0.17$--$0.24$~\AA{} over the nominal trajectory. Momentum temperature
-therefore does not validate coordinate mobility. These two limits show why the
-production friction is not presented as a molecular-diffusion fit.
+The opposite error is instructive. A rejected mapping used $\alpha=1666.67$ for a
+mass-6 bead, giving $\alpha dt/(2m)=1.25$; its momenta appeared thermal while
+drift-removed lipid centres of mass moved only $0.17$--$0.24$~\AA{} over the nominal
+trajectory. \emph{Momentum temperature does not validate coordinate mobility.}
 
 \subsection{Bare-particle mobility and contact-local protein friction}
 \label{sec:timescale}
 
-Production instead calibrates a \emph{bare}, unbonded MARTINI-particle mobility.
-Let $f_\mathrm{CG}=4$ be the MARTINI time correction,
-$\Delta t_\mathrm{protein}=40$~ps per numerical step, and
-$D_\mathrm{target}=11.5~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$. The raw MARTINI
-quantities are
-\begin{equation}
-  \Delta t_\mathrm{raw}=\frac{\Delta t_\mathrm{protein}}{f_\mathrm{CG}}
-  =10~\mathrm{ps}, \qquad
-  D_\mathrm{raw}=f_\mathrm{CG}D_\mathrm{target}
-  =46~\mu\mathrm{m}^2\,\mathrm{s}^{-1}.
-\end{equation}
-The factor appears once: shortening the raw time and increasing the raw diffusion
-are the two sides of the same mapping, and
-$D_\mathrm{raw}\Delta t_\mathrm{raw}
-=D_\mathrm{target}\Delta t_\mathrm{protein}$. Converting
-$1~\mu\mathrm{m}^2\,\mathrm{s}^{-1}=10^{-4}$~\AA$^2$/ps and matching the
-mean-square displacement accumulated over one numerical step gives
+Production instead calibrates a \emph{bare}, unbonded particle mobility. With
+$f_\mathrm{CG}=4$, $\Delta t_\mathrm{protein}=40$~ps, and
+$D_\mathrm{target}=11.5~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$, the raw quantities are
+$\Delta t_\mathrm{raw}=10$~ps and
+$D_\mathrm{raw}=46~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$; the factor appears once, and
+$D_\mathrm{raw}\Delta t_\mathrm{raw}=D_\mathrm{target}\Delta t_\mathrm{protein}$.
+Matching the mean-square displacement accumulated over one numerical step,
 \begin{equation}
   D_\mathrm{bead,up}
-  =\frac{D_\mathrm{raw}(10^{-4}~\text{\AA}^2/\mathrm{ps})
-  \Delta t_\mathrm{raw}}{dt_\mathrm{up}}
-  =5.11111~\text{\AA}^2/t_\mathrm{up},
+  =\frac{D_\mathrm{raw}(10^{-4}~\text{\AA}^2/\mathrm{ps})\Delta t_\mathrm{raw}}
+  {dt_\mathrm{up}} = 5.11111~\text{\AA}^2/t_\mathrm{up},
   \label{eq:bead_diffusion}
 \end{equation}
-where $dt_\mathrm{up}=0.009$. The Einstein relation then sets the absolute
-friction
-\begin{equation}
-  \alpha_\mathrm{bead}=\frac{k_BT}{D_\mathrm{bead,up}}.
-  \label{eq:bead_friction}
-\end{equation}
-At the current $T=0.8\,T_\mathrm{up}$,
-$\alpha_\mathrm{bead}=0.15652$ in Upside units. At any other temperature the
-workflow recomputes Eq.~\ref{eq:bead_friction} from that same system temperature;
-an independent bilayer calibration temperature is not allowed.
+and the Einstein relation sets $\alpha_\mathrm{bead}=k_BT/D_\mathrm{bead,up}$. Every
+environment particle receives $\alpha_\mathrm{bead}$. For a protein backbone carrier
+$i$ the model counts environment beads within the 12~\AA{} interaction range and
+assigns $\alpha_i=n_i\alpha_\mathrm{bead}$, recomputed at stage handoff and held
+fixed within a segment so that position-dependent multiplicative noise is not
+introduced silently.
 
-Every environment particle receives $\alpha_\mathrm{bead}$. For a protein
-N/CA/C carrier $i$, the production model counts DOPC beads within the existing
-12~\AA{} interaction range and assigns
-\begin{equation}
-  \alpha_i=n_i\alpha_\mathrm{bead}.
-  \label{eq:contact_friction}
-\end{equation}
-Contact counts are recomputed from actual coordinates at stage handoff,
-minimization promotion, and continuation, then held fixed within a trajectory
-segment. Holding them fixed avoids silently introducing position-dependent
-multiplicative noise. A zero-contact carrier remains on the ordinary Upside OU
-bath; a positive-contact carrier uses g-JF and is excluded from OU.
-
-Equation~\ref{eq:contact_friction} assumes independent additive bead drag. It
-omits spatial and temporal friction correlations, anisotropy, hydrodynamic
-coupling, and memory. It is therefore a reproducible local-damping model, not a
-measurement of the friction experienced by a real membrane protein. Likewise,
-Eq.~\ref{eq:bead_diffusion} is an input mobility for a hypothetical bare
-particle. A bead bonded into DOPC shares the molecule's long-time COM diffusion,
-so the trajectory must still report molecular diffusion independently. The H5
-file stores the numerical step, system temperature, correction factor, raw and
-corrected diffusion targets, bare-particle diffusion and friction, contact cutoff,
-and per-carrier contact counts so this distinction is auditable.
+This assumes independent additive bead drag, omitting friction correlations,
+anisotropy, hydrodynamic coupling, and memory. It is a reproducible local damping
+model, not a measurement of the friction a real membrane protein experiences, and a
+bead bonded into a lipid shares that molecule's long-time diffusion, so trajectories
+must still report molecular diffusion independently.
 
 \subsection{Membrane mechanics from a Monte-Carlo barostat}
 \label{sec:mechanics}
 
-Area compressibility $K_A$ and, through it, the bending modulus require sampling
-the equilibrium area \emph{fluctuations}, $K_A=k_BT\langle A\rangle/\mathrm{Var}(A)$.
-A weak-coupling (Berendsen- or damped-piston-style) barostat relaxes the box but
-suppresses its fluctuations, so it cannot yield $K_A$. We therefore use a
-\emph{Monte-Carlo} barostat: at fixed intervals, trial isotropic-in-plane and
-normal box rescalings are applied by scaling lipid \emph{centre-of-mass} positions
-(internal geometry preserved, so $\Delta U$ is intermolecular and reflects area
-elasticity rather than bond stiffness) and accepted with the exact
-constant-pressure Metropolis weight
-$\exp\!\big[-\beta(\Delta U+P\Delta V)\big]\,(V'/V)^{N_\mathrm{mol}}$. Being a
-Monte-Carlo move, it samples the correct isothermal--isobaric ensemble by
-construction, independent of any coupling constant, and restores physical area
-fluctuations. Consistent with the sub-diffusive lipid dynamics, the area
-decorrelates slowly, so a converged $K_A$ requires long sampling. The barostat
-proposal and acceptance rule are verified, but quantitative convergence remains
-open.
+The area compressibility requires the equilibrium area \emph{fluctuations},
+$K_A=k_BT\langle A\rangle/\mathrm{Var}(A)$. A weak-coupling barostat relaxes the box
+but suppresses its fluctuations and cannot yield $K_A$. We therefore use a
+Monte-Carlo barostat: trial box rescalings are applied by scaling lipid centres of
+mass, preserving internal geometry so that $\Delta U$ reflects area elasticity
+rather than bond stiffness, and accepted with the exact constant-pressure Metropolis
+weight $\exp[-\beta(\Delta U+P\Delta V)](V'/V)^{N_\mathrm{mol}}$. Being a
+Monte-Carlo move it samples the isothermal--isobaric ensemble by construction,
+independent of any coupling constant.
 
 \subsection{The protein--membrane interface}
 \label{sec:interface}
 
-The protein retains its native Upside force field. Its persistent backbone
-coordinates are N, CA, and C. Carbonyl O is reconstructed from their local frame
-during each force evaluation and is regenerated again during the Upside
-integration cycle; it is not an independent degree of freedom. The dry-MARTINI
-backbone interaction centre is likewise a derived site. For one residue,
+The protein retains its native Upside force field, whose persistent backbone
+coordinates are N, C$\alpha$, and C. Upside already regenerates the carbonyl O and
+amide H as derived sites through its \texttt{infer\_H\_O} node. The dry-MARTINI
+backbone bead is likewise derived. For residue $k$,
 \begin{equation}
-  \mathbf r_\mathrm{O}=\mathcal R
-  (\mathbf r_\mathrm{N},\mathbf r_\mathrm{CA},\mathbf r_\mathrm{C}),
-  \qquad
-  \mathbf r_\mathrm{BB}=\frac{
-  14\mathbf r_\mathrm{N}+12\mathbf r_\mathrm{CA}
-  +12\mathbf r_\mathrm{C}+16\mathbf r_\mathrm{O}}{54},
+  \mathbf r_\mathrm{BB}^{(k)}=\frac{
+  14\,\mathbf r_\mathrm{N}^{(k)}+12\,\mathbf r_{\mathrm{C}\alpha}^{(k)}
+  +12\,\mathbf r_\mathrm{C}^{(k)}+16\,\mathbf r_\mathrm{O}^{(k)}}{54},
   \label{eq:bb_forward}
 \end{equation}
-where $\mathcal R$ preserves the reference carbonyl geometry in the current
-N--CA--C frame. A dedicated coordinate node evaluates Eq.~\ref{eq:bb_forward}
-without mutating the integrated position array. O and BB receive no independent
-integration, thermal noise, or kinetic-temperature contribution.
-
-The reverse map follows the force distribution expected by the Upside backbone
-cycle, rather than differentiating the regenerated O coordinate back into the
-persistent atoms. If $\mathbf s_\mathrm{BB}$ is the sensitivity accumulated on
-the BB site, its additions to the integrated coordinates are
+where $\mathbf r_\mathrm{O}^{(k)}$ is taken \emph{from} \texttt{infer\_H\_O} rather
+than reconstructed from a stored reference frame. This choice is what makes the
+interface exact. Because Eq.~\ref{eq:bb_forward} is then a linear combination of
+nodes the engine already differentiates, the reverse pass is a constant-weight
+split: the N, C$\alpha$, and C shares are added to the integrated coordinates, and
+the $16/54$ O share is handed to \texttt{infer\_H\_O}, whose own chain rule carries
+it back to C$\alpha$, C, and the following residue's N---which is where the frame's
+rotational dependence lives. No placement Jacobian is required and no sensitivity is
+discarded. The weights sum to unity, so
 \begin{equation}
-  \Delta\mathbf s_\mathrm{N}=\frac{14}{54}\mathbf s_\mathrm{BB},\qquad
-  \Delta\mathbf s_\mathrm{CA}=\frac{12}{54}\mathbf s_\mathrm{BB},\qquad
-  \Delta\mathbf s_\mathrm{C}=\frac{12}{54}\mathbf s_\mathrm{BB}.
+  \sum_{a\in\{\mathrm{N},\mathrm{C}\alpha,\mathrm{C}\}}\!\!\!w_a
+  \;+\;w_\mathrm{O}=1,
+  \qquad
+  \Delta\mathbf s_a = w_a\,\mathbf s_\mathrm{BB},
   \label{eq:bb_reverse}
 \end{equation}
-The remaining $16/54$ is the O share of the dry-MARTINI backbone partition. It is
-not reassigned to N/CA/C because O is deleted and reconstructed rather than
-advanced by the integrator. Thus $38/54=70.37\%$ of a translational BB
-sensitivity reaches persistent protein coordinates. This partial route is an
-explicit model contract; it is not the full coordinate Jacobian of
-Eq.~\ref{eq:bb_forward}. Sensitivities on derived O and BB storage sites are
-discarded after Eq.~\ref{eq:bb_reverse}. Raw N/CA/C/O--environment pairs are
-excluded, so BB--environment coupling is evaluated exactly once through the BB
-site.
+and Newton's third law holds by construction. This supersedes an earlier partial
+route in which the O share was dropped and only $38/54$ of a backbone sensitivity
+reached persistent coordinates; that construction was non-conservative and is
+measured against here in Sec.~\ref{sec:exactness}.
 
-\paragraph{SC-env (side chain $\leftrightarrow$ lipid).} Upside resolves a side
-chain into one directional site, dry-MARTINI into several beads. This one genuine
-resolution mismatch is bridged by a potential of mean force: for each residue
-type, the multi-bead side chain is projected onto its single Upside site by a
-Boltzmann average over the eliminated conformations,
+Two implementation details matter. First, the environment side is not special-cased:
+the node that serves the pair table is a pass-through copy of the coordinate array
+with only the derived slots overwritten, so an environment bead's sensitivity returns
+to its own integrated coordinate unchanged. Second, the C-terminal residue has no
+\texttt{infer\_H\_O} acceptor---the node builds a carbonyl O from the \emph{next}
+residue's N, and emits $n_\mathrm{res}-1$ acceptors---so that one backbone centre is
+the N/C$\alpha$/C mass centre with the weights renormalised. This is not a numerical
+guard; the site genuinely does not exist.
+
+\paragraph{SC--environment.} Upside resolves a sidechain into one directional site,
+dry-MARTINI into several beads. This one genuine resolution mismatch is bridged by a
+potential of mean force: for each residue type the multi-bead sidechain is projected
+onto the single Upside site by a Boltzmann average over eliminated conformations,
 \begin{equation}
 U_\mathrm{SC\text{-}env}(\mathbf{r}) = -k_BT\,\ln\Big\langle
-  \exp\!\big[-U_\mathrm{MARTINI}(\mathbf{r};\Omega)/k_BT\big]\Big\rangle_{\Omega},
+  \exp[-U_\mathrm{MARTINI}(\mathbf{r};\Omega)/k_BT]\Big\rangle_{\Omega},
 \end{equation}
-giving a smooth, orientation-resolved spline table (\texttt{sc\_table}). This is
-the only PMF in the interface.
+giving a smooth, orientation-resolved spline table. This is the only PMF in the
+interface.
 
-\paragraph{BB--environment.} The backbone is a single site in both models, so
-nothing is integrated out: BB-env is the \emph{raw}
-dry-MARTINI Lennard-Jones (plus Coulomb) interaction, from the same
-\texttt{martini\_potential} spline as lipid--lipid. No softening, no PMF, no
-capping. The raw field is retained because smoothing this interaction changes
-protein insertion and confinement rather than repairing the interface.
+\paragraph{BB--environment.} The backbone is a single site in both models, so nothing
+is integrated out: BB--env is the raw dry-MARTINI interaction from the same spline as
+lipid--lipid. No softening, no PMF, no capping.
 
-\paragraph{Protein confinement.} No term keeps the protein in the membrane; its
-equilibrium depth and orientation follow from the raw force field, as they should
-from a correct force field rather than a restraint. There is no $z$-restraint and
-no implicit-membrane solvation potential.
+\paragraph{Confinement.} No term keeps the protein in the membrane. Its equilibrium
+depth and orientation follow from the raw force field, as they should.
 
-\subsection{Enhanced sampling and simulation protocol}
+\subsection{What the composition replaces, and what it omits}
+\label{sec:audit}
+
+Composing two force fields requires knowing which terms of the parent model the
+new environment \emph{replaces} and which it merely \emph{removes}. We audited the
+composed Hamiltonian against a standard Upside configuration of the same protein.
+
+The replacement is deliberate and correct. In standard Upside the rotamer solver
+takes its one-body field from an implicit-solvent environment coupling; in the
+hybrid it takes \texttt{martini\_sc\_table\_1body}, the explicit lipid field. Upside's
+implicit \emph{bilayer} term is likewise, and correctly, absent: an explicit-lipid
+model must not also carry an implicit membrane slab.
+
+The omission is not deliberate. Three groups of \emph{protein--protein} terms present
+in every standard Upside configuration have no MARTINI counterpart, because MARTINI
+supplies only protein--environment interactions:
+\begin{enumerate}
+  \item the many-body protein self-burial coupling, which rewards a residue for being
+  buried by \emph{other protein residues} and is the principal driver of tertiary
+  helix packing;
+  \item the corresponding backbone burial coupling; and
+  \item the sidechain-to-backbone hydrogen-bond coverage terms, which in standard
+  Upside are solved self-consistently \emph{inside} the rotamer node and make a
+  buried hydrogen bond stronger than an exposed one.
+\end{enumerate}
+The explicit lipid field rewards protein--lipid contact; nothing in the composed
+model rewards the protein for packing against itself beyond pairwise rotamer
+interactions, and nothing modulates backbone hydrogen-bond strength by burial.
+Section~\ref{sec:fidelity} measures what this costs. We regard this as the central
+methodological lesson of the work: \emph{a composed force field must be audited term
+by term, because substituting an environment silently removes whatever else the
+substituted term was doing.}
+
+\subsection{A frame-origin error in the sidechain anchor}
+\label{sec:cbfix}
+
+Auditing the composed model against a standard Upside configuration of the same
+protein also exposed an implementation error worth recording, because its signature
+is easy to miss. The residue frame produced by \texttt{affine\_alignment} has its
+origin at the \emph{centroid} of N, C$\alpha$, and C---the three atoms are centred
+before the Kabsch fit, and the stored reference geometry is centred to match---so a
+site placed in that frame must be specified relative to the centroid. The hybrid
+preparation stored the raw C$\beta$ coordinate instead, displacing every sidechain
+anchor by exactly the centroid, $0.568$~\AA. Since \texttt{martini\_sc\_table\_1body}
+takes that anchor as its sidechain input, the error biased every
+sidechain--environment energy and force by roughly 12\% of a bead radius; the total
+potential of an identical configuration moves by $\approx680~E_\mathrm{up}$ when it
+is corrected. The spline tables are unaffected, because they are functions of
+distance and angle \emph{relative} to the anchor.
+
+The error was found by differencing the two configurations array by array. What made
+it visible was that the bonded and hydrogen-bonding core came back bit-identical
+(maximum difference zero for the Ramachandran maps, hydrogen-bond parameters, and
+backbone pair terms), so the two arrays that did differ could not be dismissed as
+index remapping. We note this as a practical argument for differencing a composed
+model against a reference configuration of its parent, rather than only testing that
+it runs.
+
+\subsection{Protocol}
 \label{sec:protocol}
 
-Because both the intended observables and the slow intrinsic dynamics point the
-same way, the model is intended for use with enhanced sampling. Temperature
-replica exchange is supported natively (coordinate-swap convention: temperatures
-are pinned to slots and the per-slot temperature is applied to the lipid
-integrator, so each slot is a canonical ensemble); the lipid potential enters the
-exchange criterion, and no momentum rescaling is needed. Well-tempered
-metadynamics on a collective variable is available as a native bias node (a
-history-dependent Gaussian bias read off a coordinate node, its gradient
-propagated to the atoms), depositing on the simulation-round clock. These methods
-can target equilibrium populations without preserving physical kinetics, but only
-if the underlying finite-timestep distribution and the biased or replica-exchange
-reweighting are validated. Availability of the algorithms does not establish
-convergence of a particular trajectory.
+All pre-production stages treat the persistent backbone coordinates of the complete
+protein as one rigid body: forces may translate and rotate it while a mass-weighted
+rigid projection prevents internal deformation. This rule remains active through a
+dedicated handoff stage in which the final, unsoftened BB--env and SC--env
+interactions are already active, so interface clashes are removed by moving the
+membrane and the protein as physical bodies rather than by unfolding the protein. A
+rigid burn-in then lets the bilayer relax around the fully coupled protein. Only at
+an explicit transition is the rigid group cleared. There is no positional spring,
+staged release, interaction softening, or gap in interface activation at that
+transition, so pre-production protects the input fold without adding any restraint
+to the production Hamiltonian.
 
-Systems: a pure DOPC bilayer (structure, mechanics, transport), and transmembrane
-proteins 1RKL (Ost4p) and 1AFO (glycophorin~A dimer). Lateral diffusion is
-measured from unwrapped, mass-weighted 14-bead molecular COM trajectories after
-bilayer COM drift removal; protein tilt is measured backbone-only.
-
-All pre-production stages treat the persistent N/CA/C coordinates of the complete
-protein as one rigid body. Forces may translate and rotate that body, while a
-mass-weighted rigid projection prevents changes in its internal geometry; O and
-BB are then regenerated from the projected carriers. This rule remains active in
-the dedicated \texttt{production\_handoff} stage, where the final, unsoftened
-BB--environment and SC--environment interactions are already active. Handoff
-minimization removes interface clashes by moving the membrane and the protein as
-physical bodies, not by unfolding the protein. A subsequent rigid burn-in lets
-the bilayer relax around the fully coupled protein.
-
-After burn-in, the final coordinates and momenta are promoted to the production
-input, contact-local friction counts are refreshed, and the stage is relabelled
-\texttt{production}. The engine then clears the rigid group and begins flexible
-protein sampling under the same conservative interface. There is no positional
-spring, staged spring release, interaction softening, or gap in BB-env or SC-env
-activation at this transition. Consequently, pre-production protects the input
-fold without adding a restraint to the production Hamiltonian.
+Temperature replica exchange is supported natively, with temperatures pinned to slots
+so each slot is canonical; the lipid potential enters the exchange criterion.
+Systems reported here are a pure DOPC bilayer, transmembrane proteins 1RKL (Ost4p)
+and 1AFO (glycophorin~A dimer), \emph{E.~coli} GlpG in both a dodecyl-maltoside
+micelle and a POPE/POPG bilayer, and human serum albumin on a functionalised gold
+nanoparticle.
 
 \section{Results}
 
-Results are separated by the configuration that generated them. Baseline membrane
-measurements predate the final particle-mobility mapping. The corrected
-50,000-step 1RKL and 1AFO trajectories use the regenerated-O force route of
-Eq.~\ref{eq:bb_reverse}, the rigid handoff described above, and $T=0.8$ for both
-the runtime thermostat and friction calibration. Each trajectory contains 1,001
-production frames and stores $D_\mathrm{bead,up}=5.11111$ and
-$\alpha_\mathrm{bead}=0.15652$. These runs establish that the resolved interface
-can enter flexible production without destroying the input fold. They do not by
-themselves establish equilibrium or kinetic convergence.
+\subsection{Exactness of the interface force route}
+\label{sec:exactness}
 
-\subsection{Baseline bilayer structure and mechanics}
+The derived-site construction of Sec.~\ref{sec:interface} is exact, and we measure
+it rather than assert it. On a folded test protein the force remaining on the
+derived backbone-centre slots and on the derived O slots is identically
+\textbf{zero}, confirming that those sites carry no spurious dynamics, and the total
+force over all particles sums to $1.7\times10^{-9}$ of the largest single force,
+confirming that the split returns exactly what the pair table deposited. A
+20{,}000-step 1RKL trajectory on this route shows no non-finite values, potential
+relaxing from $-18{,}173$ to $-19{,}810~E_\mathrm{up}$, radius of gyration
+$12.76\rightarrow12.43$~\AA, worst peptide C--N distance 1.53~\AA{} with none above
+2~\AA, and $\langle E_\mathrm{kin}\rangle/\tfrac32k_BT=1.013$.
+
+This is a qualitative change from the superseded partial route, under which more
+force was discarded than delivered and a one-sided residual acted on the environment
+every step. That construction did net work regardless of step size and produced
+blow-ups localised on individual residues; the present route removes that failure
+mode by construction.
+
+\subsection{Baseline bilayer structure, thermostat, and transport}
 \label{sec:structure}
 
-The baseline bilayer remains assembled and gives area per lipid
-$\approx65$~\AA$^2$ (exp.\ $\approx67$), hydrophobic
-thickness (first-tail-bead separation) $\approx2.78$~nm (exp.\ $2.7$--$2.9$),
-chain order parameter $\approx0.30$ (MARTINI range), and a fluid director
-distribution (mean tilt $\approx22^\circ$, order $S\approx0.74$). The
-phosphate--phosphate distance reads slightly thick ($\approx43$~\AA{}) but the
-excess is head-group projection; the functionally decisive hydrophobic thickness,
-to which a transmembrane protein matches, is on target. A zero-tension
-Monte-Carlo-barostat run relaxes the area to a somewhat more condensed value than
-the fixed-box state, indicating the force field is marginally over-cohesive---a
-force-field fidelity note, reported and not tuned away. These values show that the
-parameterization can form a bilayer, but they are not a converged validation of
-the final temperature/friction/timestep combination. Quantitative $K_A$ and
-bending-modulus claims remain open.
+The baseline bilayer remains assembled with area per lipid $\approx65$~\AA$^2$
+(experiment $\approx67$), hydrophobic thickness $\approx2.78$~nm (experiment
+$2.7$--$2.9$), chain order parameter $\approx0.30$, and a fluid director
+distribution. For the POPE/POPG bilayer used in the GlpG work, the measured
+phosphate--phosphate thickness is $38.0\pm0.1$~\AA{} with a $25.4$~\AA{} acyl core,
+i.e.\ a hydrophobic mismatch of only $-2.8$~\AA{} against GlpG's belt---the bilayer
+geometry is not a source of error. Protein and lipid kinetic-energy ratios are
+$1.001$--$1.012$ times $\tfrac32k_BT$, verifying that the stochastic update
+thermalizes momenta at the temperature it is given. Drift-removed molecular
+diffusion remains $10^{-3}$--$10^{-2}~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ against the
+$11.5$ target: a clean diffusive regime has not been reached and molecular diffusion
+remains uncalibrated.
 
-\subsection{Thermostat and transport checks}
-\label{sec:barrier}
+\subsection{Structural stability and the limits of a stability test}
+\label{sec:hybrid}
 
-In the corrected 50,000-step trajectories, the last-200-frame protein
-kinetic-energy means are 1.001 and 1.006 times $3k_BT/2$ for 1RKL and 1AFO; the
-corresponding lipid ratios are 1.009 and 1.012.
-This verifies that the implemented stochastic update thermalizes momenta at the
-temperature it is given. It does not verify configurational sampling or a physical
-clock. Drift-removed DOPC COM fits remain window-dependent and of order
-$10^{-3}$--$10^{-2}~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$, versus the
-$11.5~\mu\mathrm{m}^2\,\mathrm{s}^{-1}$ target. A clean diffusive regime has not
-been reached, and molecular DOPC diffusion remains uncalibrated.
+The raw spline interface keeps both test proteins embedded without a confining
+potential, and the rigid handoff preserves the fold it is given: the maximum change
+among all pairwise backbone-carrier distances between the last pre-production
+structure and the production input is 0.017~\AA{} (1RKL) and 0.0037~\AA{} (1AFO).
+For 1RKL, DSSP assigns 23 helical residues at both the first and last of 1{,}001
+production frames (minimum 16, mean 21.9), and every residue of the central
+transmembrane segment 10--28 is helical in 96.5--100\% of frames; for 1AFO the
+first/final/minimum/mean counts are 54/51/48/50.8.
 
-\subsection{Evidence boundary}
-\label{sec:evidence}
+This validates the force-routing and preparation construct. It does \emph{not}
+validate the equilibrium probability of helix opening, and Sec.~\ref{sec:fidelity}
+shows why a stability test is the weaker claim.
+
+\subsection{Fold fidelity, and the price of the omitted terms}
+\label{sec:fidelity}
+
+We propagated GlpG in two environments that differ only in the explicit
+environment---a POPE/POPG bilayer and a dodecyl-maltoside micelle---using the
+identical protein force field and interface, and compared both against the crystal
+structure (Table~\ref{tab:fidelity}).
 
 \begin{table}[ht]
 \centering
 \small
+\caption{GlpG fold fidelity and amide protection in two explicit environments, at
+the same ladder temperature. Values are means over sampled production frames.}
+\label{tab:fidelity}
+\begin{tabular}{lcc}
+\toprule
+ & POPE/POPG & DDM micelle \\
+\midrule
+Helical-core C$\alpha$ RMSD (\AA)   & 4.15 & 2.61 \\
+All-C$\alpha$ RMSD (\AA)            & 7.51 & 5.51 \\
+$R_g$ (\AA); crystal 20.43          & 20.77 & 18.63 \\
+Backbone H-bond occupancy           & 0.844 & 0.952 \\
+Both protection terms fail          & 3.34\% & 0.93\% \\
+Implied $\Delta G_\mathrm{op}$ (kcal/mol) & 1.99 & 2.76 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The helical core sits 4.15~\AA{} from the crystal in the bilayer, and this is an
+equilibrium property rather than ongoing drift: it rises within the first segment
+and then holds across two further segments. Loosened packing lowers protein
+self-burial, so the structural protection criteria fail together in 3.3\% of frames
+and the implied local opening free energy is $\approx2$~kcal/mol.
+
+We eliminated the obvious alternatives by measurement. It is not the integrator: the
+kinetic-energy excess is $+2$--$3\%$ and timestep-independent, covalent geometry is
+intact, the temperature dependence is weak, and the same integrator gives 2.61~\AA{}
+in the micelle. It is not the hydrogen-bond definition: on the crystal geometry the
+Upside score agrees with the DSSP electrostatic criterion to within 8\% inside
+helices, and the disagreements are marginal. It is not lipid packing: every backbone
+site has environment beads within 8~\AA{} (nearest-neighbour distance
+$5.2$~\AA{} median), so there is no annular void. It is not hydrophobic mismatch, as
+noted above.
+
+We also tested the omission identified in Sec.~\ref{sec:audit} directly, and it is
+\emph{not} the explanation either. Three trajectories were propagated from one
+identical configuration: the model as composed, the model with the many-body
+protein self-burial term restored, and the model with every non-membrane Upside term
+restored---the last differing from a standard configuration by a single node. At
+matched length (750--780~k steps) the helical-core deviations were
+$4.61\pm0.09$, $4.71\pm0.12$, and $4.53\pm0.08$~\AA{} respectively, i.e.\ changes
+of $+0.10$ and $-0.08$~\AA{} against a target of roughly $-1.5$~\AA. The radius of
+gyration remained 20.2--20.4~\AA{} in all three, so the anticipated failure mode---an
+implicit-solvent burial term over-burying the lipid-facing surface---did not occur;
+the terms simply have little leverage on this observable. Separately, correcting the
+sidechain-anchor displacement of Sec.~\ref{sec:cbfix} did not improve fidelity
+either.
+
+We therefore report the deficit as diagnosed but unexplained. Seven candidate causes
+have been eliminated by measurement---integrator, hydrogen-bond assignment, lipid
+packing, hydrophobic mismatch, the protection threshold, the sidechain anchor, and
+the absent protein--protein terms. The one node-level difference from a standard
+configuration that remains untested is the rotamer one-body representation: the
+hybrid uses fixed rotamer probabilities where standard Upside uses rama-dependent
+ones. Whatever the cause, it, and not the interface mechanics, is what currently
+bounds quantitative membrane-protein thermodynamics with this model.
+
+\subsection{Numerical failure modes}
+\label{sec:numerics}
+
+Two failure modes are worth recording because both are silent.
+
+First, an early spline table floored the radial argument at $0.1\sigma$, producing a
+constant potential---and therefore \emph{exactly zero force}---inside
+$0.47$--$0.60$~\AA. A pair entering that region felt no restoring force and stayed.
+Removing the floor and setting the inner knot at $0.3$~\AA{} restores the published
+form, but a clamped spline still flattens below its inner knot and that domain is
+still occasionally entered.
+
+Second, and more instructive, the resulting blow-ups do not originate there.
+Instrumenting the pair loop through a complete event shows the cascade beginning with
+two \emph{environment} beads at 1.83~\AA---well inside the valid table domain, where
+the tabulated force is correct and simply enormous ($3.4\times10^{6}$)---and reaching
+sub-0.3~\AA{} separations only 1{,}072 force evaluations later. The zero-force
+plateau is the sink the cascade ends in, not its source. We note two diagnostic
+traps: after the event every force is NaN, so accumulators that compare against a
+running maximum silently report zero; and \texttt{isfinite} remains true for
+\emph{96 frames} after the system is destroyed, as does the peptide-bond count, since
+the damage is in the lipids. The discriminating test is the sign of the total
+potential---a condensed bilayer plus protein sits near $-2.2\times10^{4}~E_\mathrm{up}$,
+so a positive total means core overlap.
+
+\subsection{Application: hydrogen--deuterium exchange}
+\label{sec:hdx}
+
+In the EX2 regime the observed rate factorizes as
+$k_\mathrm{HDX}=K_\mathrm{op}k_\mathrm{chem}
+=e^{-\Delta G_\mathrm{op}/k_BT}k_\mathrm{chem}$, so opening and closing rates enter
+only through their equilibrium ratio and the MD time axis does not appear. The
+lipid-clock mismatch therefore does not rescale reported HDX seconds; it matters
+indirectly, because slow dynamics can leave the protected population biased.
+
+Two analysis defects encountered here generalise to any hybrid trajectory. First,
+MBAR must be given reduced potentials referenced to a common constant: a coupled
+protein-plus-membrane potential is $O(10^4)~E_\mathrm{up}$, $\exp(-u)$ overflows, and
+the solver never leaves its initial guess---returning $f_k=0$, uniform weights, and
+an unweighted average over the whole ladder \emph{that looks like a reweighted
+ensemble}. Subtracting one pooled-mean constant is an exact transformation and fixes
+it; on our ladder it moves the free-energy spread from $0.000$ to $106.9$ and the
+neighbour overlap from $0$ to $0.09$--$0.27$. Second, a protection-to-$\Delta G$
+converter that clips the protected probability at $0.99999$ imposes a hard ceiling of
+$0.001987\,T_\mathrm{scale}\ln(10^5)=6.8$~kcal/mol and diverts the most protected
+amides into a sentinel; on identical frames, removing the clip raises the maximum
+from 6.3 to 19.6~kcal/mol and resolves every residue.
+
+With both corrected, the POPE/POPG wildtype ladder (16 replicas, 184{,}528 pooled
+frames) resolves 187 of 203 amides at the reference temperature with
+$\Delta G$ spanning $-2.4$ to $+18.6$~kcal/mol and the expected six-band structure
+along the sequence. Consistent with Sec.~\ref{sec:fidelity}, the baseline is lower
+than an experimental profile would suggest, and we attribute that to fold fidelity
+rather than to sampling: all off-scale amides fall inside DSSP helices and none in
+loops, and $\Delta G$ correlates with both H-bond occupancy ($r=0.59$) and burial
+($r=0.65$).
+
+\subsection{A lipid-contact accessibility term}
+\label{sec:hdx-access}
+
+A membrane protein needs one further ingredient: an open amide must also be
+water-accessible. The maintained protection model scores an amide as protected when
+it is intramolecularly hydrogen bonded or buried by protein, with no lipid term, so a
+transmembrane amide facing the bilayer---shielded from water by lipid but not buried
+by protein---leaves the protected state whenever its hydrogen bond momentarily
+breaks, fragmenting the continuous protection expected of a non-exchanging helix.
+
+We recover the missing term from the coupled trajectory, which retains the explicit
+lipid. Per frame, a backbone nitrogen is marked water-inaccessible when at least a
+threshold number of lipid tail beads lie within a fixed cutoff, and the resulting
+$a\in\{0,1\}$ gates the exchange-competent population. This is the explicit-lipid
+analogue of the implicit-membrane protection term, differing only in how ``facing
+lipid'' is measured. The cutoff and count are physical but first-order, and should be
+recalibrated against explicit-water MARTINI or all-atom reference.
+
+Applied to catalytically inactivated GlpG in a DDM belt, the transmembrane helices
+recover continuous protection and one helix remains conspicuously mobile:
+transmembrane helix~4, which carries the catalytic serine at its amino terminus. TM4
+is a short helix that does not span the bilayer and is flanked by conserved
+helix-breaking glycines,\cite{Wang2006,BenShem2007} and the active-site network it
+organises is energetically weak;\cite{Gaffney2019} rhomboids are also measurably less
+stable in detergent than in a bilayer.\cite{Barniol2018,Sawczyc2024} The canonical
+TM5/L5 gate\cite{Shi2019,Bohg2023} remained comparatively ordered, so the mobility
+localises to the intrinsically irregular catalytic helix rather than the functional
+gate.
+
+\subsection{Application: a protein on a nanoparticle}
+\label{sec:np}
+
+The same composition principle applies to any data-poor combination of
+well-parameterized parts. We propagated human serum albumin on a 5~nm
+mercaptopropionic-acid-functionalised gold nanoparticle and computed a per-residue
+footprint, testing a published lysine-footprinting claim that a core lysine is
+favoured by particle binding.
+
+The result illustrates a general hazard in interpreting such simulations. Albumin
+does not merely deform on the particle; it unravels, with $R_g$ reaching
+$39$--$172$~\AA{} across six starting orientations. Once spread, contact ceases to
+discriminate: core and surface residues show equal mean contact (0.272 versus 0.261).
+Restricted to adsorbed-and-compact frames---the state the labelling experiment
+probes, and only 3.2\% of sampled frames---the measure separates properly (core 0.128
+versus surface 0.245), the claimed K525 and K541 are strongly contacting (0.55 and
+0.69), and the primary claimed residue makes \emph{zero} contact while the protein is
+still compact. We report this as inconclusive rather than contradictory: 71\% of the
+compact window comes from a single orientation, and two orientations exceed the
+periodic box in their extended state. The methodological point stands---an
+interpretation window must be chosen from the physics of the measurement being
+compared to, before looking at the answer.
+
+\subsection{Evidence boundary}
+\label{sec:evidence}
+
+\begin{table*}[ht]
+\centering
+\small
+\caption{What the present evidence supports. An equilibrium observable is a possible
+target, not a guarantee that the available trajectory has sampled it.}
+\label{tab:evidence}
 \begin{tabular}{
   >{\raggedright\arraybackslash}p{0.26\linewidth}
   >{\raggedright\arraybackslash}p{0.22\linewidth}
   >{\raggedright\arraybackslash}p{0.43\linewidth}}
 \toprule
-Quantity & Current status & Permitted interpretation \\
+Quantity & Status & Permitted interpretation \\
 \midrule
-One temperature and one bath per real degree of freedom &
-Verified in workflow and H5 wiring &
-The thermostat and friction calibration use the same $k_BT$ in the fresh H5 files. \\
-Regenerated-O BB coordinate and force route &
-Verified in code, H5 weights, and trajectory output &
-Equation~\ref{eq:bb_forward} constructs O/BB; Eq.~\ref{eq:bb_reverse} routes only
-the persistent N/CA/C shares. \\
+Derived-site BB force route &
+Exact; measured &
+Zero residual force on derived sites; total force closes to $1.7\times10^{-9}$.
+Newton's third law holds by construction. \\
+Spline table equals the published form &
+Asserted at build time to $10^{-10}$ &
+Potential-shifted LJ plus reaction field, vanishing at 1.2~nm. \\
+One temperature, one bath per real degree of freedom &
+Verified in wiring &
+Thermostat and friction calibration share $k_BT$. \\
 Rigid pre-production handoff &
-Verified in both corrected examples &
-Internal carrier distances are preserved through interface minimization and
-burn-in; flexible dynamics begins only at production. \\
-Secondary-structure regression &
-Resolved for the tested trajectories &
-The corrected 1RKL run enters and ends production with 23 DSSP-helical residues;
-this is a stability regression, not an equilibrium population estimate. \\
-Bare-particle friction of Eqs.~\ref{eq:bead_diffusion}--\ref{eq:bead_friction} &
+Verified &
+Internal geometry preserved through interface activation; flexible dynamics begins
+only at production. \\
+Finite-run secondary-structure stability &
+Passed for 1RKL and 1AFO &
+A stability regression, not an equilibrium helix-opening population. \\
+Protein--protein burial and H-bond coverage terms &
+Absent; restoring them tested &
+Their absence is real but is \emph{not} the cause of the fidelity deficit: restoring
+them moves the helical core by $<0.1$~\AA. \\
+Sidechain anchor placement &
+Error found and corrected &
+Was displaced 0.568~\AA{} by a missing frame-origin subtraction; correcting it
+changes SC-env energies but not fold fidelity. \\
+Helical-core fidelity in a bilayer &
+\textbf{4.5~\AA; cause unidentified} &
+Seven candidates eliminated by measurement. This, not the interface, bounds
+quantitative membrane-protein thermodynamics. \\
+Bare-particle friction &
 Calibrated by construction &
-An auditable effective mobility input; not the measured motion of a bonded bead. \\
-DOPC molecular lateral diffusion &
+An auditable mobility input; not the motion of a bonded bead. \\
+Molecular lateral diffusion &
 Fails target &
-Do not assign physical membrane time from the current trajectory. \\
-Protein contact friction, Eq.~\ref{eq:contact_friction} &
-Model assumption; unvalidated &
-Useful as a local FDT-consistent damping rule, not as a physical protein
-resistance or hydrodynamic tensor. \\
+Do not assign physical membrane time. \\
+Contact friction model &
+Assumption; unvalidated &
+A local FDT-consistent damping rule, not a hydrodynamic tensor. \\
+HDX $\Delta G$ profiles &
+Mechanically correct after two fixes &
+Shape and ordering are interpretable; absolute protection is bounded by fold
+fidelity above. \\
 Bilayer and protein equilibrium populations &
 Open &
-Qualitative inspection only until timestep, cutoff, replica, and ensemble
-convergence pass. \\
-HDX analysis adapter &
-Mechanically verified &
-The data layout and EX2 calculation can be tested; present uptake and protection
-factors are not quantitative predictions. \\
+Qualitative until timestep, cutoff, replica, and ensemble convergence pass. \\
 \bottomrule
 \end{tabular}
-\caption{The implemented calibration is narrower than a molecular kinetic
-validation. An equilibrium observable is a possible target, not an automatic
-guarantee that the available trajectory has sampled it.}
-\label{tab:evidence}
-\end{table}
-
-\subsection{Regenerated-O routing and the rigid handoff preserve the input fold}
-\label{sec:hybrid}
-
-The raw spline interface keeps both test proteins embedded without a confining
-potential. Direct checks of the pair table, type assignment, derivative sign,
-cutoff, pair exclusions, H5 mass fractions, and C++ reverse route agree with the
-construct in Sec.~\ref{sec:interface}. SC-env and BB-env remain active during the
-rigid handoff and throughout production; neither interaction is softened,
-disabled, or replaced by a structural restraint.
-
-The handoff preserves the fold it is given. Comparing the final stage-6.6
-structure with the post-burn-in production input, the maximum change among all
-pair distances between persistent backbone carriers is 0.017~\AA{} for 1RKL and
-0.0037~\AA{} for 1AFO. These small residuals are numerical projection drift; the
-protein cannot undergo an internal conformational transition while the rigid
-group is active. The first production frame is therefore a flexible trajectory
-started from the pre-production fold, not a structure deformed during interface
-activation.
-
-DSSP confirms that this construct resolves the reported secondary-structure
-failure. For 1RKL, the number of helical residues is 23 at the first frame, 23 at
-the final frame, 16 at the minimum, and 21.88 on average over 1,001 frames. Every
-residue in the central transmembrane segment 10--28 is helical in 96.5--100\% of
-frames. The short excursions reflected by the minimum recover rather than growing
-into persistent helix loss. For the larger 1AFO dimer, the corresponding
-first/final/minimum/mean counts are 54/51/48/50.77. Thus the corrected interface
-passes the intended finite-run structural-stability regression for both systems.
-
-This result validates the force-routing and preparation construct, not the
-equilibrium probability of helix opening. Charged pair splines remain abruptly
-truncated at 12~\AA{}, and timestep, cutoff-continuity, independent-replica, and
-enhanced-sampling tests are still required before assigning thermodynamic
-populations. Structural stability also does not repair the separate molecular
-DOPC diffusion mismatch.
-
-\subsection{Application: hydrogen-deuterium exchange}
-\label{sec:hdx}
-
-In the common EX2 regime, conformational opening and closing equilibrate before
-chemical exchange. The observed rate factorizes as
-\begin{equation}
-k_\mathrm{HDX} = \frac{k_\mathrm{op}}{k_\mathrm{cl}}\,k_\mathrm{chem}
-= K_\mathrm{op}\,k_\mathrm{chem} = e^{-\Delta G_\mathrm{op}/k_BT}\,k_\mathrm{chem},
-\end{equation}
-so the individual opening and closing rates enter only through their equilibrium
-ratio. The maintained analysis represents each frame by a binary structural
-protection state, estimates the equilibrium protected probability
-$p_\mathrm{protected}$ (with MBAR when replicas are available), and uses
-\begin{equation}
-  k_\mathrm{obs}=k_\mathrm{chem}
-  \left(1-p_\mathrm{protected}\right)
-  \label{eq:hdx_proxy}
-\end{equation}
-before calculating peptide uptake in experimental seconds. The MD time axis does
-not appear in Eq.~\ref{eq:hdx_proxy}; the lipid-clock mismatch therefore does not
-multiply or rescale the reported HDX seconds. It matters indirectly and
-critically: slow or incorrect dynamics can leave
-$p_\mathrm{protected}$ biased because the open and closed ensembles were not
-sampled.
-
-The hybrid adapter projects N/CA/C coordinates into the standard protein-only HDX
-view while copying the full coupled-system potential, sampled temperature, time,
-and compatible hydrogen-bond observables. It then reuses the existing protection,
-MBAR, intrinsic-chemistry, and uptake workflow. Exact coordinate and observable
-copying verifies this representation layer; it does not validate the source
-ensemble or the protection model.
-
-A quantitative membrane-protein HDX result requires all of the following:
-\begin{enumerate}
-  \item the requested experimental temperature is the single system temperature,
-  and protein and lipid kinetic-temperature diagnostics agree with it;
-  \item protection populations are stable to timestep reduction, trajectory
-  blocking, and independent replicas or replica exchange;
-  \item the coupled force field reproduces the relevant local helix-opening
-  thermodynamics;
-  \item an open amide is also water-accessible. Because dry-MARTINI carries no
-  explicit water, this accessibility must be supplied separately---from a
-  calibrated local depth/water-activity model, an explicit-water reference, or,
-  as developed in Section~\ref{sec:hdx-access}, from the explicit lipid retained
-  in the coupled trajectory.
-\end{enumerate}
-The corrected 1RKL trajectory now supplies a mechanically credible folded source:
-the interface no longer creates a false opening population by deforming the helix
-before production. That repair is necessary for HDX, but it is not sufficient.
-The source is still one finite trajectory, timestep convergence of opening events
-is unresolved, the lipid ensemble has not reached a clean diffusive regime, and
-the membrane-water accessibility term of Section~\ref{sec:hdx-access} is a
-first-order lipid-contact definition that has not been independently calibrated. Protection-state block
-convergence and effective sample size must be recomputed for the corrected source
-before interpreting any uptake. Current HDX outputs should therefore be used to
-verify workflow wiring and for clearly labelled qualitative sensitivity analyses,
-not as quantitative protection factors, residue opening free energies, or peptide
-uptake predictions.
-
-\subsection{A lipid-contact accessibility term and the GlpG transmembrane-helix test}
-\label{sec:hdx-access}
-
-Requirement (iv) of Section~\ref{sec:hdx} is not optional for a membrane protein.
-The maintained protection model scores a backbone amide as protected when it is
-intramolecularly hydrogen bonded or buried by other protein atoms; it carries no
-lipid term. A transmembrane amide facing the bilayer is shielded from water by
-lipid yet is not buried by protein, so in the protein-only projection it leaves
-the protected state whenever its backbone hydrogen bond momentarily breaks. The
-continuous protection expected of a non-exchanging transmembrane helix then
-fragments into an unphysical alternation along the helix, tracking the
-periodicity with which residues turn toward the lipid rather than the protein
-core.
-
-We recover the missing term from the coupled trajectory itself, which---unlike
-the projected protein-only view---retains the explicit lipid. Per frame, a
-backbone amide nitrogen is marked water-inaccessible when at least a threshold
-number of lipid hydrophobic-tail beads lie within a fixed cutoff of it; the
-resulting accessibility $a\in\{0,1\}$ gates the exchange-competent population, so
-Eq.~\ref{eq:hdx_proxy} becomes
-$k_\mathrm{obs}=k_\mathrm{chem}\,(1-p_\mathrm{protected})\,a$. This is the
-explicit-lipid analogue of the implicit-membrane protection term used for
-lipid-embedded proteins, in which a transmembrane-surface score marks lipid-facing
-amides as protected: the two treatments share both intent and underlying
-physics---local lipid excludes water---and differ only in how ``facing lipid'' is
-measured. The contact cutoff and count are physical, but they are a first-order
-definition that should be recalibrated against explicit-water MARTINI, all-atom
-simulation, or experiment, and re-examined for a dense bilayer rather than a
-detergent belt.
-
-We tested this on catalytically inactivated \emph{E.\ coli} GlpG (the S201T
-nucleophile mutant) solvated by a dodecyl-maltoside (DDM) belt. With the
-accessibility term the transmembrane helices recover the expected continuous
-protection, and one helix remains conspicuously mobile: transmembrane helix~4
-(TM4), which carries the catalytic serine Ser201 at its amino terminus. This is
-largely consistent with the known enzyme rather than an interface artefact. TM4
-is a short helix that does not span the bilayer; it begins deep within the
-membrane at Ser201 and is flanked by the conserved helix-breaking glycines
-Gly198, Gly199, and Gly202, making it intrinsically the least regular of the six
-transmembrane segments~\cite{Wang2006,BenShem2007}, and the active-site
-hydrogen-bond network it organises is energetically weak~\cite{Gaffney2019}.
-Greater mobility in detergent than in a bilayer is also expected, since rhomboids
-are measurably less stable and less active in detergent than in a lipid bilayer
-or nanodisc~\cite{Barniol2018,Sawczyc2024}. The canonical dynamic element of
-GlpG---the TM5/L5 gate that regulates lateral substrate access~\cite{Shi2019,%
-Bohg2023}---remained comparatively ordered in the coupled run, so the mobility
-localises to the intrinsically irregular catalytic helix rather than the
-functional gate. We therefore read the TM4 dynamics as predominantly
-physiological, with two reservations: the coupled fold is somewhat looser overall
-than an implicit-bilayer reference, and transient near-complete local unwinding
-sits at the upper end of what the architecture alone predicts. The discriminating
-test is environmental---propagating the identical protein in a bilayer rather
-than a detergent belt should order TM4 if the detergent is responsible, and leave
-it disordered if the coupled force field over-destabilises it.
-
-\subsection{Transmembrane helix tilt: a coupled-kinetics limit}
-\label{sec:tilt}
-
-In an earlier hybrid baseline, 1RKL stayed folded and embedded but its backbone
-tilt remained near its $\sim40^\circ$ insertion value with only
-$\pm0.2$--$0.4^\circ$ fluctuation, versus $\pm5$--$6^\circ$ in all-atom and
-wet-MARTINI references that relax to $\sim10$--$22^\circ$. The frozen trajectory
-proves inadequate relaxation but does not locate the hybrid model's equilibrium
-tilt. Bidirectional starts or enhanced sampling of the tilt coordinate must
-determine the free-energy surface before separating a kinetic limitation from a
-force-field error.
+\end{table*}
 
 \section{Discussion}
 
-Three validation layers must remain separate. First, implementation validation
-asks whether tables, force routing, regenerated coordinates, stochastic baths,
-stage constraints, and metadata implement the stated equations. The partial BB
-route, rigid-to-flexible handoff, one-temperature wiring, FDT impulse,
-bare-particle friction, contact-count mapping, and HDX projection pass this layer.
-The corrected finite-run secondary-structure regression additionally shows that
-the implementation can activate the full interface without destroying the input
-fold.
-Second, configurational validation asks whether the finite-timestep simulation
-samples the intended equilibrium distribution and whether that distribution
-matches the physical system. The present timestep dependence, charged-pair cutoff,
-and short single-trajectory sampling leave this layer open. Third, kinetic
-validation asks whether trajectory time corresponds to molecular time. The large
-DOPC diffusion error and unvalidated protein drag fail this layer.
+Three validation layers must remain separate. \emph{Implementation} validation asks
+whether tables, force routing, derived coordinates, stochastic baths, and stage
+constraints implement the stated equations; the interface now passes this layer in
+the strong sense that its force closure is exact and measured. \emph{Configurational}
+validation asks whether the finite-timestep simulation samples the intended
+distribution and whether that distribution matches the physical system; this layer is
+open, and Sec.~\ref{sec:fidelity} identifies a specific, diagnosable reason it is
+open. \emph{Kinetic} validation asks whether trajectory time corresponds to molecular
+time; the diffusion mismatch fails this layer outright.
 
-This hierarchy defines what can be trusted now. Input parameters and H5 metadata
-can be trusted to describe the implemented stochastic model. Kinetic-temperature
-averages can be trusted as momentum diagnostics. The handoff can be trusted to
-preserve internal protein geometry, and the corrected trajectories pass the
-specific test that 1RKL and 1AFO remain predominantly helical after flexible
-production begins. One cannot yet promote that stability test to an equilibrium
-helix-opening probability, nor trust absolute DOPC or protein-coupled rates, a
-40~ps physical interpretation of each trajectory step, molecular diffusion,
-converged bilayer elastic constants, or current HDX protection and uptake values.
+The distinction matters because the three are easily conflated. A trajectory that
+remains folded for 1{,}001 frames passes an implementation test and says almost
+nothing about layer two---as the bilayer-versus-micelle comparison shows, the same
+implementation gives 4.15~\AA{} and 2.61~\AA{} core deviations in two environments,
+and only the second is within the fidelity one would want before assigning
+thermodynamics.
 
-Equilibrium methods remain the appropriate route forward, but equilibrium status
-does not confer validity by itself. Timestep-halving, cutoff-continuity tests,
-independent replicas, block convergence, and enhanced-sampling overlap must
-establish the population before MBAR or EX2 postprocessing can make it
-quantitative. Correcting a sampling defect by softening or disabling the physical
-interface would instead change the model and is not acceptable.
+The broader lesson concerns composition itself. The appeal of composing a data-rich
+learned model with a transferable physical one is that neither has to be retrained.
+The hazard, which we did not anticipate and which cost the most, is that the seam is
+not only where the two models \emph{meet} but also where terms of the parent model
+quietly \emph{disappear}. Substituting an explicit environment for an implicit one
+removes the implicit term's other duties---here, protein self-burial and
+burial-dependent hydrogen bonding---because the substitute describes only
+protein--environment physics. We would now regard a term-by-term audit of the composed
+Hamiltonian, against a standard configuration of the same protein, as a mandatory
+step in any such construction rather than a diagnostic of last resort.
 
-\section{Outlook}
-
-The principle---compose individually well-determined components through their
-physical coupling, rather than train a bespoke potential for the combined
-system---is not specific to lipids. Any system in which the parts are parameterized
-but the \emph{combination} is data-poor is a candidate: a learned protein or
-polymer model together with a physical model of an inorganic or engineered phase,
-coupled by their raw cross-interactions. Nanoparticles are a concrete example---a
-protein or membrane interacting with a nanoparticle whose surface chemistry is
-physically describable but for which little protein-binding data exists. In every
-such case, composing plausible components is only the starting point. Interface
-forces, finite-step equilibrium, sampling convergence, and any kinetic mapping
-must be validated independently.
+Correcting a sampling defect by softening or disabling the physical interface would
+change the model and is not acceptable; the same applies to widening a detection
+threshold so that a run proceeds.
 
 \section{Conclusions}
 
 A membrane protein and a full-resolution dry-MARTINI bilayer can be propagated
-together through one g-JF force schedule with one temperature and one stochastic
-bath per real degree of freedom. The protein--membrane construct has three
-inseparable parts: O and BB are regenerated from persistent N/CA/C coordinates;
-BB sensitivity is returned with the $14/54$, $12/54$, and $12/54$ persistent
-shares required by the Upside integration cycle; and the fully coupled protein is
-kept rigid until an explicit transition to flexible production. Together these
-choices preserve secondary structure without softening or disabling conservative
-SC--environment or BB--environment interactions. The factor-four mapping defines
-an explicit bare-particle mobility, and the protein receives reproducible
-contact-local damping. That kinetic construction remains a model rather than a
-physical-timescale validation: whole-DOPC diffusion is not matched and protein
-hydrodynamic friction is not established. The resolved interface is ready for
-controlled equilibrium and HDX sampling studies, but absolute membrane-coupled
-kinetics and quantitative HDX still require their independent convergence and
-water-accessibility validations.
+together through one g-JF force schedule with one temperature and one stochastic bath
+per real degree of freedom, coupled by raw cross-interactions with no
+membrane-protein training data. Making the dry-MARTINI backbone bead a derived site
+built from Upside's own regenerated carbonyl O turns the interface from a partial
+force route into an exact one: the reverse pass is a constant-weight split, the O
+share is propagated by the node that owns it, residual forces on derived sites are
+zero, and total force closes to $1.7\times10^{-9}$. Every pair interaction is served
+from a spline table proven equal to the published functional form, and the protein is
+held rigid until an explicit transition to flexible production, so secondary
+structure is preserved without softening or disabling any conservative interaction.
 
-\begin{thebibliography}{9}
+The remaining barrier is not the interface but the composition. An audit of the
+composed Hamiltonian shows that the explicit lipid correctly replaces Upside's
+sidechain environment field, and correctly excludes its implicit bilayer, but leaves
+three protein--protein terms without a counterpart. The measured cost is a helical
+core 4.15~\AA{} from the crystal in a bilayer against 2.61~\AA{} in a micelle, an
+amide protection deficit that follows from it, and HDX free energies whose shape is
+informative while their baseline is not yet quantitative. Restoring those terms,
+without double-counting the explicit lipid, is the concrete next step and the
+condition under which this hybrid becomes a quantitative membrane-protein
+thermodynamic instrument.
+
+\begin{acknowledgement}
+The authors thank the members of the Sosnick and Hernandez groups for discussions.
+\end{acknowledgement}
+
+\begin{thebibliography}{99}
+
+\bibitem{Jumper2018a}
+Jumper JM, Faruk NF, Freed KF, Sosnick TR.
+Accurate calculation of side chain packing and free energy with applications to
+protein molecular dynamics.
+\emph{PLoS Comput.\ Biol.} \textbf{14}, e1006342 (2018).
+
+\bibitem{Jumper2018b}
+Jumper JM, Freed KF, Sosnick TR.
+Rapid calculation of side chain packing and free energy with applications to protein
+molecular dynamics.
+\emph{PLoS Comput.\ Biol.} \textbf{14}, e1006342 (2018).
+
+\bibitem{Arnarez2015}
+Arnarez C, Uusitalo JJ, Masman MF, Ingolfsson HI, de Jong DH, Melo MN,
+Periole X, de Vries AH, Marrink SJ.
+Dry MARTINI, a coarse-grained force field for lipid membrane simulations with
+implicit solvent.
+\emph{J.\ Chem.\ Theory Comput.} \textbf{11}, 260--275 (2015).
+
+\bibitem{GronbechJensen2013}
+Gr\o{}nbech-Jensen N, Farago O.
+A simple and effective Verlet-type algorithm for simulating Langevin dynamics.
+\emph{Mol.\ Phys.} \textbf{111}, 983--991 (2013).
+
+\bibitem{Shirts2008}
+Shirts MR, Chodera JD.
+Statistically optimal analysis of samples from multiple equilibrium states.
+\emph{J.\ Chem.\ Phys.} \textbf{129}, 124105 (2008).
 
 \bibitem{Wang2006}
 Wang Y, Zhang Y, Ha Y.
@@ -762,8 +810,8 @@ Structural basis for intramembrane proteolysis by rhomboid serine proteases.
 
 \bibitem{Gaffney2019}
 Gaffney KA, Hong H.
-The rhomboid protease GlpG has weak interaction energies in its active site
-hydrogen bond network.
+The rhomboid protease GlpG has weak interaction energies in its active site hydrogen
+bond network.
 \emph{J.\ Gen.\ Physiol.} \textbf{151}, 282--291 (2019).
 
 \bibitem{Shi2019}
@@ -786,10 +834,9 @@ diisobutylene/maleic acid copolymers.
 \emph{J.\ Am.\ Chem.\ Soc.} \textbf{140}, 14557--14561 (2018).
 
 \bibitem{Sawczyc2024}
-Sawczyc H, Tatsuta T, \"{O}ster C, Kosteletos S, Lange S, Bohg C, Langer T,
-Lange A.
-Lipid-polymer nanoparticles to probe the native-like environment of
-intramembrane rhomboid protease GlpG and its activity.
+Sawczyc H, Tatsuta T, \"{O}ster C, Kosteletos S, Lange S, Bohg C, Langer T, Lange A.
+Lipid-polymer nanoparticles to probe the native-like environment of intramembrane
+rhomboid protease GlpG and its activity.
 \emph{Nat.\ Commun.} \textbf{15}, 7533 (2024).
 
 \end{thebibliography}
