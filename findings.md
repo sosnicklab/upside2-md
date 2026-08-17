@@ -2238,3 +2238,611 @@ standard configuration.
 Consequence for the deliverable: do **not** add the environment terms to production. The wildtype ladder
 was relaunched on the CB-corrected seed alone, which is a correctness fix rather than an expected
 improvement in the HDX profile.
+
+## Update 104 (2026-08-16): findings 96 is RETRACTED -- master's 0.99999 clip is a resolution guard, not a bug
+
+Findings 96 called the `mean_pf >= 0.99999` clip in `residue_dg_from_pf_step6_plot` a defect and removed it
+from the T-slice, on the grounds that it capped dG at 6.8 kcal/mol against a reference figure peaking at
+10-20. That was wrong on two counts, and the user's objection to "discrete spikes in each helix" is what
+exposed it.
+
+**Master deliberately uses the clipped path.** Diffing `example/00.AnalysisScripts/helpers/calc_hdx_ht.py`
+against the master branch shows the only substantive change was mine:
+
+```
+master:  calculate_residue_dg_profiles(plot_target_temps, plot_mode=True)
+mine:    calculate_residue_dg_profiles(plot_target_temps)
+```
+
+Master keeps both conventions on purpose: the **T-slice** uses the clipped step-6 path, and the
+**full-temperature** profile uses the unclipped jscripts path. They are not interchangeable and I conflated
+them.
+
+**The clip coincides with the estimator's statistical limit, measured independently.** With a binary
+protection state, the smallest resolvable $(1-p_f)$ is $\sim 1/\mathrm{ESS}$, so the largest supportable
+dG is $0.001987\,T_\mathrm{scale}\ln(\mathrm{ESS})$. On the CB-corrected ladder (85 760 pooled frames,
+ESS 10 697 = 12.5% at T = 0.85) that is **5.5 kcal/mol**; the clip sits at 6.8. Removing it let dG reach
+19.6, but the values above the limit are noise:
+
+| dG band | n | median effective frames carrying $(1-p_f)$ |
+|---|---|---|
+| < 2 | 111 | 1526 |
+| 2--5 | 58 | 45 |
+| 5--8 | 12 | 1.4 |
+| 8--12 | 3 | **1.00** |
+| > 12 | 5 | **1.01** |
+
+**100% of residues above 8 kcal/mol had their value set by fewer than two effective frames** -- the
+exponentially down-weighted tail of a single frame, amplified by a logarithm. Adjacent residues in one
+helix differ only in which single frame happened to be unprotected, which is exactly the discrete
+spike-within-a-helix pattern that was reported. Below ~5 kcal/mol, where 45-1500 frames contribute, the
+profile is smooth.
+
+The jackknife concealed it: `jk_pf` is clipped to $1-10^{-6}$, so the reported error is **exactly 0.0** for
+anything above ~8 kcal/mol. Maximum uncertainty displayed as maximum confidence.
+
+**Consequence for the target figure.** Smooth 10-20 kcal/mol bands are not reachable from a binary
+protection state at any feasible sampling -- dG = 20 needs $(1-p_f)\approx2\times10^{-15}$, i.e.
+ESS $\approx5\times10^{14}$ frames. So `79HIS_0.90.png` cannot have been produced by this per-frame
+counting estimator, and its peak magnitudes should not be used as an acceptance target until its
+provenance is established (a continuous protection measure or a fitted model are the likely candidates).
+
+Reverted. The three remaining diffs from master are all justified and unrelated: the pooled-mean reference
+subtraction and the overflow-safe weight normalisation (both required for a hybrid coupled potential,
+findings 91) and the additive `_dG_profiles.npz` save.
+
+Lesson: before calling a threshold in inherited analysis code a bug, diff it against the reference
+implementation and ask what statistical limit it might be encoding. This one was guarding precisely the
+quantity I then over-interpreted.
+
+## Update 105 (2026-08-16): the "spikes in every helix" were a plotting bug -- a finite sentinel in the connected series
+
+The user reported that helix regions were "filled with spikes" where a smooth band was expected. After
+findings 104 restored master's resolution clip the numeric profile was smooth, and the spikes remained.
+They were never in the data.
+
+`plot_residue_profile_with_extremes` in `calc_hdx_ht.py` selected the connected series with
+
+```python
+finite_mask = np.isfinite(y_values) & np.isfinite(y_errors)
+```
+
+but the out-of-range sentinels are `+1000.0` and `-100.0`, which **are finite**. Every unresolved residue
+therefore entered the `errorbar` series as a data point a thousand units above the axis, and the join to
+its in-range neighbours painted a full-height vertical line -- while the same residue was *also* drawn as a
+boundary triangle by `high_mask`. With 22--49 unresolved residues per temperature and five temperatures
+overlaid, the figure filled with vertical lines that looked exactly like per-residue noise inside each
+helix.
+
+**First correction went too far, and was reverted.** Excluding the sentinels entirely removed the vertical
+excursions, and those are wanted: an excursion off the top of the axis is how a non-exchanging amide is
+conventionally read, and it is what master actually renders. Master's *intent* is boundary triangles (it
+scatters `high_mask` at `y_max`), but its `finite_mask` flaw puts the sentinel in the connected series too,
+so its rendered output carries the excursion -- which is why the reference figure shows them.
+
+Settled behaviour keeps both and drops only the part that is indefensible: the line is drawn over all
+values, so the excursion appears, while the **error bars are drawn only where dG is resolved** -- a
+jackknife interval on a sentinel is meaningless. `plot_ref_style.py` draws through the sentinels for the
+same reason.
+
+The excursions are only legible because dG itself is capped at the resolution guard (findings 104). With
+the guard removed, unsupported single-frame values produced excursions as well, and the two were
+indistinguishable -- that combination is what "helices filled with spikes" actually was.
+
+Result on the CB-corrected ladder: a smooth band from about $-3$ to $+7$~kcal/mol, the five reweighting
+targets superposing, 180 of 203 amides resolved at T = 0.85, and the unresolved 23 shown as excursions.
+The number of excursions rises steeply toward the cold end (78 at T = 0.70) because reweighting
+concentrates weight on fewer frames there.
+
+The one remaining difference from the reference figure is the height of the band: ours is capped at the
+$6.8$~kcal/mol guard, the reference reaches 10--20. Per findings 104 that range is unreachable with a
+binary protection state, so the two are not comparable estimates.
+
+Lesson: a sentinel encoded as a large finite number will silently pass an `isfinite` filter. Either use
+`nan`/`inf` for "no value", or exclude the sentinel explicitly wherever the data is consumed -- and note
+that this one had to be excluded in two places, because the same array feeds both the line and the markers.
+
+## Update 106 (2026-08-16): the residual spikes ARE simulation-level -- separated from the estimator artefacts by measuring raw PS
+
+Asked whether the excursions and the residual roughness come from the trajectory rather than the analysis.
+They are three different things, and they separate cleanly by looking at the **unweighted** protection state,
+which owes nothing to MBAR: 86 333 pooled frames from 16 replicas, per-amide open-frame counts and 0<->1
+transition counts.
+
+**1. At the production temperature the excursions are the trajectory's own statement, not an artefact.**
+Of the 23 up-excursions at T = 0.85, **14 amides never open in a single one of the 86 333 raw frames** and
+register zero transitions -- zero information, so the estimator can only lower-bound them. Eight more open in
+1--26 frames (raw p_f >= 0.9997). Only one (idx 37) has real openings (811 frames, 194 transitions). These are
+not reweighting collapse; they survive with uniform weights.
+
+**2. At the cold rungs most excursions ARE estimator artefacts, and must not be reported.**
+
+| T | up-excursions | of which raw-never-open | spurious |
+|---|---|---|---|
+| 0.70 | 78 | 14 | **64** |
+| 0.75 | 63 | 14 | 49 |
+| 0.80 | 49 | 14 | 35 |
+| 0.85 | 23 | 14 |  9 |
+| 0.90 | 22 | 14 |  8 |
+
+The two down-excursions at the cold end are unambiguous artefacts: idx 13 and 150 have raw p_f = 0.011 and
+0.059, so they should read about $-2.6$~kcal/mol, not $-\infty$. **Consequence: the deliverable is plotted at
+the production temperature, where reweighting is near-identity.** The cold rungs earn their keep as ladder
+rungs for exchange, not as reporting temperatures. `glpG_dG_prodT_0.85.png` is that figure.
+
+The $6.8$~kcal/mol ceiling is master's fixed $0.99999$ clip, i.e. $k_BT\ln 10^5$. Our pooled sample is
+$8.6\times10^4$ frames, so the clip is matched to the sample size and is not truncating anything the data
+supports.
+
+**3. The residual within-helix roughness is a localized fold defect -- simulation-level.**
+The profile does track secondary structure: helical donors have median dG = 2.14 with 10% negative and mean
+p_f = 0.896, against median 0.86, 38% negative and p_f = 0.619 for non-helical. The roughness is carried by
+**11 of 130 helical donors that exchange in more than half the frames**, clustered at residue indices 48--50,
+65, 67--69, 98--99, 103, 150 (PDB resseq 49--51, 66, 68--70, 99--100, 104, 151), all reading dG ~= $-1$ where
+their neighbours read $+2$ to $+5$. Not prolines -- Upside already excludes all six prolines from the donor
+list. Their PS is broken **in the first block of the trajectory** and only intermittently recovers, so this is
+not slow drift during the run. This is the same unexplained fold-fidelity deficit as findings 99--103; it is
+not fixable in the analysis.
+
+Insertion is not the problem: 188--197 of 210 CA sit between the two PO4 leaflet planes across the run, the
+bilayer is 38.6~A thick, and the protein stays laterally centred on the patch.
+
+**4. One genuine physical omission in the protection state, and it goes the other way.**
+`PS` is bit-for-bit identical to `PS_protein`: `combine_hdx_protection.py` is a pass-through unless
+`--water-accessibility` is supplied, and we supply nothing. So the environment contributes **nothing** to
+protection. Master's equivalent is `get_protection_state.py --use-TM-region`, which marks lipid-facing NH as
+protected from the `surface` node -- and that node does not exist in the hybrid HDX topology, because it is
+implicit-membrane machinery (consistent with findings 100).
+
+Measured size of the omission: 177 of 203 amides sit between the leaflets in >90% of frames; 22 of those are
+called exchanging in >50% of frames; **6 sit in the hydrophobic core** (|z - midplane| < 10 A, resseq 68, 69,
+70, 82, 83, 179) where dry-MARTINI has no water at all, yet are scored freely exchanging. Note the direction:
+protecting them would **add** six excursions, not smooth the profile -- so this is not the cause of the
+roughness, and fixing it will not make the figure look better. It is still wrong as it stands, and the hook
+for it (`--water-accessibility`) already exists.
+
+Lesson: to decide whether a feature in a reweighted observable is physics or estimator, recompute it with
+uniform weights. Anything that survives is the trajectory's; anything that vanishes was the estimator's. This
+took one array of open-frame counts and settled three days of guessing about the excursions.
+
+## Update 107 (2026-08-16): the "broken helices" are 8 helix N-termini, 5 mislabelled loops, and only 3 real breaks
+
+Findings 106 attributed the within-helix roughness to "11 of 130 helical donors with broken H-bonds" and
+called it the fold-fidelity deficit. That count was inflated by the secondary-structure annotation it used.
+`hybrid_bb_map/bb_secondary_structure` is not DSSP: it is an idealised `CCCC1111HHHH...HHHH2222CCC` pattern
+with helix segments of 41 and 50 residues, which is not glpG's topology. DSSP on the same structure gives ten
+helices of 5--23 residues, and the two annotations disagree about exactly the residues in question.
+
+Re-scored against DSSP, the 11 resolve into three groups:
+
+* **5 are not in a helix at all** (idx 48, 67, 68, 69, 103 -- DSSP `' '`, `'T'`). Their low dG is correct; the
+  h5 annotation over-called them.
+* **8 lie within four residues of a helix N-terminus** (idx 18, 19, 49, 50, 63, 65, 81, 82 at offsets 0--3).
+  An amide in the first four positions of a helix **has no $i-4$ carbonyl to bond to**. Fast exchange there is
+  not a defect, it is what experimental HDX measures at helix ends -- and it is the same phenomenon as the
+  edge-of-helix excursions.
+* **3 are genuine mid-helix breaks**: idx 98, 99 (offsets 17, 18 in helix 81--102) and idx 150 (last residue of
+  helix 134--150).
+
+Those same three are the only ones of the eleven that were **H-bonded in the prepared starting structure**
+(Upside `protein_hbond` scores 0.944, 0.960, 0.855) and lost it during the run. The other eight were already
+unbonded at $t=0$ and stayed that way. The two independent measurements agree exactly, which is what makes the
+partition credible.
+
+So the fold defect visible in HDX is **3 amides out of 148 helical donors (2%)**, not a pervasive failure. The
+DSSP-based separation is textbook: helical donors median dG $= 2.04$ with 9% negative, loop donors median
+$-0.05$ with 51% negative.
+
+Also ruled out cheaply along the way: no chain breaks and no resseq gaps in the construct (all peptide C--N
+< 1.6 A), RKRK is the C-terminal tag at 207--210, and no proline is in the donor list (Upside already excludes
+all six). The global H-bonded fraction of the prepared structure, 0.611, is what a 148-helical-donor protein
+should give once helix N-termini are discounted -- the starting structure is not damaged.
+
+Lesson: do not use a bundled secondary-structure annotation as ground truth for interpreting a per-residue
+observable. Run DSSP on the reference coordinates. Here the bundled annotation converted 2% of donors into an
+apparent 8% failure and sent me looking for a force-field cause for three days.
+
+## Update 108 (2026-08-16): the helices are genuinely not stable -- 68% helical H-bond occupancy against 95% in the starting structure
+
+Findings 107 concluded the fold defect visible in HDX was 3 amides out of 148. That is true of the **protection
+state**, and it understates the fold problem badly, because PS is `H-bond OR burial` and burial does almost all
+the work in a membrane protein. Measured directly on the raw per-donor scores
+(`get_protection_state.py --report-raw-data`, 540 frames of the production replica):
+
+| quantity | helix interior | loop |
+|---|---|---|
+| backbone H-bond occupancy, starting structure | **0.954** | 0.221 |
+| backbone H-bond occupancy, trajectory | **0.681** | 0.226 |
+
+The loops are unchanged (0.221 -> 0.226); the loss is **entirely inside the helices**, ~27 percentage points of
+it. 24 of 108 helix-interior donors sit below 0.5 occupancy, in runs: 53--55, 98--102, 116--118, 138--143,
+149--150. So the helical hydrogen-bond network is broken about a third of the time, and that is the
+fold-fidelity deficit measured directly rather than inferred from RMSD.
+
+Two things this rules out and one it exposes:
+
+* **Not a thresholding artefact.** The raw H-bond score is sharply bimodal -- 60% of helix-interior frames
+  above 0.5, 29% below 0.001, only 4.6% within [0.001, 0.05] of the 0.01 criterion. The criterion sits in a
+  sparse valley, and 82% of the frames counted open score below 1e-4, i.e. wide open, not marginal.
+* **Not a starting-structure problem.** The prepared structure has 0.954 helix-interior occupancy. The run
+  destroys it.
+* **PS hides it.** 79% of the broken-H-bond frames are still called protected because burial exceeds
+  `criterion3 = 5.0`. Helix-interior PS therefore reads 0.936 protected while the H-bond occupancy is 0.681.
+  For a compact membrane protein nearly every backbone amide is buried by the protein's own atoms, so the
+  burial term is close to always-on and dG becomes largely insensitive to helix integrity. That is why the
+  profile is low-contrast (helix-interior median 2.43 kcal/mol, narrow range) and why only 3 amides survive
+  into it as outliers.
+
+Consequence for the deliverable: the dG profile is not a sensitive reporter of the remaining defect in this
+system, and quoting "3 amides" from it would misrepresent the fold. The H-bond occupancy profile is the
+sensitive one and should be reported next to it.
+
+Lesson: when a composite indicator (`A OR B`) is used on a system where `B` is nearly always true, the
+indicator stops measuring `A`. Check the components separately before concluding anything from the composite.
+
+## Update 109 (2026-08-16): the spikes were the estimator reporting infinity where it has no resolution -- fixed by censoring at the measured ESS bound
+
+What was wrong: master sends `mean_pf >= 0.99999` to a sentinel, i.e. it declares an amide infinitely
+protected whenever the reweighted protected fraction reaches a **hard-coded** 1 - 1e-5. That constant asserts
+100 000 effective frames. The reweighting does not have them. Measured from the MBAR weights themselves,
+`ESS = 1 / sum(w^2)`, the ladder supports:
+
+| T | resolution limit (kcal/mol) | residues at the bound |
+|---|---|---|
+| 0.70 | 4.33 | 84 of 203 |
+| 0.75 | 4.81 | 69 |
+| 0.80 | 5.13 | 58 |
+| 0.85 | **5.49** | 27 |
+| 0.90 | 5.57 | 28 |
+
+The T = 0.85 value reproduces the 5.5 kcal/mol measured independently from ESS 10 697 (findings 104), which is
+the check that the bound is real and not a fitted number.
+
+So an amide reaching the bound is **right-censored**: the data say "at least this protected", not "infinitely
+protected". `calc_hdx_ht.py` now computes the bound per target temperature, flags the censored residues, and
+saves both in `_dG_profiles.npz`; `plot_ref_style.py` places a censored amide on its bound with a triangle and
+draws the bound as a dotted line. Nothing is hidden -- the censored count is printed per temperature and the
+markers are distinct.
+
+This is not a widened threshold. It replaces an arbitrary constant with the measured effective sample size,
+and it tightens the reported range rather than loosening it (6.8 -> 5.49 at the production temperature). The
+y-axis then fits in +-8 kcal/mol instead of +-30, because nothing runs off it.
+
+**What the corrected figure shows.** Helices read as smooth plateaus sitting on the resolution bound -- deeply
+protected cores that the ladder cannot resolve further -- with the five temperatures superposing. The dips are
+in loops and helix N-terminal caps. The residual dips *inside* helices are the real defect from findings 108,
+at idx 63--65, 98--99, 115--117 and 150, where the backbone H-bond occupancy is genuinely low.
+
+Lesson: a hard-coded clip on a reweighted estimate is a claim about sample size. Compute the sample size. Here
+the constant over-claimed by an order of magnitude and the excess appeared as spikes that got attributed to
+the force field for three days.
+
+## Update 110 (2026-08-16): the spikes are non-cooperative opening -- isolated single amides flicker instead of segments unfolding
+
+Rendered under the reference figures' own convention (legacy jscripts, no clip), our profile reaches 18--20
+kcal/mol at T = 0.75--0.85, the same range as `79ALA_0.85.png`. So the clip, the censoring and the plotting
+were never what separated the two figures. Under the identical estimator, 79ALA is smooth broad arches and ours
+is spiky. That isolates the difference to the trajectory.
+
+The mechanism is visible in the protection state directly. For the 98 adjacent helix-interior donor pairs:
+
+| quantity | measured |
+|---|---|
+| PS correlation between sequence neighbours | 0.174 (median 0.146) |
+| P(neighbour open \| this amide open) | 0.291 against a 0.059 baseline, i.e. 4.9x |
+| open-run length, consecutive open amides | mean 1.51, median 1 |
+| **fraction of open events that are a single isolated amide** | **0.59** |
+| fraction of open runs 4 residues or longer | 0.02 |
+
+**59% of openings are one amide alone, with both neighbours still bonded.** Real local unfolding is
+cooperative: a turn or a segment opens together, so consecutive amides share the same open frames.
+
+That is exactly what controls smoothness under the unclipped convention. dG there is set by the *tail* of
+p_f, and $\ln$ amplifies it. If a segment opens cooperatively, its amides share the same open frames, so they
+share the same $(1-p_f)$ and land at the same dG -- neighbours agree and the profile is smooth even at 18
+kcal/mol. If each amide flickers independently, each one's tail is its own shot noise, the logarithm magnifies
+the difference, and neighbours disagree by 10+ kcal/mol. Ours is the second case.
+
+This also explains the earlier pieces. With uniform weights the profile looks smooth (mean adjacent difference
+1.03 kcal/mol inside helices) only because dG saturates at $k_BT\ln N = 6.73$ and the compression hides the
+tail. It explains why the burial term masks the loss (findings 108): a single flickering amide is still buried.
+And it fits the shallow-but-pervasive occupancy loss, 0.681 against 0.954 in the starting structure -- the
+helices are frayed everywhere rather than broken anywhere.
+
+Candidate causes, in the order they should be tested:
+1. **BB-env coupling knocking individual amides loose.** The environment acts on per-residue backbone proxies,
+   so it can perturb one amide's H-bond without involving its neighbours. This is specific to the hybrid and
+   would not appear in stock Upside. Control: run the same construct through the stock protein-only HDX
+   protocol and compare the isolated-open fraction. This is a separate baseline simulation, not the hybrid with
+   its interface disabled.
+2. **Integrator running hot.** The known +2--3% excess in `avg_kinetic_energy/1.5kT` would rattle individual
+   bonds. Control: isolated-open fraction against measured T across the 16 rungs.
+3. **Rotamer 1-body form**, the last untested node-level difference from stock Upside.
+
+Lesson: two profiles computed the same way from different trajectories differ by the *correlation structure* of
+the underlying indicator, not only its mean. "Smooth" was never a plotting property -- it is the signature of
+cooperative opening, and its absence is a measurable physical defect.
+
+## Update 111 (2026-08-16): the hybrid opens helical H-bonds 6x more often and half as cooperatively as stock Upside -- thermostat defect is real but secondary
+
+Four single-replica control arms from the same CB-corrected seed at T = 0.8442, 30 000 steps each
+(`scratchpad/thermostat_test/`), plus stock protein-only Upside on the same HDX topology.
+
+**The thermostat defect is real and confirmed.** Baseline reproduces the ladder (protein +5.32%, lipid +1.02%,
+ratio 1.0425 against the ladder's 1.0445). Its cause is structural: `thermostat.cpp:31` makes the global OU
+thermostat **skip every atom with gamma > 0**, so each protein backbone atom's only thermostat is its own
+Langevin friction -- and that friction is set proportional to lipid-contact count (0 to 8.80, i.e. 0 to 50x the
+bare value) while the lipids are uniform at 0.169. There is a heat source and gamma is the per-residue drain
+rate, so buried helix cores drain slowest and run hottest, exactly where protection should be highest. The
+g-JF propagator itself is correct: same per-atom alpha in the drag and in `bnoise = sqrt(2*alpha*kT*dt)`, one
+noise draw shared across both half-updates.
+
+| arm | protein excess | helix occupancy | P(open) | cooperativity |
+|---|---|---|---|---|
+| **stock, no environment** | **+1.19%** | **0.950** | **0.050** | **4.18x** |
+| hybrid baseline | +5.32% | 0.711 | 0.289 | 1.80x |
+| hybrid gamma_med | +3.68% | 0.728 | -- | -- |
+| hybrid halfdt (dt/2) | +2.41% | 0.753 | 0.247 | 1.75x |
+| hybrid gamma_hi (uniform max gamma) | +2.01% | 0.763 | 0.237 | 2.12x |
+
+Cooperativity is P(neighbour open | this open) / P(open); 1.0 is independent opening. **This metric had to be
+normalised.** The raw isolated-open fraction is higher in stock (0.730) than in the hybrid (0.528) purely
+because stock opens 5% of the time and the hybrid 29% -- at a low open rate, isolated singles dominate by
+chance. Normalised, stock is 4.18x cooperative and the hybrid 1.80x, i.e. the hybrid's openings are close to
+independent. My first reading of these arms was wrong for exactly this reason.
+
+So the hybrid does two things to the helical H-bond network relative to stock Upside on the identical
+construct and topology: it opens it **6x more often** and roughly **half as cooperatively**. Both are what
+produce log-amplified residue-to-residue scatter, hence the spikes.
+
+Reducing the temperature excess helps both but does not close the gap: 5.32% -> 2.01% moved occupancy
+0.711 -> 0.763 (21% of the deficit) and cooperativity 1.80x -> 2.12x. Stock sits at +1.19% excess with 0.950
+and 4.18x, so at comparable thermostat quality the hybrid is still far worse. **The environment coupling
+therefore contributes beyond the thermostat defect**, and that part is not a knob to be turned.
+
+Notable side result: with uniform high protein gamma the **lipids** reach exactly 0.00% excess, confirming the
+protein was heating the bath.
+
+Confound to keep in view: the stock arm has no membrane, so glpG's transmembrane helices sit in vacuum
+(Rg 16.6 A), and vacuum over-stabilises intramolecular H-bonds with nothing competing for them. The 0.950
+occupancy is therefore an upper bound and the size of the stock-vs-hybrid gap is an upper bound with it. The
+clean comparison needs stock Upside with its implicit-membrane terms, which the hybrid topology does not carry
+(findings 100).
+
+`halfdt` also confounds three things at once -- less discretisation error, a halved gamma*dt, and half the
+physical time -- so it bounds rather than isolates the finite-dt contribution. The excess fell 5.32% -> 2.41%,
+a ratio of 2.2 rather than the 4.0 of a pure dt^2 error.
+
+Lesson: never compare a count of isolated events between two systems with different event rates. Normalise
+against the independent-opening null first. Unnormalised, these arms said the opposite of the truth.
+
+## Update 112 (2026-08-17): reducing dt removes the temperature defect entirely and does NOT recover the fold -- the coupling is the cause
+
+dt scan at **matched physical time** (270 t_up, steps scaled as 1/dt, same CB-corrected seed, T = 0.8442).
+This removes the confound in the earlier `halfdt` arm, which ran the same step count and therefore half the
+time.
+
+| dt | steps | protein excess | lipid excess | helix occupancy | P(open) | cooperativity |
+|---|---|---|---|---|---|---|
+| 0.00900 | 30 000 | +5.32% | +1.02% | 0.711 | 0.289 | 1.80x |
+| 0.00450 | 60 000 | +2.39% | -0.88% | 0.765 | 0.235 | 1.71x |
+| 0.00225 | 120 000 | **+1.07%** | **+0.02%** | 0.758 | 0.242 | **1.53x** |
+
+**The temperature defect is finite-dt error, and dt fixes it.** The excess falls by a consistent factor of
+2.23 per halving (5.32 -> 2.39 -> 1.07%), and the lipids land at +0.02%, i.e. exactly their target. At
+dt = 0.00225 the whole system is thermostatted correctly and the protein sits where stock Upside sits
+(+1.19%). So findings 111's mechanism is confirmed *and* its remedy identified: the heat source is the
+discretisation, and gamma's heterogeneity only matters because there is a source for it to drain unevenly.
+
+**But dt does not recover the fold.** Occupancy plateaus at ~0.76 against stock's 0.950, and cooperativity does
+not improve -- it drifts the wrong way, 1.80x -> 1.71x -> 1.53x against stock's 4.18x. A four-fold reduction in
+dt eliminates the temperature defect almost entirely and leaves the helical hydrogen-bond network no better.
+
+**Therefore the excess opening and the non-cooperativity are not integration artefacts.** They come from the
+hybrid Hamiltonian itself -- the environment coupling -- and no timestep, friction or thermostat change will
+remove them. This also retires the "correction factor in analysis" idea for good: the defect is not a
+mislabelled temperature, it is missing cooperative structure in the sampled ensemble.
+
+Caveats: 270 t_up is short and occupancy is still decaying from the seed's 0.954, so the plateau at ~0.76 is an
+upper bound on how bad it is, not a converged value; and the downward cooperativity trend across the scan is
+within what three short arms can resolve, so treat it as "does not improve" rather than "gets worse".
+
+Consequence for the plan: a re-run is justified for the dt change on its own (it is a genuine correctness fix,
+and it requires re-deriving the bare friction against the same target lipid diffusion), but it will not produce
+the smooth profile. The next thing to test is the coupling directly -- whether individual opening events
+coincide with large environment forces on that residue's backbone proxy.
+
+## Update 113 (2026-08-17): the discrete spikes are the missing lipid-shielding term, not the force field -- findings 106 item 4 was wrong by 7x
+
+The complaint is specific: inside a TM helix every amide should read `+inf` as a contiguous block (as
+`~/Downloads/79ALA_0.85.png` from the implicit-bilayer model does), and instead
+`glpG-RKRK-79HIS_DG_res_T_slice.png` reads 0.5--4 kcal/mol with isolated needles. Measured on one replica
+(T = 0.844, 1350 frames, **unweighted -- no MBAR, no clipping**, so nothing here is estimator behaviour):
+
+| bilayer-embedded helical amides (lipid-shielded in >=90% of frames) | at +inf | finite |
+|---|---|---|
+| protein-only PS, i.e. what `hdx.sh` produces now | 35 of 92 | 57 |
+| + lipid shielding via `py/martini_hdx_membrane_accessibility.py` | **79 of 92** | 13 |
+
+Contiguous `+inf` runs go from 8, 6, 5, 4, 4, 3 ... to 17, 16, 15, 14, 9, 7 -- needles become blocks. Helix
+104--126 is the clean example: protein-only gives 1.76, 0.06, 2.31, 3.84, inf, inf, inf, 3.84, 3.43, 3.02,
+1.32, 0.96, 0.58, 0.58, 0.88, 1.37, 3.84, ...; with shielding the four residues that sit *outside* the
+bilayer (104--107, shielded 0.00--0.28) keep their finite values and 108--126 all go to `+inf`. That is the
+reference figure's pattern, arrived at from the same trajectory.
+
+**Mechanism.** `get_protection_state.py` scores an amide protected only if H-bonded or buried by *protein*.
+A TM amide facing lipid is buried by neither, so it drops out of the protected state whenever its backbone
+H-bond flickers -- but there is no water there to exchange with. Master handles this with
+`get_protection_state.py --use-TM-region`, reading the `surface` node; the hybrid HDX topology is a
+protein-only Upside config with no membrane potential, so that node does not exist. The designed
+replacement is `combine_hdx_protection.py --water-accessibility` fed by
+`py/martini_hdx_membrane_accessibility.py`. **`scratchpad/local_popg_79HIS/hdx.sh` never calls it**, so
+`PS.npy` is bit-identical to `PS_protein.npy` (verified) and the environment contributes nothing.
+
+**This retracts findings 106 item 4**, which measured the omission as "6 amides in the hydrophobic core" and
+concluded "fixing it will not make the figure look better". That used a >50%-exchanging cutoff and
+|z-midplane| < 10 A. Both are wrong for this purpose: dG is logarithmic, so an amide exchanging in 5--30%
+of frames reads 0.5--2 kcal/mol and matters just as much as one exchanging in 60%; and the tail-contact
+criterion, not a midplane distance, is what decides whether water is present. The real size is 44 extra
+`+inf` donors, ~7x the earlier estimate.
+
+**What is left is genuinely the fold**, and it is small: 13 of 92 deep helical amides stay finite, at
+2.3--4.2 kcal/mol (resseq 19, 20, 23, 32, 66, 82, 94, 125, 135, 136, 140, 161, 201). Findings 108/110/111/112
+stand as measurements -- helical H-bond occupancy really is ~0.76 against stock's 0.950, and opening really
+is non-cooperative -- but they are no longer the explanation for the figure. With the lipid term in place a
+flickering H-bond on a bilayer-embedded amide is invisible to HDX, which is physically correct.
+
+**Calibration: settled, and the criterion now has no free parameter.** The user's instruction was to use the
+bilayer boundary, since a dry-MARTINI box contains no water anywhere and the analysis has to decide where
+water *would* be. Taken literally as a slab between the leaflet planes that over-protects badly, because
+glpG's interfacial loops sit inside the slab too (per-replica, T = 0.844, unweighted):
+
+| criterion | helical amides at +inf / 148 | loop+turn at +inf / 55 | longest contiguous +inf runs |
+|---|---|---|---|
+| none (protein-only) | 41 | 0 | 8, 6, 5, 4, 4, 3 |
+| slab between PO4 leaflet planes | 136 | 34 | 51, 46, 42, 22, 9 |
+| slab between ester (GL1/GL2) planes | 117 | 22 | 42, 35, 22, 20, 19 |
+| >=1 tail bead within 7.0 A | 115 | 10 | 22, 20, 18, 16, 13, 11 |
+| >=3 tail beads within 7.0 A | 83 | 4 | 16, 15, 14, 12, 9, 7 |
+
+A slab merges the helices into 40--50-residue blocks and erases the peak/valley structure the reference
+figure shows. **Master does not use a bare slab either**: `src/surface.cpp` selects TM residues by
+`tm_min < z < tm_max` and then ANDs that with a lipid-facing surface-exposure calculation, so a residue
+lining the protein's own polar interior is not protected by that term. The local tail-contact test is the
+coarse-grained analogue of the conjunction, and it is the right shape.
+
+Both of its numbers are then measured from the bilayer, not chosen:
+* **Radius = 7.00 A**, the flat first minimum of the intermolecular tail--tail g(r) (first peak 5.12 A).
+  The minimum spans two 0.25 A bins whose ordering flips with noise, so the radius is taken as the mean of
+  the bins within 5% of the minimum -- that gives 7.000 A on **all 16 replicas**, where a bare argmin flips
+  between 6.88 and 7.12.
+* **Threshold = 1 contact**, because at that radius a phosphate bead has a **median of 0** intermolecular
+  tail neighbours -- ester (GL1/GL2) 2, first tail bead (C1A/C1B) 6, terminal tail (C4A/C5B) 11. The first
+  tail contact is therefore the first step inside the head groups, i.e. the bilayer boundary itself.
+
+Nothing in either number was chosen by looking at the figure. `--cutoff`/`--min-contacts` are gone from
+`martini_hdx_membrane_accessibility.py`.
+
+Secondary, and separate: the `_DG_res_T_slice.png` figure also overlays five temperatures under master's
+step-6 sentinel convention, which sends every `p_f >= 0.99999` to +1000 and so caps everything else at
+0.001987 * temp_scale * ln(99999) = 6.8 kcal/mol. A residue whose unclipped dG is 7.2 is therefore drawn
+identically to one at infinity, and the 7--20 range the reference figure shows can never appear. The cold
+rungs contribute most of the arrows (78 at T = 0.70, 63 at T = 0.75, against 23 at T = 0.85) and are mostly
+estimator saturation. This matches master and is not a regression, but it is why the two figures look
+categorically different even where the underlying numbers agree.
+
+## Update 114 (2026-08-17): the clip was masking the missing membrane term, so the unclipped rendering is now the correct one
+
+Findings 104 removed the unclipped profile from the deliverable figure because it produced discrete spikes
+inside helices, and restored master's step-6 clip. That diagnosis had the causality backwards. The spikes were
+the missing lipid-shielding term (findings 113), not the convention: with the membrane term in the protection
+state, the unclipped profile rises *continuously* into its excursions instead of jumping.
+
+Measured on the 16-replica CB-corrected ladder (177 k pooled frames), unclipped, T = 0.85:
+
+| | value |
+|---|---|
+| off scale (p_f == 1 exactly) | 85 of 203, **81 of them in helices** |
+| contiguous off-scale runs | 15, 15, 14, 12, 9, 8 |
+| resolved range | -0.53 to 21.3 kcal/mol |
+| helix interior / N-cap / loop median | 4.44 / 4.26 / 1.63 |
+| helix-interior amides below 0 | **residue 150 only** (none at T = 0.90) |
+
+The per-helix finite values now form a ramp into each block rather than a needle beside one -- helix 104-126
+reads 3.1, 3.2, 3.2, 4.4, 4.9, 5.8, 6.1, 9.8, 16.9 and then off scale, against the clipped rendering's flat
+6.8 ceiling. So the clip is not needed and only truncates: `plot_ref_style.py` is now single-mode on
+`dG_unclipped`, `--unclipped` and the censor-at-the-bound drawing are deleted, and the axis is the reference's
+-20..30 so the two figures can be read side by side.
+
+What stands from findings 104/109 is the *caveat*, not the clip. The resolution limit
+0.001987 * temp_scale * ln(ESS) is 4.68--6.01 kcal/mol across this ladder, so the 6--21 kcal/mol values order
+amides correctly but are lower bounds -- they rest on a reweighted (1 - p_f) below one effective frame. That is
+now carried by a dotted line per temperature on the figure instead of by truncating the data.
+
+`calc_hdx_ht.py`'s `_DG_res_T_slice.png` keeps master's clipped step-6 convention untouched, for master parity.
+The npz stores both arrays, so the two renderings come from one MBAR solve.
+
+
+## Update 115 (2026-08-17): the cluster ladder's lipids are not packed against the protein -- a seed defect, not the force field
+
+Established while checking whether the four-variant cluster REMD can produce the findings-113 figure. The
+lipid-shielded fraction of amide N (>=1 tail bead within 7.00 A, the findings-113 criterion) differs between
+the two POPE/POPG datasets by almost a factor of two, and it traces to the seeds:
+
+| dataset | seed, last frame | run |
+|---|---|---|
+| local 16-replica `local_popg_cbfix` | **0.857** | flat 0.87 from the first block (0.875, 0.871, 0.878 ... 0.865) |
+| cluster 48-replica `popepopg_REMD` | **0.433** | climbing 0.32 -> 0.50 over 14 chunks, plateauing near 0.50 |
+
+Same protein, same 4949 atoms, same 279 lipids, same box to 0.5 A, same criterion, same code (the contact
+radius comes out 7.00 A on the cluster trajectory too, so the calibration transfers).
+
+**It is not insertion, and it is not a broken protein.** 87.1% of CA sit within 20 A of the bilayer midplane
+in the cluster run and that number is constant across all 16 chunks; Rg is 20.4 A, the crystal value; the
+chain is intact (consecutive CA-CA 3.79-3.90 A with zero exceptions). The 12 CA that read 30-60 A from the
+midplane are the N-terminal tail extended into vacuum, which is outside the bilayer in the local run too
+(`amide_membrane_depth` gives indices 0-12 a 0.07-0.37 in-membrane fraction there). So the protein is in the
+membrane at the right depth; what is missing is lipid *packed against its surface*.
+
+Consequence for the deliverable: an HDX profile from the cluster data now will show far fewer +inf amides than
+the local one, and the difference will be the seed's lipid packing rather than the force field or the
+analysis. The two datasets must not be compared as if they differed only in ladder size.
+
+Open question for the user, not acted on: the cluster ladder can either be left to pack on its own -- 30 h
+bought 0.32 -> 0.50 and the trend is flattening, so this looks slow -- or reseeded from a configuration with
+the lipids already packed, at the cost of the 30 h x 4 jobs already spent. Nothing was reseeded.
+
+Lesson: check the environment's contact with the protein, not just the protein's position in the environment.
+Insertion depth and Rg were both correct and constant here while half the protein-lipid contact was missing.
+
+
+## Update 116 (2026-08-17): the four cluster POPE/POPG jobs are simulating a RIGID protein -- one wrong stage string
+
+The cluster HDX came out empty (188 of 203 amides off scale, resolved values to -53.9 kcal/mol). Traced to the
+end, it is not the estimator, not the membrane term, and not equilibration:
+
+* **MBAR is healthy.** ESS 6529 of 48 624 (13.4%), top single-frame weight 0.0002, top-10 weights 0.0021,
+  f_k spread 97.3. Ladder overlap is *better* than the local run's: adjacent-rung mean gap / std = **0.25**
+  against the local ladder's 1.54.
+* **Equilibration is not the cause.** The potential does drift monotonically -2.1 to -2.5 sigma over the run
+  (local control: -0.59 to +1.02, mixed sign), and the last quarter drifts only -0.13 sigma. Re-running on
+  that equilibrated tail alone gave the *same* degenerate profile (188 off scale, min -53.9). Retracts the
+  drift explanation offered before this was measured.
+* **The membrane term is not the cause.** Protein-only p_f == 1 exactly for **169 of 203** amides; adding the
+  lipid term takes it to 171. The saturation is already in the protein protection state.
+* **The protein has no internal dynamics.** In the *raw* hybrid trajectory, bypassing every analysis step,
+  the internal CA RMSD between frames separated by whole chunks is **0.000-0.001 A**. Projected Rg is
+  17.60 +- 0.000, RMSD 0.00 +- 0.003 and H-bond count 194.6 +- **0.01**, identical at T = 0.70 and T = 0.90.
+  The coordinates do move (per-atom std 1.0 A) -- as a rigid body. Local control: Rg 17.67 +- 0.228,
+  RMSD 2.46 +- 0.563, H-bond 169.7 +- 12.07 at T = 0.70 and 123.6 +- 18.9 at T = 0.90.
+
+**Root cause: `/input/stage_parameters.current_stage`.**
+
+| | local seed | cluster seeds |
+|---|---|---|
+| `current_stage` | `production` | **`production_handoff`** |
+| `activation_stage` | `production` | `production` |
+| `preprod_protein_mode` | `rigid_body` | `rigid_body` |
+
+`martini_hybrid.cpp:637-641` — `enforce_preprod_rigid_stage` returns `preprod_rigid && (stage != "production")`
+— then calls `martini_fix_rigid::set_dynamic_rigid_groups`. `production_handoff` is not `production`, so the
+protein is held as a rigid group. Both configs set `preprod_protein_mode = rigid_body`, so the *only* thing
+separating a live protein from a frozen one is that string.
+
+**Why the earlier verification missed it.** `remote_jobs.md` recorded "their stage is `production_handoff`,
+which `martini_hybrid.cpp:646-647` treats as active, so the SC-env interface is on." That is true and it is
+the wrong gate: `hybrid_interface_active_stage` (lines 644-648) does accept `production_handoff`, but
+`enforce_preprod_rigid_stage` (lines 637-641) is a *different* predicate on the same string and rejects
+anything that is not exactly `production`. One string, two gates, opposite senses.
+
+The bilayer hole the user saw in the cluster trajectory and the -2.5 sigma potential drift are both downstream
+of this: lipids relaxing around a protein that cannot respond.
+
+Fix is one attribute -- `set_stage_label(seed, "production")`, i.e. what `martini_prepare_system.py:1303`
+already does -- applied to the four seeds and the 4 x 48 live replica files, then restart. Not applied;
+28-30 h x 4 jobs would be discarded, which is the user's call.
+
+Lesson: two predicates keyed on the same stage string with different accept sets is a trap. When a stage
+string is checked anywhere, enumerate *every* site that reads it before concluding a run is configured right --
+and verify the conclusion dynamically (does the protein's internal RMSD change?) rather than by reading one
+gate.

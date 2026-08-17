@@ -4,15 +4,27 @@ The BB proxy rework (findings 94) is done, deployed and verified; the phase is n
 shape is `~/Downloads/79HIS_0.90.png`: six broad peaks reaching ΔG 10–20 kcal/mol at residues ~35–48,
 ~85–100, ~110–125, ~135–148, ~165–175, ~190–200.
 
-**Ladder is fine; two separate things limited the profile, and both are now understood.** MBAR reweights
-correctly (f_k spread 106.9, neighbour overlap 0.093–0.268, better than the 48-replica DDM ladder). The
-compression to −5…+7 was a 0.99999 clip in `calc_hdx_ht.py`, now fixed (findings 96). The residual
-flatness — helix amides at ΔG ≈ 2 rather than 10–20 — is a model property: the helical core sits ~4.5 Å
-from the crystal, so both protection terms fail together ~3.3% of the time. **Cause still unidentified.**
-Seven candidates eliminated by measurement (integrator, H-bond assignment, lipid packing, hydrophobic
-mismatch, burial threshold, CB placement, and the absent protein–protein terms — RD1, rejected, findings
-103). The one untested node-level difference from a standard Upside config is the rotamer one-body
-representation: fixed (`placement_fixed_scalar`) versus rama-dependent (`placement_scalar`).
+**Ladder is fine; the profile shape was limited by an analysis omission, and the fold defect is a small
+residual (findings 113).** MBAR reweights correctly (f_k spread 106.9, neighbour overlap 0.093–0.268, better
+than the 48-replica DDM ladder). The dG ceiling near 6.8 kcal/mol is master's deliberate resolution guard,
+**not** a bug — findings 96 claimed otherwise and is retracted (findings 104).
+
+The dominant cause of "helix amides at ΔG ≈ 2 with isolated needles instead of a contiguous +∞ block" is
+that the protection state has **no membrane term**: `get_protection_state.py` scores only protein burial,
+the hybrid HDX topology has no `surface` node for master's `--use-TM-region`, and the replacement
+(`py/martini_hdx_membrane_accessibility.py` → `combine_hdx_protection.py --water-accessibility`) is never
+called by `hdx.sh`. Measured unweighted on one replica: applying it takes bilayer-embedded helical amides at
++∞ from 35/92 to 79/92 and turns needles into 14–17-residue blocks, i.e. the reference figure's shape.
+Findings 106 item 4 sized this at 6 amides and is retracted.
+
+What remains is a genuine but much smaller fold defect: 13 of 92 deep helical amides stay finite at
+2.3–4.2 kcal/mol, consistent with helical H-bond occupancy ~0.76 against stock's 0.950 (findings 108–112).
+Its cause is the environment coupling, not the integrator — reducing dt fourfold removed the temperature
+defect entirely and left occupancy and cooperativity unchanged (findings 112). Eight candidates eliminated
+by measurement (integrator, timestep, H-bond assignment, lipid packing, hydrophobic mismatch, burial
+threshold, CB placement, absent protein–protein terms — RD1, rejected, findings 103). The one untested
+node-level difference from a standard Upside config is the rotamer one-body representation: fixed
+(`placement_fixed_scalar`) versus rama-dependent (`placement_scalar`).
 
 - [x] **D1** Rework the BB proxy onto `infer_H_O` + constant-weight split; delete the old placement path.
 - [x] **D2** Deploy to midway3, rebuild, migrate every config (`py/martini_upgrade_hybrid_args.py`).
@@ -38,6 +50,13 @@ comparable pooled frames (347 k vs 245 k). Since the sentinel problem is a short
 events rather than of ladder rungs (overlap already verified adequate at 16 rungs), trajectory length is
 what matters and the local run wins on it. An earlier note in this file calling the cluster "better data
 by a wide margin" was wrong — it assumed 48 replicas meant proportionally more sampling.
+- [ ] **D8** Membrane term wired into the HDX pipeline (findings 113). `hdx.sh` now runs
+      `martini_hdx_membrane_accessibility.py` per replica off the joined hybrid trajectory and folds it in
+      with `combine_hdx_protection.py --water-accessibility`. The criterion carries **no free parameter**:
+      radius = flat first minimum of the intermolecular tail–tail g(r) (7.00 Å, identical on all 16
+      replicas), threshold = 1 contact, which is where a phosphate bead sits (median 0 tail neighbours at
+      that radius). `--cutoff`/`--min-contacts` removed. Full 16-replica re-analysis running into
+      `scratchpad/local_popg_cbfix/hdx_acc/`; the old protein-only results are kept alongside in `hdx/`.
 - [ ] **G2** Identify the second cause of the +2–3% avg_kinetic_energy/1.5kT excess (dt-independent).
 
 Do NOT: change dt for glpG (hard-locked to 0.009; brownian friction tuned against it), change masses,

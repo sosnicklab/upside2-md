@@ -108,19 +108,36 @@ def residue_dg_from_pf_step6_plot(mean_pf, temp_scale):
         return 0.001987 * temp_scale * np.log(mean_pf / (1.0 - mean_pf))
 
 
+def effective_sample_size(weights):
+    """Number of frames the reweighted ensemble actually rests on, 1 / sum(w^2) for normalised w."""
+    w = np.asarray(weights, dtype=float)
+    return 1.0 / np.sum(w * w)
+
+
 def residue_dg_profile_with_error(weights, temp_scale, plot_mode=False):
     weight_matrix = np.asarray(weights, dtype=float).reshape(n_rep, -1)
     sum_w_per_traj = np.sum(weight_matrix, axis=1)
     total_den = np.sum(sum_w_per_traj)
 
+    # With a binary protection state the smallest resolvable (1 - p_f) is one effective frame, so dG cannot
+    # be determined past 0.001987 * temp_scale * ln(ESS). A residue at or beyond that bound is right-censored
+    # -- the data say "at least this protected" -- and reporting it as infinite is what fills a helix with
+    # full-height spikes. The bound is a property of the reweighting at this target temperature, so it
+    # tightens sharply toward the cold end of the ladder where the weights concentrate.
+    ess = effective_sample_size(weight_matrix)
+    pf_bound = 1.0 - 1.0 / ess
+    dg_limit = 0.001987 * temp_scale * np.log(pf_bound / (1.0 - pf_bound))
+
     dG_mean = np.zeros(n_res)
     dG_err = np.zeros(n_res)
+    censored = np.zeros(n_res, dtype=bool)
 
     for residue_index in range(n_res):
         residue_pf = ps_conv[:, :, residue_index]
         sum_wp_per_traj = np.sum(residue_pf * weight_matrix, axis=1)
         total_num = np.sum(sum_wp_per_traj)
         mean_pf = total_num / total_den
+        censored[residue_index] = mean_pf >= pf_bound or mean_pf <= 1.0 / ess
         if plot_mode:
             dG_mean[residue_index] = residue_dg_from_pf_step6_plot(mean_pf, temp_scale)
             if n_rep < 2 or mean_pf <= 0.00001 or mean_pf >= 0.99999:
@@ -146,19 +163,25 @@ def residue_dg_profile_with_error(weights, temp_scale, plot_mode=False):
 
         dG_err[residue_index] = np.sqrt(max((n_rep - 1) * np.var(jk_dg), 0.0))
 
-    return dG_mean, dG_err
+    return dG_mean, dG_err, censored, dg_limit
 
 
 def calculate_residue_dg_profiles(temp_values, plot_mode=False):
     profile_temps = np.asarray(temp_values, dtype=float)
     dG_profiles = []
     dG_errors = []
+    censor_masks = []
+    dg_limits = []
     for temp_value in profile_temps:
         temp_scale = temp_value / 0.85 * 298.0
-        dG_mean, dG_err = residue_dg_profile_with_error(reweight(temp_value), temp_scale, plot_mode=plot_mode)
+        dG_mean, dG_err, censored, dg_limit = residue_dg_profile_with_error(
+            reweight(temp_value), temp_scale, plot_mode=plot_mode)
         dG_profiles.append(dG_mean)
         dG_errors.append(dG_err)
-    return profile_temps, np.asarray(dG_profiles), np.asarray(dG_errors)
+        censor_masks.append(censored)
+        dg_limits.append(dg_limit)
+    return (profile_temps, np.asarray(dG_profiles), np.asarray(dG_errors),
+            np.asarray(censor_masks), np.asarray(dg_limits))
 
 
 def residue_plot_limits(values):
@@ -170,15 +193,25 @@ def plot_residue_profile_with_extremes(ax, x_values, y_values, y_errors, y_limit
     y_values = np.asarray(y_values, dtype=float)
     y_errors = np.asarray(y_errors, dtype=float)
 
-    finite_mask = np.isfinite(y_values) & np.isfinite(y_errors)
+    y_min, y_max = y_limits
+    out_high = np.isposinf(y_values) | (y_values >= 100.0) | (y_values > y_max)
+    out_low = np.isneginf(y_values) | (y_values <= -100.0) | (y_values < y_min)
+    # The out-of-range sentinels are kept IN the connected line on purpose: joining to a value far off the
+    # axis draws the vertical excursion that marks a non-exchanging amide, which is how these profiles are
+    # conventionally read. What they must not carry is an error bar -- a jackknife interval on a sentinel is
+    # meaningless -- so the line spans everything while the error bars are drawn only where dG is resolved.
+    drawn_mask = np.isfinite(y_values)
+    finite_mask = drawn_mask & np.isfinite(y_errors) & ~out_high & ~out_low
+    if np.any(drawn_mask):
+        ax.plot(x_values[drawn_mask], y_values[drawn_mask], '-', color=color, linewidth=1.0, zorder=2)
     if np.any(finite_mask):
         ax.errorbar(
             x_values[finite_mask],
             y_values[finite_mask],
             yerr=y_errors[finite_mask],
-            fmt='o-',
+            fmt='o',
             color=color,
-            linewidth=1.0,
+            linewidth=0.0,
             markersize=3.5,
             elinewidth=0.6,
             capsize=1.5,
@@ -187,9 +220,7 @@ def plot_residue_profile_with_extremes(ax, x_values, y_values, y_errors, y_limit
     else:
         ax.plot([], [], 'o-', color=color, linewidth=1.0, markersize=3.5, label=label)
 
-    y_min, y_max = y_limits
-    high_mask = np.isposinf(y_values) | (y_values >= 100.0) | (y_values > y_max)
-    low_mask = np.isneginf(y_values) | (y_values <= -100.0) | (y_values < y_min)
+    high_mask, low_mask = out_high, out_low
 
     if np.any(high_mask):
         ax.scatter(
@@ -308,21 +339,35 @@ for t in T:
     dG_hbond.append(g)
 
 dG_hbond = np.asarray(dG_hbond)
-# The T-slice uses the jscripts convention its own helper is named for, NOT the step-6 plot one. The
-# difference is a hard ceiling: step-6 sends every residue with mean_pf >= 0.99999 to the +1000 sentinel,
-# which caps dG at 0.001987 * temp_scale * ln(99999) = 6.8 kcal/mol at T = 0.85 and throws the most
-# protected amides off the plot entirely. Measured on the POPE/POPG wildtype ladder, that clip alone
-# accounted for every "never-exchanging" residue -- 44 at T = 0.85 and 77 at T = 0.75, while the number
-# with mean_pf == 1.0 exactly was zero -- and held the profile at 6.3 against a reference figure that
-# peaks at 10-20. On the jscripts path the same data gives 19.6 and all 203 residues resolve. Reweighted
-# weights span many orders of magnitude, so mean_pf legitimately resolves far closer to 1 than 1e-5; the
-# jackknife error bar is what carries how well.
-dG_slice_temps, dGhx_slice, dGhx_slice_err = calculate_residue_dg_profiles(plot_target_temps)
-# Persist the per-temperature profiles. They were computed here and then only ever rendered, so any other
-# view of the same numbers had to recompute MBAR to get at them.
+# The T-slice keeps master's step-6 convention (plot_mode=True), which sends mean_pf >= 0.99999 to the
+# sentinel and so caps dG at 0.001987 * temp_scale * ln(99999) = 6.8 kcal/mol at T = 0.85. That cap is a
+# deliberate resolution guard, not a defect, and it very nearly coincides with the statistical limit of
+# the estimator: with a binary protection state, the smallest resolvable (1-p_f) is ~1/ESS, so the largest
+# supportable dG is 0.001987 * temp_scale * ln(ESS) -- measured at 5.5 kcal/mol on this ladder
+# (ESS 10 697 of 85 760 pooled frames at T = 0.85). Removing the clip was tried and reverted: it let dG
+# reach 19.6, but 100% of residues above 8 kcal/mol had their (1-p_f) carried by fewer than TWO effective
+# frames, so those values are single-frame shot noise amplified by the logarithm, and they appear as
+# discrete spikes within a helix rather than the smooth band the physics implies. The jackknife hides it,
+# clipping p_f at 1-1e-6 and therefore reporting exactly 0.0 error above ~8 kcal/mol.
+# The full-temperature profile below deliberately uses the unclipped jscripts convention; the two serve
+# different purposes and must not be conflated.
+(dG_slice_temps, dGhx_slice, dGhx_slice_err,
+ dGhx_slice_censored, dGhx_slice_limit) = calculate_residue_dg_profiles(plot_target_temps, plot_mode=True)
+for temp_value, limit, mask in zip(dG_slice_temps, dGhx_slice_limit, dGhx_slice_censored):
+    print('resolution limit at T = {:.2f}: {:.2f} kcal/mol, {} of {} residues censored'.format(
+        temp_value, limit, int(mask.sum()), mask.size))
+# The same profiles under the legacy jscripts convention, which clips nothing and so lets (1 - p_f) fall to
+# the weight of a single frame. Those values are not supportable -- reaching 19 kcal/mol needs ~1e16 effective
+# frames -- but the reference figures were produced this way, so they are kept alongside for comparison and
+# must never be quoted as dG.
+(_, dGhx_slice_raw, dGhx_slice_raw_err, _, _) = calculate_residue_dg_profiles(plot_target_temps)
+# Persist the per-temperature profiles together with the censoring bound, so a renderer can show an
+# unresolved amide at the limit instead of running it off the axis.
 np.savez('{}/{}_dG_profiles.npz'.format(paths['result_dir'], pdb_id),
-         res=res, temps=dG_slice_temps, dG=dGhx_slice, dG_err=dGhx_slice_err)
-dG_profile_temps, dGhx_T, dGhx_T_err = calculate_residue_dg_profiles(T)
+         res=res, temps=dG_slice_temps, dG=dGhx_slice, dG_err=dGhx_slice_err,
+         censored=dGhx_slice_censored, dg_limit=dGhx_slice_limit,
+         dG_unclipped=dGhx_slice_raw, dG_unclipped_err=dGhx_slice_raw_err)
+dG_profile_temps, dGhx_T, dGhx_T_err, _, _ = calculate_residue_dg_profiles(T)
 
 pf_frame = np.sum(PS[:, start_frame:, :], axis=2).flatten()
 den = np.linspace(0.0, 15.0, 151)

@@ -209,11 +209,18 @@ no lipid term, so a transmembrane amide facing the bilayer — shielded from wat
 buried by protein — drops out of the protected state whenever its backbone H-bond momentarily breaks,
 fragmenting the continuous +∞ ΔG that a non-exchanging TM helix must show. `martini_hdx_membrane_accessibility.py`
 recovers the missing term from the **full hybrid trajectory** (which still has the lipid): per frame, an
-amide backbone N is marked water-**inaccessible** if ≥ `--min-contacts` lipid hydrophobic-tail beads lie
-within `--cutoff` (defaults 5 beads / 8 Å, calibrated for DDM). Those amides then read as protected, so
-lipid-facing TM residues rejoin the continuous +∞ while genuinely solvent-exposed loops stay exchangeable.
-The `--cutoff`/`--min-contacts` are physical (lipid locally excludes water) and should be re-checked for a
-denser bilayer or a different lipid.
+amide backbone N is marked water-**inaccessible** if any lipid hydrophobic-tail bead lies inside the tails'
+own first coordination shell. Those amides then read as protected, so lipid-facing TM residues rejoin the
+continuous +∞ while genuinely solvent-exposed loops stay exchangeable.
+
+The criterion is the bilayer boundary and it carries **no free parameter**. The radius is the flat first
+minimum of the intermolecular tail–tail g(r) measured from the trajectory's own lipids (7.00 Å on the glpG
+POPE/POPG patch, reproducible across all 16 replicas); one contact is the boundary because at that radius a
+phosphate bead — the conventional edge of the bilayer — has a median of **zero** intermolecular tail
+neighbours, against 2 for an ester bead, 6 for the first tail bead and 11 mid-core. The test is local rather
+than a slab between the leaflet planes: a slab also protects every amide lining the protein's own polar
+interior, which for glpG merges the interfacial loops into the helices (contiguous +∞ runs of 40–50
+residues). Master ANDs its slab with a lipid-facing `surface` test for the same reason.
 
 ---
 

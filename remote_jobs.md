@@ -24,16 +24,49 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-15, after the BB-proxy rework was deployed to the cluster**.
+Snapshot **2026-08-17 15:30 CDT**.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 53410263 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | **relaunched 2026-08-16 08:35 from CB-corrected seeds** (findings 102); block 1 of 12, 48 replicas, T 0.70–0.90, dt 0.009, 36 h/block, self-resubmitting |
-| 53410264 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | same |
-| 53410265 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | same |
-| 53410266 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | same |
-| 53372760 | `np_1AO6_prod` | **NP** | RUNNING | block 6/8, self-resubmitting; ~224 k frames/replica accumulated |
-| 53372772 | `np_footprint` | **NP analysis** | RUNNING | `footprint.sbatch` → `np_frames.npz`; log `np_frames.<jobid>.out` |
+| 53441123 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | **relaunched 2026-08-17 15:25 from seeds patched to `current_stage = production`** (findings 116). Block 1 of 12, 48 replicas, T 0.70–0.90, dt 0.009, 36 h/block, self-resubmitting |
+| 53441124 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | same |
+| 53441125 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | same |
+| 53441126 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | same |
+| 53411347 | `np_1AO6_prod` | **NP** | RUNNING 28 h | rolled over from 53372760 (COMPLETED 2026-08-16 10:41); self-resubmitting |
+
+**Cancelled 2026-08-17 15:15: 53410263–66** (the rigid-protein run, findings 116) and their analysis jobs
+53439860–63 / 53440383, which completed but produced unusable figures. Their data is archived at
+`popepopg_REMD/<variant>_rigidbug/` — **184 G, deletable**, together with the older
+`<variant>_pre_cbfix/` (102 G). Seeds backed up as `seeds/<V>.up.bak_production_handoff` before patching.
+
+**MUST VERIFY on the new run, do not skip:** the protein's *internal* CA RMSD between distant frames of the
+raw trajectory must be non-zero (local reference: RMSD 2.46 ± 0.563 at T = 0.70). Reading
+`current_stage` is not sufficient — that is how the frozen run passed inspection for two days.
+
+**`HDX_LIVE=1` is mandatory while the REMD jobs run.** `run_remd.py` renames `output` to the lowest free
+`output_previous_<n>` at every chunk, so the live group can vanish between being listed and being read; the
+flag makes `martini_remd_concat.py` skip it, at a cost of ~200 of 5043 frames.
+
+### ⚠ All four POPE/POPG jobs are simulating a RIGID protein — findings 116
+
+`/input/stage_parameters.current_stage` is **`production_handoff`** in the four cluster seeds (and in all
+4 × 48 live replica files). `martini_hybrid.cpp:637-641` holds the protein as a rigid group whenever
+`preprod_protein_mode == rigid_body` **and** the stage is not exactly `production`. Both are true here.
+Measured in the raw trajectory: internal CA RMSD **0.000 Å** across whole chunks; projected Rg 17.60 ± 0.000,
+RMSD 0.00 ± 0.003, H-bond 194.6 ± 0.01, identical at T = 0.70 and T = 0.90. The local seed has
+`current_stage = production` and moves properly (RMSD 2.46 ± 0.563).
+
+The 2026-08-15 verification note that these were "fine" checked `hybrid_interface_active_stage`
+(lines 644-648), which *does* accept `production_handoff`. That is a different gate from the rigid one. One
+string, two predicates, opposite accept sets.
+
+Consequences, all downstream: the hole in the bilayer, the −2.5σ potential drift, lipid-shielded fraction
+stuck at 0.50 vs the local 0.87, and HDX profiles with 188 of 203 amides off scale. **The cluster HDX figures
+are unusable** — no amide can exchange when no H-bond ever breaks.
+
+**Fix (one attribute, not applied):** `set_stage_label(<file>, "production")` on the four seeds and the
+4 × 48 replica files, then restart. Costs the 28–30 h × 4 already spent, so it is the user's call.
+MBAR itself is fine — ESS 13.4%, ladder overlap 0.25, better than the local run.
 
 **Superseded 2026-08-16:** jobs 53349015/17/18/20 were cancelled at 16 chunks of block 1 and their data
 moved to `popepopg_REMD/<variant>_pre_cbfix/` (102 G total, deletable). They carried the 0.568 A CB
