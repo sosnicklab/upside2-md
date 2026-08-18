@@ -1,6 +1,18 @@
+import os
+
 import numpy as np
 import scipy as sp
 import pandas as pd
+
+def select_state_file(matches, protein_state, desc):
+    """
+    pick the file written for protein_state, since a wildcard matches every state the HXMS run produced
+    """
+    wanted = [m for m in matches if os.path.splitext(os.path.basename(m))[0].endswith(protein_state)]
+    if not wanted:
+        raise SystemExit('no {} for protein state {!r}; found {}'.format(
+            desc, protein_state, sorted(os.path.basename(m) for m in matches)))
+    return sorted(wanted)[0]
 
 def str_exp(x, k, b):
     """

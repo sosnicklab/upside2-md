@@ -13,6 +13,7 @@ import matplotlib.cm as cm
 import matplotlib.backends.backend_pdf as pdf
 from matplotlib.font_manager import FontProperties
 from matplotlib.ticker import LogLocator
+from helpers.function import select_state_file
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
 
@@ -268,7 +269,7 @@ def load_legacy_inputs():
         return np.array([]), np.array([]), np.array([]), np.array([])
 
     try:
-        legacy_time_log = np.load(time_matches[0])
+        legacy_time_log = np.load(select_state_file(time_matches, protein_state, 'legacy time grid'))
     except Exception as exc:
         print('failed to load legacy time grid: %s' % exc)
         return np.array([]), np.array([]), np.array([]), np.array([])
@@ -314,7 +315,7 @@ def load_legacy_reference_curves():
         if not matches:
             print('%s not found in %s' % (desc, base))
             return None
-        arr = np.load(matches[0])
+        arr = np.load(select_state_file(matches, protein_state, desc))
         if suffix == '_peps_*.npy':
             peps = arr
         else:

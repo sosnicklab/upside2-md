@@ -263,3 +263,198 @@ the VTF is a rendering artifact of `martini_extract_vtf.py`, which centres on th
 and then wraps everything into [−L/2, L/2); with a 69.5 Å protein extent in a 99.3 Å box that centre is
 ill-conditioned and can image part of the chain across. The analysis never sees it — Rg/RMSD/protection run on
 unwrapped projected coordinates with no periodic box.
+
+### 2026-08-17 (evening): cluster restart verified in flight, local run extended, poster moved to OneDrive
+* **Cluster pull/rebuild is a no-op for the physics.** All 102 files in `src/` are byte-identical before and
+  after (the apparent mismatch was macOS vs Linux `sort` collation); the pulled commit `a31d335` touches only
+  analysis Python and docs. Nothing needs re-running on that account. The four glpG jobs were still PENDING at
+  rebuild time so they start on the new binary; `np_1AO6_prod` (53411347) is stepping cleanly with 0 errors.
+* **Local ladder extended for the poster figure.** Reseeded all 16 replicas (rotated to
+  `output_previous_5`, restart from frame 5268) and relaunched at 700 k steps, ~21 h, into
+  `scratchpad/local_popg_cbfix/`. First step healthy: total_potential -21574, Rg 20.9. Roughly doubles the
+  11 068 frames/replica the current figure rests on. `hdx.sh` can be run against partial output at any time.
+* **Poster updated and moved out of the repo** to `/Users/yinhan/OneDrive/hybrid_interface_poster_2026-08-18/`
+  (OneDrive running, 7.1 M, rebuild verified from the new location; every hardcoded path repointed, including
+  `render_system.pml` and both renderers' output paths). `make_figures.sh` now defaults to `hdx_acc` and takes
+  `POSTER_HDX`; the `--unclipped`/censored figure calls are gone with the flag. Content changes: added "The
+  protection state needs the lipid" (findings 113), updated frames to 177 088 and the T = 0.85 medians to
+  4.44/4.26/1.63, retracted the ESS-censoring-as-novelty claim (findings 114), and **dropped the −3.4 kcal/mol
+  per T_up temperature slope** — on the 83 residues resolved at every temperature the median slope is −0.3 with
+  52% negative, so it is not systematic; the never-exchange count falling 119 → 85 of 203 is what survives.
+  Added `README.md` there with the rebuild recipe, the overflow constraint (all three columns full), the pending
+  refresh after the longer run, and the two claims that are easy to get wrong.
+
+### 2026-08-17 (late): re-checked the poster's failure claims, rewrote that section
+Re-measured every limitation on the current dataset rather than reasoning from the analysis change. **All hold**,
+two are worse than the poster stated: helix-interior H-bond occupancy 0.636 (was 0.681), 34 of 108 donors below
+0.5 occupancy (was 24), protein/lipid temperature excess +5.74%/+1.08%, occupancy-vs-friction r = +0.537.
+The spike fix was an analysis fix; these are simulation properties, so none moved.
+
+**It did change how they must be read.** With the membrane term, helix-interior protection is 0.989 against an
+H-bond occupancy of 0.636, and 89.3% of broken-H-bond frames are still scored protected (was 79%). So the clean
+profile is *weaker* evidence about the H-bond network than before, and that caveat now belongs on the poster.
+
+Also fixed: `fig3` was unreproducible — `make_fidelity_figures.py` read a raw array from a **previous session's
+temp directory** that no longer exists, so `make_figures.sh` would have failed. The array now lives beside the
+figure as `raw_hbond_occupancy.npy` and `HDX` points at `hdx_acc`; fig3 and fig4 both regenerate.
+
+Rewrote the limitations section at the user's request — it read as machine-written. Dropped the "two limitations
+each with a defined next step" framing, the 5-row dt-scan table (now 3 rows) and the self-auditing prose; kept one
+plain point ("The helices are too loose ... rank those numbers against each other, not against experiment") plus
+the timestep/coupling split. Filled the freed space with fig4, which is real data supporting it. Fixed two real
+errors found while editing: prose quoted 0.64 occupancy directly above a table reading 0.711 (long ladder vs
+matched 30 k controls — different runs), and the box said "the profile above" for a figure in another column.
+
+**Added the implicit-membrane comparison to the poster.** `79HIS_0.85.png` now sits beside this work's profile
+as one panel (`make_comparison_figure.py` -> `fig1_dG_comparison.png`), replacing the hybrid-only figure. The
+two are genuinely comparable in observable, construct, temperatures (0.75/0.80/0.85) and axis (-20..30), which is
+why the panel works; they are **not** comparable in pipeline (the implicit figure came from legacy jscripts with
+`--use-TM-region`) and its per-residue numbers are not available, only the PNG. RESULTS.md records that, and that
+the three comparison statements on the poster are read off the figures rather than computed from shared arrays.
+Each source panel is cropped to its ink bounding box before compositing -- two panels in one column leaves ~5 in
+each, and the source margins were the difference between legible tick labels and not.
+
+### 2026-08-17 (night): poster restructured -- Validation and stock-Upside sections out, NP methods panel in
+* **Removed `Validation` and `Against stock Upside`** at the user's call: the implicit-vs-hybrid comparison now
+  carries that role. The stock table's load-bearing numbers moved into the limitation box (occupancy 0.71->0.76
+  and cooperativity 1.80x->1.53x under dt/4, against stock's 0.95 and 4.18x) so the "survives dt/4" claim keeps
+  its evidence. Note the insertion / bilayer-integrity / no-numerical-failures statement is now unstated on the
+  poster; it is validation of the system rather than of the result, and the comparison does not cover it.
+* **NP panel added as a METHODS claim, not a result** (user's choice after I laid out the options). Two rendered
+  states side by side -- albumin folded beside the 5 nm MPA-AuNP, and albumin spread over it late in the run,
+  DSSP helix 74% -> 52% -- plus three sentences: the coupling needed no change for a different environment, and
+  the same excess opening shows up here as albumin failing to adsorb folded.
+  New, all reproducible: `export_np_snapshot.py` (cluster-side frame -> PDB, chain per particle class, chain-walk
+  PBC unwrap since a spread albumin exceeds half the box), `render_np.pml`, `make_np_figure.py`.
+  Two things worth remembering: PyMOL's `dss` finds **no** secondary structure on this CG backbone while
+  mdtraj's DSSP finds 74% helix on the same coordinates, so SS is assigned explicitly from mdtraj; and `zoom`
+  counts hidden atoms, so the 1194 ions had to be removed rather than hidden or the system rendered as a speck.
+* `fig4_interface_fidelity` dropped from the poster -- it was interim filler for the gap the NP panel now fills,
+  and its numbers are stated in the limitation box.
+
+**NP re-run assessment (findings 95 re-tested on 74% more data, and a defect found).** The current footprint
+(12 312 frames sampled from 2.32 M, against 1.33 M before) reproduces every finding-95 conclusion: K190 contact
+**0.000, the lowest of all 58 lysines**; K525 0.542 (81st pct) and K541 0.678 (88th) supported; dominant
+orientation still 71%. The adsorbed-and-compact window **shrank, 3.2% -> 1.9%**, i.e. more sampling makes it
+worse. Separately, the NP configs still carry the **uncorrected CB placement** of findings 102 -- their
+`placement_fixed_point_vector_only_CB` reads [0.0000, 0.9438, 1.2068] against the corrected
+[-0.0198, 1.5117, 1.2068], the 0.568 A centroid offset -- which matters doubly because the footprint is
+CB-anchored. `current_stage` is `production`, so no rigid-protein bug. A re-run therefore needs the CB fix
+**and** a larger box (the box is near-vacuum, 5174 beads in 200^3 A, so enlarging it is nearly free), but neither
+addresses the over-unfolding, which is most likely the same coupling defect as glpG's loose helices. Not
+resubmitted -- doing so now would spend days to reproduce the same dead end.
+
+**Poster, final structure.** Dropped the H-bond occupancy panel (`fig3`) at the user's call; its headline number
+(occupancy 0.64 against the starting structure's 0.95) moved into the limitation box, which is now the only place
+that claim is made, and the dt-scan numbers there are labelled as matched short controls so they cannot be read
+against the ladder number. Restored one sentence of system validation (insertion, 38.6 A bilayer, no numerical
+failures) since the implicit-vs-hybrid comparison validates the result and not the system. Column 3 is now:
+interface checks -> the nanoparticle system (two rendered states + the footprint against Carlson et al.'s
+lysines, `make_np_footprint_figure.py`, current data) -> the limitation box. The NP panel states plainly that it
+is thesis work in which the simulation never reproduced the labelling experiment, and that the reason is the same
+excess opening. RESULTS.md gains a Result 4 section with the re-measured numbers and the two defects to fix
+before any NP re-run.
+
+**Poster prose rewritten for register (user: "make it formal, professional, more human, not AI like").** Went
+through all three columns, not just the limitation box. Removed the constructions that read as machine-written:
+the "reaches the first ... gives up the second" schematic pairing, the triadic roadmap ("the profile, its
+validation, and what remains to improve"), self-referential hedging ("which is why it is worth saying here"),
+the grandiose "the ordering the physics requires", and the heavy em-dash chains throughout. Replaced with plain
+declarative sentences of varied length in normal scientific register; "The main thing still wrong" became
+"Principal limitation". Every number is unchanged.
+
+Two real errors surfaced while rewriting: "177 088 pooled frames" was stated in both column 2 and column 3, and
+the box's first paragraph asserted the occupancy claim twice over. Both fixed. Column 1 keeps a little slack
+(0.029); columns 2 and 3 are at 0.014 and 0.013. `.pptx`, `.pdf` and preview re-rendered; `poster_content.py.bak3`
+holds the pre-rewrite text.
+
+**Real temperature units on the poster.** Upside's reduced T meant nothing to an outside audience. 1 T_up =
+350.588 K, so the ladder is 245-316 K and T = 0.85 is exactly 298 K (which is why 0.85 is the reference rung).
+The poster now gives the conversion once where the ladder is introduced, then uses Kelvin in the body text:
+298 K for the reported profile, 245/316 K for the resolution bounds and the cooling trend, 263/280/298 K in the
+figure caption. **Figure legends stay in reduced units on purpose** -- the implicit-membrane panel is a supplied
+PNG that cannot be re-rendered, so relabelling only our half would make the comparison inconsistent; the caption
+carries the mapping. RESULTS.md gains a temperature-units section with the full table.
+
+**Poster cut to poster length; full text kept as a reading copy.** 1222 -> 795 words, a 35% cut, and the freed
+space went into type rather than white space: body 24 -> 29 pt, headings 34 -> 38 pt, so it reads at three feet.
+Paragraphs became fragments where they could, the three-conventions passage collapsed to one sentence, and the
+"Interface checks" prose became bullets. No number or caveat was dropped -- only words.
+The full version is preserved verbatim as `poster_content_reading.py` and rendered to `*_reading.pptx/.pdf`;
+both renderers now take `POSTER_CONTENT` and suffix their output, so the two cannot overwrite each other.
+Two defects the larger type exposed and I fixed: the heading "The same interface, a different environment" was
+**clipped, not wrapped** (42 characters does not fit a 11.9 in column at 38 pt -- now "Same interface, new
+environment"), and a long bullet ran into the gutter. Both are silent failures -- the OVERFLOW check only watches
+column height -- so the preview has to be looked at. Noted in the README.
+
+**NP panel reframed; NP campaign audited and found two generations behind (findings 117).** The poster no longer
+claims the simulation failed to reproduce the labelling experiment -- that would be reporting a defective run as
+a result. It now shows both states (prepared and adsorbed) with labels carrying no measurement, captioned
+"Sampling in progress", and the footprint figure is off the poster. The freed space went to restoring the
+stock-Upside benchmark table, which is what the limitation box argues from.
+The audit: the NP configs carry `r_min_ang = 0.00` (pre-findings-92 LJ core table, force-free at short range) and
+the uncorrected CB placement (findings 102). The 2026-08-15 `martini_upgrade_hybrid_args.py` migration fixed the
+node arity only, and its success had been read as evidence the configs were current. Both defects bear directly
+on adsorption, so findings 95 and the 2026-08-17 re-measurement are **superseded as tests of Carlson et al.**
+Re-run therefore recommended, needing a rebuild (the LJ tables must be regenerated), a larger box, and shorter
+replicate runs rather than six long ones -- not yet submitted, awaiting the user's call on cluster time.
+
+**Jumper Figure 1 added to the poster (column 1, "The Upside core").** Figure 1 of PLOS Comput Biol 14, e1006342
+-- the six-step Upside cycle -- downloaded from PLOS after checking the DOI resolves to that title and that the
+licence is **CC BY 4.0**; the caption credits the authors and the licence, which is what CC BY requires. It earns
+its space by replacing text: it shows O/H placement, side-chain decoration, the joint rotamer solve and the
+pull-back of forces onto C/N/CA, so three of the five "Upside core" bullets went. It also shows exactly where the
+environment couples (steps 4-5), which is the point.
+Paid for the rest by moving References to the foot of column 3 and dropping reference 7 (Gronbech-Jensen & Farago,
+the g-JF propagator) -- **it had become uncited** when the thermostat text was cut; found by extracting every
+[n] from the rendered blocks and diffing against the list. DSSP renumbered 8 -> 7.
+
+**NP campaign rebuilt and relaunched (53456240).** Killed 53411347, rebuilt all six orientations locally with
+`build_all.py`, verified each carries `r_min_ang 0.30` + 2-arg `martini_hybrid_position` + corrected CB + stage
+`production`, and proved one loads *and integrates* on the cluster binary (5000 steps, Rg steady 25.8-26.0)
+**before** deleting anything. Then removed the 206 G of pre-fix trajectories; `prod/` is 970 M, old `.out` logs
+kept, snapshots archived off-cluster. Relaunched with `NP_MAX_BLOCKS=3` rather than the default 8 to cap disk,
+since the informative window is early -- extendable by resubmitting.
+Two things worth remembering. (1) `np_hybrid.py` was a **third** stale generation: it wrote
+`martini_hybrid_position` with one argument, so the rebuild failed to load until fixed at source; the running
+configs had only ever been patched post-hoc. (2) `--frame-interval` is in **time units, not steps**: my first
+cluster load test passed `500` with dt = 0.001, which is 500 000 steps, so only step 0 was recorded and the
+kinetic-energy average over one frame printed `-nan`. That looked like a defect and was not one -- with
+`--frame-interval 0.5` the run reports `avg_kinetic_energy/1.5kT 0.866`, below 1.0 only because the average
+includes the cold start from a minimised configuration over one thermostat timescale.
+
+**Rigid-protein fix verified by measurement (not by reading the gate).** Internal CA RMSD on the relaunched
+53441123 grows 0.730 -> 1.124 -> 1.440 A over the first 100 frames, against 0.000-0.001 A across whole chunks in
+the frozen run. The glpG campaign is producing real dynamics again.
+
+### 2026-08-18: extended local dataset, poster finalised, NP site conclusions retracted
+* **Local ladder finished** (22 836 frames/replica, 363 152 pooled, KE/1.5kT 1.015-1.023). Re-analysed into
+  `hdx_acc2`. `~/Downloads/glpG_dG_vs_residue_3T.png` regenerated, and the poster's ΔG panels rebuilt from the
+  new npz so figure and text agree. At 298 K: 123 of 203 resolved (was 118), −0.5 to 18.3 kcal/mol, 80 never
+  exchanging (was 85), helix interior 4.49 / cap 3.51 / loop 1.71, resolution bound 5.02–6.46 kcal/mol.
+  Helix-interior H-bond occupancy re-measured at **0.588**, not 0.64 — it keeps drifting down with sampling
+  (0.681 → 0.636 → 0.588), so the helices loosen progressively rather than settling.
+* **Poster:** removed "Against stock Upside" and "Interface checks" (user: both read as AI-written), grew the
+  glpG system image to full column width, and removed a redundant five-temperature ΔG panel I had added — the
+  user correctly spotted it was the same data as the comparison figure's right half.
+  Added `fig7_melting.png` from the workflow's melting curve, rebuilt rather than reused because the shipped
+  `_Tm_curve.png` has an **inverted** hydrogen-bond axis. It earns its place: MBAR reweighted matches the direct
+  average to 1.7 bonds of 162 and 0.05 Å in Rg, which validates the reweighting behind every ΔG on the poster.
+  Surveyed the rest of the workflow's outputs in RESULTS.md with reasons for not using them — notably the
+  denaturant/m-value panels, which are properties of a synthetic perturbation, and the convergence KS test,
+  whose p = 0.0 reflects autocorrelation rather than drift.
+* **Slurm:** 53441123 running (19 h, 9 chunks, dynamics verified); 53441124/25/26 still queue-starved after 19 h,
+  so there is no four-variant result today.
+* **CoF panel (user request):** ran the shipped D-uptake/cooperativity workflow on the hybrid local result
+  (`scratchpad/local_popg_cbfix/hdx_acc2`). It first returned an identical COF for all 63 peptides; cause was
+  `4.calc_D_uptake.py`'s `legacy_T_range` default of 1.14 (~400 K), which puts k_chem at 4.9e5 s^-1 so every amide
+  is exchanged before the first experimental time point (findings 120). With `legacy_T_range=0.85` the curves are
+  63 distinct sigmoids and the uptake comparison reaches **mean R² = 0.693 over 57 peptides** — the first real
+  experiment-facing number from the hybrid run.
+  Fixed two latent shared-script incompatibilities to get there: `5.analyze_D_uptake.py` sliced the 0-d `T.npy`
+  the shipped extractor writes, and `write_hybrid_energy.py` emitted a flat `Energy.npy`. Added a peptide-level
+  `<pdb>_COF_peptides.csv` export beside the existing residue-level one.
+  Poster: `fig9_cof_map.png` (HX-MS above hybrid, 63 peptides, ranked within each panel) replaces the H-bond
+  landscape panel. The CoF agreement is weak and the panel says so — Spearman 0.23 over the 55 shared peptides,
+  and the workflow's linear R² is not usable because COF normalisation inflates near-flat experimental curves.
+  Also centred all poster images and enlarged the Jumper cycle figure (0.186 → 0.215 of poster width).

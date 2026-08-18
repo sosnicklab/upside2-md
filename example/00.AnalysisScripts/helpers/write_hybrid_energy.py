@@ -62,7 +62,10 @@ def main():
 
     reference = float(np.concatenate(potentials).mean())
     for potential, target in zip(potentials, targets):
-        np.save(target, potential - reference)
+        # Shape (n_frame, 1), matching what get_info_from_upside_traj.py writes from /output/potential. This
+        # file has to be a drop-in replacement: the stability path tolerates either shape, but the uptake
+        # path in 4.calc_D_uptake.py indexes Energy.npy as [:, 0] and fails on a flat array.
+        np.save(target, (potential - reference).reshape(-1, 1))
     print("Energy.npy <- coupled-system potential, reference %.4f E_up subtracted from %d replicas"
           % (reference, args.n_replica), flush=True)
 

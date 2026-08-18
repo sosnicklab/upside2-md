@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-08-13 CDT**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-08-17 CDT**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -32,41 +32,52 @@ Snapshot **2026-08-17 15:30 CDT**.
 | 53441124 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | same |
 | 53441125 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | same |
 | 53441126 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | same |
-| 53411347 | `np_1AO6_prod` | **NP** | RUNNING 28 h | rolled over from 53372760 (COMPLETED 2026-08-16 10:41); self-resubmitting |
+| 53456240 | `np_1AO6_prod` | **NP** | PENDING | **relaunched 2026-08-17 from rebuilt configs** (findings 117). `NP_MAX_BLOCKS=3`, not the default 8, to cap disk — the previous campaign reached 206 G and the informative adsorbed-but-folded window is early. Extend by resubmitting; stop with `prod/STOP`. **Health check passed:** all six stepping, Rg 26.3–27.9 (folded), H-bonds 605–630, total potential −7410 to −7666, zero NaN. The protein potential now sits near 0 where the old run read −884 to −297; that is the CB correction's documented ~+680 E_up shift (findings 102) plus thermalisation, not a new defect |
+
+**NP campaign rebuilt and relaunched 2026-08-17.** 53411347 cancelled; the six configs were rebuilt from
+`scratchpad/NP-footprinting/build_all.py` (local) because the LJ tables had to be regenerated, which a patch
+cannot do. All six verified before upload: `r_min_ang 0.30`, `martini_hybrid_position` 2 args, CB
+`[-0.0198, 1.5117, 1.2068]`, stage `production`, and each passed its stability run (Rg 26.0–27.9, no blow-up,
+gold fixed). One rebuilt config was then proved to load *and integrate* on the cluster binary before anything
+was deleted — 5000 steps, Rg steady at 25.8–26.0.
+**A third stale generation turned up:** `np_hybrid.py` itself wrote `martini_hybrid_position` with one argument,
+so the first rebuild failed to load. The running configs only had two because `martini_upgrade_hybrid_args.py`
+patched them after the fact; the prep was never fixed. Now fixed at source, so rebuilds no longer need the
+migration (the one-shot line in `np_prod.sbatch` is now a genuine no-op and can be deleted).
+**206 G of pre-fix trajectories deleted.** `prod/` is 970 M. The `.out` logs are kept in
+`prod/logs_predate_fixes/`, and the renders, snapshot PDBs and footprint npz are off-cluster in
+`~/OneDrive/hybrid_interface_poster_2026-08-18/np_snapshots_predate_fixes/` with a README saying nothing in
+them is a result.
 
 **Cancelled 2026-08-17 15:15: 53410263–66** (the rigid-protein run, findings 116) and their analysis jobs
 53439860–63 / 53440383, which completed but produced unusable figures. Their data is archived at
 `popepopg_REMD/<variant>_rigidbug/` — **184 G, deletable**, together with the older
 `<variant>_pre_cbfix/` (102 G). Seeds backed up as `seeds/<V>.up.bak_production_handoff` before patching.
 
-**MUST VERIFY on the new run, do not skip:** the protein's *internal* CA RMSD between distant frames of the
-raw trajectory must be non-zero (local reference: RMSD 2.46 ± 0.563 at T = 0.70). Reading
-`current_stage` is not sufficient — that is how the frozen run passed inspection for two days.
+**VERIFIED 2026-08-17 on the relaunched run.** Internal CA RMSD (Kabsch-superposed, so rigid-body motion is
+removed) grows 0.730 → 1.124 → 1.440 Å over the first 100 frames of 53441123, against **0.000–0.001 Å** across
+whole chunks in the frozen run. The protein has internal dynamics again. This is the check to repeat after any
+stage-label or seed change — reading `current_stage` is not sufficient, since that is how the frozen run passed
+inspection for two days.
 
 **`HDX_LIVE=1` is mandatory while the REMD jobs run.** `run_remd.py` renames `output` to the lowest free
 `output_previous_<n>` at every chunk, so the live group can vanish between being listed and being read; the
 flag makes `martini_remd_concat.py` skip it, at a cost of ~200 of 5043 frames.
 
-### ⚠ All four POPE/POPG jobs are simulating a RIGID protein — findings 116
+### The rigid-protein bug — fixed 2026-08-17, keep the lesson (findings 116)
 
-`/input/stage_parameters.current_stage` is **`production_handoff`** in the four cluster seeds (and in all
-4 × 48 live replica files). `martini_hybrid.cpp:637-641` holds the protein as a rigid group whenever
-`preprod_protein_mode == rigid_body` **and** the stage is not exactly `production`. Both are true here.
-Measured in the raw trajectory: internal CA RMSD **0.000 Å** across whole chunks; projected Rg 17.60 ± 0.000,
-RMSD 0.00 ± 0.003, H-bond 194.6 ± 0.01, identical at T = 0.70 and T = 0.90. The local seed has
-`current_stage = production` and moves properly (RMSD 2.46 ± 0.563).
+`/input/stage_parameters.current_stage` was **`production_handoff`** in the four seeds, and
+`martini_hybrid.cpp:637-641` holds the protein as a rigid group whenever `preprod_protein_mode == rigid_body`
+**and** the stage is not exactly `production`. Both were true, so 28–30 h × 4 ran with a frozen protein:
+internal CA RMSD **0.000 Å** across whole chunks, H-bond count constant to ±0.01, identical at every rung.
 
-The 2026-08-15 verification note that these were "fine" checked `hybrid_interface_active_stage`
-(lines 644-648), which *does* accept `production_handoff`. That is a different gate from the rigid one. One
-string, two predicates, opposite accept sets.
+**Fixed.** `set_stage_label(seed, "production")` on all four (backups at `seeds/<V>.up.bak_production_handoff`),
+verified `production` / `production` / `rigid_body`, relaunched as 53441123–26.
 
-Consequences, all downstream: the hole in the bilayer, the −2.5σ potential drift, lipid-shielded fraction
-stuck at 0.50 vs the local 0.87, and HDX profiles with 188 of 203 amides off scale. **The cluster HDX figures
-are unusable** — no amide can exchange when no H-bond ever breaks.
-
-**Fix (one attribute, not applied):** `set_stage_label(<file>, "production")` on the four seeds and the
-4 × 48 replica files, then restart. Costs the 28–30 h × 4 already spent, so it is the user's call.
-MBAR itself is fine — ESS 13.4%, ladder overlap 0.25, better than the local run.
+**The lesson, which is why this stays here.** The 2026-08-15 note declaring these jobs healthy checked
+`hybrid_interface_active_stage` (lines 644-648), which *does* accept `production_handoff`. That is a different
+predicate on the same string with the opposite accept set. One string, two gates. Reading a gate is not
+verification — measure the protein's internal CA RMSD instead.
 
 **Superseded 2026-08-16:** jobs 53349015/17/18/20 were cancelled at 16 chunks of block 1 and their data
 moved to `popepopg_REMD/<variant>_pre_cbfix/` (102 G total, deletable). They carried the 0.568 A CB
@@ -89,7 +100,8 @@ prep fails to load. Checked, in order: `env.sh` points `UPSIDE_HOME` at the rebu
 directories are empty, so `run_remd.py` materialises replicas from those upgraded seeds and there are no
 stale copies and no `STOP` files; the seeds carry an `/output`, which the first-block `reseed()` requires;
 their stage is `production_handoff`, which `martini_hybrid.cpp:646-647` treats as active, so the SC-env
-interface is on. The 36 h `REMD_WALL_SEC` equals the Slurm limit but the chunk loop guards with
+interface is on — **this line is the error findings 116 corrected; that gate is not the one that decides
+whether the protein moves.** The 36 h `REMD_WALL_SEC` equals the Slurm limit but the chunk loop guards with
 `remaining() - MARGIN > last_wall*1.25` (35 min plus a chunk), so the chain still has room to reseed and
 resubmit. **No resubmission needed.**
 

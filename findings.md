@@ -2846,3 +2846,154 @@ Lesson: two predicates keyed on the same stage string with different accept sets
 string is checked anywhere, enumerate *every* site that reads it before concluding a run is configured right --
 and verify the conclusion dynamically (does the protein's internal RMSD change?) rather than by reading one
 gate.
+
+## Update 117 (2026-08-17): the NP campaign predates TWO simulation fixes, not one -- re-run needs a rebuild
+
+Audited the running NP configs (`NP-1AO6/prod/np.run.*.up`) against every fix landed since they were prepared.
+Two are missing, and both affect the simulation rather than the analysis:
+
+| | NP config | corrected | finding |
+|---|---|---|---|
+| LJ core table inner knot | `r_min_ang = 0.00` | **0.30** | 92/93 (2026-08-13) |
+| CB placement (centroid-relative) | `[0.0000, 0.9438, 1.2068]` | **`[-0.0198, 1.5117, 1.2068]`** | 102 (2026-08-16) |
+| `martini_hybrid_position` arity | 2 args | 2 args | 94 -- migrated, OK |
+| `current_stage` | `production` | `production` | 116 -- OK, not rigid |
+
+The glpG POPE/POPG seeds carry `r_min_ang = 0.30` and the corrected CB; the NP configs carry neither. So the
+`martini_upgrade_hybrid_args.py` migration on 2026-08-15 fixed the node arity and nothing else, which is all it
+claims to do.
+
+**Both defects bear directly on what the NP campaign measures.** The old LJ core table is force-free at short
+range and particles were shown to reach it (findings 92) -- on an adsorbing surface that is exactly where they
+go. The CB offset displaces every side-chain interaction site by 0.568 A, and `martini_sc_table_1body` anchored
+there is the term that drives adsorption; the footprint is scored at CB as well. The over-unfolding that makes
+the current data uninterpretable (Rg 26.3 A -> 41-206 A, only 1.9% of frames adsorbed-and-compact) therefore
+cannot be attributed to the coupling until both are corrected. **The current result is not evidence against
+Carlson et al. 2025, and must not be presented as such** -- findings 95 and the re-measurement of 2026-08-17
+are both superseded as tests of the paper.
+
+**A re-run needs a rebuild, not a patch.** CB placement could be patched in place, but the LJ tables have to be
+regenerated, so the seeds should come from `martini_prepare_system` afresh; that picks up both fixes at once.
+
+**Two design changes to make at the same time.**
+* The 200 A box is too small for the states the model visits (two of six orientations exceeded it, Rg 152 and
+  206 A, self-interacting through the periodic image). The box is near-vacuum -- 5174 beads in 200^3 A -- so
+  enlarging it costs almost nothing.
+* **Replicates beat length.** The informative state is adsorbed-but-folded, and it occurs *early*: every
+  orientation starts at Rg 26 A and only orientation 2 stays near it. The compact fraction fell from 3.2% to
+  1.9% as the trajectories grew, i.e. running longer moves away from the window rather than filling it. Six
+  runs x 8 blocks x 36 h is the wrong shape; many shorter independent runs would sample the window far better
+  at the same cost.
+
+Lesson: a migration script fixes what it says it fixes. When several corrections land in a week, audit each
+long-running job field by field against each one -- the arity migration passing was taken as evidence the NP
+configs were current, and they were two generations behind.
+
+## Update 118 (2026-08-18): the rebuilt NP run retracts "K525 and K541 are supported" -- that support was the defect
+
+First footprint from the rebuilt campaign (53456240, ~20 h, 25 924 frames sampled every 11 from 47 k
+frames/orientation of rotated blocks). It is a different simulation in every respect that matters:
+
+| | pre-fix campaign | rebuilt |
+|---|---|---|
+| Rg, median / max | 85.9 / **209.0 A** (exceeds the 200 A box) | **48.3 / 78.2 A** |
+| adsorbed **and** compact | 236 of 12 312 = 1.9% | **1736 of 25 924 = 6.7%** |
+| dominant orientation's share of that window | **71%** | **26%** |
+| residues in contact per compact frame | **105.5 of 578** | **16.8** |
+| residues with contact frequency > 0.3 | 136 | **2** |
+
+The pre-fix "footprint" was the protein smeared over the particle -- 105 of 578 residues touching at once, 136 of
+them more than 30% of the time. That is not an adsorption interface. The rebuilt run gives a localised patch of
+~17 residues, which is what adsorption should look like, and it no longer overflows the box.
+
+**Consequence: findings 95's site conclusions are retracted.** In the rebuilt window none of the paper's five
+lysines is contacted: K12 0.000, K73 0.004, K190 0.000, **K525 0.000, K541 0.029** -- where the pre-fix run gave
+K525 0.542 (81st percentile) and K541 0.678 (88th). That apparent support came from one orientation (71% of the
+window) pressing a contiguous C-terminal run onto the surface while the protein was unravelling. Only the K190
+result survives, and it survives unchanged: **0.000 in both**.
+
+What the rebuilt run contacts instead is centred elsewhere -- Lys313 0.34, Glu311 0.31, Asp314 0.28, Asp562 0.25,
+Lys560 0.25 -- i.e. different lysines from the paper's.
+
+**This is provisional and must not be quoted yet.** 20 h of a 3-block run; the highest per-residue contact
+frequency is only 0.341, so no pose is yet preferred, and the interface is still forming. The poster says
+"simulations in progress" and claims nothing, which is the correct position. Re-measure at the end of block 3.
+
+Lesson: a contact-frequency footprint needs a sanity check on *how much* is in contact, not only where. 105 of
+578 residues touching a 5 nm particle should have been read as a smeared protein rather than a footprint, and
+that single number would have invalidated the site ranking a week earlier.
+
+## Update 119 (2026-08-18): master's `_DG_Hbond.png` free-energy scale is 15% low
+
+`calc_hdx_ht.py:337` forms the hydrogen-bond free energy as `g = -0.593 * np.log(hist) * t` with `t` in Upside
+reduced temperature. 0.593 kcal/mol is kT at **298 K**, i.e. at T_up = 0.85, so the correct factor is
+`kB * t * 350.588` = `0.6966 * t`. The shipped expression is low by 0.593/0.6966 = **0.851 at every
+temperature** — a uniform 15% underestimate of the free-energy scale. The same figure is also drawn for one
+rung only (`selected_replica = min(8, len(T)-1)`).
+
+Left alone in `calc_hdx_ht.py` for master parity. The poster's version is computed correctly in
+`make_hbond_landscape_figure.py`, which also drops bins carrying less than one effective frame — without that
+the 245 K curve reads 82 kcal/mol to reach 61 hydrogen bonds, where the reweighting has no support at all. With
+the cut, the three curves are single broad basins whose minimum moves 170 → 145 → 91 bonds from 245 to 316 K.
+
+Note the pattern: this is the third shipped-analysis presentation defect found while building the poster, after
+the ESS-censoring confusion (findings 114) and `_Tm_curve.png`'s inverted hydrogen-bond axis. None of them
+affects the dG pipeline; all three would have misled a reader of the figure. Check the units and the axis
+directions of any workflow figure before putting it in front of an audience.
+
+## Update 120 (2026-08-18): the COF workflow's k_chem defaults to ~400 K, which silently saturates every uptake curve
+
+Running the shipped D-uptake / cooperativity workflow (`4.calc_D_uptake.py` then `5.analyze_D_uptake.py`) on the
+hybrid local trajectory produced a **constant** COF of 27877.86 for all 63 peptides. Cause: `4.calc_D_uptake.py`
+defaults `legacy_T_range` to `[1.14]`, so the chemical exchange rates are evaluated at T_up = 1.14 ≈ 400 K
+regardless of the trajectory's own ladder. At that temperature base catalysis dominates and `k_chem` reaches
+**4.9e5 s^-1**; even a protection factor of 1000 leaves k_obs ≈ 490 s^-1, so every amide is fully exchanged in
+milliseconds — long before the first experimental time point at 60 s. Every normalised curve is then the same
+step, and the integral of its squared derivative is the same number.
+
+Passing `legacy_T_range=0.85` (298 K, the rung the experiment was run at) gives `k_chem` ≈ 10 s^-1 for a
+mid-chain serine, 63 distinct sigmoidal uptake curves, and **mean R² = 0.693 over 57 peptides** against the
+stretched-exponential fits of the HX-MS data.
+
+Three things worth carrying forward:
+
+1. **The failure never announced itself as physics.** It surfaced 200 lines downstream as matplotlib's
+   `TwoSlopeNorm: vmin, vcenter, and vmax must be in ascending order`, because a constant array makes the median
+   equal the extremes. Left unfixed on purpose: that exception is the only alarm the workflow raises for a
+   degenerate COF set, and "fixing" the colour scale would have let the constant sail through into a figure.
+2. **Check k_chem, not the exit code.** `k_chem` in `<pdb>_percentD_feats.csv` is the cheapest tell — a few s^-1
+   at pD ~6.7 and 298 K is right, 1e5 is not. `<pdb>_r_square.csv` reporting `num_peptides_compared = 0` was the
+   second tell and I read past it once.
+3. **A shipped default is not a calibrated value.** 1.14 is the rung the group's earlier non-hybrid glpG runs
+   used; nothing about it follows our ladder, and nothing in the script says so.
+
+**A third defect, found by chasing the grey peptides in the CoF map.** Both `4.calc_D_uptake.py` and
+`5.analyze_D_uptake.py` located the experimental HXMS arrays with `glob.glob(..._d_norm_peps_*.npy)` and then took
+`matches[0]`, so the requested `protein_state` was **ignored whenever the wildcard matched more than one state**,
+and the state actually compared against was whichever file the filesystem happened to list first. This dataset has
+four (`pd9`, `pd9 SUB`, `pd9 H Sub`, `pD9 Repeat 2`) and it was silently using `pd9 SUB` while `protein_state=pd9`
+was requested. Both now call `helpers/function.py:select_state_file`, which takes the file whose stem ends with the
+requested state and raises naming the state and the available files if it is absent.
+
+Correcting it moved the uptake agreement from R² = 0.693 over 57 peptides to **R² = 0.608 over 58**, and the CoF
+rank correlation from Spearman 0.23 to **0.30 (p = 0.023, n = 57)**. The earlier numbers were right about the
+method and wrong about which experiment they were compared to — the same class of error as the hard-coded PDB id
+rule in CLAUDE.md, arriving through a wildcard rather than a default. **A glob that can match more than one
+identity must be resolved by the identity, not by `[0]`.**
+
+The six grey peptides in the map are not a defect but the honest edge of the measurement, in two flavours: the five
+at residues 109–118 exchange so little (≤ 3.5 %D across the window, maxD = 5) that the stretched-exponential fit
+returns NaN, and `SSHHHHHHSSGLV` is flat from the first time point (36.1 %D at 10 s, 36.6 %D at 18 h) so
+normalising divides by a zero span. Fully protected and fully exchanged both leave no curve shape to differentiate.
+
+Two more latent incompatibilities fixed while getting there, both of which would hit any user of the uptake path:
+`5.analyze_D_uptake.py` sliced `<pdb>_<sim>_<i>_T.npy` by frame although `get_info_from_upside_traj.py` writes it
+as a 0-d array (`output.temperature[0,0]`) — now `np.atleast_1d`; and `helpers/write_hybrid_energy.py` emitted a
+flat `Energy.npy` where the uptake path indexes `[:, 0]` — now `reshape(-1, 1)`.
+
+Finally, the COF **regression** is not the readable form of this result. COF is the integral of the squared
+derivative of a curve normalised by `(max - first)`, so a nearly flat experimental curve is divided by a small
+span and its factor inflates by orders of magnitude: the experimental factors span 21 to 9.1e4 while the simulated
+ones span 129 to 2.5e4. A linear R² on them is therefore dominated by that normalisation rather than by the
+physics. The rank correlation is the usable statistic (Spearman 0.30, p = 0.023, n = 57), and the poster panel
+ranks within each dataset rather than putting the two on one colour scale.

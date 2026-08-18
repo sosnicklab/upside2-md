@@ -32,7 +32,8 @@ from scipy.stats import percentileofscore
 
 import pymbar
 from pymbar import timeseries
-from helpers.function import str_exp, plot_uptake, numerical_derivative, normalize_se, average_int
+from helpers.function import (str_exp, plot_uptake, numerical_derivative, normalize_se, average_int,
+                             select_state_file)
 
 try:
     from pyhdx.plot import apply_cmap
@@ -148,7 +149,7 @@ def load_experimental_reference():
         if not matches:
             print('%s not found in %s' % (desc, base))
             return None
-        matches_map[suffix] = matches[0]
+        matches_map[suffix] = select_state_file(matches, protein_state, desc)
 
     peps_hxms = np.load(matches_map['_peps_*.npy'])
     time_peps_hxms = np.load(matches_map['_time_peps_*.npy'])
@@ -289,8 +290,11 @@ def main():
         T_mean_vals = []
         for i in range(n_rep):
             PS.append(np.load('{}/{}_{}_{}_PS.npy'.format(result_dir, pdb_id, sim_id, i)))
-            t_arr = np.load('{}/{}_{}_{}_T.npy'.format(result_dir, pdb_id, sim_id, i))
-            T_mean_vals.append(np.mean(t_arr[start_frame:]))
+            # get_info_from_upside_traj.py stores one temperature per replica as a 0-d array
+            # (`output.temperature[0,0]`), so it cannot be sliced by frame; atleast_1d covers both that and a
+            # per-frame array, should a caller supply one.
+            t_arr = np.atleast_1d(np.load('{}/{}_{}_{}_T.npy'.format(result_dir, pdb_id, sim_id, i)))
+            T_mean_vals.append(np.mean(t_arr[start_frame:] if t_arr.size > start_frame else t_arr))
     
         min_idx = np.min([len(PS[i][:, 0]) for i in range(n_rep)])
         PS_idx = [PS[i][:min_idx] for i in range(n_rep)]
@@ -409,6 +413,9 @@ def main():
         integrals_pep_Upside.append(integral)
     
     merge_dfs['COF_Up'] = integrals_pep_Upside
+
+    merge_dfs[['peps', 'pep_starts', 'pep_ends', 'COF_HXMS', 'COF_Up']].to_csv(
+        '{}/{}/{}_COF_peptides.csv'.format(work_dir, fig_dir, primary_pdb_id), index=False)
     
     # plot D uptake curves
     
