@@ -461,6 +461,12 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
 }
 
 void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
+    // Brownian systems use g-JF Langevin; the VV-RESPA path below is not appropriate for them.
+    if(martini_brownian::has_brownian(this)) {
+        compute(DerivMode);
+        martini_brownian::apply_langevin_step(this, mom, dt);
+        return;
+    }
     auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
     bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);

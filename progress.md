@@ -458,3 +458,42 @@ the frozen run. The glpG campaign is producing real dynamics again.
   landscape panel. The CoF agreement is weak and the panel says so — Spearman 0.23 over the 55 shared peptides,
   and the workflow's linear R² is not usable because COF normalisation inflates near-flat experimental curves.
   Also centred all poster images and enlarged the Jumper cycle figure (0.186 → 0.215 of poster width).
+* **Poster restructured (2026-08-19)** around the model comparison the work is actually for. Added an Abstract box;
+  a GlpG panel (`orient_glpg.py` rotates the built PDB onto the mean of its six TM helix axes, 9.1 deg rms tilt,
+  and drops the tag; two PyMOL views); an HDX section carrying the stretched-exponential fit and both free-energy
+  equations; and **fig10, per-amide dG for Upside's implicit membrane against the hybrid — r = 0.60, Spearman
+  0.69 over the 134 amides both resolve.** Dropped the CoF panel (the group no longer uses cooperativity factors)
+  and the "Why this is hard" section.
+  Three data facts behind fig10, all recorded in RESULTS.md: both axes use the plain hydrogen-bonded-or-buried
+  criterion so the comparison is of models not protection states; `--use-TM-region` cannot run on the implicit side
+  because its legacy HDX topology has no `surface` node; and 31 of 48 implicit PS files are truncated at 4 MiB
+  boundaries, so each is read to its last complete frame.
+* **2026-08-19, cluster analysis:** ran `hdx_cluster.sbatch` with `HDX_LIVE=1` on the two wildtype POPE/POPG runs to
+  get the plain (hydrogen-bonded-or-buried) protection state for the implicit-vs-hybrid comparison.
+  **79HIS (48 replicas, 6081 frames each, ESS 37 492): r = 0.642, Spearman 0.711 over 144 amides** — up from
+  0.600/0.690/134 with the local 16-replica set, and only 1 amide saturated against 27. **79ALA, the construct that
+  matches the implicit dataset: r = 0.598 over 136** — statistically the same, so the single-residue difference was
+  never the limitation; the implicit side is, with 58 of 203 amides censored. Poster panel repointed to the 79HIS
+  cluster data, with the protected fractions cached in the poster folder so the figure needs no trajectory.
+* **NP block 2 re-measured** (18 246 frames, 3.2% adsorbed-and-compact): reproduces findings 118 unchanged. None of
+  Carlson et al.'s five lysines is contacted (K12 0.000, K73 0.005, K190 0.000, K525 0.000, K541 0.033); the patch is
+  Lys313 0.33, Glu311 0.31, Asp314 0.27, Asp562 0.26, Lys560 0.26. Max contact 0.328, so still no preferred pose.
+* **2026-08-19, poster headline panel rebuilt on matched data.** Found implicit-membrane REMD for the *same*
+  construct in `~/cds3/glpG-run3-REMD/79HIS/1` (48 replicas x 11 500 frames) and reduced it with a new
+  `popepopg_REMD/hdx_implicit.sbatch` to the plain protection state, ESS 167 977. Paired against the 48-replica
+  hybrid: **Spearman 0.662, Pearson 0.546 over 155 amides**, medians 1.36 vs 0.92, everything else held fixed
+  (construct, ladder, MBAR target, criterion). Deliberately *not* the highest r on offer — the mismatched-construct
+  pairing gives 0.642 over 144 — because that one rests on implicit files 31 of whose 48 were truncated. The two
+  implicit datasets agree with each other at r = 0.944, so provenance was the only thing at stake. Pearson is
+  cutoff-dependent here (0.55 -> 0.66 as the ceiling region is excluded) while Spearman is not, so the panel leads
+  with Spearman.
+  Operational lesson: `~/cds3` is `/cds3/...`, which compute nodes cannot read — stage to `/project` first.
+* **Integrator reviewed, not changed** (findings 123, per instruction). The hybrid bypasses Upside's three-stage
+  Predescu integrator entirely: `integration_cycle` returns after one g-JF Langevin stage whenever `/input/brownian`
+  exists, and that list includes the 630 protein backbone sites. `--integrator mv` cannot help — its level 1 is the
+  *slow* set at `dt x inner_step`. Timestep left at 0.009.
+* **2026-08-19, pooled the four implicit repeats.** `cds3/glpG-run3-REMD/79HIS` has four independent runs of the same
+  48-replica ladder, not one; all four reduced (jobs 53539424, 53540593/94/95), each reweighted to 0.85 and the
+  protected fractions averaged, pooled ESS 679 839. **Spearman 0.676, Pearson 0.554 over 170 amides**, censored on the
+  implicit side down from 47 to 32. Both statistics improve at every fixed cutoff (below 5 kcal/mol: Spearman
+  0.662 -> 0.685, Pearson 0.584 -> 0.615), so this is sampling rather than dataset selection. Poster updated.

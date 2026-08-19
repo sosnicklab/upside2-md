@@ -2915,6 +2915,8 @@ result survives, and it survives unchanged: **0.000 in both**.
 What the rebuilt run contacts instead is centred elsewhere -- Lys313 0.34, Glu311 0.31, Asp314 0.28, Asp562 0.25,
 Lys560 0.25 -- i.e. different lysines from the paper's.
 
+**Re-measured 2026-08-19 at block 2** (18 246 frames, 576 of them adsorbed-and-compact = 3.2%): unchanged. K12 0.000, K73 0.005, K190 0.000, K525 0.000, K541 0.033; contacts still Lys313 0.33, Glu311 0.31, Asp314 0.27, Asp562 0.26, Lys560 0.26; 16.9 residues in contact per frame; max contact 0.328. Rg median rose 48.3 -> 62.7 A, so albumin is still unravelling.
+
 **This is provisional and must not be quoted yet.** 20 h of a 3-block run; the highest per-residue contact
 frequency is only 0.341, so no pose is yet preferred, and the interface is still forming. The poster says
 "simulations in progress" and claims nothing, which is the correct position. Re-measure at the end of block 3.
@@ -2997,3 +2999,239 @@ span and its factor inflates by orders of magnitude: the experimental factors sp
 ones span 129 to 2.5e4. A linear R² on them is therefore dominated by that normalisation rather than by the
 physics. The rank correlation is the usable statistic (Spearman 0.30, p = 0.023, n = 57), and the poster panel
 ranks within each dataset rather than putting the two on one colour scale.
+
+## Update 121 (2026-08-19): the cluster REMD NaN are real blow-ups the driver rolls back, laundered around the ladder by exchange
+
+All four POPE/POPG variants carry non-finite potentials: 48/48 replicas of `glpG-RKRK-79HIS` (2-23 frames each of
+~6900), 48/48 of `79HIS_S115T`, 36/48 of `79ALA`, 39/48 of `79ALA_S115T`, about 0.15% of frames. Found while
+looking for a better implicit-against-hybrid correlation.
+
+**I first concluded this was an output defect and that was wrong.** The reasoning looked sound: the NaN arrive in
+pairs two frames apart recurring every 26 frames (one exchange interval), the potential immediately after and even
+*between* a NaN pair is normal, and the neighbouring frames are physically clean (Rg 19.3-21.6 A, peptide C-N
+2.41-2.62 A, potential -22000 to -23200, no drift). From that I argued a diverging integration cannot repair
+itself, so the propagated state must be healthy and only the recorded frame corrupt.
+
+Every one of those observations is real; the inference from them was not. `run_remd.py` says what is actually
+happening, in its own docstring and in `destroyed()`: **any** non-finite potential in a chunk is treated as a
+blow-up, that replica is rolled back to its pre-chunk positions, and *the NaN chunk is rotated to
+`output_previous_N` as normal historical data*. And `destroyed()` scans the whole chunk precisely because "REMD
+exchange moves a destroyed configuration between slots every replica-interval". So:
+
+* a replica genuinely blows up;
+* exchange carries the wrecked configuration around the ladder, which is why NaN appears in nearly every replica
+  file on the exchange period, and why the frames on either side look clean -- those slots held *other*, healthy
+  configurations at the time;
+* at chunk end the driver rolls the affected replicas back and keeps the chunk as history.
+
+The logs confirm it and show the events are ladder-wide rather than isolated. ROLLBACK counts: 53441123 (79HIS
+block 1) **137**, 53441124 (79HIS_S115T) **96**, 53441125 (79ALA) **37**, 53441126 (79ALA_S115T) **41**, and
+53527299 (the 79HIS resubmission) **0** over 7 chunks. They cluster by chunk, not by replica -- 79HIS chunk 2
+rolled back **all 48 replicas**, then 22 at chunk 10, 33 at chunk 12, 31 at chunk 28 -- and one 79HIS replica
+needed five consecutive rollbacks (`ROLLBACK #5`).
+
+**The analysis is nevertheless sound, and not because the NaN are rare.** `martini_remd_concat.py` keeps a frame
+only if its potential is **finite and negative**, a physical test rather than a finiteness test: a condensed
+bilayer plus protein sits near -2.2e4 E_up, so a positive total means overlapping cores. Its docstring records a
+replica that stayed finite for 96 frames at +1.9e6 before reaching NaN -- exactly the ramp a NaN-only filter would
+have kept. Nothing is clipped or repaired and the removed count is reported. So no re-run is needed to get usable
+HDX numbers out of these trajectories.
+
+What *is* outstanding is the instability itself, which is the dt / LJ-core problem of findings 112, not a "NaN
+bug"; the rollback is a guard around it. It has not recurred in the current 79HIS block.
+
+Two lessons:
+
+* **A clean neighbourhood is not evidence of a clean trajectory.** The periodicity and the healthy neighbours each
+  had an innocent explanation and a guilty one, and I took the innocent one without reading the code that writes
+  the file. Read the producer before explaining its output.
+* **Check the log the tool already writes before inferring mechanism from the data.** One `grep ROLLBACK` would
+  have settled this at the start; instead it cost four rounds of remote diagnostics and a wrong statement to the
+  user.
+
+## Update 122 (2026-08-19): the blow-up is a protein backbone site ejected by the MARTINI wall — dt is ~9x too large for a 1 m_up bead
+
+Localised by pulling a 10-frame window around the onset of the `glpG-RKRK-79ALA` event (replica 28,
+`output_previous_3`, frames 100-109, 166 MB) off the cluster and re-running it against the local engine.
+
+**What happens.** At frame 105 the total potential is +2.536e5 while Rg is 19.6 A and |pos|max 130 A -- global
+observables see nothing. The excess is entirely in `Spring_bond` (280 -> 274 347 E_up), and per-bond it is three
+bonds of one residue: **CA of residue 170 sits 80.7 A from its own C (r0 1.526) and 69.8 A from its own N
+(r0 1.453)**, worth 150 522 + 112 250 + 8 502 E_up. One atom has been ejected; the rest of the protein is intact.
+Re-evaluating the recorded coordinates locally reproduces the recorded potential to 0.03 E_up, so the coordinates
+and the energy are consistent -- the state really was that.
+
+**Why dt is the cause, with numbers.** The MARTINI tables run from `r_min_ang` 0.3 to 12 A, and every protein site
+(N, CA, C, O, BB) carries **mass 1 m_up** while every lipid and ion bead carries **6**. For a 1 m_up bead at
+dt = 0.009, one velocity-Verlet kick displaces it by `F dt^2 / m`, so:
+
+| separation | steepest pair force | one-step kick at dt 0.009 | dt for a 1 A kick |
+|---|---|---|---|
+| 2.853 A | 1.27e5 E_up/A | 10.3 A | 0.0028 |
+| 2.584 A | 4.64e5 | 37.6 A | 0.0015 |
+| **2.432 A** | **1.02e6** | **82.8 A** | **0.00099** |
+| 1.783 A | 5.60e7 | 4533 A | 0.00013 |
+
+The observed ejection is **80.7 A**, which sits inside this range. (Corrected: I first called this a quantitative
+match on the strength of `F dt^2 / m` = 82.8 A at 2.43 A. The g-JF update actually carries a factor b/2 -- see
+findings 123 -- so the prediction there is ~41 A and at the 1.78 A closest approach in the bad frame it is ~2270 A.
+The mechanism and the order of magnitude hold; the exact agreement was my arithmetic, not the model's.) The run
+lives there: over the ten frames the closest interaction-list pair
+is **2.49-2.74 A** in every clean frame (1.78 A in the bad one), with ~169 pairs per frame inside 3.40 A (the 1 A
+kick radius), ~15 inside 2.85 A (10 A), and **0.2 per frame inside 2.43 A (80 A)**. So an ejection is not an
+accident, it is the expected outcome of continuous sampling at that separation whenever the bead that happens to be
+there is a protein site rather than a lipid one.
+
+The steepest tabulated force is 5.2e17 E_up/A at the 0.3 A inner edge, which is where replica 32's 8e18 potential
+and |pos| 6.9e10 come from: once a pair is driven into the inner edge the kick is unbounded.
+
+**Consistency checks that make this the explanation rather than a story.** The ejected atom is a *protein* site,
+which is the lightest species and therefore the most unstable at fixed dt -- the 6x mass asymmetry means the same
+force throws a backbone site six times as far as a lipid bead. The `martini_hybrid_position` term also rises
+(1700 -> 12 988) as the ejected site drags its proxy. And the propagation matches the exchange arithmetic exactly:
+11 185 steps per chunk over 300 frames is 37 steps/frame, `--replica-interval 0.09` is 10 steps, so 3.7 exchanges
+per frame -- and the wreck moves ~4 rungs per frame (28 -> 32 -> 35 -> 39 -> 43 -> 47, then back down
+45 -> 41 -> 37 -> 34 -> 30 -> 26 -> 23 -> 19), one frame in each replica's output. The bond period is ~100 steps
+and the thermostat timescale 555 steps, so an 80 A excursion cannot relax in the 37 steps to the next frame: the
+clean frame that follows is a *different configuration swapped in*, not recovery.
+
+**What can be done, and what must not be.** The kick scales as dt^2, so holding the worst case to 1 A at the
+separations actually sampled needs dt ~= 0.001, nine times smaller and nine times the cost. Raising the protein
+site mass would work thermodynamically -- masses do not change equilibrium averages, only kinetics, and HDX free
+energies are equilibrium quantities -- but dt and friction here are calibrated against each other for a target
+lipid diffusion, so that is a physics decision, not a fix to apply unilaterally. Softening or capping the core is
+out. In the meantime the campaign survives on `run_remd.py`'s rollback, at the cost of roughly 12% of the compute
+(4 of 34 chunks in 79HIS block 1 were rolled back for most replicas) and of ladder mixing, and the analysis is
+unaffected because `martini_remd_concat.py` filters on finite *and negative* potential.
+
+Lesson: **global observables are the wrong instrument for a local failure.** Rg, |pos|max and the peptide C-N scan
+all passed on a frame carrying +2.5e5 E_up, because one atom in 4949 was 80 A out of place. The term decomposition
+found it in one step; three rounds of Rg-and-C-N checking had not.
+
+## Update 123 (2026-08-19): the hybrid does not use Upside's integrator for the protein — one g-JF stage replaces three Predescu stages
+
+Recorded, not fixed, at the user's instruction; dt must stay 0.009 to match the stock examples (that is also the
+engine default, `src/main.cpp:656`).
+
+`DerivEngine::integration_cycle(VecArray mom, float dt)` (`src/deriv_engine.cpp:396`) begins with
+
+```
+if(martini_brownian::has_brownian(this)) {
+    compute(DerivMode);
+    martini_brownian::apply_langevin_step(this, mom, dt);
+    return;
+}
+```
+
+so as soon as `/input/brownian` exists — which it does for every hybrid config — the function returns before
+reaching the **three-stage Predescu et al. (2012) integrator** that the same function uses otherwise, with
+`mom_update = {1.5-3a, 1.5-3a, 6a}`, `pos_update = {3b, 3-6b, 3b}` and a force evaluation per stage. Stock Upside
+examples run that three-stage scheme at dt = 0.009. The hybrid runs **one** g-JF stage at dt = 0.009:
+
+`x <- x + (b dt/m) p + (b dt^2/2m) f + (b dt/2m) beta`,  `b = 1/(1 + alpha dt / 2m)`
+
+One stage means a force spike is committed to displacement with no intermediate force re-evaluation; three stages
+let the repulsive wall push back inside the step. Same dt, different stability.
+
+`/input/brownian` covers **4529 of 4949 atoms**: all 272 ions, all 3627 lipids, and **630 of 1050 protein atoms**
+(the N/CA/C backbone), with friction 0, 0.1692, 0.3384 and 0.5075 — interface-dependent, higher near lipid, cutoff
+12 A. So the protein backbone is inside the single-stage Langevin path, and it carries the interface friction, which
+means it cannot simply be removed from the list.
+
+Measured single-step displacements `b dt^2 |F| / 2m` on the recorded frames: **protein max 0.010 A** (99.9th 0.006,
+median 0.0005) against **lipid max 0.0003 A**. Protein steps are ~30x the lipid ones, from one sixth the mass and
+stiffer forces. The bulk is nowhere near unstable; it is the tail that reaches the wall (findings 122).
+
+**`--integrator mv` does not help, contrary to what its name suggests.** `build_integrator_levels`
+(`src/deriv_engine.cpp:217`) makes `integrator_level == 1` the **slow** set, integrated at `dt * inner_step`, and
+level 0 the fast set at `dt`. It is a cost optimisation for expensive *smooth* terms, not a way to sub-step a stiff
+one. And every potential node in the hybrid config takes the default level (`read_attribute<int>(..., 2)` at
+`deriv_engine.cpp:602`, remapped to 0), so `mv` currently has an empty slow set.
+
+**What would improve stability at dt = 0.009**, best-preserving first:
+
+1. **Sub-stage the protein update.** A g-JF/BAOAB variant with inner force re-evaluations over the protein subset
+   restores the mid-step feedback the three-stage scheme provides while keeping the interface friction those sites
+   carry. This is the change that makes the hybrid consistent with the stock examples in *integrator* as well as dt.
+2. **Split the MARTINI pair list by range.** Only ~15 pairs per frame are inside the stiff region, out of 8.44 M.
+   A short-range inner list evaluated more often is the textbook RESPA split and the only variant that does not
+   multiply the cost of the full pair sum. This is the correct use of the `mv` machinery, which currently cannot
+   express it.
+3. **Protein mass repartitioning.** Exact for an equilibrium observable like HDX free energy, since masses do not
+   enter configurational averages. But `/input/brownian` ties `numerical_time_step 0.009`,
+   `target_lipid_diffusion_um2_s 11.5` and `bare_particle_friction_up 0.169` together, so this voids the
+   friction/diffusion calibration and is a physics decision.
+
+Ruled out: reducing dt (must match the stock examples), and softening or capping the core.
+
+Operational note found the hard way: **`~/cds3` is `/cds3/trsosnic/yinhan`, a filesystem that compute nodes cannot
+read.** A job reading it fails with `FileNotFoundError` on every file while the login node lists them happily. Stage
+to `/project` first — `~/project` is a symlink to `/project/trsosnic/yinhan` and works from compute nodes.
+
+## Update 124 (2026-08-19): inner sub-step integrator implemented and locally validated
+
+**Claim verified (finding 122)**: at dt=0.009, a protein backbone atom (m=1 m_up) approaching a MARTINI bead to
+2.43 Å receives a g-JF force kick of 41 Å, ejecting it from the protein. The mechanism is mass asymmetry: protein
+backbone at 1/6 the lipid mass receives 6× the displacement for the same force.
+
+**Fix chosen**: RESPA-style g-JF inner sub-stepping — `n_inner_steps = N` wraps the position update, inner force
+evaluation, and momentum update in a loop over N inner steps each at `dt_i = dt/N`. The outer `dt` seen by the
+engine, the numerical_time_step check, the friction/diffusion calibration, and the RESPA inner step count M all
+remain unchanged at 0.009. Only the g-JF integrator is sub-stepped.
+
+Implementation in `src/martini_brownian.cpp`:
+- `BrownianRuntime::n_inner_steps` (default 1, backward-compatible).
+- Read from `/input/brownian` attribute `inner_steps` via the existing
+  `read_attribute<int>(config_root, "/input/brownian", "inner_steps", 1)` overload; throws if < 1.
+- `apply_langevin_step` loops 0..N-1: each iteration does a full position update (phase 1), calls
+  `engine->compute(DerivMode)`, then the full momentum update (phase 2). The invocation counter indexes
+  by `outer_invoc × N + inner` to keep random streams distinct across inner steps.
+- No other file changed.
+
+**Kick magnitudes at N_inner=9 (dt_i=0.001)**:
+
+| r [Å] | F [E_up/Å] | kick N_inner=1 [Å] | kick N_inner=9 [Å] |
+|---|---|---|---|
+| 2.853 | 1.27e5 | 5.1 | 0.064 |
+| 2.584 | 4.64e5 | 18.8 | 0.232 |
+| 2.432 | 1.02e6 | 41.3 | 0.510 |
+| 1.783 | 5.60e7 | 2268 | 28.0 |
+
+At all approach distances that occur thermally (≥ 2.43 Å), N_inner=9 keeps the kick below 1 Å. The atom is
+smoothly repelled with no backbone spring overshoot; at N_inner=1 the same force flings it 41 Å, stretching the
+backbone spring by ~40 Å and storing ~35 000 E_up per bond.
+
+The 1.783 Å entry (28 Å kick even at N_inner=9) is reported for completeness; the LJ potential at that depth is so
+strongly repulsive that the system cannot reach it thermally — it corresponds to ~10^7 kT of potential energy.
+Making dt_i small enough to handle 1.783 Å approaches is not required and would not be achievable at any
+reasonable inner step count.
+
+**Thermostat and diffusion are preserved.** Dissipation per outer step is
+`∏_{i=1}^{N} (1 − α dt_i/(2m)) ≈ 1 − α dt/(2m) × N × (1/N) = 1 − α dt/(2m)`, identical to the N=1 case.
+`D = kT/α` is unchanged.
+
+**Local timing (1 replica, 4000 steps, 79HIS variant)**:
+- Baseline N_inner=1: 51.5 s → 12.9 ms/step
+- Fixed N_inner=9: 221.6 s → 55.4 ms/step → **4.3× overhead** (theoretical max 9×)
+- Breakdown: `engine->compute()` ≈ 5.3 ms/step (41% of step time); fixed overhead ≈ 7.6 ms/step.
+- At N_inner=5 (dt_i=0.0018), cost ≈ 2.6×; kick at 2.43 Å ≈ 1.65 Å (marginal, not verified).
+
+**Thermodynamics validated**: avg_kinetic_energy/1.5kT ≈ 1.0 (1.011 baseline, 1.002 fixed), finite potentials
+~−22 000 E_up, Rg ~20.5 Å for both arms over 4000 steps. No blow-ups captured locally because the 79HIS configs
+are in a conformational state that does not sample 2.43 Å protein-MARTINI contacts within this window; this is
+consistent with job 53527299 (79HIS resubmit) also showing 0 rollbacks over 7 chunks. The 79ALA variants have
+the susceptible conformation (37–41 rollbacks).
+
+**Local A/B test limitation (2026-08-19)**: An engineered test placing PO4-3183 at a target distance from BB-1049 failed to demonstrate the A/B contrast cleanly because:
+1. `martini_hybrid_position` uses `infer_H_O`-derived O positions (not stored /input/pos O positions) for non-terminal residues, and for the C-terminal residue it uses only N/CA/C (renormalized, no O). My script used the wrong BB position formula, placing PO4 at 2.025 Å (not 2.43 Å) from the actual runtime BB — force 8.6×10⁶ E_up/Å at that depth exceeds N_inner=9's ability to resolve in one outer step.
+2. Moving a single atom by >3 Å in a dense bilayer creates simultaneous overlaps with multiple neighbors.
+A clean local A/B requires either a toy 2-body system or a pre-failure frame from the actual cluster trajectory. The thermodynamics validation (avg_KE/1.5kT ≈ 1.0 on normal 79HIS config) remains valid and is the appropriate local check.
+
+**Cluster deployment**: rebuild the binary on midway3 (`./install.sh`), then patch each running `.up` config:
+```python
+with h5py.File(path, 'a') as f:
+    f['/input/brownian'].attrs['inner_steps'] = np.int32(9)
+```
+The new binary reads `inner_steps=1` if the attribute is absent, so it is fully backward-compatible with all
+existing configs, including DDM and NP. The patched 79ALA/79ALA_S115T configs can be hot-swapped at the next
+block boundary by the running driver.

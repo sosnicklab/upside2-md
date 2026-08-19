@@ -28,6 +28,7 @@ struct BrownianRuntime {
     vector<float> friction;
     uint32_t random_seed   = 0;
     uint64_t n_invocations = 0;
+    int      n_inner_steps = 1;
 };
 
 static map<DerivEngine*, unique_ptr<BrownianRuntime>>& runtime_map() {
@@ -64,6 +65,9 @@ void register_brownian_for_engine(DerivEngine* engine, hid_t config_root, uint32
             throw string("/input/brownian friction must be nonnegative");
         rt->friction[i] = value;
     });
+    rt->n_inner_steps = read_attribute<int>(config_root, "/input/brownian", "inner_steps", 1);
+    if(rt->n_inner_steps < 1)
+        throw string("/input/brownian inner_steps must be >= 1");
     rt->random_seed = random_seed;
     int n_atom = engine->pos->n_atom;
     rt->stochastic_mask.assign(static_cast<size_t>(n_atom), 0);
@@ -99,6 +103,8 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
     if(fabsf(dt - rt.time_step) > 1e-6f*fmaxf(dt, rt.time_step))
         throw string("runtime timestep does not match /input/brownian numerical_time_step");
 
+    const int N = rt.n_inner_steps;
+    const float dt_i = dt / static_cast<float>(N);
     const float kT = rt.temperature;
     const vector<int>& idx = rt.atom_index;
     size_t nb = idx.size();
@@ -113,55 +119,61 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
     for(int atom : martini_fix_rigid::get_z_fixed_atoms(*engine)) {
         if(atom >= 0 && atom < engine->pos->n_atom) z_fixed_mask[static_cast<size_t>(atom)] = 1u;
     }
-    vector<float> fn(3*nb);
-    for(size_t i=0;i<nb;++i) {
-        int atom = idx[i];
-        if(fixed_mask[static_cast<size_t>(atom)]) {
-            store_vec(mom, atom, make_zero<3>());
-            continue;
+
+    for(int inner = 0; inner < N; inner++) {
+        const uint64_t invoc = rt.n_invocations * static_cast<uint64_t>(N)
+                               + static_cast<uint64_t>(inner);
+        vector<float> fn(3*nb, 0.f);
+        for(size_t i=0;i<nb;++i) {
+            int atom = idx[i];
+            if(fixed_mask[static_cast<size_t>(atom)]) {
+                store_vec(mom, atom, make_zero<3>());
+                continue;
+            }
+            const float alpha = rt.friction[i];
+            const float m = have_mass ? martini_masses::get_mass(engine, atom) : 1.f;
+            const float b = 1.f/(1.f + alpha*dt_i/(2.f*m));
+            const float bnoise = sqrtf(2.f*alpha*kT*dt_i);
+            RandomGenerator random(rt.random_seed, BROWNIAN_RANDOM_STREAM,
+                                   static_cast<uint32_t>(atom), invoc);
+            auto beta = bnoise*random.normal3();
+            auto f = (-1.f)*load_vec<3>(sens, atom);
+            auto p = load_vec<3>(mom, atom);
+            if(z_fixed_mask[static_cast<size_t>(atom)]) {
+                beta.z() = 0.f;
+                f.z() = 0.f;
+                p.z() = 0.f;
+            }
+            auto x = load_vec<3>(pos_out, atom);
+            store_vec(pos_out, atom, x + (b*dt_i/m)*p + (b*dt_i*dt_i/(2.f*m))*f
+                                      + (b*dt_i/(2.f*m))*beta);
+            fn[3*i] = f.x();
+            fn[3*i+1] = f.y();
+            fn[3*i+2] = f.z();
         }
-        const float alpha = rt.friction[i];
-        const float m = have_mass ? martini_masses::get_mass(engine, atom) : 1.f;
-        const float b = 1.f/(1.f + alpha*dt/(2.f*m));
-        const float bnoise = sqrtf(2.f*alpha*kT*dt);
-        RandomGenerator random(rt.random_seed, BROWNIAN_RANDOM_STREAM,
-                               static_cast<uint32_t>(atom), rt.n_invocations);
-        auto beta = bnoise*random.normal3();
-        auto f = (-1.f)*load_vec<3>(sens, atom);
-        auto p = load_vec<3>(mom, atom);
-        if(z_fixed_mask[static_cast<size_t>(atom)]) {
-            beta.z() = 0.f;
-            f.z() = 0.f;
-            p.z() = 0.f;
+        engine->compute(DerivMode);
+        for(size_t i=0;i<nb;++i) {
+            int atom = idx[i];
+            if(fixed_mask[static_cast<size_t>(atom)]) continue;
+            const float alpha = rt.friction[i];
+            const float m = have_mass ? martini_masses::get_mass(engine, atom) : 1.f;
+            const float half = alpha*dt_i/(2.f*m);
+            const float b = 1.f/(1.f + half);
+            const float a = (1.f - half)/(1.f + half);
+            const float bnoise = sqrtf(2.f*alpha*kT*dt_i);
+            RandomGenerator random(rt.random_seed, BROWNIAN_RANDOM_STREAM,
+                                   static_cast<uint32_t>(atom), invoc);
+            auto beta = bnoise*random.normal3();
+            auto f_n = make_vec3(fn[3*i], fn[3*i+1], fn[3*i+2]);
+            auto f_n1 = (-1.f)*load_vec<3>(sens, atom);
+            auto p = load_vec<3>(mom, atom);
+            if(z_fixed_mask[static_cast<size_t>(atom)]) {
+                beta.z() = 0.f;
+                f_n1.z() = 0.f;
+                p.z() = 0.f;
+            }
+            store_vec(mom, atom, a*p + (dt_i*0.5f)*(a*f_n + f_n1) + b*beta);
         }
-        auto x = load_vec<3>(pos_out, atom);
-        store_vec(pos_out, atom, x + (b*dt/m)*p + (b*dt*dt/(2.f*m))*f + (b*dt/(2.f*m))*beta);
-        fn[3*i] = f.x();
-        fn[3*i+1] = f.y();
-        fn[3*i+2] = f.z();
-    }
-    engine->compute(DerivMode);
-    for(size_t i=0;i<nb;++i) {
-        int atom = idx[i];
-        if(fixed_mask[static_cast<size_t>(atom)]) continue;
-        const float alpha = rt.friction[i];
-        const float m = have_mass ? martini_masses::get_mass(engine, atom) : 1.f;
-        const float half = alpha*dt/(2.f*m);
-        const float b = 1.f/(1.f + half);
-        const float a = (1.f - half)/(1.f + half);
-        const float bnoise = sqrtf(2.f*alpha*kT*dt);
-        RandomGenerator random(rt.random_seed, BROWNIAN_RANDOM_STREAM,
-                               static_cast<uint32_t>(atom), rt.n_invocations);
-        auto beta = bnoise*random.normal3();
-        auto f_n = make_vec3(fn[3*i], fn[3*i+1], fn[3*i+2]);
-        auto f_n1 = (-1.f)*load_vec<3>(sens, atom);
-        auto p = load_vec<3>(mom, atom);
-        if(z_fixed_mask[static_cast<size_t>(atom)]) {
-            beta.z() = 0.f;
-            f_n1.z() = 0.f;
-            p.z() = 0.f;
-        }
-        store_vec(mom, atom, a*p + (dt*0.5f)*(a*f_n + f_n1) + b*beta);
     }
     rt.n_invocations++;
 }
