@@ -313,14 +313,21 @@ guard; the site genuinely does not exist.
 
 \paragraph{SC--environment.} Upside resolves a sidechain into one directional site,
 dry-MARTINI into several beads. This one genuine resolution mismatch is bridged by a
-potential of mean force: for each residue type the multi-bead sidechain is projected
-onto the single Upside site by a Boltzmann average over eliminated conformations,
+potential of mean force (PMF): for each (residue type, MARTINI bead type) pair the
+multi-bead sidechain geometry is analytically averaged out, with
+$\Omega=(\chi,\phi)$ denoting the discrete rotamer $\chi$ (weighted by its prior
+probability) and the azimuthal rotation $\phi$ of the sidechain bead cluster around
+the CB--CA axis,
 \begin{equation}
-U_\mathrm{SC\text{-}env}(\mathbf{r}) = -k_BT\,\ln\Big\langle
-  \exp[-U_\mathrm{MARTINI}(\mathbf{r};\Omega)/k_BT]\Big\rangle_{\Omega},
+U_\mathrm{SC\text{-}env}(r,\cos\theta) = -k_BT\,\ln\Big\langle
+  \exp[-U_\mathrm{MARTINI}(r,\cos\theta;\Omega)/k_BT]\Big\rangle_{\Omega},
 \end{equation}
-giving a smooth, orientation-resolved spline table. This is the only PMF in the
-interface.
+where $r$ is the distance from the CB anchor to the environment bead and
+$\cos\theta=-\hat{\mathbf{r}}\cdot\hat{\mathbf{d}}$ is the polar orientation relative
+to the CB--CA direction $\hat{\mathbf{d}}$. Because $\phi$ is integrated out the
+result is a 2D table in $(r,\cos\theta)$; it is computed analytically from the rotamer
+library and the dry-MARTINI force field, not from a sampled trajectory. This is the
+only PMF in the interface.
 
 \paragraph{BB--environment.} The backbone is a single site in both models, so nothing
 is integrated out: BB--env is the raw dry-MARTINI interaction from the same spline as
