@@ -222,3 +222,19 @@ Training artifacts under `SC-training/` stay in native dry-MARTINI units.
 * The simulation code must not bake dry-MARTINI to Upside conversion numbers into the training artifacts.
 * The native dry-MARTINI to Upside unit conversion happens ONCE, at h5-build time in Python, which receives the required conversion factors as explicit parameters. The runtime h5 force-field files and configs therefore store Upside-unit values (energies in `E_up`, lengths in Angstrom), and the simulation code (C++ engine) performs NO unit conversion — it reads the pre-converted spline tables directly.
 
+### midway3 SSH — Self-Connection
+
+**Do not ask the user to connect SSH.** Establish the ControlMaster socket yourself:
+
+```bash
+expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw3_master.exp
+```
+
+This script reads the password from `~/.bin/ssh_mdw3`, sends it, selects Duo option 1 (push), and opens `~/.ssh/cm-mdw3.sock` with `ControlPersist=8h`. After it exits, reuse with:
+
+```bash
+ssh -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu '<command>'
+```
+
+Check socket liveness before running: `ssh -S ~/.ssh/cm-mdw3.sock -O check yinhanw@midway3.rcc.uchicago.edu`. If the socket is missing or dead, re-run the expect script. The user still approves the Duo push on their phone — but you initiate it; you never ask them to run the script themselves.
+
