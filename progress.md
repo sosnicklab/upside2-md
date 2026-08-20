@@ -497,3 +497,24 @@ the frozen run. The glpG campaign is producing real dynamics again.
   protected fractions averaged, pooled ESS 679 839. **Spearman 0.676, Pearson 0.554 over 170 amides**, censored on the
   implicit side down from 47 to 32. Both statistics improve at every fixed cutoff (below 5 kcal/mol: Spearman
   0.662 -> 0.685, Pearson 0.584 -> 0.615), so this is sampling rather than dataset selection. Poster updated.
+* **2026-08-19, PI feedback merged (ver3 -> ver4).** Pulled the PI's hand-edited pptx content back into
+  `poster_content.py` and regenerated. Removed the p_f equation, credited Peng and Faruk with Crossref-verified
+  citations (noting [9] is a Biophys Soc meeting abstract), added a "What was hard" section, and rebuilt the GlpG
+  figure from `system.pdb` so it carries no rotation at all — the earlier tilt was my own helix-axis averaging — with
+  the leaflets' measured phosphate planes drawn as the two boundary lines. Also repaired three ver3 accidents: the
+  abstract body text had been lost, the GlpG heading overlapped its figure, and the References heading was parked
+  outside the column.
+* **2026-08-19, two figure changes.** Reweighted both models to 0.75/0.80/0.85 on the cluster (`pf_multi_T.py`, one
+  MBAR solve per dataset). The profile panel is now an **overlay** of hybrid on implicit in one axis at three
+  temperatures (`make_profile_overlay_figure.py`), replacing the side-by-side pair whose left half was a data-less
+  supplied PNG; the implicit model saturates across the TM segments while the hybrid follows it in the loops and
+  reads lower in the helices. The scatter now shows all three temperatures: **rho = 0.709 (263 K, n=156), 0.739
+  (280 K, n=162), 0.676 (298 K, n=170)** — the best agreement is not at the best-sampled temperature, which is
+  another argument against the sampling explanation. "What was hard" gained the lipid-to-one-vector-particle dead
+  end (PMF route works for side chains; tail bending and compression have no single-particle representation).
+* **2026-08-19, ver4 -> ver5.** Extracted the hand-edited deck's structure back into `poster_content.py` (References
+  to column two, What-was-hard and Future-directions to column three, bullets, 14 pt refs, author block beside the
+  title, bottom-up-PMF item). Restored the abstract body and the "Measuring stability by exchange" body, both of
+  which ver4 had lost under live headings. Both comparison figures are now generated at their printed size so the
+  script's point sizes are the printed ones; `fig12` uses $\Delta G$; `fig10` split into three panels, one per
+  temperature, each labelled with rho, R^2 and n.

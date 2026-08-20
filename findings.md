@@ -3288,3 +3288,44 @@ with h5py.File(path, 'a') as f:
 The new binary reads `inner_steps=1` if the attribute is absent, so it is fully backward-compatible with all
 existing configs, including DDM and NP. The patched 79ALA/79ALA_S115T configs can be hot-swapped at the next
 block boundary by the running driver.
+
+## Update 124 (2026-08-19): the implicit-vs-hybrid comparison had the sign wrong -- same criterion is not the same physics
+
+Both poster comparison panels used the protein-only protection state (`_PS_protein.npy`) on both axes, on the
+reasoning that holding the analysis fixed is what makes the axes compare models rather than protection states. That
+reasoning is wrong for this pair of models, and the repo already contained the reason.
+
+In the **implicit** model, membrane burial is part of the force field, so a burial-based protection state sees it
+without help. In the **hybrid** the lipid is explicit and `get_protection_state.py` measures *protein* burial only,
+so the lipid's shielding is invisible unless it is added -- exactly what findings 113 established and what
+`martini_hdx_membrane_accessibility.py` exists to supply. Applying the same criterion to both therefore strips the
+hybrid of protection the implicit model gets for free, and the transmembrane helices stop running off the axis.
+
+`--use-TM-region` cannot even the two up: neither the legacy HDX topology nor the cds3 implicit configs carry a
+`surface` node (created only by `upside_config.py --surface`), so it was never applicable to these runs.
+
+Using each model's own membrane term inverts the result:
+
+| T | n | Spearman | median implicit | median hybrid | hybrid never open |
+|---|---|---|---|---|---|
+| 263 K | 128 | 0.668 | 1.40 | 1.95 | 65 / 203 |
+| 280 K | 130 | 0.691 | 1.28 | 1.91 | 61 / 203 |
+| 298 K | 138 | 0.745 | 1.17 | 1.94 | 56 / 203 |
+
+The hybrid is the **more** protective model, its helices saturate as they should, and the 298 K agreement is better
+than the protein-only version reported (Spearman 0.745 vs 0.676, Pearson 0.680 vs 0.554).
+
+**Retracted:** the claim that the hybrid's most protected amides "read low"; the attribution of that to the
+loose-helix defect; and the argument I made against a sampling explanation (findings 121-123 discussion). With 56 of
+203 hybrid amides unresolved against the implicit model's 32, and ceilings of 6.2 against 8.0 kcal/mol, the hybrid is
+the more censored of the two and a sampling contribution cannot be ruled out the way I ruled it out.
+
+Two lessons, both about the same failure:
+
+* **"Hold the analysis fixed" is not "hold the physics fixed."** Two models can require different analysis in order
+  to be measuring the same quantity. Asking which term each model needs to make its observable comparable is the
+  question; symmetry of procedure is not evidence of symmetry of meaning.
+* **I argued from a figure instead of checking what the figure was made of.** The sign of the difference was the
+  single most load-bearing fact in three rounds of discussion, and it came from a choice I had made myself and then
+  stopped questioning. The user's "the hybrid should go to infinity at the helices" was a statement about the
+  physics that I could have checked in one command against findings 113.
