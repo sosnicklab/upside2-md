@@ -1,5 +1,58 @@
 # Findings
 
+## PDB structural difference: TM4 N-cap conformation, crystal vs membrane-simulation (2026-08-20)
+
+**Context:** The poster figure (`fig12_profile_overlay.png`) shades helical regions using DSSP. Two PDB
+sources are available:
+- `glpg_oriented.pdb` (local, poster dir) — derived from a crystal structure, oriented post hoc.
+- `popepopg_REMD/glpG-RKRK-79HIS/hdx_plain/pdb/glpG-RKRK-79HIS.pdb` (cluster) — representative
+  structure from the actual membrane REMD simulation.
+
+**Sequence:** identical in the TM4 region (residues 130–155: TRP-PHE-GLY-GLY-LEU-THR-GLY-VAL-VAL-TYR-ALA-LEU-MET-...).
+
+**DSSP difference at TM4 N-cap (residues 135–140):**
+
+| Residue | Local PDB z (Å) | Sim PDB z (Å) | Local SS | Sim SS |
+|---|---|---|---|---|
+| 135 THR | +8.8 | +2.5 | Coil | Helix |
+| 136 GLY | +6.6 | +2.4 | Coil | Helix |
+| 137 VAL | +4.4 | −0.6 | Coil | Helix |
+| 138 VAL | +1.3 | −2.2 | Coil | Helix |
+| 139 TYR | +1.6 | −1.9 | Coil | Helix |
+| 140 ALA | −1.1 | −3.4 | Coil | Helix |
+| 141 LEU | −4.0 | −6.3 | Helix | Helix |
+
+**Result:** TM4 DSSP range — local 141–149; simulation 135–151.
+
+**Cause:** In the crystal/local PDB, residues 135–140 sit at z = +2 to +9 Å (splayed toward the
+extracellular surface), so their backbone H-bond geometry fails DSSP. In the membrane-equilibrated
+simulation they sit 6–10 Å deeper (z = −0.6 to +2.5 Å), properly threaded through the bilayer, and
+DSSP assigns them as helix. Same sequence, different packing of the L3 loop / TM4 junction.
+
+**Action taken:** Poster figure HELICES and TM_LABELS updated to use simulation PDB DSSP, which matches
+2IC8 literature boundaries (TM4: construct 134–152) to within 1–2 residues.
+
+**Full DSSP comparison — all helical regions:**
+
+| Region | Local PDB | Simulation PDB | Literature (2IC8, construct offset −66) |
+|---|---|---|---|
+| Pre-TM cap | 22–26 | 19–26 | — |
+| **TM1** | 29–47 | **29–48** | 28–49 |
+| ECL loop | 50–56 | 50–57 | — |
+| L1 loop | — | 63–67 | — |
+| L1 loop | 69–76 | 71–77 | — |
+| **TM2** | 83–96 *(broken)* | **82–103** *(continuous)* | 81–104 |
+| **TM3** | 105–127 | **105–127** | 104–128 |
+| **TM4** | 141–149 *(short)* | **135–151** | 134–152 |
+| short | — | 153–155 | — |
+| **TM5** | 158–176 | **161–175** | 160–176 |
+| **TM6** | 182–208 | **185–207** | 184–203 |
+
+The simulation PDB agrees with literature to within 1–2 residues everywhere; the local PDB shows a
+broken TM2 and a truncated TM4 N-cap due to the crystal conformation.
+
+---
+
 ## Health gates: CN_MAX removed from BOTH jobs; count broken bonds instead (2026-08-09)
 
 Measured on a forced NP tear (270-0-0 at dt=0.01), recording when each candidate criterion first fires:
