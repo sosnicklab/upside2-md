@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-08-19 CDT**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-08-21 CDT**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -24,42 +24,31 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-19 11:20 CDT**.
+Snapshot **2026-08-21 CDT**.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 53527299 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | RUNNING 6.6 h | resubmission of 53441123. **332 928 frames pooled over 48 replicas** — 4.3x the other three, which are still on their first block |
-| 53441124 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | RUNNING 7.7 h | 75 888 frames pooled |
-| 53441125 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | RUNNING 7.0 h | 76 752 frames pooled. The construct that matches the local implicit-membrane dataset |
-| 53441126 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | RUNNING 6.7 h | 76 176 frames pooled |
-| 53536112 | `hdx_glpG-RKRK-79HIS` | **POPE/POPG analysis** | PENDING | `hdx_cluster.sbatch`, `HDX_LIVE=1`, `HDX_WORK=.../glpG-RKRK-79HIS/hdx_plain`, discard 500, 16 jobs. Wanted for `_PS_protein.npy` (the plain hydrogen-bonded-or-buried state) to put against the local implicit run. Log `popepopg_REMD/logs/hdx.glpG-RKRK-79HIS.53536112.out` |
-| 53536113 | `hdx_glpG-RKRK-79ALA` | **POPE/POPG analysis** | PENDING | same, for the construct-matched comparison. Log `popepopg_REMD/logs/hdx.glpG-RKRK-79ALA.53536113.out` |
-| 53456240 | `np_1AO6_prod` | **NP** | RUNNING 13.6 h | `NP_MAX_BLOCKS=3` to cap disk; stop with `prod/STOP` |
+| 54095760 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | Fresh resubmission with GLY Ramachandran fix applied to seed |
+| 54095761 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | GLY fix applied |
+| 54095762 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | GLY fix applied |
+| 54095763 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | GLY fix applied |
+| 53711321 | `np_1AO6_prod` | **NP** | RUNNING | Continuing; stop with `prod/STOP` |
 
-**All four POPE/POPG runs hit real blow-ups that the driver rolls back (2026-08-19).** ROLLBACK counts in
-`logs/remd.<jobid>.out`: 53441123 (79HIS block 1) **137**, 53441124 **97**, 53441125 **37**, 53441126 **41**,
-53527299 (current 79HIS block) **0** over 7 chunks. Events are ladder-wide, not per-replica — REMD exchange carries
-a wrecked config between slots. `run_remd.py` keeps the NaN chunk in `output_previous_N` by design.
+**GLY Ramachandran fix applied to all 4 seeds (2026-08-21).** `py/upside_config.py` symmetrizes GLY maps
+where the raw map has alphaR > alphaL at canonical bins, which is a training artifact when GLY appears
+at a helix N-terminus following a loop. All 23 GLY residues in each variant had the artifact and were
+fixed identically. Key numbers for G136 (TM4 N-terminal GLY): alphaR 2.029 → 1.440, alphaL 0.851 → 1.440.
+Seed backups at `seeds/<V>.up.bak_gly_fix`. Local validation (10k steps, T=0.85): TM4 severe H-bond
+disruption 14.9% → 6.0%. Full-REMD equilibrium result pending.
 
-**Mechanism established (finding 122)**: protein backbone atom (m=1 m_up) at 2.43 Å from a MARTINI bead receives
-a g-JF kick of 41 Å at dt=0.009, ejecting it and stretching backbone spring bonds by ~40 Å. Root cause is the
-hybrid using a single-stage g-JF step where stock Upside uses a three-stage Predescu scheme (finding 123).
+**Prior pending jobs 53757341/53759288/53762180/53763441 cancelled** (ran without the GLY fix). Those
+jobs had themselves replaced the 53527299/53441124–26 round that accumulated trajectory data; that data
+is retained in `popepopg_REMD/<variant>/` but was generated without the fix and should not be used for
+final HDX analysis until the GLY fix is validated in REMD.
 
-**Fix implemented locally (finding 124, 2026-08-19)**: g-JF inner sub-stepping via `inner_steps = N` attribute on
-`/input/brownian`. At N_inner=9 (dt_i=0.001), the kick at 2.43 Å drops from 41 Å to 0.51 Å — the atom is smoothly
-repelled. The outer `dt=0.009`, friction calibration, and RESPA M are all unchanged. Cost: ~4.3× per outer step.
-Local binary compiled and validated (avg_kinetic_energy/1.5kT ≈ 1.0 for 4000 steps, both arms).
-
-**To deploy**: (1) rebuild binary on cluster (`./install.sh`); (2) patch each running config:
-```python
-with h5py.File(path, 'a') as f:
-    f['/input/brownian'].attrs['inner_steps'] = np.int32(9)
-```
-The 79ALA/79ALA_S115T jobs are the active bleeders (37–41 rollbacks); 53527299 (79HIS) has 0 and can wait.
-Patched configs can be hot-swapped at the next block boundary.
-
-**No re-run is needed for accumulated data.** `martini_remd_concat.py` filters on finite AND negative potential,
-removing all rolled-back frames before analysis. **Check `grep -c ROLLBACK logs/remd.*.out` on any new block.**
+**g-JF inner sub-stepping fix (finding 124)** remains in the deployed binary. At N_inner=9 (dt_i=0.001)
+the kick at 2.43 Å drops from 41 Å to 0.51 Å. Cost: ~4.3× per outer step. Verify these new jobs do not
+accumulate ROLLBACK counts — if they do, check `logs/remd.<jobid>.out` for the mechanism.
 
 **NP campaign rebuilt and relaunched 2026-08-17.** 53411347 cancelled; the six configs were rebuilt from
 `scratchpad/NP-footprinting/build_all.py` (local) because the LJ tables had to be regenerated, which a patch

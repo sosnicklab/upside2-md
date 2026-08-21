@@ -51,7 +51,13 @@ explicitly labelled bare-particle mobility. An audit of the composed Hamiltonian
 that while the sidechain environment field is correctly replaced by the explicit
 lipid, three \emph{protein--protein} terms of the parent force field have no MARTINI
 counterpart and are absent. We also found and corrected a systematic 0.568~\AA{}
-displacement of the sidechain anchor. Neither, however, explains the model's
+displacement of the sidechain anchor, and identified and corrected a systematic
+artifact in the context-dependent glycine Ramachandran maps: because the training
+data is drawn from water-soluble proteins, glycine at a helix N-terminus following a
+loop is biased toward the $\alpha_L$ basin by up to $1.4~E_\mathrm{up}$, contrary to
+the physical symmetry of achiral glycine; symmetrizing the affected maps reduces
+severe TM4 hydrogen-bond disruption from 14.9\% to 6.0\% in preliminary validation.
+Neither the anchor nor the Ramachandran correction, however, explains the model's
 principal remaining limitation: a helical core that sits 4.5~\AA{} from the crystal
 in a bilayer against 2.6~\AA{} in a detergent micelle. Restoring the absent terms
 moves that deviation by less than 0.1~\AA, inside run-to-run scatter, so we report
@@ -111,9 +117,11 @@ every pair interaction served from a spline table that provably equals the publi
 functional form (Sec.~\ref{sec:membrane}); (2) a shared g-JF force update with one
 stochastic bath per real degree of freedom (Sec.~\ref{sec:langevin}); (3) an
 \emph{exact} derived-site protein--membrane interface, with measured force closure
-(Secs.~\ref{sec:interface},~\ref{sec:exactness}); (4) an audit of what the
-composition replaces and what it omits, with the measured structural consequence
-(Secs.~\ref{sec:audit},~\ref{sec:fidelity}); and (5) HDX and protein--nanoparticle
+(Secs.~\ref{sec:interface},~\ref{sec:exactness}); (4) identification and correction
+of a systematic artifact in context-dependent GLY Ramachandran maps that penalises
+TM-helix glycines (Sec.~\ref{sec:gly}); (5) an audit of what the composition
+replaces and what it omits, with the measured structural consequence
+(Secs.~\ref{sec:audit},~\ref{sec:fidelity}); and (6) HDX and protein--nanoparticle
 applications together with the numerical and analysis pitfalls encountered
 (Secs.~\ref{sec:hdx}--\ref{sec:np}), summarised as an explicit evidence boundary
 (Table~\ref{tab:evidence}).
@@ -335,6 +343,50 @@ lipid--lipid. No softening, no PMF, no capping.
 
 \paragraph{Confinement.} No term keeps the protein in the membrane. Its equilibrium
 depth and orientation follow from the raw force field, as they should.
+
+\subsection{Context-dependent Ramachandran maps and the glycine correction}
+\label{sec:gly}
+
+Upside assigns each residue a context-dependent Ramachandran map drawn from
+a library trained on water-soluble protein structures. The library encodes
+not a single GLY map but one per sequence position, mixing statistics from
+the two flanking residue types. This is physically appropriate for soluble
+proteins, but produces a systematic artifact at helix N-termini that follow
+loop segments: in soluble-protein databases, glycine at such a position is
+predominantly non-helical, so the resulting map penalises the $\alpha_R$
+basin ($\phi\approx-60^{\circ}$, $\psi\approx-45^{\circ}$) and rewards the
+$\alpha_L$ basin ($\phi\approx+60^{\circ}$, $\psi\approx+45^{\circ}$) by
+up to $1.4~E_\mathrm{up}$.
+
+GLY is achiral: it has no $\beta$-carbon, so $(\phi,\psi)$ and
+$(-\phi,-\psi)$ are related by a reflection through C$\alpha$ and are
+sterically identical. Consequently its intrinsic Ramachandran potential must
+be symmetric under $(\phi,\psi)\to(-\phi,-\psi)$, and any asymmetry in a
+trained map is a sampling artifact. We correct this at h5-build time in
+\texttt{upside\_config.py}: after reading the per-residue maps from the
+training library and before normalization, every GLY map whose raw map
+prefers $\alpha_L$ over $\alpha_R$ at the canonical grid bins is replaced by
+its symmetrized counterpart,
+\begin{equation}
+  E_\mathrm{sym}(\phi,\psi)
+  = \tfrac{1}{2}\bigl[E(\phi,\psi) + E(-\phi,-\psi)\bigr].
+  \label{eq:gly_sym}
+\end{equation}
+The condition fires only for maps with a wrong-sign bias; maps that already
+prefer $\alpha_R$ are left unchanged. In the glpG-RKRK-79HIS construct all
+23 GLY maps carry the artifact, so Eq.~\ref{eq:gly_sym} is applied to all
+of them. No retraining is required and no implicit-membrane term is
+introduced.
+
+The correction raises the canonical $\alpha_L$ energy by $0.5$--$0.9~E_\mathrm{up}$
+for the three TM4 glycines (G136, G143, G149) while increasing the actual
+helical-basin energy by only $\sim0.06~E_\mathrm{up}$, improving the
+helical-to-$\alpha_L$ barrier for each. A 10{,}000-step local validation at
+$T=0.85~E_\mathrm{up}$ starting from a well-folded reference frame shows that
+severe TM4 backbone-hydrogen-bond disruption (five or more donors below $0.3$)
+falls from 14.9\% to 6.0\% of frames, while TM6 (control; G195 mid-helix)
+is unaffected. Full cluster REMD validation is required to assess the
+equilibrium impact.
 
 \subsection{What the composition replaces, and what it omits}
 \label{sec:audit}
@@ -634,13 +686,26 @@ recalibrated against explicit-water MARTINI or all-atom reference.
 Applied to catalytically inactivated GlpG in a DDM belt, the transmembrane helices
 recover continuous protection and one helix remains conspicuously mobile:
 transmembrane helix~4, which carries the catalytic serine at its amino terminus. TM4
-is a short helix that does not span the bilayer and is flanked by conserved
-helix-breaking glycines,\cite{Wang2006,BenShem2007} and the active-site network it
-organises is energetically weak;\cite{Gaffney2019} rhomboids are also measurably less
-stable in detergent than in a bilayer.\cite{Barniol2018,Sawczyc2024} The canonical
-TM5/L5 gate\cite{Shi2019,Bohg2023} remained comparatively ordered, so the mobility
-localises to the intrinsically irregular catalytic helix rather than the functional
-gate.
+is flanked by conserved glycines\cite{Wang2006,BenShem2007} (G136 at the N-terminus,
+G143 and G149 within), and the active-site network it organises is energetically
+weak;\cite{Gaffney2019} rhomboids are also measurably less stable in detergent than
+in a bilayer.\cite{Barniol2018,Sawczyc2024} The canonical TM5/L5
+gate\cite{Shi2019,Bohg2023} remained comparatively ordered.
+
+The TM4 glycines are also the residues most affected by the GLY Ramachandran artifact
+described in Sec.~\ref{sec:gly}: G136 follows a loop, giving it a trained map that
+penalises the helical $\alpha_R$ basin by up to $1.4~E_\mathrm{up}$ relative to
+$\alpha_L$. Trajectories generated before the correction show G136 in $\alpha_L$
+(\emph{non-helical}) 22\% of production frames at $T=0.70~E_\mathrm{up}$, and this
+kink propagates to disrupt TM4 hydrogen bonds across the helix. With the GLY
+symmetrization applied (Eq.~\ref{eq:gly_sym}), the $\alpha_L$ energy at all three
+TM4 glycines increases by $0.5$--$0.9~E_\mathrm{up}$, reducing severe TM4
+hydrogen-bond disruption from 14.9\% to 6.0\% of frames in a short validation run.
+Accordingly, the observed TM4 mobility is a combination of genuine physical
+flexibility---the catalytic helix is intrinsically irregular---and a correctable
+force-field artifact. Whether the residual mobility after correction is physical
+requires the corrected REMD ensemble, which is presented as an open result pending
+cluster validation.
 
 \subsection{Application: a protein on a nanoparticle}
 \label{sec:np}
@@ -706,6 +771,12 @@ Sidechain anchor placement &
 Error found and corrected &
 Was displaced 0.568~\AA{} by a missing frame-origin subtraction; correcting it
 changes SC-env energies but not fold fidelity. \\
+GLY Ramachandran maps &
+Artifact found and corrected &
+Context-dependent maps trained on soluble proteins bias TM-helix N-terminal GLY
+toward $\alpha_L$ by up to $1.4~E_\mathrm{up}$. Symmetrizing the affected maps
+(Eq.~\ref{eq:gly_sym}) reduces severe TM4 disruption from 14.9\% to 6.0\% in
+preliminary validation; full equilibrium impact pending cluster REMD. \\
 Helical-core fidelity in a bilayer &
 \textbf{4.5~\AA; cause unidentified} &
 Seven candidates eliminated by measurement. This, not the interface, bounds
@@ -760,6 +831,20 @@ protein--environment physics. We would now regard a term-by-term audit of the co
 Hamiltonian, against a standard configuration of the same protein, as a mandatory
 step in any such construction rather than a diagnostic of last resort.
 
+A second and distinct lesson is that the parent force field may itself carry
+artifacts that are inconsequential in the training domain but consequential in the
+application domain. The GLY Ramachandran artifact (Sec.~\ref{sec:gly}) does not cause
+visible pathology in water-soluble protein simulations, because soluble helices with
+glycine N-termini are stabilized by burial and sidechain packing that partially
+compensate the erroneous torsional penalty. In a transmembrane helix those compensating
+terms are reduced---the helix is embedded and its glycines are at the lipid interface
+rather than in a hydrophobic core---so the artifact is unmasked. The corrective
+principle is physical and general: an achiral amino acid cannot have a chiral
+Ramachandran potential, and any asymmetry is an artifact to be removed. This kind of
+audit---checking whether physics-mandated symmetries hold in a learned potential---is a
+natural complement to the Hamiltonian audit above, and we regard it as a third
+mandatory step in validating a composed model in a new environment.
+
 Correcting a sampling defect by softening or disabling the physical interface would
 change the model and is not acceptable; the same applies to widening a detection
 threshold so that a run proceeds.
@@ -778,15 +863,24 @@ from a spline table proven equal to the published functional form, and the prote
 held rigid until an explicit transition to flexible production, so secondary
 structure is preserved without softening or disabling any conservative interaction.
 
-The remaining barrier is not the interface but the composition. An audit of the
-composed Hamiltonian shows that the explicit lipid correctly replaces Upside's
-sidechain environment field, and correctly excludes its implicit bilayer, but leaves
-three protein--protein terms without a counterpart. The measured cost is a helical
-core 4.15~\AA{} from the crystal in a bilayer against 2.61~\AA{} in a micelle, an
-amide protection deficit that follows from it, and HDX free energies whose shape is
-informative while their baseline is not yet quantitative. Restoring those terms,
-without double-counting the explicit lipid, is the concrete next step and the
-condition under which this hybrid becomes a quantitative membrane-protein
+Two corrections emerged from systematic auditing. An implementation audit found a
+$0.568$~\AA{} frame-origin error in the sidechain anchor, which biased every
+sidechain--environment interaction. A physics audit found that context-dependent
+glycine Ramachandran maps trained on soluble proteins systematically penalise the
+$\alpha_R$ basin at TM-helix N-termini, contrary to the physical symmetry of the
+achiral amino acid; symmetrizing the affected maps reduces severe TM4
+hydrogen-bond disruption from 14.9\% to 6.0\% in preliminary validation. Neither
+correction, however, removes the principal remaining barrier: a helical core 4.15~\AA{}
+from the crystal in a bilayer against 2.61~\AA{} in a micelle.
+
+That deficit is not the interface but the composition. An audit of the composed
+Hamiltonian shows that the explicit lipid correctly replaces Upside's sidechain
+environment field, and correctly excludes its implicit bilayer, but leaves three
+protein--protein terms without a counterpart. The measured cost is the fidelity
+deficit above, an amide protection deficit that follows from it, and HDX free energies
+whose shape is informative while their baseline is not yet quantitative. Restoring
+those terms, without double-counting the explicit lipid, is the concrete next step and
+the condition under which this hybrid becomes a quantitative membrane-protein
 thermodynamic instrument.
 
 \begin{acknowledgement}

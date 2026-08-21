@@ -791,6 +791,26 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     sheet_rids = np.array(sheet_rids)
     rama_pot   = read_weighted_maps(seq, rama_library_h5, sheet, mode)
 
+    # GLY is achiral (no beta-carbon): its Ramachandran potential has a physical
+    # symmetry under (phi,psi) -> (-phi,-psi).  Context-dependent maps trained on
+    # soluble proteins break this symmetry when GLY appears at a helix N-terminus
+    # following a loop — training data then predominantly sees non-helical
+    # conformations, biasing the map to prefer alphaL over alphaR.  Symmetrize
+    # only those GLY maps where this artifact is present (alphaL preferred over
+    # alphaR in the raw map), leaving correctly-biased maps untouched.
+    n_phi, n_psi = rama_pot.shape[1], rama_pot.shape[2]
+    idx_phi = (-np.arange(n_phi)) % n_phi
+    idx_psi = (-np.arange(n_psi)) % n_psi
+    i_alphaR = int((-60. + 180.) / (360. / n_phi)) % n_phi
+    j_alphaR = int((-45. + 180.) / (360. / n_psi)) % n_psi
+    i_alphaL = int((+60. + 180.) / (360. / n_phi)) % n_phi
+    j_alphaL = int((+45. + 180.) / (360. / n_psi)) % n_psi
+    for i, aa in enumerate(seq):
+        if aa == 'GLY':
+            m = rama_pot[i]
+            if m[i_alphaR, j_alphaR] > m[i_alphaL, j_alphaL]:
+                rama_pot[i] = 0.5 * (m + m[np.ix_(idx_phi, idx_psi)])
+
     # support finite differencing for potential derivative
     if param_deriv:
         eps = 5e-4
@@ -896,6 +916,18 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
     sheet = np.array(sheet)
 
     rama_pot   = read_weighted_maps(seq_new, rama_library_h5, sheet, mode)
+    _n_phi, _n_psi = rama_pot.shape[1], rama_pot.shape[2]
+    _idx_phi = (-np.arange(_n_phi)) % _n_phi
+    _idx_psi = (-np.arange(_n_psi)) % _n_psi
+    _i_aR = int((-60. + 180.) / (360. / _n_phi)) % _n_phi
+    _j_aR = int((-45. + 180.) / (360. / _n_psi)) % _n_psi
+    _i_aL = int((+60. + 180.) / (360. / _n_phi)) % _n_phi
+    _j_aL = int((+45. + 180.) / (360. / _n_psi)) % _n_psi
+    for _i, _aa in enumerate(seq_new):
+        if _aa == 'GLY':
+            _m = rama_pot[_i]
+            if _m[_i_aR, _j_aR] > _m[_i_aL, _j_aL]:
+                rama_pot[_i] = 0.5 * (_m + _m[np.ix_(_idx_phi, _idx_psi)])
     rama_pot  -= (rama_pot*np.exp(-rama_pot)).sum(axis=(-2,-1),keepdims=1)
 
     seq_new2 = seq_new[:]
@@ -919,8 +951,18 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
     create_array(grp, 'rama_pot',        obj=rama_pot)
 
     rama_pot_trans  = read_weighted_maps(seq_new, rama_library_h5, sheet, mode)
+    for _i, _aa in enumerate(seq_new):
+        if _aa == 'GLY':
+            _m = rama_pot_trans[_i]
+            if _m[_i_aR, _j_aR] > _m[_i_aL, _j_aL]:
+                rama_pot_trans[_i] = 0.5 * (_m + _m[np.ix_(_idx_phi, _idx_psi)])
     rama_pot_trans -= (rama_pot_trans*np.exp(-rama_pot_trans)).sum(axis=(-2,-1),keepdims=1)
     rama_pot_cis    = read_weighted_maps(seq_new2, rama_library_h5, sheet, mode)
+    for _i, _aa in enumerate(seq_new2):
+        if _aa == 'GLY':
+            _m = rama_pot_cis[_i]
+            if _m[_i_aR, _j_aR] > _m[_i_aL, _j_aL]:
+                rama_pot_cis[_i] = 0.5 * (_m + _m[np.ix_(_idx_phi, _idx_psi)])
     rama_pot_cis   -= (rama_pot_cis*np.exp(-rama_pot_cis)).sum(axis=(-2,-1),keepdims=1)
 
     grp = t.create_group(potential, 'SigmoidCoord_trans1')
