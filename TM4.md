@@ -51,7 +51,7 @@ The paper (`example/16.MARTINI/drymartini_upside_interface.tex`) has been update
 equation (`\label{eq:gly_sym}`), updated Abstract, Introduction, HDX section, Evidence table,
 Discussion, and Conclusions.
 
-## Local Validation (10k steps, T=0.85, from helical frame 2542)
+## Local Validation 1 — Stay-folded (10k steps, T=0.85, from helical frame 2542)
 
 | Metric | Original | Fixed |
 |---|---|---|
@@ -59,8 +59,30 @@ Discussion, and Conclusions.
 | TM4 mean H-bond score | 0.728 | **0.743** |
 | TM6 G195 (control) | unchanged | unchanged |
 
-60% reduction in severe disruption. The fix raises the alphaL barrier by ~0.5–0.9 E_up for TM4 GLY
-residues while barely affecting the actual helical bin energies (~+0.06 E_up).
+60% reduction in severe disruption.
+
+## Local Validation 2 — Re-folding from actual disrupted frame (20k steps, T=0.70)
+
+**Starting frame**: frame 158 of the original unfixed T=0.85 simulation (`perm_orig.up`), where
+TM4 has 2 broken helical pairs (max CA-CA+4 = 8.20 Å). This is a real disrupted TM4 state
+produced by the unfixed potential — not artificially generated.
+
+Both runs (original and fixed potential) start from identical positions. Run at T=0.70 (the REMD
+physiological rung).
+
+| Window | Metric | Original (unfixed) | Fixed |
+|---|---|---|---|
+| Early (0–20%) | Mean broken CA-CA+4 pairs | **6.42** | **0.21** |
+| Mid (20–60%) | Mean broken pairs | **8.39** | **0.09** |
+| Late (60–100%) | Mean broken pairs | **7.75** | **0.11** |
+| Late | TM4 fully helical (n_broken=0) | **0%** | **88.8%** |
+| Late | TM4 persistently disrupted (n_broken≥2) | **100%** | **0%** |
+| Late | G136 in alphaL (phi>20°) | 0% | 0% |
+
+The unfixed potential does not stall at the observed disruption — TM4 gets worse, rapidly reaching
+8 broken helical pairs and never recovering (0% fully helical). The fixed potential refolds TM4
+within the early window and holds it at 88.8% fully helical. This is a clean pass/fail test:
+the fix enables refolding from a state that the unfixed potential cannot escape.
 
 ## Key Energy Numbers
 
