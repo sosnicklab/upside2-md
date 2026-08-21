@@ -28,20 +28,23 @@ Snapshot **2026-08-21 CDT**.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 54095760 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | Fresh resubmission with GLY Ramachandran fix applied to seed |
-| 54095761 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | GLY fix applied |
-| 54095762 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | GLY fix applied |
-| 54095763 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | GLY fix applied |
+| 54103426 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | Targeted GLY fix (16 helical GLY; G132/G133 loop excluded) |
+| 54103428 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | Targeted GLY fix |
+| 54103430 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | Targeted GLY fix |
+| 54103431 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | Targeted GLY fix |
 | 53711321 | `np_1AO6_prod` | **NP** | RUNNING | Continuing; stop with `prod/STOP` |
 
-**GLY Ramachandran fix applied to all 4 seeds (2026-08-21).** `py/upside_config.py` symmetrizes GLY maps
-where the raw map has alphaR > alphaL at canonical bins, which is a training artifact when GLY appears
-at a helix N-terminus following a loop. All 23 GLY residues in each variant had the artifact and were
-fixed identically. Key numbers for G136 (TM4 N-terminal GLY): alphaR 2.029 → 1.440, alphaL 0.851 → 1.440.
-Seed backups at `seeds/<V>.up.bak_gly_fix`. Local validation (10k steps, T=0.85): TM4 severe H-bond
-disruption 14.9% → 6.0%. Full-REMD equilibrium result pending.
+**Targeted GLY Ramachandran fix applied to all 4 seeds (2026-08-21).** `py/upside_config.py`
+symmetrizes GLY maps for helical-context GLY only (phi ∈ [−130°, −20°] in the input structure, or
+phi=nan for N-terminal residue). All 16 such GLY had the artifact (alphaR > alphaL at canonical
+bins). Key numbers for G136 (TM4 N-terminal GLY): alphaL 0.851 → 1.440, alphaR 2.029 → 1.440.
+GLY in loops/turns (G49, G104, G128, G132, G133, G156, G180) are correctly excluded.
+Seed backups at `seeds/<V>.up.bak_gly_fix` (original) and `.bak_gly_fix_v2` (superseded all-23 fix).
+Cluster `upside_config.py` updated. Patch script: `popepopg_REMD/gly_fix_seeds_targeted.py`.
+Local validation: hbond rapid recovery (175→197) from disrupted TM4 frame; same as prior G136/G143/G149-only test.
 
-**Prior pending jobs 53757341/53759288/53762180/53763441 cancelled** (ran without the GLY fix). Those
+**Prior pending jobs 54095760/61/62/63 cancelled** (had all 23 GLY including loop GLY symmetrized — overcorrection).
+**Prior pending jobs 53757341/53759288/53762180/53763441 cancelled** (ran without any GLY fix). Those
 jobs had themselves replaced the 53527299/53441124–26 round that accumulated trajectory data; that data
 is retained in `popepopg_REMD/<variant>/` but was generated without the fix and should not be used for
 final HDX analysis until the GLY fix is validated in REMD.

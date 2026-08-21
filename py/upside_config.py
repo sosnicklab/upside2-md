@@ -791,13 +791,16 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     sheet_rids = np.array(sheet_rids)
     rama_pot   = read_weighted_maps(seq, rama_library_h5, sheet, mode)
 
-    # GLY is achiral (no beta-carbon): its Ramachandran potential has a physical
-    # symmetry under (phi,psi) -> (-phi,-psi).  Context-dependent maps trained on
-    # soluble proteins break this symmetry when GLY appears at a helix N-terminus
-    # following a loop — training data then predominantly sees non-helical
-    # conformations, biasing the map to prefer alphaL over alphaR.  Symmetrize
-    # only those GLY maps where this artifact is present (alphaL preferred over
-    # alphaR in the raw map), leaving correctly-biased maps untouched.
+    # GLY is achiral (no beta-carbon): its intrinsic Ramachandran potential is symmetric
+    # under (phi,psi) -> (-phi,-psi).  Context-dependent maps trained on soluble proteins
+    # break this symmetry for GLY in helical contexts because the training data is dominated
+    # by non-helical examples, biasing the map to prefer alphaL over alphaR.
+    #
+    # Scope: only symmetrize GLY that are in a helical conformation in the input structure
+    # (phi in [-130°, -20°]).  GLY in loops and turns can legitimately prefer alphaL due to
+    # the asymmetric context of surrounding L-amino acids — symmetrizing those maps would
+    # remove genuine structural preferences.  The helical phi criterion is evaluated from
+    # the input coordinates, which encode the prepared starting geometry.
     n_phi, n_psi = rama_pot.shape[1], rama_pot.shape[2]
     idx_phi = (-np.arange(n_phi)) % n_phi
     idx_psi = (-np.arange(n_psi)) % n_psi
@@ -805,8 +808,24 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     j_alphaR = int((-45. + 180.) / (360. / n_psi)) % n_psi
     i_alphaL = int((+60. + 180.) / (360. / n_phi)) % n_phi
     j_alphaL = int((+45. + 180.) / (360. / n_psi)) % n_psi
+    _input_pos = t.root.input.pos[:, :, 0]  # (n_atom, 3); backbone: N=4i, CA=4i+1, C=4i+2
+    def _input_phi(res_0idx):
+        if res_0idx == 0:
+            return np.nan
+        C_p = _input_pos[4*(res_0idx-1)+2]; N_i = _input_pos[4*res_0idx]
+        CA_i= _input_pos[4*res_0idx+1];     C_i = _input_pos[4*res_0idx+2]
+        b0=C_p-N_i; b1=CA_i-N_i; b2=C_i-CA_i
+        n1=np.cross(b0,b1); n2=np.cross(b1,b2)
+        l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
+        if l1<1e-10 or l2<1e-10: return np.nan
+        n1/=l1; n2/=l2
+        m1=np.cross(n1, b1/np.linalg.norm(b1))
+        return float(np.degrees(np.arctan2(np.dot(m1,n2), np.dot(n1,n2))))
     for i, aa in enumerate(seq):
         if aa == 'GLY':
+            phi = _input_phi(i)
+            if not (np.isnan(phi) or (-130. <= phi <= -20.)):
+                continue
             m = rama_pot[i]
             if m[i_alphaR, j_alphaR] > m[i_alphaL, j_alphaL]:
                 rama_pot[i] = 0.5 * (m + m[np.ix_(idx_phi, idx_psi)])
@@ -923,8 +942,21 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
     _j_aR = int((-45. + 180.) / (360. / _n_psi)) % _n_psi
     _i_aL = int((+60. + 180.) / (360. / _n_phi)) % _n_phi
     _j_aL = int((+45. + 180.) / (360. / _n_psi)) % _n_psi
+    _ip2 = t.root.input.pos[:, :, 0]
+    def _phi2(ri):
+        if ri == 0: return np.nan
+        C_p=_ip2[4*(ri-1)+2]; N_i=_ip2[4*ri]; CA_i=_ip2[4*ri+1]; C_i=_ip2[4*ri+2]
+        b0=C_p-N_i; b1=CA_i-N_i; b2=C_i-CA_i
+        n1=np.cross(b0,b1); n2=np.cross(b1,b2)
+        l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
+        if l1<1e-10 or l2<1e-10: return np.nan
+        n1/=l1; n2/=l2; m1=np.cross(n1,b1/np.linalg.norm(b1))
+        return float(np.degrees(np.arctan2(np.dot(m1,n2),np.dot(n1,n2))))
     for _i, _aa in enumerate(seq_new):
         if _aa == 'GLY':
+            _phi = _phi2(_i)
+            if not (np.isnan(_phi) or (-130. <= _phi <= -20.)):
+                continue
             _m = rama_pot[_i]
             if _m[_i_aR, _j_aR] > _m[_i_aL, _j_aL]:
                 rama_pot[_i] = 0.5 * (_m + _m[np.ix_(_idx_phi, _idx_psi)])
