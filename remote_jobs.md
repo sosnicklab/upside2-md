@@ -24,15 +24,19 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-21 CDT**.
+Snapshot **2026-08-24 CDT**.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 54103426 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | Targeted GLY fix (16 helical GLY; G132/G133 loop excluded) |
-| 54103428 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | Targeted GLY fix |
-| 54103430 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | Targeted GLY fix |
-| 54103431 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | Targeted GLY fix |
-| 53711321 | `np_1AO6_prod` | **NP** | RUNNING | Continuing; stop with `prod/STOP` |
+| 54473556 | `popg_glpG-RK` (79ALA) | **POPE/POPG** | RUNNING | 12 h limit; logs `popepopg_REMD/logs/remd.54473556.out` |
+| 54482006 | `popg_glpG-RK` (79ALA_S115T) | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54482006.out` |
+| 54486902 | `popg_glpG-RK` (79HIS) | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54486902.out` |
+| 54487556 | `popg_glpG-RK` (79HIS_S115T) | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54487556.out` |
+| 54732111 | `np_build_k190` | **NP** | PENDING/RUNNING | K190-facing 7th orientation build; output `NP-1AO6/build_k190_54732111.out` |
+
+**NaN cascade fix deployed 2026-08-24.** All four REMD jobs were exhibiting a cascade where one blown-up replica's NaN energy passed the exchange criterion silently (IEEE 754: `NaN < 0.f` returns false, so the "reject swap" branch was never taken). This caused a single blow-up to infect all 48 replicas within ~60 exchange steps. **Fixed** in `src/main.cpp` line ~517: added `!isfinite(lboltz_diff)` to the rejection condition. Cluster binary recompiled and deployed; running jobs pick up the new binary automatically on the next chunk call (Upside is called as a subprocess per chunk, not preloaded). Confirmed correct: pre-chunk-3 seeds for the 3 most-affected replicas (run.18/29/40) ran 10 000 steps without NaN in single-replica mode; chunk-3 failures were exchange-induced, not intrinsic blow-ups. All 4 variants show NaN in chunks 2–3 of current runs; with the new binary, subsequent chunks should be clean.
+
+**NP K190-facing orientation build submitted 2026-08-24.** Script `~/project/NP-1AO6/build_k190.py`; K190 faces NP at yaw=5.069015 rad, pitch=0.164236 rad. Correct result: `~/project/NP-1AO6/prod/np.run.6.up` (orientation "K190-facing"). Two earlier build attempts failed: (1) dict keys unquoted (`NameError`); (2) `/tmp/np_build/` path is node-local, not shared. Both fixed; 54732111 uses shared `~/project/NP-1AO6/` path.
 
 **Targeted GLY Ramachandran fix applied to all 4 seeds (2026-08-21).** `py/upside_config.py`
 symmetrizes GLY maps for helical-context GLY only (phi ∈ [−130°, −20°] in the input structure, or
@@ -214,7 +218,10 @@ not on Rg or H-bond loss. (Contrast the glpG campaign, where the protein *must* 
 ```
 np.run.0 = 0-0-0   np.run.1 = 90-0-0   np.run.2 = 180-0-0
 np.run.3 = 270-0-0 np.run.4 = 0-90-0   np.run.5 = 0-270-0
+np.run.6 = K190-facing  (yaw=5.069015 rad, pitch=0.164236 rad; K190 depth 18.22 Å from NP face)
 ```
+
+**K190-facing build** (job 54732111, submitted 2026-08-24): after completion verify `prod/np.run.6.up` exists, then relaunch the NP prod job with `NP_N=7`.
 
 Self-resubmits up to `NP_MAX_BLOCKS=8`; chunks ~104 time units, ~1765 t.u. per 36 h block.
 Local build source: `scratchpad/NP-footprinting/` (`build_all.py`, `np_hybrid.py`, six face dirs).

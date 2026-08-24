@@ -513,8 +513,10 @@ struct ReplicaExchange {
                     swap_pair.n_attempt++;
 
                     float lboltz_diff = (new_lboltz[s1] + new_lboltz[s2]) - (old_lboltz[s1]+old_lboltz[s2]);
-                    // If we reject the swap, we must reverse it
-                    if(lboltz_diff < 0.f && expf(lboltz_diff) < random.uniform_open_closed().x()) {
+                    // Reject (reverse) the swap if lboltz_diff is non-finite: NaN < 0.f returns false
+                    // in IEEE 754, so without the isfinite check a NaN energy would cause every exchange
+                    // to be accepted, spreading a blown-up replica across the entire ladder.
+                    if(!isfinite(lboltz_diff) || (lboltz_diff < 0.f && expf(lboltz_diff) < random.uniform_open_closed().x())) {
                         coord_swap(s1,s2);
                     } else {
                         swap_pair.n_success++;
