@@ -28,15 +28,18 @@ Snapshot **2026-08-24 CDT**.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 54473556 | `popg_glpG-RK` (79ALA) | **POPE/POPG** | RUNNING | 12 h limit; logs `popepopg_REMD/logs/remd.54473556.out` |
-| 54482006 | `popg_glpG-RK` (79ALA_S115T) | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54482006.out` |
-| 54486902 | `popg_glpG-RK` (79HIS) | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54486902.out` |
-| 54487556 | `popg_glpG-RK` (79HIS_S115T) | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54487556.out` |
-| 54732111 | `np_build_k190` | **NP** | PENDING/RUNNING | K190-facing 7th orientation build; output `NP-1AO6/build_k190_54732111.out` |
+| 54473556 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | RUNNING | 12 h limit; logs `popepopg_REMD/logs/remd.54473556.out` |
+| 54482006 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54482006.out` |
+| 54486902 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54486902.out` |
+| 54487556 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54487556.out` |
 
-**NaN cascade fix deployed 2026-08-24.** All four REMD jobs were exhibiting a cascade where one blown-up replica's NaN energy passed the exchange criterion silently (IEEE 754: `NaN < 0.f` returns false, so the "reject swap" branch was never taken). This caused a single blow-up to infect all 48 replicas within ~60 exchange steps. **Fixed** in `src/main.cpp` line ~517: added `!isfinite(lboltz_diff)` to the rejection condition. Cluster binary recompiled and deployed; running jobs pick up the new binary automatically on the next chunk call (Upside is called as a subprocess per chunk, not preloaded). Confirmed correct: pre-chunk-3 seeds for the 3 most-affected replicas (run.18/29/40) ran 10 000 steps without NaN in single-replica mode; chunk-3 failures were exchange-induced, not intrinsic blow-ups. All 4 variants show NaN in chunks 2–3 of current runs; with the new binary, subsequent chunks should be clean.
+**NaN cascade fix deployed 2026-08-24.** All four REMD jobs were exhibiting a cascade where one blown-up replica's NaN energy passed the exchange criterion silently (IEEE 754: `NaN < 0.f` returns false, so the "reject swap" branch was never taken). This caused a single blow-up to infect all 48 replicas within ~60 exchange steps. **Fixed** in `src/main.cpp` line ~517: added `!isfinite(lboltz_diff)` to the rejection condition. Cluster binary recompiled; running jobs pick up the new binary automatically on the next chunk call. Confirmed: pre-chunk-3 seeds for the 3 most-affected replicas ran 10 000 steps without NaN in single-replica mode; chunk-3 failures were exchange-induced, not intrinsic. NaN last seen in chunks 7–9; chunks 10–43+ are clean.
 
-**NP K190-facing orientation build submitted 2026-08-24.** Script `~/project/NP-1AO6/build_k190.py`; K190 faces NP at yaw=5.069015 rad, pitch=0.164236 rad. Correct result: `~/project/NP-1AO6/prod/np.run.6.up` (orientation "K190-facing"). Two earlier build attempts failed: (1) dict keys unquoted (`NameError`); (2) `/tmp/np_build/` path is node-local, not shared. Both fixed; 54732111 uses shared `~/project/NP-1AO6/` path.
+**NP K190-facing orientation COMPLETED (job 54732747, 2026-08-24).** `prod/np.run.6.up` exists (105 MB); `finite=True blew_up=False gold_shift=0.00 Rg 26.1→26.2`. Next: relaunch NP prod with `NP_N=7`. Earlier builds (54721071, 54729324, 54731024, 54732111) failed due to: (1) dict keys unquoted in f-strings; (2) `/tmp/` is node-local; (3) `source /etc/profile.d/modules.sh` unconditional under `set -e`. Fixed by using `~/project/NP-1AO6/` as shared path and sourcing `popepopg_REMD/env.sh`.
+
+**HDX analysis jobs 54707988–54707991 FAILED (2026-08-24).** `upside_config.py` at `write_rama_map_pot`/`write_rama_map_pot2`: GLY helical-phi code used stride 4 (N=4i, CA=4i+1, C=4i+2) but Upside backbone stores only N, CA, C — stride 3. `IndexError: index 642 out of bounds for axis 0 with size 630` (210 res × 3 = 630). **Fixed** at lines 811–816 and 948 in both local and cluster `upside_config.py`. Resubmit HDX jobs once REMD jobs complete (or sooner with `HDX_LIVE=1`).
+
+**NP footprint job 54708189 TIMED OUT (30 min limit).** Analysis did not complete. Needs longer time limit or chunked analysis.
 
 **Targeted GLY Ramachandran fix applied to all 4 seeds (2026-08-21).** `py/upside_config.py`
 symmetrizes GLY maps for helical-context GLY only (phi ∈ [−130°, −20°] in the input structure, or
@@ -221,7 +224,7 @@ np.run.3 = 270-0-0 np.run.4 = 0-90-0   np.run.5 = 0-270-0
 np.run.6 = K190-facing  (yaw=5.069015 rad, pitch=0.164236 rad; K190 depth 18.22 Å from NP face)
 ```
 
-**K190-facing build** (job 54732111, submitted 2026-08-24): after completion verify `prod/np.run.6.up` exists, then relaunch the NP prod job with `NP_N=7`.
+**K190-facing build COMPLETED** (job 54732747, 2026-08-24): `prod/np.run.6.up` exists. Relaunch NP prod job with `NP_N=7`.
 
 Self-resubmits up to `NP_MAX_BLOCKS=8`; chunks ~104 time units, ~1765 t.u. per 36 h block.
 Local build source: `scratchpad/NP-footprinting/` (`build_all.py`, `np_hybrid.py`, six face dirs).
