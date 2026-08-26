@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-08-21 CDT**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-08-26 CDT**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -24,16 +24,37 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-24 CDT**.
+Snapshot **2026-08-26 CDT**.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 54473556 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | RUNNING | 12 h limit; logs `popepopg_REMD/logs/remd.54473556.out` |
-| 54482006 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54482006.out` |
-| 54486902 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54486902.out` |
-| 54487556 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | RUNNING | logs `popepopg_REMD/logs/remd.54487556.out` |
+| 55118057 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | block 4; self-resubmit from 54486902 |
+| 55119260 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | block 4; self-resubmit from 54473556 |
+| 55122401 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | block 4; self-resubmit from 54487556 |
+| 55122658 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | block 5; self-resubmit from 54482006 |
+
+| 55371380 | `np_1AO6_prod` | **NP** | SUBMITTED | block 4; NP_N=7 (runs 0–6 incl. K190-facing); log `prod/np.55371380.out` |
+
+**NP relaunched 2026-08-26 with NP_N=7.** Block 3 (job 53711321, Aug 21) ended with "no resubmit" because NP_SUBMIT_SELF was empty — that block was submitted without the wrapper, so self-resubmission was disabled. New job 55371380 submitted via `NP_N=7 bash submit_np.sh`; self-resubmission chain is restored. np.run.6.up (K190-facing, 105 MB) already has the correct 2-arg `martini_hybrid_position` format. block_count=3; 5 blocks remain to NP_MAX_BLOCKS=8.
+
+**CRITICAL — NP section paper data is from pre-fix runs (findings95).** The quantitative claims in §4.8 were computed from `np_frames.findings95.npz` (pre-CB-anchor-fix, pre-LJ-floor-fix). Post-fix runs show substantially different behavior:
+
+| Claim | findings95 (paper) | Post-fix (current) | Valid? |
+|---|---|---|---|
+| Rg reaches 39–172 Å | ✓ in pre-fix | max 102.9 Å (still spreading) | Needs more data |
+| All-frame: core 0.272, surf 0.261 | findings95 | core 0.176, surf 0.243 | Stale |
+| Compact = 3.2%, K525=0.55, K541=0.69 | findings95 | K525≈0, K541≈0.06 | Stale — do NOT use |
+| K190 makes zero contact while compact | findings95 | 0.000 in post-fix too | Holds |
+
+The paper's K525/K541 compact-frame contact numbers (0.55 and 0.69) must be recomputed from the post-fix trajectories before submission. The K190=0 result is robust across both datasets and can be reported. Re-run footprint analysis once more production data is available.
 
 **NaN cascade fix deployed 2026-08-24.** All four REMD jobs were exhibiting a cascade where one blown-up replica's NaN energy passed the exchange criterion silently (IEEE 754: `NaN < 0.f` returns false, so the "reject swap" branch was never taken). This caused a single blow-up to infect all 48 replicas within ~60 exchange steps. **Fixed** in `src/main.cpp` line ~517: added `!isfinite(lboltz_diff)` to the rejection condition. Cluster binary recompiled; running jobs pick up the new binary automatically on the next chunk call. Confirmed: pre-chunk-3 seeds for the 3 most-affected replicas ran 10 000 steps without NaN in single-replica mode; chunk-3 failures were exchange-induced, not intrinsic. NaN last seen in chunks 7–9; chunks 10–43+ are clean.
+
+**Completed blocks (2026-08-25, blocks 3–4):** All four variants ran to completion and self-resubmitted.
+- 54473556 (79ALA_S115T): 195 ROLLBACKs, 0 DESTROYED → block 4 now PENDING as 55119260
+- 54482006 (79HIS): 113 ROLLBACKs, 0 DESTROYED → block 5 now PENDING as 55122658
+- 54486902 (79ALA): 206 ROLLBACKs, 0 DESTROYED → block 4 now PENDING as 55118057
+- 54487556 (79HIS_S115T): 233 ROLLBACKs, 0 DESTROYED → block 4 now PENDING as 55122401; **final chunk rolled back all 48 replicas — watch this variant closely**
 
 **NP K190-facing orientation COMPLETED (job 54732747, 2026-08-24).** `prod/np.run.6.up` exists (105 MB); `finite=True blew_up=False gold_shift=0.00 Rg 26.1→26.2`. Next: relaunch NP prod with `NP_N=7`. Earlier builds (54721071, 54729324, 54731024, 54732111) failed due to: (1) dict keys unquoted in f-strings; (2) `/tmp/` is node-local; (3) `source /etc/profile.d/modules.sh` unconditional under `set -e`. Fixed by using `~/project/NP-1AO6/` as shared path and sourcing `popepopg_REMD/env.sh`.
 
