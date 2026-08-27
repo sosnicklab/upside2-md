@@ -808,12 +808,12 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     j_alphaR = int((-45. + 180.) / (360. / n_psi)) % n_psi
     i_alphaL = int((+60. + 180.) / (360. / n_phi)) % n_phi
     j_alphaL = int((+45. + 180.) / (360. / n_psi)) % n_psi
-    _input_pos = t.root.input.pos[:, :, 0]  # (n_atom, 3); backbone: N=3i, CA=3i+1, C=3i+2
+    _input_pos = t.root.input.pos[:, :, 0]  # (n_atom, 3); backbone: N=4i, CA=4i+1, C=4i+2, CB=4i+3
     def _input_phi(res_0idx):
         if res_0idx == 0:
             return np.nan
-        C_p = _input_pos[3*(res_0idx-1)+2]; N_i = _input_pos[3*res_0idx]
-        CA_i= _input_pos[3*res_0idx+1];     C_i = _input_pos[3*res_0idx+2]
+        C_p = _input_pos[4*(res_0idx-1)+2]; N_i = _input_pos[4*res_0idx]
+        CA_i= _input_pos[4*res_0idx+1];     C_i = _input_pos[4*res_0idx+2]
         b0=C_p-N_i; b1=CA_i-N_i; b2=C_i-CA_i
         n1=np.cross(b0,b1); n2=np.cross(b1,b2)
         l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
@@ -945,7 +945,7 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
     _ip2 = t.root.input.pos[:, :, 0]
     def _phi2(ri):
         if ri == 0: return np.nan
-        C_p=_ip2[3*(ri-1)+2]; N_i=_ip2[3*ri]; CA_i=_ip2[3*ri+1]; C_i=_ip2[3*ri+2]
+        C_p=_ip2[4*(ri-1)+2]; N_i=_ip2[4*ri]; CA_i=_ip2[4*ri+1]; C_i=_ip2[4*ri+2]
         b0=C_p-N_i; b1=CA_i-N_i; b2=C_i-CA_i
         n1=np.cross(b0,b1); n2=np.cross(b1,b2)
         l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
