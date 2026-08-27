@@ -24,18 +24,29 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-26 CDT**.
+Snapshot **2026-08-27 CDT**.  Clean restart after stride-4 GLY Ramachandran fix.
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 55118057 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | block 4; self-resubmit from 54486902 |
-| 55119260 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | block 4; self-resubmit from 54473556 |
-| 55122401 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | block 4; self-resubmit from 54487556 |
-| 55122658 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | block 5; self-resubmit from 54482006 |
+| 55758021 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
+| 55758022 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
+| 55758023 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
+| 55758024 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
+| 55759188 | `np_build_k190` | **NP** | PENDING | builds runs 0-4 (5 K190-proximal orientations); log `prod/np_build.55759188.out` |
+| 55759189 | `np_1AO6_prod` | **NP** | PENDING | dependency afterok:55759188; NP_N=6 (runs 0-4 new + run.6 K190-facing); block 1 |
 
-| 55371380 | `np_1AO6_prod` | **NP** | SUBMITTED | block 4; NP_N=7 (runs 0–6 incl. K190-facing); log `prod/np.55371380.out` |
+**REMD clean restart 2026-08-27.** Cancelled pending jobs 55118057/55119260/55122401/55122658. Deleted wrong-map trajectory data (57-76 chunks generated with biased G136 Ramachandran map, ~228 GB freed). Reset `block_count` to 0 in all 4 variant dirs. Fresh REMD jobs 55758021-24 will reinitialize 48 replicas from `seeds/` at startup; seeds were patched correctly on 2026-08-21 with the original stride-4 code.
 
-**NP relaunched 2026-08-26 with NP_N=7.** Block 3 (job 53711321, Aug 21) ended with "no resubmit" because NP_SUBMIT_SELF was empty — that block was submitted without the wrapper, so self-resubmission was disabled. New job 55371380 submitted via `NP_N=7 bash submit_np.sh`; self-resubmission chain is restored. np.run.6.up (K190-facing, 105 MB) already has the correct 2-arg `martini_hybrid_position` format. block_count=3; 5 blocks remain to NP_MAX_BLOCKS=8.
+**NP rebuild 2026-08-27.** Old cardinal face runs 0-5 moved to `prod/old_cardinal_faces/`. run.6 (K190-facing, 6.4 GB, 24 chunks, K190 compact contact = 0) kept. Five new K190-proximal orientations to be built by job 55758307:
+
+| run | orientation | label |
+|---|---|---|
+| run.0 | yaw=5.269, pitch=0.164, roll=0 | K190 yaw+0.2 |
+| run.1 | yaw=4.869, pitch=0.164, roll=0 | K190 yaw-0.2 |
+| run.2 | yaw=5.069, pitch=0.364, roll=0 | K190 pitch+0.2 |
+| run.3 | yaw=5.069, pitch=-0.036, roll=0 | K190 pitch-0.2 |
+| run.4 | yaw=5.069, pitch=0.164, roll=0.3 | K190 roll+0.3 |
+| run.6 | yaw=5.069, pitch=0.164, roll=0 | K190 base (kept) |
 
 **CRITICAL — NP section paper data is from pre-fix runs (findings95).** The quantitative claims in §4.8 were computed from `np_frames.findings95.npz` (pre-CB-anchor-fix, pre-LJ-floor-fix). Post-fix runs show substantially different behavior:
 
@@ -58,7 +69,7 @@ The paper's K525/K541 compact-frame contact numbers (0.55 and 0.69) must be reco
 
 **NP K190-facing orientation COMPLETED (job 54732747, 2026-08-24).** `prod/np.run.6.up` exists (105 MB); `finite=True blew_up=False gold_shift=0.00 Rg 26.1→26.2`. Next: relaunch NP prod with `NP_N=7`. Earlier builds (54721071, 54729324, 54731024, 54732111) failed due to: (1) dict keys unquoted in f-strings; (2) `/tmp/` is node-local; (3) `source /etc/profile.d/modules.sh` unconditional under `set -e`. Fixed by using `~/project/NP-1AO6/` as shared path and sourcing `popepopg_REMD/env.sh`.
 
-**HDX analysis jobs 54707988–54707991 FAILED (2026-08-24).** `upside_config.py` at `write_rama_map_pot`/`write_rama_map_pot2`: GLY helical-phi code used stride 4 (N=4i, CA=4i+1, C=4i+2) but Upside backbone stores only N, CA, C — stride 3. `IndexError: index 642 out of bounds for axis 0 with size 630` (210 res × 3 = 630). **Fixed** at lines 811–816 and 948 in both local and cluster `upside_config.py`. Resubmit HDX jobs once REMD jobs complete (or sooner with `HDX_LIVE=1`).
+**GLY Ramachandran stride bug (2026-08-24 → fixed 2026-08-27).** Aug 24 commit 700e6fc wrongly changed backbone stride from 4 to 3 in `write_rama_map_pot`/`write_rama_map_pot2`. The hybrid `input.pos` stores N=4i, CA=4i+1, C=4i+2, CB=4i+3 per residue (confirmed: N_atoms[i]=4i empirically). With stride-3, G136's phi was computed as +19.6° instead of −96°, so the helical-phi filter skipped G136 and the biased map (alphaL 0.85 vs alphaR 2.03) was never symmetrized. TM4 progressively unfolded over 57-76 chunks as a result. **Fixed 2026-08-27**: reverted to stride-4; patched Ramachandran maps in-place in all 192 active replica files using seed-derived helical-GLY set (patch scripts `patch_gly_rama.py` and `patch_gly_rama_v2.py` in `popepopg_REMD/`). REMD restarted fresh from seeds (wrong-map data backed up). Note: the Aug 24 stride-3 change was motivated by an `IndexError: index 642 out of bounds for axis 0 with size 630` in HDX topology builds; that error occurs in a different call context (pure-protein topology, 210 res × 3 = 630 atoms) and requires a separate fix.
 
 **NP footprint job 54708189 TIMED OUT (30 min limit).** Analysis did not complete. Needs longer time limit or chunked analysis.
 
