@@ -32,8 +32,7 @@ Snapshot **2026-08-27 CDT**.  Clean restart after stride-4 GLY Ramachandran fix.
 | 55758022 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
 | 55758023 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
 | 55758024 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
-| 55759188 | `np_build_k190` | **NP** | PENDING | builds runs 0-4 (5 K190-proximal orientations); log `prod/np_build.55759188.out` |
-| 55759189 | `np_1AO6_prod` | **NP** | PENDING | dependency afterok:55759188; NP_N=6 (runs 0-4 new + run.6 K190-facing); block 1 |
+| 55807591 | `np_1AO6_prod` | **NP** | RUNNING | NP_N=6 (runs 0-5); block 1 |
 
 **REMD clean restart 2026-08-27.** Cancelled pending jobs 55118057/55119260/55122401/55122658. Deleted wrong-map trajectory data (57-76 chunks generated with biased G136 Ramachandran map, ~228 GB freed). Reset `block_count` to 0 in all 4 variant dirs. Fresh REMD jobs 55758021-24 will reinitialize 48 replicas from `seeds/` at startup; seeds were patched correctly on 2026-08-21 with the original stride-4 code.
 
@@ -46,7 +45,7 @@ Snapshot **2026-08-27 CDT**.  Clean restart after stride-4 GLY Ramachandran fix.
 | run.2 | yaw=5.069, pitch=0.364, roll=0 | K190 pitch+0.2 |
 | run.3 | yaw=5.069, pitch=-0.036, roll=0 | K190 pitch-0.2 |
 | run.4 | yaw=5.069, pitch=0.164, roll=0.3 | K190 roll+0.3 |
-| run.6 | yaw=5.069, pitch=0.164, roll=0 | K190 base (kept) |
+| run.5 | yaw=5.069, pitch=0.164, roll=0 | K190 base (renamed from run.6; 24 prior chunks) |
 
 **CRITICAL — NP section paper data is from pre-fix runs (findings95).** The quantitative claims in §4.8 were computed from `np_frames.findings95.npz` (pre-CB-anchor-fix, pre-LJ-floor-fix). Post-fix runs show substantially different behavior:
 
@@ -251,12 +250,12 @@ not on Rg or H-bond loss. (Contrast the glpG campaign, where the protein *must* 
 **Orientation map** (verify by checksum if ever re-uploading — a zsh 1-indexing bug shifted it once):
 
 ```
-np.run.0 = 0-0-0   np.run.1 = 90-0-0   np.run.2 = 180-0-0
-np.run.3 = 270-0-0 np.run.4 = 0-90-0   np.run.5 = 0-270-0
-np.run.6 = K190-facing  (yaw=5.069015 rad, pitch=0.164236 rad; K190 depth 18.22 Å from NP face)
+np.run.0 = K190 yaw+0.2   np.run.1 = K190 yaw-0.2   np.run.2 = K190 pitch+0.2
+np.run.3 = K190 pitch-0.2 np.run.4 = K190 roll+0.3
+np.run.5 = K190 base (yaw=5.069015 rad, pitch=0.164236 rad, roll=0; renamed from run.6; K190 depth 18.22 Å from NP face; 24 prior chunks)
 ```
 
-**K190-facing build COMPLETED** (job 54732747, 2026-08-24): `prod/np.run.6.up` exists. Relaunch NP prod job with `NP_N=7`.
+**K190-facing build COMPLETED** (job 54732747, 2026-08-24): now `prod/np.run.5.up` (renamed from run.6). NP prod running as job 55807591 with NP_N=6 (runs 0–5).
 
 Self-resubmits up to `NP_MAX_BLOCKS=8`; chunks ~104 time units, ~1765 t.u. per 36 h block.
 Local build source: `scratchpad/NP-footprinting/` (`build_all.py`, `np_hybrid.py`, six face dirs).
