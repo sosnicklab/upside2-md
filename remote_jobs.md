@@ -24,15 +24,32 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-27 CDT**.  Clean restart after stride-4 GLY Ramachandran fix.
+Snapshot **2026-08-29 CDT**.
+
+### midway2 (broadwl, sbatch works, 28 replicas, T 0.70–0.90)
+
+| JobID | Name | Cluster | State | Notes |
+|---|---|---|---|---|
+| 48889671 | `mdw2_glpG-RKRK-79HIS` | midway2 | RUNNING | block 1/12; 28 replicas; calibrating |
+| 48889672 | `mdw2_glpG-RKRK-79HIS_S115T` | midway2 | RUNNING | block 1/12; 28 replicas |
+| 48889673 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING | block 1/12; 28 replicas |
+| 48889674 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING | block 1/12; 28 replicas |
+
+Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V` (sbatch works on midway2).
+
+### midway3 (caslake, sbatch broken, 48 replicas)
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 55758021 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
-| 55758022 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
-| 55758023 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
-| 55758024 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING | block 1; fresh restart from seed |
-| 55807591 | `np_1AO6_prod` | **NP** | RUNNING | NP_N=6 (runs 0-5); block 1 |
+| 56105311 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING (Priority) | block 2; srun via tmux on login1 |
+| 56105310 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING (Priority) | block 2; srun via tmux on login1 |
+| 56105312 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING (Priority) | block 2; srun via tmux on login1 |
+| 56105313 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING (Priority) | block 2; srun via tmux on login1 |
+| 56200143 | `np_1AO6_prod` | **NP** | PENDING (None) | block 2; srun via tmux on login1 (window 4) |
+
+**sbatch broken cluster-wide (2026-08-29).** "I/O error writing script/environment to file" on all login nodes including login1. srun works (no spool file needed). Workaround: 4 srun jobs in a tmux session `remd_popg` on midway3-login1. The srun processes hold the allocation from the login node; the REMD itself runs on the compute node. When each block finishes, `REMD_SUBMIT_SELF` calls sbatch again — if sbatch is still broken, the chain will stop and the next block must be relaunched manually. Logs at `~/project/popepopg_REMD/logs/remd.srun.<V>.<jobid>.out`. To check or resume the tmux session: `ssh yinhanw@midway3-login1.rcc.uchicago.edu` then `tmux attach -t remd_popg`.
+
+**REMD local bypass completed 2026-08-28/29.** Jobs 55758021-24 had been PENDING (Priority queue) since 2026-08-27. Cancelled all 4. Ran block 1 locally on Mac M1 Pro (finished 2026-08-29 ~02:12 EDT); extracted last-frame positions (~10 MB); uploaded and reconstructed 48 × 4 minimal `.up` files on cluster with `cluster_setup.py`. All 192 replica files verified 48/48 per variant with `block_count=1`.
 
 **REMD clean restart 2026-08-27.** Cancelled pending jobs 55118057/55119260/55122401/55122658. Deleted wrong-map trajectory data (57-76 chunks generated with biased G136 Ramachandran map, ~228 GB freed). Reset `block_count` to 0 in all 4 variant dirs. Fresh REMD jobs 55758021-24 will reinitialize 48 replicas from `seeds/` at startup; seeds were patched correctly on 2026-08-21 with the original stride-4 code.
 
