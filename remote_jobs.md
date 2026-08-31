@@ -24,30 +24,32 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-29 CDT**.
+Snapshot **2026-08-31 CDT**.
 
-### midway2 (broadwl, sbatch works, 28 replicas, T 0.70–0.90)
+### midway2 (broadwl, 28 replicas, T 0.70–0.90) — primary REMD data source
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48889671 | `mdw2_glpG-RKRK-79HIS` | midway2 | RUNNING | block 1/12; 28 replicas; calibrating |
-| 48889672 | `mdw2_glpG-RKRK-79HIS_S115T` | midway2 | RUNNING | block 1/12; 28 replicas |
-| 48889673 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING | block 1/12; 28 replicas |
-| 48889674 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING | block 1/12; 28 replicas |
+| 48890657 | `mdw2_glpG-RKRK-79HIS` | midway2 | RUNNING ~16h | block 1; ~5 chunks; 0 rollbacks |
+| 48890658 | `mdw2_glpG-RKRK-79HIS_S115T` | midway2 | RUNNING ~16h | block 1; ~5 chunks; 0 rollbacks |
+| 48890659 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING ~16h | block 1; ~4 chunks; 0 rollbacks |
+| 48890660 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING ~16h | block 1; ~5 chunks; ROLLBACK #2 run.27 (T=0.90, 1/28 expected) |
 
-Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V` (sbatch works on midway2).
+**Binary fix 2026-08-30**: GCC's `-ffast-math` implies `-ffinite-math-only`, which makes `isfinite()` always return `true`, silently breaking the NaN cascade fix. Added `-fno-finite-math-only` to `src/CMakeLists_Other.txt` line 14. Rebuilt binary (midway2 job 48890656). Previous runs (48889671–74) cancelled and data cleared. TM4 stability confirmed from run.0 T=0.70: G136 φ=−113°±9°, 96.5% helical.
 
-### midway3 (caslake, sbatch broken, 48 replicas)
+Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V`.
+
+### midway3 (caslake, 48 replicas)
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 56105311 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING (Priority) | block 2; srun via tmux on login1 |
-| 56105310 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING (Priority) | block 2; srun via tmux on login1 |
-| 56105312 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING (Priority) | block 2; srun via tmux on login1 |
-| 56105313 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING (Priority) | block 2; srun via tmux on login1 |
-| 56200143 | `np_1AO6_prod` | **NP** | PENDING (None) | block 2; srun via tmux on login1 (window 4) |
+| 56105311 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING (Priority 130k vs 1.1M competing) | block 2; 2+ days queued |
+| 56105310 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING (Priority 130k) | block 2 |
+| 56105312 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING (Priority 130k) | block 2 |
+| 56105313 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING (Priority 130k) | block 2 |
+| 56565841 | `np_1AO6_prod` | **NP** | RUNNING midway3-0059 | block 3; started 2026-08-31 06:47 CDT; self-submitted (sbatch fixed) |
 
-**sbatch broken cluster-wide (2026-08-29).** "I/O error writing script/environment to file" on all login nodes including login1. srun works (no spool file needed). Workaround: 4 srun jobs in a tmux session `remd_popg` on midway3-login1. The srun processes hold the allocation from the login node; the REMD itself runs on the compute node. When each block finishes, `REMD_SUBMIT_SELF` calls sbatch again — if sbatch is still broken, the chain will stop and the next block must be relaunched manually. Logs at `~/project/popepopg_REMD/logs/remd.srun.<V>.<jobid>.out`. To check or resume the tmux session: `ssh yinhanw@midway3-login1.rcc.uchicago.edu` then `tmux attach -t remd_popg`.
+**sbatch fixed 2026-08-31.** RCC resolved the slurmctld spool issue. NP job self-submitted successfully as 56565841. REMD jobs will chain normally once they start. Tmux session `remd_popg` on midway3-login1 may still hold srun processes for REMD jobs from the workaround period — verify before relaunching if jobs start and immediately fail. REMD logs: `~/project/popepopg_REMD/logs/remd.srun.<V>.<jobid>.out`.
 
 **REMD local bypass completed 2026-08-28/29.** Jobs 55758021-24 had been PENDING (Priority queue) since 2026-08-27. Cancelled all 4. Ran block 1 locally on Mac M1 Pro (finished 2026-08-29 ~02:12 EDT); extracted last-frame positions (~10 MB); uploaded and reconstructed 48 × 4 minimal `.up` files on cluster with `cluster_setup.py`. All 192 replica files verified 48/48 per variant with `block_count=1`.
 
