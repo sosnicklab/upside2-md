@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-09-01 CDT (updated — NP GLY fix)**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-09-01 CDT (updated — glpG moved to midway2)**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -26,30 +26,39 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 Snapshot **2026-09-01 CDT (updated)**.
 
-### midway3 (caslake, 28 replicas, T 0.70–0.90) — POPE/POPG REMD re-run with corrected GLY maps
+### midway2 (broadwl, 28 replicas, T 0.70–0.90) — POPE/POPG REMD re-run with corrected GLY maps
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 57068431 | `mdw3_glpG-RKRK-79HIS` | midway3 | PENDING | block 0; corrected seeds |
-| 57068432 | `mdw3_glpG-RKRK-79HIS_S115T` | midway3 | PENDING | block 0; corrected seeds |
-| 57068433 | `mdw3_glpG-RKRK-79ALA` | midway3 | PENDING | block 0; corrected seeds |
-| 57068434 | `mdw3_glpG-RKRK-79ALA_S115T` | midway3 | PENDING | block 0; corrected seeds |
+| 48945619 | `mdw2_glpG-RKRK-79HIS` | midway2 | RUNNING midway2-0018 | block 0; corrected seeds |
+| 48945620 | `mdw2_glpG-RKRK-79HIS_S115T` | midway2 | RUNNING midway2-0221 | block 0; corrected seeds |
+| 48945621 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING midway2-0033 | block 0; corrected seeds |
+| 48945622 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING midway2-0113 | block 0; corrected seeds |
 
 **Seed fix 2026-09-01**: GLY49 (TM1 C-cap) and GLY133 (TM4 N-cap) had biased Ramachandran maps
 (alphaL preferred by 1.4-1.5 E_up) due to context-dependent map training on soluble proteins.
 Correctly symmetrized using periodic-mirror formula `0.5*(m + m[np.ix_((-i)%n, (-j)%n)])`.
-Both residues now: sym_err=0.0000, aR=aL. Partition updated from broadwl (midway2, defunct) to
-caslake (midway3). Modules updated: python/3.11.9, hdf5/1.14.3.
+Both residues now: sym_err=0.0000, aR=aL.
+
+**Moved to midway2 (broadwl) 2026-09-01**: midway3 queue times too long. Binary recompiled in
+`/project/trsosnic/yinhan/upside2-md-mdw2/obj/` using `cmake/3.26 openmpi/4.1.1+gcc-10.1.0
+hdf5/1.14.3+oneapi-2023.1 eigen/3.3`. sbatch uses `python/3.9.18` + same HDF5.
+
+**All prior trajectory data cleared**: old runs (48894116/325/342) started before the seed fix
+(01:13-02:40 AM vs fix at 14:25). Run dirs reset to block_count=0, no run files; new jobs
+start fresh from fixed seeds.
+
+**SSH to midway2**: `expect .../scratchpad/mdw2_master.exp` then use `~/.ssh/cm-mdw2.sock`.
 
 **Before resubmitting again, ALWAYS verify seeds:**
 ```bash
-cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
-module load python/3.11.9
+source /software/modules/init/bash && module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1
 export HDF5_USE_FILE_LOCKING=FALSE
+cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
 python3 check_seeds_current.py   # must show sym_err < 0.001 for GLY49 and GLY133
 ```
 
-Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V`.
+Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `.../logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V`.
 
 ### midway3 (caslake) — other active jobs
 
