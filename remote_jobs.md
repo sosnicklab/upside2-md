@@ -35,10 +35,15 @@ Snapshot **2026-09-01 CDT (updated)**.
 | 48945621 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING midway2-0033 | block 0; corrected seeds |
 | 48945622 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING midway2-0113 | block 0; corrected seeds |
 
-**Seed fix 2026-09-01**: GLY49 (TM1 C-cap) and GLY133 (TM4 N-cap) had biased Ramachandran maps
-(alphaL preferred by 1.4-1.5 E_up) due to context-dependent map training on soluble proteins.
-Correctly symmetrized using periodic-mirror formula `0.5*(m + m[np.ix_((-i)%n, (-j)%n)])`.
-Both residues now: sym_err=0.0000, aR=aL.
+**GLY map fix 2026-09-01 (complete)**: `inject_backbone_nodes` had a phi convention bug — it uses
+a reversed-b0 `_input_phi` formula (phi_up = phi_std ± 180°) but compared against `(-150,-20)` which
+captures alphaL GLY, not alphaR. All 6 helical GLY residues (GLY49, GLY104, GLY128, GLY133, GLY156,
+GLY180) were never symmetrized during setup. Their maps were biased toward alphaL by +0.65–1.65 E_up,
+driving TM helices into the alphaL conformation over 7 stages. Fix applied:
+- GLY49, GLY133: fixed in seeds before this run (sym_err=0)
+- GLY104, GLY128, GLY156, GLY180: fixed in-place in all 112 run files (4 variants × 28 replicas) on 2026-09-01; backups as `.bak_broken_gly_2`
+- `py/upside_config.py` criterion corrected: `(-150 <= phi <= -20)` → `(30 <= phi <= 160)` for both `write_rama_map_pot` and `write_rama_map_pot2`
+All 6 helical GLY now sym_err=0.000000, aR=aL across all variants.
 
 **Moved to midway2 (broadwl) 2026-09-01**: midway3 queue times too long. Binary recompiled in
 `/project/trsosnic/yinhan/upside2-md-mdw2/obj/` using `cmake/3.26 openmpi/4.1.1+gcc-10.1.0
@@ -276,16 +281,24 @@ export HDF5_USE_FILE_LOCKING=FALSE
 python3 check_seeds_current.py
 ```
 
-Expected output for a healthy seed:
+Expected output for a healthy seed (all 6 helical GLY, sym_err=0):
 ```
 glpG-RKRK-79HIS:
-  GLY49: phi=-94.1 aR=0.965 aL=0.965 sym_err=0.000000  OK
+  GLY49:  phi=-94.1  aR=0.965 aL=0.965 sym_err=0.000000  OK
+  GLY104: phi=-88.6  aR=1.012 aL=1.012 sym_err=0.000000  OK
+  GLY128: phi=-80.0  aR=1.581 aL=1.581 sym_err=0.000000  OK
   GLY133: phi=-141.6 aR=1.121 aL=1.121 sym_err=0.000000  OK
-...
+  GLY156: phi=-69.6  aR=1.300 aL=1.300 sym_err=0.000000  OK
+  GLY180: phi=-68.5  aR=1.194 aL=1.194 sym_err=0.000000  OK
 All seeds OK.
 ```
 
-A broken seed shows `sym_err ~ 3–4` and `aL << aR`. **Do not submit if any seed shows BROKEN.**
+A broken seed shows `sym_err ~ 3–6` and `aL < aR`. **Do not submit if any seed shows BROKEN.**
+
+**Current state (2026-09-01)**: TM helix body residues are in alphaL (phi_std ≈ +60°) due to the
+biased maps during stages 1–7. The REMD should drive recovery to alphaR over multiple chunks.
+helix_fraction using phi_std ∈ [-130,-20] will read ~0 in early chunks — this is expected until
+the helices refold. Judge health by N(i)--O(i-4) distances (< 3.5 Å) and absence of chain breaks.
 
 ### Step 2 — check helix health from a VTF trajectory (after first chunk)
 

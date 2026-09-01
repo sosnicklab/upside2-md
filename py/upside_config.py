@@ -798,12 +798,16 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     # by non-helical examples, biasing the map to prefer alphaL over alphaR.
     #
     # Scope: only symmetrize GLY that are in a helical-compatible conformation in the input
-    # structure (phi in [-150°, -20°]).  GLY in loops and turns can legitimately prefer alphaL
-    # due to the asymmetric context of surrounding L-amino acids — symmetrizing those maps would
-    # remove genuine structural preferences.  The range extends to -150° to capture TM helix
+    # structure (standard phi in [-150°, -20°]).  GLY in loops and turns can legitimately prefer
+    # alphaL due to the asymmetric context of surrounding L-amino acids — symmetrizing those maps
+    # would remove genuine structural preferences.  The range extends to -150° to capture TM helix
     # N/C-cap GLY residues whose initial phi may sit in the PPII/extended region (around -141°)
     # while still sampling the helical basin during simulation.  The helical phi criterion is
     # evaluated from the input coordinates, which encode the prepared starting geometry.
+    #
+    # Note: _input_phi uses a reversed b0 vector (C_prev - N instead of N - C_prev), which shifts
+    # all phi values by +180° relative to the standard convention.  Standard helical phi ∈ [-150°,-20°]
+    # maps to _input_phi ∈ [+30°,+160°] after the +180° offset, so the criterion below uses [30,160].
     n_phi, n_psi = rama_pot.shape[1], rama_pot.shape[2]
     idx_phi = (-np.arange(n_phi)) % n_phi
     idx_psi = (-np.arange(n_psi)) % n_psi
@@ -847,7 +851,7 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     for i, aa in enumerate(seq):
         if aa == 'GLY':
             phi = _input_phi(i)
-            if not (np.isnan(phi) or (-150. <= phi <= -20.)):
+            if not (np.isnan(phi) or (30. <= phi <= 160.)):
                 continue
             m = rama_pot[i]
             if m[i_alphaR, j_alphaR] > m[i_alphaL, j_alphaL]:
@@ -978,7 +982,7 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
     for _i, _aa in enumerate(seq_new):
         if _aa == 'GLY':
             _phi = _phi2(_i)
-            if not (np.isnan(_phi) or (-150. <= _phi <= -20.)):
+            if not (np.isnan(_phi) or (30. <= _phi <= 160.)):
                 continue
             _m = rama_pot[_i]
             if _m[_i_aR, _j_aR] > _m[_i_aL, _j_aL]:
