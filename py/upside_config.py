@@ -758,7 +758,8 @@ def read_weighted_maps(seq, rama_library_h5, sheet_mixing=None, mode='mixture'):
             return mixture_potential([coil_weights, sheet_weights*np.exp(-sheet_mixing)],
                                      [coil_pots,    sheet_pots])
 
-def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bias='', mode='mixture', param_deriv=False):
+def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bias='', mode='mixture', param_deriv=False,
+                       input_pos_override=None):
     grp = t.create_group(potential, 'rama_map_pot')
     grp._v_attrs.arguments = np.array([b'rama_coord'])
     grp._v_attrs.integrator_level = 0
@@ -796,11 +797,13 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     # break this symmetry for GLY in helical contexts because the training data is dominated
     # by non-helical examples, biasing the map to prefer alphaL over alphaR.
     #
-    # Scope: only symmetrize GLY that are in a helical conformation in the input structure
-    # (phi in [-130°, -20°]).  GLY in loops and turns can legitimately prefer alphaL due to
-    # the asymmetric context of surrounding L-amino acids — symmetrizing those maps would
-    # remove genuine structural preferences.  The helical phi criterion is evaluated from
-    # the input coordinates, which encode the prepared starting geometry.
+    # Scope: only symmetrize GLY that are in a helical-compatible conformation in the input
+    # structure (phi in [-150°, -20°]).  GLY in loops and turns can legitimately prefer alphaL
+    # due to the asymmetric context of surrounding L-amino acids — symmetrizing those maps would
+    # remove genuine structural preferences.  The range extends to -150° to capture TM helix
+    # N/C-cap GLY residues whose initial phi may sit in the PPII/extended region (around -141°)
+    # while still sampling the helical basin during simulation.  The helical phi criterion is
+    # evaluated from the input coordinates, which encode the prepared starting geometry.
     n_phi, n_psi = rama_pot.shape[1], rama_pot.shape[2]
     idx_phi = (-np.arange(n_phi)) % n_phi
     idx_psi = (-np.arange(n_psi)) % n_psi
@@ -808,23 +811,43 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
     j_alphaR = int((-45. + 180.) / (360. / n_psi)) % n_psi
     i_alphaL = int((+60. + 180.) / (360. / n_phi)) % n_phi
     j_alphaL = int((+45. + 180.) / (360. / n_psi)) % n_psi
-    _input_pos = t.root.input.pos[:, :, 0]  # (n_atom, 3); backbone: N=3i, CA=3i+1, C=3i+2
-    def _input_phi(res_0idx):
-        if res_0idx == 0:
-            return np.nan
-        C_p = _input_pos[3*(res_0idx-1)+2]; N_i = _input_pos[3*res_0idx]
-        CA_i= _input_pos[3*res_0idx+1];     C_i = _input_pos[3*res_0idx+2]
-        b0=C_p-N_i; b1=CA_i-N_i; b2=C_i-CA_i
-        n1=np.cross(b0,b1); n2=np.cross(b1,b2)
-        l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
-        if l1<1e-10 or l2<1e-10: return np.nan
-        n1/=l1; n2/=l2
-        m1=np.cross(n1, b1/np.linalg.norm(b1))
-        return float(np.degrees(np.arctan2(np.dot(m1,n2), np.dot(n1,n2))))
+    # input_pos_override is supplied by inject_backbone_nodes (martini_prepare_system_lib) when
+    # the file being modified is a hybrid .up whose input.pos stores MARTINI particles rather than
+    # the pure stride-3 Upside backbone.  In that case the caller extracts the N/CA/C positions
+    # via hybrid_bb_map/atom_indices and passes them as a (n_res, 3, 3) array so that _input_phi
+    # reads the correct atoms regardless of the hybrid file layout.
+    if input_pos_override is not None:
+        _bb_pos = np.asarray(input_pos_override, dtype=np.float64)  # (n_res, 3, 3): axis1 = N/CA/C
+        def _input_phi(res_0idx):
+            if res_0idx == 0:
+                return np.nan
+            C_p = _bb_pos[res_0idx-1, 2]; N_i = _bb_pos[res_0idx, 0]
+            CA_i= _bb_pos[res_0idx, 1];   C_i = _bb_pos[res_0idx, 2]
+            b0=C_p-N_i; b1=CA_i-N_i; b2=C_i-CA_i
+            n1=np.cross(b0,b1); n2=np.cross(b1,b2)
+            l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
+            if l1<1e-10 or l2<1e-10: return np.nan
+            n1/=l1; n2/=l2
+            m1=np.cross(n1, b1/np.linalg.norm(b1))
+            return float(np.degrees(np.arctan2(np.dot(m1,n2), np.dot(n1,n2))))
+    else:
+        _input_pos = t.root.input.pos[:, :, 0]  # (n_atom, 3); backbone: N=3i, CA=3i+1, C=3i+2
+        def _input_phi(res_0idx):
+            if res_0idx == 0:
+                return np.nan
+            C_p = _input_pos[3*(res_0idx-1)+2]; N_i = _input_pos[3*res_0idx]
+            CA_i= _input_pos[3*res_0idx+1];     C_i = _input_pos[3*res_0idx+2]
+            b0=C_p-N_i; b1=CA_i-N_i; b2=C_i-CA_i
+            n1=np.cross(b0,b1); n2=np.cross(b1,b2)
+            l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
+            if l1<1e-10 or l2<1e-10: return np.nan
+            n1/=l1; n2/=l2
+            m1=np.cross(n1, b1/np.linalg.norm(b1))
+            return float(np.degrees(np.arctan2(np.dot(m1,n2), np.dot(n1,n2))))
     for i, aa in enumerate(seq):
         if aa == 'GLY':
             phi = _input_phi(i)
-            if not (np.isnan(phi) or (-130. <= phi <= -20.)):
+            if not (np.isnan(phi) or (-150. <= phi <= -20.)):
                 continue
             m = rama_pot[i]
             if m[i_alphaR, j_alphaR] > m[i_alphaL, j_alphaL]:
@@ -955,7 +978,7 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
     for _i, _aa in enumerate(seq_new):
         if _aa == 'GLY':
             _phi = _phi2(_i)
-            if not (np.isnan(_phi) or (-130. <= _phi <= -20.)):
+            if not (np.isnan(_phi) or (-150. <= _phi <= -20.)):
                 continue
             _m = rama_pot[_i]
             if _m[_i_aR, _j_aR] > _m[_i_aL, _j_aL]:

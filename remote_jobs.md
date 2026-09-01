@@ -43,15 +43,12 @@ Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 56105311 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | RUNNING midway3-0213 | block 2; started 2026-09-01 |
-| 56105310 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | RUNNING midway3-0130 | block 2; started 2026-09-01 |
-| 56105312 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | RUNNING midway3-0148 | block 2; started 2026-09-01 |
-| 56105313 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | RUNNING midway3-0083 | block 2; started 2026-09-01 |
+| (cancelled) | `popg_glpG-RKRK-79*` | **POPE/POPG** | CANCELLED | 56105310–13; block 2 cancelled 2026-09-01 to free slots for HDX |
 | 56987370 | `np_1AO6_prod` | **NP** | RUNNING midway3-0091 | block 1 (fresh); envfull+300Å box |
-| 57039261 | `hdx_glpG-RKRK-79HIS` | **HDX** | PENDING | mdw2 block-1 data; stride fix applied |
-| 57039262 | `hdx_glpG-RKRK-79HIS_S115T` | **HDX** | PENDING | mdw2 block-1 data; stride fix applied |
-| 57039263 | `hdx_glpG-RKRK-79ALA` | **HDX** | PENDING | mdw2 block-1 data; stride fix applied |
-| 57039264 | `hdx_glpG-RKRK-79ALA_S115T` | **HDX** | PENDING | mdw2 block-1 data; stride fix applied |
+| 57041866 | `hdx_glpG-RKRK-79HIS` | **HDX** | PENDING | mdw2 block-1; N=28; stride+N fixes applied |
+| 57041867 | `hdx_glpG-RKRK-79HIS_S115T` | **HDX** | PENDING | mdw2 block-1; N=28 |
+| 57041868 | `hdx_glpG-RKRK-79ALA` | **HDX** | PENDING | mdw2 block-1; N=28 |
+| 57041869 | `hdx_glpG-RKRK-79ALA_S115T` | **HDX** | PENDING | mdw2 block-1; N=28 |
 
 **sbatch fixed 2026-08-31.** RCC resolved the slurmctld spool issue. NP job self-submitted successfully as 56565841. REMD jobs will chain normally once they start. Tmux session `remd_popg` on midway3-login1 may still hold srun processes for REMD jobs from the workaround period — verify before relaunching if jobs start and immediately fail. REMD logs: `~/project/popepopg_REMD/logs/remd.srun.<V>.<jobid>.out`.
 

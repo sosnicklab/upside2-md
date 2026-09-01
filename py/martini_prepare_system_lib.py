@@ -3387,6 +3387,18 @@ def inject_backbone_nodes(
         dtype=np.int32,
     )
 
+    # Extract actual N/CA/C backbone positions from the hybrid file using affine_atoms indices so that
+    # write_rama_map_pot sees the real input geometry for the GLY helical-phi symmetrisation check.
+    # Without this, _input_phi would read stride-3 from a stride-4 (N/CA/C/proxy per residue) input.pos
+    # and return garbage phi values, causing random GLY map symmetrisation and biasing TM helices toward
+    # alpha-L (specifically disrupting TM4, which has four glycines in its N-cap region).
+    with h5py.File(up_file, "r") as up_r:
+        hybrid_pos = up_r["input/pos"][:, :, 0]  # (n_all_particles, 3)
+        bb_pos_override = np.stack(
+            [hybrid_pos[affine_atoms[:, j]] for j in range(3)],
+            axis=1,
+        )  # (n_res, 3, 3): axis1 = N / CA / C
+
     with tb.open_file(str(up_file), mode="a") as tf:
         uc.t = tf
         uc.potential = tf.root.input.potential
@@ -3407,6 +3419,7 @@ def inject_backbone_nodes(
             secstr_bias="",
             mode="mixture",
             param_deriv=False,
+            input_pos_override=bb_pos_override,
         )
 
         with open(reference_state_rama, "rb") as fh:

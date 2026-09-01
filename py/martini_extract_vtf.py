@@ -643,7 +643,18 @@ def parse_args():
     parser.add_argument("output_file", help="output .vtf file")
     parser.add_argument("structure_up", nargs="?", default=None, help="structure source .up (default: input_up)")
     parser.add_argument("pdb_id", nargs="?", default=None, help="PDB id for pdb/<id>.MARTINI.pdb metadata")
-    parser.add_argument("--mode", type=int, choices=(1, 2), default=1, help="output mode (default: 1)")
+    parser.add_argument(
+        "--mode",
+        type=int,
+        choices=(1, 2),
+        default=None,
+        help=(
+            "output mode (default: auto). "
+            "Auto selects mode 2 when the structure file contains "
+            "input/hybrid_env_topology/protein_membership (hybrid systems), "
+            "and mode 1 otherwise."
+        ),
+    )
     parser.add_argument(
         "--split-segments",
         action="store_true",
@@ -797,6 +808,13 @@ def main():
 
         pdb_atom_names, pdb_res_names, pdb_res_ids, pdb_chain_ids = read_martini_pdb_metadata(pdb_file)
         pdb_metadata = (pdb_atom_names, pdb_res_names, pdb_res_ids, pdb_chain_ids)
+
+        is_hybrid = "input/hybrid_env_topology/protein_membership" in s
+        if args.mode is None:
+            mode = 2 if is_hybrid else 1
+            print(f"Mode: auto-detected {'2 (hybrid)' if is_hybrid else '1 (pure MARTINI)'}")
+        else:
+            mode = args.mode
 
         if mode == 1:
             mapping = build_mode1_mapping(
