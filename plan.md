@@ -1,72 +1,17 @@
-# CURRENT PHASE (2026-08-16): deliver the glpG HDX ΔG-vs-residue plot before Tuesday 2026-08-18
+# CURRENT PHASE (2026-09-01): accumulate cluster REMD data for HDX ΔG plots
 
-The BB proxy rework (findings 94) is done, deployed and verified; the phase is now the deliverable. Target
-shape is `~/Downloads/79HIS_0.90.png`: six broad peaks reaching ΔG 10–20 kcal/mol at residues ~35–48,
-~85–100, ~110–125, ~135–148, ~165–175, ~190–200.
+**Poster delivered 2026-08-19.** The wildtype (79HIS) ΔG-vs-residue plot is done (D1–D8 complete): 22 836 frames/replica, 123/203 residues resolved at 298 K, ΔG −0.5 to 18.3 kcal/mol, Spearman 0.676 vs implicit membrane (pooled 4 repeats, 170 amides).
 
-**Ladder is fine; the profile shape was limited by an analysis omission, and the fold defect is a small
-residual (findings 113).** MBAR reweights correctly (f_k spread 106.9, neighbour overlap 0.093–0.268, better
-than the 48-replica DDM ladder). The dG ceiling near 6.8 kcal/mol is master's deliberate resolution guard,
-**not** a bug — findings 96 claimed otherwise and is retracted (findings 104).
+**Active work:** midway2 REMD block 1 running for all four variants (48890657–60); midway3 block 2 PENDING (56105310–13). HDX ΔG for the other three variants needs at least block 2–3 to complete before analysis is meaningful. Analysis pipeline needs re-upload to cluster (`calc_hdx_ht.py`, `4.calc_D_uptake.py`) before running.
 
-The dominant cause of "helix amides at ΔG ≈ 2 with isolated needles instead of a contiguous +∞ block" is
-that the protection state has **no membrane term**: `get_protection_state.py` scores only protein burial,
-the hybrid HDX topology has no `surface` node for master's `--use-TM-region`, and the replacement
-(`py/martini_hdx_membrane_accessibility.py` → `combine_hdx_protection.py --water-accessibility`) is never
-called by `hdx.sh`. Measured unweighted on one replica: applying it takes bilayer-embedded helical amides at
-+∞ from 35/92 to 79/92 and turns needles into 14–17-residue blocks, i.e. the reference figure's shape.
-Findings 106 item 4 sized this at 6 amides and is retracted.
-
-What remains is a genuine but much smaller fold defect: 13 of 92 deep helical amides stay finite at
-2.3–4.2 kcal/mol, consistent with helical H-bond occupancy ~0.76 against stock's 0.950 (findings 108–112).
-Its cause is the environment coupling, not the integrator — reducing dt fourfold removed the temperature
-defect entirely and left occupancy and cooperativity unchanged (findings 112). Eight candidates eliminated
-by measurement (integrator, timestep, H-bond assignment, lipid packing, hydrophobic mismatch, burial
-threshold, CB placement, absent protein–protein terms — RD1, rejected, findings 103). The one untested
-node-level difference from a standard Upside config is the rotamer one-body representation: fixed
-(`placement_fixed_scalar`) versus rama-dependent (`placement_scalar`).
-
-- [x] **D1** Rework the BB proxy onto `infer_H_O` + constant-weight split; delete the old placement path.
-- [x] **D2** Deploy to midway3, rebuild, migrate every config (`py/martini_upgrade_hybrid_args.py`).
-      All four glpG jobs and the six NP replicas confirmed loading on the new binary.
-- [x] **D3** Validate the HDX pipeline end-to-end and measure MBAR overlap before committing the weekend.
-- [x] **D4** Local wildtype REMD, 16 replicas. **Stopped 2026-08-15 at the user's call** with enough
-      sampling: 11 533 frames/replica (~692 k steps), 184 528 pooled, across 4 segments, 0 NaN at stop.
-      Final figure delivered: 187/203 residues resolved at T = 0.85, 16 off-scale, ΔG −2.4…+18.6, six-peak
-      structure matching the reference's positions.
-- [x] **D5** Fixed the 0.568 Å CB placement error (findings 102), verified against real crystal CB atoms
-      (0.047 Å vs 0.576 Å), and deployed it everywhere.
-- [ ] **D6** Local wildtype ladder on the CB-corrected seed — `scratchpad/local_popg_cbfix/`, the Tuesday
-      deliverable. Resumed in segments around the user's shutdowns; ~346 k steps/replica after the segment
-      ending 2026-08-16 14:30.
-- [ ] **D7** Cluster REMD relaunched from CB-corrected seeds 2026-08-16 (53410263–66), back at block 1 of
-      12. Gives the other three variants and a 48-rung cross-check; **not** a Tuesday contributor.
-
-**Measured throughput, which settles which dataset the wildtype figure comes from.** Cluster calibration
-gives 613.7 ms/step for 48 replicas = 12.8 ms per replica-step; the local machine does 9.00 steps/s for 16
-replicas = 6.9 ms per replica-step. So the local run is ~1.9x faster per replica-step and, running 40 h,
-reaches **1.3 M steps/replica against the cluster block's ~206 k — 6.3x longer trajectories**, at
-comparable pooled frames (347 k vs 245 k). Since the sentinel problem is a shortage of sampled opening
-events rather than of ladder rungs (overlap already verified adequate at 16 rungs), trajectory length is
-what matters and the local run wins on it. An earlier note in this file calling the cluster "better data
-by a wide margin" was wrong — it assumed 48 replicas meant proportionally more sampling.
-- [ ] **D8** Membrane term wired into the HDX pipeline (findings 113). `hdx.sh` now runs
-      `martini_hdx_membrane_accessibility.py` per replica off the joined hybrid trajectory and folds it in
-      with `combine_hdx_protection.py --water-accessibility`. The criterion carries **no free parameter**:
-      radius = flat first minimum of the intermolecular tail–tail g(r) (7.00 Å, identical on all 16
-      replicas), threshold = 1 contact, which is where a phosphate bead sits (median 0 tail neighbours at
-      that radius). `--cutoff`/`--min-contacts` removed. Full 16-replica re-analysis running into
-      `scratchpad/local_popg_cbfix/hdx_acc/`; the old protein-only results are kept alongside in `hdx/`.
-- [ ] **G2** Identify the second cause of the +2–3% avg_kinetic_energy/1.5kT excess (dt-independent).
+- [ ] **G2** Identify the second cause of the +2–3% avg_kinetic_energy/1.5kT excess (dt-independent; present in 1rkl/1AFO).
 
 Do NOT: change dt for glpG (hard-locked to 0.009; brownian friction tuned against it), change masses,
 widen destroyed() thresholds, or add any guard.
 
-## Secondary: NP footprint — answered, see findings 95
+## Secondary: NP footprint — simulation does NOT reproduce the paper
 
-K190 is **not** favoured (0.000 contact whenever the protein is still compact, 50th-percentile burial);
-K525/K541 are, and "opens and exposes its center" holds. But 71% of the compact window is one orientation,
-so it is one binding pose, not a preference. Blocked from going further by over-unfolding, below.
+Post-fix block 2 (2026-08-19, 18 246 frames, 3.2% adsorbed-and-compact): **none** of the paper's five target lysines are contacted. K190 = 0.000 (lowest of 58 Lys), K525 = 0.000, K541 = 0.033. The paper requires K190 to be the most protected/contacted site; the simulation contradicts this. The dominant adsorption patch is Lys313/Glu311/Asp314/Asp562/Lys560 — not the paper's sites. Blocked by over-unfolding (run.3 Rg now 230.9 Å) and no footprint analysis on the current block-3 trajectories.
 
 ---
 
@@ -141,12 +86,7 @@ done
   in 1rkl/1AFO. Second cause unidentified (G2 open).
 - Molecular DOPC diffusion is not matched at the 40 ps/step clock (measured: 0.015 µm²/s vs 11.5 µm²/s
   target). Fallback is explicitly particle-level friction. Not a blocker for REMD equilibrium sampling.
-- **NP albumin over-unfolds past the experimental regime.** Rg 26.3 → 39/50/86/103/152/172 Å across the
-  six orientations, against a CD measurement showing secondary structure largely retained. Orientations 1
-  and 3 (Rg 152/172 Å) exceed the **200 Å box** and self-interact through the periodic image, so they are
-  unusable for structural conclusions. Only 3.2% of frames are adsorbed-and-compact, and 71% of those come
-  from orientation 2 — which is why the footprint can identify a pose but not a site preference. Testing
-  the paper's claim properly needs the adsorbed-but-folded state sampled: a larger box at minimum.
+- **NP albumin over-unfolds and does not reproduce the paper.** Six K190-proximal orientations (runs 0–5, block 3 running). Rg reaches 230.9 Å on run.3 (200 Å box — self-interaction through PBC). Only 3.2% of block-2 frames are adsorbed-and-compact, and none of the paper's five target lysines (K12, K73, K190, K525, K541) are contacted. The paper's central claim (K190 most protected) is contradicted. No footprint npz exists for block-3 data; run `np_footprint.py` after block 3 completes. Larger box required for meaningful structural conclusions on the spread state.
 - R4 (CLC-ec1 monomer+dimer on the validated bilayer) is deferred; not scheduled.
 - **NaN trigger unidentified (blocker for all glpG-DDM production).** Blow-up origin located and the
   propagation mechanism explained, but nothing measured accounts for a pair crossing from >= 3 A (~500 kT

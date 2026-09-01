@@ -24,16 +24,16 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-08-31 CDT**.
+Snapshot **2026-09-01 CDT**.
 
 ### midway2 (broadwl, 28 replicas, T 0.70–0.90) — primary REMD data source
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48890657 | `mdw2_glpG-RKRK-79HIS` | midway2 | RUNNING ~16h | block 1; ~5 chunks; 0 rollbacks |
-| 48890658 | `mdw2_glpG-RKRK-79HIS_S115T` | midway2 | RUNNING ~16h | block 1; ~5 chunks; 0 rollbacks |
-| 48890659 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING ~16h | block 1; ~4 chunks; 0 rollbacks |
-| 48890660 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING ~16h | block 1; ~5 chunks; ROLLBACK #2 run.27 (T=0.90, 1/28 expected) |
+| 48890657 | `mdw2_glpG-RKRK-79HIS` | midway2 | RUNNING | block 1; 74% done; ROLLBACK 4 |
+| 48890658 | `mdw2_glpG-RKRK-79HIS_S115T` | midway2 | RUNNING | block 1; 88% done; ROLLBACK 5; **active NaN in replica 27** |
+| 48890659 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING | block 1; 45% done; ROLLBACK 10 |
+| 48890660 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING | block 1; 96% done; ROLLBACK 5 |
 
 **Binary fix 2026-08-30**: GCC's `-ffast-math` implies `-ffinite-math-only`, which makes `isfinite()` always return `true`, silently breaking the NaN cascade fix. Added `-fno-finite-math-only` to `src/CMakeLists_Other.txt` line 14. Rebuilt binary (midway2 job 48890656). Previous runs (48889671–74) cancelled and data cleared. TM4 stability confirmed from run.0 T=0.70: G136 φ=−113°±9°, 96.5% helical.
 
@@ -55,86 +55,22 @@ Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/
 
 **REMD clean restart 2026-08-27.** Cancelled pending jobs 55118057/55119260/55122401/55122658. Deleted wrong-map trajectory data (57-76 chunks generated with biased G136 Ramachandran map, ~228 GB freed). Reset `block_count` to 0 in all 4 variant dirs. Fresh REMD jobs 55758021-24 will reinitialize 48 replicas from `seeds/` at startup; seeds were patched correctly on 2026-08-21 with the original stride-4 code.
 
-**NP rebuild 2026-08-27.** Old cardinal face runs 0-5 moved to `prod/old_cardinal_faces/`. run.6 (K190-facing, 6.4 GB, 24 chunks, K190 compact contact = 0) kept. Five new K190-proximal orientations to be built by job 55758307:
 
-| run | orientation | label |
+**CRITICAL — post-fix trajectories do NOT reproduce the paper's claims.** Block-2 measurement (2026-08-19, 18 246 frames, 3.2% adsorbed-and-compact):
+
+| Paper claim (Carlson et al.) | Post-fix block 2 | Status |
 |---|---|---|
-| run.0 | yaw=5.269, pitch=0.164, roll=0 | K190 yaw+0.2 |
-| run.1 | yaw=4.869, pitch=0.164, roll=0 | K190 yaw-0.2 |
-| run.2 | yaw=5.069, pitch=0.364, roll=0 | K190 pitch+0.2 |
-| run.3 | yaw=5.069, pitch=-0.036, roll=0 | K190 pitch-0.2 |
-| run.4 | yaw=5.069, pitch=0.164, roll=0.3 | K190 roll+0.3 |
-| run.5 | yaw=5.069, pitch=0.164, roll=0 | K190 base (renamed from run.6; 24 prior chunks) |
+| K190 is the most protected site (water + TES common site) | 0.000 contact — lowest of all 58 Lys | **CONTRADICTS paper** |
+| K525 protected (water) | 0.000 contact | Contradicts paper |
+| K541 protected (TES) | 0.033 contact | Contradicts paper |
+| K12, K73 also protected | 0.000, 0.005 | Contradicts paper |
+| "Opens and exposes its center" | Dominant patch: Lys313/Glu311/Asp314/Asp562/Lys560 (max 0.33) | Inconsistent |
 
-**CRITICAL — NP section paper data is from pre-fix runs (findings95).** The quantitative claims in §4.8 were computed from `np_frames.findings95.npz` (pre-CB-anchor-fix, pre-LJ-floor-fix). Post-fix runs show substantially different behavior:
+Rg reaches 230.9 Å (run.3, block 3) — well past the paper's DPD-simulation range. No `np_footprint.npz` exists yet for the current block-3 trajectories (~231k frames/run). None of the paper's five target lysines are contacted; the footprint must be rerun after block 3 completes before drawing any updated conclusions.
 
-| Claim | findings95 (paper) | Post-fix (current) | Valid? |
-|---|---|---|---|
-| Rg reaches 39–172 Å | ✓ in pre-fix | max 102.9 Å (still spreading) | Needs more data |
-| All-frame: core 0.272, surf 0.261 | findings95 | core 0.176, surf 0.243 | Stale |
-| Compact = 3.2%, K525=0.55, K541=0.69 | findings95 | K525≈0, K541≈0.06 | Stale — do NOT use |
-| K190 makes zero contact while compact | findings95 | 0.000 in post-fix too | Holds |
+**NaN cascade fix** is deployed in the running binary (`src/main.cpp:~517`, added `!isfinite(lboltz_diff)` to exchange rejection). **GLY Ramachandran stride bug** fixed 2026-08-27 (stride-4 restored, all 192 active replica maps patched). Both are in the current deployed binary; no action needed.
 
-The paper's K525/K541 compact-frame contact numbers (0.55 and 0.69) must be recomputed from the post-fix trajectories before submission. The K190=0 result is robust across both datasets and can be reported. Re-run footprint analysis once more production data is available.
-
-**NaN cascade fix deployed 2026-08-24.** All four REMD jobs were exhibiting a cascade where one blown-up replica's NaN energy passed the exchange criterion silently (IEEE 754: `NaN < 0.f` returns false, so the "reject swap" branch was never taken). This caused a single blow-up to infect all 48 replicas within ~60 exchange steps. **Fixed** in `src/main.cpp` line ~517: added `!isfinite(lboltz_diff)` to the rejection condition. Cluster binary recompiled; running jobs pick up the new binary automatically on the next chunk call. Confirmed: pre-chunk-3 seeds for the 3 most-affected replicas ran 10 000 steps without NaN in single-replica mode; chunk-3 failures were exchange-induced, not intrinsic. NaN last seen in chunks 7–9; chunks 10–43+ are clean.
-
-**Completed blocks (2026-08-25, blocks 3–4):** All four variants ran to completion and self-resubmitted.
-- 54473556 (79ALA_S115T): 195 ROLLBACKs, 0 DESTROYED → block 4 now PENDING as 55119260
-- 54482006 (79HIS): 113 ROLLBACKs, 0 DESTROYED → block 5 now PENDING as 55122658
-- 54486902 (79ALA): 206 ROLLBACKs, 0 DESTROYED → block 4 now PENDING as 55118057
-- 54487556 (79HIS_S115T): 233 ROLLBACKs, 0 DESTROYED → block 4 now PENDING as 55122401; **final chunk rolled back all 48 replicas — watch this variant closely**
-
-**NP K190-facing orientation COMPLETED (job 54732747, 2026-08-24).** `prod/np.run.6.up` exists (105 MB); `finite=True blew_up=False gold_shift=0.00 Rg 26.1→26.2`. Next: relaunch NP prod with `NP_N=7`. Earlier builds (54721071, 54729324, 54731024, 54732111) failed due to: (1) dict keys unquoted in f-strings; (2) `/tmp/` is node-local; (3) `source /etc/profile.d/modules.sh` unconditional under `set -e`. Fixed by using `~/project/NP-1AO6/` as shared path and sourcing `popepopg_REMD/env.sh`.
-
-**GLY Ramachandran stride bug (2026-08-24 → fixed 2026-08-27).** Aug 24 commit 700e6fc wrongly changed backbone stride from 4 to 3 in `write_rama_map_pot`/`write_rama_map_pot2`. The hybrid `input.pos` stores N=4i, CA=4i+1, C=4i+2, CB=4i+3 per residue (confirmed: N_atoms[i]=4i empirically). With stride-3, G136's phi was computed as +19.6° instead of −96°, so the helical-phi filter skipped G136 and the biased map (alphaL 0.85 vs alphaR 2.03) was never symmetrized. TM4 progressively unfolded over 57-76 chunks as a result. **Fixed 2026-08-27**: reverted to stride-4; patched Ramachandran maps in-place in all 192 active replica files using seed-derived helical-GLY set (patch scripts `patch_gly_rama.py` and `patch_gly_rama_v2.py` in `popepopg_REMD/`). REMD restarted fresh from seeds (wrong-map data backed up). Note: the Aug 24 stride-3 change was motivated by an `IndexError: index 642 out of bounds for axis 0 with size 630` in HDX topology builds; that error occurs in a different call context (pure-protein topology, 210 res × 3 = 630 atoms) and requires a separate fix.
-
-**NP footprint job 54708189 TIMED OUT (30 min limit).** Analysis did not complete. Needs longer time limit or chunked analysis.
-
-**Targeted GLY Ramachandran fix applied to all 4 seeds (2026-08-21).** `py/upside_config.py`
-symmetrizes GLY maps for helical-context GLY only (phi ∈ [−130°, −20°] in the input structure, or
-phi=nan for N-terminal residue). All 16 such GLY had the artifact (alphaR > alphaL at canonical
-bins). Key numbers for G136 (TM4 N-terminal GLY): alphaL 0.851 → 1.440, alphaR 2.029 → 1.440.
-GLY in loops/turns (G49, G104, G128, G132, G133, G156, G180) are correctly excluded.
-Seed backups at `seeds/<V>.up.bak_gly_fix` (original) and `.bak_gly_fix_v2` (superseded all-23 fix).
-Cluster `upside_config.py` updated. Patch script: `popepopg_REMD/gly_fix_seeds_targeted.py`.
-Local validation: hbond rapid recovery (175→197) from disrupted TM4 frame; same as prior G136/G143/G149-only test.
-
-**Prior pending jobs 54095760/61/62/63 cancelled** (had all 23 GLY including loop GLY symmetrized — overcorrection).
-**Prior pending jobs 53757341/53759288/53762180/53763441 cancelled** (ran without any GLY fix). Those
-jobs had themselves replaced the 53527299/53441124–26 round that accumulated trajectory data; that data
-is retained in `popepopg_REMD/<variant>/` but was generated without the fix and should not be used for
-final HDX analysis until the GLY fix is validated in REMD.
-
-**g-JF inner sub-stepping fix (finding 124)** remains in the deployed binary. At N_inner=9 (dt_i=0.001)
-the kick at 2.43 Å drops from 41 Å to 0.51 Å. Cost: ~4.3× per outer step. Verify these new jobs do not
-accumulate ROLLBACK counts — if they do, check `logs/remd.<jobid>.out` for the mechanism.
-
-**NP campaign rebuilt and relaunched 2026-08-17.** 53411347 cancelled; the six configs were rebuilt from
-`scratchpad/NP-footprinting/build_all.py` (local) because the LJ tables had to be regenerated, which a patch
-cannot do. All six verified before upload: `r_min_ang 0.30`, `martini_hybrid_position` 2 args, CB
-`[-0.0198, 1.5117, 1.2068]`, stage `production`, and each passed its stability run (Rg 26.0–27.9, no blow-up,
-gold fixed). One rebuilt config was then proved to load *and integrate* on the cluster binary before anything
-was deleted — 5000 steps, Rg steady at 25.8–26.0.
-**A third stale generation turned up:** `np_hybrid.py` itself wrote `martini_hybrid_position` with one argument,
-so the first rebuild failed to load. The running configs only had two because `martini_upgrade_hybrid_args.py`
-patched them after the fact; the prep was never fixed. Now fixed at source, so rebuilds no longer need the
-migration (the one-shot line in `np_prod.sbatch` is now a genuine no-op and can be deleted).
-**206 G of pre-fix trajectories deleted.** `prod/` is 970 M. The `.out` logs are kept in
-`prod/logs_predate_fixes/`, and the renders, snapshot PDBs and footprint npz are off-cluster in
-`~/OneDrive/hybrid_interface_poster_2026-08-18/np_snapshots_predate_fixes/` with a README saying nothing in
-them is a result.
-
-**Cancelled 2026-08-17 15:15: 53410263–66** (the rigid-protein run, findings 116) and their analysis jobs
-53439860–63 / 53440383, which completed but produced unusable figures. Their data is archived at
-`popepopg_REMD/<variant>_rigidbug/` — **184 G, deletable**, together with the older
-`<variant>_pre_cbfix/` (102 G). Seeds backed up as `seeds/<V>.up.bak_production_handoff` before patching.
-
-**VERIFIED 2026-08-17 on the relaunched run.** Internal CA RMSD (Kabsch-superposed, so rigid-body motion is
-removed) grows 0.730 → 1.124 → 1.440 Å over the first 100 frames of 53441123, against **0.000–0.001 Å** across
-whole chunks in the frozen run. The protein has internal dynamics again. This is the check to repeat after any
-stage-label or seed change — reading `current_stage` is not sufficient, since that is how the frozen run passed
-inspection for two days.
+**Verify real dynamics after any stage-label or seed change:** internal CA RMSD (Kabsch-superposed) should grow across frames. A frozen protein gives 0.000–0.001 Å; a live one reaches 1.4 Å within 100 frames. Reading `current_stage` is not sufficient — measure the RMSD.
 
 **`HDX_LIVE=1` is mandatory while the REMD jobs run.** `run_remd.py` renames `output` to the lowest free
 `output_previous_<n>` at every chunk, so the live group can vanish between being listed and being read; the
@@ -155,14 +91,6 @@ verified `production` / `production` / `rigid_body`, relaunched as 53441123–26
 predicate on the same string with the opposite accept set. One string, two gates. Reading a gate is not
 verification — measure the protein's internal CA RMSD instead.
 
-**Superseded 2026-08-16:** jobs 53349015/17/18/20 were cancelled at 16 chunks of block 1 and their data
-moved to `popepopg_REMD/<variant>_pre_cbfix/` (102 G total, deletable). They carried the 0.568 A CB
-placement defect of findings 102. Nothing usable was lost: the protection state has zero variance at that
-point in a chain (48 replicas from one common seed need several blocks to decorrelate), so block 1 was not
-analysable. The four seeds were patched in place and verified, then resubmitted as 53410263-66.
-Verification of the correction before applying it: placing CB by each convention and comparing against the
-**actual crystal CB atoms** over 187 residues gives mean deviation 0.576 A (raw, as shipped) versus
-0.047 A (corrected) -- the corrected placement is right, independent of any code reading.
 
 **Confirmed loading on the new binary 2026-08-15 00:53**: all four reached `[remd] block 1/12` and
 `calibration 2000 steps x 48` with `n_atom 4949`, no `expected 1 arguments but got 2`. The seed migration
@@ -201,40 +129,7 @@ checkpoints from `popepopg_glpG/<variant>/checkpoints/`: 4709 atoms (1050 protei
 `--membrane-thickness-angstrom 42.75`. This copy of `run_remd.py` uses a **per-chunk RNG seed**; the DDM
 copy passes a constant one, which is what made its rollback re-run the identical failing chunk.
 
-Prep history: 53325451–54 failed the stage-7.0 belt gate (34–46 of ~130 belt sites with no environment
-bead within 13.92 Å) because the lipid deletion used the LJ *minimum*, `2^(1/6)·σ_max = 6.96 Å`, removing
-41 lipids/leaflet where glpG's 822 Å² footprint justifies ~14. Resubmitted as 53332680–83 with
-`--protein-lipid-cutoff 4.7` (bead σ, i.e. genuine overlap): gate passed, 261 lipids retained,
-min protein–lipid distance 5.053 Å.
-
-### NaN-hunt result (53324867 / 53324868, COMPLETED 9:15–9:18, 340 000 steps, exchange disabled)
-
-**The trigger is real and measured. The LJ core table's floor is directly implicated.**
-
-* Sub-Ångström approaches are **common, not rare**: 4742 and 5032 reported events below 1 Å per run.
-* **~1440 events per run reach r < 0.6 Å** (inside the `r = max(r, 0.1*sig)` floored plateau), closest
-  **0.0355 Å** and **0.0466 Å**.
-* At 0.0355 Å the true dry-MARTINI LJ force is **5.8e29 E_up/Å**; the table's largest delivered force
-  anywhere was **3.4e11** — roughly **18 orders of magnitude too weak**, because below 0.1σ the tabulated
-  potential is a *constant* and therefore exerts **no force at all**.
-* One event sat at **0.0804 Å with the whole box's maximum force only 7.28 E_up/Å** — conclusive proof the
-  pair felt nothing.
-* 93% of sub-0.6 Å events coincide with a >1e6 E_up/Å force elsewhere in the box (a neighbour being
-  launched); 3% have no force above 1e3 anywhere.
-* Offending pairs are **environment–environment** (LIPID–LIPID and LIPID–ION; PROTEIN = 0–1049,
-  LIPID = 1050–2723, ION = 2724–3155), matching `lipid_kinetic` being what explodes.
-
-Mechanism, with one link still unproven: ION and LIPID are integrated as **overdamped Brownian** (only
-420 protein atoms are velocity-Verlet), and an overdamped step is proportional to the force, so a large
-force produces a large displacement that can overshoot *through* a partner. Once inside the floored
-plateau there is no restoring force to eject it, so it stays and launches its neighbours. **Entry via
-Brownian overshoot is inferred, not yet measured**; the floor removing the exit is measured.
-
-This **retracts** the earlier conclusion that the core was ~500 kT out of reach and therefore not the
-trigger. It is reached thousands of times per run.
-
-Consequence for the pending POPE/POPG jobs: they use the same table and the same integrator, so they are
-expected to hit the same failure. Fix the table core before trusting their output.
+Seeds: stage-7.0 checkpoints from `popepopg_glpG/<variant>/checkpoints/`: 4709 atoms (1050 protein / 3393 lipid / 266 ions), box 99.869² × 123.697 Å. `run_remd.py` uses a **per-chunk RNG seed** (DDM copy used constant seed → rollback re-ran the identical failing chunk; now fixed).
 
 ## 2. THE TWO CAMPAIGNS ARE DIFFERENT SIMULATIONS
 
@@ -255,34 +150,24 @@ healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis betwe
 
 ## 3. NP campaign — `np_1AO6_prod`
 
-**Unfolding is the expected result, not a failure.** 1AO6 albumin spreads on the MPA-AuNP surface —
-that is the phenomenon the footprinting measures (K190 exposure). Protein Rg of 38–154 Å against a
-native ~27–30 Å is therefore normal for this campaign and must **not** be reported as a blow-up or a
-health problem. Judge NP health on non-finite frames, peptide C–N bonds and `avg_kinetic_energy/1.5kT`,
-not on Rg or H-bond loss. (Contrast the glpG campaign, where the protein *must* stay folded and Rg
-~19 Å is the health signal.)
-
+**Unfolding is the expected result, not a failure.** 1AO6 albumin spreads on the MPA-AuNP surface. Rising Rg (currently up to 230.9 Å on run.3, block 3) is the intended observable and must **not** be reported as a blow-up. Judge health on non-finite frames, peptide C–N bonds, and `avg_kinetic_energy/1.5kT`. (Contrast glpG, where Rg ~19 Å is the health signal.)
 
 **Dir** `~/project/NP-1AO6/` — `prod/` holds `np.run.{0..5}.up` + `np.<jobid>.out`, `block_count`.
-**Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.001`, see §8) · **submit** `submit_np.sh`
-**Footprint analysis** `np_footprint.py` (uploaded 2026-08-15) → `np_footprint.npz`, `np_footprint.log`.
-**Orientation map** (verify by checksum if ever re-uploading — a zsh 1-indexing bug shifted it once):
+**Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.001`) · **submit** `submit_np.sh`
+**Footprint analysis** `np_footprint.py` → `np_footprint.npz` (must be run; no current npz for block-3 data).
+**Orientation map** (verify by checksum if re-uploading — a zsh 1-indexing bug shifted it once):
 
 ```
-np.run.0 = K190 yaw+0.2   np.run.1 = K190 yaw-0.2   np.run.2 = K190 pitch+0.2
-np.run.3 = K190 pitch-0.2 np.run.4 = K190 roll+0.3
-np.run.5 = K190 base (yaw=5.069015 rad, pitch=0.164236 rad, roll=0; renamed from run.6; K190 depth 18.22 Å from NP face; 24 prior chunks)
+np.run.0 = K190 yaw+0.2   (yaw=5.269, pitch=0.164, roll=0)
+np.run.1 = K190 yaw-0.2   (yaw=4.869, pitch=0.164, roll=0)
+np.run.2 = K190 pitch+0.2 (yaw=5.069, pitch=0.364, roll=0)
+np.run.3 = K190 pitch-0.2 (yaw=5.069, pitch=-0.036, roll=0)
+np.run.4 = K190 roll+0.3  (yaw=5.069, pitch=0.164, roll=0.3)
+np.run.5 = K190 base       (yaw=5.069015, pitch=0.164236, roll=0; K190 depth 18.22 Å from NP face)
 ```
-
-**K190-facing build COMPLETED** (job 54732747, 2026-08-24): now `prod/np.run.5.up` (renamed from run.6). NP prod running as job 55807591 with NP_N=6 (runs 0–5).
 
 Self-resubmits up to `NP_MAX_BLOCKS=8`; chunks ~104 time units, ~1765 t.u. per 36 h block.
 Local build source: `scratchpad/NP-footprinting/` (`build_all.py`, `np_hybrid.py`, six face dirs).
-
-**Expected behaviour:** the protein progressively unfolds on the NP (Rg 26 → 84 Å and still climbing).
-This is the intended science, confirmed by the user — do **not** treat rising Rg as a failure. Backbone
-stays intact (0 broken bonds). Caveat worth revisiting: on `run.3` the unfolded protein now spans
-246 Å in a 200 Å box, so it can interact with its own periodic image.
 
 **Status check:**
 ```bash
@@ -434,92 +319,12 @@ for fn in sorted(run_dir.glob("*.run.*.up")):
 
 ---
 
-## 8. History and known issues
+## 8. Known lessons (environment)
 
-**NP**
-- Aug 2 (`52881141`): all 6 faces destroyed. Root cause **dt=0.005 exceeded the velocity-Verlet limit
-  for the MARTINI LJ core**. Proven by A/B from an identical pre-tear frame, only dt differing:
-  0.005 → 42 broken bonds, Epot +9130, avgKE/1.5kT 5.34; **0.001 → 0 broken, flat Epot, avgKE 1.006**.
-  Fixed by `NP_DT=0.001`. Also rebuilt: fixed 200 Å complex-centred box (was 232–284, orientation-
-  dependent) and counterions only (218 ions, was 2442–4324).
-- Aug 5 (`53089047`): gate caught a tear on `np.run.3` and correctly stopped the chain.
-- Aug 10 (`53234804`): `NP_DT` raised 0.001 → 0.005 based on a 50 t_u test. Runs 1 (90-0-0) and
-  4 (0-90-0) destroyed at t≈250 (block 1); runs 0,2,3,5 healthy. Root cause confirmed: **backbone
-  spring bonds (k=48 E_up/Å², ω=9.8 rad/t_u) become unstable during protein unfolding on the NP
-  surface.** Protein unfolding drives backbone bonds to 3–7× thermal oscillation amplitude by t=250.
-  At dt=0.005 the integration has too few force evaluations per half-period (≈1.2 frames/half-period)
-  to track the rapid force reversal when bond amplitude is large, allowing a coincident force alignment
-  at frame 935 to inject 12 E_up of kinetic energy into a single backbone C atom in 0.27 t_u.
-  Note: the MARTINI BB-env LJ is NOT the culprit here (BB closest approach 4.1 Å throughout;
-  blow-up 70+ Å from NP surface; residues 119-122). The limiting factor is backbone spring accuracy
-  at large amplitude, not small-oscillation stability (ω×dt=0.049 << 2 is met throughout).
-  Fixed: reverted `NP_DT=0.001`; deleted /output from destroyed runs; resubmitted as job 53251911.
-
-**glpG**
-- Aug 9 (`53088898`, 79ALA): real blow-up, rolled back; contaminated trajectories deleted, job log survives.
-- Aug 11 (`53233848`, 79HIS block 2): 45/48 replicas DESTROYED at step 18476/18534 (99.7% through).
-  Root cause: **replica 11 physics blow-up** (7 protein atoms went NaN at t=52.45 ps, frame 94/300 of
-  the chunk). Replica 11 then spread full NaN (all 1050 protein atoms) to 44 other slots via REMD
-  exchange over the next ~50 ps. Contributing factor: **ion escape from seed** — all four variant seeds
-  already had ions at 24.9–185.6 Å from the protein centroid before any simulation. Ions beyond the
-  12 Å dry-MARTINI cutoff experience zero force → free Brownian diffusion outward. This is a preparation
-  design issue in `place_ions` (large virtual box, no PBC, no confinement); ions contribute zero
-  energy/force once escaped, but ionic screening is absent. Silent for many blocks because protein and
-  micelle remain physically correct. Did NOT cause the blow-up directly; underlying replica 11 failure
-  cause still unidentified.
-  Fixed: (1) `run_remd.py` updated with NaN rollback (automated per-chunk rollback rather than chain
-  termination); (2) 45 NaN-infected `.up` files manually patched with block-1 final positions;
-  (3) resubmitted as job 53294511 (block 3).
-- **Mechanism RESOLVED Aug 10 (findings 88), and it was never the timestep.**
-  `HybridPositionNode::propagate_deriv` discarded the O site's sensitivity entirely and dropped BB's
-  fourth (O) weight, while all five backbone sites (N, CA, C, O, BB) sat in the MARTINI pair table. Net
-  effect: **more force thrown away than delivered** (12537 vs 5909 E_up/A) and **3590 E_up/A of
-  one-sided force per step acting on the environment**, since the env partner's sensitivity was passed
-  through while the protein's was not. That is non-conservative, does net work regardless of step size,
-  and explains a blow-up localised on one residue's backbone. Fixed by (a) restricting the protein side
-  of the pair table to BB and (b) propagating O/BB sensitivities through the placement Jacobian.
-  Two earlier dt claims are both withdrawn: the "8.3× over the limit" figure, and a later omega*dt
-  analysis of mine that measured O-site contacts which exert no force at all.
-  Still open: a **dt-independent +2–3% `avg_kinetic_energy/1.5kT` excess** (2.43/2.16/2.18% across a 4×
-  dt range, so not discretisation error). Present in 1rkl/1AFO after the fix too. Cause unidentified.
-  Do **not** use `--potential-deriv-agreement` as a gate on these systems: with a 1e-3 A step against a
-  ~1e4 E_up float potential it is round-off dominated and returns 0.4196 both before and after the fix.
-- Aug 9 (`53166153`, 79HIS): **false positive**, my fault. A `CN_MAX=2.5 Å` threshold borrowed from NP
-  fired at 2.52 Å on a perfectly healthy chunk and cost a 6 h block. Healthy glpG reaches 2.659 Å.
-  `CN_MAX` has since been removed from both drivers in favour of the broken-bond count.
-
-**Environment gotchas**
-- Midway3 **home** is at 28.6 G of a 30 G quota (`code/lammps` 8.4 G, `code/python` 7.9 G, `.cache`
-  6.1 G, `.local` 5.9 G). Not simulation data, but jobs can fail oddly if home fills.
-- Do not run scripts from `/tmp` on the login node: another user's `/tmp/inspect.py` shadows the stdlib
-  and breaks numpy imports. Pipe via stdin or run from `~/project`.
-- Cancelling a job is not always a no-op — a 9-second run was enough for `reseed()` to consume `/output`
-  on all six NP configs and strand the next job.
-- `/project` is 1.6 T of 3.9 T used, **2.3 T free** (2026-08-13). The four POPE/POPG chains are
-  estimated at 278 G total, so disk is not a constraint.
-
-**Scratch/snapshot dirs that can be deleted**: `~/project/glpG_snapshot/` (237 M, a copy of
-`glpG-RKRK-79HIS.run.47.up` taken for local debugging).
-
----
-
-## 9. glpG-DDM micelle campaign — closed 2026-08-13
-
-All four variants ended at block 2–3 of 12, every one reporting `COMPLETED` with exit 0 while having
-failed: 79HIS_S115T lost 48/48 replicas, 79ALA 38/48, 79ALA_S115T 1/48. A green exit code from this
-driver means nothing.
-
-`53294511` (79HIS, relaunched with the rollback driver) was **cancelled**: its ROLLBACK rounds #1/#2/#3
-reported byte-identical non-finite frame counts across all 48 replicas, because `run_remd.py` passes a
-constant `--seed` every chunk, so each rollback re-runs the identical failing chunk deterministically. It
-burned 20.5 h producing only duplicates. Its `STOP` file is still in place (see §1).
-
-HDX ΔG was recovered from the clean pre-blow-up window of every replica and delivered to
-`~/Downloads/glpG_DDM_micelle_HDX_dG/`. That required fixing a silent MBAR defect: `calc_hdx_ht.py` and
-`4.calc_D_uptake.py` built reduced potentials from raw energies, and a hybrid coupled potential
-(~-7.6e3 E_up) overflows `exp(-u)` so the solver never left `f_k = 0` — returning a flat average over the
-whole ladder while looking like a reweighted ensemble. See findings 90–91.
-
-The blow-up trigger is **still unidentified**; jobs 53324867/53324868 in §1 are the instrumented hunt for
-it. Ruled out by measurement: the backbone over-count, stale pair lists, minimum image, the table build
-formula, timestep margin in the sampled range, and thermal access to the LJ core.
+- **NP dt hard limit: 0.001.** dt=0.005 caused backbone blow-ups during unfolding (large-amplitude spring instability at t>250, proven by A/B). Never raise above 0.001.
+- **Do not transfer thresholds between NP and glpG.** A CN_MAX borrowed from NP false-positived on a healthy glpG chunk (2.52 Å vs healthy max 2.659 Å) and cost a 6 h block. The two jobs have different physics.
+- **glpG NaN propagation via REMD exchange.** A single blow-up in one replica spreads to all 48 via exchange within ~60 steps (IEEE 754: `NaN < 0.f` = false). The NaN cascade fix (`!isfinite(lboltz_diff)`) and the per-chunk rollback driver address this.
+- **A green exit code means nothing** for a self-submitting REMD job. Check the log for DESTROYED/ROLLBACK counts and verify physical observables.
+- **Midway3 home quota**: 28.6 G of 30 G. Jobs can fail oddly if home fills.
+- **Do not run scripts from `/tmp`** on the login node (another user's `/tmp/inspect.py` shadows stdlib).
+- **glpG-DDM micelle campaign (closed 2026-08-13).** All four variants failed at block 2–3; used a constant `--seed` causing rollback to re-run the identical failing chunk deterministically. MBAR fix (findings 91) also required before that data was usable. HDX ΔG results in `~/Downloads/glpG_DDM_micelle_HDX_dG/`.
