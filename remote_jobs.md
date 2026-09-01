@@ -47,7 +47,11 @@ Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/
 | 56105310 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | RUNNING midway3-0130 | block 2; started 2026-09-01 |
 | 56105312 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | RUNNING midway3-0148 | block 2; started 2026-09-01 |
 | 56105313 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | RUNNING midway3-0083 | block 2; started 2026-09-01 |
-| 56987370 | `np_1AO6_prod` | **NP** | PENDING | block 1 (fresh); envfull+300Å box; 56565841 cancelled |
+| 56987370 | `np_1AO6_prod` | **NP** | RUNNING midway3-0091 | block 1 (fresh); envfull+300Å box |
+| 57039261 | `hdx_glpG-RKRK-79HIS` | **HDX** | PENDING | mdw2 block-1 data; stride fix applied |
+| 57039262 | `hdx_glpG-RKRK-79HIS_S115T` | **HDX** | PENDING | mdw2 block-1 data; stride fix applied |
+| 57039263 | `hdx_glpG-RKRK-79ALA` | **HDX** | PENDING | mdw2 block-1 data; stride fix applied |
+| 57039264 | `hdx_glpG-RKRK-79ALA_S115T` | **HDX** | PENDING | mdw2 block-1 data; stride fix applied |
 
 **sbatch fixed 2026-08-31.** RCC resolved the slurmctld spool issue. NP job self-submitted successfully as 56565841. REMD jobs will chain normally once they start. Tmux session `remd_popg` on midway3-login1 may still hold srun processes for REMD jobs from the workaround period — verify before relaunching if jobs start and immediately fail. REMD logs: `~/project/popepopg_REMD/logs/remd.srun.<V>.<jobid>.out`.
 
@@ -189,16 +193,18 @@ grep -ic nan $f                        # expect 0
 Config: 48 replicas, T 0.70–0.90, `REMD_DT=0.009`, `--replica-interval 0.09`, `--exchange-criterion 0`,
 swap sets A=(0-1,2-3,…) B=(1-2,3-4,…), 300 frames/chunk, `REMD_MAX_BLOCKS=12`.
 
-### HDX analysis for the POPE/POPG campaign (staged 2026-08-15, not yet run)
+### HDX analysis for the POPE/POPG campaign — RUNNING (submitted 2026-09-01)
 
-`popepopg_REMD/hdx_cluster.sbatch`, one job per variant:
+Jobs 57033313–57033316, reading from midway2 block-1 data (`popepopg_REMD_mdw2/`, ~7000–7400 frames/replica, `HDX_LIVE=1`). Outputs land in `popepopg_REMD_mdw2/<variant>/hdx/`. Plot: `results/<V>_POPEPOPG_dG_vs_residue.png`.
 
+To resubmit after more data:
 ```bash
-B=/home/yinhanw/project/popepopg_REMD
+B=/home/yinhanw/project/popepopg_REMD; MDW2=/project/trsosnic/yinhan/popepopg_REMD_mdw2
 for V in glpG-RKRK-79HIS glpG-RKRK-79HIS_S115T glpG-RKRK-79ALA glpG-RKRK-79ALA_S115T; do
-  sbatch --job-name=hdx_$V --output=$B/logs/hdx.%j.out --partition=caslake --account=pi-trsosnic \
+  sbatch --job-name=hdx_${V} --output=$B/logs/hdx.%j.out --partition=caslake --account=pi-trsosnic \
     --nodes=1 --ntasks-per-node=1 --cpus-per-task=16 --time=04:00:00 \
-    --export=ALL,PDB_ID=$V $B/hdx_cluster.sbatch
+    --export=ALL,PDB_ID=${V},HDX_SRC=${MDW2}/${V},HDX_LIVE=1,HDX_WORK=${MDW2}/${V}/hdx \
+    $B/hdx_cluster.sbatch
 done
 ```
 
