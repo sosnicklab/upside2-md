@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-08-26 CDT**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-09-01 CDT**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -43,11 +43,11 @@ Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 56105311 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | PENDING (Priority 130k vs 1.1M competing) | block 2; 2+ days queued |
-| 56105310 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | PENDING (Priority 130k) | block 2 |
-| 56105312 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | PENDING (Priority 130k) | block 2 |
-| 56105313 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | PENDING (Priority 130k) | block 2 |
-| 56565841 | `np_1AO6_prod` | **NP** | RUNNING midway3-0059 | block 3; started 2026-08-31 06:47 CDT; self-submitted (sbatch fixed) |
+| 56105311 | `popg_glpG-RKRK-79HIS` | **POPE/POPG** | RUNNING midway3-0213 | block 2; started 2026-09-01 |
+| 56105310 | `popg_glpG-RKRK-79HIS_S115T` | **POPE/POPG** | RUNNING midway3-0130 | block 2; started 2026-09-01 |
+| 56105312 | `popg_glpG-RKRK-79ALA` | **POPE/POPG** | RUNNING midway3-0148 | block 2; started 2026-09-01 |
+| 56105313 | `popg_glpG-RKRK-79ALA_S115T` | **POPE/POPG** | RUNNING midway3-0083 | block 2; started 2026-09-01 |
+| 56987370 | `np_1AO6_prod` | **NP** | PENDING | block 1 (fresh); envfull+300Å box; 56565841 cancelled |
 
 **sbatch fixed 2026-08-31.** RCC resolved the slurmctld spool issue. NP job self-submitted successfully as 56565841. REMD jobs will chain normally once they start. Tmux session `remd_popg` on midway3-login1 may still hold srun processes for REMD jobs from the workaround period — verify before relaunching if jobs start and immediately fail. REMD logs: `~/project/popepopg_REMD/logs/remd.srun.<V>.<jobid>.out`.
 
@@ -140,8 +140,8 @@ healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis betwe
 |---|---|---|
 | method | regular MD, 6 independent trajectories, single T=0.8647, no exchange | **REMD**, 48 replicas, T ladder 0.70–0.90, configuration exchange |
 | purpose | nanoparticle adsorption footprinting (K190 exposure) | **HDX** protection factors / ΔG |
-| system | 1AO6 albumin 578 res + 5 nm MPA-AuNP, 4198 atoms, box 200 Å | glpG 210 res in a DDM micelle, 3156 atoms, box 137 Å |
-| composition | PROTEIN 2890 + GOLD 887 + MPA 203 + ION 218 (counterions only) | PROTEIN 1050 + LIPID 1674 + ION 432 |
+| system | 1AO6 albumin 578 res + 5 nm MPA-AuNP, 8608 atoms, box 300 Å | glpG 210 res in a DDM micelle, 3156 atoms, box 137 Å |
+| composition | PROTEIN 2890 + GOLD 887 + MPA 203 + ION 4628 (K+ 2423 / Cl- 2205, 0.15 M KCl) | PROTEIN 1050 + LIPID 1674 + ION 432 |
 | integrator | **pure velocity-Verlet**, no `/input/brownian` | **MIXED**: 2736 atoms (ION+LIPID+630 protein) overdamped **Brownian**; 420 protein atoms velocity-Verlet |
 | timestep | **0.001**, freely settable at runtime | **0.009, HARD-LOCKED** by `/input/brownian/numerical_time_step`; `martini_brownian.cpp:100` throws on mismatch. Friction is tuned against it for lipid D=11.5 µm²/s — **do not change it** |
 | detection | non-finite positions OR ≥5 stretched bonds | non-finite potential (whole chunk) OR ≥5 stretched bonds |
@@ -152,18 +152,18 @@ healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis betwe
 
 **Unfolding is the expected result, not a failure.** 1AO6 albumin spreads on the MPA-AuNP surface. Rising Rg (currently up to 230.9 Å on run.3, block 3) is the intended observable and must **not** be reported as a blow-up. Judge health on non-finite frames, peptide C–N bonds, and `avg_kinetic_energy/1.5kT`. (Contrast glpG, where Rg ~19 Å is the health signal.)
 
-**Dir** `~/project/NP-1AO6/` — `prod/` holds `np.run.{0..5}.up` + `np.<jobid>.out`, `block_count`.
+**Dir** `~/project/NP-1AO6/` — `prod/` holds `np.run.{0..5}.up` + `np.<jobid>.out`, `block_count`. **Current configs are the envfull+300Å rebuild** (protein-protein terms injected, 4628 ions at 0.15 M KCl, 8608 atoms); block_count reset to 0.
 **Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.001`) · **submit** `submit_np.sh`
 **Footprint analysis** `np_footprint.py` → `np_footprint.npz` (must be run; no current npz for block-3 data).
-**Orientation map** (verify by checksum if re-uploading — a zsh 1-indexing bug shifted it once):
+**Orientation map** (cardinal Euler faces; see `scratchpad/NP-footprinting/orientation_map.txt`):
 
 ```
-np.run.0 = K190 yaw+0.2   (yaw=5.269, pitch=0.164, roll=0)
-np.run.1 = K190 yaw-0.2   (yaw=4.869, pitch=0.164, roll=0)
-np.run.2 = K190 pitch+0.2 (yaw=5.069, pitch=0.364, roll=0)
-np.run.3 = K190 pitch-0.2 (yaw=5.069, pitch=-0.036, roll=0)
-np.run.4 = K190 roll+0.3  (yaw=5.069, pitch=0.164, roll=0.3)
-np.run.5 = K190 base       (yaw=5.069015, pitch=0.164236, roll=0; K190 depth 18.22 Å from NP face)
+np.run.0 = 0-0-0   (yaw=0.0,  pitch=0.0,  roll=0)
+np.run.1 = 90-0-0  (yaw=90.0, pitch=0.0,  roll=0)
+np.run.2 = 180-0-0 (yaw=180.0,pitch=0.0,  roll=0)
+np.run.3 = 270-0-0 (yaw=270.0,pitch=0.0,  roll=0)
+np.run.4 = 0-90-0  (yaw=0.0,  pitch=90.0, roll=0)
+np.run.5 = 0-270-0 (yaw=0.0,  pitch=270.0,roll=0)
 ```
 
 Self-resubmits up to `NP_MAX_BLOCKS=8`; chunks ~104 time units, ~1765 t.u. per 36 h block.
