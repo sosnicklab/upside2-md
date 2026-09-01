@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-09-01 CDT (updated)**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-09-01 CDT (updated — NP GLY fix)**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -55,7 +55,12 @@ Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 56987370 | `np_1AO6_prod` | **NP** | RUNNING midway3-0091 | block 1 (fresh); envfull+300Å box |
+| 57070350 | `np_1AO6_prod` | **NP** | PENDING | block 1 (fresh); envfull+300Å box; GLY maps fixed |
+
+**NP GLY fix 2026-09-01**: 1AO6 albumin had 4 broken helical GLY maps: GLY11, GLY81, GLY203, GLY244
+(sym_err 3.0–5.3 E_up, alphaR bias +1.1 to +1.8 E_up). Prior job 56987370 cancelled.
+Fixed all 6 seed files with the same periodic-mirror symmetrization as the glpG fix.
+Backups at `prod/np.run.*.up.bak_broken_gly`. Check script: `~/project/NP-1AO6/check_np_gly.py`.
 
 **HDX jobs (57041866-69, 57033313-16) — CANCELLED / DONE.** Data they analysed came from the broken
 runs with biased GLY49/GLY133 maps. Do not use those HDX results. Rerun HDX after the new REMD
