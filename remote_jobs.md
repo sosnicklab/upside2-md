@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-09-01 CDT**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-09-01 CDT (updated)**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -24,31 +24,42 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 ## 1. Current jobs
 
-Snapshot **2026-09-01 CDT**.
+Snapshot **2026-09-01 CDT (updated)**.
 
-### midway2 (broadwl, 28 replicas, T 0.70–0.90) — primary REMD data source
+### midway3 (caslake, 28 replicas, T 0.70–0.90) — POPE/POPG REMD re-run with corrected GLY maps
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48890657 | `mdw2_glpG-RKRK-79HIS` | midway2 | RUNNING | block 1; 74% done; ROLLBACK 4 |
-| 48890658 | `mdw2_glpG-RKRK-79HIS_S115T` | midway2 | RUNNING | block 1; 88% done; ROLLBACK 5; **active NaN in replica 27** |
-| 48890659 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING | block 1; 45% done; ROLLBACK 10 |
-| 48890660 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING | block 1; 96% done; ROLLBACK 5 |
+| 57068431 | `mdw3_glpG-RKRK-79HIS` | midway3 | PENDING | block 0; corrected seeds |
+| 57068432 | `mdw3_glpG-RKRK-79HIS_S115T` | midway3 | PENDING | block 0; corrected seeds |
+| 57068433 | `mdw3_glpG-RKRK-79ALA` | midway3 | PENDING | block 0; corrected seeds |
+| 57068434 | `mdw3_glpG-RKRK-79ALA_S115T` | midway3 | PENDING | block 0; corrected seeds |
 
-**Binary fix 2026-08-30**: GCC's `-ffast-math` implies `-ffinite-math-only`, which makes `isfinite()` always return `true`, silently breaking the NaN cascade fix. Added `-fno-finite-math-only` to `src/CMakeLists_Other.txt` line 14. Rebuilt binary (midway2 job 48890656). Previous runs (48889671–74) cancelled and data cleared. TM4 stability confirmed from run.0 T=0.70: G136 φ=−113°±9°, 96.5% helical.
+**Seed fix 2026-09-01**: GLY49 (TM1 C-cap) and GLY133 (TM4 N-cap) had biased Ramachandran maps
+(alphaL preferred by 1.4-1.5 E_up) due to context-dependent map training on soluble proteins.
+Correctly symmetrized using periodic-mirror formula `0.5*(m + m[np.ix_((-i)%n, (-j)%n)])`.
+Both residues now: sym_err=0.0000, aR=aL. Partition updated from broadwl (midway2, defunct) to
+caslake (midway3). Modules updated: python/3.11.9, hdf5/1.14.3.
+
+**Before resubmitting again, ALWAYS verify seeds:**
+```bash
+cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
+module load python/3.11.9
+export HDF5_USE_FILE_LOCKING=FALSE
+python3 check_seeds_current.py   # must show sym_err < 0.001 for GLY49 and GLY133
+```
 
 Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V`.
 
-### midway3 (caslake, 48 replicas)
+### midway3 (caslake) — other active jobs
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| (cancelled) | `popg_glpG-RKRK-79*` | **POPE/POPG** | CANCELLED | 56105310–13; block 2 cancelled 2026-09-01 to free slots for HDX |
 | 56987370 | `np_1AO6_prod` | **NP** | RUNNING midway3-0091 | block 1 (fresh); envfull+300Å box |
-| 57041866 | `hdx_glpG-RKRK-79HIS` | **HDX** | PENDING | mdw2 block-1; N=28; stride+N fixes applied |
-| 57041867 | `hdx_glpG-RKRK-79HIS_S115T` | **HDX** | PENDING | mdw2 block-1; N=28 |
-| 57041868 | `hdx_glpG-RKRK-79ALA` | **HDX** | PENDING | mdw2 block-1; N=28 |
-| 57041869 | `hdx_glpG-RKRK-79ALA_S115T` | **HDX** | PENDING | mdw2 block-1; N=28 |
+
+**HDX jobs (57041866-69, 57033313-16) — CANCELLED / DONE.** Data they analysed came from the broken
+runs with biased GLY49/GLY133 maps. Do not use those HDX results. Rerun HDX after the new REMD
+(57068431-34) accumulates sufficient data.
 
 **sbatch fixed 2026-08-31.** RCC resolved the slurmctld spool issue. NP job self-submitted successfully as 56565841. REMD jobs will chain normally once they start. Tmux session `remd_popg` on midway3-login1 may still hold srun processes for REMD jobs from the workaround period — verify before relaunching if jobs start and immediately fail. REMD logs: `~/project/popepopg_REMD/logs/remd.srun.<V>.<jobid>.out`.
 
@@ -236,7 +247,123 @@ done
 
 ---
 
-## 5. How to check health CORRECTLY
+## 5. How to check TM helix health (TM1 and TM4)
+
+This check is run frequently after any seed change or after the first trajectory chunk completes.
+TM1 (GLY49 at C-cap) and TM4 (GLY133 at N-cap) are the two helices most sensitive to the GLY
+Ramachandran bias bug and must be verified independently from the global health check.
+
+### Step 1 — verify seeds before submitting (run once per seed generation)
+
+```bash
+cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
+module load python/3.11.9
+export HDF5_USE_FILE_LOCKING=FALSE
+python3 check_seeds_current.py
+```
+
+Expected output for a healthy seed:
+```
+glpG-RKRK-79HIS:
+  GLY49: phi=-94.1 aR=0.965 aL=0.965 sym_err=0.000000  OK
+  GLY133: phi=-141.6 aR=1.121 aL=1.121 sym_err=0.000000  OK
+...
+All seeds OK.
+```
+
+A broken seed shows `sym_err ~ 3–4` and `aL << aR`. **Do not submit if any seed shows BROKEN.**
+
+### Step 2 — check helix health from a VTF trajectory (after first chunk)
+
+Extract a VTF for the T=0.70 replica (slot 0) and analyse phi/psi:
+
+```python
+import numpy as np, re
+
+def parse_vtf(vtf_path):
+    """Return atoms list and positions array from a VTF trajectory."""
+    atoms = []
+    with open(vtf_path) as f:
+        for line in f:
+            m = re.match(r"atom\s+(\d+)\s+name\s+(\S+)\s+resid\s+(\d+).*chain\s+(\S+)", line)
+            if m:
+                atoms.append({"aid": int(m.group(1)), "name": m.group(2),
+                               "resid": int(m.group(3)), "chain": m.group(4)})
+            elif line.startswith("timestep"):
+                break
+    n_atoms = max(a["aid"] for a in atoms) + 1
+    frames = []
+    pos = np.zeros((n_atoms, 3)); count = 0; in_frame = False
+    with open(vtf_path) as f:
+        for line in f:
+            if line.startswith("timestep"):
+                if in_frame: frames.append(pos.copy())
+                pos[:] = 0; count = 0; in_frame = True; continue
+            if in_frame:
+                if line.startswith(("pbc","bond","atom","#")) or not line.strip(): continue
+                parts = line.split()
+                if len(parts) >= 3:
+                    try: pos[count] = [float(x) for x in parts[:3]]; count += 1
+                    except ValueError: pass
+    if in_frame and count > 0: frames.append(pos.copy())
+    return atoms, np.array(frames)
+
+def dihedral(a, b, c, d):
+    b1=b-a; b2=c-b; b3=d-c
+    n1=np.cross(b1,b2); n2=np.cross(b2,b3)
+    l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
+    if l1<1e-10 or l2<1e-10: return np.nan
+    n1/=l1; n2/=l2
+    m1=np.cross(n1,b2/np.linalg.norm(b2))
+    return np.degrees(np.arctan2(np.dot(m1,n2),np.dot(n1,n2)))
+
+def helix_fraction(atoms, frames, chain="A", res_range=(131, 152)):
+    """Fraction of frames where res_range is helical (phi in [-130,-20] AND psi in [-90,15])."""
+    n_by_r  = {a["resid"]: a["aid"] for a in atoms if a["chain"]==chain and a["name"]=="N"}
+    ca_by_r = {a["resid"]: a["aid"] for a in atoms if a["chain"]==chain and a["name"]=="CA"}
+    c_by_r  = {a["resid"]: a["aid"] for a in atoms if a["chain"]==chain and a["name"]=="C"}
+    res_list = [r for r in range(res_range[0], res_range[1]+1)
+                if r in n_by_r and r in ca_by_r and r in c_by_r]
+    hel_frac = {}
+    for r in res_list:
+        phis = []; psis = []
+        for pos in frames:
+            if r-1 not in c_by_r: phis.append(np.nan); psis.append(np.nan); continue
+            phi = dihedral(pos[c_by_r[r-1]], pos[n_by_r[r]], pos[ca_by_r[r]], pos[c_by_r[r]])
+            psi = dihedral(pos[n_by_r[r]], pos[ca_by_r[r]], pos[c_by_r[r]],
+                           pos[n_by_r[r+1]] if r+1 in n_by_r else pos[c_by_r[r]]) if r+1 in n_by_r else np.nan
+            phis.append(phi); psis.append(psi)
+        phis = np.array(phis); psis = np.array(psis)
+        hel_frac[r] = float(np.mean(
+            (-130<=phis) & (phis<=-20) & (-90<=psis) & (psis<=15)))
+    return hel_frac
+
+# Usage:
+atoms, frames = parse_vtf("/path/to/glpG_79HIS_T0.70_slot0.vtf")
+# TM4 health (residues 131-152, GLY133 at N-cap)
+tm4 = helix_fraction(atoms, frames, res_range=(131, 152))
+print("TM4 helix fraction per residue:", {r: f"{v:.2f}" for r, v in tm4.items()})
+print("TM4 mean:", np.mean(list(tm4.values())))
+# TM1 health (residues 29-49, GLY49 at C-cap)
+tm1 = helix_fraction(atoms, frames, res_range=(29, 49))
+print("TM1 mean:", np.mean(list(tm1.values())))
+# GLY133 phi distribution
+# expect: mostly in [-130, -20] for a stable TM4 N-cap
+```
+
+**Pass criteria (TM helix healthy):**
+- TM4 mean helix fraction > 0.8 across residues 131–152
+- TM1 mean helix fraction > 0.8 across residues 29–49
+- GLY49 phi stays in [-130°, -20°] for >80% of frames
+- GLY133 phi stays in [-150°, -20°] for >80% of frames
+
+**Fail signal (biased maps still active):**
+- TM helix fraction near 0 — the helix collapsed
+- GLY49 or GLY133 phi drifting to +60° (alphaL) — the map is pushing it left-handed
+
+---
+
+## 5b. How to check health CORRECTLY (general bond/energy check)
 
 **`isfinite` is not a health check.** At a real glpG failure the environment coordinates were
 **±4.65e12 Å** — numerically finite, physically destroyed. And in a forced NP tear the protein reached

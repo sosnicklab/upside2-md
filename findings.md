@@ -3329,3 +3329,88 @@ Two lessons, both about the same failure:
   single most load-bearing fact in three rounds of discussion, and it came from a choice I had made myself and then
   stopped questioning. The user's "the hybrid should go to infinity at the helices" was a statement about the
   physics that I could have checked in one command against findings 113.
+
+---
+
+## GLY Ramachandran symmetry: bugs, correct fix, and TM4/TM1 state check (2026-09-01)
+
+### The bug
+
+Context-dependent Ramachandran maps are trained on soluble proteins where GLY in helical positions is
+underrepresented. This biases the map to strongly prefer alphaL over alphaR for GLY residues. For TM
+helices, GLY residues must be symmetric: glycine is achiral and equally stable in both mirror
+configurations. Two glpG residues were affected:
+
+| Residue | Location | Initial phi (hybrid seed) | alphaR energy | alphaL energy | delta |
+|---|---|---|---|---|---|
+| GLY49 | TM1 C-cap | -94.1° (helical) | 1.72 E_up | 0.21 E_up | 1.51 → helix strongly destabilized |
+| GLY133 | TM4 N-cap | -141.6° (PPII/helix boundary) | 1.81 E_up | 0.43 E_up | 1.38 → helix strongly destabilized |
+
+The code fix in `upside_config.py:write_rama_map_pot` symmetrizes GLY maps using
+`m_sym = 0.5 * (m + m[np.ix_(idx_phi, idx_psi)])` where `idx_phi = (-np.arange(n_phi)) % n_phi`
+(the correct periodic mirror). The phi filter was [-130°, -20°]; GLY133 at -141.6° was just
+outside and escaped symmetrization. **Fixed: extended to [-150°, -20°].**
+
+### What NOT to do (bugs encountered)
+
+1. **Wrong symmetrization formula `m[::-1, ::-1]`**: maps index i to n-1-i, not (-i)%n. Off by 1 for
+   all i>0 on a periodic grid. Result: creates a NEW asymmetry (alphaR preferred by ~0.58 E_up) instead
+   of a neutral map. The [::-1, ::-1] sym_err metric misleadingly reads 0.0000 for this broken map.
+
+2. **Checking phi from initial hybrid positions without the `input_pos_override` fix**: the stride-4
+   backbone layout (N=4i, CA=4i+1, C=4i+2, proxy=4i+3) was previously read as stride-3, giving garbage
+   phi angles. Now `inject_backbone_nodes` reads actual N/CA/C from `hybrid_bb_map/atom_indices`.
+
+3. **Using `m[idx_grid(-57, n)]` (round) instead of `m[int((-60+180)/(360/n))]` (int/floor)** to check
+   aR vs aL: the two give different grid indices (25 vs 24 for a 72-point grid). inject_backbone_nodes
+   uses the `int()` convention for i_alphaR/i_alphaL.
+
+### How to check correctness of GLY Ramachandran maps in a seed file
+
+```python
+import h5py, numpy as np
+
+fn = "path/to/seed.up"
+with h5py.File(fn, "r") as h:
+    rama_pot = np.array(h["/input/potential/rama_map_pot/rama_pot"])
+    rama_resid = np.array(h["/input/potential/rama_map_pot/residue_id"])
+
+n = rama_pot.shape[1]
+mirror = (-np.arange(n)) % n  # CORRECT periodic mirror
+
+for r1 in [49, 133]:   # 1-indexed GLY residues at TM1 C-cap and TM4 N-cap
+    r0 = r1 - 1
+    ridx = np.where(rama_resid == r0)[0]
+    m = rama_pot[ridx[0]]
+    sym_err = float(np.max(np.abs(m - m[np.ix_(mirror, mirror)])))
+    # int() convention matches inject_backbone_nodes
+    i_aR = int((-60. + 180.) / (360. / n)) % n   # = 24 for n=72
+    j_aR = int((-45. + 180.) / (360. / n)) % n   # = 27 for n=72
+    i_aL = int((+60. + 180.) / (360. / n)) % n   # = 48 for n=72
+    j_aL = int((+45. + 180.) / (360. / n)) % n   # = 45 for n=72
+    print(f"GLY{r1}: sym_err={sym_err:.4f} aR={m[i_aR,j_aR]:.3f} aL={m[i_aL,j_aL]:.3f}")
+    # CORRECT state: sym_err < 0.001, aR == aL (within float precision)
+    # BROKEN state: sym_err >> 0 (typically 3-4 E_up), aL << aR
+```
+
+### How to verify TM4 stability in a VTF trajectory
+
+TM4 is the most vulnerable helix (GLY133 at N-cap, GLY132, GLY136 nearby). After any seed
+re-preparation, extract a short VTF and check:
+
+1. **GLY133 phi**: must remain in helical range [-130°, -20°] over the trajectory. If phi drifts to
+   +60° (alphaL), the map is still biased.
+2. **TM4 helix fraction**: residues 131-152 (1-indexed). Helix criterion: phi in [-130°, -20°] AND
+   psi in [-90°, +15°]. Expect >0.8 for a stable TM helix.
+3. **Ramachandran map check** (above): run on the seed BEFORE submitting. Both sym_err must be < 0.001.
+
+A VTF trajectory has backbone atoms N/CA/C/O per residue (4 atoms per residue for protein chain A).
+The phi angle for residue i uses: C(i-1), N(i), CA(i), C(i). Chain A atom indices start at 0 with
+the pattern: atom 0 = N of GLY1, atom 1 = CA of GLY1, atom 2 = C of GLY1, atom 3 = O of GLY1,
+atom 4 = N of res2, etc.
+
+### Root cause summary
+
+The initial hybrid backbone positions DO come from the PDB structure (helical). The phi filter bug
+(stride-3 misread or range boundary) caused the maps to not be symmetrized. During simulation, GLY49
+and GLY133 encountered helical phi but were penalized by the biased maps, destabilizing TM1 and TM4.
