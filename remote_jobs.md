@@ -1,6 +1,6 @@
 # Remote jobs on midway3 — status and handbook
 
-Snapshot: **2026-09-01 CDT (updated — glpG moved to midway2)**. Written so a fresh session can pick up cold. Everything needed to
+Snapshot: **2026-09-01 CDT (updated — glpG REMD restarted on midway3 caslake, fresh seeds)**. Written so a fresh session can pick up cold. Everything needed to
 connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
 are not listed, only summarised in §8 where they carry a lesson.
 
@@ -26,41 +26,34 @@ Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before
 
 Snapshot **2026-09-01 CDT (updated)**.
 
-### midway2 (broadwl, 28 replicas, T 0.70–0.90) — POPE/POPG REMD re-run with corrected GLY maps
+### midway3 (caslake) — POPE/POPG REMD re-run with corrected GLY maps (fresh seeds 2026-09-01)
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48945619 | `mdw2_glpG-RKRK-79HIS` | midway2 | RUNNING midway2-0018 | block 0; corrected seeds |
-| 48945620 | `mdw2_glpG-RKRK-79HIS_S115T` | midway2 | RUNNING midway2-0221 | block 0; corrected seeds |
-| 48945621 | `mdw2_glpG-RKRK-79ALA` | midway2 | RUNNING midway2-0033 | block 0; corrected seeds |
-| 48945622 | `mdw2_glpG-RKRK-79ALA_S115T` | midway2 | RUNNING midway2-0113 | block 0; corrected seeds |
+| 57099419 | `glpG-RKRK-79HIS` | midway3 caslake | PENDING/RUNNING | block 0; fresh seeds, all GLY maps correct |
+| 57099420 | `glpG-RKRK-79HIS_S115T` | midway3 caslake | PENDING/RUNNING | block 0; fresh seeds, all GLY maps correct |
+| 57099421 | `glpG-RKRK-79ALA` | midway3 caslake | PENDING/RUNNING | block 0; fresh seeds, all GLY maps correct |
+| 57099422 | `glpG-RKRK-79ALA_S115T` | midway3 caslake | PENDING/RUNNING | block 0; fresh seeds, all GLY maps correct |
+
+Seeds: rebuilt from `hybrid_prep/` MARTINI structures using the corrected `upside_config.py`. Installed to
+`/project/trsosnic/yinhan/popepopg_REMD_mdw2/seeds/<V>.up` (old seeds backed up as `.bak_alphaL_restart_2026-09-01`).
+Protein is in alphaR (phi_std ≈ -60°, confirmed by BioPython). All 6 helical GLY sym_err=0.000000.
+Cluster upside_config.py also patched at `/project/trsosnic/yinhan/upside2-md-mdw2/py/upside_config.py` (backup: `.bak_phi_criterion`).
 
 **GLY map fix 2026-09-01 (complete)**: `inject_backbone_nodes` had a phi convention bug — it uses
 a reversed-b0 `_input_phi` formula (phi_up = phi_std ± 180°) but compared against `(-150,-20)` which
 captures alphaL GLY, not alphaR. All 6 helical GLY residues (GLY49, GLY104, GLY128, GLY133, GLY156,
-GLY180) were never symmetrized during setup. Their maps were biased toward alphaL by +0.65–1.65 E_up,
-driving TM helices into the alphaL conformation over 7 stages. Fix applied:
-- GLY49, GLY133: fixed in seeds before this run (sym_err=0)
-- GLY104, GLY128, GLY156, GLY180: fixed in-place in all 112 run files (4 variants × 28 replicas) on 2026-09-01; backups as `.bak_broken_gly_2`
-- `py/upside_config.py` criterion corrected: `(-150 <= phi <= -20)` → `(30 <= phi <= 160)` for both `write_rama_map_pot` and `write_rama_map_pot2`
-All 6 helical GLY now sym_err=0.000000, aR=aL across all variants.
-
-**Moved to midway2 (broadwl) 2026-09-01**: midway3 queue times too long. Binary recompiled in
-`/project/trsosnic/yinhan/upside2-md-mdw2/obj/` using `cmake/3.26 openmpi/4.1.1+gcc-10.1.0
-hdf5/1.14.3+oneapi-2023.1 eigen/3.3`. sbatch uses `python/3.9.18` + same HDF5.
-
-**All prior trajectory data cleared**: old runs (48894116/325/342) started before the seed fix
-(01:13-02:40 AM vs fix at 14:25). Run dirs reset to block_count=0, no run files; new jobs
-start fresh from fixed seeds.
-
-**SSH to midway2**: `expect .../scratchpad/mdw2_master.exp` then use `~/.ssh/cm-mdw2.sock`.
+GLY180) were never symmetrized during setup. Their maps were biased against alphaR by +0.65–1.65 E_up,
+progressively destabilizing alphaR TM helices (manifests as H-bond loss at bilayer midplane — Bug 2).
+Fix: `py/upside_config.py` criterion `(-150 <= phi <= -20)` → `(30 <= phi <= 160)` in both
+`write_rama_map_pot` and `write_rama_map_pot2`.
 
 **Before resubmitting again, ALWAYS verify seeds:**
 ```bash
-source /software/modules/init/bash && module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1
+module load python/3.11.9 hdf5/1.14.3
 export HDF5_USE_FILE_LOCKING=FALSE
 cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
-python3 check_seeds_current.py   # must show sym_err < 0.001 for GLY49 and GLY133
+python3 check_seeds_current.py   # must show sym_err < 0.001 for all 6 helical GLY
 ```
 
 Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `.../logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V`.
@@ -69,7 +62,7 @@ Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `.../logs/
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
-| 57070350 | `np_1AO6_prod` | **NP** | PENDING | block 1 (fresh); envfull+300Å box; GLY maps fixed |
+| 57099442 | `np_1AO6_prod` | **NP** | PENDING/RUNNING | block 1 (continuing); envfull+300Å box; GLY maps fixed |
 
 **NP GLY fix 2026-09-01**: 1AO6 albumin had 4 broken helical GLY maps: GLY11, GLY81, GLY203, GLY244
 (sym_err 3.0–5.3 E_up, alphaR bias +1.1 to +1.8 E_up). Prior job 56987370 cancelled.
@@ -295,10 +288,13 @@ All seeds OK.
 
 A broken seed shows `sym_err ~ 3–6` and `aL < aR`. **Do not submit if any seed shows BROKEN.**
 
-**Current state (2026-09-01)**: TM helix body residues are in alphaL (phi_std ≈ +60°) due to the
-biased maps during stages 1–7. The REMD should drive recovery to alphaR over multiple chunks.
-helix_fraction using phi_std ∈ [-130,-20] will read ~0 in early chunks — this is expected until
-the helices refold. Judge health by N(i)--O(i-4) distances (< 3.5 Å) and absence of chain breaks.
+**Current state (2026-09-01)**: Seeds rebuilt from `hybrid_prep/` MARTINI structures using corrected
+upside_config.py. Protein is in alphaR (BioPython phi_std ≈ -60° for TM1 body). All 6 helical GLY
+maps symmetric. helix_fraction using phi_std ∈ [-130,-20] should be nonzero from the start.
+
+**WARNING — dihedral sign error in the VTF analysis script above**: the homemade `dihedral()` function
+returns `-phi_std`. For alphaR residues (true phi_std ≈ -60°), it reports ≈ +60°. Use BioPython's
+`calc_dihedral` for any phi verification instead of the function defined above.
 
 ### Step 2 — check helix health from a VTF trajectory (after first chunk)
 
