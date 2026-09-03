@@ -3414,3 +3414,66 @@ atom 4 = N of res2, etc.
 The initial hybrid backbone positions DO come from the PDB structure (helical). The phi filter bug
 (stride-3 misread or range boundary) caused the maps to not be symmetrized. During simulation, GLY49
 and GLY133 encountered helical phi but were penalized by the biased maps, destabilizing TM1 and TM4.
+
+## Update 125 (2026-09-03): a Slurm NODE_FAIL requeue silently eats the REMD block budget
+
+`run_remd.py` derives its block number from a plain `block_count` file in the run dir, incremented at
+**every process start**:
+
+```python
+bc = RUN_DIR / "block_count"
+blk = (int(bc.read_text()) if bc.exists() else 0) + 1
+bc.write_text(str(blk))
+```
+
+Nothing decrements it when a start produces no data, and the chain stops once `blk >= MAX_BLOCKS`
+(12). Job 48971711 (`glpG-RKRK-79HIS`) was requeued 5 times by Slurm, every time `NODE_FAIL` on
+`midway2-0003`, a node `scontrol` reports as `ALLOCATED+NOT_RESPONDING`. Each incarnation burned
+~15 min of calibration and died, so after 4.5 h the variant was at block 6/12 having completed **zero**
+chunks, while its three siblings were at block 1/12 with 2 chunks each.
+
+Three things make this hard to see:
+* `squeue` shows the job `RUNNING`, and `sacct -X` shows only the newest incarnation. The restart
+  history needs `sacct -j <id> --duplicates` or `scontrol show job <id> | grep Restarts`.
+* The log is truncated on each requeue (`--output` reopens with `>`), so `head -1` shows the *current*
+  block number and the earlier failures leave no trace in the file.
+* `grep -c "chunk done"` is the honest progress metric. It read 0 while the block label read 6/12.
+
+Rules:
+* After any `NODE_FAIL` requeue, reset `block_count` to the number of genuinely completed blocks, or
+  the chain ends early with a fraction of the intended sampling.
+* Exclude the failed node (`--exclude=` in `submit_remd.sh`, so it propagates to self-resubmissions).
+  Slurm will otherwise re-allocate the same hung node indefinitely.
+* `NOT_RESPONDING` is not proof the process is dead; it can be a network partition with the writer
+  still running. Before resubmitting, confirm log size and h5 mtimes are static over a dwell, and that
+  every replica file opens with finite `input/pos`. An abrupt kill loses unflushed HDF5 buffers, which
+  is safe here: the file reverts to its last consistent state and `reseed()` resumes from it.
+
+## Update 126 (2026-09-03): wrapping a hybrid frame into the box tears every non-protein molecule
+
+`extract_glpg_vtf.py` wrapped all atoms into the box and then unwrapped **only** the protein backbone
+(`unwrap_protein_chain` walked `bb_map["bb_atom_index"]`). Every lipid and ion straddling a periodic
+face was left split across the cell, which VMD renders as sticks shooting across the box:
+
+| declared bond length | protein-only unwrap | per-molecule unwrap |
+| --- | --- | --- |
+| mean | 6.82 A | 3.80 A |
+| max | **141.07 A** | 22.53 A |
+| instances > 30 A | 24430 of 753660 | **0** |
+
+The 141 A worst case was a PO4-GL1 bond inside a single lipid, not a protein bond, so a protein-only
+integrity check passes while the file is unusable. Fixed by replacing the special case with a
+topology-general unwrap: build `(child, parent)` pairs by walking connected components of the declared
+bond graph once, then apply min-image displacement child-relative-to-parent per frame. This covers
+protein, lipids and ions with no per-species knowledge.
+
+Two pre-existing quirks of `martini_extract_vtf` in hybrid mode, both cosmetic, both left alone:
+* The protein backbone is emitted **twice**, once in the particle section and again as the appended
+  all-atom backbone (chain A carries N/CA/C/O x 420 for a 210-residue protein). The two sets are
+  exactly coincident (max displacement 0.0000 A), so it renders as one protein with doubled sticks.
+* The carbonyl O is reconstructed from the *following* residue's N, because the hybrid `.up` stores
+  N/CA/C/CB and no O. At the C-terminus there is no following residue, so that one O extrapolates to
+  a meaningless position (up to 22.5 A from its C in 110 of 180 frames). It is the *only* bond above
+  10 A after the fix; real N/CA/C bonds are mean 1.45 A, max 2.39 A, none above 3 A.
+
+Check the **declared bonds** across all frames, not just the protein backbone, when validating a VTF.

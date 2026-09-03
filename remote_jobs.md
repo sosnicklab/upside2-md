@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-03 CDT (box Z expanded to 180 Å; jobs 48971711-14 submitted)**.
+Snapshot: **2026-09-03 ~14:05 CDT (79HIS requeue loop fixed: dead node excluded, block counter reset, resubmitted as 48973026)**.
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -35,16 +35,53 @@ Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-03 CDT (seeds rebuilt correctly; jobs 48971030-33 submitted)**.
+Snapshot **2026-09-03 ~14:05 CDT (verified live against `squeue`/`sacct` and the logs)**.
 
 ### midway2 — POPE/POPG REMD (correct seeds, all 6 GLY fixed)
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48971711 | `glpG-RKRK-79HIS` | midway2 | RUNNING | box Z=180 Å; bak_broken_gly + all 6 GLY fixed |
-| 48971712 | `glpG-RKRK-79HIS_S115T` | midway2 | RUNNING | box Z=180 Å |
-| 48971713 | `glpG-RKRK-79ALA` | midway2 | RUNNING | box Z=180 Å |
-| 48971714 | `glpG-RKRK-79ALA_S115T` | midway2 | RUNNING | box Z=180 Å |
+| 48973026 | `glpG-RKRK-79HIS` | midway2 | PENDING (Resources) | Resubmitted 14:00 after the 48971711 requeue loop was fixed. `ExcNodeList=midway2-0003`, `block_count` reset 6 to 0. |
+| 48971712 | `glpG-RKRK-79HIS_S115T` | midway2 | RUNNING | block 1/12, 2 chunks done, 1 rollback (run.27) |
+| 48971713 | `glpG-RKRK-79ALA` | midway2 | RUNNING | block 1/12, 2 chunks done, 1 rollback (run.26) |
+| 48971714 | `glpG-RKRK-79ALA_S115T` | midway2 | RUNNING | block 1/12, 2 chunks done, 1 rollback (run.27) |
+| 48970780 | `np_1AO6_prod` | midway2 | RUNNING | 8.5 h, Restarts=0, 6 replicas all T=0.86. Log `NP-1AO6/prod/np.48970780.out`. **The NP campaign now runs on midway2, not midway3.** |
+
+**Health measured 2026-09-03 13:45** (not inferred from exit codes):
+* Protein is live, not frozen: `potential[:,0]` std = 58 to 621 across recent groups (frozen signature is 0.000).
+* glpG Rg = 17.9 to 22.0 Å across all 28 replicas of all 4 variants; hbonds 85 to 202. Physically sane.
+* No `nan`/`inf`/error lines in any of the 5 logs.
+* **Top of the ladder is straining.** Positive `protein_potential` excursions (vs ~-1400 typical) are
+  confined to replicas 26 (T=0.89) and 27 (T=0.90): 68 to 156 such frames per variant, peaking at
+  +2905 with hbonds down to 88. These are the same replicas that trip the peptide-bond ROLLBACK
+  (`final-frame N of 209 peptide bonds > 2.0 A`). Consistent with the known dt-too-large / LJ-core
+  instability at the hot end, not with a healthy ladder. Do not widen the rollback gate; the gate is
+  reporting a real event.
+* **NP Rg is far above native albumin (about 27 to 30 Å)**: run0 64.9, run1 95.3, run2 72.4, run3 118.4,
+  run4 48.9, run5 44.5 Å, and all six grew over the block. Same unphysical expansion flagged before
+  (previous peak 230.9 Å). NP footprint conclusions remain unsupported until this is explained.
+
+**79HIS requeue loop, fixed 2026-09-03 14:00.** Job 48971711 was requeued 5 times, every time
+`NODE_FAIL` on `midway2-0003`, which `scontrol show node` reports as `ALLOCATED+NOT_RESPONDING`
+(a hung node that slurmctld kept re-allocating). It completed zero chunks across 4.5 h.
+
+What was wrong and what was done:
+* **The dead node kept being reselected.** `--exclude=midway2-0003` added to `submit_remd.sh`, so it
+  propagates to every self-resubmission of all four variants (backup: `submit_remd.sh.bak_pre_exclude`).
+* **Node failures were burning the block budget.** `block_count` is a plain file in the run dir that
+  `run_remd.py` increments at *every process start*, not per completed chunk, so 6 dead starts had
+  advanced 79HIS to 6/12 of `MAX_BLOCKS` with nothing to show. Reset to 0, putting it level with its
+  siblings. **Any future NODE_FAIL requeue needs the same reset, or the chain silently ends early.**
+* **Verified safe before resubmitting**: `midway2-0003` was `NOT_RESPONDING`, which can also mean a
+  network partition with the process still writing. Confirmed no writer was active (log and h5 mtimes
+  and log size unchanged over 75 s) and that all 28 replica files open with finite `input/pos`. The
+  killed chunk's unflushed HDF5 buffers were discarded, so each file sits at its last consistent
+  post-calibration state and `reseed()` continues cleanly from there.
+* Left alone: `sc_env_transition_step_start` is 18000 for 79HIS against 39096-40618 for its siblings.
+  That counter tracks cumulative simulated steps and correctly reflects that 79HIS has run far fewer,
+  so it is consistent, not corrupt. It does undercount slightly, because a requeue does not set
+  `REMD_LAST_CHUNK_STEPS` and `reseed()` then credits the default 2000 steps rather than the steps the
+  killed chunk actually ran. Not hand-patched: editing that attr is a physics-schedule change.
 
 **Seeds corrected 2026-09-03**: Restored `bak_broken_gly` seeds (properly equilibrated, `activation_stage=production`, `current_stage=production`, has `output` group), applied GLY symmetrization to all 6 helical residues (GLY49, GLY104, GLY128, GLY133, GLY156, GLY180), and expanded box Z from 123.7 Å to 180 Å (updated `martini_potential.z_len` in all 4 seeds). Old replica files deleted; block_count reset.
 
@@ -96,11 +133,13 @@ cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
 python3 check_seeds_current.py   # must show sym_err < 0.001 for all 6 helical GLY
 ```
 
-### midway3 (caslake) — NP campaign
+### midway3 (caslake)
 
-| JobID | Name | Campaign | State | Notes |
-|---|---|---|---|---|
-| 57099442 | `np_1AO6_prod` | **NP** | PENDING/RUNNING | block 1 (continuing); envfull+300Å box; GLY maps fixed |
+**midway3 queue is EMPTY as of 2026-09-03 13:45.** Nothing has been submitted there since
+2026-09-01T18:18, when jobs 57099419-22 and 57099442 (`np_1AO6_prod`) were all cancelled with
+00:00:00 elapsed; they never ran. The NP campaign moved to midway2 (job 48970780 above).
+`sacct` on midway3 still lists 53233848 / 53233852 as RUNNING with 23 d elapsed; these are stale
+accounting rows with no matching `squeue` entry, not live jobs.
 
 **NP GLY fix 2026-09-01**: 1AO6 albumin had 4 broken helical GLY maps: GLY11, GLY81, GLY203, GLY244
 (sym_err 3.0–5.3 E_up, alphaR bias +1.1 to +1.8 E_up). Prior job 56987370 cancelled.
