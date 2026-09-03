@@ -1,39 +1,76 @@
-# Remote jobs on midway3 — status and handbook
+# Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-01 CDT (updated — glpG REMD restarted on midway3 caslake, fresh seeds)**. Written so a fresh session can pick up cold. Everything needed to
-connect, check health correctly, and react to a failure is here. Job state below is live; superseded jobs
-are not listed, only summarised in §8 where they carry a lesson.
+Snapshot: **2026-09-03 CDT (seeds corrected: bak_broken_gly base + all 6 GLY symmetrized; jobs 48971030-33 submitted)**.
+Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
+and react to a failure is here. Job state below is live; superseded jobs are not listed, only
+summarised in §8 where they carry a lesson.
 
 ---
 
 ## 0. Connect first (needs a Duo push on the user's phone)
 
-Key-based auth is NOT enabled on midway3; password + Duo is the only method. The ControlMaster socket
-expires roughly hourly, so expect to redo this most sessions.
+Key-based auth is NOT enabled; password + Duo is the only method. The ControlMaster socket expires
+roughly hourly, so expect to redo this most sessions.
 
+**midway2** (POPE/POPG REMD campaign):
+```bash
+ssh -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu   # alive?
+expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw2_master.exp    # if not: USER MUST APPROVE DUO
+ssh -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu '<command>'
+```
+`~/project` on midway2 is a symlink to `/project/trsosnic` (not `/project/trsosnic/yinhan/`).
+Data is at `~/project/yinhan/popepopg_REMD_mdw2/`.
+Python env: `source /software/modules/init/bash && module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1 && export HDF5_USE_FILE_LOCKING=FALSE`
+
+**midway3** (NP campaign and glpG-DDM micelle):
 ```bash
 ssh -S ~/.ssh/cm-mdw3.sock -O check yinhanw@midway3.rcc.uchicago.edu   # alive?
-expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw3_master.exp    # if not: opens socket, USER MUST APPROVE DUO
+expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw3_master.exp    # if not: USER MUST APPROVE DUO
 ssh -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu '<command>'
 ```
-
-`~/project` is a symlink to `/project/trsosnic/yinhan/` (note: **yinhan**, not yinhanw).
-Load the python env on the cluster with `source ~/project/NP-1AO6/env.sh` before any h5py work.
+`~/project` on midway3 is a symlink to `/project/trsosnic/yinhan/` (note: **yinhan**, not yinhanw).
+Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 ---
 
 ## 1. Current jobs
 
-Snapshot **2026-09-01 CDT (updated)**.
+Snapshot **2026-09-03 CDT (seeds rebuilt correctly; jobs 48971030-33 submitted)**.
 
-### midway3 (caslake) — POPE/POPG REMD re-run with corrected GLY maps (fresh seeds 2026-09-01)
+### midway2 — POPE/POPG REMD (correct seeds, all 6 GLY fixed)
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 57099419 | `glpG-RKRK-79HIS` | midway3 caslake | PENDING/RUNNING | block 0; fresh seeds, all GLY maps correct |
-| 57099420 | `glpG-RKRK-79HIS_S115T` | midway3 caslake | PENDING/RUNNING | block 0; fresh seeds, all GLY maps correct |
-| 57099421 | `glpG-RKRK-79ALA` | midway3 caslake | PENDING/RUNNING | block 0; fresh seeds, all GLY maps correct |
-| 57099422 | `glpG-RKRK-79ALA_S115T` | midway3 caslake | PENDING/RUNNING | block 0; fresh seeds, all GLY maps correct |
+| 48971030 | `glpG-RKRK-79HIS` | midway2 | PENDING | fresh start from corrected seed |
+| 48971031 | `glpG-RKRK-79HIS_S115T` | midway2 | PENDING | fresh start from corrected seed |
+| 48971032 | `glpG-RKRK-79ALA` | midway2 | PENDING | fresh start from corrected seed |
+| 48971033 | `glpG-RKRK-79ALA_S115T` | midway2 | PENDING | fresh start from corrected seed |
+
+**Seeds corrected 2026-09-03**: Previous seeds (48970013-16 runs) were built fresh from MARTINI structures with `activation_stage=minimization` — protein was rigid because `preprod_protein_mode=rigid_body` is only released at `activation_stage=production`, and the system had never been equilibrated through stages. Fix: restored `bak_broken_gly` seeds (properly equilibrated, `activation_stage=production`, `current_stage=production`, has `output` group), then applied GLY symmetrization to all 6 helical residues (GLY49, GLY104, GLY128, GLY133, GLY156, GLY180). All sym_err=0.000000. Old replica files deleted; block_count reset to 0.
+
+28 replicas per variant (midway2 REMD uses 28-core nodes). Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`.
+Logs: `.../logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V`.
+
+**CRITICAL — rigid-stage fix 2026-09-02**: Seeds were built with `current_stage = minimization` and
+`preprod_protein_mode = rigid_body`. The `set_stage_label(seed, "production")` step was never applied,
+so all prior trajectory data (output_previous_0 through output_previous_13 for 79HIS; similar blocks for
+other variants) was produced with a completely frozen protein: `rama_map_potential std = 0.000` across all
+frames. Fixed by `fix_stage.py`: patched `input/stage_parameters.current_stage` to `production` in all
+116 files (4 seeds + 28 replicas × 4 variants), reset `block_count` to 0.
+Seed backups: `seeds/<V>.up.bak_rigid_stage`.
+
+**DATA EXCLUSION**: All trajectory data produced before 2026-09-02 (output_previous_* groups) in
+`popepopg_REMD_mdw2/` has a rigid protein and must NOT be used for any conformational analysis or HDX.
+
+**Verify fix after first chunk** (compare `rama_map_potential std` to NP control = 0.773):
+```python
+import h5py, numpy as np, os
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+with h5py.File("/project/trsosnic/yinhan/popepopg_REMD_mdw2/glpG-RKRK-79HIS/glpG-RKRK-79HIS.run.0.up", "r") as h:
+    for grp in sorted([k for k in h if k.startswith("output_previous_")], key=lambda k: int(k.split("_")[-1])):
+        pot = h[grp]["potential"][:, 0]
+        print(f"{grp}: rama_std={np.std(pot):.3f}")
+```
 
 Seeds: rebuilt from `hybrid_prep/` MARTINI structures using the corrected `upside_config.py`. Installed to
 `/project/trsosnic/yinhan/popepopg_REMD_mdw2/seeds/<V>.up` (old seeds backed up as `.bak_alphaL_restart_2026-09-01`).
@@ -50,15 +87,14 @@ Fix: `py/upside_config.py` criterion `(-150 <= phi <= -20)` → `(30 <= phi <= 1
 
 **Before resubmitting again, ALWAYS verify seeds:**
 ```bash
-module load python/3.11.9 hdf5/1.14.3
+source /software/modules/init/bash
+module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1
 export HDF5_USE_FILE_LOCKING=FALSE
 cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
 python3 check_seeds_current.py   # must show sym_err < 0.001 for all 6 helical GLY
 ```
 
-Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`. Logs: `.../logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V`.
-
-### midway3 (caslake) — other active jobs
+### midway3 (caslake) — NP campaign
 
 | JobID | Name | Campaign | State | Notes |
 |---|---|---|---|---|
