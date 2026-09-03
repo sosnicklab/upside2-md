@@ -3449,31 +3449,87 @@ Rules:
   every replica file opens with finite `input/pos`. An abrupt kill loses unflushed HDF5 buffers, which
   is safe here: the file reverts to its last consistent state and `reseed()` resumes from it.
 
-## Update 126 (2026-09-03): wrapping a hybrid frame into the box tears every non-protein molecule
+## Update 126 (2026-09-03): two VTF-generation bugs, both fixed at the root in `py/martini_extract_vtf.py`
 
-`extract_glpg_vtf.py` wrapped all atoms into the box and then unwrapped **only** the protein backbone
-(`unwrap_protein_chain` walked `bb_map["bb_atom_index"]`). Every lipid and ion straddling a periodic
-face was left split across the cell, which VMD renders as sticks shooting across the box:
+### Bug 1: the library never unwrapped molecules, so every VTF had torn lipids
 
-| declared bond length | protein-only unwrap | per-molecule unwrap |
+`extract_trajectory` wrapped every particle into the box via `centralize_system` and then wrote the
+frame. Nothing unwrapped. Any molecule straddling a periodic face was left split across the cell,
+which VMD renders as bonds shooting across the box. Measured on the same seed file, 400 frames,
+4187 bonds:
+
+| declared bond length | before | after |
 | --- | --- | --- |
-| mean | 6.82 A | 3.80 A |
-| max | **141.07 A** | 22.53 A |
-| instances > 30 A | 24430 of 753660 | **0** |
+| mean | 6.89 A | 3.85 A |
+| max | **141.00 A** | **6.91 A** |
+| instances > 50 A | 54502 of 1674800 (3.254%) | **0** |
 
-The 141 A worst case was a PO4-GL1 bond inside a single lipid, not a protein bond, so a protein-only
-integrity check passes while the file is unusable. Fixed by replacing the special case with a
-topology-general unwrap: build `(child, parent)` pairs by walking connected components of the declared
-bond graph once, then apply min-image displacement child-relative-to-parent per frame. This covers
-protein, lipids and ions with no per-species knowledge.
+The 141 A worst case was a PO4-GL1 bond *inside one lipid*, so a protein-only integrity check passes
+while the file is unusable. Fixed by adding `build_bond_walk` and `unwrap_molecules` next to
+`centralize_system` and calling them in `extract_trajectory` after centring: walk the connected
+components of the declared bond graph once, then apply a minimum-image displacement
+child-relative-to-parent per frame. No per-species knowledge, so it covers protein, lipids and ions.
 
-Two pre-existing quirks of `martini_extract_vtf` in hybrid mode, both cosmetic, both left alone:
-* The protein backbone is emitted **twice**, once in the particle section and again as the appended
-  all-atom backbone (chain A carries N/CA/C/O x 420 for a 210-residue protein). The two sets are
-  exactly coincident (max displacement 0.0000 A), so it renders as one protein with doubled sticks.
-* The carbonyl O is reconstructed from the *following* residue's N, because the hybrid `.up` stores
-  N/CA/C/CB and no O. At the C-terminus there is no following residue, so that one O extrapolates to
-  a meaningless position (up to 22.5 A from its C in 110 of 180 frames). It is the *only* bond above
-  10 A after the fix; real N/CA/C bonds are mean 1.45 A, max 2.39 A, none above 3 A.
+### Bug 2: mode 1 on a hybrid system emits the protein twice, and VMD then rejects both copies
+
+`build_mode1_mapping` emits the MARTINI-side protein *and* the appended all-atom backbone:
+
+| | particle-section protein | appended AA backbone |
+| --- | --- | --- |
+| atoms | 1050: N/CA/C/O x 210, plus 210 BB beads | 840: N/CA/C/O x 210 |
+| coordinates | N/CA/C/O identical to the appended copy (0.0000 A); BB sits 0.47-1.48 A off CA | the reference |
+| residue names | `PRO` for **every** protein particle | real, from `input/sequence` |
+| bonds | **0** | 839 (one connected chain) |
+
+`infer_residue_names_from_class` has no sequence to work from and hardcodes `"PRO"` for
+`particle_class == "PROTEIN"`. VMD saw 210 unbonded pseudo-proline residues sharing resids 1..210
+with the real chain and `atomselect protein` returned nothing usable. Dropping only the duplicated
+N/CA/C/O was not enough either: the 210 BB beads, unbonded and ~0.9 A off CA, still traced a ghost
+backbone that showed up under `not protein`.
+
+**This was never a bug to patch downstream: it is mode 1 being the wrong mode for a hybrid system.**
+`build_mode2_mapping` already does the right thing, keeping `protein_membership < 0` (every
+environment particle, no protein particles at all) plus the sequence-named all-atom backbone. The
+library's CLI already auto-detects mode 2 when `input/hybrid_env_topology/protein_membership` exists.
+The analysis scripts were calling `build_mode1_mapping` directly and so bypassed that. Both were
+switched to `build_mode2_mapping`: `extract_glpg_vtf.py` and `extract_one_block.py` on midway2.
+
+Verified in VMD 1.9.4a57 on the written file (4739 atoms = 840 protein + 3627 lipid + 272 ion):
+
+```
+protein          -> 840 atoms, names {C, CA, N, O} only, chain A, 210 residues
+not protein      -> 3899 atoms, chains {I, X} only, no N/CA/C/O, no BB
+chain A -> 840     backbone -> 840     protein and name CA -> 210     name BB -> 0
+chain X -> 3627    chain I / ions -> 272
+```
+
+Mode 2 reproduces byte-identical atom and bond records to a hand-built "mode 1 minus the protein
+particles" (all 8926 records match), confirming the two are the same layout. Coordinates can differ
+by exactly one box length: the unwrap anchor per molecule depends on atom ordering, so a molecule may
+sit in a different periodic image. Each molecule is intact either way.
+
+`lipid` returns 0 because `infer_residue_names_from_class` leaves lipids `UNK`: it only assigns a
+lipid name for `cls == "OTHER"`, and these particles are class `LIPID`. Select them with `chain X`.
+Do **not** relabel them `DOPC` the way that function does, since this is a POPE/POPG system. The
+POPE/POPG split *is* recoverable from the head-group bead name, which is the honest route if lipid
+resnames are ever wanted: `NH3` = POPE (143 lipids here), `GL0` = POPG (136), totalling 279.
+
+Residue numbering is trustworthy for selections: `input/sequence` position 79 is HIS in the 79HIS
+variants and ALA in the 79ALA variants, and position 115 is SER or THR exactly as `S115T` implies.
 
 Check the **declared bonds** across all frames, not just the protein backbone, when validating a VTF.
+
+### The C-terminal carbonyl O is an unconstrained particle (a data property, not an extraction bug)
+
+Initially misdiagnosed as a reconstruction artifact. It is not: the hybrid `.up` **does** store an O
+per residue (`input/atom_names` is N, CA, C, O repeating), and both emitted copies carry identical
+coordinates, so nothing is being reconstructed. Measured C-O distance over 180 frames:
+
+* residues 1..209: mean 1.24 A, **max 1.24 A** (a rigid constraint)
+* residue 210: starts at 1.17 A and escapes monotonically (correlation with frame index +0.78) to
+  22.5 A
+
+So the last residue's carbonyl O has nothing holding it to its C and diffuses away. Exactly 1 of 210
+residues is affected, it is the only declared bond above 10 A in the extracted VTF, and the N/CA/C
+backbone is unaffected (mean 1.45 A, max 2.39 A, none above 3 A). Harmless for the backbone physics
+and for HDX, but hide it when rendering: `protein and not (resid 210 and name O)`.

@@ -293,6 +293,47 @@ def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
     return out
 
 
+def build_bond_walk(n_output, bonds):
+    """(child, parent) pairs per connected molecule, parents always before their children.
+
+    Applying a minimum-image displacement in this order reconnects a whole molecule from a single
+    already-placed anchor atom."""
+    adjacency = [[] for _ in range(n_output)]
+    for i, j in bonds:
+        if 0 <= i < n_output and 0 <= j < n_output:
+            adjacency[i].append(j)
+            adjacency[j].append(i)
+
+    walk = []
+    visited = np.zeros(n_output, dtype=bool)
+    for root in range(n_output):
+        if visited[root] or not adjacency[root]:
+            continue
+        visited[root] = True
+        stack = [root]
+        while stack:
+            parent = stack.pop()
+            for child in adjacency[parent]:
+                if not visited[child]:
+                    visited[child] = True
+                    walk.append((child, parent))
+                    stack.append(child)
+    return walk
+
+
+def unwrap_molecules(frame_pos, walk, x_len, y_len, z_len):
+    """Reconnect bonded molecules that centralize_system split across a periodic face.
+
+    Wrapping every particle into the box tears any molecule straddling a face: its bonds then span
+    most of the cell when rendered. Walking the bond topology with a minimum-image displacement
+    restores each molecule without moving it off its periodic image."""
+    box = np.array([x_len, y_len, z_len], dtype=float)
+    out = np.array(frame_pos, copy=True)
+    for child, parent in walk:
+        out[child] -= box * np.round((out[child] - out[parent]) / box)
+    return out
+
+
 def write_vtf_frame(fh, pos):
     fh.write("\ntimestep ordered\n")
     for x, y, z in pos:
@@ -718,6 +759,8 @@ def extract_trajectory(
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
 
+    bond_walk = build_bond_walk(n_output_particles, out_bonds)
+
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
         f.write(f"# mode {mode}\n")
@@ -761,6 +804,7 @@ def extract_trajectory(
                 y_len,
                 z_len,
             )
+            out_frame = unwrap_molecules(out_frame, bond_walk, x_len, y_len, z_len)
             if np.isnan(out_frame).any():
                 raise ValueError(f"NaN coordinates found in frame {frame_idx} for group {output_group}")
             write_vtf_frame(f, out_frame)
