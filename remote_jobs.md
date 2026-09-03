@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-03 CDT (seeds corrected: bak_broken_gly base + all 6 GLY symmetrized; jobs 48971030-33 submitted)**.
+Snapshot: **2026-09-03 CDT (box Z expanded to 180 Å; jobs 48971711-14 submitted)**.
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -41,12 +41,14 @@ Snapshot **2026-09-03 CDT (seeds rebuilt correctly; jobs 48971030-33 submitted)*
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48971030 | `glpG-RKRK-79HIS` | midway2 | PENDING | fresh start from corrected seed |
-| 48971031 | `glpG-RKRK-79HIS_S115T` | midway2 | PENDING | fresh start from corrected seed |
-| 48971032 | `glpG-RKRK-79ALA` | midway2 | PENDING | fresh start from corrected seed |
-| 48971033 | `glpG-RKRK-79ALA_S115T` | midway2 | PENDING | fresh start from corrected seed |
+| 48971711 | `glpG-RKRK-79HIS` | midway2 | RUNNING | box Z=180 Å; bak_broken_gly + all 6 GLY fixed |
+| 48971712 | `glpG-RKRK-79HIS_S115T` | midway2 | RUNNING | box Z=180 Å |
+| 48971713 | `glpG-RKRK-79ALA` | midway2 | RUNNING | box Z=180 Å |
+| 48971714 | `glpG-RKRK-79ALA_S115T` | midway2 | RUNNING | box Z=180 Å |
 
-**Seeds corrected 2026-09-03**: Previous seeds (48970013-16 runs) were built fresh from MARTINI structures with `activation_stage=minimization` — protein was rigid because `preprod_protein_mode=rigid_body` is only released at `activation_stage=production`, and the system had never been equilibrated through stages. Fix: restored `bak_broken_gly` seeds (properly equilibrated, `activation_stage=production`, `current_stage=production`, has `output` group), then applied GLY symmetrization to all 6 helical residues (GLY49, GLY104, GLY128, GLY133, GLY156, GLY180). All sym_err=0.000000. Old replica files deleted; block_count reset to 0.
+**Seeds corrected 2026-09-03**: Restored `bak_broken_gly` seeds (properly equilibrated, `activation_stage=production`, `current_stage=production`, has `output` group), applied GLY symmetrization to all 6 helical residues (GLY49, GLY104, GLY128, GLY133, GLY156, GLY180), and expanded box Z from 123.7 Å to 180 Å (updated `martini_potential.z_len` in all 4 seeds). Old replica files deleted; block_count reset.
+
+**VTF extraction note**: `output_previous_0` in each replica is the old seed's `output` group (single-T stage-7 data), moved there by `reseed()`. Skip it; REMD data starts at `output_previous_1`. Script: `/home/yinhanw/project/yinhan/extract_glpg_vtf.py` (skips block 0, wraps atoms into box, unwraps protein backbone chain).
 
 28 replicas per variant (midway2 REMD uses 28-core nodes). Data: `/project/trsosnic/yinhan/popepopg_REMD_mdw2/<variant>/`.
 Logs: `.../logs/remd.<V>.<jobid>.out`. Self-submitting via `bash submit_remd.sh $V`.
