@@ -1,6 +1,14 @@
 ## Overview
 Upside is a molecular dynamics simulation package for protein folding and conformational dynamics. It combines a fast C++ core with Python scripts for configuration and analysis.
 
+### File Format Reference
+
+Before editing any `.up` simulation input file, force-field `.h5` parameter file, or preparation script in `py/`, read **`up.md`** in the repo root. It documents:
+- The HDF5 structure of `.up` files (all `/input` datasets, all `/input/potential` node types and their dataset schemas, the `/output` trajectory layout)
+- Every force-field parameter file (`sidechain.h5`, `hbond.h5`, `environment.h5`, `bb_env.dat`, `martini.h5`, `dopc.h5`, `rama.dat`, `sheet`, `membrane.h5`)
+- Hybrid-specific groups (`hybrid_bb_map`, `hybrid_remap`, `cgl_gle`, `barostat`, `stage_parameters`)
+- Critical conventions: angle storage as cosines, CGL target angle sign, GLY symmetrization, spline table exactness, thermostat timescales
+
 ## Physical Model Integrity
 **CRITICAL: Do not modify, scale to zero, or disable core physics interactions.**
 * **Hybrid Interface Interactions**: The interaction potentials between the protein Side Chains and the dry-MARTINI environment (SC-env), as well as the protein Backbone and the dry-MARTINI environment (BB-env), must **NEVER** be turned off.
