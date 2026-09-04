@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-04 ~09:49 CDT (gly-sym training running on midway2 as 48974436; previous 48974325 failed due to numpy pickle incompatibility fixed by re-initializing on midway2)**.
+Snapshot: **2026-09-04 ~11:15 CDT (gly-sym training queued on midway2 as 48974463; previous 48974436 failed due to CWD bug in srun_mdw2.sh — fixed by adding `cd "$PROJECT_ROOT"`).**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -35,15 +35,19 @@ Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-04 ~09:49 CDT (verified live against `squeue`)**.
+Snapshot **2026-09-04 ~11:15 CDT (verified live against `squeue`)**.
 
 ### midway2 — gly-sym core FF training
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48974436 | `upside-gly-sym` | midway2 broadwl | RUNNING | 2 nodes (midway2-0271/0272), 12 tasks × 4 CPUs = 48 CPUs, 2 GB/CPU. Checkpoint: `~/project/yinhan/upside2-md-mdw2/training/gly-sym/run_output/initial_checkpoint.pkl`. Log: `training/gly-sym/upside-gly-sym_48974436.out`. 200 steps per Slurm run; resubmit with latest checkpoint. Monitor: env (ASP/GLU more negative), GLY angular profile staying palindromic. |
+| 48974463 | `upside-gly-sym` | midway2 broadwl | PENDING | 2 nodes, 12 tasks × 4 CPUs. Checkpoint: `training/gly-sym/run_output/initial_checkpoint.pkl` (re-initialized 2026-09-04 11:13). Log: `training/gly-sym/upside-gly-sym_48974463.out`. |
 
-**Init completed 2026-09-04 09:49 on midway2.** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. Binary compiled on midway2 with `gcc/10.1.0 hdf5/1.14.3+oneapi-2023.1 eigen/3.3`. GLY dp1 forced symmetric throughout training. Note: checkpoint must be created on midway2 (numpy 1.26.4) not midway3 (numpy 2.2.6) due to pickle ABI incompatibility.
+**GLY symmetry fix (complete as of 2026-09-04):** GLY Ramachandran maps are now symmetrized at the source: `parameters/common/rama.dat` (and the training copy `training/gly-sym/upside_input/rama.dat`) have had the `(phi, psi) -> (-phi, -psi)` symmetry applied to all GLY dimer entries (coil index 8, sheet index 7). Max residual asymmetry is 0.0 (was 6.3 E_up). The `upside_config.py` runtime patch has been removed (reverted to master). Training workers call `upside_config.py` at each step, which now reads the symmetric library automatically.
+
+**CWD fix:** `srun_mdw2.sh` now `cd "$PROJECT_ROOT"` before running ConDiv; the checkpoint stores relative paths from the project root.
+
+**Init (2026-09-04 11:13):** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. GLY dp1 forced palindromic by `rotamer_parameter_estimation.py`.
 
 **Resubmit:** `cd ~/project/yinhan/upside2-md-mdw2/training/gly-sym && sbatch srun_mdw2.sh run_output/<latest_checkpoint.pkl> 200`
 
