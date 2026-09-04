@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-04 ~11:15 CDT (gly-sym training queued on midway2 as 48974463; previous 48974436 failed due to CWD bug in srun_mdw2.sh — fixed by adding `cd "$PROJECT_ROOT"`).**
+Snapshot: **2026-09-04 ~15:30 CDT (gly-sym training job 48974804 PENDING on midway2 broadwl; three ConDiv.py bugs fixed this session — see gly-sym section).**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -35,19 +35,26 @@ Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-04 ~11:15 CDT (verified live against `squeue`)**.
+Snapshot **2026-09-04 ~15:30 CDT (verified live against `squeue`)**.
 
 ### midway2 — gly-sym core FF training
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48974659 | `upside-gly-sym` | midway2 broadwl | RUNNING | midway2-[0320-0321], 2 nodes, 12 tasks × 4 CPUs. Checkpoint: `training/gly-sym/run_output/initial_checkpoint.pkl`. Log: `training/gly-sym/upside-gly-sym_48974659.out`. |
+| 48974804 | `upside-gly-sym` | midway2 broadwl | PENDING (Resources) | 2 nodes, 12 tasks × 4 CPUs. Checkpoint: `training/gly-sym/run_output/initial_checkpoint.pkl`. Log: `training/gly-sym/upside-gly-sym_48974804.out`. |
 
 **GLY symmetry fix (complete as of 2026-09-04):** GLY Ramachandran maps are now symmetrized at the source: `parameters/common/rama.dat` (and the training copy `training/gly-sym/upside_input/rama.dat`) have had the `(phi, psi) -> (-phi, -psi)` symmetry applied to all GLY dimer entries (coil index 8, sheet index 7). Max residual asymmetry is 0.0 (was 6.3 E_up). The `upside_config.py` runtime patch has been removed (reverted to master). Training workers call `upside_config.py` at each step, which now reads the symmetric library automatically.
 
 **CWD fix:** `srun_mdw2.sh` now `cd "$PROJECT_ROOT"` before running ConDiv; the checkpoint stores relative paths from the project root.
 
 **Init (2026-09-04 11:13):** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. GLY dp1 forced palindromic by `rotamer_parameter_estimation.py`.
+
+**Three ConDiv.py bugs fixed 2026-09-04 (all in `training/gly-sym/ConDiv.py`):**
+1. `--slurmd-debug=0` in the srun worker launch is restricted to root/SlurmUser on midway2 Slurm. Removed.
+2. `shutil.copy` does not set the execute bit on the copied `run_output/ConDiv.py`. Workers launched by srun with just `worker_path` got `execve() Permission denied`. Fixed by passing `sys.executable, worker_path` (same pattern as the non-Slurm branch).
+3. `compute_divergence` referenced `nonlinear_coupling_environment` but `upside_config.py`'s `--environment-potential-type` defaults to `1` (sigmoid), writing `sigmoid_coupling_environment` instead. Fixed by renaming the node reference in `compute_divergence`.
+
+**Submit rule:** always submit gly-sym (and all other training/simulation jobs) through the **midway2 SSH socket**. Submitting via the midway3 socket routes to caslake even when the sbatch script requests broadwl.
 
 **Resubmit:** `cd ~/project/yinhan/upside2-md-mdw2/training/gly-sym && sbatch srun_mdw2.sh training/gly-sym/run_output/<latest_checkpoint.pkl> 200`
 

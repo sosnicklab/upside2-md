@@ -230,6 +230,17 @@ Training artifacts under `SC-training/` stay in native dry-MARTINI units.
 * The simulation code must not bake dry-MARTINI to Upside conversion numbers into the training artifacts.
 * The native dry-MARTINI to Upside unit conversion happens ONCE, at h5-build time in Python, which receives the required conversion factors as explicit parameters. The runtime h5 force-field files and configs therefore store Upside-unit values (energies in `E_up`, lengths in Angstrom), and the simulation code (C++ engine) performs NO unit conversion — it reads the pre-converted spline tables directly.
 
+### Default Cluster for Remote Jobs
+
+**Unless the user explicitly specifies otherwise, all remote jobs go to midway2 (broadwl partition), not midway3.**
+
+Midway3 (caslake) has very long Priority queue times and should only be used when midway2 is unavailable or when a job requires midway3-specific resources. Submitting from the midway3 login node will route jobs to caslake even if the script requests broadwl — always submit training and simulation jobs through the **midway2 SSH socket** (`~/.ssh/cm-mdw2.sock`).
+
+```bash
+# Submit to midway2:
+ssh -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu 'cd <project_dir> && sbatch <script>'
+```
+
 ### midway3 SSH — Self-Connection
 
 **Do not ask the user to connect SSH.** Establish the ControlMaster socket yourself:
