@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-04 ~09:15 CDT (gly-sym FF training transferred to midway2 as 48974325; midway3 job 57800348 cancelled)**.
+Snapshot: **2026-09-04 ~09:49 CDT (gly-sym training running on midway2 as 48974436; previous 48974325 failed due to numpy pickle incompatibility fixed by re-initializing on midway2)**.
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -35,15 +35,15 @@ Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-04 ~09:15 CDT (verified live against `squeue`)**.
+Snapshot **2026-09-04 ~09:49 CDT (verified live against `squeue`)**.
 
 ### midway2 — gly-sym core FF training
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48974325 | `upside-gly-sym` | midway2 broadwl | RUNNING | 2 nodes (midway2-0250/0251), 12 tasks × 4 CPUs = 48 CPUs, 2 GB/CPU. Checkpoint: `~/project/yinhan/upside2-md-mdw2/training/gly-sym/run_output/initial_checkpoint.pkl`. Log: `training/gly-sym/upside-gly-sym_48974325.out`. 200 steps per Slurm run; resubmit with latest checkpoint. Monitor: env (ASP/GLU more negative), GLY angular profile staying palindromic. |
+| 48974436 | `upside-gly-sym` | midway2 broadwl | RUNNING | 2 nodes (midway2-0271/0272), 12 tasks × 4 CPUs = 48 CPUs, 2 GB/CPU. Checkpoint: `~/project/yinhan/upside2-md-mdw2/training/gly-sym/run_output/initial_checkpoint.pkl`. Log: `training/gly-sym/upside-gly-sym_48974436.out`. 200 steps per Slurm run; resubmit with latest checkpoint. Monitor: env (ASP/GLU more negative), GLY angular profile staying palindromic. |
 
-**Init completed 2026-09-04 02:00 on midway3, transferred to midway2 2026-09-04 09:15.** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. Binary compiled on midway2 with `gcc/10.1.0 hdf5/1.14.3+oneapi-2023.1 eigen/3.3`. GLY dp1 forced symmetric throughout training.
+**Init completed 2026-09-04 09:49 on midway2.** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. Binary compiled on midway2 with `gcc/10.1.0 hdf5/1.14.3+oneapi-2023.1 eigen/3.3`. GLY dp1 forced symmetric throughout training. Note: checkpoint must be created on midway2 (numpy 1.26.4) not midway3 (numpy 2.2.6) due to pickle ABI incompatibility.
 
 **Resubmit:** `cd ~/project/yinhan/upside2-md-mdw2/training/gly-sym && sbatch srun_mdw2.sh run_output/<latest_checkpoint.pkl> 200`
 
