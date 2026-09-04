@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-03 ~14:05 CDT (79HIS requeue loop fixed: dead node excluded, block counter reset, resubmitted as 48973026)**.
+Snapshot: **2026-09-04 ~09:15 CDT (gly-sym FF training transferred to midway2 as 48974325; midway3 job 57800348 cancelled)**.
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -35,7 +35,17 @@ Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-03 ~14:05 CDT (verified live against `squeue`/`sacct` and the logs)**.
+Snapshot **2026-09-04 ~09:15 CDT (verified live against `squeue`)**.
+
+### midway2 — gly-sym core FF training
+
+| JobID | Name | Cluster | State | Notes |
+|---|---|---|---|---|
+| 48974325 | `upside-gly-sym` | midway2 broadwl | RUNNING | 2 nodes (midway2-0250/0251), 12 tasks × 4 CPUs = 48 CPUs, 2 GB/CPU. Checkpoint: `~/project/yinhan/upside2-md-mdw2/training/gly-sym/run_output/initial_checkpoint.pkl`. Log: `training/gly-sym/upside-gly-sym_48974325.out`. 200 steps per Slurm run; resubmit with latest checkpoint. Monitor: env (ASP/GLU more negative), GLY angular profile staying palindromic. |
+
+**Init completed 2026-09-04 02:00 on midway3, transferred to midway2 2026-09-04 09:15.** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. Binary compiled on midway2 with `gcc/10.1.0 hdf5/1.14.3+oneapi-2023.1 eigen/3.3`. GLY dp1 forced symmetric throughout training.
+
+**Resubmit:** `cd ~/project/yinhan/upside2-md-mdw2/training/gly-sym && sbatch srun_mdw2.sh run_output/<latest_checkpoint.pkl> 200`
 
 ### midway2 — POPE/POPG REMD (correct seeds, all 6 GLY fixed)
 
@@ -133,13 +143,7 @@ cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
 python3 check_seeds_current.py   # must show sym_err < 0.001 for all 6 helical GLY
 ```
 
-### midway3 (caslake)
-
-**midway3 queue is EMPTY as of 2026-09-03 13:45.** Nothing has been submitted there since
-2026-09-01T18:18, when jobs 57099419-22 and 57099442 (`np_1AO6_prod`) were all cancelled with
-00:00:00 elapsed; they never ran. The NP campaign moved to midway2 (job 48970780 above).
-`sacct` on midway3 still lists 53233848 / 53233852 as RUNNING with 23 d elapsed; these are stale
-accounting rows with no matching `squeue` entry, not live jobs.
+### midway3 (caslake) — context notes
 
 **NP GLY fix 2026-09-01**: 1AO6 albumin had 4 broken helical GLY maps: GLY11, GLY81, GLY203, GLY244
 (sym_err 3.0–5.3 E_up, alphaR bias +1.1 to +1.8 E_up). Prior job 56987370 cancelled.

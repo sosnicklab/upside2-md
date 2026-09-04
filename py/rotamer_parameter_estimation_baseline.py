@@ -21,9 +21,6 @@ n_knot_hb      = 10
 hb_dr          = 0.625
 sc_dr          = 0.7
 
-# GLY is residue-type index 7 in the ALA-sorted ordering:
-# ALA ARG ASN ASP CYS GLN GLU GLY HIS ILE LEU LYS MET PHE PRO SER THR TRP TYR VAL
-GLY_IDX = 7
 
 # ---------------------------------------------------------------------------
 # Core unpacking: latent vector → structured parameter tensors
@@ -62,21 +59,7 @@ def unpack_param_maker(lparam):
     # -----------------------------------------------------------------------
     angular_logits = read_param((n_restype, n_restype, n_knot_angular))
 
-    # GLY symmetry correction:
-    # GLY has no chirality — swapping HA2↔HA3 leaves the molecule unchanged.
-    # Its pair-interaction angular profile must therefore be palindromic so
-    # that the force field assigns the same energy regardless of which HA is
-    # "pointing toward" the partner residue.  We enforce this by averaging the
-    # logits with their reversed-index counterparts before applying sigmoid.
-    flip = torch.arange(n_knot_angular - 1, -1, -1, dtype=torch.long)
-    gly_row     = angular_logits[GLY_IDX : GLY_IDX + 1, :, :]      # (1, 20, 15)
-    gly_sym     = 0.5 * (gly_row + gly_row[:, :, flip])            # palindromic
-    angular_logits_corrected = torch.cat([
-        angular_logits[:GLY_IDX, :, :],
-        gly_sym,
-        angular_logits[GLY_IDX + 1:, :, :]
-    ], dim=0)                                                        # (20, 20, 15)
-    angular_spline_sc = torch.sigmoid(angular_logits_corrected)      # (20, 20, 15)
+    angular_spline_sc = torch.sigmoid(angular_logits)                 # (20, 20, 15)
 
     clamped_1 = clamp_spline(read_symm(n_knot_sc - 3))              # (20, 20, 12)
     clamped_2 = clamp_spline(read_symm(n_knot_sc - 3))              # (20, 20, 12)
@@ -193,16 +176,8 @@ def _init_x0(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
     """
     parts = []
 
-    # 1. angular_logits (20, 20, 15): logit of dp1 angular slice of rot.
-    # Pre-symmetrize the GLY row: the palindrome constraint makes the loss
-    # independent of the antisymmetric component, and starting at the
-    # palindromic average sets the gradient to zero there, so L-BFGS-B
-    # converges without any GLY-specific iterations.
-    angular_dp1 = np.asarray(rotp[:, :, :n_knot_angular])
-    gly = angular_dp1[GLY_IDX]
-    angular_dp1_ws = angular_dp1.copy()
-    angular_dp1_ws[GLY_IDX] = 0.5 * (gly + gly[:, ::-1])
-    parts.append(_logit(angular_dp1_ws).ravel())
+    # 1. angular_logits (20, 20, 15): logit of dp1 angular slice of rot
+    parts.append(_logit(rotp[:, :, :n_knot_angular]).ravel())
 
     # 2. clamped_symm_1 middle (20, 20, 9): interior knots of radial block 1
     parts.append(_clamp_middle(rotp[:, :, n_knot_angular*2:n_knot_angular*2 + n_knot_sc]).ravel())
