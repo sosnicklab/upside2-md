@@ -1,5 +1,32 @@
 # Findings
 
+## GLY Ramachandran maps must be symmetrized unconditionally (2026-09-04)
+
+**Root cause of repeated TM4 instability in glpG REMD.**
+
+GLY has no beta-carbon, so its intrinsic Ramachandran potential is symmetric under (phi, psi) -> (-phi, -psi). Context-dependent maps trained on PDB data break this symmetry as a statistical artifact: GLY in helical positions sees predominantly helical neighbours in the database, so the raw map over-populates alphaL, placing the global minimum at phi_std ~ +85 deg instead of -85 deg. This forces GLY residues in TM helices (especially TM4: GLY132, GLY133, GLY136, GLY143, GLY149) to preferentially sample alphaL during simulation, breaking helix H-bonds and causing apparent instability.
+
+**Diagnostic signature:** In any h5 seed file, read `/input/potential/rama_map_pot/rama_pot` and check `max|m[i,j] - m[-i,-j]|` for each GLY row. Values >0.01 E_up indicate a broken map. Before the fix, all 23 GLY residues had symmetry error 3.3-4.3 E_up; GLY132 had its global minimum at phi_std=+85.
+
+**History of failed fixes:**
+1. First attempt used 1-indexed residue numbers as 0-indexed h5 array lookups (off-by-1) — fixed non-GLY residues while leaving all GLY residues untouched.
+2. Second attempt (in `write_rama_map_pot`) added two wrong conditions: (a) skip GLY with input phi outside [30°, 160°] in Upside convention, (b) only symmetrize if alphaR energy > alphaL energy. Both conditions caused silent misses.
+
+**Correct fix** (applied 2026-09-04 to `py/upside_config.py`):
+```python
+for i, aa in enumerate(seq):
+    if aa == 'GLY':
+        m = rama_pot[i]
+        rama_pot[i] = 0.5 * (m + m[np.ix_(idx_phi, idx_psi)])
+```
+Unconditional, no phi criterion, no alphaR/alphaL guard. Applied in all three places: `write_rama_map_pot`, and both GLY loops in `write_rama_map_pot2` (trans and cis variants). The `input_pos_override` parameter added to support the discarded phi criterion was also removed.
+
+**Verification:** Local test (79HIS seed, 300 frames, T=0.70) confirmed TM4 residues 134-151 at 1.000 helix fraction. GLY132/133 at the N-cap showed 0.0 (expected for helix-cap positions, not a defect). Remote h5 files on midway2 fixed separately by `fix_gly_maps.py` (symmetrizes by sequence lookup).
+
+**Rule:** Any future change to `write_rama_map_pot` that touches the GLY symmetrization block must preserve the unconditional form. Do not re-introduce a phi criterion or an alphaR/alphaL guard.
+
+---
+
 ## PDB structural difference: TM4 N-cap conformation, crystal vs membrane-simulation (2026-08-20)
 
 **Context:** The poster figure (`fig12_profile_overlay.png`) shades helical regions using DSSP. Two PDB
