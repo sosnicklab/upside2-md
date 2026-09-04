@@ -41,7 +41,7 @@ Snapshot **2026-09-04 ~11:15 CDT (verified live against `squeue`)**.
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48974463 | `upside-gly-sym` | midway2 broadwl | PENDING | 2 nodes, 12 tasks × 4 CPUs. Checkpoint: `training/gly-sym/run_output/initial_checkpoint.pkl` (re-initialized 2026-09-04 11:13). Log: `training/gly-sym/upside-gly-sym_48974463.out`. |
+| 48974659 | `upside-gly-sym` | midway2 broadwl | RUNNING | midway2-[0320-0321], 2 nodes, 12 tasks × 4 CPUs. Checkpoint: `training/gly-sym/run_output/initial_checkpoint.pkl`. Log: `training/gly-sym/upside-gly-sym_48974659.out`. |
 
 **GLY symmetry fix (complete as of 2026-09-04):** GLY Ramachandran maps are now symmetrized at the source: `parameters/common/rama.dat` (and the training copy `training/gly-sym/upside_input/rama.dat`) have had the `(phi, psi) -> (-phi, -psi)` symmetry applied to all GLY dimer entries (coil index 8, sheet index 7). Max residual asymmetry is 0.0 (was 6.3 E_up). The `upside_config.py` runtime patch has been removed (reverted to master). Training workers call `upside_config.py` at each step, which now reads the symmetric library automatically.
 
@@ -49,7 +49,9 @@ Snapshot **2026-09-04 ~11:15 CDT (verified live against `squeue`)**.
 
 **Init (2026-09-04 11:13):** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. GLY dp1 forced palindromic by `rotamer_parameter_estimation.py`.
 
-**Resubmit:** `cd ~/project/yinhan/upside2-md-mdw2/training/gly-sym && sbatch srun_mdw2.sh run_output/<latest_checkpoint.pkl> 200`
+**Resubmit:** `cd ~/project/yinhan/upside2-md-mdw2/training/gly-sym && sbatch srun_mdw2.sh training/gly-sym/run_output/<latest_checkpoint.pkl> 200`
+
+Note: checkpoint path must be relative to PROJECT_ROOT (the repo root), not to the gly-sym directory, because srun_mdw2.sh does `cd "$PROJECT_ROOT"` before running ConDiv.
 
 ### midway2 — POPE/POPG REMD (correct seeds, all 6 GLY fixed)
 
