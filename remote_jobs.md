@@ -107,6 +107,23 @@ is not the same force field that was trained. Verified directly from the files, 
 `ff-check-cont` picks it up). To re-enable installing after one has happened, remove
 `$PROJECT/training/gly-sym/.ff_installed`.
 
+### Slurm snapshots the batch script at submission — two bugs came from this
+
+**A requeue restarts training from a STALE checkpoint and destroys newer ones.** Job 48977118 was
+requeued by Slurm after a node failure (0010 → 0011). A requeue reruns the batch script *verbatim
+with its original arguments*, so it resumed from the `epoch_02_minibatch_07` it had been submitted
+with, and `main_loop`'s `rmtree` deleted checkpoints 08–21 on the way back up. Net progress was zero
+from 15:32 to 17:37 and the wall clock resets on every requeue, so it would never have terminated on
+its own. Fixed two ways in `srun_mdw2.sh`: `#SBATCH --no-requeue`, and the script now resolves the
+newest checkpoint on disk at run time and ignores a staler argument (it logs when they differ).
+Verify with `scontrol show job <id> | grep Requeue` — must be `Requeue=0`.
+
+**An edit to a `.sbatch` does not reach jobs already queued.** `check_continue` 48977123 was submitted
+at 12:47 and ran at 17:37, using its 12:47 snapshot — so it submitted 200 steps even though the file
+on disk had said `STEPS_PER_JOB=180` for hours. 200 × 637 s = 35 h 23 min against a 36 h wall, and a
+wall-limit kill is the trigger for the latent NaN path. **After editing any script in the chain,
+cancel and resubmit the already-queued jobs that use it, or the edit silently does nothing.**
+
 ### The unattended chain (built 2026-09-05; runs without a Claude session)
 
 The user is away from the Mac on Thursday 2026-09-10 and a Claude session exists only while that Mac
@@ -153,9 +170,30 @@ frames). It also orders groups numerically, since a string sort puts `output_pre
 `output_previous_9`. Verified on real data: exit 2 / `NO_WINNER` with no trajectories, exit 0 with a
 winner otherwise; ~14 s for 12 replicas, so minutes for 56.
 
-**NP is deliberately excluded** from this chain (not urgent). `ff-check-cont` no longer patches NP,
-and the cancel pattern is `^mdw2_glpG` only. The four steps NP needs are written out in a marked
-block at the end of `decide_and_launch.sbatch`.
+**NP is now IN the chain** (enabled 2026-09-05 at the user's request). It runs after the glpG
+relaunch, so a `NO_WINNER` verdict (exit 3 at line 93) leaves both systems untouched. NP already
+carries both coverage nodes, so all three trained tables install directly and
+`martini_inject_coverage.py` is never run on it — the arm decision does not apply to NP. Its
+environment is `sigmoid_coupling_environment` while the trained environment is nonlinear, so **NP
+keeps its old environment table**; that is a known limitation, not an oversight. Patch and verify
+happen before the `scancel`, so a failure cannot leave NP cancelled with nothing resubmitted.
+Verified on a live replica: `check_hybrid_up.py --require "$NP_NODES"` passes (8608 atoms, 36 nodes,
+energy −11159.36, interface intact, intra-protein MARTINI excluded, production stage).
+
+**Legacy-ff jobs stopped 2026-09-05 15:03.** All four glpG variants and NP were running on the old
+force field, so their output would have been discarded at install time. `STOP` files were written
+into each run dir (`popepopg_REMD_mdw2/<V>/STOP` and `NP-1AO6/prod/STOP`), which `run_remd.py:185`
+and `run_np_prod.py:131` poll between chunks — each job finishes its current chunk and exits without
+resubmitting, rather than being killed mid-write. `scancel` was not used because the midway2 login
+node was refusing connections; the STOP path is the cleaner stop anyway. `decide_and_launch.sbatch`
+removes every `STOP` before resubmitting (glpG at line 150, NP in its own block), so the relaunch is
+not blocked by them. **If you ever restart these by hand, delete the STOP file first or the driver
+will exit immediately.**
+
+**Monitoring without midway2.** `/project` is shared between midway2 and midway3, so training
+progress, logs and run dirs are all readable from the midway3 socket when the midway2 login node is
+down. Only `squeue`/`sbatch` need midway2. The chain is unaffected by a login-node outage: every
+`sbatch` in it is issued from inside a running job on a compute node.
 
 **Backups before anything destructive:** seeds and NP replicas copied to `*.bak_pre_ff3_<stamp>`
 with `cp -n`. Reverting = copy them back.
