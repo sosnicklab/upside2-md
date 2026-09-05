@@ -1,20 +1,41 @@
 # Progress log
 
-## 2026-09-01: current state
+High-level execution diary. Job ids, states and log paths live in `remote_jobs.md` only.
 
-**Poster delivered 2026-08-19** (ver5, OneDrive). glpG wildtype (79HIS) ΔG-vs-residue figure complete: 22 836 frames/replica, 123/203 amides resolved at 298 K, Spearman 0.676 vs implicit membrane (pooled 4 repeats, 170 amides).
+## Current phase (from 2026-09-05): core-FF retraining, then an unattended glpG arm test
 
-**midway2 REMD (48890657–60, all four variants):** block 1 running.
-- 79HIS: 74%, 4 rollbacks
-- 79HIS_S115T: 88%, 5 rollbacks; **active NaN in replica 27** — watch
-- 79ALA: 45%, 10 rollbacks (high)
-- 79ALA_S115T: 96%, 5 rollbacks
+ConDiv gly-sym retraining is running on midway2 toward 600 minibatches. Everything downstream of it
+must run without supervision — the user is away from the Mac on Thursday 2026-09-10, and a Claude
+session exists only while that Mac is on. The chain therefore lives in Slurm scripts on the cluster.
 
-**midway3 REMD block 2 (56105310–13):** still PENDING (Priority ~130k).
-
-**NP footprinting (six K190-proximal orientations, block 3 running):** post-fix block-2 measurement (18 246 frames, 3.2% adsorbed-and-compact) shows none of Carlson et al.'s five target lysines contacted (K190=0.000, K525=0.000, K541=0.033). Simulation CONTRADICTS paper's central claim (K190 most protected). No footprint npz exists for current block-3 data; run `np_footprint.py` after block 3 completes. Rg reaches 230.9 Å on run.3 — protein over-unfolds.
-
-**Before any cluster HDX analysis:** re-upload `calc_hdx_ht.py` and `4.calc_D_uptake.py` from repo; cluster copy drifts from repo.
+**2026-09-05**
+- Audited the training code against the upstream `origin/ConDiv` reference with four parallel
+  reviewers. **No correctness bug in the math**: gradient identical to the reference (diff 0.0),
+  env-derivative folding correct to 2.8e-10 by finite difference, coeff/weights slice confirmed
+  against `src/environment.cpp`. Restrained/free ensembles verified separate — the 0↔1 exchange was
+  attempted 79 times and accepted 0.
+- **Restored the reference 8-replica ladder.** `n_threads` silently set both the OpenMP thread count
+  and the replica count, so packing 4 workers/node had truncated the ladder to 4 rungs (top T 0.86
+  vs 0.99), weakening the CD negative phase. Now 8 replicas on 4 nodes; thread density per node is
+  unchanged so the step time did not move (~612-664 s). Resumed from the existing checkpoint with no
+  progress lost.
+- **Fixed the FF-install pipeline, which could not have worked.** `extract_ff.py` was unable to load
+  any checkpoint (`Target`/`Update` are `__main__` types), which under `set -e` would have aborted
+  the install *after* the full multi-day run. Now verified to reproduce training's own
+  `sidechain.h5`/`environment.h5` byte-for-byte. Rebuilt `check_continue.sbatch` with a
+  forward-progress guard (the old `afterany` chain would have resubmitted a failing job forever), an
+  install sentinel, timestamped seed backups, and 180-step jobs sized to fit the 36 h wall.
+- **Established that glpG and NP run different Hamiltonians by build accident**, not design: the
+  in-tree hybrid prep never calls the coverage/environment writers and has no flag to, while NP's
+  configs came from the rejected RD1 `envfull` recipe via a gitignored script. Unifying them is the
+  goal of the arm test.
+- Wrote and validated `py/martini_inject_coverage.py` (Arm B builder). Injecting into glpG shifts the
+  potential +51.28 E_up **entirely within `protein_potential`**, MARTINI nodes byte-identical,
+  idempotent, engine stable over 1000 steps. Bit-level parity against a real standard Upside config.
+- Captured the pre-install glpG TM baseline for the after-comparison. Found and fixed a sign
+  inversion in the dihedral routine before trusting any number from it.
+- Confirmed on the live configs (not from source alone) that dry-MARTINI contributes nothing
+  intra-protein, the hybrid interface terms are intact, and the protein is genuinely mobile.
 
 ## Key completed milestones
 
@@ -23,7 +44,19 @@
 | 2026-08-10 | findings-88 fix (BB force path) deployed; all seeds rebuilt |
 | 2026-08-13 | MBAR reference subtraction fixed (findings 91); dG plots delivered |
 | 2026-08-15 | BB proxy reworked onto `infer_H_O`; CB placement bug fixed (findings 102) |
-| 2026-08-16 | Cluster rigid-protein bug found and fixed (current_stage must be "production") |
+| 2026-08-16 | Cluster rigid-protein bug found and fixed (`current_stage` must be `production`) |
 | 2026-08-17 | Membrane accessibility term wired into HDX pipeline (findings 113) |
 | 2026-08-18 | NP campaign rebuilt with corrected CB + r_min_ang; relaunched |
-| 2026-08-19 | Poster finalised; NP block-2 re-measured; all claims corrected vs Carlson et al. |
+| 2026-08-19 | Poster delivered; NP block-2 re-measured; claims corrected against Carlson et al. |
+| 2026-09-01 | GLY Ramachandran maps symmetrized at source in `parameters/common/rama.dat` |
+| 2026-09-05 | Core-FF retraining moved to the reference 8-replica ladder; FF-install pipeline fixed and verified |
+
+## Carried-over open items
+
+- **NP footprint contradicts the paper.** None of Carlson et al.'s five target lysines are contacted
+  (K190 = 0.000, the lowest of 58 Lys). Blocked on over-unfolding and on running `np_footprint.py`
+  against current data. NP is explicitly not urgent.
+- **Cluster analysis scripts drift from the repo.** Re-upload `calc_hdx_ht.py` and
+  `4.calc_D_uptake.py` before trusting any cluster-side HDX result.
+- **TM4 is weak** (0.47-0.65 helix fraction vs TM1's 0.77-0.91) in the pre-install baseline. Cause
+  unproven; the arm test bears on it but was not designed to settle it.

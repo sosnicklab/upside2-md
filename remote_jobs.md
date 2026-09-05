@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-04 ~15:30 CDT (gly-sym training job 48974804 PENDING on midway2 broadwl; three ConDiv.py bugs fixed this session — see gly-sym section).**
+Snapshot: **2026-09-05 ~13:00 CDT (training switched to the reference 8-replica ladder as job 48977118, resumed from step 84 with no progress lost; automation rewritten and live-tested after an audit found it would have failed at the finish line).**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -35,13 +35,130 @@ Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-04 ~15:30 CDT (verified live against `squeue`)**.
+Snapshot **2026-09-05 ~13:00 CDT (verified live against squeue)**.
 
-### midway2 — gly-sym core FF training
+### midway2 — gly-sym core FF training + automation
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48974804 | `upside-gly-sym` | midway2 broadwl | PENDING (Resources) | 2 nodes, 12 tasks × 4 CPUs. Checkpoint: `training/gly-sym/run_output/initial_checkpoint.pkl`. Log: `training/gly-sym/upside-gly-sym_48974804.out`. |
+| 48977118 | `upside-gly-sym` | midway2 broadwl | PENDING (Resources) | **4 nodes, 12 tasks × 8 CPUs — 8-replica reference ladder.** Resumed from `run_output/epoch_02_minibatch_07/checkpoint.pkl` (step 84). Log: `training/gly-sym/upside-gly-sym_48977118.out`. |
+| 48977123 | `ff-check-cont` | midway2 broadwl | PENDING (Dependency on 48977118) | Rewritten auto-pipeline (see below). |
+
+**2026-09-05 — replica ladder restored to the reference protocol.** `ConDiv.py:54` `n_threads`
+sets BOTH the OpenMP thread count AND the REMD replica count (`ConDiv.py:397`). `srun_mdw2.sh`
+had it at 4 for node packing, which silently truncated the ladder from the reference 8 replicas
+(top T ≈ 0.99) to 4 (top T = 0.86), weakening the CD negative phase — a resource knob quietly
+changing the sampling procedure. Now 8 replicas on 4 nodes. Thread density per node is unchanged
+(3 workers × 8 threads = 24 vs the old 6 × 4 = 24), so wall time per step is unaffected;
+`n_threads` is read from the environment and is NOT in the checkpoint, so the switch resumed from
+step 84 with nothing lost. Job 48975615 (4-replica) cancelled at step 84.
+
+**Audit of the training code, 2026-09-05 (Opus 5, four parallel reviewers vs the upstream
+`origin/ConDiv` reference).** No correctness bug in the math. Verified numerically, not by
+inspection: gradient vs the reference `d_obj` differs by exactly 0.0; the env-derivative folding
+`envd[:,-2] += deriv.env[:,-1]` is the correct adjoint of `tmp[:,-1] = tmp[:,-3]` to 2.8e-10 by
+finite difference; `quadspline_energy` returns `(..., n3-2, n1-2, n2-2)` so the distance axis is
+dim 2 and the Bug-7 `.view(-1,1,1)` is the only correct arrangement (the other candidates raise,
+they do not silently mis-broadcast); `full_env[:coeff_size]` really does select coeff, confirmed
+against `src/environment.cpp:789-833`. Restrained/free separation is clean — the 0↔1 exchange was
+attempted 79 times and accepted **0** times, so the contrast is genuine.
+
+**Latent hazard, not yet fired:** on SIGTERM Upside returns 0 (`src/main.cpp:1404,1495`), so
+`j.job.wait() != 0` cannot catch an early-terminated run. A trajectory shorter than the hardcoded
+`int(n_frame/2)`=125 offset yields empty slices, `mean` of empty → `nan`, and that nan propagates
+through Adam into every parameter with no `WORKER_FAIL`. Not triggered in 84 minibatches. Monitor
+by grepping logs for `WORKER_FAIL`/`RESULT_READ_FAIL` rather than by trusting exit codes.
+
+**Driver vs worker copies differ, and that is correct.** `state['worker_path']` pins workers to the
+frozen `run_output/ConDiv.py`, which carries the env-deriv fix (it runs `compute_divergence`);
+the live `training/gly-sym/ConDiv.py` carries the srun fixes (it runs `run_minibatch`). Each has
+what its role executes. **Do not re-run `initialize` without first syncing the local all-fixes
+`ConDiv.py` to the remote driver** — a re-init overwrites the worker copy and every worker would
+then request 360 elements from a node returning 760 (fails loudly, `engine_c_library.cpp:109-111`).
+
+**Automation scripts in `$PROJECT/training/gly-sym/` — rewritten and live-tested 2026-09-05:**
+- `extract_ff.py <ckpt> <outdir>` — **the original could not load any checkpoint.** `Target`/`Update`
+  are `__main__` types (ConDiv runs as `__main__`), so a separate process raised
+  `AttributeError: Can't get attribute 'Target'`. With `set -e` this would have aborted the install
+  *after* the full multi-day run, with nothing downstream ever running. Both classes are now
+  redefined in the script. Verified against the real checkpoint: output is **byte-identical** to the
+  `sidechain.h5`/`environment.h5` that `run_minibatch` itself writes (max|diff| = 0 on all six
+  arrays), and differs from init by pair 7.21 / coverage 8.46 / hydrophobe 6.77 / energies 0.91,
+  while the untrained latent blocks sit at ~1e-13 as their zero gradient predicts.
+- `patch_seeds.py <sidechain.h5> <file.up> ...` — checks shapes before writing and reports every
+  table as applied or **ABSENT** instead of skipping silently; aborts if a file takes no table.
+- `check_continue.sbatch` — resubmits training to `MAX_STEPS=600`, then installs. Now has: a
+  forward-progress guard (aborts after 3 rounds with no new checkpoints, instead of resubmitting a
+  deterministically-failing job forever on `afterany`), a duplicate-chain guard, an
+  already-training guard, `cd $PROJECT` (the checkpoint stores project-relative paths), a
+  bootstrap fallback to `initial_checkpoint.pkl`, `nullglob` on the NP glob, an `.ff_installed`
+  sentinel so the destructive block cannot run twice, all patching done **before** anything is
+  cancelled, and a final job capped at the remaining step count.
+
+**Force-field install scope — open question.** Only `pair_interaction` can go into the glpG seeds:
+they are hybrid-MARTINI configs with no `hbond_coverage`, no `hbond_coverage_hydrophobe` and no
+environment node at all. NP takes all three tables but its environment is `sigmoid_coupling_environment`,
+incompatible with the trained `nonlinear_coupling_environment`. So the trained env energies (which
+did move, 0.91) have nowhere to go in either system, and glpG receives one of the three trained
+tables. The pair term was trained *jointly* with coverage/hydrophobe/env, so transplanting it alone
+is not the same force field that was trained. Verified directly from the files, not inferred.
+
+**To force an early install:** `touch $PROJECT/training/gly-sym/FORCE_INSTALL_FF` (the next
+`ff-check-cont` picks it up). To re-enable installing after one has happened, remove
+`$PROJECT/training/gly-sym/.ff_installed`.
+
+### The unattended chain (built 2026-09-05; runs without a Claude session)
+
+The user is away from the Mac on Thursday 2026-09-10 and a Claude session exists only while that Mac
+is on, so the decision logic is encoded in Slurm scripts, not in monitoring.
+
+```
+upside-gly-sym --afterany--> ff-check-cont  (loops to 600 minibatches)
+                                  | install branch: extract_ff.py -> parameters/ff_3.0_trained/,
+                                  |                 back up 4 seeds, write .ff_installed
+                                  v
+                            armtest-build (run_arm_test.sbatch)
+                                  |-> armtest_A_<V>  (28 cpu, 12 h)  --+
+                                  |-> armtest_B_<V>  (28 cpu, 12 h)  --+
+                                  +-> arm-decide  --dependency=afterany:A:B  <-+
+                            arm-decide (decide_and_launch.sbatch)
+                               ARM_A / ARM_B -> patch the 4 real seeds, verify, scancel mdw2_glpG*,
+                                                wipe replicas, block_count=0, submit_remd.sh x4
+                               NO_WINNER     -> exit 3, cancel nothing, launch nothing
+                               always        -> push_progress.sh (EXIT trap)
+```
+
+`decide_and_launch` is submitted by `run_arm_test`, not by `ff-check-cont`, because the two arm job
+ids do not exist until `run_arm_test` runs. If `run_arm_test` dies before queueing it, its `die()`
+writes the reason to `arm_verdict.txt` and runs `push_progress.sh`, so the failure still reaches git.
+
+**Arms.** A = plain hybrid + trained `pair_interaction` only. B = `martini_inject_coverage.py` adds
+`hbond_coverage` + `hbond_coverage_hydrophobe` (+ prerequisite `placement_fixed_point_vector_scalar`),
+then the full trained FF. Measured on the 79HIS seed: arm A energy −25107.28 (25 nodes), arm B
+−24995.55 (28 nodes) — the two coverage terms contribute **+111.73 E_up**. Full `/input` diff vs the
+pristine seed: arm A changes exactly one dataset; arm B changes that one and adds exactly 17.
+
+**Assertions before anything launches** (and again on the production seeds before any `scancel`):
+`exclude_intra_protein_martini == 1`, `current_stage == production`, and the three hybrid interface
+nodes present. Proven to fire: a tampered copy with the flag cleared exits 1 — and its energy jumps
+to **+51070** vs −24996, which is what dry-MARTINI acting inside the protein looks like.
+
+**Two toolchain traps, already handled.** The venv has pytables but *no h5py*; the module python has
+h5py but *no pytables*. Both sbatch scripts capture `PY_H5` before activating the venv and `PY`
+after, and assert both imports up front. Do not pip-install into the venv while training is live.
+
+**`decide_arm.py` frame selection.** It skips `output_previous_0` — that group is the seed's own
+pre-test `/output`, rotated there by the first `reseed()`, and is old-force-field data (~17% of
+frames). It also orders groups numerically, since a string sort puts `output_previous_10` before
+`output_previous_9`. Verified on real data: exit 2 / `NO_WINNER` with no trajectories, exit 0 with a
+winner otherwise; ~14 s for 12 replicas, so minutes for 56.
+
+**NP is deliberately excluded** from this chain (not urgent). `ff-check-cont` no longer patches NP,
+and the cancel pattern is `^mdw2_glpG` only. The four steps NP needs are written out in a marked
+block at the end of `decide_and_launch.sbatch`.
+
+**Backups before anything destructive:** seeds and NP replicas copied to `*.bak_pre_ff3_<stamp>`
+with `cp -n`. Reverting = copy them back.
 
 **GLY symmetry fix (complete as of 2026-09-04):** GLY Ramachandran maps are now symmetrized at the source: `parameters/common/rama.dat` (and the training copy `training/gly-sym/upside_input/rama.dat`) have had the `(phi, psi) -> (-phi, -psi)` symmetry applied to all GLY dimer entries (coil index 8, sheet index 7). Max residual asymmetry is 0.0 (was 6.3 E_up). The `upside_config.py` runtime patch has been removed (reverted to master). Training workers call `upside_config.py` at each step, which now reads the symmetric library automatically.
 
@@ -49,10 +166,14 @@ Snapshot **2026-09-04 ~15:30 CDT (verified live against `squeue`)**.
 
 **Init (2026-09-04 11:13):** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. GLY dp1 forced palindromic by `rotamer_parameter_estimation.py`.
 
-**Three ConDiv.py bugs fixed 2026-09-04 (all in `training/gly-sym/ConDiv.py`):**
-1. `--slurmd-debug=0` in the srun worker launch is restricted to root/SlurmUser on midway2 Slurm. Removed.
-2. `shutil.copy` does not set the execute bit on the copied `run_output/ConDiv.py`. Workers launched by srun with just `worker_path` got `execve() Permission denied`. Fixed by passing `sys.executable, worker_path` (same pattern as the non-Slurm branch).
-3. `compute_divergence` referenced `nonlinear_coupling_environment` but `upside_config.py`'s `--environment-potential-type` defaults to `1` (sigmoid), writing `sigmoid_coupling_environment` instead. Fixed by renaming the node reference in `compute_divergence`.
+**Seven bugs fixed 2026-09-04:**
+1. `--slurmd-debug=0` in the srun worker launch is restricted to root/SlurmUser on midway2 Slurm. Removed from ConDiv.py srun args.
+2. `shutil.copy` does not set the execute bit on the copied `run_output/ConDiv.py`. Workers launched by srun with just `worker_path` got `execve() Permission denied`. Fixed: pass `sys.executable, worker_path`.
+3. `compute_divergence` referenced `sigmoid_coupling_environment` (wrong intermediate fix) → reverted to `nonlinear_coupling_environment`. The env spline type must be 0 (nonlinear) for training, not 1 (sigmoid). Added `environment_potential_type=0` to kwargs in ConDiv.py worker call.
+4. `py/run_upside.py` checked `if environment_potential_type:` which is `False` for integer `0`. `--environment-potential-type=0` was never passed to upside_config.py, so all base.h5 files got the sigmoid node instead of nonlinear. Fixed: `if environment_potential_type is not None:`. Applied both locally and on the cluster.
+5. `compute_divergence` passed `coeff.shape = (20, 18)` → product 360 to `get_param_deriv`, but the C++ `NonlinearCoupling::get_param_deriv()` returns `coeff_grad (360) + weights_grad (400) = 760` elements concatenated. Fixed: read both `coeff.shape` and `weights.shape[0]`, call `get_param_deriv((760,), ...)`, then slice `full_grad[:360].reshape(20, 18)` to recover just the coeff gradient.
+6. `d_obj` in `backprop_deriv`: `rot_expect`, `hb_expect`, and `hyd_expect` were 1D tensors of shape `(n_knot_sc-2,)` / `(n_knot_hb-2,)`. PyTorch broadcasts 1D → last dim, but `rot_e`/`cov_e`/`hyd_e` have shape `(..., n_dist-2, n_ang-2, n_ang-2)`, so the subtraction `rot_e - rot_expect` tried to match dim 4 (13, angular) against the expectation (10, distance). Fixed: `.view(-1, 1, 1)` on all three expectations so they align with the distance dimension (dim 2). Applied locally and to remote `run_output/ConDiv.py`.
+7. Same fix as bug 6 but was NOT applied to the remote *main* ConDiv.py at `training/gly-sym/ConDiv.py`. The worker copy (`run_output/ConDiv.py`) only runs `compute_divergence`; `backprop_deriv`/`d_obj` run in the main process from `training/gly-sym/ConDiv.py`. Patched the correct file.
 
 **Submit rule:** always submit gly-sym (and all other training/simulation jobs) through the **midway2 SSH socket**. Submitting via the midway3 socket routes to caslake even when the sbatch script requests broadwl.
 
@@ -64,11 +185,13 @@ Note: checkpoint path must be relative to PROJECT_ROOT (the repo root), not to t
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48973026 | `glpG-RKRK-79HIS` | midway2 | PENDING (Resources) | Resubmitted 14:00 after the 48971711 requeue loop was fixed. `ExcNodeList=midway2-0003`, `block_count` reset 6 to 0. |
-| 48971712 | `glpG-RKRK-79HIS_S115T` | midway2 | RUNNING | block 1/12, 2 chunks done, 1 rollback (run.27) |
-| 48971713 | `glpG-RKRK-79ALA` | midway2 | RUNNING | block 1/12, 2 chunks done, 1 rollback (run.26) |
-| 48971714 | `glpG-RKRK-79ALA_S115T` | midway2 | RUNNING | block 1/12, 2 chunks done, 1 rollback (run.27) |
-| 48970780 | `np_1AO6_prod` | midway2 | RUNNING | 8.5 h, Restarts=0, 6 replicas all T=0.86. Log `NP-1AO6/prod/np.48970780.out`. **The NP campaign now runs on midway2, not midway3.** |
+| 48974448 | `mdw2_glpG-RKRK-*` | midway2 broadwl | RUNNING 8.5 h | One of 4 glpG variants. 79HIS is at block 13 (past REMD_MAX_BLOCKS=12, may finish naturally). Others at block 2. |
+| 48974449 | `mdw2_glpG-RKRK-*` | midway2 broadwl | RUNNING 17.4 h | |
+| 48974450 | `mdw2_glpG-RKRK-*` | midway2 broadwl | RUNNING 17.4 h | |
+| 48974451 | `mdw2_glpG-RKRK-*` | midway2 broadwl | RUNNING 17.4 h | |
+| 48974470 | `np_1AO6_prod` | midway2 broadwl | RUNNING 15.3 h | block_count=6. Log `NP-1AO6/prod/np.48974470.out`. |
+
+**NOTE:** When `ff-check-cont` (48976493) fires the install path, it will cancel all glpG and NP jobs, patch seeds/replicas with the new ff, delete glpG replicas, reset block_count=0, and submit fresh jobs for all 4 variants + NP.
 
 **Health measured 2026-09-03 13:45** (not inferred from exit codes):
 * Protein is live, not frozen: `potential[:,0]` std = 58 to 621 across recent groups (frozen signature is 0.000).
