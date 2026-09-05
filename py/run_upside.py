@@ -150,7 +150,7 @@ def upside_config(fasta,
 
     if environment_potential:
         args.append('--environment-potential=%s'%environment_potential)
-    if environment_potential_type:
+    if environment_potential_type is not None:
         args.append('--environment-potential-type=%s'%environment_potential_type)
     if environment_weights_number:
         args.append('--environment-weights-number=%s'%environment_weights_number)
