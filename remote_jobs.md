@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-05 ~13:00 CDT (training switched to the reference 8-replica ladder as job 48977118, resumed from step 84 with no progress lost; automation rewritten and live-tested after an audit found it would have failed at the finish line).**
+Snapshot: **2026-09-07 ~15:30 CDT (verified live against squeue). Training at step 324/500; the self-driving chain is armed and healthy, 0 stalls. All glpG and NP production has finished and is idle, waiting for the trained force field.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -35,14 +35,31 @@ Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-05 ~13:00 CDT (verified live against squeue)**.
+Snapshot **2026-09-07 ~15:30 CDT (verified live against squeue)**.
 
 ### midway2 — gly-sym core FF training + automation
 
 | JobID | Name | Cluster | State | Notes |
 |---|---|---|---|---|
-| 48977118 | `upside-gly-sym` | midway2 broadwl | PENDING (Resources) | **4 nodes, 12 tasks × 8 CPUs — 8-replica reference ladder.** Resumed from `run_output/epoch_02_minibatch_07/checkpoint.pkl` (step 84). Log: `training/gly-sym/upside-gly-sym_48977118.out`. |
-| 48977123 | `ff-check-cont` | midway2 broadwl | PENDING (Dependency on 48977118) | Rewritten auto-pipeline (see below). |
+| 48981235 | `upside-gly-sym` | midway2 broadwl | RUNNING 9:45 of 36 h, nodes midway2-[0381-0384] | 4 nodes, 8-replica reference ladder. Resumed from `run_output/epoch_07_minibatch_06/checkpoint.pkl` (step 271) for 180 steps, so it ends at step **451**. Log: `training/gly-sym/upside-gly-sym_48981235.out`. |
+| 48981236 | `ff-check-cont` | midway2 broadwl | PENDING (Dependency afterany:48981235) | Next chain link. Its snapshot has `MAX_STEPS=500`, so at 451 it takes the *continue* branch and submits one last 49-step job; the install fires on the check after that. |
+
+**Progress: 324 / 500 minibatches** (`find run_output -name checkpoint.pkl -path '*/epoch_*/checkpoint.pkl' | wc -l`).
+`.chain_stalls` = 0, `.chain_progress` = 271. Neither `.ff_installed` nor `.production_relaunched`
+exists yet, and `parameters/ff_3.0_trained/` has not been created — the install has not fired.
+
+**Rate has recovered.** 652 s/step over the last 20 steps, against the 915 s/step degraded rate that
+`STEPS_PER_JOB=130` was sized for. Projection at 652 s/step: 48981235 reaches step 451 around
+**2026-09-08 14:20** (inside its 17:46 wall), the 49-step tail finishes ~**09-08 23:30** plus queue,
+and the FF install fires early **09-09**.
+
+**Two survived node failures.** 48977380 and 48980825 both ended `NODE_FAIL`; the `afterany`
+`ff-check-cont` link caught each one and resubmitted from the latest checkpoint with no lost steps.
+The chain does not need a human after a node failure.
+
+**`MAX_STEPS` was cut 600 → 500** to hold the Thursday deadline against the srun-credential slowdown.
+That was a heuristic bound, not a convergence criterion. `NSTEPS` is clamped to `MAX_STEPS - N_DONE`,
+so the run stops exactly at 500.
 
 **2026-09-05 — replica ladder restored to the reference protocol.** `ConDiv.py:54` `n_threads`
 sets BOTH the OpenMP thread count AND the REMD replica count (`ConDiv.py:397`). `srun_mdw2.sh`
@@ -321,15 +338,24 @@ Note: checkpoint path must be relative to PROJECT_ROOT (the repo root), not to t
 
 ### midway2 — POPE/POPG REMD (correct seeds, all 6 GLY fixed)
 
-| JobID | Name | Cluster | State | Notes |
-|---|---|---|---|---|
-| 48974448 | `mdw2_glpG-RKRK-*` | midway2 broadwl | RUNNING 8.5 h | One of 4 glpG variants. 79HIS is at block 13 (past REMD_MAX_BLOCKS=12, may finish naturally). Others at block 2. |
-| 48974449 | `mdw2_glpG-RKRK-*` | midway2 broadwl | RUNNING 17.4 h | |
-| 48974450 | `mdw2_glpG-RKRK-*` | midway2 broadwl | RUNNING 17.4 h | |
-| 48974451 | `mdw2_glpG-RKRK-*` | midway2 broadwl | RUNNING 17.4 h | |
-| 48974470 | `np_1AO6_prod` | midway2 broadwl | RUNNING 15.3 h | block_count=6. Log `NP-1AO6/prod/np.48974470.out`. |
+**No glpG or NP job is running.** All of them ran to `COMPLETED` on 2026-09-05 and nothing resubmitted
+them, because the only thing that will is the chain's `decide_and_launch.sbatch`:
 
-**NOTE:** When `ff-check-cont` (48976493) fires the install path, it will cancel all glpG and NP jobs, patch seeds/replicas with the new ff, delete glpG replicas, reset block_count=0, and submit fresh jobs for all 4 variants + NP.
+| JobID | Name | Ended | Outcome |
+|---|---|---|---|
+| 48974448 | `mdw2_glpG-RKRK-79HIS` | 2026-09-05T16:24 | COMPLETED after 21:04:56. The other three variants finished alongside it. |
+| 48974470 | `np_1AO6_prod` | 2026-09-05T15:59 | COMPLETED after 1-03:19:47. |
+
+This is the intended resting state, not a fault: production is deliberately idle on the old force
+field until the trained tables exist. The consequence is that `decide_and_launch.sbatch` will find
+nothing for its `scancel mdw2_glpG*` to cancel, which is harmless — the resubmit step is what matters.
+The pre-install TM baseline is already captured in `popepopg_REMD_mdw2/BASELINE_TM_pre_ff3.txt`
+(79HIS TM4 mean_helix 0.645, 79HIS_S115T 0.474, 79ALA 0.571), and the four `seeds/*.up` files are
+in place for the coverage injection.
+
+**NP is out of the chain** and must be started by hand from `NP-1AO6/build_np_ff3.py`; it is being
+rebuilt from scratch rather than patched, because its replicas carry 98 accumulated output groups
+(246 GB) of old-FF unfolded coordinates.
 
 **Health measured 2026-09-03 13:45** (not inferred from exit codes):
 * Protein is live, not frozen: `potential[:,0]` std = 58 to 621 across recent groups (frozen signature is 0.000).
