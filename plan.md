@@ -22,6 +22,32 @@ production launched → progress pushed to git. No human in the loop after Sep 9
 7. Launch glpG production on the winning arm. NP later (not urgent).
 8. `push_progress.sh` — commit + push so the result is readable off-cluster.
 
+## NP: rebuilt from scratch, NOT in the Thursday chain
+
+Decided 2026-09-07. NP is **out** of `decide_and_launch.sbatch` and will be rebuilt from scratch on
+the trained FF afterwards, for two independent reasons:
+
+* **Disk.** Each of the 6 replicas is ~41 GB carrying 98 accumulated `output_previous_*` groups
+  (246 GB total). Resetting `block_count` and appending a fresh 8-block campaign adds ~330 GB and
+  crosses the 1.64 T hard group quota, i.e. ENOSPC mid-write and a corrupt HDF5 file.
+* **Physics.** `run_np_prod.py` reseeds `/input/pos` from `output/pos[-1]`, so the current
+  coordinates are a partly unfolded, partly adsorbed structure produced by the OLD force field
+  (Rg reached 230 Å). Patching in place would continue an old-FF trajectory under a new FF.
+
+Build assets survive on the cluster in `NP-1AO6/`: `np_hybrid.py` (FCC gold core, MPA tethering,
+ions, hybrid assembly — imported as a library), `build_k190.py`, `build_k190_proximal.py`,
+`1AO6_A.pdb`, `orientation_map.txt`. Only the `build_all.py` wrapper was lost with the gitignored
+scratchpad. `np_hybrid.py` hardcodes `parameters/ff_2.1/` and must be retargeted at
+`parameters/ff_3.0_trained/` for `sidechain.h5`/`environment.h5` only — `hbond.h5`, `sheet` and
+`martini.h5` were **not** trained and stay at ff_2.1.
+
+**The rebuild must use whichever coverage recipe wins the arm test**, so NP and glpG finally share
+one Hamiltonian. That is the whole point of doing it this way rather than patching.
+
+Unresolved: `prod/orientation_map.txt` records cardinal Euler faces while `build_k190_proximal.py`
+builds K190-proximal perturbations, and `remote_jobs.md` / `progress.md` disagree about which the
+current replicas are. Must be settled from the files themselves before rebuilding.
+
 ## Decisions fixed in advance (cannot be asked on Thursday)
 
 * **Health gate** (both arms): all potentials finite, Rg 15–25 Å, < 5 stretched peptide C–N bonds

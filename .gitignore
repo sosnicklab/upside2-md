@@ -32,3 +32,4 @@ parameters/dryMARTINI/*.h5
 *scratchpad*
 backup/*
 training/*
+*.bak_*

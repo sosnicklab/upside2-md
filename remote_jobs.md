@@ -107,6 +107,68 @@ is not the same force field that was trained. Verified directly from the files, 
 `ff-check-cont` picks it up). To re-enable installing after one has happened, remove
 `$PROJECT/training/gly-sym/.ff_installed`.
 
+### Disk: the GPFS group quota is the binding limit, NOT `df`
+
+`df -h /project` reports over a terabyte free and is **misleading**. The real constraint is the
+per-group GPFS quota, visible only via `rcchelp quota`:
+
+```
+trsosnic   blocks (group)   used 1.45T   soft 1.49T   hard 1.64T
+           files  (group)   used 596023  soft 728600  hard 801460
+```
+
+Exceeding the hard limit fails writes with ENOSPC, which can corrupt an HDF5 file mid-write — the
+worst possible failure for an unattended run. Check `rcchelp quota` before anything that writes tens
+of GB. Note the quota accounting updates on a timer, so it lags a large delete by minutes; verify
+with `du` instead of waiting for the number to move.
+
+**Footprints measured 2026-09-07:** training `run_output` ~17 MB per minibatch (~10 GB for a full
+600-step run); a glpG seed is 191 MB, so a 28-replica arm costs 5.2 GB before trajectory growth and
+the two-arm test ~14 GB all-in; each glpG variant's live replicas run 22.5 GB and the whole variant
+directory reaches 43-53 GB once trajectories accumulate. `decide_and_launch` deletes the live
+replicas before resubmitting, so the relaunch is net **-69 GB**, not a cost.
+
+**2026-09-07 cleanup, 69 GB reclaimed.** Deleted three sets of replica trajectory backups whose data
+this file already rules out — `.bak_alphaL_run` (112 files, 27.5 G, alphaL era), `.bak_broken_gly_2`
+(112 files, 25.8 G, pre-GLY-fix) and NP `.bak_broken_gly` (6 files, 14.9 G). All seed-level backups
+were kept (`.bak_rigid_stage`, `.bak_broken_gly` seeds, `.bak_alphaL_restart`, 2.25 GB total) since
+they are the cheap record of seed state. Take care with the patterns: glpG has a *seed* set named
+`.bak_broken_gly` that must survive while NP's *replica* set of the same name is the 14.9 GB target.
+
+### sbatch propagates the submitter's environment — this broke the whole chain once
+
+**2026-09-06, found the hard way.** `check_continue.sbatch` requests `#SBATCH --mem=8G`, which puts
+`SLURM_MEM_PER_NODE` in its environment. `sbatch` hands that environment to the job it submits, and
+`srun_mdw2.sh` requests `--mem-per-cpu`, which sets `SLURM_MEM_PER_CPU`. With both present every
+worker launch died instantly:
+
+```
+srun: fatal: SLURM_MEM_PER_CPU, SLURM_MEM_PER_GPU, and SLURM_MEM_PER_NODE are mutually exclusive.
+```
+
+All 12 workers failed, `run_minibatch` raised `All jobs failed`, and the job exited in under a
+minute. `check_continue` resubmitted, the new job died the same way, three times — then the
+forward-progress guard correctly aborted the chain at `stall 3/3` with training frozen at 236/600.
+
+**This path had never executed before.** Every training job until then was submitted by hand from an
+interactive shell, which has no `SLURM_MEM_*` set. The one job `check_continue` did submit was
+cancelled before it ran. So the chain's only resubmit path was broken from the day it was written and
+nothing revealed it. Had it stayed hidden, the unattended run would have aborted and produced nothing.
+
+Fixed by unsetting the three mutually-exclusive variables after the `#SBATCH` block in every script
+that submits another job — `check_continue.sbatch`, `run_arm_test.sbatch`, `decide_and_launch.sbatch`.
+Unsetting them does not change the running job's own allocation; Slurm has already granted it.
+
+Verified by execution, not inspection: `check_continue` was rerun with no dependency so it performed a
+real resubmission, and the resulting job showed 0 `mutually exclusive` errors, 12/12 worker outputs,
+96 replica `.h5` files (12 workers x 8 replicas), 0 `WORKER_FAIL`, and `MinMemoryCPU=2000M` as the
+only memory variable.
+
+**The general rule: a nested `sbatch` inherits `SLURM_*` from the job that calls it.** Before adding
+any new submitting script, sanitize that environment or match the memory-request *type* of the child.
+`remd.sbatch`, `np_prod.sbatch` and `armtest_remd.sbatch` set no `--mem` at all, so they were never
+exposed — but they are equally reliant on the caller not leaking a conflicting pair.
+
 ### Slurm snapshots the batch script at submission — two bugs came from this
 
 **A requeue restarts training from a STALE checkpoint and destroys newer ones.** Job 48977118 was
@@ -198,7 +260,45 @@ down. Only `squeue`/`sbatch` need midway2. The chain is unaffected by a login-no
 **Backups before anything destructive:** seeds and NP replicas copied to `*.bak_pre_ff3_<stamp>`
 with `cp -n`. Reverting = copy them back.
 
-**GLY symmetry fix (complete as of 2026-09-04):** GLY Ramachandran maps are now symmetrized at the source: `parameters/common/rama.dat` (and the training copy `training/gly-sym/upside_input/rama.dat`) have had the `(phi, psi) -> (-phi, -psi)` symmetry applied to all GLY dimer entries (coil index 8, sheet index 7). Max residual asymmetry is 0.0 (was 6.3 E_up). The `upside_config.py` runtime patch has been removed (reverted to master). Training workers call `upside_config.py` at each step, which now reads the symmetric library automatically.
+**GLY symmetry: there are TWO rama libraries, and picking the wrong one is the whole hazard.**
+
+| file | GLY asymmetry | belongs to |
+|---|---|---|
+| `parameters/common/rama.dat` | coil 6.31, sheet 67.47 E_up | the **old** force field — asymmetric *by design*, leave it alone |
+| `parameters/common/rama3.dat` | **0.0000 / 0.0000** | the **GLY-symmetric** force field — use this for anything trained |
+| `training/gly-sym/upside_input/rama.dat` | 0.0000 / 0.0000 | training's copy, byte-identical to `rama3.dat` |
+
+`rama3.dat` and the training copy have the same md5 (`932649af…`); `rama.dat` is `996a607b…`.
+
+**Every existing config is already correct.** glpG seeds, glpG live replicas and NP live replicas all
+measure worst GLY `sym_err = 0.000000` (chiral controls 11.2 E_up, so the metric does detect real
+chirality). The arm test copies existing seeds, so it is unaffected.
+
+**The real defect was in the NP builder, not the library.** `np_hybrid.upside_ff_paths()` hardcodes
+`common/rama.dat`, so a trained-ff build would have silently produced αL-biased GLY maps — the
+documented TM4 failure mode. Fixed 2026-09-07: `build_np_ff3.py` takes `--rama-library`, defaulting
+to `rama3.dat`, and `np_hybrid.build_system(spec, work_dir, ff=None)` now accepts an ff override
+(default unchanged, so `build_k190*.py` still work).
+
+Note the trap that override exposed: overriding the dict in the *caller* was not enough, because
+`build_system` re-derived the paths internally. The symmetry check would have printed
+"GLY rama asymmetry 0" while the build used the asymmetric file. **Verify that a force-field
+override reaches the writer, not just the pre-flight check.**
+
+**Do NOT "fix" `parameters/common/rama.dat`.** It is deliberately the old force field's library.
+Overwriting it with the symmetric maps (attempted and reverted 2026-09-07) silently changes the old
+force field for every consumer — `py/martini_prepare_system.py` and all of
+`example/08.MembraneSimulation/` read it.
+
+**Two grid conventions, and they differ — this cost a false alarm.** The GLY mirror
+`(phi,psi) -> (-phi,-psi)` is:
+* `m[::-1, ::-1]` for the `.up` `rama_map_pot/rama_pot` maps (bin centres at `-180+(i+0.5)*5`);
+* `roll(m[::-1, ::-1], 1)` for the library's `dimer_pot` (bin centres at `-180+i*5`).
+
+Using the library convention on a `.up` map fabricates ~3.3 E_up of asymmetry on perfectly good
+seeds. Always validate the metric against a chiral control (ALA/SER/HIS must show ~10-11 E_up) and
+against `dG(aR->aL)`, which is the physically meaningful quantity and reads exactly 0.000 on a
+correctly symmetrized map.
 
 **CWD fix:** `srun_mdw2.sh` now `cd "$PROJECT_ROOT"` before running ConDiv; the checkpoint stores relative paths from the project root.
 
