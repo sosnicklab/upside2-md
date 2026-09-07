@@ -849,6 +849,66 @@ nor the analysis, and the two datasets must not be compared as if they differed 
 **Check the environment's contact with the protein, not just the protein's position in the environment.**
 Insertion depth and Rg were both correct and constant here while half the protein-lipid contact was missing.
 
+### TM4 needs the retrained tables AND the coverage nodes — neither alone is enough (2026-09-07)
+
+Measured locally, four arms from one pristine glpG seed, three paired replicates each (seeds
+1234/2345/3456), T=0.70, dt=0.009, 300 k steps (2700 time units). The trained force field was a
+mid-training snapshot at step 269/500 of the ConDiv retraining of ff_2.1.
+
+| arm | diverged | TM4 helix fraction | TM1 helix | Rg mean |
+|---|---|---|---|---|
+| CONTROL — ff_2.1, no coverage nodes | 0/3 | 0.441 [0.298-0.633] | 0.800 | 20.15 |
+| ARM A — trained `pair_interaction` only | **1/3** | 0.588 [0.495-0.668] | 0.783 | 20.23 |
+| ARM C — ff_2.1 tables + coverage nodes | 0/3 | 0.562 [0.318-0.766] | 0.814 | 20.30 |
+| ARM B — trained pair + coverage nodes | 0/3 | **0.782 [0.657-0.863]** | 0.832 | 19.48 |
+
+**The two causes are synergistic, not additive.** Restoring the coverage nodes with *old* tables
+(ARM C, 0.562) and installing the *new* tables without the nodes (ARM A, 0.588) both land inside the
+control's replicate spread — neither fixes TM4. Only both together (ARM B, 0.782) clears it, with
+every replicate above 0.65 and the worst beating the control's best. TM4 goes from roughly half of
+TM1 to parity with it.
+
+This is what "the pair term was co-trained with coverage" predicts: the trained pair table is only
+correct in the presence of the partners it was optimized against, and glpG sets those to zero.
+
+**Corollary for the hybrid builder:** restoring `hbond_coverage` + `hbond_coverage_hydrophobe` is
+worth doing only *together* with the retrained tables. That is why RD1 (findings 103) measured no
+benefit — it restored the terms with old parameters, which is exactly ARM C.
+
+**ARM A diverges deterministically on one seed.** Seed 1234 blew up at t=2490.8 in two independent
+rounds with an identical signature: potential jumps -23462.7 -> -22142.0 (+1320 E_up in one frame
+interval), then seven consecutive peptide C-N bonds across residues 136-145 (inside TM4) stretch to
+2.10-2.73 A against a 1.33 A equilibrium, and the box goes NaN one frame later. Seeds 2345 and 3456
+ran the full 2700 clean. 1/3 against 0/9 for the other arms is suggestive, not significant, but a
+blow-up is a hard failure rather than a graded observable, and it starts in the TM4 backbone.
+
+**Caveats.** n=3 with wide spreads (control TM4 ranged 0.298-0.633 across seeds); single-temperature,
+single-replica-per-seed, no REMD; mid-training force field. `rama_map_potential` std varied 360-1955
+across runs, far more than expected and **unexplained** — do not read that column as a health metric
+until it is understood.
+
+### A stopping criterion for the retraining, measured rather than guessed (2026-09-07)
+
+`MAX_STEPS` was originally a guessed heuristic. Cumulative rms drift of `pair_interaction` from
+ff_2.1, sampled across the run:
+
+| step (approx) | cumulative drift | added since previous |
+|---|---|---|
+| 29 | 0.487 | +0.394 |
+| 59 | 0.637 | +0.150 |
+| 97 | 0.745 | +0.108 |
+| 158 | 0.834 | +0.089 |
+| 187 | 0.908 | +0.074 |
+| 217 | 0.983 | +0.075 |
+| 246 | 1.057 | +0.075 |
+| 269 | 1.188 | +0.063 |
+
+Against an initial rms of 2.965, 269 steps moved `pair_interaction` **40%**, `coverage_interaction`
+45% and `hydrophobe_interaction` 41%. The drift decelerates sharply over the first ~60 steps and then
+settles into a slow near-linear crawl of ~0.07 per 30 steps — it does **not** asymptote to zero, so
+there is no natural convergence point. The first ~60 steps carry the bulk of the refinement; the tail
+is the least productive part. Use this table, not a round number, to justify where to stop.
+
 ---
 
 ## 5. HDX: what the estimator measures and how to read it
