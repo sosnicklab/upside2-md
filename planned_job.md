@@ -95,6 +95,19 @@ Note it reads only `output_previous_*` groups, so for a fresh run point it at `/
 
 ---
 
+## Local artifacts (survive a reboot)
+
+`scratchpad/ff3_retraining/` on the persistent disk, gitignored:
+
+* `local_glpG_test/RESULTS_FULL.txt` + 18 run logs — the four-arm experiment record
+* `verify_rama.py`, `gly_final.py` — GLY symmetry checks with the **correct** mirror convention
+* `converge.py`, `drift.py` — the parameter-drift stopping criterion
+* `verify_ff.py` — proves `extract_ff.py` output matches what training itself writes
+* copies of every deployed chain script, and `np/build_np_ff3.py` + `verify_np_ff3.py`
+* `ConDiv_original.py` — the upstream reference the training code was diffed against
+
+The cluster copies are authoritative for anything the chain executes; these are the reference set.
+
 ## Open items
 
 * **TM4 is likely but not proven fixed.** ARM B measured 0.782 against a >0.8 pass criterion, at
