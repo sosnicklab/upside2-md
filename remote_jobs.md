@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-07 ~21:40 CDT. RCC STORAGE OUTAGE. Training stalled at step 338/500 since ~17:42 CDT with every worker wedged in GPFS I/O wait; midway2 login nodes refuse SSH and midway3 has lost its GPFS mounts, so job 48981235 cannot be cancelled and no cluster file can be read. Training has been resumed LOCALLY on the Mac from a reconstructed step-269 checkpoint.**
+Snapshot: **2026-09-08 ~09:15 CDT. RCC STORAGE OUTAGE ONGOING. ff3.0 training now runs as a SINGLE rockfish job (30725720, step 327/500) continuing the half-trained force field; the Mac run and the second rockfish trainer were retired at the user's request. midway2 is cancelled and unusable. Training was stalled at step 338/500 since ~17:42 CDT with every worker wedged in GPFS I/O wait; midway2 login nodes refuse SSH and midway3 has lost its GPFS mounts, so job 48981235 cannot be cancelled and no cluster file can be read. Training has been resumed LOCALLY on the Mac from a reconstructed step-269 checkpoint.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -55,34 +55,42 @@ Snapshot **2026-09-07 ~15:30 CDT (verified live against squeue)**.
 
 ### midway2 — gly-sym core FF training + automation
 
-**The cluster is unreachable as of 2026-09-07 ~21:05 CDT. Nothing here can be queried or changed
-until RCC restores storage.**
+**midway2 has no jobs. Its filesystem is still wedged and it cannot host a trainer.**
 
-| JobID | Name | Cluster | State | Notes |
-|---|---|---|---|---|
-| 48981235 | `upside-gly-sym` | midway2 broadwl | RUNNING but **wedged**, no progress since ~17:42 CDT | Last completed epoch 8 / minibatch 33 = step **338/500** (550 s, normal). All 9 workers on `midway2-[0382-0384]` sit in `D` state at 00:00:00 CPU, wchan `cxiWaitEventWait` / `lookup_slow`. Wall limit 2026-09-08 17:46. Log: `training/gly-sym/upside-gly-sym_48981235.out`. |
-| 48981236 | `ff-check-cont` | midway2 broadwl | PENDING (Dependency afterany:48981235) | Fires when 48981235 ends. If storage is healthy by then it resubmits from the newest checkpoint on its own. A job whose tasks are stuck in `D` can hang in COMPLETING, which would leave the dependency unsatisfied and the chain frozen. |
+| JobID | Name | Outcome |
+|---|---|---|
+| 48981235 | `upside-gly-sym` | **CANCELLED** 2026-09-08 00:45 CDT after 18:53:06, of which the last ~7 h did nothing. Sat in `COMPLETING` for minutes because its workers were in uninterruptible `D` state, then cleared on its own — no RCC intervention was needed. |
+| 48981236 | `ff-check-cont` | **CANCELLED** deliberately, at the same time. With `afterany` it would have fired the moment 48981235 ended and resumed training from the step-338 checkpoint into the poisoned `run_output`, re-wedging on the same inode. |
 
-**Cannot be cancelled, and the reason is NOT established.** `midway2.rcc.uchicago.edu:22` returns
-`Connection refused` from this Mac. Two readings fit, and they call for different actions:
+**Login access is restored but the filesystem is not.** SSH works via the midway3 tunnel (see below),
+`squeue`/`scancel`/`sbatch` all respond because they are Slurm daemons and touch no files, and
+`ls -d` of `training/gly-sym` returns. Everything of substance still hangs: reading
+`upside-gly-sym_48981235.out`, listing `run_output`, `stat` on the step-338 checkpoint, even loading
+the project `.venv` python.
 
-1. **Our IP is banned on midway2** (a reject rule / fail2ban). Supporting: both login nodes **answer
-   ICMP** while midway3 — where SSH works — does not; the refusal began within ~2 min of two
-   accidental password attempts at ~21:03 CDT; `planned_job.md:86` records a previous ban from this
-   exact trigger that took ~3 h to clear and needed a VPN. Remedy: connect the UChicago VPN, which
-   changes the source address.
-2. **sshd is stopped on the login nodes**, whether it died on the hung filesystem or RCC stopped it
-   while handling the incident. Supporting: `/project` was already stalling on `midway2-login1`
-   beforehand.
+**`timeout` does not help, and each attempt costs a session.** A GPFS read in `D` state is
+uninterruptible, so `timeout 20 ls <wedged path>` neither returns nor dies — it hangs the shell and
+holds a ControlMaster channel until the mux refuses new sessions. Do not probe the wedged tree
+interactively.
 
-Do not assert either one. **The test is to reach midway2:22 from a different source address** — VPN,
-phone hotspot, or any host outside this network. Probing from inside RCC has no discriminating
-power: outbound port-22 connections from `midway3-login5` are themselves blocked, and the control
-target `midway3-login1` — where a live session proves sshd is up — returned no banner either.
+**Probe it with a Slurm job instead, and read the verdict from the exit code.** This touches no
+files from the login node and cannot hang a session:
 
-**If our IP is banned, the recovery watcher is worthless.** It polls port 22 from this machine and
-would report "still down" indefinitely, including long after midway2 is healthy. Settle the
-source-IP question before trusting its silence.
+```bash
+sbatch --parsable -p broadwl -A pi-trsosnic -N1 -n1 -t 5 --job-name=fs-probe --output=/dev/null \
+  --wrap="timeout 30 ls $D/upside_input >/dev/null || exit 11; ... exit 0"
+sacct -j <jid> -o State,ExitCode -n
+```
+`COMPLETED 0:0` = healthy; `11` upside_input, `12` srun_mdw2.sh, `13` run_output, `14` the step-338
+checkpoint; **`TIMEOUT` = still wedged**. Probe 48984472 came back **TIMEOUT after 5:17 on a fresh
+node (midway2-0177)**, which proves the filesystem itself is sick rather than a stale client on the
+original nodes. A watcher now resubmits this probe every 30 min.
+
+**When it does come back, midway2 is the best host, not just an extra one:** its step-338 checkpoint
+is 60 steps ahead of everything running now and carries the genuine Adam state, and at 565 s/step it
+beats rockfish's 516-679 s. The move at that point is to resume it from
+`run_output/epoch_08_minibatch_33/checkpoint.pkl` into a **fresh** run directory (never the poisoned
+one) and retire the Mac. `scratchpad/ff3_retraining/handoff_to_mdw2.sh` encodes the comparison.
 
 **The outage is filesystem-wide, not one bad node.** Evidence gathered 2026-09-07 21:00-21:30 CDT:
 
@@ -146,7 +154,31 @@ identical to `parameters/common/rama3.dat` (the GLY-symmetric library) and NOT t
 
 | JobID | Name | State | Notes |
 |---|---|---|---|
-| **30725720** | `upside-ff3` | **RUNNING** on `c[625,655]` since 2026-09-07 23:49 CDT, **48 h wall** | Resumed at **step 275**, running **225 steps to 500**. Log `training/gly-sym/upside-ff3_30725720.out`, run dir `training/gly-sym/run_output_ff3/`. |
+| **30725720** | `upside-ff3` (trainer A) | **RUNNING** on `c[625,655]` since 2026-09-07 23:49 CDT, 48 h wall | Resumed at **step 275**, 225 steps to 500. Log `upside-ff3_30725720.out`, run dir `run_output_ff3/`. |
+| **30725855** | `upside-ff3b` (trainer B) | **RUNNING** on `c[164,187]` since 2026-09-08 00:52 CDT, 48 h wall | Resumed at **step 280** from trainer A's own checkpoint (`solver step_num 11`), 220 steps to 500. Log `upside-ff3b_30725855.out`, run dir `run_output_ff3b/`. |
+
+| 30726466 | `upside-ff3-cont` | PENDING (`afterany:30725720`) | Chain link, in case one 48 h wall is not enough. |
+
+**Retired 2026-09-08 09:12 CDT at the user's request, once trainer A was clearly ahead and healthy:**
+
+| what | final state |
+|---|---|
+| rockfish trainer B, `30725855` + link `30726467` | CANCELLED at step 326. Run dir `run_output_ff3b/` left on disk. |
+| the Mac run, PID 9228 | stopped at **step 304** after 35 minibatches, 0 failures. Checkpoints kept in `training/gly-sym/run_output_local269/`. |
+
+The Mac had done its job: it carried training through the hours when both RCC clusters were
+unreachable, and its step-274 checkpoint is what seeded rockfish. By 09:10 it was 23 steps behind
+and 1.8x slower, and two independent rockfish runs already covered the "one run goes bad" case.
+
+**Its worker processes do not die with the driver.** `kill <driver>` leaves the 12
+`ConDiv.py worker` subprocesses and their `upside` children running on all 20 cores. Stop them in
+order: `kill <driver>`, then `pkill -f 'ConDiv.py worker'`, then `pkill -x upside`, and confirm with
+`pgrep -cf ConDiv.py` and `pgrep -cx upside` both reading 0.
+
+**Trainer A (30725720) is now the single source of the deliverable.** It resumed at step 275 from
+the Mac's verified checkpoint and has run without a failure since; extract the force field from its
+newest checkpoint under `run_output_ff3/`. Charged to `rherna21`: a few thousand core-hours of
+1,150,000.
 
 **Measured rate: 516 s/minibatch** (first step, 0 failures, Median RMSD 0.86 / 2.32). That is 1.1x
 midway2's 565 s and 2.2x the Mac's 1141 s — the 390 s projected from clock speed was optimistic.
