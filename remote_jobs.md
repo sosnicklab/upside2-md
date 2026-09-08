@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-08 ~09:15 CDT. RCC STORAGE OUTAGE ONGOING. ff3.0 training now runs as a SINGLE rockfish job (30725720, step 327/500) continuing the half-trained force field; the Mac run and the second rockfish trainer were retired at the user's request. midway2 is cancelled and unusable. Training was stalled at step 338/500 since ~17:42 CDT with every worker wedged in GPFS I/O wait; midway2 login nodes refuse SSH and midway3 has lost its GPFS mounts, so job 48981235 cannot be cancelled and no cluster file can be read. Training has been resumed LOCALLY on the Mac from a reconstructed step-269 checkpoint.**
+Snapshot: **2026-09-08 ~15:30 CDT. The RCC storage outage is OVER. ff3.0 training runs on TWO hosts — midway2 `48988330` and rockfish `30725720`, both at step ~355/500, finishing 2026-09-09 afternoon. The install chain is RE-ARMED as `48994406` (`ff-check-cont`, afterany:48988330) and now hands off to a retargeted arm test that compares the two trained force fields instead of two coverage recipes. Measured 2026-09-08: the two runs differ by 15-17% rms on every trained table, a third of the whole training signal, so that test is not a formality. glpG production is idle (all four variants COMPLETED 2026-09-05), so the launch has nothing to cancel. OWED: extract rockfish's step-500 force field into `parameters/ff_3.0_trained_rf/` with a matching `STEP` file, or the test runs one-armed.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -33,14 +33,19 @@ Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
 
 **rockfish** (JHU ARCH — added 2026-09-07 as the outage-proof host for ff3.0 training):
 ```bash
-ssh rockfish                                   # key auth, NO Duo: ~/.ssh/rockfish, user ywang268
-bash scratchpad/rf.sh '<command>'              # same, with the login banner stripped
+ssh -o BatchMode=yes -o ConnectTimeout=25 rockfish '<command>'   # key auth, NO Duo
+# ~/.ssh/rockfish, user ywang268. Strip the banner by emitting your own marker first:
+ssh -o BatchMode=yes rockfish 'echo === ; <command>' | sed -n '/^===/,$p'
+# A BINARY file needs base64, not cat: the banner is on stdout and prepends 1659 bytes.
+ssh -o BatchMode=yes rockfish 'echo __B64__; base64 <file>' 2>/dev/null \
+  | sed -n '/^__B64__$/,$p' | tail -n +2 | base64 -d > local_file   # then check md5 both sides
 ```
 Key-based, so this host needs no interactive second factor and can be polled freely. The login
 banner (survey notice + quota tables) is **not** a clean shell: it breaks `rsync` outright
-(`protocol incompatibility`), so transfer with `tar czf - … | ssh rockfish "tar xzf - -C …"` and run
-commands through `scratchpad/rf.sh`. Host key was verified over two independent network paths (this
-Mac and midway3) before being recorded, since ARCH publishes no fingerprints:
+(`protocol incompatibility`) and `scp` with `Received message too long`, so transfer with
+`tar czf - … | ssh rockfish "tar xzf - -C …"` or `cat file | ssh rockfish "cat > dest"`. Host key was
+verified over two independent network paths (this Mac and midway3) before being recorded, since ARCH
+publishes no fingerprints:
 `ED25519 SHA256:V58d1zhfocFT/JR90J3HqMw6uJTLhn+Nc58NfnoJqM8`.
 
 Paths: repo `/scratch4/rherna21/ywang268/upside2-md-rf` (`$RF`), scratch4 group quota 15 TB with
@@ -51,104 +56,196 @@ without it `module load` silently does nothing.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-07 ~15:30 CDT (verified live against squeue)**.
+Snapshot **2026-09-08 ~14:00 CDT (verified live against `squeue` on both hosts)**.
 
-### midway2 — gly-sym core FF training + automation
+### midway2 — gly-sym core FF training
 
-**midway2 has no jobs. Its filesystem is still wedged and it cannot host a trainer.**
+**RUNNING again.** The GPFS outage cleared and training resumed 2026-09-08 10:41 CDT.
 
-| JobID | Name | Outcome |
+| JobID | Name | State | Notes |
+|---|---|---|---|
+| **48988330** | `upside-gly-sym` | **RUNNING** on `midway2-[0027,0150,0260,0269]` since 2026-09-08 10:41 CDT, 1-12:00:00 wall (ends 2026-09-09 22:41 CDT) | Resumed from `run_output/epoch_08_minibatch_33/checkpoint.pkl` = step 338, "for 162 steps". Newest written checkpoint `epoch_09_minibatch_14` = **step 357** as of 15:20 CDT. 0 failures. Log `upside-gly-sym_48988330.out`, run dir `run_output/`. |
+| **48994406** | `ff-check-cont` | PENDING (`afterany:48988330`) | The armed install chain. See below. |
+
+It resumed into the **existing** `run_output`, not the fresh directory the recovery plan called for,
+and the previously wedged inodes gave no trouble. `fs-probe 48988264` returned **COMPLETED 0:0**
+after the 16 probes before it all read TIMEOUT; that is what unblocked the resume.
+
+`.ff_installed` and `.production_relaunched` are absent, so no destructive step fired during the
+outage and production was never at risk. `parameters/ff_3.0_trained/` does not exist yet.
+
+**`continue_mdw2.sbatch` deliberately does not install the force field** — its own header says
+"Deliberately NOT check_continue.sbatch: that script installs the trained force field". The install
+scripts are all still present in `training/gly-sym/` (`check_continue.sbatch`,
+`decide_and_launch.sbatch`, `extract_ff.py`, `patch_seeds.py`, `check_hybrid_up.py`,
+`check_quota.py`, `push_progress.sh`, `tm_health.py`), but **nothing is armed to call them**.
+
+### glpG production is IDLE — all four variants finished 2026-09-05
+
+| JobID | variant | elapsed |
 |---|---|---|
-| 48981235 | `upside-gly-sym` | **CANCELLED** 2026-09-08 00:45 CDT after 18:53:06, of which the last ~7 h did nothing. Sat in `COMPLETING` for minutes because its workers were in uninterruptible `D` state, then cleared on its own — no RCC intervention was needed. |
-| 48981236 | `ff-check-cont` | **CANCELLED** deliberately, at the same time. With `afterany` it would have fired the moment 48981235 ended and resumed training from the step-338 checkpoint into the poisoned `run_output`, re-wedging on the same inode. |
+| 48974448 | `mdw2_glpG-RKRK-79HIS` | 21:04:56 |
+| 48974449 | `mdw2_glpG-RKRK-79HIS_S115T` | 1-04:34:07 |
+| 48974450 | `mdw2_glpG-RKRK-79ALA` | 1-05:23:26 |
+| 48974451 | `mdw2_glpG-RKRK-79ALA_S115T` | 1-05:03:45 |
 
-**Login access is restored but the filesystem is not.** SSH works via the midway3 tunnel (see below),
-`squeue`/`scancel`/`sbatch` all respond because they are Slurm daemons and touch no files, and
-`ls -d` of `training/gly-sym` returns. Everything of substance still hangs: reading
-`upside-gly-sym_48981235.out`, listing `run_output`, `stat` on the step-338 checkpoint, even loading
-the project `.venv` python.
+Two consequences for `decide_and_launch.sbatch`, which was written assuming production was live:
+its `scancel mdw2_glpG*` now has nothing to cancel, and its replica-deletion step would delete
+**completed pre-ff3 baseline trajectories** (132 GB under `popepopg_REMD_mdw2/`) rather than a
+half-finished run. Re-read that script before letting it fire.
 
-**`timeout` does not help, and each attempt costs a session.** A GPFS read in `D` state is
-uninterruptible, so `timeout 20 ls <wedged path>` neither returns nor dies — it hangs the shell and
-holds a ControlMaster channel until the mux refuses new sessions. Do not probe the wedged tree
-interactively.
+The baseline *measurement* is already saved as text and is not at risk:
+`popepopg_REMD_mdw2/BASELINE_TM_pre_ff3.txt` (2026-09-05 13:09), replica run.0 = T=0.70 rung. It
+records the failure ff_3.0 has to beat — 79HIS TM1 `mean_helix=0.906` / **TM4 `0.645`**, GLY49
+`median_phi=+75.9` and GLY133 `+67.7` (alphaL) — against the pass criterion of TM `mean_helix > 0.8`
+and negative (alphaR) GLY phi.
 
-**The tunnel route dies with the midway3 master, and costs two Duo pushes to rebuild.** Both
-ControlMasters expired around 2026-09-08 09:45 CDT (`ControlPersist=8h`), and because the
-`-L 2222:...` forward was held by the midway3 master process, midway2 access went with it — the FS
-probe started returning an empty string instead of `TIMEOUT`, which is the signature of a dead
-socket rather than a wedged filesystem. Rebuilding costs a push for midway3, then the forward (free,
-over that master), then a push for midway2:
+### The install chain is re-armed, and what it now does
 
-```bash
-expect scratchpad/mdw3_master.exp                                   # push 1
-ssh -o BatchMode=yes -f -N -L 2222:128.135.112.68:22 \
-    -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu         # free
-expect scratchpad/mdw2_via_tunnel.exp                               # push 2
+Armed 2026-09-08 as **`48994406`** (`ff-check-cont`, `--dependency=afterany:48988330`).
+`48988387` (`continue_mdw2.sbatch`) was cancelled once the submission was confirmed: it only ever
+continued training, which `check_continue.sbatch` also does, so keeping both was two chain drivers
+racing for one `run_output`.
+
+**`48994331` was the first attempt and had to be replaced** — a live instance of the snapshot trap
+below. It was submitted before `check_continue.sbatch` gained the `FF_DIR/STEP` stamp, so it carried
+the older snapshot; `run_arm_test.sbatch` is submitted at *runtime* and would therefore have picked
+up the newer version that refuses to run without that file, and the chain would have died at the
+handoff with nothing launched. The rule that catches this: **after editing any script in the chain,
+resubmit every queued job that runs it.** The re-arm now greps the on-disk script for the feature
+before resubmitting against it, and always submits the replacement before cancelling the original.
+
+What fires when 48988330 ends:
+
+```
+48988330 ends --afterany--> 48994406 check_continue.sbatch
+    step < 500 ?  resubmit srun_mdw2.sh for the remainder, re-arm, exit
+    step = 500 ?  extract_ff.py    -> parameters/ff_3.0_trained/{sidechain,environment}.h5
+                  write FF_DIR/STEP = 500
+                  compare_ff.py    -> logs midway2 vs rockfish, gates nothing
+                  back up 4 glpG seeds as .up.bak_pre_ff3_<stamp>
+                  submit run_arm_test.sbatch
+                      arm M = coverage nodes + midway2's ff        (always)
+                      arm R = coverage nodes + rockfish's ff       (only if STEP matches)
+                      12 h each, 28 replicas, then afterany -->
+                  decide_and_launch.sbatch
+                      decide_arm.py: health gate, then higher mean(TM1,TM4);
+                                     inside 0.05 scatter midway2 wins as primary
+                      check_quota.py 120 -> abort if short, nothing touched
+                      verify the seed backups exist -> abort
+                      inject coverage + patch the 4 real seeds -> abort, restore from backup
+                      check_hybrid_up.py --require -> abort
+                      archive $V/run.0.up -> $V/pre_ff3/, delete rungs 1-27, keep $V/hdx/
+                      block_count=0, submit_remd.sh x4 (REMD_MAX_BLOCKS=4)
+                      remove armtest_M / armtest_R, log quota
+                      push_progress.sh  (EXIT trap: runs on every path)
 ```
 
-Only do that when midway2 is actually needed — nothing about training depends on it now. A cheap
-watcher polls midway2:22 **directly** from this Mac instead; if that opens, the IP block has lifted
-and one push to `scratchpad/mdw2_master.exp` is enough, with no tunnel at all.
+**The safety property is unchanged and is now stronger:** every failure before the archive step
+leaves the pre-ff3 data, the seed backups and the queue untouched. There is no running production to
+cancel, so the old script's most destructive stretch no longer exists; what replaced it moves
+`run.0` aside before deleting anything.
 
-**Probe history: 8 consecutive `TIMEOUT`s** between 05:10 and 09:19 CDT (48984801, 48984815,
-48984883, 48984929, 48984967, 48985135, 48986084, 48986119), each hanging its full 5 min wall on a
-fresh compute node. `/project` had then been failing for ~12 h. Note the damage is not uniform: a
-probe from 00:25 CDT eventually returned with `run dir OK` and `parameters OK` while `ls ~` and the
-wedged minibatch directory hung, so specific inodes are stuck rather than the whole fileset being
-offline.
+Scripts changed on midway2 (originals kept as `.bak_pre_ffcompare`, `submit_remd.sh.bak_pre_maxblocks`),
+each uploaded and md5-verified end to end:
 
-**Probe it with a Slurm job instead, and read the verdict from the exit code.** This touches no
-files from the login node and cannot hang a session:
+| file | change |
+|---|---|
+| `check_continue.sbatch` | step derived from the newest written checkpoint's directory name, not a file count; stamps `FF_DIR/STEP`; runs `compare_ff.py`; hands off to `run_arm_test.sbatch` |
+| `run_arm_test.sbatch` | arms M/R differ by force field, not by node recipe; arm R optional and refused unless its `STEP` matches |
+| `decide_arm.py` | M/R labels, midway2 wins ties as declared primary, honest one-armed n=1 verdict |
+| `decide_and_launch.sbatch` | reads the verdict again instead of a hardcoded `ARM_B`; coverage always injected; archives `run.0` instead of deleting the ladder; dead `NP_BASE`/`NP_NODES` removed |
+| `compare_ff.py` | new; array-by-array diff of two trained `sidechain.h5` |
+| `submit_remd.sh` | `REMD_MAX_BLOCKS=4`, because 12 needs ~690 GB and the quota allows ~284 |
+
+**Verified before arming, not assumed:** `bash -n` on all four sbatch scripts, `py_compile` on both
+python files, `compare_ff.py` against `ff_2.1` versus itself (all `rel_rms` 0.0000) and against a
+missing file (exit 1, the one-armed path), `decide_arm.py` on unbuilt arms (exit 2, `NO_WINNER`),
+and `extract_ff.py` dry-run on rockfish writing a valid `sidechain.h5` from its live checkpoint.
+
+### OWED: deliver rockfish's step-500 force field
+
+midway2 cannot reach rockfish from inside a Slurm job, so this is a manual step, and without it the
+arm test runs one-armed at n=1. When rockfish `30725720` reaches step 500 (`epoch_13_minibatch_05`):
+
+```bash
+RF=/scratch4/rherna21/ywang268/upside2-md-rf
+D=$RF/training/gly-sym
+ssh rockfish "cd $RF && source /etc/profile.d/modules.sh && module load gcc/9.3.0 hdf5/1.10.7 && \
+  source $RF/.venv/bin/activate && export HDF5_USE_FILE_LOCKING=FALSE && \
+  python3 $D/extract_ff.py $D/run_output_ff3/epoch_13_minibatch_05/checkpoint.pkl /tmp/ff3_rf_500"
+# then transfer via base64 -- see the banner warning below -- and on midway2:
+#   mkdir -p parameters/ff_3.0_trained_rf && cp sidechain.h5 environment.h5 there
+#   echo 500 > parameters/ff_3.0_trained_rf/STEP
+```
+
+`extract_ff.py` and `compare_ff.py` are already uploaded to rockfish's `training/gly-sym/` and the
+extraction was dry-run successfully there on 2026-09-08.
+
+**Do not create `parameters/ff_3.0_trained_rf/` early with a mid-training force field.** The `STEP`
+file exists to stop exactly that: the two runs are as far apart from each other as ~85 steps of
+training moves them, so a step-354 rockfish file against a step-500 midway2 file would measure the
+step gap and the trajectory gap together and separate neither.
+
+**A binary file cannot be piped out of rockfish with `cat`.** The login banner lands on stdout, so
+`ssh rockfish 'cat file' > local` prepends 1659 bytes and the HDF5 superblock is gone — the failure
+reads as `file signature not found`, not as a truncated transfer. This is the same hazard already
+recorded for `rsync` and `scp`, and it applies to `cat` too. Use a marker and base64, and verify:
+
+```bash
+ssh -o BatchMode=yes rockfish 'echo __B64__; base64 <file>' 2>/dev/null \
+  | sed -n '/^__B64__$/,$p' | tail -n +2 | base64 -d > local_file
+# then compare md5 against `ssh rockfish 'echo __M__; md5sum <file>'`
+```
+
+### Which trainer is the deliverable — decided 2026-09-08: both run, the arm test picks
+
+midway2 is the **declared primary**: the seeds, the install chain, the production data and the
+baseline all live there, so it wins any tie inside the 0.05 TM scatter. Both trainers run to 500 and
+both force fields are measured, because the pair is worth more than the saved node-hours — it is the
+only convergence evidence available, and rockfish's cost is charged to `rherna21`, 1,150,000
+core-hours essentially unused.
+
+The measurement that settled it (full detail in `findings.md`): at step ~355 the two runs had drifted
+the **same distance** from ff_2.1 to within 0.1-1.7%, but in directions 23 degrees apart, leaving
+them 33-40% of that drift away from each other. Training reproduces how far it moves and not where.
+A single run therefore does not pin the force field to better than a third of what it changed, which
+is why the pre-production check was restored rather than skipped.
+
+### Outage lessons worth keeping (the outage itself is over)
+
+Direct SSH from this Mac works again (`nc -z midway2.rcc.uchicago.edu 22` succeeds), so the midway3
+`-L 2222` tunnel and `mdw2_via_tunnel.exp` are no longer needed; one push to
+`scratchpad/mdw2_master.exp` is enough.
+
+* **A returning login node is not a healthy filesystem.** Port 22 reopened while `/project` still
+  stalled. Gate on a timed `ls` of the run directory *and* `parameters/`, or on a Slurm probe.
+* **Probe a wedged filesystem with a Slurm job, never interactively.** A GPFS read in `D` state is
+  uninterruptible, so `timeout 20 ls <wedged path>` neither returns nor dies: it hangs the shell and
+  holds a ControlMaster channel until the mux refuses new sessions. Read the verdict from the probe
+  job's exit code instead — `11` upside_input, `12` srun_mdw2.sh, `13` run_output, `14` the
+  checkpoint, `COMPLETED 0:0` healthy, `TIMEOUT` still wedged:
 
 ```bash
 sbatch --parsable -p broadwl -A pi-trsosnic -N1 -n1 -t 5 --job-name=fs-probe --output=/dev/null \
   --wrap="timeout 30 ls $D/upside_input >/dev/null || exit 11; ... exit 0"
 sacct -j <jid> -o State,ExitCode -n
 ```
-`COMPLETED 0:0` = healthy; `11` upside_input, `12` srun_mdw2.sh, `13` run_output, `14` the step-338
-checkpoint; **`TIMEOUT` = still wedged**. Probe 48984472 came back **TIMEOUT after 5:17 on a fresh
-node (midway2-0177)**, which proves the filesystem itself is sick rather than a stale client on the
-original nodes. A watcher now resubmits this probe every 30 min.
 
-**When it does come back, midway2 is the best host, not just an extra one:** its step-338 checkpoint
-is 60 steps ahead of everything running now and carries the genuine Adam state, and at 565 s/step it
-beats rockfish's 516-679 s. The move at that point is to resume it from
-`run_output/epoch_08_minibatch_33/checkpoint.pkl` into a **fresh** run directory (never the poisoned
-one) and retire the Mac. `scratchpad/ff3_retraining/handoff_to_mdw2.sh` encodes the comparison.
-
-**The outage is filesystem-wide, not one bad node.** Evidence gathered 2026-09-07 21:00-21:30 CDT:
-
-| probe | result |
-|---|---|
-| midway2-login1 `ls /project` | hangs indefinitely; `/home` responded normally |
-| midway2 `ls` on `epoch_08_minibatch_34` | wedges permanently, and `timeout` cannot kill it (`D` state is uninterruptible) |
-| midway3-login5, midway3-login1 | `/home` empty, `/project` and `/project2` are bare **xfs**, `/scratch/midway3` absent, `/software` empty so no `squeue`/`sbatch` in PATH |
-| midway3-login2/3/4 via hop | `Permission denied (publickey)` — home is gone, so no keys |
-| group quota, just before the hang | 1.45 T used / 1.49 T soft / 1.64 T hard, no grace: not a quota condition |
-
-`ls -d` on paths under `/project/trsosnic` briefly succeeded from a compute node while deeper
-lookups hung, so the client mount existed and metadata operations were stalling.
-
-**Progress is preserved on disk through step 338**; `.ff_installed` and `.production_relaunched`
-were never written, so no destructive step in the chain fired and production is untouched.
-
-**Recovery watcher armed** (local, polls every 60 s): fires when midway2 SSH reopens or midway3
-regains `/project` + `sbatch`. On recovery: `scancel 48981235`, then resume from the newest
-checkpoint into a **fresh output directory**, since the wedged inodes may stay poisoned.
-
-**Do not let ssh fall through to password auth.** A probe hit the ControlMaster session cap
-(wedged sessions hold channels) and fell through to `Permission denied` twice — the RCC ban trigger.
-Every cluster call must carry `-o BatchMode=yes -o PasswordAuthentication=no
--o NumberOfPasswordPrompts=0`.
-
-**Connecting to a specific login node.** `scratchpad/rcc_master.exp <host> <socket> [host-key-alias]`
-opens a socket to any RCC node, reading the password from `~/.bin/ssh_mdw3`. All four
-`midway3-login[1-4]` present the same ED25519 key as `midway3.rcc.uchicago.edu`
-(`SHA256:DFRZlrKTqj6XjN78r5j/rEFqEKlz2yQpZGSuW9MPPr0`), so pass that as the alias rather than
-editing `known_hosts`. Without it the connection stops at a host-key prompt, the script answers
-*that* prompt, and **no Duo push is ever sent** — which looks exactly like a dead push.
-
+* **Do not let ssh fall through to password auth.** Wedged sessions hold mux channels, the session
+  cap is hit, and ssh then tries a password — the RCC IP-ban trigger, and the ban took ~3 h to clear.
+  Every cluster call must carry `-o BatchMode=yes -o PasswordAuthentication=no
+  -o NumberOfPasswordPrompts=0`.
+* **The damage was not uniform.** A probe from 00:25 CDT returned `run dir OK` and `parameters OK`
+  while `ls ~` and the wedged minibatch directory hung, so specific inodes stall rather than the
+  whole fileset going offline. Group quota just before the hang was 1.45 T / 1.49 T soft with no
+  grace, so it was not a quota condition.
+* **Connecting to a specific login node.** `scratchpad/rcc_master.exp <host> <socket> [host-key-alias]`
+  opens a socket to any RCC node, reading the password from `~/.bin/ssh_mdw3`. All four
+  `midway3-login[1-4]` present the same ED25519 key as `midway3.rcc.uchicago.edu`
+  (`SHA256:DFRZlrKTqj6XjN78r5j/rEFqEKlz2yQpZGSuW9MPPr0`), so pass that as the alias rather than
+  editing `known_hosts`. Without it the connection stops at a host-key prompt, the script answers
+  *that* prompt, and **no Duo push is ever sent** — which looks exactly like a dead push.
 ### Disk: 246 GB reclaimed 2026-09-08 for the ff3.0 production campaign
 
 Deleted with the user's approval: the six `NP-1AO6/prod/np.run.[0-5].up` replicas, ~41 GB each.
@@ -166,19 +263,6 @@ Small `.bak_*` files were deliberately left: `build_np_ff3.py.bak_pre_rama3`,
 `np_hybrid.py.bak_pre_ffparam`, `footprint.sbatch.bak_hardcoded` and
 `build_np_ff3.py.bak_pre_boxlen_*`. They are 32 KB each and are the record of which defect each fix
 addressed.
-
-### Keeping the midway2 tunnel alive
-
-Access is Mac -> midway3 master -> `-L 2222:128.135.112.68:22` -> midway2, because this Mac's IP is
-still refused directly (~14 h and counting) while midway2's sshd answers fine from midway3.
-Rebuilding costs two Duo pushes, so the tunnel is kept warm rather than allowed to lapse:
-
-* The reachability watcher runs a command over the midway2 socket every 10 min. Each one resets
-  `ControlPersist=8h` on that master, and the traffic flows through the forward, so the midway3
-  master stays busy too. That check IS the keepalive.
-* The forward is held by the **midway3 master process itself** (pid shows up under
-  `lsof -iTCP:2222`), which is why the tunnel died with it when the master expired at 09:45.
-* Kill the watcher and the tunnel lapses ~8 h later.
 
 ### rockfish (JHU ARCH) — ff3.0 training, the outage-proof host
 
@@ -210,31 +294,16 @@ identical to `parameters/common/rama3.dat` (the GLY-symmetric library) and NOT t
 
 | JobID | Name | State | Notes |
 |---|---|---|---|
-| **30725720** | `upside-ff3` (trainer A) | **RUNNING** on `c[625,655]` since 2026-09-07 23:49 CDT, 48 h wall | Resumed at **step 275**, 225 steps to 500. Log `upside-ff3_30725720.out`, run dir `run_output_ff3/`. |
-| **30725855** | `upside-ff3b` (trainer B) | **RUNNING** on `c[164,187]` since 2026-09-08 00:52 CDT, 48 h wall | Resumed at **step 280** from trainer A's own checkpoint (`solver step_num 11`), 220 steps to 500. Log `upside-ff3b_30725855.out`, run dir `run_output_ff3b/`. |
+| **30725720** | `upside-ff3` | **RUNNING** on `c[625,655]` since 2026-09-07 23:49 CDT, 48 h wall (ends 2026-09-09 ~23:00 CDT) | Resumed at **step 275**; newest written checkpoint `epoch_09_minibatch_11` = **step 354** as of 2026-09-08 15:00 CDT. 0 failures. `extract_ff.py` and `compare_ff.py` are uploaded here and the extraction is dry-run verified. Log `upside-ff3_30725720.out`, run dir `run_output_ff3/`. |
+| 30726466 | `upside-ff3-cont` | PENDING (`afterany:30725720`) | Chain link: resumes the newest checkpoint if the wall kills the trainer, exits immediately if step >= 500. Self-perpetuating (queues its own successor before training starts) with a 3-stall abort guard. |
 
-| 30726466 | `upside-ff3-cont` | PENDING (`afterany:30725720`) | Chain link, in case one 48 h wall is not enough. |
+Retired 2026-09-08 09:12 CDT at the user's request: trainer B `30725855` + link `30726467`,
+CANCELLED at step 326, run dir `run_output_ff3b/` left on disk. It existed to cover "one run goes
+bad"; that role is now filled by midway2 being back.
 
-**Retired 2026-09-08 09:12 CDT at the user's request, once trainer A was clearly ahead and healthy:**
-
-| what | final state |
-|---|---|
-| rockfish trainer B, `30725855` + link `30726467` | CANCELLED at step 326. Run dir `run_output_ff3b/` left on disk. |
-| the Mac run, PID 9228 | stopped at **step 304** after 35 minibatches, 0 failures. Checkpoints kept in `training/gly-sym/run_output_local269/`. |
-
-The Mac had done its job: it carried training through the hours when both RCC clusters were
-unreachable, and its step-274 checkpoint is what seeded rockfish. By 09:10 it was 23 steps behind
-and 1.8x slower, and two independent rockfish runs already covered the "one run goes bad" case.
-
-**Its worker processes do not die with the driver.** `kill <driver>` leaves the 12
-`ConDiv.py worker` subprocesses and their `upside` children running on all 20 cores. Stop them in
-order: `kill <driver>`, then `pkill -f 'ConDiv.py worker'`, then `pkill -x upside`, and confirm with
-`pgrep -cf ConDiv.py` and `pgrep -cx upside` both reading 0.
-
-**Trainer A (30725720) is now the single source of the deliverable.** It resumed at step 275 from
-the Mac's verified checkpoint and has run without a failure since; extract the force field from its
-newest checkpoint under `run_output_ff3/`. Charged to `rherna21`: a few thousand core-hours of
-1,150,000.
+**`continue_rf.sbatch` installs nothing.** rockfish holds only `train_rf.sbatch` and
+`continue_rf.sbatch` — no `extract_ff.py`, no `decide_and_launch.sbatch`, and no `.ff_installed` or
+`RESUME_STEP` flag files. At step 500 this host stops and waits.
 
 **Measured rate: 516 s/minibatch** (first step, 0 failures, Median RMSD 0.86 / 2.32). That is 1.1x
 midway2's 565 s and 2.2x the Mac's 1141 s — the 390 s projected from clock speed was optimistic.
@@ -286,81 +355,50 @@ log states its own arithmetic (`resuming at step 275 for 225 steps -> 500`). Rea
 
 **Transfers to Rockfish must not use `rsync` or `scp`.** The login banner makes the shell unclean:
 `rsync` dies with `protocol incompatibility` and `scp` with `Received message too long`. Use
-`tar czf - … | ssh rockfish "tar xzf - -C …"` or `cat file | ssh rockfish "cat > dest"`, and run
-commands through `scratchpad/rf.sh`.
+`tar czf - … | ssh rockfish "tar xzf - -C …"` or `cat file | ssh rockfish "cat > dest"`, and strip
+the banner from command output with a self-emitted marker (see §0).
 
 **Do not use the system `python3` on the login node** for checkpoint surgery — it cannot read pickle
 protocol 5 (`unsupported pickle protocol: 5`). Activate `$RF/.venv` first.
 
-### Local training on the Mac — the live ff3.0 run
+### Checkpoint bookkeeping and cross-host transfer (lessons; no local run is active)
 
-Started 2026-09-07 21:39 CDT, PID 9228, M1 Ultra (16 P + 4 E cores).
+The Mac trainer that carried training through the outage was stopped 2026-09-08 09:12 CDT at step
+304, after 35 minibatches and 0 failures. Its step-275 checkpoint is what seeded rockfish. What is
+worth keeping from it:
 
-* Launcher `scratchpad/ff3_retraining/train_local_269.sh`, detached, survives the shell.
-* Run dir / log: `training/gly-sym/run_output_local269/`, `train_local.log`.
-* Resumes at **epoch 7 minibatch 3 = step 269**, running 231 steps to the MAX_STEPS=500 target.
-* **Measured 1134 s per minibatch** (20,780 s user CPU over 1,134 s wall — 18.3 of 20 cores busy),
-  2.0x the cluster's 565 s/step. 231 steps projects to ~73 h, finishing around **2026-09-10 22:00**.
-* Checkpoints land in `run_output_local269/epoch_XX_minibatch_YY/checkpoint.pkl` as on the cluster.
+* **Count written `checkpoint.pkl` files, never minibatch directories.** `main_loop` creates
+  `epoch_XX_minibatch_YY/` when a step *starts* and writes `checkpoint.pkl` when it *ends*, so
+  globbing directories reports a step that has not happened. The step number of a written checkpoint
+  is `XX*38 + YY + 1`.
+* **Worker processes do not die with the driver.** `kill <driver>` leaves the 12 `ConDiv.py worker`
+  subprocesses and their `upside` children running on every core. Stop them in order: `kill
+  <driver>`, then `pkill -f 'ConDiv.py worker'`, then `pkill -x upside`, and confirm `pgrep -cf
+  ConDiv.py` and `pgrep -cx upside` both read 0.
+* **A checkpoint moves between hosts by path rewrite, not by refit.**
+  `rf_adopt_checkpoint.py` rewrote the paths inside the Mac's `checkpoint.pkl` with **no `pack_param`
+  refit**, so the latent vector was preserved exactly and `solver step_num` carried the Adam moments
+  over. Verified rather than assumed: `extract_ff.py` on the source and the adopted checkpoint gave
+  identical SHA-256 digests on all four trained arrays (`pair_interaction`
+  `ef24b0b911287425efd289ca`, `coverage_interaction` `191d6fbddeba8837d4f86c81`,
+  `hydrophobe_interaction` `58d4010f74b611279ca4bc1e`, `environment/energies`
+  `5ed10d16729d92c698707cf7`). Both sides run numpy 2, so the pickle transfers directly; the `.npz`
+  export detour is only needed for a numpy 1.x destination, whose array pickles cannot reference
+  `numpy._core`.
 
-**It resumes from 269, not 338**, because steps 270-338 exist only in the wedged `/project` tree.
-The 69 lost steps are the cost of the outage.
+### The local reference set is on a DIFFERENT Mac, not this one
 
-### The handoff rule: whichever side is further along wins
+`planned_job.md` lists `scratchpad/ff3_retraining/` as the local artifact set (four-arm experiment
+record, `verify_ff.py`, `converge.py`, `drift.py`, `handoff_to_mdw2.sh`, copies of every deployed
+chain script, `ConDiv_original.py`). **None of it exists in this working copy**, and neither does
+`training/gly-sym/` or `scratchpad/rf.sh`: this checkout last committed 2026-09-03 and received the
+Sep 7-8 work as two `pull: Fast-forward`s, which carry the `.md` files but not a gitignored
+directory. That work, and the Mac trainer, ran on another machine.
 
-Set up 2026-09-07 after the outage split training across two hosts. The cluster's newest checkpoint
-is frozen at **step 338**; the local run started at **269** and advances ~1141 s/step (measured), so:
+Consequence: from this machine the **cluster copies are the only readable copies** of the chain
+scripts, and the four-arm experiment record is unreadable here. Do not plan a step that reads
+`scratchpad/ff3_retraining/*` without first checking it is present.
 
-| when midway2 returns | who is ahead | what happens |
-|---|---|---|
-| before **2026-09-08 19:23** | cluster (338) | **continue the midway2 job**: resume from the cluster's own newest checkpoint, in its own `run_output`. It keeps the real Adam moments, runs at 565 s/step, and leaves the `ff-check-cont` chain working untouched. |
-| after **2026-09-08 19:42** | local (339+) | upload the local state, rebuild a checkpoint in the cluster's `run_output`, submit, and correct the chain's step target for the gap. |
-
-`bash scratchpad/ff3_retraining/handoff_to_mdw2.sh` implements both branches; `--stop-local` also
-stops the Mac run, but only after the cluster job has written a checkpoint. It measures both sides
-rather than trusting the projection above.
-
-**The wedged directory is the gate on the cluster-ahead branch.** Resuming from step 338 means the
-next step writes `run_output/epoch_08_minibatch_34` — precisely the inode that hung. The script
-clears it under a timeout first; if it cannot be removed, it **refuses to submit**, because the job
-would hang there exactly as 48981235 did. `main_loop` would `rmtree` it anyway, but as part of a
-job, where the hang costs another wall-clock allocation instead of an error message.
-
-**Two `upside-gly-sym` jobs would write the same `run_output`.** 48981235 may still be listed, and a
-job whose tasks are stuck in `D` can sit in COMPLETING indefinitely. The script cancels any stale
-trainer and waits for the queue to clear before submitting; if one will not leave, it aborts and says
-RCC must clear it.
-
-**The chain re-arms itself in the cluster-ahead branch, with no help.** `check_continue.sbatch:109`
-checks `train_running()` and, finding an active `upside-gly-sym`, re-arms a fresh link against it
-instead of submitting a second trainer. Cancelling 48981235 satisfies the queued link's
-`afterany` dependency, so it fires, sees the new job, and re-arms. Nothing to do.
-
-**The local-ahead branch must fix the chain's arithmetic.** `check_continue.sbatch` decides when to
-install by **counting checkpoint files** (`count_steps`), and steps 270-338 were computed on the Mac,
-so after an upload the cluster's file count lags the true step by that gap. The script computes the
-offset, patches `MAX_STEPS` to `500 - offset` (backing the file up first), then cancels and
-resubmits the queued link, since Slurm snapshots a batch script at submission and an edit cannot
-reach a job already queued. Without this the install fires ~64 steps late.
-
-**Adam state survives the transfer.** `export_local_state.py` writes `grad1`, `grad2` and `step_num`
-alongside the parameters as plain `.npz` arrays; `import_state_mdw2.py` injects them into the
-cluster's own initial checkpoint. The `.npz` detour is not optional: this Mac runs numpy 2.4.4, whose
-array pickles reference `numpy._core` and cannot be unpickled by numpy 1.x, so shipping
-`checkpoint.pkl` itself could fail on the cluster. `allow_pickle=False` arrays read on both sides and
-the rebuilt checkpoint is written with pickle protocol 2.
-
-**Count written `checkpoint.pkl` files, never minibatch directories.** `main_loop` creates
-`epoch_XX_minibatch_YY/` when a step *starts* and writes `checkpoint.pkl` when it *ends*, so globbing
-directories reports a step that has not happened. Caught while testing: the counter read 270 while
-step 270 was still running.
-
-**A returning login node is not a healthy filesystem.** Port 22 can reopen while `/project` still
-stalls; the script gates on a timed `ls` of the run directory *and* `parameters/`.
-
-**Untested against a live queue.** Both branches were written and syntax-checked while the cluster
-was down, so the `scancel`/`sbatch`/dependency paths have never executed. Read its output rather
-than assuming it worked, and confirm the new job reaches RUNNING and writes a checkpoint.
 
 ### Disk: the GPFS group quota is the binding limit, NOT `df`
 
@@ -441,10 +479,18 @@ on disk had said `STEPS_PER_JOB=180` for hours. 200 × 637 s = 35 h 23 min again
 wall-limit kill is the trigger for the latent NaN path. **After editing any script in the chain,
 cancel and resubmit the already-queued jobs that use it, or the edit silently does nothing.**
 
-### The unattended chain (built 2026-09-05; runs without a Claude session)
+### The unattended chain (built 2026-09-05) — DISARMED as of 2026-09-08
 
-The user is away from the Mac on Thursday 2026-09-10 and a Claude session exists only while that Mac
-is on, so the decision logic is encoded in Slurm scripts, not in monitoring.
+**Nothing below is queued any more.** The GPFS outage broke the chain: `ff-check-cont` (48981236)
+was cancelled with its trainer, and the links that replaced it on both hosts
+(`continue_mdw2.sbatch`, `continue_rf.sbatch`) only resume training and explicitly refuse to install.
+Every script named here still exists in `training/gly-sym/` and is still the intended design; it has
+to be re-armed by hand, and `decide_and_launch.sbatch` needs re-reading first because glpG
+production is now COMPLETED rather than running (see §1). The description is kept as the design of
+record.
+
+The original rationale, still valid: the decision logic belongs in Slurm scripts rather than in
+monitoring, because a Claude session exists only while the Mac is on.
 
 ```
 upside-gly-sym --afterany--> ff-check-cont  (loops to 600 minibatches)

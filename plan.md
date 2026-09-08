@@ -1,26 +1,108 @@
-# CURRENT PHASE (2026-09-05): core-FF retraining, then an unattended glpG arm test
+# CURRENT PHASE (2026-09-08): finish ff3.0 on two hosts, then an FF-convergence arm test
 
-ConDiv gly-sym retraining is running on midway2 with the reference 8-replica ladder (job ids and
-live state in `remote_jobs.md`). **Everything from here to glpG production must run unattended** — the
-user is away from the Mac on Thursday 2026-09-10, and a Claude session only exists while that Mac is
-on. The autonomy therefore lives in Slurm scripts on midway2, not in a monitoring session.
+ConDiv gly-sym retraining is running on **two** hosts at once and both reach `MAX_STEPS=500` on
+Wednesday 2026-09-09 afternoon (job ids and live state in `remote_jobs.md`). They diverged at step
+338, so they are independent stochastic trajectories of the same training and will yield two
+different force fields. **Everything from here to glpG production must run unattended** — the user
+is away from the Mac on Thursday 2026-09-10 and a Claude session only exists while that Mac is on.
+The autonomy lives in Slurm scripts on midway2, not in a monitoring session.
 
-Timeline: ff finalized ~Sep 9 midday → both arms tested → winner decided by encoded rule → glpG
-production launched → progress pushed to git. No human in the loop after Sep 9.
+## Revised decision 2026-09-08: the arm test comes back, as an FF-convergence test
+
+The 12 h A/B arm test was skipped on 2026-09-07 because the local four-arm experiment settled the
+coverage question (only trained-pair + coverage clears TM4). That left `planned_job.md` with an open
+item: skipping it removed the **only pre-production check on the final force field**, so production
+would have launched on an FF whose TM4 was never measured.
+
+Two trainers finishing at once turns that liability into the check. The arm test is retargeted:
+
+| | old arms | new arms |
+|---|---|---|
+| arm A / M | plain hybrid + trained pair only | coverage nodes + **midway2's** trained FF |
+| arm B / R | coverage nodes + full trained FF | coverage nodes + **rockfish's** trained FF |
+
+Both arms now carry the coverage recipe, which is settled on physics grounds (see "The intra-protein
+split" below: coverage is the arm that implements the intended model, not merely the self-consistent
+one). The only variable left is which training trajectory produced the tables. That makes the test
+an n=2 convergence check on the deliverable:
+
+* the two arms agree within scatter -> training converged, TM4 number is real, launch on midway2's
+* the two arms disagree -> 500 steps is not convergence, and that is a finding, not a coin flip
+* both fail the health gate -> launch nothing, exactly as before
+
+**And it is not a formality.** Measured at step ~355 (`findings.md`): the two runs drifted the same
+distance from ff_2.1 to within 0.1-1.7% but 23 degrees apart in direction, so they sit 33-40% of that
+drift from each other and 15-17% rms apart on every trained table. A single ConDiv run does not pin
+the force field to better than a third of what training changed. The corollary is a trap the `STEP`
+stamp now blocks: the trajectory difference is the same size as ~85 steps of training, so pairing
+force fields from different steps measures neither.
+
+**midway2's FF is the declared primary**, so it wins any tie. Reason: the seeds, the install chain,
+the production data and the baseline all live on midway2, and it is 2 steps ahead. This replaces the
+old tie-break ("Arm B, the self-consistent choice"), which no longer discriminates now that both
+arms carry the same node recipe.
+
+**Rockfish's FF is an optional input.** midway2 cannot reach rockfish from inside a Slurm job, so
+`parameters/ff_3.0_trained_rf/sidechain.h5` has to be delivered by hand. If it is absent when the
+arm test builds, arm R is skipped and the chain runs a single-arm TM4 check, which is still the
+pre-production check that was missing. That is logged loudly, never silently.
 
 ## The chain (each step submitted as a Slurm dependency of the previous)
 
-1. `srun_mdw2.sh` — 180 steps/job (180 × ~664 s = 33.2 h, inside the 36 h wall; 200 would overrun
-   and a wall-limit kill is the trigger for the latent NaN path in §Known Errors).
-2. `check_continue.sbatch` — resubmits until `MAX_STEPS=600`, then installs the FF.
+1. `srun_mdw2.sh` — `STEPS_PER_JOB=130` steps per job, inside the 36 h wall.
+2. `check_continue.sbatch` — resubmits until `MAX_STEPS=500`, then extracts the FF and hands off.
+   Its step counter now derives the step from the newest **written** checkpoint's directory name
+   (`XX*38 + YY + 1`), not from a file count. See Known Errors.
 3. `extract_ff.py` → `parameters/ff_3.0_trained/{sidechain,environment}.h5`.
-4. Build **Arm A** (plain hybrid + trained `pair_interaction` only) and **Arm B**
-   (`martini_inject_coverage.py` adds `hbond_coverage` + `hbond_coverage_hydrophobe`, then the full
-   trained FF is installed). Both from the same checkpoint, same conditions.
-5. Short test run of both arms in parallel.
-6. `decide_arm.py` — health gate, then the winner.
-7. Launch glpG production on the winning arm. NP later (not urgent).
+4. `compare_ff.py` — a free numerical diff of the two trained `sidechain.h5` files, logged before
+   anything is launched. Costs nothing and is the first evidence about convergence.
+5. `run_arm_test.sbatch` — build arm M (always) and arm R (if the rockfish FF was delivered), both
+   from copies of the same seed with the coverage nodes injected, verify both, launch both 12 h.
+6. `decide_arm.py` — health gate, then the winner, with midway2 primary on a tie.
+7. `decide_and_launch.sbatch` — install the winner into the four real seeds and launch glpG
+   production. **glpG production is idle** (all four variants COMPLETED 2026-09-05), so this is now
+   a launch rather than a cancel-and-relaunch. See "The baseline data" below.
 8. `push_progress.sh` — commit + push so the result is readable off-cluster.
+
+## The baseline data, and the disk bound that decides it
+
+`decide_and_launch.sbatch` was written when production was live, and its relaunch step does
+`rm -f $V/$V.run.*.up`. Those files are no longer a half-finished run: they are the **completed
+pre-ff3 baseline**, 28 replicas x ~825 MB x 4 variants = ~92 GB, and the derived HDX analysis in
+`$V/hdx/` (53 GB) was computed from them.
+
+**Measured growth rate** (`run.0` of two variants, 2026-09-08): a replica is
+`280 MB + 43.7 KB x frames`, fitted from 79HIS (51 output groups, 13117 frames, 853 MB) against
+79ALA (32 groups, 9730 frames, 705 MB). At `REMD_FRAMES_PER_CHUNK=300` that is ~13 MB per chunk per
+replica, so **~364 MB per chunk per variant, ~1.6 GB/h across all four** at the ~1.1 chunk/h the
+first campaign sustained.
+
+**That rate is the binding constraint, not `REMD_MAX_BLOCKS=12`.** Quota is 1.45 T of a 1.64 T hard
+group limit, so headroom is 195 GB:
+
+| | GB |
+|---|---|
+| headroom today | 195 |
+| 2-arm test, 12 h each | ~22 |
+| glpG campaign, per day across 4 variants | ~38 |
+| a full 12-block campaign (12 x 36 h) | **~690, which does not fit under any deletion plan** |
+
+So two things follow, and they are separate decisions:
+
+1. **The old raw ladder has to go for the campaign to start with room.** Keeping it leaves 103 GB,
+   which the arm test plus ~2 days of campaign consumes, and then the campaign hits the quota
+   mid-write, which is ENOSPC and a corrupt HDF5 file. The proposal is to **move `run.0`** (the
+   T=0.70 rung, the one `BASELINE_TM_pre_ff3.txt` measured) to `$V/pre_ff3/`, **delete rungs 1-27**,
+   and leave `$V/hdx/` untouched. `run.0` at 3.3 GB total keeps a re-measurable old-FF trajectory
+   for any future TM4 / Rg / core-RMSD diff at 3.6% of the disk, and rungs 1-27 exist for
+   multi-temperature MBAR whose output is already computed and kept.
+2. **`REMD_MAX_BLOCKS=12` is not a reachable target and should be set deliberately.** Even at 284 GB
+   reclaimed headroom the campaign runs ~7 days before the quota binds. The TM4 and HDX checks read
+   the first blocks, so a lower bound is the honest setting; leaving it at 12 encodes an intention
+   the disk cannot honour.
+
+The `scancel mdw2_glpG*` step stays. It is a precondition (nothing may be writing those files when
+they are moved), not a workaround, and it is a no-op today.
 
 ## NP: rebuilt from scratch, NOT in the Thursday chain
 
@@ -53,8 +135,11 @@ current replicas are. Must be settled from the files themselves before rebuildin
 * **Health gate** (both arms): all potentials finite, Rg 15–25 Å, < 5 stretched peptide C–N bonds
   in the final frame, helix fraction computable. An arm that fails cannot win.
 * **Winner**: higher `mean(TM1, TM4)` helix fraction. If the gap is < 0.05 (inside scatter),
-  **Arm B wins** — it is the self-consistent choice, since the trained pair term was optimized
-  jointly with the coverage/hydrophobe tables only Arm B carries.
+  **midway2's force field wins**, because the seeds, the install chain, the production data and the
+  baseline all live on midway2 and it finished 2 steps ahead. A tie is the *expected* result here
+  and it is the good one: it means the two independent training trajectories converged.
+* **Only one arm available** (the rockfish FF was not delivered in time): run it alone. A single-arm
+  result is still the pre-production TM4 check, and it is reported as n=1 rather than as agreement.
 * **Both arms fail** → launch nothing, keep backups, write a report. Never run production on a FF
   that failed its health check.
 * Baseline for comparison: `popepopg_REMD_mdw2/BASELINE_TM_pre_ff3.txt`, captured 2026-09-05 from
@@ -147,33 +232,35 @@ widen `destroyed()` thresholds, or add any guard.
 - **Bilayer path**: NVT at target APL; tile/carve geometry; xy-barostat kept for CHARMM-GUI-derived
   systems only, until a trusted target APL exists for those lipids.
 
-## Revised decision 2026-09-07: training moved to the Mac after the RCC storage outage
+## Resolved 2026-09-08: the outage detour is over, and it left two trainers
 
-The midway2 `/project` GPFS wedged at ~17:42 CDT with training at step 338/500, and by 21:05 CDT
-both midway2 login nodes refused SSH and midway3 had lost every GPFS mount. Job 48981235 cannot be
-cancelled and no cluster file can be read, so the Slurm chain in this plan is suspended, not
-running. Live job state and the recovery procedure are in `remote_jobs.md`.
+The midway2 GPFS outage (2026-09-07 ~17:42 CDT, training wedged at step 338) forced training onto
+the Mac at step 269 and then onto rockfish at step 275. Storage came back 2026-09-08 morning and
+midway2 resumed from its own step-338 checkpoint, so both hosts are now training toward 500 and the
+Mac run is stopped. Details in `remote_jobs.md`.
 
-**What changed and why:** the chain's premise was that every decision be encoded in Slurm scripts so
-no human is needed on Thursday. That premise fails when the cluster itself is unreachable, so
-training now runs locally, from the newest force field that is *reachable* rather than the newest
-that exists.
+What the detour cost and left behind:
 
-* Resumed at **step 269** (the four-arm test's extraction, the only trained FF off the cluster) via a
-  checkpoint rebuilt with `scratchpad/ff3_retraining/build_local_resume.py`. Reconstruction fidelity
-  and the Adam-state caveat are recorded in `findings.md` §10b.
-* 231 steps at a measured 1134 s/step projects to ~73 h, finishing around **2026-09-10 22:00**.
-* Steps 270-338 are forfeited unless storage returns; that is the cost of the outage, not a choice.
-* Enabling this at all required fixing a genuine defect: Upside trapped on exit under clang whenever
+* **69 steps were forfeited once and then were not** — midway2's 338 survived on disk, so its
+  lineage never lost them; only the rockfish lineage carries the gap, which is why the two differ.
+* **A real defect was fixed to enable local running**: Upside trapped on exit under clang whenever
   Monte Carlo was enabled, so every local worker reported `WORKER_FAIL` on valid data
-  (`findings.md` §3.9). Results are unchanged — verified bit-identical.
-
-**If storage returns before the local run finishes**, prefer the cluster: it resumes from step 338
-with the real Adam state and runs at 565 s/step. The recovery watcher in `remote_jobs.md` fires on
-either cluster coming back; the local run can be killed at any time without losing its checkpoints.
+  (`findings.md` §3.9). Verified bit-identical, so the fix is a keeper regardless of the detour.
+* **The reference artifacts are stranded.** `scratchpad/ff3_retraining/` and `training/gly-sym/`
+  live on the machine that ran the Mac trainer, not on this one; this checkout received the Sep 7-8
+  work as `git pull` fast-forwards, which do not carry a gitignored directory. From here the
+  cluster copies are the only readable copies of the chain scripts.
 
 ## Known Errors / Blockers
 
+- **`check_continue.sbatch`'s step counter is 2 low, and it decides when to install.** `count_steps`
+  counts `checkpoint.pkl` files under `run_output`, but `epoch_02_minibatch_09` and
+  `epoch_02_minibatch_14` never wrote one, so the count trails the true step permanently. At true
+  step 500 it reads 498, concludes training is unfinished, and submits a 4-node job for 2 more
+  minibatches — overshooting to 502 and making the two hosts' force fields come from different
+  steps, which would wreck the n=2 comparison. Fix: derive the step from the newest written
+  checkpoint's directory name (`XX*38 + YY + 1`), the arithmetic `continue_mdw2.sbatch` and
+  `continue_rf.sbatch` already use.
 - avg_kinetic_energy/1.5kT is +2.1% above 1.000 after the findings-88 fix. dt-independent; present
   in 1rkl/1AFO. Second cause unidentified (G2 open).
 - Molecular DOPC diffusion is not matched at the 40 ps/step clock (measured: 0.015 µm²/s vs 11.5 µm²/s

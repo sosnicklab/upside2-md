@@ -4,9 +4,49 @@ High-level execution diary. Job ids, states and log paths live in `remote_jobs.m
 
 ## Current phase (from 2026-09-05): core-FF retraining, then an unattended glpG arm test
 
-ConDiv gly-sym retraining is running on midway2 toward 600 minibatches. Everything downstream of it
-must run without supervision — the user is away from the Mac on Thursday 2026-09-10, and a Claude
-session exists only while that Mac is on. The chain therefore lives in Slurm scripts on the cluster.
+ConDiv gly-sym retraining runs on midway2 AND rockfish toward 500 minibatches, both finishing
+2026-09-09 afternoon. Everything downstream of it must run without supervision — the user is away
+from the Mac on Thursday 2026-09-10, and a Claude session exists only while that Mac is on. The
+chain therefore lives in Slurm scripts on the cluster.
+
+**2026-09-08**
+- **Storage came back and left two trainers.** midway2 resumed from its own step-338 checkpoint
+  (`48988330`); rockfish never stopped (`30725720`). Both at step ~355 of 500 with 0 failures. The
+  Mac trainer is retired. Files: none, this was a status check.
+- **Found the chain disarmed and re-armed it.** Neither host installed anything at step 500:
+  `continue_mdw2.sbatch` refuses to by design and rockfish has no install script, so both would
+  have simply stopped. Re-armed as `48994406` and cancelled the now-redundant `48988387`. The first
+  attempt (`48994331`) had to be replaced: Slurm snapshots a batch script at submission, and it
+  predated the `STEP` stamp that the runtime-submitted `run_arm_test.sbatch` requires, so the chain
+  would have died at the handoff. Walked straight into a trap already recorded in `remote_jobs.md`.
+- **Found three things `planned_job.md` asserted that were false**: nothing would install the force
+  field; glpG production is idle rather than running (all four COMPLETED 2026-09-05), so the
+  relaunch had nothing to cancel and its `rm -f $V.run.*.up` would have deleted the completed
+  pre-ff3 baseline; and `scratchpad/ff3_retraining/` is on a different machine, having arrived here
+  only as `git pull` fast-forwards that do not carry a gitignored directory.
+- **Measured the retraining's reproducibility, which decided the plan.** The two runs had drifted the
+  same distance from ff_2.1 (within 0.1-1.7%) but 23 degrees apart in direction, leaving them 33-40%
+  of that drift from each other and 15-17% rms apart on every trained table. Training reproduces how
+  far it moves, not where. So the 12 h arm test was **restored** rather than skipped, retargeted from
+  "which coverage recipe" to "does a 16% table difference change TM4" — which also restores the
+  pre-production check that skipping it had removed.
+- **Rewrote the chain for that, and for idle production.** `check_continue.sbatch` (step from the
+  checkpoint directory name, not a file count that trailed by 2 and would have overshot to 502;
+  stamps `FF_DIR/STEP`), `run_arm_test.sbatch` (arms differ by force field, arm R refused unless its
+  `STEP` matches), `decide_arm.py` (M/R, midway2 wins ties as primary, honest n=1 verdict),
+  `decide_and_launch.sbatch` (reads the verdict instead of a hardcoded `ARM_B`, archives
+  `$V/run.0.up` to `$V/pre_ff3/` instead of deleting the ladder, dead `NP_*` vars removed),
+  `submit_remd.sh` (`REMD_MAX_BLOCKS=4`: 12 needs ~690 GB against ~284 GB of quota), and new
+  `compare_ff.py`. All six md5-verified onto the cluster with `.bak_pre_ffcompare` backups.
+- **Verified before arming**: `bash -n` on four sbatch scripts, `py_compile` on both python files,
+  `compare_ff.py` on ff_2.1 versus itself (rel_rms 0.0000) and on a missing file (the one-armed
+  path), `decide_arm.py` on unbuilt arms (`NO_WINNER`, exit 2), and an `extract_ff.py` dry run on
+  rockfish producing a valid `sidechain.h5`.
+- **Learned that `cat` cannot move a binary off rockfish**: the login banner is on stdout and
+  prepends 1659 bytes, which reads as `file signature not found` rather than as a bad transfer.
+  base64 with a marker, md5-checked both ends.
+- Outstanding: extract rockfish's **step-500** force field into `parameters/ff_3.0_trained_rf/` with
+  a matching `STEP` file, or the arm test runs one-armed at n=1.
 
 **2026-09-05**
 - Audited the training code against the upstream `origin/ConDiv` reference with four parallel

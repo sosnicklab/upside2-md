@@ -937,6 +937,47 @@ settles into a slow near-linear crawl of ~0.07 per 30 steps — it does **not** 
 there is no natural convergence point. The first ~60 steps carry the bulk of the refinement; the tail
 is the least productive part. Use this table, not a round number, to justify where to stop.
 
+### Retraining reproduces how far it moves, not where — the between-run scatter is ~a third of the training signal (2026-09-08)
+
+The GPFS outage split training across two hosts, which produced an accident worth more than the
+inconvenience cost: two runs from a common ancestor at step 269 that took different routes to the
+same step. midway2 continued from its own step-338 checkpoint; the rockfish lineage lost steps
+270-338 and retrained them. Comparing their extracted `sidechain.h5` at step 355 and 354:
+
+| array | drift_M | drift_R | between | between/drift |
+|---|---|---|---|---|
+| `pair_interaction` | 1.3902 | 1.3883 | 0.5449 | **39%** |
+| `coverage_interaction` | 1.6664 | 1.6951 | 0.5587 | **33%** |
+| `hydrophobe_interaction` | 1.3487 | 1.3415 | 0.5434 | **40%** |
+
+`drift_*` is `rms(trained - ff_2.1)`; `between` is `rms(rockfish - midway2)`.
+
+Two things are true at once, and only reading both gets it right:
+
+* **The magnitude of training is highly reproducible.** The two runs drifted the same distance from
+  ff_2.1 to within 0.1-1.7%. The drift also matches the table above (1.188 at step 269 to 1.39 at
+  355 is the recorded ~0.07 per 30 steps), so both runs are on the same slow crawl.
+* **The direction is not.** Separated by 0.39 of the distance each travelled, the two drift vectors
+  differ by about 23 degrees. Relative to the tables themselves the disagreement is 15-17% rms.
+
+So a single ConDiv run does not determine the force field to better than ~a third of what training
+changed. **`MAX_STEPS` is not the only thing that needed a measured justification: the run itself
+has a reproducibility scale, and it is large.** Consequences:
+
+* A force field quoted from one run should carry this scatter. Two runs agreeing on an observable is
+  evidence; one run is a sample.
+* It is the reason the arm test was restored rather than skipped (`plan.md`). The question it answers
+  is no longer "which coverage recipe" but "does a 16% table difference change TM4". If it does not,
+  the TM number is real; if it does, 500 steps is not convergence for the deliverable.
+* Never pair force fields from different steps when comparing runs. The step difference and the
+  trajectory difference are the same size here, so a mismatched pair measures neither.
+  `run_arm_test.sbatch` now refuses arm R unless `ff_3.0_trained_rf/STEP` matches
+  `ff_3.0_trained/STEP`.
+
+Not yet known: whether the 23-degree spread shrinks with more steps, or is the stationary noise of
+the contrastive-divergence estimator. The drift table says the magnitude crawls without asymptote,
+which argues for stationary noise, but that is an inference and has not been measured.
+
 ---
 
 ## 5. HDX: what the estimator measures and how to read it
