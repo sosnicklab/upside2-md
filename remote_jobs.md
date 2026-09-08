@@ -73,6 +73,31 @@ uninterruptible, so `timeout 20 ls <wedged path>` neither returns nor dies — i
 holds a ControlMaster channel until the mux refuses new sessions. Do not probe the wedged tree
 interactively.
 
+**The tunnel route dies with the midway3 master, and costs two Duo pushes to rebuild.** Both
+ControlMasters expired around 2026-09-08 09:45 CDT (`ControlPersist=8h`), and because the
+`-L 2222:...` forward was held by the midway3 master process, midway2 access went with it — the FS
+probe started returning an empty string instead of `TIMEOUT`, which is the signature of a dead
+socket rather than a wedged filesystem. Rebuilding costs a push for midway3, then the forward (free,
+over that master), then a push for midway2:
+
+```bash
+expect scratchpad/mdw3_master.exp                                   # push 1
+ssh -o BatchMode=yes -f -N -L 2222:128.135.112.68:22 \
+    -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu         # free
+expect scratchpad/mdw2_via_tunnel.exp                               # push 2
+```
+
+Only do that when midway2 is actually needed — nothing about training depends on it now. A cheap
+watcher polls midway2:22 **directly** from this Mac instead; if that opens, the IP block has lifted
+and one push to `scratchpad/mdw2_master.exp` is enough, with no tunnel at all.
+
+**Probe history: 8 consecutive `TIMEOUT`s** between 05:10 and 09:19 CDT (48984801, 48984815,
+48984883, 48984929, 48984967, 48985135, 48986084, 48986119), each hanging its full 5 min wall on a
+fresh compute node. `/project` had then been failing for ~12 h. Note the damage is not uniform: a
+probe from 00:25 CDT eventually returned with `run dir OK` and `parameters OK` while `ls ~` and the
+wedged minibatch directory hung, so specific inodes are stuck rather than the whole fileset being
+offline.
+
 **Probe it with a Slurm job instead, and read the verdict from the exit code.** This touches no
 files from the login node and cannot hang a session:
 
