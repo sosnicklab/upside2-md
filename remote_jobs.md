@@ -149,6 +149,37 @@ opens a socket to any RCC node, reading the password from `~/.bin/ssh_mdw3`. All
 editing `known_hosts`. Without it the connection stops at a host-key prompt, the script answers
 *that* prompt, and **no Duo push is ever sent** — which looks exactly like a dead push.
 
+### Disk: 246 GB reclaimed 2026-09-08 for the ff3.0 production campaign
+
+Deleted with the user's approval: the six `NP-1AO6/prod/np.run.[0-5].up` replicas, ~41 GB each.
+They were superseded on three independent counts — built on ff_2.1, run in a **200 A box** whose
+PBC-honest protein extent is only ~188 A, and structurally unfolded to Rg 230.9 A, i.e. already
+self-interacting through the boundary. `NP-1AO6` went from ~251 GB to **4.9 GB**; `prod/` keeps
+`block_count`, `k190_results`, `logs_predate_fixes` and the job logs (953 MB).
+
+Headroom was the reason: 1.45 T of a 1.49 T soft / 1.64 T hard group quota left only ~195 GB, and
+4 relaunched glpG variants plus 6 NP runs at a larger box do not fit in that. Exceeding the hard
+limit gives ENOSPC, which can corrupt an HDF5 file mid-write. **The quota number lags a large delete
+by minutes — verify with `du`, not `rcchelp quota`.**
+
+Small `.bak_*` files were deliberately left: `build_np_ff3.py.bak_pre_rama3`,
+`np_hybrid.py.bak_pre_ffparam`, `footprint.sbatch.bak_hardcoded` and
+`build_np_ff3.py.bak_pre_boxlen_*`. They are 32 KB each and are the record of which defect each fix
+addressed.
+
+### Keeping the midway2 tunnel alive
+
+Access is Mac -> midway3 master -> `-L 2222:128.135.112.68:22` -> midway2, because this Mac's IP is
+still refused directly (~14 h and counting) while midway2's sshd answers fine from midway3.
+Rebuilding costs two Duo pushes, so the tunnel is kept warm rather than allowed to lapse:
+
+* The reachability watcher runs a command over the midway2 socket every 10 min. Each one resets
+  `ControlPersist=8h` on that master, and the traffic flows through the forward, so the midway3
+  master stays busy too. That check IS the keepalive.
+* The forward is held by the **midway3 master process itself** (pid shows up under
+  `lsof -iTCP:2222`), which is why the tunnel died with it when the master expired at 09:45.
+* Kill the watcher and the tunnel lapses ~8 h later.
+
 ### rockfish (JHU ARCH) — ff3.0 training, the outage-proof host
 
 Set up 2026-09-07/08 because midway2 is unusable (GPFS down) and the Mac alone would not finish
