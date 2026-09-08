@@ -51,6 +51,29 @@ session exists only while that Mac is on. The chain therefore lives in Slurm scr
 | 2026-09-01 | GLY Ramachandran maps symmetrized at source in `parameters/common/rama.dat` |
 | 2026-09-05 | Core-FF retraining moved to the reference 8-replica ladder; FF-install pipeline fixed and verified |
 
+### 2026-09-07 evening — RCC storage outage, training relocated to the Mac
+
+* Checked the ff3.0 run as asked and found it **stalled, not running**: Slurm said `RUNNING` while
+  all 9 workers sat in `D` state at zero CPU for 3.5 h on GPFS wait channels. Diagnosed to an
+  RCC-wide storage incident (midway2 login nodes refusing TCP, midway3 login nodes with `/project`
+  as bare xfs and no Slurm client). Job 48981235 cannot be cancelled; RCC ticket drafted at
+  `scratchpad/rcc_ticket_draft.md`. Recovery watcher armed.
+* Benchmarked a real minibatch locally to size the fallback: **1134 s/step** on the M1 Ultra, 2.0x
+  the cluster. The benchmark exposed a real bug — all 12 workers failed on valid data because
+  Upside exits **SIGTRAP (133)** under clang when Monte Carlo is enabled. Root cause: abstract
+  `MonteCarloSampler` with no virtual destructor, deleted through `unique_ptr` of the base.
+  Fixed in `src/monte_carlo_sampler.h`; old and new binaries give bit-identical output on all 16
+  datasets.
+* Established that the newest *reachable* force field is the step-269 extraction (step 338 is on the
+  wedged filesystem) and that a resumable checkpoint can be rebuilt from it: `pack_param` refits the
+  latent vector to 1.1e-16, and `extract_ff.py` on the rebuilt checkpoint returns the same force
+  field to 1e-11 relative.
+* **Local training running** from step 269 for 231 steps, PID 9228, log
+  `training/gly-sym/run_output_local269/train_local.log`, ETA ~2026-09-10 22:00.
+* Files modified: `src/monte_carlo_sampler.h`, `remote_jobs.md`, `findings.md`, `plan.md`,
+  `progress.md`; added `scratchpad/ff3_retraining/{build_local_resume.py,train_local_269.sh}`,
+  `scratchpad/rcc_master.exp`, `scratchpad/rcc_ticket_draft.md`.
+
 ## Carried-over open items
 
 - **NP footprint contradicts the paper.** None of Carlson et al.'s five target lysines are contacted

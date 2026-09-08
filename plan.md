@@ -147,6 +147,31 @@ widen `destroyed()` thresholds, or add any guard.
 - **Bilayer path**: NVT at target APL; tile/carve geometry; xy-barostat kept for CHARMM-GUI-derived
   systems only, until a trusted target APL exists for those lipids.
 
+## Revised decision 2026-09-07: training moved to the Mac after the RCC storage outage
+
+The midway2 `/project` GPFS wedged at ~17:42 CDT with training at step 338/500, and by 21:05 CDT
+both midway2 login nodes refused SSH and midway3 had lost every GPFS mount. Job 48981235 cannot be
+cancelled and no cluster file can be read, so the Slurm chain in this plan is suspended, not
+running. Live job state and the recovery procedure are in `remote_jobs.md`.
+
+**What changed and why:** the chain's premise was that every decision be encoded in Slurm scripts so
+no human is needed on Thursday. That premise fails when the cluster itself is unreachable, so
+training now runs locally, from the newest force field that is *reachable* rather than the newest
+that exists.
+
+* Resumed at **step 269** (the four-arm test's extraction, the only trained FF off the cluster) via a
+  checkpoint rebuilt with `scratchpad/ff3_retraining/build_local_resume.py`. Reconstruction fidelity
+  and the Adam-state caveat are recorded in `findings.md` §10b.
+* 231 steps at a measured 1134 s/step projects to ~73 h, finishing around **2026-09-10 22:00**.
+* Steps 270-338 are forfeited unless storage returns; that is the cost of the outage, not a choice.
+* Enabling this at all required fixing a genuine defect: Upside trapped on exit under clang whenever
+  Monte Carlo was enabled, so every local worker reported `WORKER_FAIL` on valid data
+  (`findings.md` §3.9). Results are unchanged — verified bit-identical.
+
+**If storage returns before the local run finishes**, prefer the cluster: it resumes from step 338
+with the real Adam state and runs at 565 s/step. The recovery watcher in `remote_jobs.md` fires on
+either cluster coming back; the local run can be killed at any time without losing its checkpoints.
+
 ## Known Errors / Blockers
 
 - avg_kinetic_energy/1.5kT is +2.1% above 1.000 after the findings-88 fix. dt-independent; present

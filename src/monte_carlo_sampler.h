@@ -25,6 +25,10 @@ struct MonteCarloSampler {
 
     MonteCarloSampler() {}; // Empty default constructor
 
+    // Samplers are held as unique_ptr<MonteCarloSampler> and deleted through
+    // that base pointer, so the destructor must be virtual.
+    virtual ~MonteCarloSampler() {}
+
     MonteCarloSampler(const std::string& name_, RandomStreamType stream_id_, H5Logger& logger):
         name(name_),
         stream_id(stream_id_)

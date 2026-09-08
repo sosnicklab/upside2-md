@@ -704,6 +704,34 @@ when rendering: `protein and not (resid 210 and name O)`.
 
 ---
 
+### 3.9 Upside traps on exit under clang whenever Monte Carlo is enabled
+
+`MonteCarloSampler` (`src/monte_carlo_sampler.h:12`) is abstract — it declares
+`propose_random_move` pure virtual — but has **no virtual destructor**, while
+`MultipleMonteCarloSampler` holds `std::vector<std::unique_ptr<MonteCarloSampler>>` and therefore
+deletes `PivotSampler`/`JumpSampler` through the abstract base. That is guaranteed UB, and clang on
+arm64 compiles the delete to a trap: the process dies with **SIGTRAP (exit 133)** in
+`~MonteCarloSampler`, *after* the run has finished and flushed. GCC on midway2 does not trap, which
+is why the same code trains fine on the cluster and fails on the Mac.
+
+Bisected to `--monte-carlo-interval` alone: a single config with no REMD traps, and the same run
+without that flag exits 0. Every local Upside run using MC has been exiting nonzero all along, and
+`parameters/ff_2.1`-era code in `upside2-md-master` has the identical defect, so this is longstanding
+rather than something this branch introduced.
+
+The consequence was severe and silent in the wrong direction: ConDiv's worker checks
+`j.job.wait() != 0` and raises `RUN_FAIL`, so **all 12 workers of a local training minibatch reported
+`WORKER_FAIL` on completely valid data** — 250/250 frames written, Rg 13.2-13.8 A, potentials
+negative, the temperature ladder correct. `run_minibatch` then raised `All jobs failed`. Read that
+way round, an exit code was condemning good physics.
+
+Fixed by giving the base class a virtual destructor. Verified by execution, not inspection: the
+three previously-trapping invocations exit 0, and on an identical 160-time-unit run the old and new
+binaries produce **bit-identical output across all 16 datasets** (`pos`, `potential`, `kinetic`,
+`hbond`, `pivot_stats`, `rama_map_potential`, ...), so results are unchanged and master parity in
+results holds. The trap sat purely in the teardown path.
+
+
 ## 4. What the hybrid gets wrong, and what is still open
 
 ### 4.1 Fold fidelity: a ~4.5 A helical-core deviation, cause unidentified (findings 100, 103)
@@ -1441,6 +1469,29 @@ Method notes that remain valid:
 
 ## 10. Cluster and operational lessons
 
+* **A wedged GPFS makes a dead job look healthy, and `squeue` will not tell you (2026-09-07).** Job
+  48981235 was reported `RUNNING` for 3.5 h while all nine of its workers sat in `D` state at
+  `00:00:00` CPU, wchan `cxiWaitEventWait` / `lookup_slow`, having never started their compute
+  binary. The honest probes are per-process, not per-job: `sstat -a -j <id>` (a step whose `AveCPU`
+  does not climb is not computing), then `ps -o pid,stat,time,etime,wchan` on the allocated nodes.
+  `D` state is uninterruptible, so `timeout 10 ls <wedged dir>` does **not** return — it leaks a
+  process and, over an SSH ControlMaster, burns a session channel until the mux refuses new
+  sessions and ssh falls through to password auth. That fall-through is the RCC-ban trigger, so pin
+  `-o BatchMode=yes -o PasswordAuthentication=no -o NumberOfPasswordPrompts=0` on every cluster
+  call before probing anything that might hang.
+* **RCC's GPFS serves midway2, midway3 and beagle3, so "try the other cluster" is not a fallback for
+  a storage incident.** During the 2026-09-07 outage midway2's login nodes refused TCP while
+  midway3's login nodes had lost `/home`, `/project`, `/project2`, `/scratch` and `/software`
+  outright — `stat -f /project` reported **xfs**, and with `/software` gone there was no `squeue` or
+  `sbatch` in PATH at all. Distinguish "this node's mount is stalled" from "the filesystem is gone"
+  with `stat -f`, and check a second login node before concluding either.
+* **All four `midway3-login[1-4]` share `midway3.rcc.uchicago.edu`'s host key, and skipping that
+  detail costs a Duo push.** Connecting by the per-node hostname stops at an unknown-host-key
+  prompt; an expect script then answers *that* prompt with the password and no push is ever sent,
+  which is indistinguishable from a Duo failure. Pass
+  `-o HostKeyAlias=midway3.rcc.uchicago.edu` (`scratchpad/rcc_master.exp` does) instead of editing
+  `known_hosts`.
+
 * **A Slurm NODE_FAIL requeue silently eats the REMD block budget (findings 125).** `run_remd.py` derives
   its block number from a plain `block_count` file incremented at **every process start**, and nothing
   decrements it when a start produces no data; the chain stops once `blk >= MAX_BLOCKS` (12). One job was
@@ -1481,6 +1532,37 @@ Method notes that remain valid:
   ESS-censoring confusion, and `_Tm_curve.png`'s inverted hydrogen-bond axis.
 
 ---
+
+## 10b. A ConDiv checkpoint can be rebuilt from an extracted force field
+
+Measured 2026-09-07, when the outage left the step-269 `sidechain.h5`/`environment.h5` as the newest
+reachable force field and no checkpoint at all.
+
+`expand_param` writes five of the six `unpack_params` blocks to `sidechain.h5` and **discards the
+sixth (`rotscalar`)**, so the h5 is not a complete parameter record. It is still enough:
+
+* `pack_param` (`py/rotamer_parameter_estimation.py:257`) is an L-BFGS-B refit rather than an
+  analytic inverse, but on trained tables it is effectively exact — final loss **1.95e-18**,
+  reproducing pair/coverage/placement/centre to **1.1e-16** and hydrophobe to 1.4e-9 (5.6e-11
+  relative, against a trained signal of 10-35 in float64 tables). The palindrome floor of 54.18 seen
+  at init does **not** reappear, because the GLY row of a trained table is already palindromic.
+* `rotscalar` is identically zero at init (`|x|max = 0.000000`) and is not part of the deployed force
+  field, so borrowing it from the init checkpoint is exact for what the simulation reads.
+* `params.env = energies[:, :-1]` recovers exactly, because `expand_param` sets the last column to a
+  copy of the third-from-last — assert `energies[:, -1] == energies[:, -3]` to confirm.
+* Adam state is **not** recoverable. `alpha` is constant (rot 0.125, env 0.025) and the bias
+  correction applies from step 1, so a fresh solver costs a transient rather than a mis-scaled step;
+  with `beta2 = 0.96` the second-moment memory is only ~25 steps, so the transient is short.
+
+Acceptance test that matters: run `extract_ff.py` on the rebuilt checkpoint and diff its output
+against the force field you started from. Builder: `scratchpad/ff3_retraining/build_local_resume.py`.
+
+**The stale worker copy is the trap here.** `state['worker_path']` in a local checkpoint may point at
+`run_output/ConDiv.py`, which on this Mac predates the env-derivative fix (it calls
+`get_param_deriv(env_shape, ...)` with 360 elements against a node returning 760) and the
+`environment_potential_type = 0` fix, so it would build a sigmoid environment node and then fail in
+`compute_divergence`. Point `worker_path` at the all-fixes `training/gly-sym/ConDiv.py` and assert
+the fix markers are present in the copy.
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 
