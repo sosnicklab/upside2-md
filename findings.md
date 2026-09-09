@@ -738,25 +738,32 @@ results holds. The trap sat purely in the teardown path.
 
 The protein does not hold its tertiary helix packing. Helical-core CA-RMSD from the crystal **plateaus at
 4.1-4.4 A** in POPE/POPG (3.48 -> 4.67 within the first segment, then flat across two more, so equilibrium
-rather than drift) against **2.61 A** in DDM.
+rather than drift).
 
-| at T = 0.70, crystal-bonded amides | POPE/POPG | DDM |
-|---|---|---|
-| H-bond occupancy (median) | 0.844 | 0.952 |
-| burial fails | 3.4% | 1.2% |
-| both fail -> exposure | 3.34% | 0.93% |
-| implied raw dG_open | 1.99 | 2.76 |
-| helical-core CA-RMSD | 4.15 A | 2.61 A |
-| CA-Rg (crystal 20.43 A) | 20.77 | 18.63 |
+| at T = 0.70, crystal-bonded amides | POPE/POPG |
+|---|---|
+| H-bond occupancy (median) | 0.844 |
+| burial fails | 3.4% |
+| both fail -> exposure | 3.34% |
+| implied raw dG_open | 1.99 |
+| helical-core CA-RMSD | 4.15 A |
+| CA-Rg (crystal 20.43 A) | 20.77 |
 
-Two cautions on the DDM column: that campaign died at block 2-3, so it had less time to drift; and its Rg is
-1.8 A *below* the crystal while POPE/POPG matches it, so DDM is compacted rather than more faithful.
+**The detergent column is retired (2026-09-09).** These numbers were originally quoted against a DDM
+micelle, which scored 2.61 A core RMSD and 0.952 occupancy. DDM is no longer an environment of this model,
+so that column is not evidence for anything and is not carried here. It was never a clean comparison in any
+case: that campaign died at block 2-3 so it had less time to drift, and its Rg was 1.8 A *below* the crystal
+while POPE/POPG matches it, so it was compacted rather than more faithful. The consequence to keep in mind
+is that **there is now no measured reference for how faithful this model can be**, only the crystal, so the
+size of the deficit is stated against the crystal and nothing calibrates how much of it is recoverable.
 
 **Ruled out by measurement (findings 100):**
 * *Integrator.* The `avg_kinetic_energy/1.5kT` excess is +2-3% and dt-independent, far too small to produce
   a 15% unbonded population; covalent geometry is intact (worst C-N 1.78 A, 0 broken); the temperature
   dependence is weak (H-bond loss 27% -> 16% from 315 K to 245 K, ~1.7x, what a ~2 kcal/mol opening free
-  energy predicts); and the same integrator gives 2.6 A core RMSD in DDM.
+  energy predicts). The cross-check that used to close this bullet, the same integrator scoring 2.6 A core
+  RMSD in a detergent micelle, is retired with DDM; the dt scan in section 4.2 is what carries the argument
+  now.
 * *H-bond assignment.* On the crystal geometry Upside's H-bond score agrees with the DSSP electrostatic
   criterion to within 8% inside helices (DSSP 86.5%, Upside 78.4%), and the 12 disagreements are marginal.
   ~16% of DSSP-helical amides are helix N-termini with no i-4 partner, so 86.5% is near the ceiling.
@@ -777,8 +784,9 @@ each, single system, T = 0.70, all from one identical starting configuration):
 | `env` | protein self-burial | 4.71 +- 0.12 | 20.43 |
 | `envfull` | all non-membrane Upside terms | 4.53 +- 0.08 | 20.16 |
 
-`env - base` is +0.10 A and `envfull - base` is -0.08 A, both inside the run-to-run scatter, against a
-target of roughly -1.5 A toward the DDM figure. Rg stays at 20.2-20.4 against a crystal value of 20.43 in
+`env - base` is +0.10 A and `envfull - base` is -0.08 A, both inside the run-to-run scatter, so no arm
+repaired anything. The -1.5 A improvement this was originally scored against came from the retired
+detergent comparison; there is no calibrated target now. Rg stays at 20.2-20.4 against a crystal value of 20.43 in
 every arm, so nothing over-compacted either: the predicted failure mode did not occur, but neither did the
 intended repair. The CB correction also did not improve fold fidelity (`base` at 4.61 A is no better than
 the 4.15 A previously measured, though the two are not directly comparable, 4.15 A being a 16-replica REMD
@@ -1314,6 +1322,11 @@ FIRST FIRING TIME PER CRITERION
 ## 7. System preparation
 
 ### 7.1 Environment morphology is derived from topology, not chosen
+
+**Status (2026-09-09): DDM is retired as an environment of this model, and glpG runs in a POPE/POPG
+bilayer only.** Everything in this section is kept, because it is the rule that stops any single-tail
+detergent from being built as a slab, and DDM is the worked example the rule was derived on. Nothing here
+is a live production path.
 
 `derive_environment_morphology` counts acyl chains as connected components of the apolar (`C1`-`C5`) bond
 subgraph in the lipid ITP: one tail means micelle, two or more means bilayer. DDM resolves to micelle,

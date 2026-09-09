@@ -11,8 +11,10 @@ get_info_from_upside_traj.py reads that instead. The coupled potential is taken 
 trajectories, whose frames are the ones the projection was built from, so the arrays stay aligned
 frame for frame.
 
-The reference: the coupled potential of a protein plus a DDM micelle is around -7.6e3 E_up, giving
-reduced potentials near -1.2e4, and exp(-u) at that magnitude overflows. Measured on
+The reference: the coupled potential of a protein plus a lipid environment is large. It is around
+-7.6e3 E_up for the detergent micelle these numbers were measured on, and -2.2e4 to -2.5e4 E_up for
+the POPE/POPG bilayer, which is the larger system and the worse case. Reduced potentials then reach
+-1.2e4 or beyond, and exp(-u) at that magnitude overflows. Measured on
 glpG-RKRK-79HIS_S115T, MBAR then never leaves its initial guess (f_k spread 0.000, neighbour overlap
 0.0000) and the reweighting weights underflow to zero at every target temperature but the lowest rung.
 Subtracting one constant C from every replica's energy is exact, not an approximation: it shifts f_k by

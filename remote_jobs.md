@@ -46,7 +46,7 @@ way. Only `squeue`/`sacct` need midway2 itself; the two clusters have separate S
 separate accounting databases, so `sacct --clusters=all` on midway3 does **not** see midway2 jobs.
 Python env: `source /software/modules/init/bash && module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1 && export HDF5_USE_FILE_LOCKING=FALSE`
 
-**midway3** (NP campaign and glpG-DDM micelle):
+**midway3** (NP campaign):
 ```bash
 ssh -S ~/.ssh/cm-mdw3.sock -O check yinhanw@midway3.rcc.uchicago.edu   # alive?
 expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw3_master.exp    # if not: USER MUST APPROVE DUO
@@ -199,7 +199,9 @@ Run this at the start of any session that finds training still short of step 500
 
 `squeue -u yinhanw` on midway3 is **empty** (checked 2026-09-09 08:14). Its last activity of any
 kind was 2026-09-04 (`hdx_glpG-*` COMPLETED 08:56, then two `upside-gly-sym` attempts that FAILED
-and were cancelled). The NP campaign and the glpG-DDM micelle are both stopped.
+and were cancelled). The NP campaign is stopped, and the glpG detergent campaign that used to live
+here is retired along with the DDM model (2026-09-09), so nothing is expected to run on midway3 for
+glpG at all.
 
 **Trap: midway3's accounting database holds stale `RUNNING` rows.** `sacct --clusters=all` reports
 `53233848 remd_glpG-RKRK-79HIS RUNNING 29-02:54:01` and `53233852 ... RUNNING 29-02:52:52`. These
@@ -1049,11 +1051,11 @@ healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis betwe
 
 | | **NP** (`np_1AO6_prod`) | **glpG** (`remd_glpG-*`) |
 |---|---|---|
-| method | regular MD, 6 independent trajectories, single T=0.8647, no exchange | **REMD**, 48 replicas, T ladder 0.70–0.90, configuration exchange |
+| method | regular MD, 6 independent trajectories, single T=0.8647, no exchange | **REMD**, 28 replicas, T ladder 0.70–0.90, configuration exchange |
 | purpose | nanoparticle adsorption footprinting (K190 exposure) | **HDX** protection factors / ΔG |
-| system | 1AO6 albumin 578 res + 5 nm MPA-AuNP, 8608 atoms, box 300 Å | glpG 210 res in a DDM micelle, 3156 atoms, box 137 Å |
-| composition | PROTEIN 2890 + GOLD 887 + MPA 203 + ION 4628 (K+ 2423 / Cl- 2205, 0.15 M KCl) | PROTEIN 1050 + LIPID 1674 + ION 432 |
-| integrator | **pure velocity-Verlet**, no `/input/brownian` | **MIXED**: 2736 atoms (ION+LIPID+630 protein) overdamped **Brownian**; 420 protein atoms velocity-Verlet |
+| system | 1AO6 albumin 578 res + 5 nm MPA-AuNP, 8608 atoms, box 300 Å | glpG 210 res in a POPE/POPG bilayer. **Read the atom count and box from the seed**: two generations exist, 4949 atoms / 279 lipids / box 99.77² × 180 Å and an older 4709 / 261 / 99.869² × 123.697 Å |
+| composition | PROTEIN 2890 + GOLD 887 + MPA 203 + ION 4628 (K+ 2423 / Cl- 2205, 0.15 M KCl) | PROTEIN 1050 + LIPID (13 beads each) + ions regenerated at 0.15 M; the counts follow the seed generation |
+| integrator | **pure velocity-Verlet**, no `/input/brownian` | **MIXED**: ions, lipids and the 630 protein N/CA/C sites are on the single-stage g-JF **Brownian** path (4529 of 4949 atoms on the current seeds); the other 420 protein atoms are not in `/input/brownian` |
 | timestep | **0.001**, freely settable at runtime | **0.009, HARD-LOCKED** by `/input/brownian/numerical_time_step`; `martini_brownian.cpp:100` throws on mismatch. Friction is tuned against it for lipid D=11.5 µm²/s — **do not change it** |
 | detection | non-finite positions OR ≥5 stretched bonds | non-finite potential (whole chunk) OR ≥5 stretched bonds |
 
@@ -1091,14 +1093,17 @@ grep -ic nan $f                        # expect 0
 
 ## 4. glpG campaign — `remd_glpG-*` (HDX)
 
-**Dir** `~/project/glpG_DDM_micelle_REMD/` — one subdir per variant, each with 48 `*.run.N.up`,
-`remd.<jobid>.out`, `block_count`.
-**NOTE the directory name**: `glpG_DDM_micelle_REMD`. The older `glpG_DDM_REMD` (lamellar, 72 G) is gone.
+**Dir** `~/project/yinhan/popepopg_REMD_mdw2/` on **midway2** — one subdir per variant, each with 28
+`*.run.N.up`, `remd.<jobid>.out`, `block_count`.
 **Driver** `run_remd.py` · **sbatch** `remd.sbatch` · **submit** `submit_remd.sh <variant>`
 **Variants:** `glpG-RKRK-79HIS`, `glpG-RKRK-79HIS_S115T`, `glpG-RKRK-79ALA`, `glpG-RKRK-79ALA_S115T`
 
-Config: 48 replicas, T 0.70–0.90, `REMD_DT=0.009`, `--replica-interval 0.09`, `--exchange-criterion 0`,
-swap sets A=(0-1,2-3,…) B=(1-2,3-4,…), 300 frames/chunk, `REMD_MAX_BLOCKS=12`.
+Config: 28 replicas, T 0.70–0.90, `REMD_DT=0.009` (hard-locked), `REMD_MAX_BLOCKS=4` for the ff3.0
+campaign. The per-run flags live in `submit_remd.sh` on the cluster; that file is the authority.
+
+**The midway3 detergent campaign is gone.** `glpG_DDM_micelle_REMD/` (and the older lamellar
+`glpG_DDM_REMD/`) belonged to the DDM model, retired 2026-09-09. Its data is not deleted, but nothing
+in this handbook points at it any more and no number from it is used as evidence.
 
 ### HDX analysis for the POPE/POPG campaign — RUNNING (submitted 2026-09-01)
 
@@ -1139,7 +1144,7 @@ healthy configuration in and the bad one moves to another slot. Consequences:
 **Status check:**
 ```bash
 for v in glpG-RKRK-79HIS glpG-RKRK-79HIS_S115T glpG-RKRK-79ALA glpG-RKRK-79ALA_S115T; do
-  d=~/project/glpG_DDM_micelle_REMD/$v; f=$(ls -t $d/remd.*.out | head -1)
+  d=~/project/yinhan/popepopg_REMD_mdw2/$v; f=$(ls -t $d/remd.*.out | head -1)
   echo "$v block=$(cat $d/block_count) nan=$(grep -ic nan $f) DESTROYED=$(grep -c DESTROYED $f)"
 done
 ```
@@ -1326,7 +1331,7 @@ replicas). On NaN detection it overwrites the last `output/pos` frame and `outpu
 the pre-chunk values so that `reseed()` on the next iteration picks up the clean state.
 
 **These driver scripts are NOT in git.** They live on the cluster at
-`~/project/glpG_DDM_micelle_REMD/run_remd.py` and `~/project/NP-1AO6/run_np_prod.py`.
+`~/project/yinhan/popepopg_REMD_mdw2/run_remd.py` (midway2) and `~/project/NP-1AO6/run_np_prod.py`.
 No version history exists for them. Edit directly on the cluster.
 A running job keeps the version it loaded at start; edits take effect at the **next block**.
 
@@ -1340,7 +1345,7 @@ with the last finite frame from `output_previous_0` (end of block 1), then resub
 ```python
 import h5py, numpy as np
 from pathlib import Path
-run_dir = Path("~/project/glpG_DDM_micelle_REMD/<variant>").expanduser()
+run_dir = Path("~/project/yinhan/popepopg_REMD_mdw2/<variant>").expanduser()
 for fn in sorted(run_dir.glob("*.run.*.up")):
     with h5py.File(str(fn), "r") as h5:
         n_bad = int((~np.isfinite(np.asarray(h5["/output/potential"][:]))).sum())
@@ -1351,7 +1356,7 @@ for fn in sorted(run_dir.glob("*.run.*.up")):
             last = h5["/output/pos"].shape[0] - 1
             h5["/output/pos"][last, 0, :, :] = prev_pos
             h5["/output/potential"][last, 0] = 0.0
-# then: bash ~/project/glpG_DDM_micelle_REMD/submit_remd.sh <variant>
+# then: bash ~/project/yinhan/popepopg_REMD_mdw2/submit_remd.sh <variant>
 ```
 
 **NP**: `run_np_prod.py` `reseed()` is idempotent, so a config with no `/output` but a valid
@@ -1367,4 +1372,4 @@ for fn in sorted(run_dir.glob("*.run.*.up")):
 - **A green exit code means nothing** for a self-submitting REMD job. Check the log for DESTROYED/ROLLBACK counts and verify physical observables.
 - **Midway3 home quota**: 28.6 G of 30 G. Jobs can fail oddly if home fills.
 - **Do not run scripts from `/tmp`** on the login node (another user's `/tmp/inspect.py` shadows stdlib).
-- **glpG-DDM micelle campaign (closed 2026-08-13).** All four variants failed at block 2–3; used a constant `--seed` causing rollback to re-run the identical failing chunk deterministically. MBAR fix (findings 91) also required before that data was usable. HDX ΔG results in `~/Downloads/glpG_DDM_micelle_HDX_dG/`.
+- **glpG detergent campaign (closed 2026-08-13, model retired 2026-09-09).** Kept for one lesson only: it used a constant `--seed`, so a rollback re-ran the identical failing chunk deterministically, which is why the driver now takes a per-chunk seed. All four variants failed at block 2–3. Its HDX ΔG output is in `~/Downloads/glpG_DDM_micelle_HDX_dG/` and is no longer cited.

@@ -220,8 +220,11 @@ widen `destroyed()` thresholds, or add any guard.
   A finiteness guard is NOT added (NO GUARDS rule; it would hide the defect it is meant to catch).
 - **Protein presents BB only** to the MARTINI pair table. SC-env is active and must never be disabled.
   All intra-protein interactions are handled by the Upside core FF.
-- **glpG environment morphology**: derived from ITP acyl-chain count (one tail → micelle; two or more →
-  bilayer). DDM → micelle with 186 molecules wrapping the 28.2 Å hydrophobic belt; barostat off.
+- **glpG runs in a POPE/POPG bilayer only.** Detergent (DDM) is retired as an environment, decided
+  2026-09-09: it is not part of the model being reported and no DDM number is used as evidence. The
+  generic morphology rule stays and is unchanged, because it is what stops a single-tail detergent
+  from being built as a slab: derived from ITP acyl-chain count, one tail → micelle, two or more →
+  bilayer.
 - **Bilayer path**: NVT at target APL; tile/carve geometry; xy-barostat kept for CHARMM-GUI-derived
   systems only, until a trusted target APL exists for those lipids.
 
@@ -260,7 +263,7 @@ What the detour cost and left behind:
   target). Fallback is explicitly particle-level friction. Not a blocker for REMD equilibrium sampling.
 - **NP albumin over-unfolds and does not reproduce the paper.** Six K190-proximal orientations (runs 0–5, block 3 running). Rg reaches 230.9 Å on run.3 (200 Å box — self-interaction through PBC). Only 3.2% of block-2 frames are adsorbed-and-compact, and none of the paper's five target lysines (K12, K73, K190, K525, K541) are contacted. The paper's central claim (K190 most protected) is contradicted. No footprint npz exists for block-3 data; run `np_footprint.py` after block 3 completes. Larger box required for meaningful structural conclusions on the spread state.
 - R4 (CLC-ec1 monomer+dimer on the validated bilayer) is deferred; not scheduled.
-- **NaN trigger unidentified (blocker for all glpG-DDM production).** Blow-up origin located and the
+- **NaN trigger unidentified (blocker for hybrid production generally).** Blow-up origin located and the
   propagation mechanism explained, but nothing measured accounts for a pair crossing from >= 3 A (~500 kT
   margin) into the catastrophic core region. Needs per-step instrumentation inside a running ladder;
   stored trajectories cannot resolve it (60-step frames, no momenta). See findings 90.
@@ -297,9 +300,10 @@ Arm B is narrower than `envfull`: it restores only `hbond_coverage` + `hbond_cov
 replaces.
 
 **Underlying measurement that motivated RD1** (findings 100/101): glpG's helical-core CA-RMSD plateaus
-at 4.15 Å in POPE/POPG vs 2.61 Å in DDM, with backbone H-bond occupancy 0.844 where crystal geometry
-scores ~1.0. Ruled out by measurement: integrator, H-bond assignment (agrees with DSSP to 8%), lipid
-voids, hydrophobic mismatch, burial threshold.
+at 4.15 Å in POPE/POPG, with backbone H-bond occupancy 0.844 where crystal geometry scores ~1.0. The
+detergent comparison that originally framed this as a 1.5 Å deficit is retired with DDM. Ruled out
+by measurement: integrator, H-bond assignment (agrees with DSSP to 8%), lipid voids, hydrophobic
+mismatch, burial threshold.
 
 **Risk carried into the new test:** `environment.h5` was trained against implicit solvent, so an
 uncovered residue reads as water-exposed, and the hybrid has no `membrane.h5` to correct that. Failure

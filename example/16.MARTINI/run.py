@@ -16,7 +16,7 @@ import run_upside as ru
 
 pdb_id             = "glpG-RKRK-79HIS"
 protein_aa_pdb     = os.path.expanduser("~/Downloads/glpG-RKRK-79HIS.pdb")        # all-atom protein
-lipid_name         = "DDM"                                                        # moleculetype in dryMARTINI_itp/
+lipid_name         = "DDM"                                                        # moleculetype in dryMARTINI_itp/; production is POPE,POPG, DDM is retired
 charmm_gui_dir     = os.path.expanduser("~/Downloads/charmm-gui-8543403667")      # CHARMM-GUI Martini membrane
 opm_reference      = os.path.expanduser("~/Downloads/2nr9.pdb")                   # OPM membrane-oriented reference
 membrane_thickness = 48.8   # equilibrated dry-MARTINI membrane thickness (A) for the ion count

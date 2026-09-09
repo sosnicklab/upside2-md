@@ -110,6 +110,10 @@ With `continue_sim = False` it builds the seed (Stage 1) and submits the REMD jo
 with `continue_sim = True` to extend production. To run **only** the Stage-1 preparation — e.g. to
 inspect the packed system before committing to production — call the workflow directly:
 
+The command below is the **micelle** worked example. Production runs in a POPE/POPG bilayer;
+DDM is retired as a production environment (2026-09-09) and is kept here only as the single-tail
+detergent case, because it is the one that exercises the micelle path.
+
 ```bash
 python ../../py/martini_prepare_system.py run-hybrid-workflow \
   --pdb-id glpG-RKRK-79HIS \
@@ -226,7 +230,11 @@ residues). Master ANDs its slab with a lipid-facing `surface` test for the same 
 
 ## 5. Physical model and key parameters
 
-**Aggregate morphology (why DDM is a micelle).** A lamellar phase's hydrophobic thickness is
+**Aggregate morphology (why DDM is a micelle).** *DDM is retired as a production environment
+(2026-09-09); glpG runs in a POPE/POPG bilayer. This section is kept because it is the physics behind
+the morphology check, which is what stops any single-tail detergent from being built as a slab.*
+
+A lamellar phase's hydrophobic thickness is
 `2·V_tail/APL`, and the area per molecule is set by the head. DDM has one C12 tail and a bulky maltose
 head (APL ≈ 40 Å²), giving a tail core of only **≈ 11–14 Å** — while glpG's hydrophobic belt is **28.2 Å**
 (OPM). Reaching 28 Å would need APL ≈ 23 Å², which a maltose head cannot approach, so **no DDM bilayer can

@@ -10,6 +10,15 @@ from the Mac on Thursday 2026-09-10, and a Claude session exists only while that
 chain therefore lives in Slurm scripts on the cluster.
 
 **2026-09-09**
+- **DDM is retired as an environment, and the documentation was cleaned to match.** glpG runs in a
+  POPE/POPG bilayer only. Removed the detergent column that `findings.md` §4.1 used as the fidelity
+  reference (2.61 A core RMSD, 0.952 occupancy) and said plainly that there is now no measured
+  reference for how faithful this model can be, only the crystal. Retired the `glpG_DDM_micelle_REMD`
+  paths in `remote_jobs.md` and pointed the glpG sections at `popepopg_REMD_mdw2`; corrected the
+  two-campaign table, which still described glpG as a 48-replica micelle. Kept, deliberately: the
+  one-tail-means-micelle morphology rule and its DDM worked example (it is what stops a detergent
+  being built as a slab), the per-chunk RNG seed lesson, and the DDM itp/pdb parameter files.
+  Files: `plan.md`, `findings.md`, `remote_jobs.md`, `example/16.MARTINI/readme.md`.
 - **The chain proved itself overnight, unattended.** `48988330` FAILED (exit 7:0, cause unexplained,
   both logs clean) at step 443 and its replacement `48999774` hit a NODE_FAILURE at 449.
   `check_continue` caught both, read the step exactly right each time, and resumed for precisely the
