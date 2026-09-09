@@ -185,6 +185,32 @@ chain therefore lives in Slurm scripts on the cluster.
   matching `STEP` file, or the arm test runs one-armed at n=1; and re-stamp the quota headroom from
   midway3 if the launch slips past 2026-09-10 08:30.
 
+### Afternoon addendum (2026-09-09 15:45 CDT)
+
+* **Both trainers are in the last hour:** midway2 `49000800` at step 492/500 (ETA ~17:00 CDT),
+  rockfish `30725720` at step 496/500 (ETA ~16:25 CDT). Rockfish finishes first, which is what makes
+  the owed force-field delivery possible at all; the margin is only ~35 min.
+* **`remote_jobs.md` claimed a delivery watcher (`scratchpad/deliver_rf.sh`) had been polling since
+  12:07 CDT. It did not exist.** No such file anywhere on this Mac, no log, no process, and never
+  committed since `scratchpad` is gitignored. Trusting it would have let the arm test go one-armed
+  unattended. Corrected the entry and added the rule: verify a watcher with `ps` and its log.
+* **Built and started the real mechanism**, both verified running: `watch_extract_500.sh` on rockfish
+  login03 (pid 599446) extracts the step-500 force field once the checkpoint size settles, and
+  `auto_deliver_rf.sh` on this Mac polls for it and runs `deliver_rf_ff.sh`, which pushes both `.h5`
+  to `parameters/ff_3.0_trained_rf/` through the midway3 socket. `STEP` is written last so a partial
+  transfer cannot look like a delivery, and the script refuses unless rockfish's STEP reads 500
+  (tested: it refuses and creates nothing). The binary path was dry-run end to end with
+  `ff_2.1/sidechain.h5`, identical md5 on all three hops and the file opens in h5py.
+* **`midway2-0096` killed a second job** (`48999888`, NODE_FAIL at 13:15, after `48999774` that
+  morning). Deliberately did **not** add `--exclude=midway2-0096`: checkpoint resume made each
+  failure cost only the in-flight minibatch, and with 9 steps left, editing a working chain script
+  carries more risk than a ~5 min requeue.
+* Corrected a stale note claiming direct midway2 SSH had returned. `nc` is refused again as of 15:30,
+  so the midway3 tunnel route is still required.
+* Files modified: `remote_jobs.md`, `progress.md`; added
+  `scratchpad/ff3_retraining/{deliver_rf_ff.sh,auto_deliver_rf.sh}` and `watch_extract_500.sh` on
+  rockfish.
+
 ## Carried-over open items
 
 - **NP footprint contradicts the paper.** None of Carlson et al.'s five target lysines are contacted
