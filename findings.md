@@ -1574,6 +1574,45 @@ Method notes that remain valid:
 
 ---
 
+## 10a. TM4 is flat between training steps 269 and 404 (measured 2026-09-09)
+
+ARM_B repeated locally on the step-404 force field, paired with the step-269 four-arm test: same
+seed file (`glpG-RKRK-79HIS.up`, md5 `6a8285d1...`), same protocol (300k steps, dt 0.009
+hard-locked, T=0.70, `--disable-recentering`, frame-interval 6.75), same three RNG seeds.
+
+| force field | TM4 mean helix fraction | Rg mean | diverged |
+|---|---|---|---|
+| ff_2.1, no coverage | 0.441 [0.298-0.633] | ~20.4 A | 0/3 |
+| trained step 269 + coverage | 0.782 [0.657-0.863] | 19.48 A | 0/3 |
+| **trained step 404 + coverage** | **0.709 [0.641, 0.812]** | **19.62 A** | **0/3** |
+
+Per replicate 0.641 / 0.812 / 0.673; TM1 0.823 mean. **135 further training steps bought no
+measurable TM4.** The ranges overlap heavily and n=3 at one temperature cannot resolve 0.07, so the
+claim is "flat", not "worse". It is worth knowing because the force field itself moved a lot over
+those steps — |dpair| 5.65, |dcoverage| 9.34 against init-to-269 magnitudes of 12.40 and 20.25 — so
+the parameters were still changing while this observable was not.
+
+**Rg stays ~0.8 A compact** (19.62 vs the 20.4 A crystal), unchanged from 19.48 at step 269. The
+over-burying risk from training the environment against implicit solvent has neither resolved nor
+worsened.
+
+**One replicate had a full recovery from a large excursion.** s1234 reached potential **+11269 E_up**
+from a -24948 start, stretched one peptide C-N to **9.83 A** (17 bonds over 2 A at some point) and
+logged `avg_KE/1.5kT` **1.117** against a 1.000 target, then returned to -23739 with mean C-N
+1.320 A and zero stretched bonds in the final frame. The other two stayed clean (max C-N 4.97 and
+3.17 A, KE 1.030 and 1.042). This is the signature class of the documented blow-up mechanism
+surviving rather than propagating, so treat a single such excursion in production as a warning, not
+proof of failure.
+
+**Two traps in the local test harness.** `analyze.py` ignores argv: it hardcodes four arm names and
+resolves configs from `run2/` and logs from `logs2/` relative to its own file, so it must be driven
+by staging that layout (symlinks are enough) and overriding `ARMS`; its final per-arm block then
+crashes on a format string that assumes four arms, while the per-run table is complete. Separately,
+**Upside overwrites `/output` rather than appending**: a fresh run on a production seed replaces the
+seed's frames, and the way to tell them apart is the time spacing, not the frame count — the seed
+carried 300 frames at 0.45 spacing and the run wrote 401 at 6.75, so an unwary "skip the first 300
+frames" would have discarded three quarters of the new data.
+
 ## 10b. A ConDiv checkpoint can be rebuilt from an extracted force field
 
 Measured 2026-09-07, when the outage left the step-269 `sidechain.h5`/`environment.h5` as the newest
