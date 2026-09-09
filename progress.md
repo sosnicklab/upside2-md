@@ -114,6 +114,40 @@ chain therefore lives in Slurm scripts on the cluster.
   `progress.md`; added `scratchpad/ff3_retraining/{build_local_resume.py,train_local_269.sh}`,
   `scratchpad/rcc_master.exp`, `scratchpad/rcc_ticket_draft.md`.
 
+## 2026-09-09 - status check, and a latent quota-gate defect fixed
+
+* Checked all three hosts. **Training is healthy and on track:** midway2 `48999888` at step 453 and
+  rockfish `30725720` at step 454 of 500, both ~11 min/step, converging on step 500 around
+  16:00-17:00 CDT the same day. midway3 is idle. The install chain re-armed itself twice overnight
+  (`48999889` now queued) and absorbed two midway2 job losses with no human action: `48988330`
+  FAILED at step 443 with ExitCode 7:0 and clean logs (cause unproven), `48999774` hit an outright
+  `NODE_FAIL` on midway2-0096. Each cost only the partial minibatch in flight.
+* **Fixed `training/gly-sym/check_quota.py`, which would have falsely aborted the production
+  launch.** `decide_and_launch.sbatch` gates on it, and on midway2 it exited 1 because every quota
+  interface there is broken (`/project` is a remote fileset). Investigating that exposed a second,
+  worse defect: `rcchelp quota` emits **four** `trsosnic` group rows and the old parser took the
+  first, so it had been reading `/beagle3`'s quota on midway3 and `/project2`'s on midway2, never
+  `/project`'s. The gate now matches the `mounted at` section header and returns
+  `min(group_headroom, fileset_free)`; the corrected group row (1516 G) agrees with statvfs on
+  `/project/trsosnic` (1514 G) to within 2 G, which is the cross-check that the right row is read.
+  Where `rcchelp` cannot answer, a timestamped stamp written from midway3 is used, and a stamp over
+  24 h old is refused rather than trusted. Verified by 7 tests on the cluster, including with the
+  chain's own venv interpreter. No resubmission needed: it is a `.py` read at runtime, so the Slurm
+  snapshot trap does not apply.
+* Also corrected the "GPFS group quota is binding, NOT df" note in `remote_jobs.md`, which quoted
+  `/project2`'s numbers as the constraint. On our fileset the two limits agree, so `df` on
+  `/project/trsosnic` is sound; what was wrong was the quota row, not `df`.
+* Recorded the working midway2 route: this Mac's IP is blocked on midway2's login nodes, so it is
+  reachable only through a midway3 port forward plus `mdw2_via_tunnel.exp`. The ProxyCommand variant
+  reports success and silently leaves no socket. Also noted that `/project` is the same filesystem
+  on midway2 and midway3, so training state can be read without a midway2 login at all.
+* Files modified: `remote_jobs.md`, `progress.md`, and on the cluster
+  `training/gly-sym/check_quota.py` (original kept as `check_quota.py.bak_pre_stamp`), mirrored to
+  `scratchpad/ff3_retraining/check_quota.py`.
+* **Still owed:** extract rockfish's step-500 force field into `parameters/ff_3.0_trained_rf/` with a
+  matching `STEP` file, or the arm test runs one-armed at n=1; and re-stamp the quota headroom from
+  midway3 if the launch slips past 2026-09-10 08:30.
+
 ## Carried-over open items
 
 - **NP footprint contradicts the paper.** None of Carlson et al.'s five target lysines are contacted

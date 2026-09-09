@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-08 ~15:30 CDT. The RCC storage outage is OVER. ff3.0 training runs on TWO hosts — midway2 `48988330` and rockfish `30725720`, both at step ~355/500, finishing 2026-09-09 afternoon. The install chain is RE-ARMED as `48994406` (`ff-check-cont`, afterany:48988330) and now hands off to a retargeted arm test that compares the two trained force fields instead of two coverage recipes. Measured 2026-09-08: the two runs differ by 15-17% rms on every trained table, a third of the whole training signal, so that test is not a formality. glpG production is idle (all four variants COMPLETED 2026-09-05), so the launch has nothing to cancel. OWED: extract rockfish's step-500 force field into `parameters/ff_3.0_trained_rf/` with a matching `STEP` file, or the test runs one-armed.**
+Snapshot: **2026-09-09 ~08:30 CDT. Training is HEALTHY on both hosts and converging on step 500 this afternoon: midway2 `48999888` at step 453, rockfish `30725720` at step 454, both ~11 min/step, so ~47 steps = ~8 h remain -> step 500 around 16:00-17:00 CDT today. The install chain is armed as `48999889` and self-healing: it absorbed two midway2 node failures overnight with no human action. FIXED this session: `check_quota.py` would have FALSELY ABORTED the production launch (every quota interface is broken on midway2), and separately had never measured the right filesystem, `rcchelp` reports four `trsosnic` quota rows and it read `/beagle3`'s. It now gates on `min(group_headroom, fileset_free)` for `/project`, 1514 G against the 120 G needed, verified by 7 tests on the cluster. STILL OWED: (1) extract rockfish's step-500 force field into `parameters/ff_3.0_trained_rf/` with a matching `STEP` file, or the arm test runs one-armed at n=1; (2) re-stamp the quota headroom from midway3 if the launch slips past 2026-09-10 08:30. Also: this Mac's IP is blocked on midway2's login nodes, reach it via the midway3 port-forward route (`mdw2_via_tunnel.exp`), NOT `mdw2_master.exp`.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -12,14 +12,38 @@ summarised in §8 where they carry a lesson.
 Key-based auth is NOT enabled; password + Duo is the only method. The ControlMaster socket expires
 roughly hourly, so expect to redo this most sessions.
 
-**midway2** (POPE/POPG REMD campaign):
+**midway2** (POPE/POPG REMD campaign): **this Mac's IP is BLOCKED on midway2's login nodes.**
+`mdw2_master.exp` fails with `Connection refused` on port 22 while midway3 answers normally, so the
+refusal is an address block, not an outage and not a Duo problem. Reach midway2 through midway3 in
+two steps (confirmed working 2026-09-09; connect midway3 first, then):
 ```bash
 ssh -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu   # alive?
-expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw2_master.exp    # if not: USER MUST APPROVE DUO
+# 1. port-forward midway2:22 to localhost:2222 over the existing midway3 master (no Duo)
+ssh -o BatchMode=yes -f -N -L 2222:128.135.112.69:22 \
+    -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu
+# 2. open the midway2 master over that forward           # USER MUST APPROVE DUO
+expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw2_via_tunnel.exp
 ssh -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu '<command>'
 ```
+**Use `mdw2_via_tunnel.exp`, not `mdw2_via_mdw3.exp`.** The ProxyCommand variant authenticates and
+prints "ssh backgrounded", then the master dies without ever binding its socket, it looks like a
+success and leaves you with no socket. The script's own header records this; I ignored it and burned
+a Duo push. The forward must be opened *before* the expect script runs.
+
+Two zsh/tooling traps that cost time here:
+* **zsh does not word-split unquoted variables.** `M2="ssh -S sock host"; $M2 'cmd'` runs silently
+  and produces NOTHING, it is not a connection failure. Write the `ssh` call out in full.
+* `timeout` does not exist on this Mac; do not wrap `expect` in it.
+
 `~/project` on midway2 is a symlink to `/project/trsosnic` (not `/project/trsosnic/yinhan/`).
 Data is at `~/project/yinhan/popepopg_REMD_mdw2/`.
+
+**`/project` is the SAME filesystem on midway2 and midway3** (both mount `midway3_cap`), so
+`/project/trsosnic/yinhan/upside2-md-mdw2/` is fully readable from midway3. Checkpoint progress,
+chain logs, `.ff_installed`/`.production_relaunched` flags and force-field directories can all be
+checked **without a midway2 login at all**, useful when the IP block or a login outage is in the
+way. Only `squeue`/`sacct` need midway2 itself; the two clusters have separate Slurm controllers and
+separate accounting databases, so `sacct --clusters=all` on midway3 does **not** see midway2 jobs.
 Python env: `source /software/modules/init/bash && module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1 && export HDF5_USE_FILE_LOCKING=FALSE`
 
 **midway3** (NP campaign and glpG-DDM micelle):
@@ -56,29 +80,131 @@ without it `module load` silently does nothing.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-08 ~14:00 CDT (verified live against `squeue` on both hosts)**.
+Snapshot **2026-09-09 ~08:20 CDT (verified live against `squeue`/`sacct` on both hosts)**.
 
-### midway2 — gly-sym core FF training
+### midway2, gly-sym core FF training
 
-**RUNNING again.** The GPFS outage cleared and training resumed 2026-09-08 10:41 CDT.
+**RUNNING and healthy. The chain drove itself through two node failures overnight with no human
+action**, exactly what it was built to do.
 
 | JobID | Name | State | Notes |
 |---|---|---|---|
-| **48988330** | `upside-gly-sym` | **RUNNING** on `midway2-[0027,0150,0260,0269]` since 2026-09-08 10:41 CDT, 1-12:00:00 wall (ends 2026-09-09 22:41 CDT) | Resumed from `run_output/epoch_08_minibatch_33/checkpoint.pkl` = step 338, "for 162 steps". Newest written checkpoint `epoch_09_minibatch_14` = **step 357** as of 15:20 CDT. 0 failures. Log `upside-gly-sym_48988330.out`, run dir `run_output/`. |
-| **48994406** | `ff-check-cont` | PENDING (`afterany:48988330`) | The armed install chain. See below. |
+| **48999888** | `upside-gly-sym` | **RUNNING** on `midway2-[0096-0099]` since 2026-09-09 07:40:45, 1-12:00:00 wall (ends 2026-09-10 19:40) | Resumed from `epoch_11_minibatch_30` = step 449, "for 51 steps". Newest written checkpoint `epoch_11_minibatch_33` = **step 453** at 08:11:37; minibatch 34 in flight. ~10 min/step. |
+| **48999889** | `ff-check-cont` | PENDING (`afterany:48999888`) | The armed install chain, 30 min wall. Submitted 07:40 today, i.e. **after** the last chain-script edit (2026-09-08 14:15), so it carries the current snapshot, the snapshot trap is not in play. |
 
-It resumed into the **existing** `run_output`, not the fresh directory the recovery plan called for,
-and the previously wedged inodes gave no trouble. `fs-probe 48988264` returned **COMPLETED 0:0**
-after the 16 probes before it all read TIMEOUT; that is what unblocked the resume.
+**Step numbering:** `step = epoch*38 + minibatch + 1` (38 minibatches per epoch). So step 500 is
+`epoch_13_minibatch_05`, and `epoch_11_minibatch_33` is step 453. 47 steps remain, ~8 h at the
+current rate, so step 500 lands around **16:00 CDT 2026-09-09**.
 
-`.ff_installed` and `.production_relaunched` are absent, so no destructive step fired during the
-outage and production was never at risk. `parameters/ff_3.0_trained/` does not exist yet.
+**The overnight history, and what killed each job:**
 
-**`continue_mdw2.sbatch` deliberately does not install the force field** — its own header says
-"Deliberately NOT check_continue.sbatch: that script installs the trained force field". The install
-scripts are all still present in `training/gly-sym/` (`check_continue.sbatch`,
-`decide_and_launch.sbatch`, `extract_ff.py`, `patch_seeds.py`, `check_hybrid_up.py`,
-`check_quota.py`, `push_progress.sh`, `tm_health.py`), but **nothing is armed to call them**.
+| JobID | State | Ran | Reached | Cause |
+|---|---|---|---|---|
+| 48988330 | `FAILED` ExitCode **7:0** | 09-08 10:41 → 09-09 06:17 (19:36) | step 443 | **Unexplained.** Both `.out` and `.err` are clean, no traceback, no `srun` message, no slurmstepd line. The log stops at the `EPOCH 11 MINIBATCH 25` banner at 06:04 and the allocation ended 13 min later. Exit 7 with no output is consistent with a task-launch/node-communication failure, but that is **not proven**. |
+| 48994406 | COMPLETED | 06:17 → 06:18 |, | Saw step 443 < 500, resubmitted training as 48999774, re-armed as 48999775. |
+| 48999774 | `NODE_FAIL` | 06:18 → 07:40 (1:21) | step 449 | `slurmstepd-midway2-0096: ... CANCELLED AT 07:40:37 DUE TO NODE FAILURE`. |
+| 48999775 | COMPLETED | 07:40 → 07:40 |, | Resubmitted training as 48999888, re-armed as 48999889. |
+
+**Restarts are cheap and that is by design**, `check_continue.sbatch` resumes from the newest
+written checkpoint, so each failure cost only the partial minibatch in flight (443→443, 449→449).
+Two crashes in 14 h cost well under an hour of compute. Do not "fix" this by adding requeue; a
+Slurm requeue loop previously restarted training from a *stale* checkpoint (§8).
+
+Note `midway2-0096` failed at 07:40 and Slurm then handed 48999888 the same node at 07:40:45. It is
+writing checkpoints normally (08:02, 08:11), so the node came back. If the failures continue,
+`--exclude=midway2-0096` is the lever; the script already excludes `midway2-0003,midway2-[0342-0345]`.
+
+`.ff_installed` and `.production_relaunched` are still absent and
+`parameters/ff_3.0_trained/` does not exist, so **no destructive step has fired**.
+
+### FIXED 2026-09-09: `check_quota.py` was gating on the wrong filesystem
+
+Found while checking status: the chain's disk pre-flight would have **falsely aborted the
+production launch**, and separately, it had never measured the filesystem the data is on. Both are
+fixed, tested and deployed. Original kept as `check_quota.py.bak_pre_stamp` (md5 `fb60a73f…`);
+new file md5 `3e4b8906…`, identical on the cluster and in `scratchpad/ff3_retraining/`.
+
+**Defect 1: the gate read the wrong quota row.** `rcchelp quota` reports **four separate
+`trsosnic blocks (group)` rows**, one per filesystem, and the old parser took the *first* one:
+
+| rcchelp section | used / hard | headroom | is it ours? |
+|---|---|---|---|
+| `project` (Beagle3 GPFS at `/beagle3`) | 4.10 T / 5.50 T | 1434 G | no; what the old script read on midway3 |
+| `project` (Midway3 GPFS at **`/project`**) | 2.36 T / 3.84 T | **1516 G** | **yes** |
+| `project2` (Midway2 GPFS at `/project2`) | 1.45 T / 1.64 T | 195 G | no; what it read on midway2 |
+| `cds3` (Ceph at `/cds3`) | 3.23 T / 4.00 T | 789 G | no |
+
+So the number it printed was `/beagle3`'s. It happened to be conservative here, but it was not a
+measurement of `/project`. The parser now matches the `mounted at <path>` section header against
+`FS_MOUNTPOINT = /project`. The corrected row (1516 G) agrees with `statvfs` on
+`/project/trsosnic` (1514 G) to within 2 G, and that agreement is the cross-check that the right
+row is being read.
+
+**Defect 2: `rcchelp` cannot answer on midway2 at all, so the gate exited 1.** `/project` is a
+*remote* fileset on midway2 and every interface fails there:
+
+| source | result on midway2 |
+|---|---|
+| `rcchelp quota` | crashes: `TypeError: argument of type 'NoneType' is not iterable`, emits `home`/`scratch`/`project2` and **no `/project` section** |
+| `rcchelp project-quota trsosnic` | `mmlsquota: File system gpfs_cap1 is not known to the GPFS cluster` |
+| `mmlsquota -g trsosnic midway3_cap` | `Operation not permitted` (needs privilege) |
+| `gpfsquota` | `/srv/adm/gpfsquota: No such file or directory` |
+
+`decide_and_launch.sbatch:131` runs `"$PY" check_quota.py 120 || die`, so this aborted the launch
+after the whole multi-day training run, with nothing modified, but nothing launched either.
+
+**The fix.** The gate is now `min(group_headroom, statvfs_free)`, because either limit can bind:
+today the fileset (1514 G) is marginally tighter than the group quota (1516 G). A successful
+`rcchelp` read *stamps* the group headroom to `training/gly-sym/QUOTA_HEADROOM_GB` on the shared
+filesystem; midway2, which cannot measure it, reads that stamp. **A stamp older than 24 h is
+refused, not used**, a gate that exists to prevent ENOSPC cannot run on stale data.
+
+Also fixed: `MOUNT` was `/project`, which is the whole 6.3 PB `midway3_cap` device where statvfs
+reports 1.7 PB free, making that leg meaningless. It is now `/project/trsosnic` (3929 G).
+And `subprocess.run(capture_output=)` is 3.7+, while midway2's default `python3` is 3.6.8; the
+chain uses the 3.9.18 venv so it would not have tripped, but it is now 3.6-safe.
+
+**No resubmission was needed.** `check_quota.py` is a `.py` invoked at runtime, so the Slurm
+snapshot trap does not apply, unlike the `.sbatch` files. The queued `48999889` picks it up as is.
+
+**Verified, not assumed**, 7 tests, run on the cluster:
+
+| # | case | result |
+|---|---|---|
+| 1 | midway2, no stamp | rc=1, names the missing file and says to stamp on midway3 |
+| 2 | midway3 | reads the `/project` row, 1516 G, stamps it, rc=0 |
+| 3 | midway2, fresh stamp | 1514 G, `sufficient for 120 G`, rc=0 |
+| 4 | need 99999 G | `INSUFFICIENT: need 99999 G, have 1514 G`, rc=1 |
+| 5 | stamp backdated 30 h | rc=1, refuses as stale |
+| 6 | stamp backdated 23 h | rc=0, accepted |
+| 7 | malformed stamp | rc=1, refuses as unparseable |
+
+Test 3 was re-run with the chain's exact interpreter
+(`$PROJECT/.venv/bin/python3`, 3.9.18, after the same `module load`) and passes.
+
+**STANDING ACTION: re-stamp if the launch slips past 24 h.** The stamp was written 2026-09-09
+~08:27 CDT and the chain needs it around 16:00 CDT the same day, so it is comfortably fresh, but
+if node failures push step 500 into 2026-09-10, the gate will refuse until it is refreshed. One
+command on midway3, no Duo needed if the socket is up:
+
+```bash
+ssh -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu \
+  'python3 /project/trsosnic/yinhan/upside2-md-mdw2/training/gly-sym/check_quota.py 120'
+```
+
+Run this at the start of any session that finds training still short of step 500.
+
+### midway3, IDLE, nothing queued or running
+
+`squeue -u yinhanw` on midway3 is **empty** (checked 2026-09-09 08:14). Its last activity of any
+kind was 2026-09-04 (`hdx_glpG-*` COMPLETED 08:56, then two `upside-gly-sym` attempts that FAILED
+and were cancelled). The NP campaign and the glpG-DDM micelle are both stopped.
+
+**Trap: midway3's accounting database holds stale `RUNNING` rows.** `sacct --clusters=all` reports
+`53233848 remd_glpG-RKRK-79HIS RUNNING 29-02:54:01` and `53233852 ... RUNNING 29-02:52:52`. These
+jobs are **not running**, they are August records that never received a final state, most likely
+because the controller lost them. `squeue` is the authority for what is live; treat any multi-week
+`Elapsed` in `sacct` as a zombie row, not a long job.
 
 ### glpG production is IDLE — all four variants finished 2026-09-05
 
@@ -102,12 +228,17 @@ and negative (alphaR) GLY phi.
 
 ### The install chain is re-armed, and what it now does
 
-Armed 2026-09-08 as **`48994406`** (`ff-check-cont`, `--dependency=afterany:48988330`).
-`48988387` (`continue_mdw2.sbatch`) was cancelled once the submission was confirmed: it only ever
+First armed 2026-09-08 as `48994406`; it has since re-armed itself twice and the live instance is
+**`48999889`** (`ff-check-cont`, `--dependency=afterany:48999888`). `48988387`
+(`continue_mdw2.sbatch`) was cancelled once the first submission was confirmed: it only ever
 continued training, which `check_continue.sbatch` also does, so keeping both was two chain drivers
 racing for one `run_output`.
 
-**`48994331` was the first attempt and had to be replaced** — a live instance of the snapshot trap
+The self-re-arming was **observed working** overnight 2026-09-08/09: each `check_continue` run
+resubmitted training and queued its own successor, so the id to watch changes every time a training
+job dies. Read the newest `check-continue_*.out` rather than trusting an id written here.
+
+**`48994331` was the first attempt and had to be replaced**, a live instance of the snapshot trap
 below. It was submitted before `check_continue.sbatch` gained the `FF_DIR/STEP` stamp, so it carried
 the older snapshot; `run_arm_test.sbatch` is submitted at *runtime* and would therefore have picked
 up the newer version that refuses to run without that file, and the chain would have died at the
@@ -166,7 +297,9 @@ and `extract_ff.py` dry-run on rockfish writing a valid `sidechain.h5` from its 
 ### OWED: deliver rockfish's step-500 force field
 
 midway2 cannot reach rockfish from inside a Slurm job, so this is a manual step, and without it the
-arm test runs one-armed at n=1. When rockfish `30725720` reaches step 500 (`epoch_13_minibatch_05`):
+arm test runs one-armed at n=1. **Rockfish is at step 454 as of 2026-09-09 09:06 EDT and reaches 500
+around 16:40 CDT the same day**, roughly when midway2 does, so expect both to need attention in the
+same window. When rockfish `30725720` reaches step 500 (`epoch_13_minibatch_05`):
 
 ```bash
 RF=/scratch4/rherna21/ywang268/upside2-md-rf
@@ -360,7 +493,7 @@ identical to `parameters/common/rama3.dat` (the GLY-symmetric library) and NOT t
 
 | JobID | Name | State | Notes |
 |---|---|---|---|
-| **30725720** | `upside-ff3` | **RUNNING** on `c[625,655]` since 2026-09-07 23:49 CDT, 48 h wall (ends 2026-09-09 ~23:00 CDT) | Resumed at **step 275**; newest written checkpoint `epoch_09_minibatch_11` = **step 354** as of 2026-09-08 15:00 CDT. 0 failures. `extract_ff.py` and `compare_ff.py` are uploaded here and the extraction is dry-run verified. Log `upside-ff3_30725720.out`, run dir `run_output_ff3/`. |
+| **30725720** | `upside-ff3` | **RUNNING** on `c[625,655]`, `StartTime=2026-09-08T00:48:57 EndTime=2026-09-10T00:48:57` EDT (48 h wall) | Resumed at **step 275**; newest written checkpoint `epoch_11_minibatch_34` = **step 454** at 2026-09-09 09:06 EDT. **0 failures in 32 h**, cleaner than midway2, which lost two jobs in the same window. ~10.7 min/step, so the remaining 46 steps take ~8.4 h and step 500 lands ~17:40 EDT / **16:40 CDT 2026-09-09**, about 7 h inside the wall. `extract_ff.py` and `compare_ff.py` are uploaded here and the extraction is dry-run verified. Log `upside-ff3_30725720.out`, run dir `run_output_ff3/`. |
 | 30726466 | `upside-ff3-cont` | PENDING (`afterany:30725720`) | Chain link: resumes the newest checkpoint if the wall kills the trainer, exits immediately if step >= 500. Self-perpetuating (queues its own successor before training starts) with a 3-stall abort guard. |
 
 Retired 2026-09-08 09:12 CDT at the user's request: trainer B `30725855` + link `30726467`,
@@ -466,20 +599,32 @@ scripts, and the four-arm experiment record is unreadable here. Do not plan a st
 `scratchpad/ff3_retraining/*` without first checking it is present.
 
 
-### Disk: the GPFS group quota is the binding limit, NOT `df`
+### Disk: check BOTH the group quota and the fileset, either can bind
 
-`df -h /project` reports over a terabyte free and is **misleading**. The real constraint is the
-per-group GPFS quota, visible only via `rcchelp quota`:
+**Corrected 2026-09-09.** This section previously said the group quota is the binding limit and
+`df` is misleading, and quoted `used 1.45T / hard 1.64T`. **Those are `/project2`'s numbers, not
+`/project`'s**, a different filesystem, and not where any of this data lives. `rcchelp quota`
+reports four separate `trsosnic` group rows and the one that governs `/project/trsosnic` is the
+`Midway3 GPFS mounted at /project` section (see §1 for the full table).
+
+The two limits for `/project/trsosnic`, measured 2026-09-09:
 
 ```
-trsosnic   blocks (group)   used 1.45T   soft 1.49T   hard 1.64T
-           files  (group)   used 596023  soft 728600  hard 801460
+group quota (rcchelp, "mounted at /project" section):  used 2.36T  soft 3.49T  hard 3.84T -> 1516 G free
+fileset (statvfs / df on /project/trsosnic):           3929 G total, 2.4T used            -> 1514 G free
 ```
 
-Exceeding the hard limit fails writes with ENOSPC, which can corrupt an HDF5 file mid-write — the
-worst possible failure for an unattended run. Check `rcchelp quota` before anything that writes tens
-of GB. Note the quota accounting updates on a timer, so it lags a large delete by minutes; verify
-with `du` instead of waiting for the number to move.
+They agree to within 2 G, so neither is misleading here and **`df` on the fileset is a sound
+number**, what was misleading was reading the wrong quota row. The safe check is `min()` of the
+two, since a fileset smaller than the group limit inverts which one binds. `check_quota.py` now
+does exactly this; use it rather than reading `rcchelp` by eye.
+
+Do **not** run `df` or `statvfs` on `/project` itself: that is the whole 6.3 PB `midway3_cap`
+device and reports 1.7 PB free. Use `/project/trsosnic`.
+
+Exceeding the hard limit fails writes with ENOSPC, which can corrupt an HDF5 file mid-write, the
+worst possible failure for an unattended run. Note the quota accounting updates on a timer, so it
+lags a large delete by minutes; verify with `du` instead of waiting for the number to move.
 
 **Footprints measured 2026-09-07:** training `run_output` ~17 MB per minibatch (~10 GB for a full
 600-step run); a glpG seed is 191 MB, so a 28-replica arm costs 5.2 GB before trajectory growth and
