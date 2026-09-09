@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-09 ~08:30 CDT. Training is HEALTHY on both hosts and converging on step 500 this afternoon: midway2 `48999888` at step 453, rockfish `30725720` at step 454, both ~11 min/step, so ~47 steps = ~8 h remain -> step 500 around 16:00-17:00 CDT today. The install chain is armed as `48999889` and self-healing: it absorbed two midway2 node failures overnight with no human action. FIXED this session: `check_quota.py` would have FALSELY ABORTED the production launch (every quota interface is broken on midway2), and separately had never measured the right filesystem, `rcchelp` reports four `trsosnic` quota rows and it read `/beagle3`'s. It now gates on `min(group_headroom, fileset_free)` for `/project`, 1514 G against the 120 G needed, verified by 7 tests on the cluster. STILL OWED: (1) extract rockfish's step-500 force field into `parameters/ff_3.0_trained_rf/` with a matching `STEP` file, or the arm test runs one-armed at n=1; (2) re-stamp the quota headroom from midway3 if the launch slips past 2026-09-10 08:30. Also: this Mac's IP is blocked on midway2's login nodes, reach it via the midway3 port-forward route (`mdw2_via_tunnel.exp`), NOT `mdw2_master.exp`.**
+Snapshot: **2026-09-09 ~12:15 CDT. ff3.0 training is ~4.5 h from done on both hosts: midway2 `48999888` at step 473/500 (projected ~16:50 CDT) and rockfish `30725720` at 476/500 (~16:27 CDT). Both healthy, 0 failure lines. The chain drove itself through two job failures overnight with no human action; armed link is `48999889`. A local watcher, `scratchpad/deliver_rf.sh`, is polling rockfish and will deliver its step-500 force field to `parameters/ff_3.0_trained_rf/` automatically, because the two hosts finish only ~23 min apart and a missed window silently costs the n=2 convergence check. Decided today: the pre-ff3 ladder is ARCHIVED, not pruned (there is no disk constraint, see below), and `REMD_MAX_BLOCKS=4` is kept as a scheduling choice. Another session is also editing this directory and this file.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -89,12 +89,13 @@ action**, exactly what it was built to do.
 
 | JobID | Name | State | Notes |
 |---|---|---|---|
-| **48999888** | `upside-gly-sym` | **RUNNING** on `midway2-[0096-0099]` since 2026-09-09 07:40:45, 1-12:00:00 wall (ends 2026-09-10 19:40) | Resumed from `epoch_11_minibatch_30` = step 449, "for 51 steps". Newest written checkpoint `epoch_11_minibatch_33` = **step 453** at 08:11:37; minibatch 34 in flight. ~10 min/step. |
-| **48999889** | `ff-check-cont` | PENDING (`afterany:48999888`) | The armed install chain, 30 min wall. Submitted 07:40 today, i.e. **after** the last chain-script edit (2026-09-08 14:15), so it carries the current snapshot, the snapshot trap is not in play. |
+| **48999888** | `upside-gly-sym` | **RUNNING** on `midway2-[0096-0099]` since 2026-09-09 07:40:45, 1-12:00:00 wall (ends 2026-09-10 19:40) | Resumed from `epoch_11_minibatch_30` = step 449, "for 51 steps". Newest written checkpoint `epoch_12_minibatch_16` = **step 473** at 12:00 CDT. Measured 643 s/step over the last 5, 0 failure lines. |
+| **48999889** | `ff-check-cont` | PENDING (`afterany:48999888`) | The armed install chain, 30 min wall. Submitted 07:40 today, after the last edit to `check_continue.sbatch` itself, so it carries the current snapshot. `decide_and_launch.sbatch` and `submit_remd.sh` were edited later, at 12:05 today, but both are invoked at **runtime** rather than queued, so no snapshot holds a stale copy of them. |
 
 **Step numbering:** `step = epoch*38 + minibatch + 1` (38 minibatches per epoch). So step 500 is
-`epoch_13_minibatch_05`, and `epoch_11_minibatch_33` is step 453. 47 steps remain, ~8 h at the
-current rate, so step 500 lands around **16:00 CDT 2026-09-09**.
+`epoch_13_minibatch_05`, and `epoch_12_minibatch_16` is step 473. 27 steps remain, ~4.8 h at the
+measured 643 s/step, so step 500 lands around **16:50 CDT 2026-09-09**. rockfish is 3 steps ahead
+and lands ~16:27, which is the whole reason the delivery watcher exists.
 
 **The overnight history, and what killed each job:**
 
@@ -294,10 +295,20 @@ python files, `compare_ff.py` against `ff_2.1` versus itself (all `rel_rms` 0.00
 missing file (exit 1, the one-armed path), `decide_arm.py` on unbuilt arms (exit 2, `NO_WINNER`),
 and `extract_ff.py` dry-run on rockfish writing a valid `sidechain.h5` from its live checkpoint.
 
-### OWED: deliver rockfish's step-500 force field
+### OWED, now automated: deliver rockfish's step-500 force field
 
 midway2 cannot reach rockfish from inside a Slurm job, so this is a manual step, and without it the
-arm test runs one-armed at n=1. **Rockfish is at step 454 as of 2026-09-09 09:06 EDT and reaches 500
+arm test runs one-armed at n=1.
+
+**A local watcher now does it: `scratchpad/deliver_rf.sh`, running in the background since 12:07
+CDT, log `scratchpad/deliver_rf.log`.** It polls rockfish every 3 min for
+`run_output_ff3/epoch_13_minibatch_05/checkpoint.pkl` (step 500), then extracts, pulls both files
+with the base64 recipe, md5-verifies each in both directions, and writes `STEP` **last** so a
+partial transfer cannot be mistaken for a delivery. It gives up after 6 h rather than run forever,
+and it finishes by reporting whether midway2's chain had already fired. It needs the midway2
+ControlMaster socket alive (opened 12:00 CDT, `ControlPersist=8h`) and this Mac awake.
+
+The manual procedure, if the watcher is not running: **Rockfish is at step 454 as of 2026-09-09 09:06 EDT and reaches 500
 around 16:40 CDT the same day**, roughly when midway2 does, so expect both to need attention in the
 same window. When rockfish `30725720` reaches step 500 (`epoch_13_minibatch_05`):
 

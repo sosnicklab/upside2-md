@@ -1718,6 +1718,20 @@ One line each: what was believed, what is true, and why it is worth keeping.
   seed. The real cause was that the protein was rigid (findings 116).
 * **The stage-7 freeze:** accepted on canonical kinetic energy and retained secondary structure, both of
   which a high-friction g-JF process satisfies while its coordinates barely move.
+* **"The group quota leaves 195 GB, so the pre-ff3 ladder has to be deleted" (2026-09-08, corrected
+  2026-09-09):** the glpG data is on `/project`, which has **1514 GB** free; 195 GB is the
+  `/project2` group quota, a different filesystem. `rcchelp quota` reports **four** separate
+  `trsosnic` group block quotas (`/beagle3`, `/project`, `/project2`, `/cds3`), so the section
+  header (`mounted at <path>`) has to be matched against the mount the data is on. Taking the first
+  `trsosnic blocks` row reads `/beagle3` on midway3 and `/project2` on midway2, neither of which is
+  the right filesystem. `df -h` on the data path gave the correct 1.5 T and was dismissed as
+  "the whole filesystem, not the group quota". On `/project` the fileset *is* the group's 3.9 T
+  allocation, so `df` and the quota agree there (1514 G vs 1515 G), and that agreement is the
+  cross-check to run. Consequence of the error: an argument for deleting 89 GB of completed
+  baseline trajectories that did not need deleting. `check_quota.py` now matches the section
+  header, takes `min(group quota, statvfs)`, and stamps the value to `QUOTA_HEADROOM_GB` because
+  `rcchelp quota` only answers fully on midway3 (on midway2 `/project` is a remote fileset and every
+  quota interface fails partway). A stamp older than 24 h is refused rather than used.
 * **The BB-env PMF:** built to fix a protein "kick" that was a setup artifact (a non-standard timestep
   inherited from the abandoned CGL plus under-resolved lipids driving a displacement cap), and the PMF then
   caused the drift it was meant to prevent. Rule out setup artifacts, timestep and sub-step resolution above

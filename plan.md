@@ -64,45 +64,38 @@ pre-production check that was missing. That is logged loudly, never silently.
    a launch rather than a cancel-and-relaunch. See "The baseline data" below.
 8. `push_progress.sh` — commit + push so the result is readable off-cluster.
 
-## The baseline data, and the disk bound that decides it
+## The baseline data: archived, nothing deleted
 
-`decide_and_launch.sbatch` was written when production was live, and its relaunch step does
-`rm -f $V/$V.run.*.up`. Those files are no longer a half-finished run: they are the **completed
-pre-ff3 baseline**, 28 replicas x ~825 MB x 4 variants = ~92 GB, and the derived HDX analysis in
-`$V/hdx/` (53 GB) was computed from them.
+`decide_and_launch.sbatch` was written when production was live, and its relaunch step did
+`rm -f $V/$V.run.*.up`. Those files are not a half-finished run: they are the **completed pre-ff3
+baseline**, 28 replicas x ~825 MB x 4 variants = ~92 GB, and the HDX analysis in `$V/hdx/` (53 GB)
+was computed from them.
 
-**Measured growth rate** (`run.0` of two variants, 2026-09-08): a replica is
+The relaunch step now **moves the whole 28-rung ladder** to `$V/pre_ff3/` and leaves `$V/hdx/`
+alone. Nothing is deleted. The multi-temperature ladder is exactly what MBAR/HDX reweighting reads,
+so keeping only the T=0.70 rung would have cost the ability to redo that analysis on the old force
+field.
+
+**Corrected 2026-09-09: there is no disk constraint, and the earlier version of this section was
+wrong.** It argued for deleting rungs 1-27 to free 89 GB against a 195 GB headroom. That 195 GB is
+the **`/project2`** group quota (1.45 T of a 1.64 T limit). The glpG data is on **`/project`**, a
+different 3.9 T fileset with **1514 GB free**, confirmed by `df` on the data path, `statvfs` on the
+fileset, and the `rcchelp` section header. `rcchelp quota` reports four separate `trsosnic` group
+block quotas (`/beagle3`, `/project`, `/project2`, `/cds3`), and reading the first `trsosnic blocks`
+row picks the wrong filesystem. See `findings.md` §12.
+
+Measured growth, which still holds and is still worth having: a replica is
 `280 MB + 43.7 KB x frames`, fitted from 79HIS (51 output groups, 13117 frames, 853 MB) against
-79ALA (32 groups, 9730 frames, 705 MB). At `REMD_FRAMES_PER_CHUNK=300` that is ~13 MB per chunk per
-replica, so **~364 MB per chunk per variant, ~1.6 GB/h across all four** at the ~1.1 chunk/h the
-first campaign sustained.
+79ALA (32 groups, 9730 frames, 705 MB), so ~13 MB per chunk per replica and ~1.6 GB/h across the
+four variants.
 
-**That rate is the binding constraint, not `REMD_MAX_BLOCKS=12`.** Quota is 1.45 T of a 1.64 T hard
-group limit, so headroom is 195 GB:
+`REMD_MAX_BLOCKS=4` is retained, but as a **scheduling** choice rather than a disk one: 4 blocks is
+~2 days per variant and ~75 GB and gets to a TM4 verdict, where the driver's default of 12 commits
+~18 days of wall per variant (~690 GB, which now fits) before anyone sees whether TM4 is fixed.
+Extending is that one number plus a resubmit.
 
-| | GB |
-|---|---|
-| headroom today | 195 |
-| 2-arm test, 12 h each | ~22 |
-| glpG campaign, per day across 4 variants | ~38 |
-| a full 12-block campaign (12 x 36 h) | **~690, which does not fit under any deletion plan** |
-
-So two things follow, and they are separate decisions:
-
-1. **The old raw ladder has to go for the campaign to start with room.** Keeping it leaves 103 GB,
-   which the arm test plus ~2 days of campaign consumes, and then the campaign hits the quota
-   mid-write, which is ENOSPC and a corrupt HDF5 file. The proposal is to **move `run.0`** (the
-   T=0.70 rung, the one `BASELINE_TM_pre_ff3.txt` measured) to `$V/pre_ff3/`, **delete rungs 1-27**,
-   and leave `$V/hdx/` untouched. `run.0` at 3.3 GB total keeps a re-measurable old-FF trajectory
-   for any future TM4 / Rg / core-RMSD diff at 3.6% of the disk, and rungs 1-27 exist for
-   multi-temperature MBAR whose output is already computed and kept.
-2. **`REMD_MAX_BLOCKS=12` is not a reachable target and should be set deliberately.** Even at 284 GB
-   reclaimed headroom the campaign runs ~7 days before the quota binds. The TM4 and HDX checks read
-   the first blocks, so a lower bound is the honest setting; leaving it at 12 encodes an intention
-   the disk cannot honour.
-
-The `scancel mdw2_glpG*` step stays. It is a precondition (nothing may be writing those files when
-they are moved), not a workaround, and it is a no-op today.
+The `scancel mdw2_glpG*` step stays. It is a precondition (nothing may be writing a replica while it
+is being moved), not a workaround, and it is a no-op today.
 
 ## NP: rebuilt from scratch, NOT in the Thursday chain
 

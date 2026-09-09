@@ -9,6 +9,34 @@ ConDiv gly-sym retraining runs on midway2 AND rockfish toward 500 minibatches, b
 from the Mac on Thursday 2026-09-10, and a Claude session exists only while that Mac is on. The
 chain therefore lives in Slurm scripts on the cluster.
 
+**2026-09-09**
+- **The chain proved itself overnight, unattended.** `48988330` FAILED (exit 7:0, cause unexplained,
+  both logs clean) at step 443 and its replacement `48999774` hit a NODE_FAILURE at 449.
+  `check_continue` caught both, read the step exactly right each time, and resumed for precisely the
+  steps missing. Now on `48999888` at step 473, link `48999889`. The step-counter fix earned its keep
+  inside 14 h: the old file-count version would have read 441 and 447 and landed on 502, putting the
+  two hosts at different steps.
+- **Corrected my own disk analysis, which was wrong.** I reported 195 GB of headroom; that is the
+  `/project2` group quota, while the glpG data is on `/project` with **1514 GB** free. `rcchelp
+  quota` lists four separate `trsosnic` group quotas and I read the wrong row, then dismissed the
+  `df` output that was actually correct. The other session found this independently and rewrote
+  `check_quota.py` to match the section header, take `min(quota, statvfs)`, and stamp the value;
+  that fix is kept. Recorded in `findings.md` §12.
+- **Reversed the decision that error had driven.** `decide_and_launch.sbatch` now **archives all 28
+  pre-ff3 rungs** to `$V/pre_ff3/` and deletes nothing, since the multi-temperature ladder is what
+  MBAR/HDX reads. `REMD_MAX_BLOCKS=4` is kept but rejustified on schedule rather than disk. Files:
+  `decide_and_launch.sbatch`, `submit_remd.sh`, both md5-verified with `.bak_pre_keepladder` /
+  `.bak_pre_rejustify`.
+- **Automated the delivery race.** The two hosts finish ~23 min apart and midway2's chain fires as
+  soon as its trainer ends, so a missed window silently loses the n=2 check.
+  `scratchpad/deliver_rf.sh` polls rockfish and delivers its step-500 force field, writing `STEP`
+  last so a partial transfer cannot be mistaken for a delivery.
+- **Broke a standing instruction**: `CLAUDE.md` forbids the em dash character and I used it
+  throughout yesterday's documentation edits. Removed from today's additions; yesterday's are
+  committed and still there.
+- Noted: another session is editing the same cluster directory and the same `.md` files, and a
+  `git pull` at 10:45 merged its work in. Nothing collided, which was partly luck.
+
 **2026-09-08**
 - **Storage came back and left two trainers.** midway2 resumed from its own step-338 checkpoint
   (`48988330`); rockfish never stopped (`30725720`). Both at step ~355 of 500 with 0 failures. The
