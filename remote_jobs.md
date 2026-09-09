@@ -246,6 +246,72 @@ sacct -j <jid> -o State,ExitCode -n
   (`SHA256:DFRZlrKTqj6XjN78r5j/rEFqEKlz2yQpZGSuW9MPPr0`), so pass that as the alias rather than
   editing `known_hosts`. Without it the connection stops at a host-key prompt, the script answers
   *that* prompt, and **no Duo push is ever sent** — which looks exactly like a dead push.
+### midway2: the original chain is re-armed (user, 2026-09-08 14:18)
+
+The user cancelled the training-only link 48988387 and submitted **48994406 `ff-check-cont`**
+(`check_continue.sbatch`, `--dependency=afterany:48988330`). There is no crontab on the account; this
+was a deliberate manual action.
+
+Consequence, which differs from a training-only link: when 48988330 ends, 48994406 continues to
+`MAX_STEPS=500`, then extracts the force field to `parameters/ff_3.0_trained`, backs up the seeds,
+writes `.ff_installed`, and chains into `decide_and_launch.sbatch`, which patches the four real seeds
+with ARM_B and **relaunches glpG production on midway2 automatically**. It also runs
+`push_progress.sh`, which commits and pushes to git. Both sentinels were absent when checked, so it
+will fire cleanly.
+
+* It counts checkpoint **files** (367) while the true step is **369** — an offset of 2 from
+  checkpoints an old requeue deleted — so it trains ~2 steps past 500. Harmless.
+* It does **not** touch NP, by design. The 500 A NP rebuild stays manual.
+* It knows nothing about rockfish. Rockfish's glpG launch stays manual, via
+  `scratchpad/ff3_retraining/install_and_launch_rf.sh`.
+* `install_and_launch_mdw2.sh` is now a fallback for the case where the chain aborts.
+
+### The two training runs produce DIFFERENT force fields, and only one may be used
+
+Rockfish resumed from the Mac's step-274 checkpoint and midway2 from its own step-338; both then
+advanced independently, so their step-500 parameters differ by the accumulated stochastic difference
+of ~150 contrastive-divergence steps. They are two samples of the same training procedure, not two
+copies of one result.
+
+**Production on the two clusters must therefore install the SAME force field, or the two glpG
+campaigns are not poolable** — they would be different Hamiltonians, and combining their
+trajectories or their HDX ΔG estimates would be meaningless.
+
+Decision recorded: **midway2's force field is the reference.** Two reasons — its lineage is the
+unbroken one (its Adam state was never exported and re-imported), and `check_continue.sbatch`
+installs it there automatically whatever else happens. So after the chain fires, copy
+`midway2:parameters/ff_3.0_trained/sidechain.h5` to rockfish and patch the rockfish seeds from
+**that** file, not from rockfish's own training output. Verify with the SHA-256 digest check that
+already caught nothing wrong on the checkpoint transfer.
+
+Rockfish's own step-500 force field is still worth keeping as an independent replicate of the
+training procedure — it is the only evidence available about run-to-run spread in the trained
+parameters — but it must not be mixed into production.
+
+### NP rebuild at a 500 A box — staged, waiting on the force field
+
+`scratchpad/ff3_retraining/np/build_and_launch_np.sh <sidechain.h5> <environment.h5> [--launch]`
+does the whole thing: build six runs on rockfish, verify, transfer, launch on midway2.
+
+* **Build on rockfish, run on midway2.** `build_np_ff3.py` needs ONE interpreter with both h5py and
+  pytables. Rockfish's venv has both; midway2 has them split (venv -> pytables, module python ->
+  h5py), and pip-installing into midway2's venv would disturb an environment a queued training job
+  depends on.
+* **Pass midway2's force field**, not rockfish's — see the divergence note above.
+* **Box 500 A** via the new `--box-len`. A molecule sees its own image once its extent exceeds
+  L minus the 12 A cutoff, so the old 200 A box was honest only to ~188 A while albumin reached
+  Rg 230.9 A: that structural readout was PBC-contaminated. 500 A is honest to ~488 A, at ~11292 ion
+  pairs against 723 at 200 A, so the systems are ~3.5x larger and correspondingly slower per step.
+* **The replicas go in `prod/`.** `np_prod.sbatch` hardcodes `NP_RUN_DIR="$BASE/prod"` and globs
+  `np.run.*.up`; `submit_np.sh` logs to `$B/prod`. Using `prod/` leaves both untouched, and it holds
+  no replicas since the deletion. The script **refuses to proceed if any `np.run.*.up` is still
+  there**, so two box sizes cannot end up in one run directory, and it writes `prod/BOX_LEN_A`
+  because the box is not visible in the directory name.
+* Every transfer is md5-verified per replica.
+* NP resources, unchanged: 1 node, **6 cpus-per-task**, 36 h wall, self-resubmitting to MAX_BLOCKS,
+  and `NP_DT=0.001` — a hard limit for this system, since unfolding drives backbone bonds to
+  large-amplitude oscillation where accuracy, not MARTINI LJ stability, sets the step.
+
 ### Disk: 246 GB reclaimed 2026-09-08 for the ff3.0 production campaign
 
 Deleted with the user's approval: the six `NP-1AO6/prod/np.run.[0-5].up` replicas, ~41 GB each.
