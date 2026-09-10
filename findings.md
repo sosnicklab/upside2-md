@@ -68,6 +68,491 @@ hydrophobic surfaces. The principled fix is to include membrane proteins in the 
 targets so packing is calibrated against lipid competition. Scaling SC-env or BB-env down, or
 adding an orientational term to hold the bundle, is forbidden and would break the model.
 
+## THE ACTUAL DEFECT: glpG's hybrid config has NO backbone-environment term at all (2026-09-10)
+
+While implementing the MARTINI-type coverage fix I read the coverage code properly and found my
+mechanism was misframed, and then found a much simpler and better-supported defect.
+
+### My coverage story was wrong
+
+`HBondCoverage` is built as `CoordNode(get_dset_size(1,grp,"index2")[0], 1)` and accumulates
+`output(0, edge_indices2[ne])` (`hbond.cpp:438-460`). Its output is therefore **per sidechain
+bead**, and it is a 1-body cost handed to the rotamer solver for *placing a sidechain where it
+covers a backbone H-bond*. It is **not** a measure of how shielded a backbone H-bond is from
+water. So "make hbond_coverage lipid-aware" does not implement "lipid shields the H-bond", and the
+48% collapse I measured at TM4 is a sidechain-placement quantity, not a desolvation one.
+
+### What is actually missing
+
+Comparing the node lists directly:
+
+| | soluble benchmark config | glpG hybrid config |
+|---|---|---|
+| `bb_sigmoid_coupling_environment` | present | **ABSENT** |
+| `environment_coverage_hb` / `_sc` | present | **ABSENT** |
+| `hb_environment_coverage_hn` / `_oc` | present | **ABSENT** |
+| `cat_pos_bb_coverage`, `weighted_pos`, `sigmoid_coupling_environment` | present | **ABSENT** |
+
+**glpG has no environment-dependent backbone term whatsoever.** Its `hbond_energy` is purely
+geometric: a backbone H-bond is worth the same whether buried in the protein core or dangling in
+bulk. In the soluble force field `bb_sigmoid_coupling_environment` and the two
+`hb_environment_coverage` nodes supply exactly that burial dependence.
+
+The cause is one line: `upside_config.py:2444`, `if args.environment_potential:` gates every one of
+those nodes, and the hybrid glpG builder never passes `--environment-potential`. My soluble
+benchmark configs DO pass it, which is why they have the nodes and glpG does not.
+
+### Why this explains everything measured
+
+* TM4 has the lowest intrinsic helix propensity of the six helices (23% glycine against TM1's 5%).
+  With no burial bonus for its backbone H-bonds it has nothing but intrinsic propensity to hold it,
+  so it is the first to melt while TM1 survives.
+* Temperature independent across the whole ladder: a **missing energy term**, not a thermal effect.
+* Present in all four variants and predating ff3.0: the hybrid builder has always omitted it.
+* Retraining the rotamer tables (ff3.0) helps a little but cannot substitute for an absent
+  backbone term, which is exactly the partial improvement observed.
+* It also explains the long-standing note that "the trained environment table has no home in glpG":
+  the environment nodes are not there to receive it.
+
+### The fix, and the caveat on it
+
+Rebuild the glpG seeds passing `--environment-potential parameters/ff_3.0/environment.h5` and
+`--bb-environment-potential .../bb_env.dat`. Both are already trained and already shipped. **No new
+parameters, no C++, no retraining.**
+
+The one thing to check first: the omission may have been deliberate. `planned_job.md` records
+"the environment node would double-count explicit dry-MARTINI lipid". That worry is real for the
+implicit *membrane* potential, but the environment coverage counts **protein neighbours only**, so
+it does not see lipid and cannot double-count it. That should be verified rather than assumed
+before deploying anywhere.
+
+This also puts the user's MARTINI-type idea in the right place: once the environment term exists,
+whether lipid should contribute to *environment* coverage is the meaningful question, and the
+MARTINI Qa/Qd/C1 classification is the parameter-free way to answer it.
+
+## The MARTINI-typed H-bond correction makes things worse; not deployed (2026-09-10, settled)
+
+Built, tested, refuted. The idea was sound and maps cleanly onto the code: dry-MARTINI's own
+particle typing says where water is not, so let the beads that can neither donate nor accept an
+H-bond (C1 and C3, the 2511-bead acyl core) count toward the backbone environment coordinate, while
+the donor/acceptor headgroups (Qa PO4, Qd NH3, Na GL1/GL2, and P4 GL0, which is MARTINI's own water
+bead) do not. It needs no C++: `hbbb_coverage` takes bare positions, `Add` sums coverages
+elementwise, and node types resolve by prefix, so the apolar channel enters `bl` through the already
+trained `hbond_weight`. Nothing was refit.
+
+Three seeds, same protocol and seeds as the other two arms, scored on the build's real helical
+segments:
+
+| arm | TM4a 134-139 | TM4b 141-155 | TM1 30-43 |
+|---|---|---|---|
+| armB500, no environment | 0.807 | 0.805 | 0.911 |
+| + backbone environment | 0.691 | 0.868 | 0.900 |
+| + MARTINI apolar channel | **0.464** | **0.717** | **0.810** |
+
+Every measure got worse, by -0.089 to -0.228. The likely reason is a sign trap: the coverage is
+non-negative and enters `bl` with a positive weight, and raising `bl` raises the energy, so the
+channel acts as an effective **repulsion between backbone and acyl chains**, which is the opposite
+of the intended "the core is dry, stop charging for desolvation". Making it act in the intended
+direction needs a signed term, which is the same wall the lipid-coverage scan hit.
+
+Not deployed anywhere. Also worth recording: scored on proper segments rather than the old capped
+window, the plain backbone-environment term is not neutral either, it trades TM4a (-0.116) against
+TM4b (+0.063). Neither route helps.
+
+## Where TM4 actually loses helix, and what it is not (2026-09-10)
+
+Four hypotheses died on measurement this round, and the survivor is a much narrower target.
+
+**TM4 is the least lipid-exposed helix in the protein, not the most.** Backbone beads with a lipid
+neighbour inside 12 A: TM1 10.7, TM3 7.0, TM5 6.5, TM6 4.1, TM2 4.4, **TM4 2.0**, and 7 of TM4's 22
+backbone beads have no lipid within 12 A at all. The 134-139 stretch sits at the bilayer midplane
+(|z| = 0.5-2.1 A) and still contacts nothing: its total dry-MARTINI energy against all 3627 lipid
+beads is 0.000. TM4 is packed in the middle of the six-helix bundle. Every protein-lipid explanation
+is therefore excluded, which is why the backbone-environment term, the lipid-coverage scan and the
+MARTINI-typed channel all returned nothing.
+
+**The MARTINI backbone typing is inert here even though it looks wrong.** dry-MARTINI types TM4's
+134-137 as `Nd` (helix N-cap, eps 2.7 kJ/mol against C1) and 131-133 as `P5` (coil, 0.5 kJ/mol)
+against `N0`'s 3.5, so those beads are nominally under-stabilised in the acyl core. Re-typing them
+all `N0` changes the total by **-0.3 kJ/mol**, because there is no lipid near them to interact with.
+
+**Much of the headline number was a window artifact.** TM4 was being scored over 131-152, but the
+build never treats 130-133 (`P5`) or 140 (`C5`) as helix. Scored on the build's own helical
+segments, TM4's two pieces sit at 0.807 (134-139) and 0.805 (141-155), against a protein mean near
+0.82. TM4 is not an outlier by that measure; the worst segment in the protein is the proline-rich
+60-77 at 0.536.
+
+**The real loss is sharp and local.** Per-residue helix occupancy, first 10% of frames vs last 10%,
+three seeds: 139 TYR 1.000 -> 0.350, 140 ALA 1.000 -> 0.333, 141 LEU 1.000 -> 0.333, 142 MET
+1.000 -> 0.533, and 134/135/137 lose 0.32-0.43, while **143-146 and 149 hold at 1.000** and 153-155
+hold. So the unwinding is confined to 134-142, the deeply buried midplane half, and the half nearer
+the headgroups is untouched.
+
+**It is not input strain.** In the seed structure TM4's i->i+4 O...N distances run 2.81-3.12 A
+continuously from 134 to 149, a pristine helix. Residue 140 in particular is perfectly helical
+(O140...N144 = 2.85 A) despite being typed `C5`, so that SS call is a mis-assignment rather than a
+real break, and it is energetically inert anyway.
+
+**A separate real defect, found on the way and worth fixing on its own merits.** `rama_map_pot`'s
+GLY maps in the built config are exactly symmetric (max asymmetry 0.000000), so that fix holds. But
+the shared reference state `rama_map_pot_ref` is a single map applied to all 210 residues and is
+chirally asymmetric by 1.07, worth **+0.32 E_up** between the two helical basins. It is added
+directly as energy (`*pot += value`, `rama_map_pot.cpp`). For every non-GLY residue the residue map
+swamps it (net alphaR favoured by 2.07). For GLY, whose own map is now exactly symmetric, it is the
+only chirality term left, so **every glycine is pushed toward alphaL by +0.37 E_up**. That is
+measurable: GLY residues sit below their own helix's mean occupancy in every helix. It is the same
+class of bug as the GLY symmetrization fix, in the one place that fix did not reach. It is **not**
+the TM4 cause: glycine density does not predict which helix fails (r = +0.23, wrong sign, and TM3
+carries 17.9% GLY at 0.928 occupancy).
+
+**What is left.** TM4 is the most protein-buried helix (13.55 backbone coverage against a 9.66
+protein mean), and burial correlates *positively* with helix stability across segments (r = +0.52),
+so it is not a buried-backbone penalty either. That leaves the sidechain and rotamer terms as the
+dominant environment for this helix, which is exactly what the M-vs-R arm test varies.
+
+## The backbone-environment term does NOT fix TM4 (2026-09-10, settled)
+
+Tested and refuted. The hybrid glpG config genuinely lacks every environment node while all 32
+soluble benchmark configs carry them, so restoring them was a real modelling gap to close. It does
+not close the TM4 gap.
+
+**Measurement.** `armB500_s{1234,2345,3456}` (coverage, no environment) against the same seed with
+`write_weighted_pos` + `write_bb_environment` injected, identical protocol, identical three seeds,
+300000 steps at T=0.70, none diverged, 401 frames each:
+
+| arm | TM4 helix fraction | TM1 |
+|---|---|---|
+| armB500, no environment | 0.673 [0.543-0.744] | 0.879 |
+| + backbone environment  | 0.693 [0.623-0.813] | 0.876 |
+
+**+0.020 with fully overlapping ranges on n=3.** Seed scatter is +-0.10, five times the effect. The
+protocol is not insensitive: the same three seeds resolved control 0.441 vs armB269 0.782 on this
+exact system, so it detects +0.34 comfortably. It detects nothing here.
+
+**Why, measured rather than argued.** My first explanation was that the burial coordinate counts
+protein neighbours only, so a TM helix reads as solvent-exposed. That is wrong, and the measurement
+says the opposite. Counting neighbours within the channel's own 6 A radius on the folded seed:
+
+| region | protein | apolar lipid | polar lipid |
+|---|---|---|---|
+| TM1 29-49 | 10.77 | 0.50 | 0.01 |
+| TM4 131-152 | **13.69** | **0.02** | 0.04 |
+| whole protein | 9.66 | 0.15 | 0.02 |
+
+`bb_sigmoid_coupling_environment` is `scale * compact_sigmoid(bl - center, sharpness)` with
+scale -0.301, center 2.0, sharpness 0.5, and `compact_sigmoid` reversed, so the solvation credit is
+fully on below bl = 0 and fully off above bl = 4. TM4 sits at 13.7, the **most buried region of the
+protein**, three times past saturation. Its credit is already zero, which is why restoring the term
+moved TM4 by 0.020 and why the whole config's energy moved by only 32 E_up. TM4's backbone is
+shielded by its own sidechains and by the rest of the six-helix bundle; it barely touches acyl
+chains at all (0.02 apolar neighbours, against TM1's 0.50).
+
+So the environment term is not mispricing TM4, it is saturated and inert there. Any fix that works
+by feeding the existing burial coordinate is therefore dead on arrival for TM4, including making
+lipid count toward burial: the MARTINI-typed channel adds +0.0 to TM4 and +1.0 to TM1 on the folded
+seed. Whatever destabilises TM4 is not the backbone environment term.
+
+**Not deployed.** The gate was that it had to fix TM4 locally before going to rockfish or midway2.
+It did not, so glpG production was left alone on both clusters. The term is still correct physics
+that a hybrid config should carry, and the NP ff3.0 rebuild includes it for that reason, but it is
+not the TM4 answer and must not be sold as one.
+
+## Lipid-coverage scan: what was built, and the sign caveat (2026-09-10, running)
+
+Implemented and launched. Three findings about feasibility, each correcting an earlier estimate of
+mine, and one caveat that limits what the result can mean.
+
+**It needs no C++.** Three properties of the engine make a lipid coverage channel a config-only
+change: node types resolve by **prefix** (`deriv_engine.cpp:598`), so a group named
+`hbbb_coverage_lipid` is instantiated as the registered `hbbb_coverage`; `rotamer` takes a
+**variable-length** `prob_nodes` list (`rotamer.cpp:1174-1178`) and uses each node's output
+**directly as a 1-body energy** (`rotamer.cpp:868-870`); and `hbbb_coverage`'s interaction is
+`HbondEnvironmentCoverageInteraction2` with **n_dim2 = 3**, so its second group can be bare
+positions. The trained `hbond_coverage` type cannot be used: it needs n_dim2 = 6, a direction
+vector, and lipid beads have none. Each prob node must have n_elem = 747, the sidechain bead count
+(`rotamer.cpp:702`), which group1 satisfies.
+
+Built as `scratchpad/lipid_coverage_test/inject_lipid_coverage.py` (gitignored): group1 = the 747
+sidechain beads, group2 = the 3627 LIPID beads with ids offset by 100000 so the built-in
+|id1-id2|<=2 exclusion cannot fire, `interaction_param` (1,1,4) = r0, r_sharpness, dot0=-2 (angular
+sigmoid ~1, making it a pure radial burial count), dot_sharpness.
+
+**Sign caveat, and it matters.** This interaction returns a **non-negative** count and it is used
+directly as energy, so the channel can only *penalise* lipid proximity, never reward it. Measured
+at the seed: baseline E = -24944.285, and with the channel +15.0 (r0=4), +72.2 (r0=6), +183.0
+(r0=8), all finite, |deriv|max 310-351. So this is **not** the hypothesised fix, which would
+*remove* a spurious desolvation penalty from lipid-solvated H-bonds. What it actually tests is
+whether biasing sidechains toward protein burial and away from lipid rescues TM4. That is a
+related but distinct proposition, and the parameters are chosen rather than trained.
+
+**Readout is the trend, not any value.** r0 = 4.0, 6.0, 8.0 against the existing `armB500_s1234`
+baseline, same protocol and seed. Monotonic TM4 improvement with r0 would support the mechanism and
+justify doing it properly with a trained, signed term; flat or non-monotonic refutes this route.
+
+## Coverage test (2026-09-10): the hypothesis survives, narrowed to the HYDROPHOBE term
+
+Ran the cheap precursor to the lipid-aware-coverage experiment. Two things came out of it, one a
+correction to my own cost estimate.
+
+### Correction: the fix is NOT a Python edit
+
+I estimated "2 hours, extend the neighbour list in `martini_inject_coverage.py`". Reading the code,
+that is wrong. Both coverage nodes take **exactly two argument nodes**,
+`["protein_hbond", <sidechain placement node>]`, and `index2` indexes directly into the sidechain
+placement node's bead list. Group2 *is* that node's output. Lipid beads cannot be appended from
+Python without either giving the node a third input group or putting MARTINI beads into the
+sidechain placement node, which would corrupt the rotamer solver. **Making coverage lipid-aware is
+an engine change in `src/environment.cpp`, not a script edit.**
+
+### What was measured instead, and what it shows
+
+`upside_engine.get_output()` exposes both coverage nodes directly, so the *premise* is testable
+without touching C++: does the coverage associated with TM4 actually collapse, and does it collapse
+more than for a helix that stays folded? Mean of 3 seeds, first 6 frames against last 6:
+
+| term / helix | early | late | change |
+|---|---|---|---|
+| `hbond_coverage` TM4 | 0.383 | 0.536 | +0.153 (rises) |
+| `hbond_coverage` TM1 | 0.580 | 0.792 | +0.212 (rises) |
+| **`hbond_coverage_hydrophobe` TM4** | 3.948 | 2.047 | **-1.901, a 48.2% collapse** |
+| `hbond_coverage_hydrophobe` TM1 | 3.359 | 2.848 | -0.511, 15.2% |
+
+against helix outcomes of TM4 0.97 -> 0.67 and TM1 0.97 -> 0.92 over the same window.
+
+**The plain `hbond_coverage` term rises for both helices and does not discriminate.** The
+**hydrophobe** term collapses **3x more for TM4 than TM1**, and that is the one term whose
+discrimination matches the helix outcome. It is also exactly the term lipid should contribute to:
+acyl tails are hydrophobic and do bury the backbone, yet contribute zero here.
+
+### Caveats, stated because they bound the claim
+
+* `get_output` returns shape **(747, 1)** for both nodes, i.e. one value per *sidechain bead*, and
+  both coverage nodes are **arguments to the `rotamer` node**, not direct multipliers on the
+  backbone H-bond energy. So the route from this term to backbone helix stability is indirect,
+  through the coupled sidechain solver. The correlation is real; the causal chain is not proven.
+* An earlier probe of mine reported `hbond_coverage` TM4 dropping 24.6%. That used only column 0 of
+  the output and is superseded by the table above, which averages the full output with a consistent
+  `id2` mapping for both terms.
+
+### Verdict
+
+The hypothesis is **not refuted and is now sharper**: it is the hydrophobic backbone-burial
+coverage, not the sidechain-competition coverage, that fails at TM4. That is worth the engine work.
+The next step is a third input group on `HbondEnvironmentCoverageInteraction` in
+`src/environment.cpp` so MARTINI beads can contribute hydrophobic coverage, then rerun the
+three-arm test. Note the trained tables were fitted with protein-only coverage, so a positive
+result is evidence about the mechanism, not a deployable force field.
+
+## RE-ANALYSIS: the real cause of TM4 unfolding (2026-09-10). Supersedes the splay-causes-melt story.
+
+Redone from scratch on the WT production trajectory (13117 frames) and the REMD ladder. Two of my
+earlier claims do not survive.
+
+### It is NOT thermal melting
+
+WT glpG, ff_2.1 production, TM cores in the last block of each replica across the ladder:
+
+| replica | T | TM1 30-48 | TM4 134-151 |
+|---|---|---|---|
+| 0 | 0.700 | 0.943 | **0.432** |
+| 6 | 0.742 | 0.910 | 0.521 |
+| 12 | 0.786 | 0.840 | 0.534 |
+| 18 | 0.831 | 0.712 | 0.363 |
+| 24 | 0.877 | 0.818 | 0.494 |
+| 27 | 0.900 | 0.918 | **0.531** |
+
+**TM4 is flat across the whole ladder, 0.36-0.57, with no monotonic temperature dependence, and is
+no better at the coldest rung than the hottest.** A helix melting thermally would be high at
+T=0.700 and low at T=0.900. TM1 meanwhile behaves normally. So the partially melted TM4 is what
+this force field prefers at *every* temperature sampled: the native helix is not the free-energy
+minimum, and no amount of cooling or sampling fixes that.
+
+### It IS reversible, and it has NOT equilibrated
+
+Same trajectory, 13117 frames at T=0.70: starts at 1.000, and by tenths runs
+0.99, 1.00, 0.97, 0.88, 0.82, 0.72, 0.63, 0.47, 0.31, 0.39. Overall mean 0.716, sd 0.278,
+min 0.056, max 1.000. After the initial drop, **47.8% of frames are still above 0.8** and it
+recovers above 0.8 repeatedly.
+
+So TM4 is not destroyed; it interconverts between helical and partly melted, with the population
+drifting toward melted. And it is **still drifting after 13117 frames**, so even the long
+production run is not equilibrated.
+
+### What I got wrong: splay does not demonstrably cause the melt
+
+I previously wrote that the bundle opens, TM4 loses packing, and the helix then melts. Testing the
+ordering properly does not support it. Cross-correlating the raw time series gave
+"lipid gain leads helix loss by 99 time units, r = 0.64", but both series are monotone trends and
+that number is an artifact of the shared trend. **On first differences, which remove the trend,
+every coupling collapses to r = 0.21-0.26 and the lipid-helix lag falls to +/-9 time units, less
+than one sampling interval.** No causal direction is resolvable. The earlier per-residue
+correlation was already weak (+0.21), and the melt is not a discrete event either: the largest
+single-step drops are -0.17 to -0.39 at unrelated times in different seeds.
+
+### What the cause actually is, and what remains hypothesis
+
+**Established:** the force field gives TM4's native helix insufficient free-energy preference over
+a partially melted alternative, at all temperatures in the ladder. Everything else has been
+excluded: not GLY asymmetry (verified 0.000000 in every seed, production and live), not the
+mutations (TM4 is byte-identical in all four variants and all four decay), not ff3.0 (it predates
+it, and ff3.0 only slows it), not the capped measurement window (the decay is real on 134-151),
+not temperature, not irreversible damage.
+
+**Hypothesis for why TM4 and not TM1**, still untested: TM4 has the lowest intrinsic helix
+propensity of the six helices (5 glycines in 22 residues, 23%, against TM1's 1 in 21) *and* is the
+most protein-buried at the start (0.22 lipid beads/residue against TM1's 0.55), so it depends most
+on the burial-dependent coverage terms, which count only protein and are blind to lipid. A helix
+that is both intrinsically floppy and maximally dependent on a burial term that mis-reads its
+environment is the one that gives way first. Testable by making coverage lipid-aware and repeating
+the three-arm run.
+
+## The GLY fix is intact; the earlier "TM4 is fixed" conclusion was a convergence error (2026-09-10)
+
+Two separate questions, separate answers.
+
+### The GLY symmetrization is correctly applied and is not the problem
+
+Checked with the correct `.up` mirror `m[::-1,::-1]` on every relevant config: the four production
+seeds, the production replica that actually decayed (`glpG-RKRK-79HIS.run.0.up`), the two live
+ff3.0 arm-test seeds, and the local three-arm configs. **All PASS: 23 GLY maps, max asymmetry
+0.000000**, with the chiral control (SER/HIS/ALA) at 11.10-11.15 E_up, exactly the expected 10-11.
+
+So GLY symmetry is real and present, and TM4 still melts. This does not contradict the earlier
+record, which already said GLY symmetry was **necessary but not sufficient** (ff_2.1 with symmetric
+GLY still gave TM4 0.441). It was never the claimed fix.
+
+### What was actually wrong: means compared across arms that had not equilibrated
+
+The claimed fix was trained pair + coverage, ARM B at 0.782 against a 0.441 control. Both are
+**trajectory means**. Broken into quintiles, TM4 core 134-151, 3 seeds:
+
+| arm | q1 | q2 | q3 | q4 | q5 | mean | 2nd-half slope /1000 t.u. |
+|---|---|---|---|---|---|---|---|
+| control ff_2.1 | 0.87 | 0.51 | 0.43 | 0.43 | 0.41 | 0.528 | **-0.022** |
+| trained 269 + coverage | 0.99 | 0.97 | 0.87 | 0.84 | 0.81 | 0.898 | -0.055 |
+| trained 500 + coverage | 0.97 | 0.88 | 0.85 | 0.72 | 0.67 | 0.817 | **-0.135** |
+
+**The control had already bottomed out by q3 and is flat thereafter. The trained arms were still
+falling, the step-500 arm six times faster than the control.** Comparing means, or any fixed-time
+value, between a converged arm and two non-converged ones systematically flatters the
+non-converged ones: part of their higher score is simply "has not finished decaying yet".
+
+The independent check that this is the right diagnosis: my local ff_2.1 control ends at **0.41** and
+the ff_2.1 **production** run, 25-40x longer, ends at **0.43**. ff_2.1 had genuinely converged
+inside the short run. No production-length ff3.0 run exists yet, so its endpoint is unmeasured, and
+extrapolating the -0.135 slope from 0.67 reaches the control's 0.41 within roughly another 1900
+time units.
+
+**What survives:** the trained tables plus coverage are better than `ff_2.1` at every time point,
+and that improvement is real. **What does not survive:** "TM4 is fixed", or any absolute claim that
+it clears a threshold. On this evidence ff3.0 *delays* TM4 loss rather than preventing it.
+
+### The tooling bakes the error in
+
+`final_analysis.py` and `decide_arm.py` both compute helix fraction as `.mean()` over every frame,
+with no convergence or trend check. **The arm test running tonight inherits this**: it will rank
+arm M against arm R on trajectory means of runs that are almost certainly still decaying. For an
+M-vs-R *relative* comparison that is tolerable if both decay alike, but no absolute "TM4 passed"
+should be read out of it. Report the quintile trend and the second-half slope alongside any mean.
+
+## TM4 melts in ALL FOUR glpG variants, including the wild type, and predates ff3.0 (2026-09-10)
+
+Asked whether the TM4 unfolding is variant-specific, on the expectation that wild-type 79HIS at
+least should hold. It is not variant-specific, and the wild type is not spared.
+
+**First: TM4 is byte-identical in all four variants.** The mutations are at position 79 (HIS/ALA)
+and 115 (SER/THR); TM4 is residues 134-151, `LeuThrGlyValValTyrAlaLeuMetGlyTyrValTrpLeuArgGlyGluArg`
+in every one. There is no sequence basis for one variant's TM4 behaving differently.
+
+**Second, from the ff_2.1 PRODUCTION runs that produced the pre-ff3 baseline** (28-replica REMD,
+replica run.0 = T=0.70 rung, first output block against last), core windows TM1 30-48 and TM4
+134-151:
+
+| variant | blocks | TM1 first | TM4 first | **TM4 last** | TM1 last |
+|---|---|---|---|---|---|
+| glpG-RKRK-79HIS (wild type) | 51 | 1.000 | 1.000 | **0.432** | 0.943 |
+| glpG-RKRK-79HIS_S115T | 32 | 1.000 | 1.000 | **0.350** | 0.771 |
+| glpG-RKRK-79ALA | 32 | 1.000 | 1.000 | **0.601** | 0.556 |
+| glpG-RKRK-79ALA_S115T | 32 | 1.000 | 1.000 | **0.368** | 0.828 |
+
+**Every variant starts at TM4 = 1.000 and every one decays to 0.35-0.60.** The wild type ends at
+0.432, no better than the mutants; 79ALA is in fact the *best* at 0.601. TM1 largely holds
+(0.77-0.94) except in 79ALA.
+
+**This predates ff3.0 entirely.** These are the ff_2.1 runs from before the retraining, so the TM4
+melt is a property of the glpG/dry-MARTINI hybrid model rather than of the retrained force field or
+of any mutation. ff3.0 slows it (WT local test: 0.97 -> 0.67 against ff_2.1's 0.87 -> 0.41) but the
+phenomenon is the same one, and the expectation that wild-type TM4 should be stable has never been
+met by this model.
+
+Caveat on comparing the numbers directly: the production runs are 28-replica REMD and the local
+three-arm tests are single-temperature MD, so absolute values are not interchangeable. The
+within-table comparison across the four variants is like for like.
+
+A matching ff3.0 single-temperature test of the other three variants was launched 2026-09-10 to
+confirm the ordering carries over; the WT arm of that test is the one already reported.
+
+## Why TM4 still partially unfolds under ff3.0 (diagnosed 2026-09-10, from the VTF)
+
+User inspected the ff3.0 trajectory and saw TM4 better than ff_2.1 but still partly unfolded. That
+is correct, and the trajectory mean (0.817) hides it: TM4 starts essentially perfect and decays.
+
+**It is a progressive melt in the MIDDLE of TM4, not end-fraying.** Per residue, first fifth of the
+run against the last fifth, mean of 3 seeds, with the i->i+4 backbone H-bond distance at the end:
+
+| res | early | late | i->i+4 O...N late |
+|---|---|---|---|
+| 139 TYR | 0.992 | **0.432** | 6.44 A |
+| 140 ALA | 0.992 | **0.333** | 6.36 A |
+| 141 LEU | 0.996 | **0.342** | 5.22 A |
+| 142 MET | 0.996 | 0.543 | 4.32 A |
+
+A formed helix H-bond is ~3.0 A, and 146->150 is still 3.57 A, so the break is local to 139-142
+with a second weak patch at 134-137. **The seed has 134-151 fully helical**, so none of this is
+inherited from the starting structure.
+
+**The cause is the bundle opening, not anything specific to TM4's sequence.** TM4 begins
+**completely protein-buried, 0.0 lipid beads per residue**, and ends with lipid at every residue
+while losing **40% of its packing contacts** to the other five helices (10.2 -> 6.1 per residue).
+
+Same process in every arm; ff3.0 slows it without stopping it:
+
+| arm | TM4 helix early -> late | lipid beads early -> late | packing early -> late |
+|---|---|---|---|
+| control ff_2.1 | 0.87 -> 0.41 | 2 -> 31 | 41 -> 31 |
+| trained 269 + coverage | 0.99 -> 0.81 | 2 -> 22 | 42 -> 34 |
+| trained 500 + coverage | 0.97 -> 0.67 | 1 -> 20 | 44 -> 36 |
+
+ff3.0 keeps more packing and admits ~35% less lipid than ff_2.1, which is the visible improvement,
+but the mechanism is untouched.
+
+**Honest limit on the causal claim.** Across the 18 core residues the per-residue correlation
+between helix loss and packing loss is only **+0.21**, and with lipid gain **+0.09**. So the link is
+global, TM4 as a whole loses support and melts somewhere in the middle, and is NOT a residue-level
+"this contact broke so this turn opened".
+
+### The specific candidate defect: the coverage term is blind to lipid
+
+`hbond_coverage` and `hbond_coverage_hydrophobe` take `id2` = 747 **protein sidechain beads** and
+`id1` = 630 protein backbone atoms. No MARTINI bead enters either (verified in the config). Those
+terms modulate backbone H-bond strength by burial.
+
+In a soluble protein, trained on 456 soluble proteins, "not covered by protein" always means
+"exposed to water", where the backbone H-bond competes with water and should be weakened. In a
+bilayer it can instead mean "surrounded by acyl tails", which shield an H-bond at least as well as
+protein does. The model cannot tell those apart, so as TM4 goes from protein-buried to
+lipid-solvated its coverage collapses and its H-bonds are penalised as if they had been dunked in
+water. That is exactly when and where the helix melts.
+
+It also predicts the observed ordering: TM4 is the most buried helix at the start (0.22 lipid
+beads/residue against TM1's 0.55) so it suffers the largest coverage change, and it is TM4 rather
+than TM1 that degrades (TM4 0.817 vs TM1 0.919).
+
+**This is a hypothesis consistent with the data, not a proven cause.** It is directly testable:
+include MARTINI beads in the coverage calculation and rerun the same three-arm test. If TM4 holds,
+the mechanism is confirmed. Note that would be a model-structure change requiring retraining and
+validation, not a parameter tweak, and must not be done by scaling SC-env or BB-env.
+
 ## The remaining glpG problem is NOT TM4: the helix bundle splays and lipid wedges into it (2026-09-09)
 
 TM4's helix is fine. Decomposing the residual core CA-RMSD on the 9 local trajectories shows the

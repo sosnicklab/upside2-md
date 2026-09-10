@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 """ITP readers used by the dry-MARTINI workflow."""
 
+from __future__ import annotations
+
 import importlib.util
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple

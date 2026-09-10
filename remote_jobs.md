@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-09 ~17:45 CDT. The two-arm force-field test is RUNNING ON BOTH CLUSTERS. rockfish `30768485`/`30768486` since 17:17 CDT; midway2 `49002097`/`49002098` since 17:40 CDT with decider `49002099` queued afterany. Both clusters built bit-identical arms (arm M energy -24944.283203, arm R -24957.681641 on both). ETAs: **rockfish verdict ~05:20 CDT 2026-09-10** (no decider queued there, run `decide_arm.py` by hand), **midway2 verdict ~05:50 CDT 2026-09-10** (decider automatic). A local 3-arm TM4 smoke test on this Mac finishes **~18:56 CDT tonight**. midway2's first two attempts FAILED for two DIFFERENT reasons, both now fixed and both verified by reproducing the failure first: a broken module system on `midway2-0003`, and a venv leaking through `sbatch --export=ALL` into the REMD runners. The same venv leak would have killed PRODUCTION, so `remd.sbatch` is patched too. Nothing destructive fired in either failure: `.production_relaunched` absent, seeds byte-identical.**
+Snapshot: **2026-09-10 ~00:00 CDT. Two campaigns are live. (1) The glpG two-arm force-field test runs on BOTH clusters as independent replicates: midway2 `49002097`/`49002098` with decider `49002099`, rockfish `30768485`/`30768486` with verdict-only decider `30768512`. Verdicts ~05:20 (rockfish) and ~05:50 (midway2) CDT 2026-09-10. (2) The **ff3.0 re-benchmark of Peng et al. JCTC 2022** launched on midway2 broadwl: 32 jobs, `49002902`-`49002933`, 16 proteins x native/de novo, 14-replica REMD each, self-resubmitting until their Table S2 durations complete. Upside now has ONE shared deployment at `/beagle3/trsosnic/yinhan/upside2-md` usable from both clusters via `env_shared.sh`; see §0b. ff3.0 is deployed in the repo as `parameters/ff_3.0`. midway3 has no other work.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -138,156 +138,138 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-09 ~17:45 CDT (verified live against `squeue` on both hosts)**.
+Snapshot **2026-09-10 ~09:20 CDT (verified live against `squeue`)**.
 
-### The two-arm test is running on both clusters
+### Campaign 1: glpG production on ff3.0, lowered ladder ceiling (both clusters, 2026-09-10 ~09:10)
 
-| host | JobID | Name | State | Ends |
-|---|---|---|---|---|
-| rockfish | 30768485 | `rf_armtest_M` | RUNNING on c590 since 17:17 CDT | ~05:17 CDT 09-10 |
-| rockfish | 30768486 | `rf_armtest_R` | RUNNING on c569 since 17:17 CDT | ~05:17 CDT 09-10 |
-| midway2 | 49002097 | `armtest_M` | RUNNING on midway2-0340 since 17:40 CDT | ~05:41 CDT 09-10 |
-| midway2 | 49002098 | `armtest_R` | RUNNING on midway2-0161 since 17:40 CDT | ~05:41 CDT 09-10 |
-| midway2 | 49002099 | `arm-decide` | PENDING, afterany on both arms | verdict + production launch ~05:50 CDT 09-10 |
-| rockfish | 30768512 | `rf-arm-decide` | PENDING, afterany on both arms | verdict only, ~05:20 CDT 09-10 |
-
-**rockfish now has its own decider: `30768512` (`rf-arm-decide`), PENDING on
-`afterany:30768485:30768486`.** It runs `decide_arm.py` against `armtest_M`/`armtest_R` and writes
-`popepopg_REMD/arm_verdict_rf.txt`. A Slurm dependency was chosen over a watcher on the Mac so the
-verdict does not depend on this machine staying awake or on a live session.
-
-**It is verdict-only and deliberately so.** `decide_arm_rf.sbatch` runs `decide_arm.py` and nothing
-else: it does not patch seeds and does not launch production. midway2's `decide_and_launch.sbatch`
-owns that, and rockfish's `seeds/*.up` are still the unpatched old-force-field copies staged
-2026-09-08 with no coverage nodes, so a launch from rockfish would run the arm the four-arm
-experiment measured at TM4 0.441. `decide_arm.py` was copied from midway2 unchanged
-(md5 `5bc7798c31850a68003eea35e5a57e81`) along with `BASELINE_TM_pre_ff3.txt`.
-
-Both clusters built **bit-identical arms**: arm M energy `-24944.283203` \|deriv\|max 300.2, arm R
-`-24957.681641` \|deriv\|max 301.9, identical on midway2 and rockfish. Same seed
-(`6a8285d1…`), same force fields (`c67351ca…`, `cfe4ba5e…`), same 28-replica ladder.
-
-### midway2 failed twice first, for two DIFFERENT reasons. Both fixed.
-
-Both were diagnosed by reproducing the failure before changing anything, and the first diagnosis I
-reached was wrong; the record below is what the evidence actually showed.
-
-**Failure 1, job `49001769`: a broken module system on `midway2-0003`.** The build died with
-`ModuleNotFoundError: No module named 'h5py'`, reporting `PY_H5` as the *venv* python.
-`run_arm_test.sbatch` does `module load python/3.9.18` and then `PY_H5=$(command -v python3)`,
-expecting the module python. On `midway2-0003` that `module load` fails silently (its stderr is
-sent to `/dev/null`), so `PY_H5` fell back to the inherited venv python, which has pytables but no
-h5py. **This is node-specific**: a diagnostic job on `midway2-0017` showed the unpatched code
-resolving correctly to `/software/python-3.9.18-el7-x86_64/bin/python3` with h5py 3.14.0, because
-`module load` prepends to PATH and wins over an inherited venv when it works at all.
-`srun_mdw2.sh` already excluded this node; the exclusion had only ever been applied to the arm jobs
-`run_arm_test.sbatch` submits, never to that script itself, nor to `decide_and_launch.sbatch`.
-**Fix: `#SBATCH --exclude=midway2-0003` added to both.** An earlier attempt to harden the `PY_H5`
-lookup was reverted: on a good node it changes nothing, and on a broken one it would have silently
-picked `/usr/bin/python3` and produced a worse error.
-
-**Failure 2, jobs `49002091`/`49002092`: the venv leaking through `sbatch --export=ALL`.** With the
-node fixed, the build succeeded and launched both arms, which then died in seconds on
-`run_remd.py` line 22, `import h5py`. `run_arm_test.sbatch` activates the venv before submitting
-the arms, `sbatch` propagates the environment, and in the child the `module load` in
-`armtest_remd.sbatch` is a **no-op because the module is already in `LOADEDMODULES`**, so nothing
-re-prepends the module python and `python3` stays the venv python. Reproduced exactly on the login
-node before patching, and confirmed fixed there afterwards.
-**Fix: strip an inherited venv from PATH after `source env.sh`.** `run_remd.py` needs only numpy
-and h5py, both of which the module python has (numpy 2.0.2, h5py 3.14.0), and the `upside` binary
-stays on PATH via `env.sh`.
-
-**The same leak would have killed production.** `submit_remd.sh` submits `remd.sbatch` with
-`--export=ALL`, and `decide_and_launch.sbatch` also runs with the venv active, so the production
-launch at the end of the chain would have failed identically. **`remd.sbatch` is patched with the
-same block.** It is a no-op when submitted by hand from a login shell, which is why production
-worked before and why this was never seen.
-
-Originals kept as `*.bak_pre_venvfix` and `*.bak_pre_pyfix`; the failed arm directories are
-preserved as `armtest_{M,R}.failed_venv_20260909_174049`.
-
-**The safety property held through both failures.** `die()` ran each time, `.production_relaunched`
-was never created, the four real seeds are byte-identical
-(`glpG-RKRK-79HIS.up` still md5 `6a8285d1…`, 199844540 bytes), and nothing was cancelled. The
-decider `49002093` fired on the failed arms and aborted with "Nothing was cancelled and nothing was
-launched."
-
-### FIXED 2026-09-09: `check_quota.py` was gating on the wrong filesystem
-
-Found while checking status: the chain's disk pre-flight would have **falsely aborted the
-production launch**, and separately, it had never measured the filesystem the data is on. Both are
-fixed, tested and deployed. Original kept as `check_quota.py.bak_pre_stamp` (md5 `fb60a73f…`);
-new file md5 `3e4b8906…`, identical on the cluster and in `scratchpad/ff3_retraining/`.
-
-**Defect 1: the gate read the wrong quota row.** `rcchelp quota` reports **four separate
-`trsosnic blocks (group)` rows**, one per filesystem, and the old parser took the *first* one:
-
-| rcchelp section | used / hard | headroom | is it ours? |
+| host | JobIDs | variants | wall |
 |---|---|---|---|
-| `project` (Beagle3 GPFS at `/beagle3`) | 4.10 T / 5.50 T | 1434 G | no; what the old script read on midway3 |
-| `project` (Midway3 GPFS at **`/project`**) | 2.36 T / 3.84 T | **1516 G** | **yes** |
-| `project2` (Midway2 GPFS at `/project2`) | 1.45 T / 1.64 T | 195 G | no; what it read on midway2 |
-| `cds3` (Ceph at `/cds3`) | 3.23 T / 4.00 T | 789 G | no |
+| midway2 | 49003548-49003551 | all four | 36 h x 4 blocks |
+| rockfish | 30775667-30775670 | all four | 48 h |
 
-So the number it printed was `/beagle3`'s. It happened to be conservative here, but it was not a
-measurement of `/project`. The parser now matches the `mounted at <path>` section header against
-`FS_MOUNTPOINT = /project`. The corrected row (1516 G) agrees with `statvfs` on
-`/project/trsosnic` (1514 G) to within 2 G, and that agreement is the cross-check that the right
-row is being read.
+**The arm test is decided: R wins**, so `parameters/ff_3.0` now carries the **rockfish** training
+run's tables (`sidechain.h5` `cfe4ba5e...`, `environment.h5` `301f8418...`, both step 500),
+byte-identical in the repo, on beagle3 and on rockfish. The arm-M tables are kept beside them as
+`*.bak_armM_20260910-*`. Scored on the segments the build actually treats as helix rather than
+`decide_arm.py`'s capped window, over replicas 0-2:
 
-**Defect 2: `rcchelp` cannot answer on midway2 at all, so the gate exited 1.** `/project` is a
-*remote* fileset on midway2 and every interface fails there:
+| measure | arm M | arm R | R - M |
+|---|---|---|---|
+| TM4a 134-139 | 0.979 | 0.987 | +0.008 |
+| TM4b 141-155 | 0.884 | 0.946 | **+0.062** |
+| TM1 30-43 | 0.873 | 0.944 | **+0.071** |
+| TM3 99-115 | 0.931 | 0.931 | 0.000 |
 
-| source | result on midway2 |
-|---|---|
-| `rcchelp quota` | crashes: `TypeError: argument of type 'NoneType' is not iterable`, emits `home`/`scratch`/`project2` and **no `/project` section** |
-| `rcchelp project-quota trsosnic` | `mmlsquota: File system gpfs_cap1 is not known to the GPFS cluster` |
-| `mmlsquota -g trsosnic midway3_cap` | `Operation not permitted` (needs privilege) |
-| `gpfsquota` | `/srv/adm/gpfsquota: No such file or directory` |
+**Ladder ceiling lowered 0.90 -> 0.82, from measurement.** Pooling all 8428 frames of the arm-R run
+by their logged instantaneous temperature, TM4's 134-139 segment holds 0.981 below T = 0.72 and
+collapses to **0.201** in the 0.88-0.90 bin, while TM3 and TM6 barely move. Whole-fold helix content
+sits on a plateau at 87% of the coldest bin from 0.78 to 0.84, then falls to 72% at 0.90. 0.82 is the
+top of that plateau. `REMD_N` stays 28 on both clusters, so the narrower span also tightens the
+spacing (0.0043 at the cold end, was 0.0071) and raises exchange acceptance.
 
-`decide_and_launch.sbatch:131` runs `"$PY" check_quota.py 120 || die`, so this aborted the launch
-after the whole multi-day training run, with nothing modified, but nothing launched either.
+* Set through `REMD_T_HI=0.82` in each cluster's submit script; `run_remd.py` builds
+  `linspace(sqrt(T_LO), sqrt(T_HI), N)**2` and needed no change. Verified in the running job:
+  ladder starts 0.7, 0.704275 and ends 0.815386, 0.82 over 28 replicas.
+* **Seeds were pristine ff_2.1 with no coverage nodes**; the cancelled decider never patched them.
+  Both clusters were patched by hand with `martini_inject_coverage.py` then `patch_seeds.py` against
+  the arm-R `sidechain.h5`, backed up first as `*.bak_pre_armR_20260910-*`. All four seed energies
+  agree exactly across clusters (-24957.68 / -24843.17 / -24903.80 / -24806.57), so the two runs are
+  true replicates. `rockfish` had no `patch_seeds.py`; it was copied from midway2.
+* **No environment nodes were added.** The arm test that chose R ran without them, and adding them
+  locally traded TM4a (-0.116) against TM4b (+0.063) with no net gain, so the ladder ceiling is the
+  only variable that changed.
+* midway2's 130 GB of pre-ff3 replicas were moved to `<variant>/pre_ff3/` (same filesystem, nothing
+  deleted); `hdx/` was left alone. rockfish had no prior production data.
 
-**The fix.** The gate is now `min(group_headroom, statvfs_free)`, because either limit can bind:
-today the fileset (1514 G) is marginally tighter than the group quota (1516 G). A successful
-`rcchelp` read *stamps* the group headroom to `training/gly-sym/QUOTA_HEADROOM_GB` on the shared
-filesystem; midway2, which cannot measure it, reads that stamp. **A stamp older than 24 h is
-refused, not used**, a gate that exists to prevent ENOSPC cannot run on stale data.
+### Campaign 2: ff3.0 re-benchmark of Peng et al. JCTC 2022 (launched 2026-09-09 ~23:55 CDT)
 
-Also fixed: `MOUNT` was `/project`, which is the whole 6.3 PB `midway3_cap` device where statvfs
-reports 1.7 PB free, making that leg meaningless. It is now `/project/trsosnic` (3929 G).
-And `subprocess.run(capture_output=)` is 3.7+, while midway2's default `python3` is 3.6.8; the
-chain uses the 3.9.18 venv so it would not have tripped, but it is now 3.6-safe.
+32 jobs on midway2 broadwl, **relaunched a second time 2026-09-10 ~09:15 CDT** once ff_3.0 became
+the arm-R tables; the 03:50 launch had been built against arm M and was cancelled 38 min in (parked
+in `armM_discarded/`). All 32 RUNNING, and all 32 configs verified against the deployed libraries:
+`nonlinear_coupling_environment` present, `sigmoid_coupling_environment` absent, `coeff` equal to
+`ff_3.0/environment.h5:energies` and the rotamer pair table equal to `ff_3.0/sidechain.h5`.
+16 proteins x {native, de novo}, 14-replica REMD, per-protein temperature ladders and durations
+verbatim from Table S2, dt 0.009, frames every 100 time units, exchange every 10.
 
-**No resubmission was needed.** `check_quota.py` is a `.py` invoked at runtime, so the Slurm
-snapshot trap does not apply, unlike the `.sbatch` files. The queued `48999889` picks it up as is.
+The first launch (`49002902`-`49002933`, cancelled after ~3 h) built the wrong environment coupling;
+its `runs/` and `logs/` are parked in `sigmoid_discarded/` (4.0 G) and can be deleted.
 
-**Verified, not assumed**, 7 tests, run on the cluster:
+* **Working dir** `/beagle3/trsosnic/yinhan/ff3_benchmark`, runs under `runs/<prot>_<kind>_ff_3.0/`,
+  logs in `logs/`. Structures in `pdb/` came from Xiangda Peng's
+  `/project2/trsosnic/pengxd/Data/test-set-15`, each verified against the residue count in Fig S4.
+* **They resubmit themselves.** Several arms need far more than the 36 h wall (ubiquitin de novo is
+  8.03 M time units, days of it), so each job runs under a `--time-limit`, archives its output to
+  `output_previous_N`, reseeds from the last frame and re-queues for the remainder. Progress is
+  measured from frames actually written. A run is finished when `runs/<tag>/COMPLETE` appears.
+* **Baseline to beat** (Fig S5, 16-protein means): FF2 from-native TM 0.55 / Ca-RMSD 4.0 A, de novo
+  TM 0.42 / 6.1 A. Per-protein FF2 values and the terminal-residue exclusions are in `plan.md`.
+  **Peng's own `ff_2.1` is byte-identical to ours** (`799dc192...`), so the published numbers are a
+  valid baseline rather than an approximate one.
+* **Weakest FF2 cases, where ff3.0 has room:** lambda (5.4 A), hyp (11.1 A centroid), protein G
+  (4.2/7.9), cspA (4.2/5.5), NTL9 (8.2 centroid).
+* **Not yet built: TM-score.** Ca-RMSD can use `example/01.GettingStarted/calc_rmsd.py`; TM-score
+  needs the standard binary or an implementation before the comparison is complete.
+* **The environment coupling was wrong on the first launch, and is fixed.** ff_3.0 retrained
+  exactly one array in `environment.h5`, `energies`, and only `nonlinear_coupling_environment`
+  reads it; `scale`, `center` and `sharpness` are byte-identical to ff_2.1. `ConDiv.py` trained
+  with `environment_potential_type = 0` (nonlinear), but `upside_config`'s CLI default is `1`
+  (sigmoid) and `bench_run.py` did not override it, so the first 32 configs never read the
+  retrained table and measured ff_3.0's sidechain against ff_2.1's environment. `bench_run.py` now
+  passes `environment_potential_type = 0` for ff_3.0.
+* **Pre-create `runs/<tag>/input` before submitting.** Eleven of the first 32 resubmissions died
+  instantly in `os.makedirs(inp_dir, exist_ok=True)` with `FileNotFoundError`: 32 jobs racing to
+  create nested directories on beagle3 at once. The directories are now pre-created, which removes
+  the race; the eleven were resubmitted with `--exclude=midway2-0003`.
+* **No ff_2.1 control was run.** The comparison is against the paper's published numbers, so it
+  inherits any difference between their analysis and ours. An internal ff_2.1 arm would remove that
+  and costs another 32 jobs.
 
-| # | case | result |
+### Campaign 3: NP 1AO6 + MPA-AuNP rebuild on ff3.0 (midway2, started 2026-09-10 ~02:51 CDT)
+
+| JobID | what | log |
 |---|---|---|
-| 1 | midway2, no stamp | rc=1, names the missing file and says to stamp on midway3 |
-| 2 | midway3 | reads the `/project` row, 1516 G, stamps it, rc=0 |
-| 3 | midway2, fresh stamp | 1514 G, `sufficient for 120 G`, rc=0 |
-| 4 | need 99999 G | `INSUFFICIENT: need 99999 G, have 1514 G`, rc=1 |
-| 5 | stamp backdated 30 h | rc=1, refuses as stale |
-| 6 | stamp backdated 23 h | rc=0, accepted |
-| 7 | malformed stamp | rc=1, refuses as unparseable |
+| 49003158 | `np_build_ff3`, builds the six cardinal-orientation configs | `NP-1AO6/build_ff3_49003158.out` |
 
-Test 3 was re-run with the chain's exact interpreter
-(`$PROJECT/.venv/bin/python3`, 3.9.18, after the same `module load`) and passes.
+Rebuilt from scratch rather than patched: the old replicas carry 98 accumulated output groups
+(246 GB) and their coordinates are old-force-field unfolded.
 
-**STANDING ACTION: re-stamp if the launch slips past 24 h.** The stamp was written 2026-09-09
-~08:27 CDT and the chain needs it around 16:00 CDT the same day, so it is comfortably fresh, but
-if node failures push step 500 into 2026-09-10, the gate will refuse until it is refreshed. One
-command on midway3, no Duo needed if the socket is up:
+* **Working dir** `/project/trsosnic/yinhan/NP-1AO6`, building into `prod_ff3/`. Driver
+  `build_np_ff3.py`, checker `verify_np_ff3.py`, run under `build_np_ff3.sbatch` against the shared
+  beagle3 Upside.
+* **Built with `--environment-type nonlinear`**, which is the coupling ff_3.0 was actually trained
+  on, so unlike the 32 benchmark jobs this one does read the retrained `energies` table.
+  `--coverage on` matches both glpG arms and the replicas these configs replace, and
+  `--rama-library rama3.dat` carries the GLY-symmetric maps.
+* **Production is not submitted yet.** `submit_np.sh` still points at `prod/` and the old
+  `upside2-md-mdw2`; repoint both at `prod_ff3/` and the beagle3 Upside before launching, and keep
+  `NP_DT=0.001`.
+* **Four bugs were fixed to get the build to run**, all real and all previously masked because the
+  driver had never been executed since its 09-08 edit: `str | Path` annotations that need Python
+  3.10 while the shared venv is 3.9 (`py/martini_itp_reader.py`,
+  `py/martini_prepare_system_lib.py`, both now `from __future__ import annotations`);
+  `np.exceptions.VisibleDeprecationWarning`, which needs NumPy >= 1.25 against the cluster's 1.23
+  (`py/martini_prepare_system_lib.py`, now version-tolerant); `SYSTEM[...]` where the dict is
+  `SPEC` (`build_np_ff3.py`, four references); and an exact-equality rotamer-geometry check that
+  fired on 5e-13 A of float64 round-trip noise, now compared against a 1e-9 A tolerance that also
+  prints the measured deviation every run.
 
-```bash
-ssh -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu \
-  'python3 /project/trsosnic/yinhan/upside2-md-mdw2/training/gly-sym/check_quota.py 120'
-```
+### Campaign 4: NP production on ff3.0 (midway2, launched 2026-09-10 04:31 CDT)
 
-Run this at the start of any session that finds training still short of step 500.
+| JobID | what | log |
+|---|---|---|
+| 49003318 | `np_1AO6_prod`, block 1 of 8, self-resubmitting | `NP-1AO6/prod_ff3/np.49003318.out` |
+
+Build `49003158` finished rc=0 and all six configs passed `verify_np_ff3.py` (composition, ion
+counts, 300 A box, `exclude_intra_protein_martini` 1, environment nodes present, no
+`sigmoid_coupling_environment`, coverage nodes wired into the rotamer, finite energy and gradient).
+
+* **dt is pinned to 0.001 in `np_prod.sbatch`.** `run_np_prod.py` defaults `NP_DT` to 0.009, which
+  is wrong for NP: the short step is required for accuracy while the backbone unfolds.
+* `np_prod.sbatch` and `submit_np.sh` now point at `prod_ff3/` and source the shared beagle3
+  `env_shared.sh` instead of the old per-cluster `upside2-md-mdw2`. The `martini_upgrade_hybrid_args`
+  call was dropped: it exists to migrate old replicas, and these configs are freshly built.
+* The old `prod/` replicas (246 GB, 98 output groups, old-force-field coordinates) are untouched and
+  can be deleted once `prod_ff3` has produced a block.
 
 ### midway3, IDLE, nothing queued or running
 
@@ -323,138 +305,6 @@ records the failure ff_3.0 has to beat — 79HIS TM1 `mean_helix=0.906` / **TM4 
 `median_phi=+75.9` and GLY133 `+67.7` (alphaL) — against the pass criterion of TM `mean_helix > 0.8`
 and negative (alphaR) GLY phi.
 
-### The install chain is re-armed, and what it now does
-
-First armed 2026-09-08 as `48994406`; it has since re-armed itself twice and the live instance is
-**`48999889`** (`ff-check-cont`, `--dependency=afterany:48999888`). `48988387`
-(`continue_mdw2.sbatch`) was cancelled once the first submission was confirmed: it only ever
-continued training, which `check_continue.sbatch` also does, so keeping both was two chain drivers
-racing for one `run_output`.
-
-The self-re-arming was **observed working** overnight 2026-09-08/09: each `check_continue` run
-resubmitted training and queued its own successor, so the id to watch changes every time a training
-job dies. Read the newest `check-continue_*.out` rather than trusting an id written here.
-
-**`48994331` was the first attempt and had to be replaced**, a live instance of the snapshot trap
-below. It was submitted before `check_continue.sbatch` gained the `FF_DIR/STEP` stamp, so it carried
-the older snapshot; `run_arm_test.sbatch` is submitted at *runtime* and would therefore have picked
-up the newer version that refuses to run without that file, and the chain would have died at the
-handoff with nothing launched. The rule that catches this: **after editing any script in the chain,
-resubmit every queued job that runs it.** The re-arm now greps the on-disk script for the feature
-before resubmitting against it, and always submits the replacement before cancelling the original.
-
-What fires when 48988330 ends:
-
-```
-48988330 ends --afterany--> 48994406 check_continue.sbatch
-    step < 500 ?  resubmit srun_mdw2.sh for the remainder, re-arm, exit
-    step = 500 ?  extract_ff.py    -> parameters/ff_3.0_trained/{sidechain,environment}.h5
-                  write FF_DIR/STEP = 500
-                  compare_ff.py    -> logs midway2 vs rockfish, gates nothing
-                  back up 4 glpG seeds as .up.bak_pre_ff3_<stamp>
-                  submit run_arm_test.sbatch
-                      arm M = coverage nodes + midway2's ff        (always)
-                      arm R = coverage nodes + rockfish's ff       (only if STEP matches)
-                      12 h each, 28 replicas, then afterany -->
-                  decide_and_launch.sbatch
-                      decide_arm.py: health gate, then higher mean(TM1,TM4);
-                                     inside 0.05 scatter midway2 wins as primary
-                      check_quota.py 120 -> abort if short, nothing touched
-                      verify the seed backups exist -> abort
-                      inject coverage + patch the 4 real seeds -> abort, restore from backup
-                      check_hybrid_up.py --require -> abort
-                      archive $V/run.0.up -> $V/pre_ff3/, delete rungs 1-27, keep $V/hdx/
-                      block_count=0, submit_remd.sh x4 (REMD_MAX_BLOCKS=4)
-                      remove armtest_M / armtest_R, log quota
-                      push_progress.sh  (EXIT trap: runs on every path)
-```
-
-**The safety property is unchanged and is now stronger:** every failure before the archive step
-leaves the pre-ff3 data, the seed backups and the queue untouched. There is no running production to
-cancel, so the old script's most destructive stretch no longer exists; what replaced it moves
-`run.0` aside before deleting anything.
-
-Scripts changed on midway2 (originals kept as `.bak_pre_ffcompare`, `submit_remd.sh.bak_pre_maxblocks`),
-each uploaded and md5-verified end to end:
-
-| file | change |
-|---|---|
-| `check_continue.sbatch` | step derived from the newest written checkpoint's directory name, not a file count; stamps `FF_DIR/STEP`; runs `compare_ff.py`; hands off to `run_arm_test.sbatch` |
-| `run_arm_test.sbatch` | arms M/R differ by force field, not by node recipe; arm R optional and refused unless its `STEP` matches |
-| `decide_arm.py` | M/R labels, midway2 wins ties as declared primary, honest one-armed n=1 verdict |
-| `decide_and_launch.sbatch` | reads the verdict again instead of a hardcoded `ARM_B`; coverage always injected; archives `run.0` instead of deleting the ladder; dead `NP_BASE`/`NP_NODES` removed |
-| `compare_ff.py` | new; array-by-array diff of two trained `sidechain.h5` |
-| `submit_remd.sh` | `REMD_MAX_BLOCKS=4`, because 12 needs ~690 GB and the quota allows ~284 |
-
-**Verified before arming, not assumed:** `bash -n` on all four sbatch scripts, `py_compile` on both
-python files, `compare_ff.py` against `ff_2.1` versus itself (all `rel_rms` 0.0000) and against a
-missing file (exit 1, the one-armed path), `decide_arm.py` on unbuilt arms (exit 2, `NO_WINNER`),
-and `extract_ff.py` dry-run on rockfish writing a valid `sidechain.h5` from its live checkpoint.
-
-### rockfish will run the two-arm force-field test (armed 2026-09-09 16:52 CDT)
-
-Decided this session: rockfish runs the arm test, and midway2's chain is left armed to run its own.
-The two clusters then give **independent replicates of the same comparison**, which is the direct
-answer to the n=1 concern in `planned_job.md`. Rockfish is the better host for it: idle, 48 h walls,
-1,145,000 core-hours unused, and zero job failures in 32 h against midway2's three lost jobs today.
-
-**Why the staged seeds could not simply be launched.** `popepopg_REMD/seeds/*.up` on rockfish were
-staged 2026-09-08, before ff3.0 existed. Inspection shows **no coverage nodes at all**
-(`hbond_coverage`, `hbond_coverage_hydrophobe` absent; only `hbond_energy` and `protein_hbond`) and
-the old force field. That is precisely the arm the local four-arm experiment measured at TM4
-**0.441**, against the >0.8 pass criterion, versus 0.782 for trained-pair + coverage. Launching them
-as they stood would have run known-failing physics and produced a confidently wrong HDX result.
-
-**The seed is byte-identical on both clusters**, md5 `6a8285d1aab81143247e066fda73db74`,
-199844540 bytes, so the two arm tests are comparing the same starting structure.
-
-The port holds the science fixed and changes only the bootstrap: same `run_remd.py`
-(md5 `3993d1b0131c369738be2abeab67aaec`, identical on both hosts), same variant
-`glpG-RKRK-79HIS`, same 28-replica ladder, same 12 h (`REMD_WALL_SEC=43200`), same
-`REMD_MAX_BLOCKS=1` and empty `REMD_SUBMIT_SELF`, same coverage recipe on both arms, both arms cut
-from copies of one seed. Rockfish's venv carries pytables, h5py and `upside_engine` together, so it
-uses one interpreter where midway2 needs two.
-
-| file | where | role |
-|---|---|---|
-| `armtest_remd_rf.sbatch` | `popepopg_REMD/` on rockfish | one arm, a direct port of midway2's `armtest_remd.sbatch` |
-| `build_arms_rf.sh` | `popepopg_REMD/` on rockfish | copies the seed twice, injects coverage, patches arm M with midway2's tables and arm R with rockfish's, verifies both with `check_hybrid_up.py --require`, submits both |
-| `deliver_m_to_rf.sh` | `scratchpad/ff3_retraining/` on this Mac | polls midway2 for `ff_3.0_trained/STEP`, carries it to rockfish md5-verified, then runs `build_arms_rf.sh` |
-
-`parameters/ff_3.0_trained_rf/` on rockfish is staged and verified (md5 `cfe4ba5e…`, `STEP=500`).
-`build_arms_rf.sh` **refuses unless both `STEP` files exist and match** (tested: it exits 1 with
-`no .../ff_3.0_trained/STEP; midway2's force field has not been delivered yet` and builds nothing),
-so a mismatched pair cannot confound the step gap with the trajectory gap.
-
-**Running now:** `deliver_m_to_rf.sh` (this Mac, pid 57306, started 16:52 CDT, log
-`scratchpad/ff3_retraining/deliver_m_to_rf.log`, gives up after 6 h). midway2 was at step 498 when
-it was armed. Verify it with `ps` and its log before trusting it.
-
-### RESOLVED 2026-09-09: `parameters/ff_3.0` was never ff3.0, and has been deleted
-
-`parameters/ff_3.0/` (md5 `3777ee0c232c0e860ae537322ad90392`) had a cumulative `pair_interaction`
-drift from `ff_2.1` of **0.0501**, against 1.19 at training step 269 and 1.68 at step 500. By the
-measured drift rate that is about **one step** of training: it was `ff_2.1` in all but name.
-
-It was not a rockfish artifact and not the half-trained force field rockfish resumed from. That
-hypothesis was tested and ruled out numerically: distance to `ff_2.1` 0.0501, distance to the
-step-275 resume point 1.2141, so it sat essentially on top of `ff_2.1` and 24x closer to it than to
-the branch point. It matched no checkpoint of either training run. It entered **git** in commit
-`2818532` (2026-09-04) beside the rewrite of `py/rotamer_parameter_estimation.py`, and reached
-rockfish only because the repo was copied there.
-
-**Deleted from the working tree 2026-09-09.** Nothing in `py/`, `src/` or `example/` referenced it,
-and `run_remd.py` reads no force field at all since the tables are baked into the `.up` seed at
-patch time. It stays recoverable from commit `2818532`. The rockfish copy at
-`$RF/parameters/ff_3.0/` is untouched and should be removed there too.
-
-**There is now exactly one ff3.0 directory in the repo: `parameters/ff_3.0/`** (midway2 step 500,
-`c67351ca...`), which overwrote that slot and carries a README recording provenance and caveats.
-Note the naming: on the clusters the same force field is `parameters/ff_3.0_trained/`, with
-rockfish's alternative as `ff_3.0_trained_rf`; in the repo it takes the plain `ff_3.0` slot beside
-`ff_2.0` and `ff_2.1`. The rockfish-trained alternative
-lives only on the clusters as `ff_3.0_trained_rf` until the arm test decides between them.
-
 ### The two training runs share history, so the arm test is a weaker check than it looks
 
 rockfish resumed from midway2's half-trained checkpoint rather than training from scratch, so the
@@ -469,132 +319,6 @@ trainings would be** (extrapolating the same rate to a full 500 independent step
 separation, against the 26% actually measured). If arms M and R agree on TM1/TM4, that shows this
 pair agrees; it does NOT show that a retraining is reproducible. A real reproducibility test needs a
 run branched at step 0.
-
-### DELIVERED 2026-09-09 16:30 CDT: rockfish's step-500 force field is in place
-
-midway2 cannot reach rockfish from inside a Slurm job, so this Mac was the relay. Done, and the arm
-test will run two-armed rather than one-armed at n=1.
-
-```
-parameters/ff_3.0_trained_rf/
-  sidechain.h5     1201772 B   cfe4ba5ebcdf4a5405c71cbcd7e60a11
-  environment.h5     22784 B   301f8418fc79148c2f2d459c7686c336
-  STEP                   4 B   500
-```
-
-**Provenance, checked rather than assumed.** Extracted from
-`run_output_ff3/epoch_13_minibatch_05/checkpoint.pkl` (the extractor logged `epoch=13 i_mb=6`, i.e.
-500 steps complete), shapes `pair(20,20,54) coverage(8,20,50) hydrophobe(12,20,50) env(20,18)`. The
-md5s above are identical on rockfish, on this Mac and on midway2. `compare_ff.py` against `ff_2.1`
-gives mean `rel_rms = 0.4773` across the three trained tables while `hydrophobe_placement` and
-`rotamer_center_fixed` match to 1e-13, which is the signature of a genuinely trained file and rules
-out a stale copy of the starting point. It opens in h5py on midway2.
-
-`STEP` was written last, so a partial transfer could not have been mistaken for a delivery.
-
-**Rockfish training is finished**: `squeue -u ywang268` is empty; `30725720` completed and the
-`30726466` continue link exited as designed once step >= 500.
-
-**The watchers have both exited and are no longer running.** They were single-shot:
-`watch_extract_500.sh` on rockfish login03 (extracted 17:28-17:29 EDT) and `auto_deliver_rf.sh` on
-this Mac (delivered 16:30:14-16:30:50 CDT). Logs kept at
-`training/gly-sym/watch_extract_500.log` on rockfish and
-`scratchpad/ff3_retraining/auto_deliver_rf.log` here.
-
-**A previous entry claimed `scratchpad/deliver_rf.sh` had been polling since 12:07 CDT. It never
-existed** (no file, no log, no process, never committed, `scratchpad` is gitignored). Trusting it
-would have lost the second arm silently. **Verify a watcher with `ps` and its log, not by reading
-this file.**
-
-Scripts kept in `scratchpad/ff3_retraining/`: `deliver_rf_ff.sh` (the transfer, refuses unless
-rockfish `STEP` reads 500) and `auto_deliver_rf.sh` (the poller). `scratchpad` is gitignored, so
-these do not survive a clean checkout.
-
-**Do not create `parameters/ff_3.0_trained_rf/` early with a mid-training force field.** The `STEP`
-file exists to stop exactly that: the two runs are as far apart from each other as ~85 steps of
-training moves them, so a step-354 rockfish file against a step-500 midway2 file would measure the
-step gap and the trajectory gap together and separate neither.
-
-**A binary file cannot be piped out of rockfish with `cat`.** The login banner lands on stdout, so
-`ssh rockfish 'cat file' > local` prepends 1659 bytes and the HDF5 superblock is gone — the failure
-reads as `file signature not found`, not as a truncated transfer. This is the same hazard already
-recorded for `rsync` and `scp`, and it applies to `cat` too. Use a marker and base64, and verify:
-
-```bash
-ssh -o BatchMode=yes rockfish 'echo __B64__; base64 <file>' 2>/dev/null \
-  | sed -n '/^__B64__$/,$p' | tail -n +2 | base64 -d > local_file
-# then compare md5 against `ssh rockfish 'echo __M__; md5sum <file>'`
-```
-
-### Which trainer is the deliverable — decided 2026-09-08: both run, the arm test picks
-
-midway2 is the **declared primary**: the seeds, the install chain, the production data and the
-baseline all live there, so it wins any tie inside the 0.05 TM scatter. Both trainers run to 500 and
-both force fields are measured, because the pair is worth more than the saved node-hours — it is the
-only convergence evidence available, and rockfish's cost is charged to `rherna21`, 1,150,000
-core-hours essentially unused.
-
-The measurement that settled it (full detail in `findings.md`): at step ~355 the two runs had drifted
-the **same distance** from ff_2.1 to within 0.1-1.7%, but in directions 23 degrees apart, leaving
-them 33-40% of that drift away from each other. Training reproduces how far it moves and not where.
-A single run therefore does not pin the force field to better than a third of what it changed, which
-is why the pre-production check was restored rather than skipped.
-
-### Outage lessons worth keeping (the outage itself is over)
-
-**Superseded 2026-09-09 15:30: direct SSH is refused again.** `nc -z midway2.rcc.uchicago.edu 22`
-fails from this Mac while midway3 answers on the same probe, so the midway3 `-L 2222` tunnel and
-`mdw2_via_tunnel.exp` ARE required. See §0 for the working route. The earlier note here said direct
-access had returned and the tunnel was no longer needed; that was true on 2026-09-08 and is not true
-now, so re-probe with `nc` rather than trusting either claim.
-
-* **A returning login node is not a healthy filesystem.** Port 22 reopened while `/project` still
-  stalled. Gate on a timed `ls` of the run directory *and* `parameters/`, or on a Slurm probe.
-* **Probe a wedged filesystem with a Slurm job, never interactively.** A GPFS read in `D` state is
-  uninterruptible, so `timeout 20 ls <wedged path>` neither returns nor dies: it hangs the shell and
-  holds a ControlMaster channel until the mux refuses new sessions. Read the verdict from the probe
-  job's exit code instead — `11` upside_input, `12` srun_mdw2.sh, `13` run_output, `14` the
-  checkpoint, `COMPLETED 0:0` healthy, `TIMEOUT` still wedged:
-
-```bash
-sbatch --parsable -p broadwl -A pi-trsosnic -N1 -n1 -t 5 --job-name=fs-probe --output=/dev/null \
-  --wrap="timeout 30 ls $D/upside_input >/dev/null || exit 11; ... exit 0"
-sacct -j <jid> -o State,ExitCode -n
-```
-
-* **Do not let ssh fall through to password auth.** Wedged sessions hold mux channels, the session
-  cap is hit, and ssh then tries a password — the RCC IP-ban trigger, and the ban took ~3 h to clear.
-  Every cluster call must carry `-o BatchMode=yes -o PasswordAuthentication=no
-  -o NumberOfPasswordPrompts=0`.
-* **The damage was not uniform.** A probe from 00:25 CDT returned `run dir OK` and `parameters OK`
-  while `ls ~` and the wedged minibatch directory hung, so specific inodes stall rather than the
-  whole fileset going offline. Group quota just before the hang was 1.45 T / 1.49 T soft with no
-  grace, so it was not a quota condition.
-* **Connecting to a specific login node.** `scratchpad/rcc_master.exp <host> <socket> [host-key-alias]`
-  opens a socket to any RCC node, reading the password from `~/.bin/ssh_mdw3`. All four
-  `midway3-login[1-4]` present the same ED25519 key as `midway3.rcc.uchicago.edu`
-  (`SHA256:DFRZlrKTqj6XjN78r5j/rEFqEKlz2yQpZGSuW9MPPr0`), so pass that as the alias rather than
-  editing `known_hosts`. Without it the connection stops at a host-key prompt, the script answers
-  *that* prompt, and **no Duo push is ever sent** — which looks exactly like a dead push.
-### midway2: the original chain is re-armed (user, 2026-09-08 14:18)
-
-The user cancelled the training-only link 48988387 and submitted **48994406 `ff-check-cont`**
-(`check_continue.sbatch`, `--dependency=afterany:48988330`). There is no crontab on the account; this
-was a deliberate manual action.
-
-Consequence, which differs from a training-only link: when 48988330 ends, 48994406 continues to
-`MAX_STEPS=500`, then extracts the force field to `parameters/ff_3.0_trained`, backs up the seeds,
-writes `.ff_installed`, and chains into `decide_and_launch.sbatch`, which patches the four real seeds
-with ARM_B and **relaunches glpG production on midway2 automatically**. It also runs
-`push_progress.sh`, which commits and pushes to git. Both sentinels were absent when checked, so it
-will fire cleanly.
-
-* It counts checkpoint **files** (367) while the true step is **369** — an offset of 2 from
-  checkpoints an old requeue deleted — so it trains ~2 steps past 500. Harmless.
-* It does **not** touch NP, by design. The 500 A NP rebuild stays manual.
-* It knows nothing about rockfish. Rockfish's glpG launch stays manual, via
-  `scratchpad/ff3_retraining/install_and_launch_rf.sh`.
-* `install_and_launch_mdw2.sh` is now a fallback for the case where the chain aborts.
 
 ### The two training runs produce DIFFERENT force fields, and only one may be used
 
@@ -641,146 +365,6 @@ does the whole thing: build six runs on rockfish, verify, transfer, launch on mi
 * NP resources, unchanged: 1 node, **6 cpus-per-task**, 36 h wall, self-resubmitting to MAX_BLOCKS,
   and `NP_DT=0.001` — a hard limit for this system, since unfolding drives backbone bonds to
   large-amplitude oscillation where accuracy, not MARTINI LJ stability, sets the step.
-
-### Disk: 246 GB reclaimed 2026-09-08 for the ff3.0 production campaign
-
-Deleted with the user's approval: the six `NP-1AO6/prod/np.run.[0-5].up` replicas, ~41 GB each.
-They were superseded on three independent counts — built on ff_2.1, run in a **200 A box** whose
-PBC-honest protein extent is only ~188 A, and structurally unfolded to Rg 230.9 A, i.e. already
-self-interacting through the boundary. `NP-1AO6` went from ~251 GB to **4.9 GB**; `prod/` keeps
-`block_count`, `k190_results`, `logs_predate_fixes` and the job logs (953 MB).
-
-Headroom was the reason: 1.45 T of a 1.49 T soft / 1.64 T hard group quota left only ~195 GB, and
-4 relaunched glpG variants plus 6 NP runs at a larger box do not fit in that. Exceeding the hard
-limit gives ENOSPC, which can corrupt an HDF5 file mid-write. **The quota number lags a large delete
-by minutes — verify with `du`, not `rcchelp quota`.**
-
-Small `.bak_*` files were deliberately left: `build_np_ff3.py.bak_pre_rama3`,
-`np_hybrid.py.bak_pre_ffparam`, `footprint.sbatch.bak_hardcoded` and
-`build_np_ff3.py.bak_pre_boxlen_*`. They are 32 KB each and are the record of which defect each fix
-addressed.
-
-### rockfish (JHU ARCH) — ff3.0 training, the outage-proof host
-
-Set up 2026-09-07/08 because midway2 is unusable (GPFS down) and the Mac alone would not finish
-until Thursday evening. **Continues the half-trained force field; it does not restart training.**
-
-| item | value |
-|---|---|
-| account | `rherna21` — 1,150,000 core-hours allocated, **0.0 used** this quarter (ends 2026-09-30); this job needs ~2,400 |
-| partition | `parallel`, **3-day wall**, so ONE job covers every remaining step — no chain, no stall guard, no install link |
-| nodes | 2 x 48-core Xeon Gold 6248R @3.00 GHz (Cascade Lake) = the 96 cores a minibatch needs |
-| repo | `/scratch4/rherna21/ywang268/upside2-md-rf` |
-| build | `module load gcc/9.3.0 cmake/3.27.7 eigen/3.4.0 hdf5/1.10.7`, then `cmake ../src/ -DEIGEN3_INCLUDE_DIR=/data/apps/extern/spack_on/gcc/9.3.0/eigen/3.4.0-jof5yd7ppm3sdsc2dfd5t2idrzcwsz7b/include/eigen3 && make -j 12` |
-| python | `module load python/3.11.9`, repo `.venv` with numpy, scipy, tables, h5py, torch (CPU wheel) |
-| data | `training/gly-sym/upside_input` — 1827 files, 259 MB, transferred and counted |
-
-**Why 2 nodes and not more:** `minibatch_size = 12` and `UPSIDE_TRAIN_NTHREADS = 8`, and
-`n_threads` sets **both** the OpenMP thread count and the REMD replica count (`ConDiv.py:54,397`),
-so it cannot be lowered without truncating the reference 8-replica ladder. 12 x 8 = 96 cores is the
-algorithm's ceiling; extra nodes would idle.
-
-**Rama library verified before anything ran.** `upside_input/rama.dat` md5 `932649af145b366d12791abd64915fd5`,
-identical to `parameters/common/rama3.dat` (the GLY-symmetric library) and NOT the old asymmetric
-`rama.dat` (`996a607b…`). Training on the wrong one reproduces the alphaL-biased GLY failure.
-
-**Queue estimate at setup time:** `sbatch --test-only` for 2 nodes x 30 h answered
-`Job 30725644 to start at 2026-09-08T12:23:38 ... on nodes c[132-133]`, i.e. ~11 h out
-(cluster clock is EDT, so 11:23 CDT Tue). 1038 jobs were pending in `parallel`.
-
-| JobID | Name | State | Notes |
-|---|---|---|---|
-| 30725720 | `upside-ff3` | **COMPLETE at step 500**, 2026-09-09 ~17:28 EDT. Its force field is extracted and delivered (see §1). `squeue` is empty; the `30726466` continue link exited as designed. |
-| 30726466 | `upside-ff3-cont` | PENDING (`afterany:30725720`) | Chain link: resumes the newest checkpoint if the wall kills the trainer, exits immediately if step >= 500. Self-perpetuating (queues its own successor before training starts) with a 3-stall abort guard. |
-
-Retired 2026-09-08 09:12 CDT at the user's request: trainer B `30725855` + link `30726467`,
-CANCELLED at step 326, run dir `run_output_ff3b/` left on disk. It existed to cover "one run goes
-bad"; that role is now filled by midway2 being back.
-
-**`continue_rf.sbatch` installs nothing.** rockfish holds only `train_rf.sbatch` and
-`continue_rf.sbatch` — no `extract_ff.py`, no `decide_and_launch.sbatch`, and no `.ff_installed` or
-`RESUME_STEP` flag files. At step 500 this host stops and waits.
-
-**Measured rate: 516 s/minibatch** (first step, 0 failures, Median RMSD 0.86 / 2.32). That is 1.1x
-midway2's 565 s and 2.2x the Mac's 1141 s — the 390 s projected from clock speed was optimistic.
-225 steps x 516 s = **32.3 h, finishing Wed 2026-09-09 ~08:00 CDT**, inside the 48 h wall with 16 h
-spare and a full day before Thursday ends.
-
-**The 30 h wall was not enough, which is why 30725696 was replaced.** 226 x 516 s = 32.4 h, so that
-job would have been wall-killed around step 483 — 17 steps short, after 30 h of compute. A running
-job's `TimeLimit` cannot be raised by a user, so the fix was cancel and resubmit at 48 h (partition
-max is 3 days). Only the in-flight minibatch was lost, because step 275's checkpoint was already on
-disk. **Check the measured `seconds elapsed` against the requested wall after the first step of any
-new run** — the estimate from clock speed was off by 32%.
-
-**The queue estimate was wrong in our favour.** `--test-only` predicted a 2026-09-08T12:23 start;
-the job actually started **within seconds** of submission. Do not plan around `--test-only`.
-
-**Superseded: 30725696** (30 h wall, see above) and **30725686**, submitted 12 minutes earlier and cancelled. It ran on the *old* snapshot of
-`train_rf.sbatch`, which took argument 2 as a literal step count, so its log read `for 500 steps` —
-it would have trained 274 → 774, overshot the MAX_STEPS=500 target by 274 steps and been wall-killed
-at 30 h. Slurm snapshots the batch script at submission, so editing the file could not fix the
-running job; it had to be cancelled and resubmitted. The corrected script derives the count at run
-time from `RESUME_STEP` and logs `resuming at step 274 for 226 steps -> 500`. **Check that line in
-the log after every submission** — it is the only place the arithmetic is visible.
-
-Also cancelled: 30725687, a 1-step validation job on `express`. It was pending with
-reason `PartitionConfig` (express refuses 2-node requests) and became pointless once the real job
-started immediately.
-
-**The transfer preserved the half-trained force field exactly, and this was verified, not assumed.**
-`extract_ff.py` run on both the Mac's source checkpoint and the adopted Rockfish checkpoint gives
-identical SHA-256 digests on all four trained arrays:
-
-| array | sha256 (first 24) | sum |
-|---|---|---|
-| `pair_interaction` | `ef24b0b911287425efd289ca` | +1.6294386169e+04 |
-| `coverage_interaction` | `191d6fbddeba8837d4f86c81` | +7.4490769816e+03 |
-| `hydrophobe_interaction` | `58d4010f74b611279ca4bc1e` | +8.9675347942e+03 |
-| `environment/energies` | `5ed10d16729d92c698707cf7` | +6.2365761830e+01 |
-
-Adoption used `scratchpad/ff3_retraining/rf_adopt_checkpoint.py`, a straight path rewrite of the
-Mac's `checkpoint.pkl` (md5 verified end to end) — **no `pack_param` refit**, so the latent vector is
-the Mac's exactly and `solver step_num 5` carried the Adam moments over. Both sides run numpy 2, so
-the pickle transfers directly; the `.npz` export path is only needed for a numpy 1.x destination.
-
-**The submit script derives the step count at run time**, from a `RESUME_STEP` file next to a
-hand-built checkpoint, or from the directory name (`epoch_XX_minibatch_YY` -> `XX*38 + YY + 1`) when
-resuming from inside a run. So a resubmission always runs exactly the steps still missing, and the
-log states its own arithmetic (`resuming at step 275 for 225 steps -> 500`). Read that line.
-
-**Transfers to Rockfish must not use `rsync` or `scp`.** The login banner makes the shell unclean:
-`rsync` dies with `protocol incompatibility` and `scp` with `Received message too long`. Use
-`tar czf - … | ssh rockfish "tar xzf - -C …"` or `cat file | ssh rockfish "cat > dest"`, and strip
-the banner from command output with a self-emitted marker (see §0).
-
-**Do not use the system `python3` on the login node** for checkpoint surgery — it cannot read pickle
-protocol 5 (`unsupported pickle protocol: 5`). Activate `$RF/.venv` first.
-
-### Checkpoint bookkeeping and cross-host transfer (lessons; no local run is active)
-
-The Mac trainer that carried training through the outage was stopped 2026-09-08 09:12 CDT at step
-304, after 35 minibatches and 0 failures. Its step-275 checkpoint is what seeded rockfish. What is
-worth keeping from it:
-
-* **Count written `checkpoint.pkl` files, never minibatch directories.** `main_loop` creates
-  `epoch_XX_minibatch_YY/` when a step *starts* and writes `checkpoint.pkl` when it *ends*, so
-  globbing directories reports a step that has not happened. The step number of a written checkpoint
-  is `XX*38 + YY + 1`.
-* **Worker processes do not die with the driver.** `kill <driver>` leaves the 12 `ConDiv.py worker`
-  subprocesses and their `upside` children running on every core. Stop them in order: `kill
-  <driver>`, then `pkill -f 'ConDiv.py worker'`, then `pkill -x upside`, and confirm `pgrep -cf
-  ConDiv.py` and `pgrep -cx upside` both read 0.
-* **A checkpoint moves between hosts by path rewrite, not by refit.**
-  `rf_adopt_checkpoint.py` rewrote the paths inside the Mac's `checkpoint.pkl` with **no `pack_param`
-  refit**, so the latent vector was preserved exactly and `solver step_num` carried the Adam moments
-  over. Verified rather than assumed: `extract_ff.py` on the source and the adopted checkpoint gave
-  identical SHA-256 digests on all four trained arrays (`pair_interaction`
-  `ef24b0b911287425efd289ca`, `coverage_interaction` `191d6fbddeba8837d4f86c81`,
-  `hydrophobe_interaction` `58d4010f74b611279ca4bc1e`, `environment/energies`
-  `5ed10d16729d92c698707cf7`). Both sides run numpy 2, so the pickle transfers directly; the `.npz`
-  export detour is only needed for a numpy 1.x destination, whose array pickles cannot reference
-  `numpy._core`.
 
 ### The local reference set is on a DIFFERENT Mac, not this one
 
@@ -886,147 +470,6 @@ at 12:47 and ran at 17:37, using its 12:47 snapshot — so it submitted 200 step
 on disk had said `STEPS_PER_JOB=180` for hours. 200 × 637 s = 35 h 23 min against a 36 h wall, and a
 wall-limit kill is the trigger for the latent NaN path. **After editing any script in the chain,
 cancel and resubmit the already-queued jobs that use it, or the edit silently does nothing.**
-
-### The unattended chain (built 2026-09-05) — DISARMED as of 2026-09-08
-
-**Nothing below is queued any more.** The GPFS outage broke the chain: `ff-check-cont` (48981236)
-was cancelled with its trainer, and the links that replaced it on both hosts
-(`continue_mdw2.sbatch`, `continue_rf.sbatch`) only resume training and explicitly refuse to install.
-Every script named here still exists in `training/gly-sym/` and is still the intended design; it has
-to be re-armed by hand, and `decide_and_launch.sbatch` needs re-reading first because glpG
-production is now COMPLETED rather than running (see §1). The description is kept as the design of
-record.
-
-The original rationale, still valid: the decision logic belongs in Slurm scripts rather than in
-monitoring, because a Claude session exists only while the Mac is on.
-
-```
-upside-gly-sym --afterany--> ff-check-cont  (loops to 600 minibatches)
-                                  | install branch: extract_ff.py -> parameters/ff_3.0_trained/,
-                                  |                 back up 4 seeds, write .ff_installed
-                                  v
-                            armtest-build (run_arm_test.sbatch)
-                                  |-> armtest_A_<V>  (28 cpu, 12 h)  --+
-                                  |-> armtest_B_<V>  (28 cpu, 12 h)  --+
-                                  +-> arm-decide  --dependency=afterany:A:B  <-+
-                            arm-decide (decide_and_launch.sbatch)
-                               ARM_A / ARM_B -> patch the 4 real seeds, verify, scancel mdw2_glpG*,
-                                                wipe replicas, block_count=0, submit_remd.sh x4
-                               NO_WINNER     -> exit 3, cancel nothing, launch nothing
-                               always        -> push_progress.sh (EXIT trap)
-```
-
-`decide_and_launch` is submitted by `run_arm_test`, not by `ff-check-cont`, because the two arm job
-ids do not exist until `run_arm_test` runs. If `run_arm_test` dies before queueing it, its `die()`
-writes the reason to `arm_verdict.txt` and runs `push_progress.sh`, so the failure still reaches git.
-
-**Arms.** A = plain hybrid + trained `pair_interaction` only. B = `martini_inject_coverage.py` adds
-`hbond_coverage` + `hbond_coverage_hydrophobe` (+ prerequisite `placement_fixed_point_vector_scalar`),
-then the full trained FF. Measured on the 79HIS seed: arm A energy −25107.28 (25 nodes), arm B
-−24995.55 (28 nodes) — the two coverage terms contribute **+111.73 E_up**. Full `/input` diff vs the
-pristine seed: arm A changes exactly one dataset; arm B changes that one and adds exactly 17.
-
-**Assertions before anything launches** (and again on the production seeds before any `scancel`):
-`exclude_intra_protein_martini == 1`, `current_stage == production`, and the three hybrid interface
-nodes present. Proven to fire: a tampered copy with the flag cleared exits 1 — and its energy jumps
-to **+51070** vs −24996, which is what dry-MARTINI acting inside the protein looks like.
-
-**Two toolchain traps, already handled.** The venv has pytables but *no h5py*; the module python has
-h5py but *no pytables*. Both sbatch scripts capture `PY_H5` before activating the venv and `PY`
-after, and assert both imports up front. Do not pip-install into the venv while training is live.
-
-**`decide_arm.py` frame selection.** It skips `output_previous_0` — that group is the seed's own
-pre-test `/output`, rotated there by the first `reseed()`, and is old-force-field data (~17% of
-frames). It also orders groups numerically, since a string sort puts `output_previous_10` before
-`output_previous_9`. Verified on real data: exit 2 / `NO_WINNER` with no trajectories, exit 0 with a
-winner otherwise; ~14 s for 12 replicas, so minutes for 56.
-
-**NP is now IN the chain** (enabled 2026-09-05 at the user's request). It runs after the glpG
-relaunch, so a `NO_WINNER` verdict (exit 3 at line 93) leaves both systems untouched. NP already
-carries both coverage nodes, so all three trained tables install directly and
-`martini_inject_coverage.py` is never run on it — the arm decision does not apply to NP. Its
-environment is `sigmoid_coupling_environment` while the trained environment is nonlinear, so **NP
-keeps its old environment table**; that is a known limitation, not an oversight. Patch and verify
-happen before the `scancel`, so a failure cannot leave NP cancelled with nothing resubmitted.
-Verified on a live replica: `check_hybrid_up.py --require "$NP_NODES"` passes (8608 atoms, 36 nodes,
-energy −11159.36, interface intact, intra-protein MARTINI excluded, production stage).
-
-**Legacy-ff jobs stopped 2026-09-05 15:03.** All four glpG variants and NP were running on the old
-force field, so their output would have been discarded at install time. `STOP` files were written
-into each run dir (`popepopg_REMD_mdw2/<V>/STOP` and `NP-1AO6/prod/STOP`), which `run_remd.py:185`
-and `run_np_prod.py:131` poll between chunks — each job finishes its current chunk and exits without
-resubmitting, rather than being killed mid-write. `scancel` was not used because the midway2 login
-node was refusing connections; the STOP path is the cleaner stop anyway. `decide_and_launch.sbatch`
-removes every `STOP` before resubmitting (glpG at line 150, NP in its own block), so the relaunch is
-not blocked by them. **If you ever restart these by hand, delete the STOP file first or the driver
-will exit immediately.**
-
-**Monitoring without midway2.** `/project` is shared between midway2 and midway3, so training
-progress, logs and run dirs are all readable from the midway3 socket when the midway2 login node is
-down. Only `squeue`/`sbatch` need midway2. The chain is unaffected by a login-node outage: every
-`sbatch` in it is issued from inside a running job on a compute node.
-
-**Backups before anything destructive:** seeds and NP replicas copied to `*.bak_pre_ff3_<stamp>`
-with `cp -n`. Reverting = copy them back.
-
-**GLY symmetry: there are TWO rama libraries, and picking the wrong one is the whole hazard.**
-
-| file | GLY asymmetry | belongs to |
-|---|---|---|
-| `parameters/common/rama.dat` | coil 6.31, sheet 67.47 E_up | the **old** force field — asymmetric *by design*, leave it alone |
-| `parameters/common/rama3.dat` | **0.0000 / 0.0000** | the **GLY-symmetric** force field — use this for anything trained |
-| `training/gly-sym/upside_input/rama.dat` | 0.0000 / 0.0000 | training's copy, byte-identical to `rama3.dat` |
-
-`rama3.dat` and the training copy have the same md5 (`932649af…`); `rama.dat` is `996a607b…`.
-
-**Every existing config is already correct.** glpG seeds, glpG live replicas and NP live replicas all
-measure worst GLY `sym_err = 0.000000` (chiral controls 11.2 E_up, so the metric does detect real
-chirality). The arm test copies existing seeds, so it is unaffected.
-
-**The real defect was in the NP builder, not the library.** `np_hybrid.upside_ff_paths()` hardcodes
-`common/rama.dat`, so a trained-ff build would have silently produced αL-biased GLY maps — the
-documented TM4 failure mode. Fixed 2026-09-07: `build_np_ff3.py` takes `--rama-library`, defaulting
-to `rama3.dat`, and `np_hybrid.build_system(spec, work_dir, ff=None)` now accepts an ff override
-(default unchanged, so `build_k190*.py` still work).
-
-Note the trap that override exposed: overriding the dict in the *caller* was not enough, because
-`build_system` re-derived the paths internally. The symmetry check would have printed
-"GLY rama asymmetry 0" while the build used the asymmetric file. **Verify that a force-field
-override reaches the writer, not just the pre-flight check.**
-
-**Do NOT "fix" `parameters/common/rama.dat`.** It is deliberately the old force field's library.
-Overwriting it with the symmetric maps (attempted and reverted 2026-09-07) silently changes the old
-force field for every consumer — `py/martini_prepare_system.py` and all of
-`example/08.MembraneSimulation/` read it.
-
-**Two grid conventions, and they differ — this cost a false alarm.** The GLY mirror
-`(phi,psi) -> (-phi,-psi)` is:
-* `m[::-1, ::-1]` for the `.up` `rama_map_pot/rama_pot` maps (bin centres at `-180+(i+0.5)*5`);
-* `roll(m[::-1, ::-1], 1)` for the library's `dimer_pot` (bin centres at `-180+i*5`).
-
-Using the library convention on a `.up` map fabricates ~3.3 E_up of asymmetry on perfectly good
-seeds. Always validate the metric against a chiral control (ALA/SER/HIS must show ~10-11 E_up) and
-against `dG(aR->aL)`, which is the physically meaningful quantity and reads exactly 0.000 on a
-correctly symmetrized map.
-
-**CWD fix:** `srun_mdw2.sh` now `cd "$PROJECT_ROOT"` before running ConDiv; the checkpoint stores relative paths from the project root.
-
-**Init (2026-09-04 11:13):** pack_param converged to loss=54.1821 (palindrome floor). 38 minibatches × 12 proteins = 456 proteins. GLY dp1 forced palindromic by `rotamer_parameter_estimation.py`.
-
-**Seven bugs fixed 2026-09-04:**
-1. `--slurmd-debug=0` in the srun worker launch is restricted to root/SlurmUser on midway2 Slurm. Removed from ConDiv.py srun args.
-2. `shutil.copy` does not set the execute bit on the copied `run_output/ConDiv.py`. Workers launched by srun with just `worker_path` got `execve() Permission denied`. Fixed: pass `sys.executable, worker_path`.
-3. `compute_divergence` referenced `sigmoid_coupling_environment` (wrong intermediate fix) → reverted to `nonlinear_coupling_environment`. The env spline type must be 0 (nonlinear) for training, not 1 (sigmoid). Added `environment_potential_type=0` to kwargs in ConDiv.py worker call.
-4. `py/run_upside.py` checked `if environment_potential_type:` which is `False` for integer `0`. `--environment-potential-type=0` was never passed to upside_config.py, so all base.h5 files got the sigmoid node instead of nonlinear. Fixed: `if environment_potential_type is not None:`. Applied both locally and on the cluster.
-5. `compute_divergence` passed `coeff.shape = (20, 18)` → product 360 to `get_param_deriv`, but the C++ `NonlinearCoupling::get_param_deriv()` returns `coeff_grad (360) + weights_grad (400) = 760` elements concatenated. Fixed: read both `coeff.shape` and `weights.shape[0]`, call `get_param_deriv((760,), ...)`, then slice `full_grad[:360].reshape(20, 18)` to recover just the coeff gradient.
-6. `d_obj` in `backprop_deriv`: `rot_expect`, `hb_expect`, and `hyd_expect` were 1D tensors of shape `(n_knot_sc-2,)` / `(n_knot_hb-2,)`. PyTorch broadcasts 1D → last dim, but `rot_e`/`cov_e`/`hyd_e` have shape `(..., n_dist-2, n_ang-2, n_ang-2)`, so the subtraction `rot_e - rot_expect` tried to match dim 4 (13, angular) against the expectation (10, distance). Fixed: `.view(-1, 1, 1)` on all three expectations so they align with the distance dimension (dim 2). Applied locally and to remote `run_output/ConDiv.py`.
-7. Same fix as bug 6 but was NOT applied to the remote *main* ConDiv.py at `training/gly-sym/ConDiv.py`. The worker copy (`run_output/ConDiv.py`) only runs `compute_divergence`; `backprop_deriv`/`d_obj` run in the main process from `training/gly-sym/ConDiv.py`. Patched the correct file.
-
-**Submit rule:** always submit gly-sym (and all other training/simulation jobs) through the **midway2 SSH socket**. Submitting via the midway3 socket routes to caslake even when the sbatch script requests broadwl.
-
-**Resubmit:** `cd ~/project/yinhan/upside2-md-mdw2/training/gly-sym && sbatch srun_mdw2.sh training/gly-sym/run_output/<latest_checkpoint.pkl> 200`
-
-Note: checkpoint path must be relative to PROJECT_ROOT (the repo root), not to the gly-sym directory, because srun_mdw2.sh does `cd "$PROJECT_ROOT"` before running ConDiv.
 
 ### midway2 — POPE/POPG REMD (correct seeds, all 6 GLY fixed)
 

@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+from __future__ import annotations
+
 import _pickle as cPickle
 import importlib.util
 import os
@@ -17,6 +19,10 @@ import numpy as np
 import tables as tb
 
 from martini_itp_reader import parse_dry_forcefield, parse_itp_atomtype_masses, parse_itp_file
+
+# NumPy moved VisibleDeprecationWarning under np.exceptions in 1.25 and dropped the
+# top-level alias in 2.0. The clusters run 1.23, this machine runs 2.x.
+VISIBLE_DEPRECATION_WARNING = getattr(np, "exceptions", np).VisibleDeprecationWarning
 
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
@@ -3414,7 +3420,7 @@ def inject_backbone_nodes(
                 warnings.filterwarnings(
                     "ignore",
                     message=r"dtype\(\): align should be passed as Python or NumPy boolean.*",
-                    category=np.exceptions.VisibleDeprecationWarning,
+                    category=VISIBLE_DEPRECATION_WARNING,
                 )
                 ref_state_raw = cPickle.load(fh, encoding="latin1")
         ref_state_cor = np.log(np.asarray(ref_state_raw, dtype=np.float64))
