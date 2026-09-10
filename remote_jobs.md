@@ -78,6 +78,64 @@ without it `module load` silently does nothing.
 
 ---
 
+## 0b. Shared Upside deployment on beagle3 (2026-09-09)
+
+**One tree, one binary, both clusters: `/beagle3/trsosnic/yinhan/upside2-md`.**
+`source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh` sets everything up identically on
+midway2 and midway3; verified by running the binary on each.
+
+Why this works, all measured rather than assumed:
+
+* **`/beagle3` is visible and writable from the COMPUTE NODES of both clusters.** A probe job on
+  midway2-0291 and midway3-0036 confirmed it, along with `/project` and `/project2`.
+  **`/cds3` is login-node only** and cannot be used for jobs.
+* **One binary serves both.** It was compiled on midway2's Broadwell with `-march=native`
+  (`src/CMakeLists_Other.txt:8`) and contains **zero AVX-512** (`zmm` register uses = 0), so it runs
+  on midway3's Cascade Lake. **Compiling on midway3 instead would be a trap**: `-march=native` there
+  emits AVX-512 and the binary would die with SIGILL on broadwl.
+* **Module requirements differ and the env file handles both.** `hdf5/1.14.3+oneapi-2023.1` exists
+  on both and supplies the `libhdf5.so.310` this binary links against. midway2 *additionally* needs
+  `gcc/10.1.0`, because its system libstdc++ lacks `GLIBCXX_3.4.20` and the binary will not load
+  without it; midway3 does not need gcc.
+
+Deployed by rsync from `/project/trsosnic/yinhan/upside2-md-mdw2` (430 MB: `src py obj parameters
+cmake example` and the install scripts), **excluding `training/`**, which is 6.6 GB of ConDiv
+campaign data that does not belong in a code deployment. `parameters/ff_3.0_trained/sidechain.h5`
+verified `c67351ca...` on beagle3.
+
+**Filesystem headroom, and a trap.** `df` is misleading on `/project2`: it shows 787 T free while
+the trsosnic *group* quota there allows only **195 G** more. By group headroom the usable
+filesystems are `/project` (1516 G), `/beagle3` (1434 G), `/cds3` (789 G, unusable from compute
+nodes) and `/project2` (195 G). beagle3 was chosen so benchmark output does not compete with the
+live glpG campaign on `/project`.
+
+**Naming:** the cluster keeps `ff_3.0_trained` / `ff_3.0_trained_rf` because the running chain
+scripts reference those paths. The repo uses the plain `ff_3.0` slot. Do not rename on the cluster
+while the arm test is running.
+
+### Other Upside copies (inventory 2026-09-09)
+
+Owned by yinhanw:
+
+| path | size | branch | last touched | disposition |
+|---|---|---|---|---|
+| `/project/trsosnic/yinhan/upside2-md-mdw2` | 8.3 G | martini-dev | today | **ACTIVE**, all 3 running jobs use it |
+| `/beagle3/trsosnic/yinhan/upside2-md` | 6.4 G | martini-dev | today | **the shared deployment**, refreshed from stale 2026-08-27 |
+| `/scratch/midway2/yinhanw/upside2-md-water-diff` | 13 G | water-diff | 2025-10-30 | idle; see below |
+| `/scratch/midway2/yinhanw/upside2-md` | 176 M | **master** | 2026-01-28 | keep, master |
+| `/home/yinhanw/upside2-md` | 256 M | **master** | 2025-11-19 | keep, master |
+
+**Not ours, never touch:** `/beagle3/trsosnic/upside2-md` and `/project2/trsosnic/upside2-md`
+(bayhi), `/project2/trsosnic/software/upside2-md` (nffaruk), `/project2/trsosnic/pengxd/*`
+(pengxd), plus copies under baxa, avmolina, ruofan, tobin, schwartznw, yiheng, zonganw,
+simoneritchey, amz and bayhi.
+
+**`upside2-md-water-diff` is the only deletion candidate and it is NOT purely a code copy.** Its
+source is safe: HEAD `c44a404` is reachable from `origin/water-diff` on GitHub with 0 uncommitted
+files. But **11 of its 13 GB is `example/16.MARTINI/outputs/water_T*`**, water-diffusion simulation
+output from 2025-10-30 that is not in git and exists nowhere else. Deleting the directory discards
+that data. Left in place pending a decision.
+
 ## 1. Current jobs
 
 Snapshot **2026-09-09 ~17:45 CDT (verified live against `squeue` on both hosts)**.

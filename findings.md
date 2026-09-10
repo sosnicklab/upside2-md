@@ -11,6 +11,63 @@ wrong. Where a finding is cited elsewhere in the repo by its old update number, 
 
 ---
 
+## ff3.0 DOES fix the HDX-relevant observable for glpG: backbone H-bond retention (2026-09-09)
+
+Backbone H-bond count from the run logs, 3 seeds each, same local protocol. This is the quantity
+HDX actually reports on, and the one the pre-ff3 failure was recorded against (occupancy 0.844).
+
+| arm | start | mid | end | retained |
+|---|---|---|---|---|
+| control, ff_2.1 no coverage | 194.6 | 145.6 | 124.5 | **0.640** |
+| trained 269 + coverage | 194.6 | 183.5 | 137.0 | 0.704 |
+| trained 500 + coverage | 194.6 | 192.0 | 170.1 | **0.874** |
+| recorded pre-ff3 REMD failure | | | | 0.844 |
+
+**Step 500 retains 0.874 of the backbone H-bonds against 0.640 for `ff_2.1`, and is the only arm
+that clears the 0.844 failure baseline.** It also beats step 269 by a wide margin (0.874 vs 0.704),
+which is the opposite of the TM4-helix-fraction ranking and agrees with the core-RMSD ranking.
+
+Caveat, as everywhere in this local test: single-temperature MD, not the REMD the 0.844 came from,
+so the comparison to that number is indicative rather than strict. The between-arm ordering under
+identical conditions is the solid part.
+
+This matters more than the fold drift for the deliverable. HDX measures H-bond opening, not
+absolute tertiary packing, so a bundle that loosens while its H-bonds stay closed can still give
+correct protection factors. Of the four observables measured, ff3.0 step 500 is now better than
+ff_2.1 on all of them and better than step 269 on three.
+
+## Why the glpG bundle splay is NOT a bug, and what is left to try (2026-09-09)
+
+Two candidate defects were tested and both came back clean, so the splay is thermodynamics, not a
+broken table or exclusion.
+
+**The intercalating lipid is acyl tail, not headgroup.** Bead types wedged between two or more TM
+helices, enrichment against their abundance in the system:
+
+| role | share in bundle | share in system | enrichment |
+|---|---|---|---|
+| acyl tail | 83.4% | 69.2% | **1.20x** |
+| glycerol | 10.7% | 15.4% | 0.69x |
+| headgroup | 5.9% | 15.4% | **0.39x** |
+
+Per bead the most enriched is C4A at 2.41x, a deep tail bead; the most excluded are GL0 at 0.11x
+and NH3 at 0.21x. Charged and polar headgroups are being kept out of the hydrophobic interior
+exactly as they should be. This is physically correct hydrophobic solvation of the helix surfaces,
+not a spline table putting headgroups in the core.
+
+**The coverage terms do not count lipid as burial.** `hbond_coverage` takes
+`id2` = 747 sidechain beads and `hbond_coverage_hydrophobe` takes `id1` = 630 backbone atoms with
+the same 747, i.e. protein only; no MARTINI bead enters either. So a helix solvated by lipid
+correctly reads as *exposed* rather than buried, and the coverage term is not rewarding the
+splayed state.
+
+**What is left.** With both mechanisms ruled out, the imbalance stands: protein-lipid attraction is
+full-strength dry-MARTINI while protein-protein packing comes from a core force field trained on
+456 soluble proteins with zero membrane content, and lipid wins the competition for the same
+hydrophobic surfaces. The principled fix is to include membrane proteins in the ConDiv training
+targets so packing is calibrated against lipid competition. Scaling SC-env or BB-env down, or
+adding an orientational term to hold the bundle, is forbidden and would break the model.
+
 ## The remaining glpG problem is NOT TM4: the helix bundle splays and lipid wedges into it (2026-09-09)
 
 TM4's helix is fine. Decomposing the residual core CA-RMSD on the 9 local trajectories shows the

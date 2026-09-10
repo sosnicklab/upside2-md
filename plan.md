@@ -308,3 +308,64 @@ mismatch, burial threshold.
 **Risk carried into the new test:** `environment.h5` was trained against implicit solvent, so an
 uncovered residue reads as water-exposed, and the hybrid has no `membrane.h5` to correct that. Failure
 mode is over-burying the TM surface — watch for Rg collapsing below the crystal's 20.4 Å.
+
+## ff3.0 re-benchmark against Peng et al. JCTC 2022, 18, 550-561
+
+Source: `~/OneDrive - The University of Chicago/peng-et-al-2021-...pdf` and SI `ct1c00960_si_001.pdf`
+(Table S2, Fig S4, Fig S5). The paper's FF2 is the ff_2.1 lineage; we re-run its folding test set
+under `parameters/ff_3.0` and compare like for like.
+
+### Aggregate targets to beat (Fig S5, 16-protein means)
+
+| | FF1 (2018) | FF2 (~ff_2.1) | ff3.0 |
+|---|---|---|---|
+| from native | TM 0.45, Ca-RMSD 5.7 A | TM 0.55, **4.0 A** | ? |
+| de novo | TM 0.37, 7.4 A | TM 0.42, **6.1 A** | ? |
+
+### Per-protein FF2 baseline, lowest Ca-RMSD (centroid of largest cluster) from Fig S4
+
+| protein | res | FF2 Ca-RMSD | | protein | res | FF2 Ca-RMSD |
+|---|---|---|---|---|---|---|
+| alpha3d | 73 | 2.2 (3.2) | | NTL9 | 39 | 2.5 (8.2) |
+| BBA | 28 | 1.0 (2.2) | | NuG2 | 61 | 2.2 (3.7) |
+| BBL | 47 | 1.2 (4.8) | | protein B | 53 | 1.2 (2.6) |
+| cspA | 69 | **4.2 (5.5)** | | protein G | 56 | **4.2 (7.9)** |
+| gpW | 62 | 1.4 (4.1) | | protein L | 61 | 3.1 (4.1) |
+| homeodomain | 52 | 1.4 (2.5) | | top7 | 92 | 2.7 (3.5) |
+| hyp | 70 | 2.6 **(11.1)** | | ubiquitin | 76 | 1.6 (3.5) |
+| lambda | 80 | **5.4 (8.3)** | | WW domain | 33 | 0.6 (2.0) |
+
+**The five weakest cases, i.e. what ff3.0 has a chance to improve:** lambda (5.4 A lowest, the worst
+fold), hyp (11.1 A centroid, dominant state wrong), protein G (4.2/7.9), cspA (4.2/5.5), NTL9
+(2.5 but 8.2 centroid).
+
+RMSD excludes disordered termini, exactly as the paper: BBA 1-3,28; BBL 1-6; cspA 1-3; gpW 1,56-62;
+homeodomain 1-4,50-52; hyp 1-5; lambda 1,2; NuG2 1-4; protein B 1-6,52,53; ubiquitin 1,74-76;
+WW domain 1-4,29-31.
+
+### Protocol (SI "Simulation details and sampling", Table S2)
+
+Per protein, two runs: one from the native state, one de novo from unfolded. REMD, **14 replicas**,
+per-protein temperature ladder and length from Table S2 (times 1.79M to 8.03M Upside time units;
+sum over all 32 runs ~135 M time units before the 14x replica factor). Verlet, **dt = 0.009**,
+Langevin with Ornstein-Uhlenbeck thermostat, thermalization timescale 5.0, coordinates every 100
+time units, REMD exchange attempts every 10 time units. Protein L and ubiquitin de novo used five
+independent runs.
+
+### Status / what is needed
+
+* Protocol template exists: `example/01.GettingStarted/run_1UBQ_local.sh` already runs 1UBQ and
+  takes `ff=` as a variable, so `ff_2.1` -> `ff_3.0` is a one-line switch. `calc_rmsd.py` is there.
+* **14 of the 16 native structures are not in the repo or on midway2** and must be fetched. Only
+  ubiquitin (`1UBQ.pdb`) is present.
+* TM-score is not in the repo; needs the standard TM-score binary or an implementation.
+* Cost is dominated by the de novo runs. Measure the step rate on a ubiquitin pilot before
+  committing the full set.
+* The test set is **not** contaminated: none of these appear in the 456-protein training list.
+
+### The four HDX proteins (separate, second benchmark)
+
+`EHEE_rd2_0005`, `HEEH_rd4_0097`, ubiquitin, ubiquitin L50E. Ub/L50E: REMD 14 replicas 0.8-1.02,
+>2.4M time units, from `1ubq.pdb`, MBAR reweighting. Documented FF2 failures worth re-testing:
+Ub and L50E could not be reversibly folded; **wild-type Ub gave the poorest HDX prediction**, worse
+than the less stable L50E; dG_HX for the most stable NHs came out 0.2-1.5 kcal/mol below experiment.
