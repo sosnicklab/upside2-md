@@ -11,6 +11,359 @@ wrong. Where a finding is cited elsewhere in the repo by its old update number, 
 
 ---
 
+## The remaining glpG problem is NOT TM4: the helix bundle splays and lipid wedges into it (2026-09-09)
+
+TM4's helix is fine. Decomposing the residual core CA-RMSD on the 9 local trajectories shows the
+defect is tertiary, not secondary.
+
+**Individual helices are intact; the bundle is not.** CA-RMSD of each helical segment fitted to
+itself, against the whole-core value:
+
+| arm | whole core | mean per-helix | worst helix |
+|---|---|---|---|
+| control | 7.47 | 2.96 | 5.40 |
+| trained 269 | 5.33 | 2.07 | 2.98 |
+| trained 500 | **4.89** | **1.71** | 2.38 (TM4) |
+
+Every helix holds its own shape to 1.2-2.4 A while the assembly is 4.9 A out. Dropping the two
+short peripheral helices (19-26, 50-57) changes almost nothing (4.96 -> 4.77), so this is the TM
+core repacking, not floppy termini.
+
+**The bundle splays laterally and flattens.** Against the seed (mean inter-helix centroid distance
+16.19 A, Rg_xy 11.16, Rg_z 9.39):
+
+| arm | inter-helix dist | Rg in-plane | Rg along normal |
+|---|---|---|---|
+| control | +4.36 | +4.34 | -1.62 |
+| trained 269 | +1.72 | +2.50 | -1.26 |
+| trained 500 | +2.32 | +2.42 | -1.16 |
+
+The helices spread apart in the membrane plane and the bundle pancakes along the normal.
+
+**Lipid wedges into the bundle.** Dry-MARTINI beads within 7 A of two or more different TM helices,
+i.e. sitting in inter-helical space:
+
+| | seed | control | trained 269 | trained 500 |
+|---|---|---|---|---|
+| intercalated lipid beads | **5** | 46.2 | 41.0 | **36.1** |
+
+A 7-fold invasion. ff3.0 cuts it by ~25% against the control but does not come close to restoring
+crystal packing.
+
+**Nothing has equilibrated except the lateral splay.** An earlier version of this note said the
+step-500 core RMSD had "plateaued". That was wrong: it came from an arbitrary quintile threshold.
+Fitting the actual slope over the second half of each run, per 1000 time units, mean +/- sd over
+the 3 seeds:
+
+| metric | control | trained 269 | trained 500 |
+|---|---|---|---|
+| whole-core RMSD | +0.440 +/- 0.545 | +0.309 +/- 0.077 | **+0.123 +/- 0.068** |
+| per-helix RMSD | +0.384 +/- 0.164 | +0.526 +/- 0.208 | +0.279 +/- 0.205 |
+| Rg in-plane | +0.278 +/- 0.390 | **-0.033 +/- 0.258** | **-0.034 +/- 0.156** |
+| intercalated lipid | +6.150 +/- 3.578 | +5.500 +/- 4.604 | +5.751 +/- 2.909 |
+
+Only **Rg in-plane** is genuinely flat, and only for the two trained arms: the lateral splaying
+does stop, at about +2.4 A of spread. Everything else is still moving at 2700 time units.
+
+The step-500 core RMSD rises at +0.123 A per 1000 time units, roughly 2.5x slower than step 269 but
+**not zero**. Its per-helix RMSD is also still climbing. So step 500 slows the fold degradation, it
+does not halt it, and 4.9 A is a snapshot of an ongoing process rather than an endpoint.
+
+**The most important number here: ff3.0 does not slow lipid invasion at all.** The intercalation
+rate is statistically identical across all three arms, +5.5 to +6.2 beads per 1000 time units,
+including the untrained control. The trained force field starts the invasion later and so ends with
+a lower count (36 against 46), but the *rate* is untouched. Lipid is still entering the bundle at
+the end of every run, with no sign of saturating.
+
+This also corrects the ranking claim made from TM4 helix fraction: step 500 is better than step 269
+on fold drift rate, but neither is stable, and longer sampling should be expected to make both
+worse. The 12 h REMD arms sample far longer than 2700 time units.
+
+**Ruled out: that TM4 is preferentially attacked.** TM4 is the *least* lipid-exposed helix, in the
+seed (0.22 beads/residue against TM1's 0.55) and after the run (+1.00, the smallest increase of the
+six). Correlation between helix glycine content and lipid-contact increase is **negative**,
+r = -0.41. TM4 is a buried, central, glycine-rich helix with small side chains: it barely touches
+lipid itself, and depends almost entirely on packing against its neighbours. That is why it reads
+as fragile when the bundle loosens, even though nothing is attacking it directly.
+
+### Hypothesis for the cause, NOT yet tested
+
+An asymmetry in the hybrid model. `exclude_intra_protein_martini = 1`, so dry-MARTINI supplies
+**zero** intra-protein attraction and all helix-helix packing comes from the Upside core force
+field, which is trained on **458 soluble proteins with zero membrane content**. Protein-lipid
+attraction, meanwhile, is full-strength dry-MARTINI. Lipid therefore competes for the same
+hydrophobic surfaces with an interaction that was never balanced against the protein-protein term,
+and wins, prying the bundle open. Consistent with training reporting median RMSD ~0.93 A on its
+soluble set while this membrane protein settles 4.9 A out.
+
+This is a hypothesis. It cannot be tested by scaling SC-env or BB-env down, which the project
+forbids and which would break the physical model. A legitimate test would compare the same protein
+against a different surrounding phase, or measure whether the splay tracks protein-lipid contact
+energy frame by frame.
+
+## Is TM4 resolved? NOT YET. Helix fraction says yes, fold integrity does not (2026-09-09)
+
+Measured on the same 9 local trajectories, against the metrics the failure was actually recorded
+on rather than helix fraction alone.
+
+| arm | TM4 core 134-151 | TM1 core 30-48 | helical-core CA-RMSD | GLY49 phi | GLY133 phi |
+|---|---|---|---|---|---|
+| control | 0.528 | 0.832 | 7.62 A | +41.3 | +18.2 |
+| trained 269 + coverage | 0.898 | 0.867 | 5.66 A | +93.9 | -18.6 |
+| trained 500 + coverage | 0.817 | 0.919 | **5.07 A** | +42.5 | +31.8 |
+| recorded pre-ff3 REMD failure | - | - | **4.15 A** | +75.9 | +67.7 |
+
+**The two proxies disagree, and they disagree about which force field is better.** Step 500 beats
+step 269 on core RMSD (5.07 vs 5.66), TM1 (0.919 vs 0.867) and Rg (20.35 vs 19.48 against a 20.4 A
+crystal), and loses only on TM4 helix fraction (0.817 vs 0.898). Picking a winner on TM4 alone
+would invert the ranking given by the other three.
+
+**Core CA-RMSD does not clear the bar.** Every arm, including the best, sits above the 4.15 A that
+was recorded as the *failure*. Two caveats that stop this being conclusive: this is
+single-temperature MD at T=0.70 for 2700 time units, not the 28-replica REMD the 4.15 A came from,
+and the core here is the 162 residues helical in the seed, which may be a larger and looser
+selection than whatever the 4.15 A was measured over. **The two numbers may not be commensurable;
+re-measure with a matched core definition before treating the comparison as real.** What is solid
+is the internal contrast: ff3.0 cuts core drift from 7.62 to 5.07 A.
+
+**The GLY phi pass criterion is not met by any arm, and is itself suspect.**
+`BASELINE_TM_pre_ff3.txt` requires GLY49 and GLY133 median phi negative (alphaR). No arm achieves
+both. But **the crystal-derived seed itself has GLY49 at +94.1 and GLY133 at +141.6**, i.e. it
+fails the criterion at t=0, before any dynamics. Both are helix caps (section above), and a cap
+glycine in a left-handed or extended conformation is normal. This is the same class of error as the
+TM4 window: a criterion that the native starting structure does not satisfy. **Do not certify or
+condemn a force field on this criterion until it is re-derived from the reference structure.**
+
+### Verdict
+
+Not resolved, and specifically:
+
+* **Resolved:** the old force field's genuine TM4 weakness (core helix 0.528) is fixed, to 0.817-0.898
+  against TM1's 0.867-0.919, i.e. near parity. And most of the apparent "TM4 is half of TM1" gap is
+  the capped measurement window, now diagnosed.
+* **Not established:** that the *fold* is fixed. Core CA-RMSD is the metric the deliverable depends
+  on and no arm demonstrably beats the failure baseline on it.
+* **Not usable as evidence:** the GLY phi criterion, until re-derived.
+* **Thin:** n=3, one temperature, one variant, local MD. The 28-replica REMD arm tests are the real
+  measurement and had not reported when this was written.
+
+## What actually makes TM4 look unstable (diagnosed 2026-09-09)
+
+Asked what destabilises TM4 besides GLY symmetry. Diagnosed on the 9 local trajectories. The
+dominant cause is **the definition of the metric**, not the physics, and two plausible physical
+causes were tested and ruled out.
+
+### 1. The TM4 window includes a 3-residue non-helical cap. This is most of the effect.
+
+`TM4 = (131, 152)` in `tm_health.py`, `decide_arm.py` and `final_analysis.py`. Dihedrals of the
+**crystal-derived seed itself**, before any dynamics:
+
+| res | aa | phi | psi | helical? |
+|---|---|---|---|---|
+| 131 | PHE | -134.9 | +161.5 | no |
+| 132 | GLY | -160.4 | +147.6 | no |
+| 133 | GLY | +141.6 | +146.7 | no |
+| 134 | LEU | -76.2 | -0.6 | **yes, the helix starts here** |
+| 151 | ARG | -89.3 | -25.2 | yes |
+| 152 | ASP | -140.8 | +73.6 | no |
+
+So 4 of the 22 residues in the window are loop/cap in the starting structure and cannot be
+helical. **The metric is capped at 18/22 = 0.818**, against a stated pass criterion of >0.8. A
+perfect TM4 helix scores 0.818. `tm_health.py`'s own comment says "GLY133 at N-cap", so the cap was
+known and included anyway.
+
+TM1 has the same problem, but far milder: only GLY49 is a cap, ceiling 20/21 = 0.952. **That
+asymmetry alone manufactures much of the "TM4 is half of TM1" impression.**
+
+Measured over the true helix instead:
+
+| arm | TM4 131-152 | TM4 **134-151** | TM1 29-49 | TM1 **30-48** |
+|---|---|---|---|---|
+| control, ff_2.1 no coverage | 0.441 | 0.528 | 0.800 | 0.832 |
+| trained 269 + coverage | 0.782 | **0.898** | 0.832 | 0.867 |
+| trained 500 + coverage | 0.673 | **0.817** | 0.879 | 0.919 |
+
+As a fraction of the achievable ceiling, armB269 reaches **96%** and armB500 **82%**. armB269 was
+essentially at the maximum the metric permits.
+
+### 2. Ruled out: buried charge
+
+TM4 ends ARG148, GLY149, GLU150, ARG151, ASP152, and ARG148/GLU150 sit 11.1 A from the bilayer
+centre, inside the acyl region (headgroup planes at +19.0/-21.1 A, thickness 40.1 A). But this is
+**not special to TM4**: 10 charged residues are buried below 12 A across the protein, only 2 of them
+in TM4. And they are paired, not naked: ARG148-GLU150 4.1 A, ARG151-ASP152 3.4 A. Not a strain.
+
+### 3. Ruled out: glycine content as an internal helix breaker
+
+TM4 is glycine-rich, 5 of 22 (23%) at 132, 133, 136, 143, 149, against 1 of 21 (5%) for TM1, which
+is a real sequence difference and the obvious suspect. But within the true helix core the glycines
+are **not** the weak positions:
+
+| arm | helix fraction at GLY | at non-GLY | deficit |
+|---|---|---|---|
+| control | 0.486 | 0.536 | -0.050 |
+| armB269 | 0.854 | 0.907 | -0.053 |
+| armB500 | 0.911 | 0.799 | **+0.113** |
+
+Under the final force field the glycines are the *better* positions. The two glycines that never go
+helical, 132 and 133, are the cap from section 1. So glycine content makes TM4 *susceptible*, and
+GLY rama symmetry was needed to stop the alphaL bias, but internal glycine is not what limits TM4
+now.
+
+### What is left
+
+Under the old force field TM4 was genuinely weak: core 0.528 against TM1's 0.832. The trained
+tables plus coverage nodes fix that, to 0.898 (step 269) and 0.817 (step 500) against TM1's 0.867
+and 0.919, i.e. near parity. What remains is the step-269 -> step-500 regression measured above,
+which is force-field drift, not a TM4-specific defect.
+
+### Consequences
+
+* **Report TM4 on 134-151, not 131-152**, or report the ceiling alongside it. As written, the
+  >0.8 criterion demands ~100% helicity of every core residue.
+* **`decide_arm.py` scores the arms on the same capped window**, so both cluster arms are being
+  judged against a 0.818 ceiling. That does not bias the M-vs-R *comparison*, since both arms share
+  it, but any absolute "TM4 passed/failed" read from the arm test is measured against the wrong
+  scale.
+* Do not "fix" this by widening the helix criterion. The window is what is wrong, and the seed's own
+  dihedrals say where the helix starts.
+
+## Local TM4 check of the FINAL step-500 force field (2026-09-09): NOT resolved, and worse than step 269
+
+Three arms, three matched RNG seeds, the identical protocol used for the 2026-09-07 four-arm run
+(same seed file `6a8285d1...`, dt 0.009, T=0.70, `--disable-recentering`, 300000 steps, 400 frames).
+All 9 runs finished clean, 0 non-finite frames.
+
+| arm | diverged | TM4 helix | TM1 helix | Rg mean | max C-N |
+|---|---|---|---|---|---|
+| CONTROL, ff_2.1, no coverage | 0/3 | 0.441 [0.298-0.633] | 0.800 | 20.15 | 4.16 |
+| ARM B269, trained step-269 + coverage | 0/3 | **0.782** [0.657-0.863] | 0.832 | 19.48 | 11.16 |
+| ARM B500, trained step-500 + coverage | 0/3 | **0.673** [0.543-0.744] | 0.879 | 20.35 | 4.06 |
+
+**The two anchors reproduced the 2026-09-07 reference exactly**, to three decimals including the
+replicate ranges, so the binary rebuild of 2026-09-07 21:34 (the `MonteCarloSampler` virtual
+destructor) changed nothing and ARM B500 is directly comparable.
+
+**Training from step 269 to 500 made TM4 worse, consistently.** Paired on matched seeds:
+
+| observable | per-seed change 269 -> 500 | mean | t(2) |
+|---|---|---|---|
+| TM4 | -0.114, -0.131, -0.082 | **-0.109** | -7.6 |
+| TM1 | +0.040, +0.063, +0.039 | +0.047 | +6.0 |
+| Rg | +0.17, +1.11, +1.31 | +0.86 A | +2.5 |
+
+Every seed moves the same way in every observable, so this is a real effect at n=3, not scatter.
+
+**It is a trade, not a pure regression.** Step 500 is *better* on everything except TM4: TM1 rises
+0.832 -> 0.879, the over-compaction flagged in `planned_job.md` is gone (Rg 19.48 -> 20.35 against a
+20.4 A crystal, essentially exact), and the worst peptide C-N bond drops 11.16 -> 4.06 A, i.e. the
+one stretched bond in ARM B269 is gone.
+
+**This is the random walk showing up in an observable.** The training objective is flat between
+step 269 and 500, so the parameters diffuse; TM4 and TM1 then diffuse in *opposite* directions.
+There is no monotone "more training is better", which is the same conclusion the parameter-drift
+analysis reached, now confirmed downstream. It is also the strongest argument yet for averaging over
+the plateau rather than picking whatever step training happened to stop at.
+
+**Do NOT read 0.673 against the >0.8 REMD criterion directly.** That criterion comes from
+`BASELINE_TM_pre_ff3.txt`, which is 28-replica REMD; this is single-temperature MD at T=0.70 and is
+harsher, as the control shows (0.441 here against 0.645 for 79HIS at the T=0.70 rung of the REMD
+baseline). The trustworthy result is the *paired, relative* one: step 500 is 0.109 below step 269 on
+TM4 under identical conditions. Whether either clears 0.8 is what the 28-replica arm tests measure.
+
+## ff3.0 convergence: the objective converged, the parameters never will (measured 2026-09-09)
+
+**The parameter vector performs a random walk, not a descent.** Measured on midway2's own run by
+comparing `pair_interaction` at step 496 against earlier steps of the same run:
+
+| lag (steps) | rel_rms drift | rel_rms / sqrt(lag) |
+|---|---|---|
+| 12 | 0.0486 | 0.0140 |
+| 25 | 0.0682 | 0.0136 |
+| 50 | 0.0943 | 0.0133 |
+| 100 | 0.1444 | 0.0144 |
+| 200 | 0.2241 | 0.0158 |
+
+`rel_rms / sqrt(lag)` is constant to within 15% over a 16-fold range of lag. Drift therefore grows
+as sqrt(steps) with no fixed point: **training longer does not converge the parameters, it just
+diffuses further.** The mild rise at lag 200 is a weak systematic component on top of the diffusion.
+
+**The training objective, by contrast, has plateaued.** Median RMSD across rockfish's 272 logged
+minibatches, by quarter: 0.9337, 0.9296, 0.9190, 0.9322 (col 1, noise +/- 0.035) and 2.188, 2.125,
+2.085, 2.152 (col 2, noise +/- 0.23). The slope over the last half is +0.0084 and +0.1266 per 100
+minibatches, i.e. zero within noise and if anything slightly *worse*. Fit quality saturated well
+before step 500.
+
+**Consequence: "ff3.0" is a sample from a distribution, not a unique answer.** Compared at the
+*same* step 496, midway2's and rockfish's force fields differ by mean `rel_rms = 0.2115` across the
+three trained tables (pair 0.2118, coverage 0.1963, hydrophobe 0.2264), while the untrained
+`hydrophobe_placement` and `rotamer_center_fixed` agree to 1e-16.
+
+**The two runs are NOT independent replicates, and that spread is a LOWER bound (corrected
+2026-09-09 by the user).** rockfish did not train from scratch: it resumed from midway2's
+half-trained checkpoint, so the runs share all history up to the branch at **step ~274** and have
+diverged only over the 222 steps since. Measured from that branch, on `pair_interaction`:
+
+| step | steps since branch | rel_rms | rel/sqrt(steps since branch) |
+|---|---|---|---|
+| 275 | 1 | 0.0757 | 0.0757 |
+| 300 | 26 | 0.1410 | 0.0276 |
+| 338 | 64 | 0.1729 | 0.0216 |
+| 400 | 126 | 0.2136 | 0.0190 |
+| 496 | 222 | 0.2627 | 0.0176 |
+
+Against the within-run drift of one run over the same lags: rel/sqrt(lag) = 0.0169, 0.0170, 0.0183,
+0.0200. **The two runs separate at the same diffusive rate as a single run wanders**: after the
+branch they are two independent walks, and nothing more.
+
+Extrapolating that rate to a full independent training (500 steps rather than 222) gives
+`0.0176 * sqrt(500) = 0.39`, so two force fields trained independently from `ff_2.1` should differ
+by roughly **40%**, not 26%. The measured spread is small only because the runs share 274 steps.
+
+(The one anomaly: at step 275, a single update after the branch, they already differ by 0.0757,
+far above `sqrt(1) * 0.0176`. The first update after a resume is outsized, most likely because the
+Nesterov/momentum state is not carried across the resume. Worth knowing before reading any
+single-step comparison near a restart.)
+
+**ff3.0 loads and runs, but its force tail is heavier (measured 2026-09-09 on rockfish).** The
+step-500 rockfish force field was patched into a real glpG seed (coverage nodes injected, then the
+trained tables) and put through `check_hybrid_up.py --require`. It passes: hybrid interface intact,
+intra-protein MARTINI still excluded, production stage, finite energy. Same seed, three configs:
+
+| config | nodes | energy | median \|f\| | p90 | p99 | p99.9 | max | atoms \|f\|>50 |
+|---|---|---|---|---|---|---|---|---|
+| unpatched seed | 25 | -25076.96 | 0.045 | 8.29 | 23.1 | 41.5 | 65.1 | 2 |
+| coverage + ff_2.1 | 28 | -25025.68 | 0.045 | 8.52 | 27.8 | 48.8 | 111.2 | 5 |
+| coverage + ff3.0_rf | 28 | -24957.68 | 0.045 | 9.14 | 31.6 | 97.4 | 318.3 | 14 |
+
+Energies agree within 0.5%. The **bulk is unchanged**: the median is identical and p90/p99 are only
+7% and 14% above the `ff_2.1` control, so ff3.0 is not globally stiffer. The difference is entirely
+in the extreme tail, 9 atoms out of 4949 that are hot under ff3.0 and not under `ff_2.1`, with the
+peak going 111 -> 318. This tracks the tables themselves, whose repulsive maxima widened
+(pair 27.8 -> 34.0, hydrophobe 21.2 -> 28.6).
+
+Note the coverage nodes alone already double the peak force (65 -> 111) before any retraining, so
+part of this is the coverage recipe rather than ff3.0.
+
+This is at the *seed* configuration, which is unrelaxed, and a handful of stiff contacts normally
+relax out in the first steps. It is not a failure and not a reason to change anything. It is the
+specific thing to watch in the arm test's first block: if an arm destabilises, these ~9 atoms are
+where to look first.
+
+**What follows from this:**
+* Cutting MAX_STEPS from 600 to 500 for the deadline cost nothing measurable. The objective was
+  already flat, and 100 more steps would only have moved the parameters another ~14% at random.
+* **Neither trained force field can be preferred on training grounds**, they are statistically
+  equivalent fits. Only a downstream physical observable can choose, which is exactly what the
+  arm test (TM1/TM4 helix fraction) does. Do not skip it and do not decide by inspecting the tables.
+* **Read the arm test as the weaker statement it is.** Its two arms share 274 of 500 training steps,
+  so they are more alike than two independent trainings would be. If the arms agree on TM1/TM4, that
+  shows this pair agrees, NOT that any two retrainings would. A genuine reproducibility test needs a
+  run branched at step 0.
+* Any future claim that a retrain "improved" the force field must clear the 21% reproducibility
+  floor before it means anything.
+
+
 ## 1. Standing rules and the measurements behind them
 
 ### 1.1 A spline table must BE the published potential

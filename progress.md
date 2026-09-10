@@ -185,7 +185,62 @@ chain therefore lives in Slurm scripts on the cluster.
   matching `STEP` file, or the arm test runs one-armed at n=1; and re-stamp the quota headroom from
   midway3 if the launch slips past 2026-09-10 08:30.
 
-### Afternoon addendum (2026-09-09 15:45 CDT)
+### Deployed ff3.0 (2026-09-09 22:42 CDT)
+
+* **`parameters/ff_3.0/` installed** from midway2's step-500 output (cluster name there is
+  `ff_3.0_trained`; the local slot keeps the `ff_2.0`/`ff_2.1` convention): `sidechain.h5`
+  (`c67351ca...`), `environment.h5` (`e4d2f685...`), `STEP` = 500, plus a README recording
+  provenance, why step 500 over step 269, and what the force field does not fix. md5 verified
+  against midway2 on both ends.
+* **Verified, not assumed.** The trained tables moved (rel_rms ~0.57 vs `ff_2.1`) while
+  `hydrophobe_placement` and `rotamer_center_fixed` are identical to 0.0000, which is the check that
+  only the intended tables changed. Then end to end: a real glpG seed patched with the deployed
+  file passes the full hybrid check, engine energy -24944.285156, finite forces, interface intact,
+  intra-protein MARTINI excluded. That energy agrees with the cluster's arm M to 8e-8 relative,
+  the expected platform floating-point difference.
+* **The stale `parameters/ff_3.0` was DELETED** (user's call, 2026-09-09): it sat 0.0501 from
+  `ff_2.1`, about one training step, and was not ff3.0 in anything but name. Nothing in `py/`,
+  `src/` or `example/` referenced it. `parameters/ff_3.0/` is now the single ff3.0 directory,
+  overwriting that slot; the old content remains recoverable from commit `2818532` if ever needed.
+  `hbond.h5` was carried over from `ff_2.1` (byte-identical, and hbond was held fixed in training)
+  so the slot is complete like its siblings.
+* **Not committed** (read-only git rule). Left unstaged for the user.
+* **Open:** if the REMD arm test picks arm R, `sidechain.h5` must be swapped for rockfish's
+  `cfe4ba5e...`. Noted in the README.
+
+### Evening (2026-09-09 17:20 CDT): training complete, arm test running on both clusters
+
+* **Training finished at step 500 on both hosts.** midway2 extracted its force field at 17:15:58 and
+  handed off; rockfish finished earlier and its force field was delivered at 16:30.
+* **The two-arm test is running on both clusters** as independent replicates. rockfish `30768485` (M)
+  and `30768486` (R); midway2 `49001769` building its own pair. Both clusters hold byte-identical
+  copies of both force fields (`c67351ca…`, `cfe4ba5e…`) and a byte-identical seed, so the two
+  replicates test exactly the same comparison.
+* **Concluded ff3.0 needs no further training** and recorded why in `findings.md`: the objective has
+  plateaued, the parameters random-walk with no fixed point, and the between-run spread grows as
+  sqrt(t), so more training makes the force field *less* reproducible. Also found the training set is
+  458 soluble proteins with zero membrane content, while the deliverable is TM4 stability in a
+  bilayer, so more steps optimize an objective that is both saturated and misaligned. Suggested
+  averaging over the plateau instead, to be validated rather than assumed.
+* **Verified ff3.0 is usable for simulation**: patched into a real seed it passes the full hybrid
+  check (finite energy, interface intact, intra-protein MARTINI excluded, production stage). Its
+  force *tail* is heavier than ff_2.1 (peak 318 vs 111) but the bulk is unchanged (identical median,
+  p90/p99 within 7-14%); the excess is 9 atoms out of 4949. Recorded as the thing to watch first if
+  an arm destabilises.
+* **Found a gap in the chain**: `run_arm_test.sbatch` excludes `midway2-0003` for its children but
+  not for itself, and `49001769` duly landed there.
+
+### Afternoon addendum (2026-09-09 16:35 CDT)
+
+* **Rockfish training finished at step 500 and its force field is DELIVERED** to
+  `parameters/ff_3.0_trained_rf/` (16:30:50 CDT), so the arm test will be two-armed rather than
+  one-armed at n=1. Provenance checked, not assumed: extracted from `epoch_13_minibatch_05`
+  (`epoch=13 i_mb=6`), md5 identical on rockfish / this Mac / midway2, and `compare_ff.py` against
+  `ff_2.1` shows mean `rel_rms = 0.4773` on the three trained tables while the untrained geometry
+  tables match to 1e-13. `STEP` was written last so a partial transfer could not pass as a delivery.
+* midway2 `49000800` was at step 497/500 at 16:31, ~30 min from triggering `49000801`.
+
+### Earlier that afternoon (15:45 CDT)
 
 * **Both trainers are in the last hour:** midway2 `49000800` at step 492/500 (ETA ~17:00 CDT),
   rockfish `30725720` at step 496/500 (ETA ~16:25 CDT). Rockfish finishes first, which is what makes

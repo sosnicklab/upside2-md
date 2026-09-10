@@ -451,7 +451,18 @@ Force-field files (read-only, never modified at runtime):
     dopc.h5        -> CGL pair PMFs and SC-CGL interaction tables
   parameters/ff_2.1/
     martini.h5     -> MARTINI non-bonded spline tables
+  parameters/ff_3.0/
+    sidechain.h5   -> ConDiv-retrained rotamer tables (training step 500, deployed 2026-09-09)
+    environment.h5 -> retrained; unused by glpG, which has no environment node
+    hbond.h5       -> byte-identical copy of ff_2.1; hbond was held fixed during training
 ```
+
+`ff_3.0` retrains only `pair_interaction`, `coverage_interaction`, `hydrophobe_interaction` and the
+environment energies, starting from `ff_2.1`. `hydrophobe_placement` and `rotamer_center_fixed` are
+unchanged to 1e-13. Take `bb_env.dat`, `sheet`, `membrane.h5` and `martini.h5` from `ff_2.1`; they
+were not retrained. The clusters hold the same force field as `ff_3.0_trained`, plus rockfish's
+independently trained `ff_3.0_trained_rf`, each with a `STEP` file that the arm-test scripts gate
+on; the repo copy carries no `STEP` because nothing here reads it.
 
 ---
 
