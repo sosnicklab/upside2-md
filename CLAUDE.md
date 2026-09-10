@@ -79,6 +79,43 @@ source source.sh
 
 ```
 
+### Shared Upside Deployment (midway2 + midway3)
+
+**`/beagle3/trsosnic/yinhan/upside2-md` is the one deployment both clusters use.**
+
+```bash
+source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh
+```
+
+That single file gives an identical binary, force fields and Python on midway2 and midway3.
+Do not build a second per-cluster tree; the whole point is that there is one.
+
+Why it works, each point measured rather than assumed:
+
+* **`/beagle3` is visible and writable from the COMPUTE NODES of both clusters**, as are `/project`
+  and `/project2`. **`/cds3` is login-node only** and cannot be used by jobs.
+* **One binary serves both.** It is compiled on midway2 (Broadwell) where `-march=native`
+  (`src/CMakeLists_Other.txt:8`) emits no AVX-512, so it also runs on midway3's Cascade Lake.
+  **Always compile on midway2.** Building on midway3 produces AVX-512 and the binary dies with
+  SIGILL on broadwl.
+* **`hdf5/1.14.3+oneapi-2023.1` exists on both** and supplies the `libhdf5.so.310` the binary needs.
+  midway2 *additionally* needs `gcc/10.1.0`, because its system libstdc++ lacks `GLIBCXX_3.4.20`.
+* **The venv is portable because its interpreter lives on shared storage.** `pyrt/` is a copy of
+  midway2's el7 python 3.9.18, and `.venv` is built from it, so nothing points at `/software`,
+  which is **per-cluster** and is why earlier venvs worked on only one machine. An el7 interpreter
+  runs on el8 (midway3) but not the reverse, the same compatibility direction as the binary.
+  `env_shared.sh` puts `pyrt/lib` on `LD_LIBRARY_PATH` for `libpython3.9.so.1.0`.
+  Carries numpy, pytables, prody and h5py; verified importing on both clusters.
+
+**Filesystem headroom, and a trap.** `df` is misleading: `/project2` shows 787 T free while the
+trsosnic *group* quota there allows only ~195 G more. By real headroom: `/project` ~1.5 T,
+`/beagle3` ~1.4 T, `/cds3` ~0.8 T (unusable from compute nodes), `/project2` ~0.2 T. Check the
+group quota, not `df`.
+
+**Naming.** The repo ships `parameters/ff_3.0`. The clusters additionally keep `ff_3.0_trained` and
+`ff_3.0_trained_rf` under `/project/.../upside2-md-mdw2` because the running glpG chain scripts
+reference those paths; do not rename those while that chain is live.
+
 ### Slurm Environment Setup
 
 For Slurm jobs on the cluster, do not rely on the Apple Silicon `source.sh` bootstrap as the primary environment setup.
