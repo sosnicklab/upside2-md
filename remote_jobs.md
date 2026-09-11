@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-10 ~19:40 CDT. Four campaigns live, 41 jobs, all RUNNING, none queued or failed. midway2 has 37: glpG production `49003548`-`49003551`, the 32-arm ff3.0 benchmark `49003553`-`49003584`, and NP production `49003839`. rockfish has the four glpG replicates `30775667`-`30775670` (11 h in, 36 h wall left). midway3 is idle. The arm test is decided (**R wins**) and `parameters/ff_3.0` carries the rockfish arm-R tables; the ladder ceiling is 0.82. Upside has ONE shared deployment at `/beagle3/trsosnic/yinhan/upside2-md`, usable from both clusters via `env_shared.sh`; see §0b. **Open issue: the glpG hot replicas still blow up at the 0.82 ceiling** (see §1 Campaign 1).**
+Snapshot: **2026-09-10 ~22:10 CDT. The glpG campaign was RELAUNCHED on both clusters with the temperature fix and the ladder ceiling restored to 0.90.** midway2 `49006599`-`49006602` (4 blocks x 36 h), rockfish `30791125`-`30791128` (12 blocks x 48 h). Both carry `inner_steps = 4` on `/input/brownian` and a rebuilt binary whose Brownian friction tracks the replica temperature; `numerical_time_step` stays 0.009. The pre-fix replicas (34 GB midway2, same on rockfish) are archived under `<variant>/pre_tempfix_20260910/` and are NOT poolable with the new data. Also live and untouched: the 32-job ff3.0 benchmark `49003553`-`49003584` and NP production `49003839`, both verified to have no `/input/brownian` and therefore provably unaffected by the change. midway3 is idle. See findings.md 3.10/3.10a for the diagnosis and the fix.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -144,72 +144,39 @@ that data. Left in place pending a decision.
 Snapshot **2026-09-10 ~19:40 CDT (verified live against `squeue` on both hosts, and against
 frames actually written).**
 
-### Campaign 1: glpG production on ff3.0, lowered ladder ceiling (both clusters, 2026-09-10 ~09:10)
+### Campaign 1: glpG production, temperature fix + ceiling 0.90 (both clusters, 2026-09-10 ~22:05)
 
-| host | JobIDs | variants | wall |
-|---|---|---|---|
-| midway2 | 49003548-49003551 | all four | 36 h x 4 blocks |
-| rockfish | 30775667-30775670 | all four | 48 h |
+| host | JobIDs | variants | wall | blocks |
+|---|---|---|---|---|
+| midway2 | 49006599-49006602 | all four | 36 h | 4 |
+| rockfish | 30791125-30791128 | all four | 48 h | **12** (its submit script does not set `REMD_MAX_BLOCKS`) |
 
-**Live health at 2026-09-10 19:40 (11 h 24 m in, block 1 of 4).** All four midway2 chains and all
-four rockfish chains are RUNNING and advancing; each has completed 5-6 chunks of ~17 k steps at
-~6900-7300 s per chunk, and ~94 k s of the 129600 s wall remains in block 1.
+**Why this was relaunched rather than continued.** The previous runs (midway2 `49003548`-`49003551`,
+rockfish `30775667`-`30775670`) were integrating a protein that sat ~10% above its set point, and TM4
+melted progressively as a result: cold-replica TM4_full fell 0.818 -> 0.58-0.71 over eight chunks
+while TM3 stayed flat at 0.92, and **0 of 60 replica measurements passed the > 0.8 TM4 criterion**.
+Those trajectories are a different ensemble from the new ones and must not be pooled. They are kept
+at `<variant>/pre_tempfix_20260910/` because they are the evidence base for the diagnosis, and can be
+deleted once findings.md 3.10 is considered final.
 
-**The hot end of the ladder is still breaking, and the 0.82 ceiling did not stop it.** Rollbacks so
-far this block, by replica index (28 replicas, 0 = coldest):
+**What changed, all three verified in the live runs:**
+* `inner_steps = 4` on `/input/brownian` in every seed and replica. Confirmed live: replica 27 reports
+  `inner_steps = 4`, `numerical_time_step = 0.009`. Backbone temperature 1.10x -> 1.01x set point.
+* Brownian friction now scales by `T/T_ref`, so the calibrated lipid diffusion is delivered at the
+  temperature actually run instead of only at 0.8647. Binary rebuilt **on midway2** (zero `zmm`, so it
+  still runs on broadwl) and on rockfish; old binaries kept as `obj/upside.pre_tempfix_20260910`.
+* **Ladder ceiling restored 0.82 -> 0.90.** Confirmed live: the ladder ends at 0.9 over 28 replicas.
+  The 0.82 ceiling had been calibrated against helix content measured on the broken model, so it was
+  compensation for a numerical artifact. Measured locally from the pristine seed over 400 time units,
+  TM4b is 0.926 at T = 0.90 with the fix (seed value 0.933) against 0.346 without it.
 
-| variant | rollbacks | replicas hit |
-|---|---|---|
-| 79HIS | 1 (at calibration) | 27 |
-| 79HIS_S115T | 5 | 14, 21, 22, 23, 27 |
-| 79ALA | 5 | 18, 26, 27 (x3) |
-| 79ALA_S115T | 4 | 26, 27 (x2, one at calibration) |
-
-Two distinct failure signatures appear: **non-finite potential** over 60-262 frames of a chunk, and
-**peptide bonds > 2.0 A** in the final frame (7-24 of 209 bonds). `run.27` in 79ALA rolled back
-three times, so the detection gate is recycling the same replica rather than curing it. Every
-rollback is at replica 14 or hotter; replicas 0-13 are clean in all four variants, so the cold end
-the HDX analysis uses is unaffected **so far**.
-
-This is not diagnosed. Lowering the ceiling 0.90 -> 0.82 was calibrated against *helix content*, not
-against integration stability, so it was never expected to fix a blow-up and evidently has not. Do
-not widen the gate or raise the tolerance. The open question is whether the non-finite potentials
-come from the MARTINI lipid interactions at high T or from the newly patched arm-R coverage nodes,
-and the next step is to localize one event rather than to keep restarting from it.
-
-**The arm test is decided: R wins**, so `parameters/ff_3.0` now carries the **rockfish** training
-run's tables (`sidechain.h5` `cfe4ba5e...`, `environment.h5` `301f8418...`, both step 500),
-byte-identical in the repo, on beagle3 and on rockfish. The arm-M tables are kept beside them as
-`*.bak_armM_20260910-*`. Scored on the segments the build actually treats as helix rather than
-`decide_arm.py`'s capped window, over replicas 0-2:
-
-| measure | arm M | arm R | R - M |
-|---|---|---|---|
-| TM4a 134-139 | 0.979 | 0.987 | +0.008 |
-| TM4b 141-155 | 0.884 | 0.946 | **+0.062** |
-| TM1 30-43 | 0.873 | 0.944 | **+0.071** |
-| TM3 99-115 | 0.931 | 0.931 | 0.000 |
-
-**Ladder ceiling lowered 0.90 -> 0.82, from measurement.** Pooling all 8428 frames of the arm-R run
-by their logged instantaneous temperature, TM4's 134-139 segment holds 0.981 below T = 0.72 and
-collapses to **0.201** in the 0.88-0.90 bin, while TM3 and TM6 barely move. Whole-fold helix content
-sits on a plateau at 87% of the coldest bin from 0.78 to 0.84, then falls to 72% at 0.90. 0.82 is the
-top of that plateau. `REMD_N` stays 28 on both clusters, so the narrower span also tightens the
-spacing (0.0043 at the cold end, was 0.0071) and raises exchange acceptance.
-
-* Set through `REMD_T_HI=0.82` in each cluster's submit script; `run_remd.py` builds
-  `linspace(sqrt(T_LO), sqrt(T_HI), N)**2` and needed no change. Verified in the running job:
-  ladder starts 0.7, 0.704275 and ends 0.815386, 0.82 over 28 replicas.
-* **Seeds were pristine ff_2.1 with no coverage nodes**; the cancelled decider never patched them.
-  Both clusters were patched by hand with `martini_inject_coverage.py` then `patch_seeds.py` against
-  the arm-R `sidechain.h5`, backed up first as `*.bak_pre_armR_20260910-*`. All four seed energies
-  agree exactly across clusters (-24957.68 / -24843.17 / -24903.80 / -24806.57), so the two runs are
-  true replicates. `rockfish` had no `patch_seeds.py`; it was copied from midway2.
-* **No environment nodes were added.** The arm test that chose R ran without them, and adding them
-  locally traded TM4a (-0.116) against TM4b (+0.063) with no net gain, so the ladder ceiling is the
-  only variable that changed.
-* midway2's 130 GB of pre-ff3 replicas were moved to `<variant>/pre_ff3/` (same filesystem, nothing
-  deleted); `hdx/` was left alone. rockfish had no prior production data.
+**Open, and not fixed here: all 23 GLY Ramachandran maps in these seeds are mis-symmetrised** with an
+off-by-one mirror (`m == m[::-1,::-1]` exactly, 3.1 E_up from the correct periodic mirror `i -> (-i)%n`).
+It was deliberately left alone: the correct symmetrisation makes alphaR/alphaL degenerate and would
+*remove* the +0.55 E_up alphaR preference the buggy map accidentally supplies, so fixing it in
+isolation could destabilise TM4 further. NP's maps are correctly symmetrised (11/11) because that
+system was built fresh against `rama3.dat`, which is the principled route for glpG too. Do this as a
+separate, attributable change.
 
 ### Campaign 2: ff3.0 re-benchmark of Peng et al. JCTC 2022 (launched 2026-09-09 ~23:55 CDT)
 
