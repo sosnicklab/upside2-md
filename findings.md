@@ -1640,6 +1640,40 @@ shows 15 rollbacks over 11.4M replica-steps, one per ~762k, and this test sample
 of one expected waiting time. A properly powered local test is ~4 h at N = 1 and ~14.5 h at N = 8.
 **Do not read the eight held runs as evidence the fix works.**
 
+### 3.10b The 0.90 ceiling is well below the unfolding transition, and TM4's loss is local (2026-09-10)
+
+`reports/GroupMeetings/0323/group_meeting_03_23.pptx` slide 8 ("Phase transition (defolding)") measured
+glpG's thermal transition under the **implicit membrane** model. The transition is sharp between
+T = 1.05 and 1.10 -- mean CA-RMSD 17.6 -> 28.4 A and mean Rg 23.1 -> 35.7 A -- and plateaus by 1.15
+(34.7 A / 42.5 A). At T = 0.90 the protein sits on the smooth pre-transition baseline at RMSD 10.0 A,
+Rg 18.4 A. **T = 0.90 is therefore a legitimate ladder ceiling, far below unfolding.**
+
+The dry-MARTINI hybrid agrees, which is a useful cross-model check. Placing the local wild-type runs
+on the same axes (CA-RMSD to seed over t = 500-1000, protein-only Rg):
+
+| run | T | CA-RMSD | Rg |
+|---|---|---|---|
+| fixed, T = 0.70 | 0.70 | 8.67 A | 20.17 A |
+| fixed, T = 0.90 seed 1 | 0.90 | 8.38 A | 19.02 A |
+| fixed, T = 0.90 seed 2 | 0.90 | 8.64 A | 19.97 A |
+| unfixed, T = 0.90 | 0.90 | 9.91 A | 20.51 A |
+
+All four land essentially on the implicit-membrane value at 0.90 and nowhere near the post-transition
+28-35 A / 35-43 A. The fix also lowers RMSD slightly (8.4-8.6 against 9.9 unfixed).
+
+**Consequence for the TM4 diagnosis.** The helix-fraction loss measured at T = 0.90 is **not** thermal
+unfolding: RMSD and Rg are native-like and, in the run that lost the most helix (seed 2: TM4a
+0.945 -> 0.556, TM1 1.000 -> 0.646), Rg *fell* 21.2 -> 19.5 A while the potential *fell* -20776 ->
+-21192 E_up. That is the protein settling into a more compact, lower-energy, less-helical state, not
+melting. So the residual TM4 problem belongs to the hybrid environment coupling or to helix propensity
+in the bilayer (the GLY maps are a live suspect, 3.10a), not to temperature. An earlier suggestion in
+this session to consider reverting the ceiling to 0.82/0.86 on the strength of the T = 0.90 helix
+numbers was wrong and is withdrawn.
+
+Two limits on how far the slide-8 result transfers: it measured RMSD and Rg only, so it cannot certify
+TM4's *helicity* at 0.90, and it used the implicit membrane, so its transition temperature does not
+carry over quantitatively to the dry-MARTINI hybrid.
+
 ### 3.4 The four cluster POPE/POPG jobs were simulating a RIGID protein (findings 116)
 
 The cluster HDX came out empty (188 of 203 amides off scale, resolved values to -53.9 kcal/mol). Not the
