@@ -26,6 +26,11 @@ struct BrownianRuntime {
     float    temperature = 1.f;
     float    time_step = 0.f;
     vector<float> friction;
+    // Temperature the friction was calibrated at.  friction = kT_ref/D_target, so holding it fixed
+    // while the run sits at another temperature delivers D = D_target*(T/T_ref) instead of D_target.
+    // Scaling by T/T_ref restores the target diffusion at every temperature; 0 disables the scaling
+    // for configs that never declared a reference temperature.
+    float    reference_temperature = 0.f;
     uint32_t random_seed   = 0;
     uint64_t n_invocations = 0;
     int      n_inner_steps = 1;
@@ -68,6 +73,10 @@ void register_brownian_for_engine(DerivEngine* engine, hid_t config_root, uint32
     rt->n_inner_steps = read_attribute<int>(config_root, "/input/brownian", "inner_steps", 1);
     if(rt->n_inner_steps < 1)
         throw string("/input/brownian inner_steps must be >= 1");
+    rt->reference_temperature = read_attribute<float>(
+            config_root, "/input/brownian", "reference_temperature_up", 0.f);
+    if(rt->reference_temperature < 0.f)
+        throw string("/input/brownian reference_temperature_up must be nonnegative");
     rt->random_seed = random_seed;
     int n_atom = engine->pos->n_atom;
     rt->stochastic_mask.assign(static_cast<size_t>(n_atom), 0);
@@ -106,6 +115,9 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
     const int N = rt.n_inner_steps;
     const float dt_i = dt / static_cast<float>(N);
     const float kT = rt.temperature;
+    // Hold the calibrated diffusion, not the calibrated drag: D = kT/alpha, so alpha must track the
+    // running temperature for D to stay at the target the friction was built from.
+    const float friction_scale = rt.reference_temperature > 0.f ? kT/rt.reference_temperature : 1.f;
     const vector<int>& idx = rt.atom_index;
     size_t nb = idx.size();
     VecArray pos_out = engine->pos->output;
@@ -130,7 +142,7 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
                 store_vec(mom, atom, make_zero<3>());
                 continue;
             }
-            const float alpha = rt.friction[i];
+            const float alpha = rt.friction[i]*friction_scale;
             const float m = have_mass ? martini_masses::get_mass(engine, atom) : 1.f;
             const float b = 1.f/(1.f + alpha*dt_i/(2.f*m));
             const float bnoise = sqrtf(2.f*alpha*kT*dt_i);
@@ -155,7 +167,7 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
         for(size_t i=0;i<nb;++i) {
             int atom = idx[i];
             if(fixed_mask[static_cast<size_t>(atom)]) continue;
-            const float alpha = rt.friction[i];
+            const float alpha = rt.friction[i]*friction_scale;
             const float m = have_mass ? martini_masses::get_mass(engine, atom) : 1.f;
             const float half = alpha*dt_i/(2.f*m);
             const float b = 1.f/(1.f + half);

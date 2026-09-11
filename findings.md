@@ -1440,6 +1440,206 @@ Two lessons: **a clean neighbourhood is not evidence of a clean trajectory** (re
 explaining its output), and **check the log the tool already writes before inferring a mechanism from the
 data**.
 
+## 3.10 The glpG blow-ups: the two subsystems are not at the same temperature (2026-09-10)
+
+Diagnosed after 15 rollbacks appeared in block 1 of the four production chains. The user's hypothesis
+(a temperature mismatch between dry-MARTINI and Upside) is confirmed and quantified below. The dt
+lock prevented one planned test: `apply_langevin_step` throws when the runtime dt differs from
+`/input/brownian numerical_time_step`, so a dt scan is impossible without rebuilding the node, and
+that check was left alone.
+
+**The Upside temperature conversion is exactly K = T_up x 350.588235.** The reference table in
+`~/OneDrive - The University of Chicago/image.png` was checked row by row and is internally
+consistent on all 24 rows (max |dK| < 1e-5 K, |dC| <= 0.05 from its own rounding). Using it:
+
+| | T_up | K | C |
+|---|---|---|---|
+| ladder rung 0 (coldest) | 0.700 | 245.4 | -27.7 |
+| ladder rung 27 (hottest) | 0.820 | 287.5 | +14.3 |
+| dry-MARTINI reference | 0.8647 | 303.15 | +30.00 |
+
+**Every dry-MARTINI parameter is built for 0.8647, and the ladder runs entirely below it.** Three
+independent places carry that same number, so it is the model's design temperature and not a stray
+constant: `/input/brownian` `reference_temperature_up` = 0.8647, where the friction is fixed for a
+target lipid diffusion of 11.5 um^2/s (and `bare_particle_diffusion_up` = 5.1111 = 0.8647/0.16918
+confirms D = kT/gamma is evaluated there); `py/martini_build_tables.py`
+`DEFAULT_PRODUCTION_TEMP_UPSIDE` = 0.8647; and the equilibration itself, since `output_previous_0`
+of every replica of every variant is a single-temperature run at exactly 0.8647, after which
+production dropped to the ladder. The bilayer is therefore run **15.7 to 57.7 K below** the
+temperature its friction, its tables and its equilibration all assume. Because MARTINI energies are
+fixed in absolute units, at rung 0 every MARTINI interaction is 0.8647/0.70 = **1.24x stronger in
+units of kT** than at the reference, which over-condenses the bilayer rather than merely slowing it.
+The two scales are not interchangeable: 0.7-0.9 is a sensible reduced-temperature folding range for
+Upside's trained statistical potential, where it carries no Kelvin meaning, but the same number is
+handed to the MARTINI subsystem as a literal kT in the Brownian noise.
+
+**Measured, the protein and the lipids sit at different temperatures.** On clean frames only (finite
+and negative potential), 79ALA, all 28 rungs: **lipids track their set point** at T_lip/T_nom = 1.020
+flat across the ladder, while **the protein does not**, sitting at T_nom + ~0.08 T_up (about +28 K)
+and reaching 1.506 at rung 27 against a nominal 0.820. The rungs that rolled back (27, 18, 17, 14,
+26) are the ones with the largest excess. Two controls make the offset real rather than an artefact
+of the wreck: it is present at the same ~1.10 ratio in cold rungs 0-13 that never rolled back, and
+the lipids occupy the *same slots* under the *same* exchange yet stay on target.
+
+`protein_kinetic` is a trustworthy instrument here, which was worth checking: the 420 O/sidechain
+slots placed by the `placement_*` nodes carry **exactly zero** momentum, but they are also excluded
+from the logger's `n_dynamic` count, so the logged value is the mean over the 630 dynamic backbone
+sites and is not diluted. (A naive per-atom average over all 1050 `PROTEIN` slots gives 0.661 x T_nom
+instead of 1.136 and is simply wrong.)
+
+**Reproduced locally on one system with no replica exchange**, started from an equilibrated cluster
+frame. At production settings (T = 0.7215, tau = 5) the local run gives T_prot = 0.7911 against the
+cluster's 0.7912 for that same rung, and T_lip 0.7327 against 0.7355. Exchange is therefore not
+involved at all; the excess is intrinsic to the hybrid integration. Two scans characterise it:
+
+| | T_nom | T_prot | T_lip | T_prot/T_nom |
+|---|---|---|---|---|
+| tau = 1 | 0.7215 | 0.8487 | 0.7349 | 1.176 |
+| tau = 5 | 0.7215 | 0.8197 | 0.7489 | 1.136 |
+| tau = 20 | 0.7215 | 0.8600 | 0.7412 | 1.192 |
+| tau = 5 | 0.8647 | 0.9821 | 0.8796 | 1.136 |
+
+The excess is **multiplicative and independent of both the thermostat timescale (over a 20x range)
+and the temperature** (identical 1.136 ratio at 0.7215 and 0.8647). It is therefore not a power leak
+the thermostat fails to remove, which would scale as P*tau. A first reading of partial data suggested
+it grew superlinearly with temperature; that was a transient burst contaminating a half-length
+average and is wrong.
+
+**It is the mass-1 backbone, under either thermostat.** With momentum logging, split by thermostat
+mechanism:
+
+| group | T/T_nom at 0.7215 | T/T_nom at 0.8647 |
+|---|---|---|
+| backbone, friction > 0 (g-JF Brownian) | 1.092 | 1.077 |
+| backbone, friction == 0 (OU thermostat) | 1.130 | 1.072 |
+| lipid/ion (g-JF Brownian) | 1.024 | 0.999 |
+
+Both protein subsets are hot by the same amount and there is no trend with lipid-contact count
+(1.04-1.18, scattered), so the interface friction and the OU thermostat are both exonerated: the bias
+belongs to the mass-1 protein sites themselves. That is integrator discretisation bias, which is
+multiplicative and tau-independent exactly as measured. It is not the explicit springs, whose
+stiffest mode (`Spring_angle`, k = 175) gives only (omega*dt)^2/4 = 0.7% at dt = 0.009; the steep
+MARTINI pair core is the only curvature in the system large enough, and it reaches the protein
+through `martini_hybrid_position`, since `martini_potential` takes the proxy positions as its
+argument.
+
+**And the cold bilayer is what presses the backbone into that core.** Measured on the two local runs,
+minimum-image protein-backbone-to-environment distances (raw coordinates, so a comparative proxy for
+the true proxy-mediated distance rather than the exact interacting one):
+
+| | mean of per-frame minimum | closest seen | pairs/frame < 3.40 A |
+|---|---|---|---|
+| T = 0.7215 (production) | 3.512 A | **2.887 A** | **0.38** |
+| T = 0.8647 (design point) | 3.623 A | 3.289 A | 0.07 |
+
+**5.4x more sub-3.40 A contacts at the production temperature**, with the closest approach falling
+from 3.29 to 2.89 A. Per 3.2 the pair force at 2.853 A is 1.27e5 E_up/A, where dt for a 1 A one-step
+kick on a mass-1 site is 0.0028, so dt = 0.009 is already 3.2x too large there. The causal chain is
+therefore: the bilayer is run 16-58 K below its design point, which strengthens every MARTINI
+interaction by up to 1.24x in kT and over-condenses the environment; that drives protein backbone
+sites measurably closer into the steep core; and mass-1 sites at dt = 0.009 integrate that core
+inaccurately, giving a standing 8-13% kinetic excess with intermittent bursts to 1.5-1.8, until one
+site is ejected and tears the TM4 backbone.
+
+**What the local runs did NOT do: produce a blow-up.** Over 250 time units they stayed finite and
+negative, with zero pairs inside 2.85 A. They reproduce the standing temperature split and the
+contact-density shift, which are the precursors; the ejection itself is a rare event (3.2 measured
+0.2 pairs/frame inside 2.43 A only in long cluster runs). So the last link, that the increased
+contact density is what produces the ejections, is consistent with everything measured but is
+inferred rather than demonstrated here.
+
+**The blow-up itself is a backbone tear in TM4, and not a force-field-table defect.** Decomposing a
+finite-but-positive onset frame (79ALA r27, `output_previous_2`, frame 208, -19765 -> +1683 ->
++43240 E_up) by node puts essentially all of the excess in `Spring_bond` (1272 -> 21724 -> 62558),
+with `Spring_angle` +655 and `Spring_omega` +332 and every MARTINI term flat. Per bond it is
+consecutive backbone bonds of residues 139-141: at frame 208 `C140-N141` is at 18.5 A against
+r0 = 1.300, `CA139-C139` at 16.7 A and `N139-CA139` at 16.3 A. That is TM4. Re-evaluating the
+recorded coordinates on the local engine reproduces the recorded total to **0.27%** (+43356 vs
++43240) while using the *older* local tables rather than the deployed arm-R ones, so the catastrophe
+is geometric and the arm-R retraining is not its cause. Note also that the frames immediately before
+onset are already far out of equilibrium: peptide bonds sit at 2.0-2.9 A against r0 = 1.3, roughly
+60 kT of bond strain, where equipartition at T = 0.82 with k = 48 allows 0.13 A rms.
+
+Ruled out by measurement, each: the arm-R tables (above); an unthermostatted subset, since
+`stochastic_mask` is set only where `friction > 0` (`martini_brownian.cpp:78`) and the OU thermostat
+therefore still reaches every friction-zero atom (`thermostat.cpp:31`), so each atom is thermostatted
+by exactly one mechanism and both target the same kT; and exchange laundering of the protein excess.
+
+**A measurement trap worth keeping: lipid diffusion cannot be measured from production output.**
+Replica exchange puts a different configuration in a slot every exchange interval, so consecutive
+frames of a production chunk are not a trajectory. Measured on PO4 beads, the apparent lateral D
+*falls* with lag in production (9.07, 5.14, 2.56, 1.43, 0.82 A^2/time_up at lags 1-16), the signature
+of frame-to-frame discontinuity, while the exchange-free 0.8647 equilibration behaves like a real
+trajectory and *rises* with lag (0.025 -> 0.103). Use a continuous single-temperature run for any
+transport observable.
+
+### 3.10a The fix, what it verifiably does, and what it does not (2026-09-10)
+
+The ladder was made authoritative and dry-MARTINI brought to it (plan.md, Revised decision
+2026-09-10). Two changes, both verified; one deliberate non-change; and one claim that could **not**
+be tested.
+
+**Change 1: friction follows the replica temperature** (`src/martini_brownian.cpp`). Friction is
+built as `gamma = kT_ref/D_target` with T_ref = 0.8647, so at rung 0 the realised lipid diffusion was
+`D_target * 0.70/0.8647`, 19% below the 11.5 um^2/s the node exists to deliver. The runtime now
+scales gamma by `T/T_ref`, giving `D = kT/gamma(T) = D_target` at every rung and through exchange.
+Keyed on `reference_temperature_up`, so a config that never declared one is untouched. This changes
+**only transport, not thermodynamics** -- friction does not enter the Boltzmann distribution, so
+potential statistics and exchange acceptance are unaffected. Verified: at T = 0.8647 the new binary
+is **bitwise identical** to the old over 200 steps (scale is exactly 1 there), and at T = 0.7215 it
+differs (max |dpot| = 40.5 E_up), so the scaling engages where it should and nowhere else.
+
+**Change 2: `inner_steps` = 4 by default** (`py/martini_prepare_system_lib.py`, env
+`UPSIDE_MARTINI_INNER_STEPS`). N substeps of `dt/N` inside each outer step, noise using `dt_i` so FDT
+holds. The **outer dt stays 0.009**, so `numerical_time_step`, the friction/dt lock and the 40
+ps-per-step clock are all untouched; it changes no force field and no parameter, it integrates the
+same equations more accurately. The capability already existed in C++ and no Python code had ever
+written the attribute. Measured on glpG-RKRK-79ALA from an equilibrated frame at T = 0.7215:
+
+| inner_steps | backbone (Brownian) | backbone (OU) | lipid | logged T_prot | excess | wall |
+|---|---|---|---|---|---|---|
+| 1 | 1.092 | 1.130 | 1.024 | 1.101 | +10.1% | 262 s |
+| 2 | 1.034 | 1.039 | 1.018 | 1.035 | +3.5% | 333 s (1.27x) |
+| 4 | 1.010 | 1.011 | 1.009 | 1.011 | **+1.1%** | 538 s (2.05x) |
+
+**The temperature mismatch is resolved**: at N = 4 both protein thermostat groups and the lipids sit
+within ~1% of the set point, so the two subsystems are finally at the same temperature. Cost is far
+below the naive Nx because the baseline already does two force evaluations per step and a substep
+adds one, so the ratio is `(N+1)/2`.
+
+**Non-change: MARTINI epsilons are not rescaled.** Solute tempering (`eps * T/T_ref`, preserving
+`eps/kT`) is the textbook fix for the remaining defect and is forbidden here, because a spline table
+must equal the published dry-MARTINI form exactly. So the over-condensation stands: at rung 0 every
+MARTINI interaction is still 1.24x too strong in kT, and the 5.4x excess of sub-3.40 A
+protein-environment contacts is unchanged.
+
+**Not demonstrated: that any of this stops the blow-ups.** Two separate reasons, both quantitative.
+
+*The unsafe window only shrinks as 1/sqrt(N).* Differentiating the deployed
+`combined_energy_grids`, the separation below which one step throws a mass-1 site more than 1 A is:
+
+| inner_steps | dt_i | r(kick > 1.0 A) | r(kick > 0.3 A) |
+|---|---|---|---|
+| 1 | 0.00900 | 3.228 A | 3.544 A |
+| 2 | 0.00450 | 2.900 | 3.181 |
+| 4 | 0.00225 | 2.607 | 2.865 |
+| 8 | 0.00112 | 2.350 | 2.572 |
+| 64 | 0.00014 | 1.705 | 1.869 |
+
+At N = 1 the run sits continuously inside its own unsafe window (0.38 pairs/frame below 3.40 A),
+which is the mechanism. N = 4 shrinks it to 2.607 A but 3.2 measured ~0.2 pairs/frame inside 2.43 A
+on long runs, still inside. **Covering the measured close-approach population needs N = 8**; the
+1.78 A approaches of 3.2 would need N ~ 64.
+
+*And the direct test was underpowered by 50x.* Starting from the recorded last clean frame of the
+real 79ALA r27 event (frame 207, potential -19765, one backbone bond already at 6.27 A, one frame
+before the +43240 catastrophe), four seeds at T = 0.82 with N = 1 and four with N = 8: **all eight
+held**, relaxing to -21100..-21550 with no non-finite or positive frame. The N = 1 arm did not
+reproduce the tear, so the comparison carries no information. The rate explains why: the cluster
+shows 15 rollbacks over 11.4M replica-steps, one per ~762k, and this test sampled 13.3k steps, 1.8%
+of one expected waiting time. A properly powered local test is ~4 h at N = 1 and ~14.5 h at N = 8.
+**Do not read the eight held runs as evidence the fix works.**
+
 ### 3.4 The four cluster POPE/POPG jobs were simulating a RIGID protein (findings 116)
 
 The cluster HDX came out empty (188 of 203 amides off scale, resolved values to -53.9 kcal/mol). Not the

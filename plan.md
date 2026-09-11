@@ -1,3 +1,94 @@
+# CURRENT PHASE (2026-09-10): diagnose the glpG hot-replica blow-ups
+
+Production is live on both clusters (job state in `remote_jobs.md`) and the four midway2 chains plus
+the four rockfish replicates are advancing, but replicas 14 and hotter roll back repeatedly: 15
+rollbacks across the four variants in block 1 alone, in two signatures, non-finite potential over
+60-262 frames of a chunk and 7-24 of 209 peptide bonds above 2.0 A in the final frame. The cold
+replicas 0-13 that HDX uses are clean so far. The goal of this phase is the **cause**, measured, not
+a way to keep the chain running.
+
+## What is already known, and why it is not yet an answer
+
+`findings.md` 3.2 localised a blow-up of this class on `glpG-RKRK-79ALA`: one mass-1 protein
+backbone site ejected 80 A by a MARTINI LJ wall, all of the excess in `Spring_bond`, with the run
+continuously sampling 2.43-2.85 A pair separations where dt = 0.009 delivers a 1 A one-step kick.
+Production still runs `DT = 0.009` (`run_remd.py:34`, not overridden by `submit_remd.sh`).
+
+That makes the known mechanism the leading hypothesis but **not** the established cause of these
+events, for three reasons: the force field changed (these runs are the first production on the
+arm-R tables), the seeds were patched by hand with coverage nodes on both clusters, and the ladder
+ceiling moved 0.90 -> 0.82. Asserting 3.2 by analogy is exactly the error the project rules forbid.
+
+## Execution phases
+
+- [x] **P1. Locate onsets in the live data.** The rollback keeps the NaN frames (`run_remd.py`
+      patches only the last frame), so every event is still in the replica files under
+      `output_previous_*`. Scan potential/kinetic per frame for the first non-finite or positive
+      frame in the replicas the logs name: 79ALA run.27 (3 rollbacks), run.18; 79HIS_S115T run.23
+      (262 frames), run.22, run.14; 79ALA_S115T run.26/27 (peptide-bond signature).
+- [x] **P2. Pull a window.** Extract the last clean frame and the onset frame (plus a few either
+      side) as coordinates only, and bring them local. A full replica is ~310 MB; a window is ~1 MB.
+- [x] **P3. Re-evaluate locally, decomposed by term.** Reproduce the recorded potential on the local
+      engine, then decompose: which node carries the excess, which residue/site, which pair, and at
+      what separation. This is the step that distinguishes mechanisms rather than assuming one.
+- [x] **P4. Attribute.** Decide between: the 3.2 mass-1 ejection at dt = 0.009; a coverage-node
+      defect from the hand patch; an arm-R table defect; or something new. Test each against the
+      measured window, not against plausibility.
+- [~] **P5. Local reproduction.** Partly done. The standing temperature split reproduces exactly
+      (local T_prot 0.7911 vs cluster 0.7912 at the same rung, no exchange) and so does the
+      contact-density shift, but 250 time units produced no ejection, so the tear itself is still
+      inferred. Producing one locally needs a much longer run or a hot-rung start.
+
+## Revised decision 2026-09-10: the ladder is authoritative, MARTINI is brought to it
+
+The user chose the ladder as priority. The 28-rung 0.70-0.82 ladder stays exactly as it is (it was
+set from measured TM4 helix content) and the dry-MARTINI side is made consistent with the temperature
+actually being run, rather than the ladder being moved up to MARTINI's 0.8647 design point.
+
+Two changes follow from that, and one deliberate non-change:
+
+1. **Friction follows the replica temperature.** `gamma = kT_ref / D_target` is built with
+   `reference_temperature_up` = 0.8647 (`martini_prepare_system_lib.py:2523`), so at rung 0 the
+   realised lipid diffusion is `D_target * 0.70/0.8647` = 19% below the 11.5 um^2/s the node exists
+   to deliver. Scaling gamma by `T/T_ref` at runtime, where `set_brownian_temperature` already
+   receives the temperature, restores `D = kT/gamma = D_target` at every rung automatically and
+   through exchange. This is consistent with the node's own declared intent
+   (`transport_observable = bare_martini_particle_lateral_diffusion`, `target_lipid_diffusion_um2_s`):
+   the mobility is *defined* by a target diffusion, not by a fixed drag coefficient. It does **not**
+   fix the blow-ups, and slightly reduces damping.
+
+2. **The protein sites get a subdivided integration step.** The measured 8-13% protein kinetic excess
+   is discretisation bias of mass-1 sites against the steep MARTINI core, not a thermostat defect
+   (findings 3.10: both thermostat mechanisms are hot by the same amount, no contact-count trend, and
+   the excess is independent of tau over a 20x range). `apply_langevin_step` already supports an
+   `inner_steps` attribute that integrates N substeps of `dt/N` per outer step, with the noise using
+   `dt_i` so FDT still holds. This is the right knob because **the outer dt stays 0.009**, so
+   `numerical_time_step`, the friction/dt calibration and the 40 ps-per-step mapping are all
+   untouched, and because it changes no force field and no parameter: it integrates the same
+   equations more accurately. Cost is N x the force evaluations, which is real and must be reported.
+
+3. **MARTINI energies are NOT rescaled.** The cleanest theoretical fix for the remaining defect (at
+   rung 0 every MARTINI interaction is 1.24x stronger in kT, which over-condenses the bilayer and
+   drives 5.4x more sub-3.40 A protein-environment contacts) would be solute-tempering: scale the
+   environment epsilons by `T/T_ref` so `eps/kT` is preserved. That is forbidden here. The project
+   rule is explicit that a spline table "is a representation, never a variant" and must equal the
+   published dry-MARTINI functional form exactly, and separately that twisting parameters to make
+   something work is not allowed. **So the over-condensation is not fixed and remains an accepted
+   consequence of prioritising the ladder.** It needs a decision from the user, because the honest
+   alternatives are a real REST/solute-tempering implementation (a genuine architecture change) or
+   moving the ladder to bracket 0.8647.
+
+### Verification required before this is called done
+
+- [ ] `inner_steps` measurably removes the protein kinetic excess locally, scaling roughly as 1/N^2,
+      with the lipids still on target and the potential statistically unchanged.
+- [ ] The friction scaling restores D = D_target at a ladder temperature, measured on a continuous
+      local run (never from production output: exchange makes consecutive frames non-sequential).
+- [ ] Master parity is untouched for non-hybrid configs: both changes must be inert when
+      `/input/brownian` is absent.
+
+---
+
 # CURRENT PHASE (2026-09-08): finish ff3.0 on two hosts, then an FF-convergence arm test
 
 ConDiv gly-sym retraining is running on **two** hosts at once and both reach `MAX_STEPS=500` on

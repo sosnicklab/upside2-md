@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-10 ~00:00 CDT. Two campaigns are live. (1) The glpG two-arm force-field test runs on BOTH clusters as independent replicates: midway2 `49002097`/`49002098` with decider `49002099`, rockfish `30768485`/`30768486` with verdict-only decider `30768512`. Verdicts ~05:20 (rockfish) and ~05:50 (midway2) CDT 2026-09-10. (2) The **ff3.0 re-benchmark of Peng et al. JCTC 2022** launched on midway2 broadwl: 32 jobs, `49002902`-`49002933`, 16 proteins x native/de novo, 14-replica REMD each, self-resubmitting until their Table S2 durations complete. Upside now has ONE shared deployment at `/beagle3/trsosnic/yinhan/upside2-md` usable from both clusters via `env_shared.sh`; see §0b. ff3.0 is deployed in the repo as `parameters/ff_3.0`. midway3 has no other work.**
+Snapshot: **2026-09-10 ~19:40 CDT. Four campaigns live, 41 jobs, all RUNNING, none queued or failed. midway2 has 37: glpG production `49003548`-`49003551`, the 32-arm ff3.0 benchmark `49003553`-`49003584`, and NP production `49003839`. rockfish has the four glpG replicates `30775667`-`30775670` (11 h in, 36 h wall left). midway3 is idle. The arm test is decided (**R wins**) and `parameters/ff_3.0` carries the rockfish arm-R tables; the ladder ceiling is 0.82. Upside has ONE shared deployment at `/beagle3/trsosnic/yinhan/upside2-md`, usable from both clusters via `env_shared.sh`; see §0b. **Open issue: the glpG hot replicas still blow up at the 0.82 ceiling** (see §1 Campaign 1).**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -14,7 +14,10 @@ roughly hourly, so expect to redo this most sessions.
 
 **midway2** (POPE/POPG REMD campaign): **this Mac's IP is BLOCKED on midway2's login nodes.**
 `mdw2_master.exp` fails with `Connection refused` on port 22 while midway3 answers normally, so the
-refusal is an address block, not an outage and not a Duo problem. Reach midway2 through midway3 in
+refusal is an address block, not an outage and not a Duo problem. **Still blocked, re-tested
+2026-09-10 19:35:** `nc -z midway2.rcc.uchicago.edu 22` gives `Connection refused` from this Mac,
+and so does `128.135.112.69` directly, while the same host answers fine from midway3. The tunnel
+below remains the only route. Reach midway2 through midway3 in
 two steps (confirmed working 2026-09-09; connect midway3 first, then):
 ```bash
 ssh -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu   # alive?
@@ -138,7 +141,8 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-10 ~10:30 CDT (verified live against `squeue`)**.
+Snapshot **2026-09-10 ~19:40 CDT (verified live against `squeue` on both hosts, and against
+frames actually written).**
 
 ### Campaign 1: glpG production on ff3.0, lowered ladder ceiling (both clusters, 2026-09-10 ~09:10)
 
@@ -146,6 +150,32 @@ Snapshot **2026-09-10 ~10:30 CDT (verified live against `squeue`)**.
 |---|---|---|---|
 | midway2 | 49003548-49003551 | all four | 36 h x 4 blocks |
 | rockfish | 30775667-30775670 | all four | 48 h |
+
+**Live health at 2026-09-10 19:40 (11 h 24 m in, block 1 of 4).** All four midway2 chains and all
+four rockfish chains are RUNNING and advancing; each has completed 5-6 chunks of ~17 k steps at
+~6900-7300 s per chunk, and ~94 k s of the 129600 s wall remains in block 1.
+
+**The hot end of the ladder is still breaking, and the 0.82 ceiling did not stop it.** Rollbacks so
+far this block, by replica index (28 replicas, 0 = coldest):
+
+| variant | rollbacks | replicas hit |
+|---|---|---|
+| 79HIS | 1 (at calibration) | 27 |
+| 79HIS_S115T | 5 | 14, 21, 22, 23, 27 |
+| 79ALA | 5 | 18, 26, 27 (x3) |
+| 79ALA_S115T | 4 | 26, 27 (x2, one at calibration) |
+
+Two distinct failure signatures appear: **non-finite potential** over 60-262 frames of a chunk, and
+**peptide bonds > 2.0 A** in the final frame (7-24 of 209 bonds). `run.27` in 79ALA rolled back
+three times, so the detection gate is recycling the same replica rather than curing it. Every
+rollback is at replica 14 or hotter; replicas 0-13 are clean in all four variants, so the cold end
+the HDX analysis uses is unaffected **so far**.
+
+This is not diagnosed. Lowering the ceiling 0.90 -> 0.82 was calibrated against *helix content*, not
+against integration stability, so it was never expected to fix a blow-up and evidently has not. Do
+not widen the gate or raise the tolerance. The open question is whether the non-finite potentials
+come from the MARTINI lipid interactions at high T or from the newly patched arm-R coverage nodes,
+and the next step is to localize one event rather than to keep restarting from it.
 
 **The arm test is decided: R wins**, so `parameters/ff_3.0` now carries the **rockfish** training
 run's tables (`sidechain.h5` `cfe4ba5e...`, `environment.h5` `301f8418...`, both step 500),
@@ -182,6 +212,18 @@ spacing (0.0043 at the cold end, was 0.0071) and raises exchange acceptance.
   deleted); `hdx/` was left alone. rockfish had no prior production data.
 
 ### Campaign 2: ff3.0 re-benchmark of Peng et al. JCTC 2022 (launched 2026-09-09 ~23:55 CDT)
+
+**Live progress 2026-09-10 19:40 (~11 h in).** All 32 RUNNING, none stalled, no `COMPLETE`
+marker yet and no resubmission archived except `hyp_denovo`, which carries 280 k time units from an
+earlier submission. Frames are being written in every run and the observables are sane (Rg 8-12 A,
+potentials -70 to -260 E_up). Progress on the current submission's remaining target ranges from
+**5.4%** (hyp de novo) to **47%** (BBA native); the median is ~20%.
+
+The long de novo arms set the campaign length. `ubiquitin_denovo` has done 561 k of 8.03 M time
+units in 11 h, a rate of ~51 k/h, so it needs roughly **6-7 more days** and about 4 more wall blocks.
+Expect the native arms to finish within 1-2 days and the de novo arms about a week out. Percentages
+above are against each job's *remaining* target, not the full Table S2 duration, so they reset at
+each resubmission; measure absolute progress from `run.log`'s first column plus what is archived.
 
 32 jobs on midway2 broadwl, **relaunched a second time 2026-09-10 ~09:15 CDT** once ff_3.0 became
 the arm-R tables; the 03:50 launch had been built against arm M and was cancelled 38 min in (parked
@@ -258,6 +300,16 @@ Rebuilt from scratch rather than patched: the old replicas carry 98 accumulated 
 | JobID | what | log |
 |---|---|---|
 | 49003839 | `np_1AO6_prod`, block 1 of 8, self-resubmitting | `NP-1AO6/prod_ff3/np.49003839.out` |
+
+**Live progress 2026-09-10 19:40 (9 h 05 m in).** RUNNING, all six orientations advancing together at
+step ~11-12.5 k of 84255 for block 1, no NaN or inf anywhere in the log. Observables are physical:
+Rg 27-33 A per system, 478-539 hbonds, protein potential -670 to -906 E_up and total potential
+~-11 600 to -11 900 E_up, all steady rather than drifting. The six `.up` files are 4.5 GB each
+(27 GB so far).
+
+At ~1390 steps/h, block 1's 84255 steps need **~60 h**, so it will not finish inside the 36 h wall
+and must resubmit once mid-block; all 8 blocks are a **~20 day** campaign at this rate. `block_count`
+still reads 1.
 
 **Rebuilt on the arm-R force field 2026-09-10 10:26** (build `49003643`, rc=0, `verify_np_ff3.py`
 rc=0, all six configs confirmed to carry the deployed `ff_3.0` pair and to sit 8.44 away from the

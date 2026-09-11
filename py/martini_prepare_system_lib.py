@@ -2505,6 +2505,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             reference_temperature = float(os.environ.get("UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP", "0.8647"))
             raw_relaxation_ps = float(os.environ.get("UPSIDE_DRY_MARTINI_RELAXATION_PS", "4.0"))
             dynamics_phase = os.environ.get("UPSIDE_MARTINI_DYNAMICS_PHASE", "production")
+            # Substeps of numerical_time_step/inner_steps inside each outer step. The outer step is
+            # what the friction and the ps-per-step clock are calibrated against and stays 0.009;
+            # this only integrates the same Langevin equation more accurately. Required because
+            # mass-1 protein carriers at dt = 0.009 pick up a kinetic-temperature excess against the
+            # steep MARTINI core: measured on glpG-RKRK-79ALA at T = 0.7215, the backbone runs
+            # +10.1% above its set point at inner_steps = 1, +3.5% at 2 and +1.1% at 4, while the
+            # lipids go 1.024 -> 1.009, for 1.27x and 2.05x the wall time (findings 3.10).
+            inner_steps = int(os.environ.get("UPSIDE_MARTINI_INNER_STEPS", "4"))
+            if inner_steps < 1:
+                raise ValueError("UPSIDE_MARTINI_INNER_STEPS must be >= 1")
             if numerical_time_step <= 0.0 or protein_time_ps <= 0.0 or martini_time_factor <= 0.0:
                 raise ValueError("MARTINI clock parameters must be positive")
             if target_diffusion <= 0.0 or reference_temperature <= 0.0 or raw_relaxation_ps <= 0.0:
@@ -2555,6 +2565,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             t.create_array(brownian_grp, 'atom_index', obj=brownian_atom_index)
             t.create_array(brownian_grp, 'friction', obj=friction.astype(np.float32))
             brownian_grp._v_attrs.numerical_time_step = np.float64(numerical_time_step)
+            brownian_grp._v_attrs.inner_steps = np.int32(inner_steps)
             brownian_grp._v_attrs.protein_time_ps_per_step = np.float64(protein_time_ps)
             brownian_grp._v_attrs.martini_time_factor = np.float64(martini_time_factor)
             brownian_grp._v_attrs.raw_martini_time_ps_per_step = np.float64(raw_martini_time_ps)

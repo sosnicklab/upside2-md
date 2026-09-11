@@ -1,3 +1,55 @@
+# 2026-09-10 (evening): glpG blow-up diagnosis
+
+Asked to check remote job status, then to find the cause of the glpG hot-replica blow-ups and test it
+locally. Job status: 41 jobs live (midway2 37 = 4 glpG + 32 benchmark + 1 NP; rockfish 4 glpG), all
+RUNNING, midway3 idle; midway2 still IP-blocked from this Mac, reached through the midway3 tunnel.
+Details and throughput estimates are in `remote_jobs.md`.
+
+## Diagnosis (findings.md 3.10 carries the full record)
+
+The user's hypothesis was a temperature mismatch between dry-MARTINI and Upside. Confirmed:
+
+1. Verified `~/OneDrive .../image.png` row by row: K = T_up x 350.588235 exactly, 0/24 rows
+   inconsistent. The production ladder 0.70-0.82 is **245.4-287.5 K = -27.7 to +14.3 C**.
+2. Every dry-MARTINI parameter is built for **0.8647 T_up = 303.15 K = 30.00 C**: `/input/brownian`
+   `reference_temperature_up`, `martini_build_tables.py DEFAULT_PRODUCTION_TEMP_UPSIDE`, and the
+   equilibration run itself (`output_previous_0` is at exactly 0.8647 in every replica of every
+   variant). The ladder runs the bilayer 15.7-57.7 K below all three, making MARTINI interactions
+   1.24x stronger in kT at rung 0.
+3. Measured on clean frames, the two subsystems are at different temperatures: lipids 1.020 x T_nom
+   flat across the ladder, protein T_nom + ~0.08 T_up (+28 K), reaching 1.506 at rung 27.
+4. **Reproduced locally with no replica exchange**: from an equilibrated cluster frame at production
+   settings, local T_prot = 0.7911 vs the cluster's 0.7912 for that rung, T_lip 0.7327 vs 0.7355.
+   The offset is nearly independent of the thermostat timescale (+0.074/+0.070/+0.106 at tau =
+   1/5/20) so it is not a power leak the thermostat fails to remove, and it grows with temperature
+   (+0.070 at T = 0.7215, +0.329 at T = 0.8647).
+5. The blow-up is a `Spring_bond` tear of the TM4 backbone at residues 139-141 (C140-N141 at 18.5 A
+   against r0 1.300), reproduced locally to 0.27% on the older tables, so it is geometric and the
+   arm-R retraining is not its cause.
+
+Ruled out by measurement: arm-R tables, an unthermostatted atom subset, exchange laundering of the
+protein excess. A dt scan was impossible by design (`apply_langevin_step` throws unless runtime dt
+matches `/input/brownian numerical_time_step`); that check was left alone.
+
+Attributed: the excess belongs to the mass-1 backbone under EITHER thermostat (friction>0 sites
+1.092/1.077, friction==0 sites 1.130/1.072, lipids 1.024/0.999) with no lipid-contact-count trend, so
+it is integrator discretisation bias on the steep MARTINI core, not a thermostat or friction defect.
+The cold bilayer is what presses the backbone there: 5.4x more sub-3.40 A protein-environment
+contacts at T = 0.7215 than at the 0.8647 design point, closest approach 2.89 vs 3.29 A.
+
+Two of my own readings were corrected by the full-length data: the excess is multiplicative and
+tau/temperature-independent (not superlinear in T, which came from a burst in a half-length average),
+and `protein_kinetic` is not diluted by the 420 zero-momentum placed atoms because the logger
+excludes them from `n_dynamic`.
+
+Not demonstrated locally: the ejection itself. 250 time units stayed finite and negative with zero
+pairs inside 2.85 A, so the local runs reproduce the precursors (temperature split, contact density),
+and the final link to the tear is inferred.
+
+No production job was touched, no gate widened, no parameter changed.
+
+---
+
 # Progress log
 
 High-level execution diary. Job ids, states and log paths live in `remote_jobs.md` only.
