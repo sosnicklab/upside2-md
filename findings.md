@@ -130,6 +130,25 @@ This also puts the user's MARTINI-type idea in the right place: once the environ
 whether lipid should contribute to *environment* coverage is the meaningful question, and the
 MARTINI Qa/Qd/C1 classification is the parameter-free way to answer it.
 
+## Carried over from planned_job.md before deleting it (2026-09-10)
+
+That file tracked the ff3.0 training chain, which is finished, deployed and superseded. Everything
+in it was either done, recorded elsewhere, or wrong. These two were recorded nowhere else.
+
+**The two Ramachandran libraries, and the mirror that differs between them.**
+`parameters/common/rama.dat` is the OLD force field and is asymmetric in GLY *by design*; do not
+"fix" it. The GLY-symmetric library ff_3.0 must run against is `parameters/common/rama3.dat`. The
+correct GLY mirror is **`m[::-1,::-1]` for `.up` `rama_map_pot` maps but `roll(m[::-1,::-1], 1)` for
+the library's own `dimer_pot`**. Using the wrong one fabricates about 3.3 E_up of asymmetry on
+perfectly good seeds. Always verify against a chiral control (ALA/SER/HIS must still show 10-11 E_up
+of asymmetry, or the mirror hit everything) and against `dG(aR->aL)`, which reads 0.000 on a correct
+GLY map.
+
+**One GLY experiment is still untested:** whether GLY asymmetry ever contributed *independently* to
+TM4's instability. The control is a de-symmetrized run, a few hours locally. Worth doing only if the
+glycine thread is picked up again; note that the 2026-09-10 measurements argue against glycine being
+the TM4 cause at all, and that the asymmetric reference state is the live GLY defect instead.
+
 ## The MARTINI-typed H-bond correction makes things worse; not deployed (2026-09-10, settled)
 
 Built, tested, refuted. The idea was sound and maps cleanly onto the code: dry-MARTINI's own

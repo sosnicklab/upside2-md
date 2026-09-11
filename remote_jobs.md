@@ -138,7 +138,7 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-10 ~09:20 CDT (verified live against `squeue`)**.
+Snapshot **2026-09-10 ~10:30 CDT (verified live against `squeue`)**.
 
 ### Campaign 1: glpG production on ff3.0, lowered ladder ceiling (both clusters, 2026-09-10 ~09:10)
 
@@ -257,7 +257,12 @@ Rebuilt from scratch rather than patched: the old replicas carry 98 accumulated 
 
 | JobID | what | log |
 |---|---|---|
-| 49003318 | `np_1AO6_prod`, block 1 of 8, self-resubmitting | `NP-1AO6/prod_ff3/np.49003318.out` |
+| 49003839 | `np_1AO6_prod`, block 1 of 8, self-resubmitting | `NP-1AO6/prod_ff3/np.49003839.out` |
+
+**Rebuilt on the arm-R force field 2026-09-10 10:26** (build `49003643`, rc=0, `verify_np_ff3.py`
+rc=0, all six configs confirmed to carry the deployed `ff_3.0` pair and to sit 8.44 away from the
+arm-M table). The first build `49003158` and the 4 h of production `49003318` that ran on arm-M
+tables are parked in `prod_ff3_armM_20260910-084115/` (14 G) and can be deleted.
 
 Build `49003158` finished rc=0 and all six configs passed `verify_np_ff3.py` (composition, ion
 counts, 300 A box, `exclude_intra_protein_martini` 1, environment nodes present, no
