@@ -1674,6 +1674,77 @@ Two limits on how far the slide-8 result transfers: it measured RMSD and Rg only
 TM4's *helicity* at 0.90, and it used the implicit membrane, so its transition temperature does not
 carry over quantitatively to the dry-MARTINI hybrid.
 
+### 3.10c What actually caused TM4 to be unstable, and what the GLY maps do (2026-09-10)
+
+Six hypotheses were eliminated by measurement, in this order:
+
+| hypothesis | test | verdict |
+|---|---|---|
+| global thermal unfolding | CA-RMSD 8.4-8.6 A, Rg 19-20 A; transition is at T = 1.05-1.10 (3.10b) | ruled out |
+| GLY143 mid-helix alphaL flip | phi stays -67 to -88, h = 0.91-1.00 for the whole run | ruled out, it never flips |
+| GLY133 / GLY49 cap sign | phi = +71 at GLY133 in the *healthy* T = 0.70 run (TM4b 0.991) | ruled out, no correlation |
+| TM4a at the bilayer interface | \|z\| = 1.47 A, the most *central* segment (TM3 = 8.58 A) | ruled out |
+| arm-R force-field tables | recorded blow-up reproduced to 0.27% on the older tables | ruled out |
+| GLY Ramachandran mis-symmetrisation | controlled run, correct mirror vs buggy (below) | ruled out, correcting it is **worse** |
+
+**Primary cause: the temperature mismatch (3.10, 3.10a).** The protein ran ~10% above its set point,
+so the nominal 0.70-0.90 ladder drove it at ~0.77-0.99 T_up, about +28 K, which is across TM4's
+fraying range while TM3 stays well below its own. With `inner_steps = 4` the cold end is now
+*healthier than the seed*: at T = 0.70, TM4a 0.999, TM4b **0.991**, TM1 1.000 against seed values of
+1.000 / 0.933 / 0.952. The pre-fix cluster gave TM4_full 0.589-0.727 at the same rungs, and 0 of 60
+replica measurements passed the > 0.8 criterion.
+
+**The GLY symmetrisation is a real defect but not this defect, and correcting it makes TM4 worse.**
+Controlled test, wild type, T = 0.90, `inner_steps = 4`, two seeds per arm, t = 500-1000, everything
+identical but the 23 GLY maps:
+
+| GLY maps | TM4a | TM4b | TM1 | TM3 |
+|---|---|---|---|---|
+| buggy off-by-one mirror (what is deployed) | 0.786 | 0.840 | 0.810 | 0.819 |
+| correct periodic mirror | **0.531** | **0.717** | 0.849 | 0.845 |
+
+This is what the energetics predicted. For GLY143 the mirror penalty `E(alphaL) - E(alphaR)` is
+**+0.571 E_up** under the buggy mirror, **0.000** under the correct one, and **-0.644** in the raw
+library map. Only the buggy map favours the right-handed helix; the correct symmetrisation is exactly
+neutral and the raw library actively prefers left-handed. So "fixing" the symmetrisation removes a
+spurious ~0.57 E_up (0.6 kT) per-glycine helix bias that TM4 had been leaning on.
+
+**Therefore the residual TM4 fraying at T = 0.90 is a force-field property, not a bug.** Glycine in
+this Rama library carries no right-handed helix preference, and TM4 is the glycine-dense helix: 3 in
+17 residues (1.76 per 10) against TM1's **zero** and TM3's 2 near its ends. TM4 is simply the marginal
+helix, and it frays from its N-terminal turn (loss begins at 135/136, then 134) at the hot end of the
+ladder, which is what a REMD hot end is for. Glycine genuinely is a helix breaker, so this may be
+correct physics rather than something to repair.
+
+**Statistical caveat, stated because the effect is not large relative to the scatter:** n = 2 per arm,
+and within-arm spread is comparable to the between-arm difference (buggy TM4a = 0.990 and 0.583;
+correct TM4a = 0.663 and 0.400). What the test establishes firmly is only the negative: **no run with
+corrected maps beat the best run with the buggy maps**, so correcting the symmetrisation is not a TM4
+fix. Deciding what the GLY map *should* be is a force-field question -- validate the library's GLY
+dimer maps against PDB glycine statistics -- not a patch to apply to seeds.
+
+### 3.10d The fix eliminates the blow-ups: 434x fewer bad frames (2026-09-11)
+
+This is the measurement that was missing when the fix was deployed. Earlier attempts to demonstrate
+blow-up prevention locally were underpowered by ~50x (3.10a); the production runs settle it. Counting
+every production frame with a non-finite **or** positive potential across all 112 replica files
+(4 variants x 28 rungs), skipping the rigid-protein equilibration group:
+
+| | production frames | non-finite or positive | rate |
+|---|---|---|---|
+| pre-fix (archived `pre_tempfix_20260910/`) | 246 120 | 1 604 | **0.6517%** |
+| post-fix (`inner_steps = 4`, ceiling 0.90) | 481 040 | **7** | **0.0015%** |
+
+A **434-fold reduction on nearly twice the data**. At the pre-fix rate the post-fix runs would have
+carried ~3 135 bad frames; 7 were observed. The logged rollback count agrees: 15 rollbacks in the
+pre-fix block 1 against 0 in the 12 visible post-fix chunks. Note the ceiling was simultaneously
+*raised* 0.82 -> 0.90, so this is not a temperature-lowering artefact.
+
+**Not zero, and that is expected.** 7 frames remain, consistent with the arithmetic in 3.10a: at
+`inner_steps = 4` the one-step-kick radius is 2.607 A, which still does not cover the ~2.43 A
+approaches long runs reach. `inner_steps = 8` would cover that population at ~3.6x cost. The residual
+rate is low enough that the rollback machinery absorbs it.
+
 ### 3.4 The four cluster POPE/POPG jobs were simulating a RIGID protein (findings 116)
 
 The cluster HDX came out empty (188 of 203 amides off scale, resolved values to -53.9 kcal/mol). Not the

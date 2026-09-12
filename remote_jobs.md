@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-10 ~22:10 CDT. The glpG campaign was RELAUNCHED on both clusters with the temperature fix and the ladder ceiling restored to 0.90.** midway2 `49006599`-`49006602` (4 blocks x 36 h), rockfish `30791125`-`30791128` (12 blocks x 48 h). Both carry `inner_steps = 4` on `/input/brownian` and a rebuilt binary whose Brownian friction tracks the replica temperature; `numerical_time_step` stays 0.009. The pre-fix replicas (34 GB midway2, same on rockfish) are archived under `<variant>/pre_tempfix_20260910/` and are NOT poolable with the new data. Also live and untouched: the 32-job ff3.0 benchmark `49003553`-`49003584` and NP production `49003839`, both verified to have no `/input/brownian` and therefore provably unaffected by the change. midway3 is idle. See findings.md 3.10/3.10a for the diagnosis and the fix.**
+Snapshot: **2026-09-11 ~18:50 CDT. rockfish is GONE as a host** -- the user's access ran on a former PI's allocation and was stopped, so `30791125`-`30791128` were cancelled after 14 h 33 m and glpG is now **midway2-only**; the two-cluster replicate design is retired. **glpG post-fix is live and healthy**: `49006599`-`49006602` RUNNING with `49007551`-`49007554` queued behind them on `afterany` dependencies. The temperature fix is confirmed in production (protein 1.016-1.031 x set point across all 28 rungs against 1.10-1.84 before) and **blow-ups are down 434-fold** (0.6517% -> 0.0015% of frames, findings 3.10d). **NP has STOPPED and needs a decision**: `49003839` finished block 1 of 8 and its gate ended the chain because orientation 1 tore; the other five are healthy. The 32-job ff3.0 benchmark continues, 29 running with 3 arms COMPLETE. midway3 is idle. See findings.md 3.10-3.10d for the whole diagnosis.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -144,39 +144,51 @@ that data. Left in place pending a decision.
 Snapshot **2026-09-10 ~19:40 CDT (verified live against `squeue` on both hosts, and against
 frames actually written).**
 
-### Campaign 1: glpG production, temperature fix + ceiling 0.90 (both clusters, 2026-09-10 ~22:05)
+### Campaign 1: glpG production, post-fix, midway2 only (2026-09-11)
 
-| host | JobIDs | variants | wall | blocks |
-|---|---|---|---|---|
-| midway2 | 49006599-49006602 | all four | 36 h | 4 |
-| rockfish | 30791125-30791128 | all four | 48 h | **12** (its submit script does not set `REMD_MAX_BLOCKS`) |
+| JobIDs | state | wall | blocks |
+|---|---|---|---|
+| 49006599-49006602 | RUNNING since 2026-09-11T01:38 | 36 h | reports "block 5/4", see below |
+| 49007551-49007554 | PENDING on `afterany` of the matching variant | 36 h | `REMD_MAX_BLOCKS=9` |
 
-**Why this was relaunched rather than continued.** The previous runs (midway2 `49003548`-`49003551`,
-rockfish `30775667`-`30775670`) were integrating a protein that sat ~10% above its set point, and TM4
-melted progressively as a result: cold-replica TM4_full fell 0.818 -> 0.58-0.71 over eight chunks
-while TM3 stayed flat at 0.92, and **0 of 60 replica measurements passed the > 0.8 TM4 criterion**.
-Those trajectories are a different ensemble from the new ones and must not be pooled. They are kept
-at `<variant>/pre_tempfix_20260910/` because they are the evidence base for the diagnosis, and can be
-deleted once findings.md 3.10 is considered final.
+**rockfish is retired as a host.** Access came from a former PI's allocation and was stopped on
+2026-09-11; `30791125`-`30791128` were cancelled after 14 h 33 m. That leaves ~14.5 h of post-fix
+data on an identical protocol at
+`/scratch4/rherna21/ywang268/upside2-md-rf/popepopg_REMD/<variant>/`, currently **not retrieved**.
+Copying it is read-only and does not consume the allocation, so it is still recoverable; decide
+before that scratch is reaped. Do not submit anything else there.
 
-**What changed, all three verified in the live runs:**
-* `inner_steps = 4` on `/input/brownian` in every seed and replica. Confirmed live: replica 27 reports
-  `inner_steps = 4`, `numerical_time_step = 0.009`. Backbone temperature 1.10x -> 1.01x set point.
-* Brownian friction now scales by `T/T_ref`, so the calibrated lipid diffusion is delivered at the
-  temperature actually run instead of only at 0.8647. Binary rebuilt **on midway2** (zero `zmm`, so it
-  still runs on broadwl) and on rockfish; old binaries kept as `obj/upside.pre_tempfix_20260910`.
-* **Ladder ceiling restored 0.82 -> 0.90.** Confirmed live: the ladder ends at 0.9 over 28 replicas.
-  The 0.82 ceiling had been calibrated against helix content measured on the broken model, so it was
-  compensation for a numerical artifact. Measured locally from the pristine seed over 400 time units,
-  TM4b is 0.926 at T = 0.90 with the fix (seed value 0.933) against 0.346 without it.
+**The fix is confirmed in production** (79HIS, all 28 rungs, completed chunk):
+protein temperature **1.016-1.031** across the ladder against 1.10 (cold) to 1.84 (hot) before,
+lipids 1.007, zero bad frames in that chunk, TM4 healthy everywhere (cold rungs TM4a 0.998,
+TM4b 0.944; ladder means TM4a 0.930, TM4b 0.894) against a pre-fix TM4_full of 0.589-0.727 where
+**0 of 60** replica measurements passed the > 0.8 criterion. Blow-ups: **434x fewer** bad frames
+(findings 3.10d). All of this at a ladder ceiling that was *raised* 0.82 -> 0.90.
 
-**Open, and not fixed here: all 23 GLY Ramachandran maps in these seeds are mis-symmetrised** with an
-off-by-one mirror (`m == m[::-1,::-1]` exactly, 3.1 E_up from the correct periodic mirror `i -> (-i)%n`).
-It was deliberately left alone: the correct symmetrisation makes alphaR/alphaL degenerate and would
-*remove* the +0.55 E_up alphaR preference the buggy map accidentally supplies, so fixing it in
-isolation could destabilise TM4 further. NP's maps are correctly symmetrised (11/11) because that
-system was built fresh against `rama3.dat`, which is the principled route for glpG too. Do this as a
-separate, attributable change.
+**Four NODE_FAIL requeues, and they are not this job's fault.** Slurm requeued all four variants at
+identical seconds (21:55:47, 01:05:47, 01:35:47, ~11:35) on *different* nodes, which is an
+infrastructure event, not hardware and not the change: the pre-fix job ran 12 h 52 m with none and
+the 32 benchmark jobs were untouched. Each requeue re-runs `run_remd.py`, which increments
+`block_count` and **truncates the log** (same `%j` output file), so only the current block's log
+survives.
+
+**Two traps this exposed, both now guarded:**
+* `block_count` is read once at job start, so every requeue burns a block. It reached 4 of 4, which
+  would have ended the chain silently. It is now pinned at **4** so the running jobs (which carry
+  `MAX_BLOCKS=4` from their submit-time `--export`) can never resubmit, and continuation is handled
+  by the `afterany` dependents with `MAX_BLOCKS=9`.
+* **Do not "fix" that by resetting `block_count` to 0.** A later requeue would then read 0, get
+  `blk = 1 < 4`, and resubmit itself *alongside* the dependent -- two jobs writing the same replica
+  files. That mistake was made and reverted on 2026-09-11.
+* Archive from the cluster that will run the jobs. Archiving `block_count` from midway3 while
+  relaunching on midway2 left the compute nodes reading a stale copy on the shared `/project`, so all
+  four variants started at block 2. The replica `.up` files were correctly absent and rebuilt from the
+  seeds, so only the counter was affected.
+
+**Still open, deliberately not changed:** all 23 GLY Ramachandran maps carry an off-by-one mirror.
+Correcting it makes TM4 **worse** (TM4a 0.786 -> 0.531), because only the buggy map favours the
+right-handed helix; see findings 3.10c. TM4's residual fraying at the hot rung is a force-field
+property, not a bug.
 
 ### Campaign 2: ff3.0 re-benchmark of Peng et al. JCTC 2022 (launched 2026-09-09 ~23:55 CDT)
 
@@ -262,38 +274,43 @@ Rebuilt from scratch rather than patched: the old replicas carry 98 accumulated 
   fired on 5e-13 A of float64 round-trip noise, now compared against a 1e-9 A tolerance that also
   prints the measured deviation every run.
 
-### Campaign 4: NP production on ff3.0 (midway2, launched 2026-09-10 04:31 CDT)
+### Campaign 4: NP production on ff3.0 -- rollback-on-tear added, chain restarted (2026-09-11)
 
-| JobID | what | log |
-|---|---|---|
-| 49003839 | `np_1AO6_prod`, block 1 of 8, self-resubmitting | `NP-1AO6/prod_ff3/np.49003839.out` |
+| JobID | what |
+|---|---|
+| 49003839 | block 1 of 8, COMPLETED 11:06, chain ended by its own gate when orientation 1 tore |
+| **49009692** | block 2 of 8, submitted 2026-09-11 ~21:50 with the new driver |
 
-**Live progress 2026-09-10 19:40 (9 h 05 m in).** RUNNING, all six orientations advancing together at
-step ~11-12.5 k of 84255 for block 1, no NaN or inf anywhere in the log. Observables are physical:
-Rg 27-33 A per system, 478-539 hbonds, protein potential -670 to -906 E_up and total potential
-~-11 600 to -11 900 E_up, all steady rather than drifting. The six `.up` files are 4.5 GB each
-(27 GB so far).
+**Unfolding is the objective and it is working.** Over block 1 run.1's protein Rg rose smoothly
+52.1 -> 55.0 A with covalent bonds entirely normal (mean C-N 1.327-1.347 A, max 1.68-1.83 A, zero
+bonds over 2.0 A) for the first **2947 of 3011** frames, and the other five orientations are clean
+throughout. Do not mistake a rising Rg for damage here.
 
-At ~1390 steps/h, block 1's 84255 steps need **~60 h**, so it will not finish inside the 36 h wall
-and must resubmit once mid-block; all 8 blocks are a **~20 day** campaign at this rate. `block_count`
-still reads 1.
+**The tear is a separate event.** Unfolding does not stretch a covalent bond. Onset frame **2948**
+(t = 82.54); all **63** frames to the end stayed torn with no recovery, the potential stepping from a
+healthy -11611 to -10306 E_up; the final frame carried 7 C-N over 2.0 A (worst 3.22 A) plus a CA-C at
+3.20 A, in one contiguous stretch, residues 439-450. At `k = 48` a 3.22 A peptide bond is ~100 kT, so
+it is not thermal. It is the same mass-1-backbone-versus-MARTINI-core tear as glpG, rare here because
+dt = 0.001 puts the one-step-kick radius at ~2.33 A against glpG's 3.23 A. NP logged
+`avg_kinetic_energy/1.5kT` = 0.998-1.005 on all six and runs at the 0.8647 design temperature, so it
+never had the glpG temperature defect and neither of the 09-10 fixes applies to it (no
+`/input/brownian`).
 
-**Rebuilt on the arm-R force field 2026-09-10 10:26** (build `49003643`, rc=0, `verify_np_ff3.py`
-rc=0, all six configs confirmed to carry the deployed `ff_3.0` pair and to sit 8.44 away from the
-arm-M table). The first build `49003158` and the 4 h of production `49003318` that ran on arm-M
-tables are parked in `prod_ff3_armM_20260910-084115/` (14 G) and can be deleted.
+**`run_np_prod.py` now rolls back instead of ending the chain** (backup:
+`run_np_prod.py.bak_pre_rollback_20260911`). `reseed` restarts each orientation from its last healthy
+output frame; torn frames stay in the file as history and are simply never used as a restart point,
+so detection is unchanged and nothing is masked. A system that cannot produce a healthy frame for
+`NP_MAX_STRIKES` (3) consecutive chunks still ends the chain. Verified by dry-run against the real
+data before deploying: run.1 restarts at frame 2947 discarding exactly the 63 torn frames, and the
+five clean orientations restart at the last frame exactly as before.
 
-Build `49003158` finished rc=0 and all six configs passed `verify_np_ff3.py` (composition, ion
-counts, 300 A box, `exclude_intra_protein_martini` 1, environment nodes present, no
-`sigmoid_coupling_environment`, coverage nodes wired into the rotamer, finite energy and gradient).
-
-* **dt is pinned to 0.001 in `np_prod.sbatch`.** `run_np_prod.py` defaults `NP_DT` to 0.009, which
-  is wrong for NP: the short step is required for accuracy while the backbone unfolds.
-* `np_prod.sbatch` and `submit_np.sh` now point at `prod_ff3/` and source the shared beagle3
-  `env_shared.sh` instead of the old per-cluster `upside2-md-mdw2`. The `martini_upgrade_hybrid_args`
-  call was dropped: it exists to migrate old replicas, and these configs are freshly built.
-* The old `prod/` replicas (246 GB, 98 output groups, old-force-field coordinates) are untouched and
-  can be deleted once `prod_ff3` has produced a block.
+**The trap that dry-run caught, and it matters.** The restart criterion must be STRICTER than the
+detection criterion. `CN_COUNT = 5` separates healthy (never more than 2 stretched bonds) from a
+catastrophic tear (279-431), so it is the right *trigger*, but selecting a restart frame with it
+picked frame 3004 -- which still carried 4 stretched bonds -- and would have propagated the very
+damage the gate exists to stop. Restart eligibility is therefore `RESTART_CN_MAX = 0`: a restart
+point must have no stretched bond at all. **Do not conflate the two thresholds.** dt stays pinned at
+0.001 in `np_prod.sbatch` and the 2.0 A gate is untouched.
 
 ### midway3, IDLE, nothing queued or running
 
