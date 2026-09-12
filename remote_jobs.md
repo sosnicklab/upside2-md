@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-11 ~18:50 CDT. rockfish is GONE as a host** -- the user's access ran on a former PI's allocation and was stopped, so `30791125`-`30791128` were cancelled after 14 h 33 m and glpG is now **midway2-only**; the two-cluster replicate design is retired. **glpG post-fix is live and healthy**: `49006599`-`49006602` RUNNING with `49007551`-`49007554` queued behind them on `afterany` dependencies. The temperature fix is confirmed in production (protein 1.016-1.031 x set point across all 28 rungs against 1.10-1.84 before) and **blow-ups are down 434-fold** (0.6517% -> 0.0015% of frames, findings 3.10d). **NP has STOPPED and needs a decision**: `49003839` finished block 1 of 8 and its gate ended the chain because orientation 1 tore; the other five are healthy. The 32-job ff3.0 benchmark continues, 29 running with 3 arms COMPLETE. midway3 is idle. See findings.md 3.10-3.10d for the whole diagnosis.**
+Snapshot: **2026-09-12 ~07:00 CDT. rockfish is GONE as a host** -- the user's access ran on a former PI's allocation and was stopped, so `30791125`-`30791128` were cancelled after 14 h 33 m and glpG is now **midway2-only**; the two-cluster replicate design is retired. **glpG post-fix is live and healthy**: all 4 variants on blocks 6-8 of 9; temperature 0.997-1.036 across all 28 rungs. **NP is running clean**: block 2/8, all 6 orientations 0 stretched bonds (rollback driver deployed). **ff3.0 benchmark**: 6/32 COMPLETE (BBA both, BBL_native, NTL9_native, WWdomain both), 26 RUNNING. midway3 idle. **midway2 IP block lifted** -- direct connection via `mdw2_master.exp` works as of 2026-09-12. See findings.md 3.10-3.10d for temperature-fix diagnosis.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
@@ -12,26 +12,21 @@ summarised in §8 where they carry a lesson.
 Key-based auth is NOT enabled; password + Duo is the only method. The ControlMaster socket expires
 roughly hourly, so expect to redo this most sessions.
 
-**midway2** (POPE/POPG REMD campaign): **this Mac's IP is BLOCKED on midway2's login nodes.**
-`mdw2_master.exp` fails with `Connection refused` on port 22 while midway3 answers normally, so the
-refusal is an address block, not an outage and not a Duo problem. **Still blocked, re-tested
-2026-09-10 19:35:** `nc -z midway2.rcc.uchicago.edu 22` gives `Connection refused` from this Mac,
-and so does `128.135.112.69` directly, while the same host answers fine from midway3. The tunnel
-below remains the only route. Reach midway2 through midway3 in
-two steps (confirmed working 2026-09-09; connect midway3 first, then):
+**midway2** (POPE/POPG REMD campaign): Direct connection confirmed working 2026-09-12 -- the IP block
+that was present through 2026-09-10 has been lifted. Use `mdw2_master.exp` directly:
 ```bash
 ssh -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu   # alive?
+expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw2_master.exp    # if not: USER MUST APPROVE DUO
+ssh -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu '<command>'
+```
+If the IP block returns and direct access fails, tunnel through midway3 as a fallback:
+```bash
 # 1. port-forward midway2:22 to localhost:2222 over the existing midway3 master (no Duo)
 ssh -o BatchMode=yes -f -N -L 2222:128.135.112.69:22 \
     -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu
 # 2. open the midway2 master over that forward           # USER MUST APPROVE DUO
 expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw2_via_tunnel.exp
-ssh -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu '<command>'
 ```
-**Use `mdw2_via_tunnel.exp`, not `mdw2_via_mdw3.exp`.** The ProxyCommand variant authenticates and
-prints "ssh backgrounded", then the master dies without ever binding its socket, it looks like a
-success and leaves you with no socket. The script's own header records this; I ignored it and burned
-a Duo push. The forward must be opened *before* the expect script runs.
 
 Two zsh/tooling traps that cost time here:
 * **zsh does not word-split unquoted variables.** `M2="ssh -S sock host"; $M2 'cmd'` runs silently
@@ -144,12 +139,24 @@ that data. Left in place pending a decision.
 Snapshot **2026-09-10 ~19:40 CDT (verified live against `squeue` on both hosts, and against
 frames actually written).**
 
-### Campaign 1: glpG production, post-fix, midway2 only (2026-09-11)
+### Campaign 1: glpG production, post-fix, midway2 only (updated 2026-09-12)
 
-| JobIDs | state | wall | blocks |
-|---|---|---|---|
-| 49006599-49006602 | RUNNING since 2026-09-11T01:38 | 36 h | reports "block 5/4", see below |
-| 49007551-49007554 | PENDING on `afterany` of the matching variant | 36 h | `REMD_MAX_BLOCKS=9` |
+| JobIDs | variant | state | block | note |
+|---|---|---|---|---|
+| 49006599 | 79HIS | RUNNING 5h43m | 7/9 | temp 0.998-1.036, no rollbacks |
+| 49006600 | 79HIS_S115T | RUNNING 2h47m | 7/9 | temp 0.997-1.016, clean |
+| 49006601 | 79ALA | RUNNING ~2m | 8/9 | just started |
+| 49006602 | 79ALA_S115T | RUNNING 11h3m | 6/9 | temp healthy |
+| 49010274-49010277 | all 4 | PENDING (afterany) | next block | the LAST block; see below |
+
+**THE CHAIN IS ABOUT TO END, verified against the files on 2026-09-12.** `submit_remd.sh:33` now exports
+`REMD_MAX_BLOCKS=5`, and `run_remd.py:204` resubmits only while `blk < MAX_BLOCKS`. Block counts are
+**79HIS 7, 79HIS_S115T 7, 79ALA 10, 79ALA_S115T 6** -- every one already past 5. So the four running jobs
+will print `no resubmit`, the four `afterany` dependents will each run one further block, and then glpG
+stops. **Raising `MAX_BLOCKS` in `submit_remd.sh` is the only thing that continues it, and it must be
+done before the dependents finish** or the campaign has to be restarted from the current replicas.
+This supersedes the notes below claiming `MAX_BLOCKS=4` pinned with `=9` dependents; the file was edited
+after those were written, and 79ALA at block 10 is past 9 in any case.
 
 **rockfish is retired as a host.** Access came from a former PI's allocation and was stopped on
 2026-09-11; `30791125`-`30791128` were cancelled after 14 h 33 m. That leaves ~14.5 h of post-fix
@@ -192,11 +199,11 @@ property, not a bug.
 
 ### Campaign 2: ff3.0 re-benchmark of Peng et al. JCTC 2022 (launched 2026-09-09 ~23:55 CDT)
 
-**Live progress 2026-09-10 19:40 (~11 h in).** All 32 RUNNING, none stalled, no `COMPLETE`
-marker yet and no resubmission archived except `hyp_denovo`, which carries 280 k time units from an
-earlier submission. Frames are being written in every run and the observables are sane (Rg 8-12 A,
-potentials -70 to -260 E_up). Progress on the current submission's remaining target ranges from
-**5.4%** (hyp de novo) to **47%** (BBA native); the median is ~20%.
+**Live progress 2026-09-12 ~08:55 CDT.** **7/32 COMPLETE** (BBA_native, BBA_denovo, BBL_native,
+gpW_native, NTL9_native, WWdomain_native, WWdomain_denovo); 25 RUNNING at 12-18.5 h of a 36 h wall.
+Still running: hyp, NuG2, alpha3d, BBL_denovo, gpW_denovo, homeodomain, NTL9_denovo, proteinG, lambda,
+proteinL, ubiquitin, top7, proteinB, cspA. De novo arms set the campaign length; ubiquitin_denovo is
+the longest and is still days out.
 
 The long de novo arms set the campaign length. `ubiquitin_denovo` has done 561 k of 8.03 M time
 units in 11 h, a rate of ~51 k/h, so it needs roughly **6-7 more days** and about 4 more wall blocks.
@@ -274,12 +281,58 @@ Rebuilt from scratch rather than patched: the old replicas carry 98 accumulated 
   fired on 5e-13 A of float64 round-trip noise, now compared against a 1e-9 A tolerance that also
   prints the measured deviation every run.
 
-### Campaign 4: NP production on ff3.0 -- rollback-on-tear added, chain restarted (2026-09-11)
+### Campaign 4: NP production on ff3.0 -- rollback-on-tear driver, block 2 running (2026-09-12)
 
-| JobID | what |
-|---|---|
-| 49003839 | block 1 of 8, COMPLETED 11:06, chain ended by its own gate when orientation 1 tore |
-| **49009692** | block 2 of 8, submitted 2026-09-11 ~21:50 with the new driver |
+| JobID | what | status |
+|---|---|---|
+| 49003839 | block 1 of 8 | COMPLETED 2026-09-11 11:06, orientation 1 tore at frame 2948; chain rolled back |
+| **49009692** | block 2 of 8 | RUNNING 9h05m elapsed, **all 6 orientations: 0 stretched bonds**, ~28h wall remaining |
+
+### NP block-2 analysis, 2026-09-12: two findings that outrank the Carlson comparison
+
+**1. The protein unfolds WITHOUT the nanoparticle, so deformation cannot be attributed to it.**
+Independently verified: run 0 reaches **Rg(CA) 64.1 A while 165 A from the NP centre**, having never
+bound (0.3% of frames in contact). Run 3 is also unbound (206 A) but stays compact at 33 A. So at
+T = 0.8647 (303 K) this force field unfolds isolated albumin in bulk, which removes the premise of the
+campaign: the bound runs' deformation is not demonstrably NP-induced. **Treat this as a protein-stability
+question in ff3.0 before spending more NP compute.**
+
+**2. Only 4 of 6 orientations ever adsorb, and they are frozen footprints, not an ensemble.**
+Bound-frame fractions: run 0 **0.3%**, run 1 94.3%, run 2 95.4%, run 3 **0.2%**, run 4 99.9%, run 5 95.1%.
+Pairwise Spearman between per-run lysine profiles falls to **-0.05** (run 4 vs run 5); **no lysine exceeds
+0.2 in all four** adsorbed runs. Each run binds one contiguous subdomain and never reorients in 2.7 M
+steps: run 1 -> IA, run 2 -> IIIB+IB, run 4 -> IIIB, run 5 -> IIA/IIB. **A contact fraction of 0.000
+therefore means "that face was never presented", not "never contacts"** - which is exactly K190's
+situation. Blocks 3-8 add frames, not faces. Testing a specific lysine needs a run seeded with that face
+toward the particle, or a method that lets the protein reorient.
+
+**Not the old PBC failure.** Intra-protein MARTINI pairs are skipped at runtime
+(`skip_pair_if_intra_protein`) and all BB-NP pairs within 12 A use image (0,0,0), so these Rg values are
+real chain extension rather than wrap-around into a second image. The 230 A artifact is gone.
+
+**`np_footprint.py` has two real bugs; any earlier footprint conclusion used the broken version.**
+* It sets `CB_PLACEMENT = [0, 0.94375626, 1.2068012]`, which is CB relative to **CA**, and adds it to the
+  **N/CA/C centroid**. The config's own centroid-frame value is `[-0.0198, 1.5117, 1.2068]`, so it is off
+  by **0.568 A on every residue** - the same sidechain-anchor error already recorded as fixed elsewhere,
+  which never propagated here. Rebuilding CB from the config's own `affine_alignment/ref_geom` agrees with
+  the Upside engine to 2e-4 A.
+* It applies **no minimum image** in the 300 A cubic box while coordinates are stored unwrapped (ions have
+  drifted to +/-3000 A).
+
+**Carlson et al. 2025 claims, measured over 21,941 healthy frames (CB within 8.0 A of GOLD/MPA,
+minimum-imaged; 67 of 22,008 frames carrying a torn peptide bond excluded):**
+
+| claim | measured | verdict |
+|---|---|---|
+| K190 most protected | **0.0000**, rank 43/58, closest approach ever **14.0 A** against 3.9-4.4 A for genuine contacts | contradicted by this data; **INSUFFICIENT DATA** for the ensemble claim, since only 4 faces docked |
+| K525 protected | 0.0000 at 8 A, 0.0011 at 10 A, closest 9.1 A | **INSUFFICIENT** - a near-miss, not a null |
+| K541 protected | **0.12** bound-normalised, rank 18/58, 0.46 in run 4 | **SUPPORTS**, weakly |
+| K12, K73 protected | K73 **0.15** (rank 16), K12 **0.09** (rank 22) | **SUPPORTS**, weakly, but in different single orientations |
+| "opens and exposes its center" | opens: Rg 26.7 -> 32/39/50/74 A, kappa2 0.08 -> 0.19-0.77. Centre: contact-weighted native r_COM **31.6 A vs 25.3 A** unweighted, Pearson **+0.598**; f>0.30 set mean r_COM 39.7 A, never-contacted set 20.6 A | opening **SUPPORTS** but is not NP-attributable (see finding 1); "exposes its center" **CONTRADICTS** - the footprint is measurably peripheral |
+
+Top sites are K573 0.44, K560 0.32, K574 0.28, K545 0.25, K93 0.25. 18 lysines sit at exactly 0.0000.
+**Do not quote the pooled six-run ranking as an ensemble result**; it is the union of four frozen faces,
+and dropping the two unusable runs (0 and 1) collapses it to the IIIB patch plus the IIA patch.
 
 **Unfolding is the objective and it is working.** Over block 1 run.1's protein Rg rose smoothly
 52.1 -> 55.0 A with covalent bonds entirely normal (mean C-N 1.327-1.347 A, max 1.68-1.83 A, zero
@@ -312,7 +365,174 @@ damage the gate exists to stop. Restart eligibility is therefore `RESTART_CN_MAX
 point must have no stretched bond at all. **Do not conflate the two thresholds.** dt stays pinned at
 0.001 in `np_prod.sbatch` and the 2.0 A gate is untouched.
 
-### midway3, IDLE, nothing queued or running
+### Campaign 5: post-fix HDX dG on midway3 (submitted 2026-09-12 ~07:40 CDT)
+
+| JobID | variant | work dir |
+|---|---|---|
+| 58910978 | `glpG-RKRK-79HIS` | `popepopg_REMD_mdw2/<V>/hdx_postfix/` |
+| 58910979 | `glpG-RKRK-79HIS_S115T` | same pattern |
+| 58910980 | `glpG-RKRK-79ALA` | same pattern |
+| 58910981 | `glpG-RKRK-79ALA_S115T` | same pattern |
+
+**All four COMPLETED 0:0 on 2026-09-12 07:43**, ~5 min each. Input verified purely post-fix:
+6921 frames/replica - 300 (seed block `output_previous_0`, skipped) - 500 (discard) = **6121 frames**,
+which is exactly what the join produced, 0 non-finite potentials, 28/28 replicas, x4 variants.
+
+Reads the **live** midway2 replicas over the shared `/project` (23-24 REMD blocks) with `HDX_LIVE=1`, so
+this is a snapshot, not the final dataset; re-run after the chain reaches block 9.
+Logs `popepopg_REMD/logs/hdxpf.<jobid>.out`. Launcher `popepopg_REMD/hdx_cluster.sbatch`.
+
+**Result: global protection rose, but TM4 did NOT become non-exchanging.** Non-exchanging residues at
+T=0.85 went **43/203 (pre-fix) -> 66-81/203 (post-fix)**, so the temperature/GLY fixes did stabilise the
+protein. TM4 (131-152) gained new off-scale spikes near 120-123 and 143-147 and its resolved median rose
+only 2.2-2.8 -> 2.6-3.0 kcal/mol, staying **0-2 of 21 censored** against TM1's **16-18 of 21**.
+
+**That is not TM4 being unfolded.** Measured on the same post-fix trajectory, TM4 is 0.86 helical by
+phi/psi and in the protected state in **97.9%** of frames (`PS_combined` 0.979, `PS_protein` 0.974)
+against TM1's 0.991/0.948. Censoring requires `mean_pf >= 1 - 1/ESS` (~0.9998); TM4 sits at 0.97-0.99
+while 16/21 TM1 amides sit at ~1.000, so TM4 resolves to a finite ~3 kcal/mol instead of going off scale.
+
+**Resolved 2026-09-12: TM4 IS well protected, and the regional median was the misleading statistic.**
+Per residue at T=0.85 (pooled 28 replicas x 6120 frames, `dg_limit` 5.90):
+
+| TM4 residues | dG (kcal/mol) | 1 - protection | reading |
+|---|---|---|---|
+| 129-134 (N-cap/interface) | 0.15-1.23 | 8e-2 to 4e-1 | genuinely weak, drags the median down |
+| 135-139 | 2.58-3.14 | 4e-3 to 1.8e-2 | intermediate |
+| **140-146 (helix core)** | **3.46-4.85** | **5e-4 to 2e-3** | **strongly protected** |
+| 147 | 1000 (sentinel) | 0.00e+00 | the one censored TM4 amide |
+| 149-151 (C-cap) | 1.15-1.44 | 3e-2 to 5e-2 | interfacial |
+
+So "TM4 median 3.0" averaged a protected core (~4.3) with weak caps (~1.0). **TM4's core is stable and
+protected; it is not unfolded and not anomalous.**
+
+**Why it does not go off scale, quantitatively.** Censoring needs `1 - pf < 1/ESS`, which at this ESS is
+**4.7e-05**. TM4's best core amide (144) sits at 4.8e-04 -- real protection, but 10x above the resolution
+limit, so it resolves at 4.73 rather than censoring. TM1 by contrast is `1.000000` exactly (**zero**
+exchange events in 171,360 frames) for residues 36-42, which is why it saturates the sentinel. The
+contrast is 99.95%-protected versus literally-never-exchanging, not folded versus unfolded.
+
+**Mechanism, decomposed per frame 2026-09-12 and NOT what was first written here.** Protection combines as
+`protection_t = 1 - (1 - pp_t) * acc_t`, so an amide counts as exchanged only when protein protection
+fails **and** it is water-accessible in the same frame. Counting both over 171,382 samples:
+
+| | H-bond/burial flicker `pp_fail` | `acc` | exchanged |
+|---|---|---|---|
+| TM1 30-48 | **0.0369** | **0.0021** | 3.13e-05 -> spikes |
+| TM4 135-151 | **0.0322** | **0.4230** | 1.11e-02 -> does not spike |
+
+**TM4's backbone protection is slightly BETTER than TM1's.** The two differ by ~200x in `acc` alone, and
+that is the whole explanation. Per residue it is unambiguous: **res 36 flickers 7.0%**, the worst of any
+amide, but `acc=0.0000` so it logs **0** exchange events and spikes; **res 140 flickers only 1.2%**, six
+times less, but `acc=0.195` so it logs **371** events and resolves at ~4 kcal/mol.
+
+**Therefore the off-scale plateau is largely a lipid-burial map, not a protection map.** Whenever
+`acc_t = 0`, protection is identically 1 regardless of H-bond state, so helicity barely enters. TM1 does
+**not** "never exchange" -- its H-bonds break 3.7% of the time; the lipid simply hides every break. Do not
+read a spike as evidence of secondary structure.
+
+**Correction to an earlier entry: within the TM4 core it IS a helical face.** Across the full 131-152
+window the 21-residue end effect dominates the variance, which is what was measured first. In the core,
+`acc` for 140-147 runs 0.20, 0.39, 0.42, 0.016, 0.039, 0.654, 0.066, 0.001 -- 141/145 (i, i+4) both
+exposed, 143/147 (i, i+4) both buried, i.e. ~3.6-4 periodicity. One TM4 face is lipid-facing and the other
+points into the protein interior and the catalytic cavity. Eight residues, so suggestive not settled.
+**The one structural oddity left:** TM4's lipid-shielded stretch is only ~5 residues (143-147) against
+TM1's 19 (30-48). A helix crossing a ~30 A hydrophobic core should shield ~20, so in this model TM4 sits
+shallow/tilted. That is plausible for glpG, whose catalytic cavity is water-filled near the midplane
+(S115 is the catalytic serine in this numbering, hence the S115T variants), but it has **not** been
+checked against the crystal structure. That comparison is the remaining open item -- a structural
+question about the model, no longer a suspected analysis bug.
+
+**Figures regenerated 2026-09-12 with T=0.90 added, and NOTHING else changed.** The only edit to
+`plot_ref_style.py` is the `--temperatures` default, now `0.75,0.80,0.85,0.90`; T=0.90 leaves the fewest
+amides off scale (73/203 against 105 at T=0.75). The `.npz` was not recomputed. Local repo copy and both
+cluster copies kept byte-identical.
+
+**A "censored amides as bounds" rendering was tried the same day and REVERTED at the user's direction.**
+It replaced the off-scale excursions with hollow carets sitting on each temperature's resolution limit,
+broke the profile line across them, and retightened the axis to `(-4, 8.6)`. Both changes were wrong and
+the reasons are worth keeping:
+* **Breaking the line fragments the profile.** The continuous excursion is what makes each temperature
+  read as one curve; gapping it at every censored amide turns the figure into disconnected islands.
+* **Collapsing every censored amide onto `dg_limit` asserts they are all equal to ~6 kcal/mol**, when the
+  actual statement is "unmeasurably large". It also caps the visible range at the limit, which is a worse
+  distortion than running the excursions off the top.
+The off-scale-excursion rendering in the docstring is a deliberate, documented choice ("reads as one
+continuous excursion rather than a capped plateau ... that is how these profiles are conventionally
+read"). **Do not replace it.** Keep `Y_LIMITS = (-20, 30)`.
+
+**Still true, and the real caveat on the numbers:** the markers above
+`0.001987 * temp_scale * ln(ESS)` (5.16-5.96 kcal/mol here) rest on a reweighted `1-p_f` below one
+effective frame. They order amides correctly but are lower bounds, not quotable dG. That is the
+docstring's own warning and it applies to every value above ~6 on the figure, including the 18-19
+kcal/mol excursion feet.
+
+### Rockfish pooling evaluated and REJECTED (2026-09-12)
+
+It is genuinely poolable, checked rather than assumed: all **112 force-field datasets byte-identical** to
+midway2 (so rockfish production did install the reference `c67351ca...` FF, as the plan required), same
+friction 0.252482 / 4529 Brownian atoms / box 99.768^2 x 180 / 28-rung ladder with run.0 = T=0.70, and
+healthy `avg_kinetic_energy/1.5kT` 1.001-1.034. Rockfish is still SSH-reachable despite the allocation
+being stopped; data at `/scratch4/rherna21/ywang268/upside2-md-rf/popepopg_REMD/<variant>/`, 28 replicas,
+17-18 GB each.
+
+**But the payoff is 4 residues.** Rockfish holds only 2715 frames/replica against midway2's 6921, so
++31% samples raises ESS 21,418 -> 28,057, the limit 5.90 -> 6.06, and resolves 127 -> **131 of 203**. Not
+worth ~72 GB off a dying allocation.
+**The plot was never sampling-limited.** Of 84 censored amides at T=0.85, **59 have exactly zero exchange
+events** in 171,382 samples, so they are censored at any achievable ESS; only 25 are data-limited, and
+resolving those needs ESS > 171k, i.e. ~8x more simulation. The ceiling grows as `ln(ESS)`, so pooling
+cannot fix a sparse plot -- rendering and rung choice did.
+Rockfish remains useful for exactly one thing: an **independent-seed convergence cross-check** under an
+identical Hamiltonian. Its `/scratch4` may be reaped, so retrieve it only if that check is wanted.
+
+**Writes to `hdx_postfix/`, NOT `hdx/`.** The Sep-4 `hdx/` results are the pre-fix dG baseline and are
+deliberately preserved; do not point a rerun at `hdx/`.
+
+**`HDX_N=28` must be passed explicitly.** `hdx_cluster.sbatch` defaults to `N=48` (the retired midway3
+48-replica ladder). The midway2 ladder is 28, and a wrong N makes step 2's `replicas done: n/N` check
+fail the job.
+
+**Two rounds failed in 2 s each (`58910584`-`58910592`, then `58910849`-`58910852`). Two independent
+causes, both now fixed; `env.sh` backup is `env.sh.bak_pre_venvfix_20260912`.**
+
+*Cause 1 -- the shared `.venv` was swapped out from under this pipeline.* `env.sh` activated
+`$UPSIDE_HOME/.venv`, which was **rebuilt 2026-09-10 from the portable `pyrt` 3.9 interpreter**. That
+venv carries numpy/scipy/h5py/tables/prody/Bio but **NOT pymbar and NOT matplotlib**, so the HDX
+pipeline cannot run in it at all, and its interpreter additionally needs `pyrt/lib` on
+`LD_LIBRARY_PATH` (which `env.sh` never set) or it dies on `libpython3.9.so.1.0`. The right environment
+is `.venv_el8_py311_bak` (el8 python 3.11.9: pymbar 4.0.3, matplotlib 3.11.1, scipy 1.17.1, prody 2.6.1,
+Bio 1.87) -- the venv `env.sh`'s own `module load python/3.11.9` was written for, and the one that
+produced the Sep-4 results.
+**Do not "re-unify" this on the pyrt 3.9 venv.** That venv exists for binary portability across both
+clusters; HDX is pure Python, runs only on midway3, and needs the fuller 3.11 stack.
+
+*Cause 2 -- and this is the trap: **that backup venv's `activate` is poisoned by the rename.*** It was
+created as `.venv` and later renamed, so `bin/activate:38` still hardcodes
+`VIRTUAL_ENV="/beagle3/.../upside2-md/.venv"` and line 42 does `PATH="$VIRTUAL_ENV/bin:$PATH"`.
+**Sourcing `.venv_el8_py311_bak/bin/activate` therefore puts the CURRENT pyrt 3.9 `.venv` on PATH** --
+it silently activates the very environment you were trying to avoid, which is why round 2 failed with
+the identical `libpython3.9.so.1.0` error as round 1. `env.sh` now sets `VIRTUAL_ENV`/`PATH` by hand and
+never sources that activate. Verified on a compute node before resubmitting: python 3.11.9 from the
+right venv, all eight HDX imports OK, step-1 script runnable.
+**A renamed venv's `activate` is not relocatable.** Check `grep VIRTUAL_ENV= <venv>/bin/activate`
+against the directory it actually lives in before trusting any `.bak` venv.
+
+**`midway3-0014` is excluded, and it is genuinely broken, not flaky.** A node probe shows it carries
+only **2** beagle3 mount entries against 4 on healthy nodes, and
+`/beagle3/trsosnic/yinhan/upside2-md` is simply **absent** there, so any job of ours that lands on it
+cannot see the deployment. It failed this way on 2026-09-01 (job 57033313) and again 2026-09-12;
+0019/0026/0050/0053/0061 are all fine. Treat it like `midway2-0003`.
+**midway3-0201 is NOT bad** -- it sees beagle3 correctly; its failures were entirely Cause 1/2 and it
+needs no exclusion.
+
+**A known real bug still lurks in step 1 for some variants.** Job 57033314 (2026-09-01) died in
+`upside_config.py:815 _input_phi` with `IndexError: index 642 out of bounds for axis 0 with size 630`:
+the HDX topology's `input/pos` is stride-3 (N/CA/C, 210x3 = 630) while `_input_phi` indexes stride-4.
+The Sep-4 run got past it, so it is variant/-path-dependent rather than universal; if a variant fails
+there again, fix the stride in `_input_phi`, do not skip the variant.
+
+### midway3, otherwise idle apart from the HDX jobs above
 
 `squeue -u yinhanw` on midway3 is **empty** (checked 2026-09-09 08:14). Its last activity of any
 kind was 2026-09-04 (`hdx_glpG-*` COMPLETED 08:56, then two `upside-gly-sym` attempts that FAILED
@@ -766,7 +986,8 @@ grep -ic nan $f                        # expect 0
 **Driver** `run_remd.py` · **sbatch** `remd.sbatch` · **submit** `submit_remd.sh <variant>`
 **Variants:** `glpG-RKRK-79HIS`, `glpG-RKRK-79HIS_S115T`, `glpG-RKRK-79ALA`, `glpG-RKRK-79ALA_S115T`
 
-Config: 28 replicas, T 0.70–0.90, `REMD_DT=0.009` (hard-locked), `REMD_MAX_BLOCKS=4` for the ff3.0
+Config: 28 replicas, T 0.70–0.90, `REMD_DT=0.009` (hard-locked), `REMD_MAX_BLOCKS=5` as of 2026-09-12
+(read from `submit_remd.sh:33`; all four block counts already exceed it, see §1) for the ff3.0
 campaign. The per-run flags live in `submit_remd.sh` on the cluster; that file is the authority.
 
 **The midway3 detergent campaign is gone.** `glpG_DDM_micelle_REMD/` (and the older lamellar

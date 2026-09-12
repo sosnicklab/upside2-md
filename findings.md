@@ -2343,6 +2343,34 @@ What is left is genuinely the fold, and it is small: 13 of 92 deep helical amide
 figure: with the lipid term in place, a flickering H-bond on a bilayer-embedded amide is invisible to HDX,
 which is physically correct.
 
+**Update 2026-09-12: the off-scale plateau is a lipid-burial map, not a protection map.** Decomposing the
+conjunction per frame over 171,382 samples (`protection_t = 1 - (1 - pp_t) * acc_t`, so an amide counts as
+exchanged only when protein protection fails *and* it is water-accessible in the same frame):
+
+| | `pp_fail` (H-bond/burial flicker) | `acc` | exchanged |
+|---|---|---|---|
+| TM1 30-48 | **0.0369** | **0.0021** | 3.13e-05 -> saturates |
+| TM4 135-151 | **0.0322** | **0.4230** | 1.11e-02 -> stays finite |
+
+The two helices flicker at the **same rate** -- TM4 slightly less -- and differ by ~200x in `acc` alone.
+Per residue: **res 36 flickers 7.0%**, the worst of any amide, yet `acc = 0.0000` so it logs **0** exchange
+events and saturates; **res 140 flickers 1.2%**, six times less, yet `acc = 0.195` so it logs **371** and
+resolves at ~4 kcal/mol. Because `acc_t = 0` makes protection identically 1 whatever the H-bond is doing,
+saturation is decided by lipid contact and helicity barely enters. **A `+inf` run is therefore not evidence
+of secondary structure**, and the claim that TM1 "never exchanges" is wrong as a structural statement: its
+H-bonds break 3.7% of the time and the lipid hides every break. This is the designed behaviour (a flickering
+H-bond with no water present is correctly invisible), but it means the figure's protection map is only as
+good as the 7 A tail-contact test, which asks solely "is a lipid tail nearby" and leans on the protein-burial
+term to separate a protein-interior amide from a solvent-exposed one.
+
+Within the TM4 core the exposure is a **helical face**, not the 21-residue depth gradient first recorded from
+the full 131-152 window: `acc` for 140-147 runs 0.20, 0.39, 0.42, 0.016, 0.039, 0.654, 0.066, 0.001, so
+141/145 (i, i+4) are both exposed and 143/147 both buried. One face is lipid-packed, the other points into
+the protein interior and the catalytic cavity. **Open:** whether 141/142/145 line a genuinely water-filled
+cavity (hybrid TM4 is then right, and better than implicit, which cannot represent a face at all) or are
+packed against neighbouring helices (hybrid is then under-protecting them). Eight residues, so the face is
+suggestive rather than settled.
+
 **The same argument applies to any implicit-versus-hybrid comparison.** In the implicit model membrane
 burial is part of the force field, so a burial-based protection state sees it for free; applying the
 protein-only criterion to both strips the hybrid of protection the implicit model gets. (`--use-TM-region`
@@ -2360,6 +2388,131 @@ better than the protein-only version (Spearman 0.745 against 0.676). Note the hy
 censored of the two (56 of 203 unresolved against 32, ceilings 6.2 against 8.0 kcal/mol), so a sampling
 contribution cannot be excluded. **"Hold the analysis fixed" is not "hold the physics fixed":** two models
 can require different analysis in order to measure the same quantity.
+
+### 5.3b Implicit vs hybrid: what each one actually calls "protected" (verified 2026-09-12)
+
+Established by reading the scripts and the saved arrays, not the records, after a session in which the
+`.md` notes were twice misleading on this point.
+
+**The two protection rules are the same logical form.** Master, in `get_protection_state.py`:
+`PS = HB1 + HB2 + BL`, then `if use_TM_region: PS += Su`, then `PS[PS>1] = 1` -- an **OR** over
+H-bond, sidechain H-bond, protein burial and lipid-surface exposure. Ours, in
+`combine_hdx_protection.py:31-32`: `exchange = (1 - pp) * acc; protection = 1 - exchange`, which is
+`pp OR (not acc)` = `pp OR lipid-shielded`. So the hybrid's combination is master's, and it also
+validates finiteness, the [0,1] range and shape equality. **The combination rule is not the problem.**
+
+**But the implicit run never applied any membrane term at all.** Verified three ways:
+`hdx_implicit.sbatch` calls `get_protection_state.py` bare; **nothing anywhere in the repo passes
+`--use-TM-region`** (the only hits are its own `add_argument` and a docstring mention in
+`martini_hdx_membrane_accessibility.py`); and the saved implicit results
+(`/project/trsosnic/yinhan/implicit_79HIS_run3/results`, 48 replicas) contain only `_PS_protein.npy`,
+`_Hbond.npy`, `_Energy.npy`, `_T.npy` -- **no `_ACC.npy` and no combined `_PS.npy`**. The implicit path
+also never calls `calc_hdx_ht.py` or `plot_ref_style.py`; it runs its own inline pymbar block and saves
+`_implicit_plain_pf.npy`. **So the lipid credit belongs to the hybrid, not the implicit run** -- the
+reverse of the natural guess.
+
+**Consequence, and it is the important one.** Because `acc_t = 0` makes protection identically 1
+whatever the H-bond is doing, saturation is decided by lipid contact and helicity barely enters:
+
+| | `pp_fail` | `acc` | exchanged |
+|---|---|---|---|
+| TM1 30-48 | 0.0369 | 0.0021 | 3.13e-05 -> saturates |
+| TM4 135-151 | 0.0322 | 0.4230 | 1.11e-02 -> finite |
+
+The two helices flicker at the **same rate, TM4 slightly less**, and differ ~200x in `acc` alone.
+Res 36 flickers **7.0%**, the worst of any amide, but `acc = 0.0000` so it logs **0** events and
+saturates; res 140 flickers **1.2%**, six times less, but `acc = 0.195` so it logs **371** and resolves
+near 4 kcal/mol. **A `+inf` run is therefore a lipid-contact map, not a fold map**, and "TM1 never
+exchanges" is false as a structural statement.
+
+**The TM4 signal is real, and must not be suppressed.** It was proposed to mark TM4 water-inaccessible
+because it is protein-buried. Rejected on measurement: the state-B frames (`pp=0 AND acc=1`) are
+**temperature-activated** -- **zero** events across the 8 coldest rungs, 71-89% in the hottest 7, res 140
+climbing monotonically 0 -> 123. A cutoff-margin artifact would appear at all temperatures. Also, `BL`
+already protects these amides in 98-99% of frames, so an override would change only the 1-2% that *is*
+the opening. And it would hard-code one protein's identity into shared `py/`.
+**What the proposal did correct:** TM4 141/142/145 are **not** cavity-lining. They carry 23-24 protein
+heavy atoms within 6 A -- indistinguishable from the deeply buried 143/147 (22.6, 22.3) -- and their
+nearest lipid bead is a tail. They sit at **6.87-7.34 A** from the nearest tail against 4.90-5.16 A for
+143/147, i.e. straddling the 7.00 A shell, which is why `acc` lands near 0.5. So they are protein-packed
+in the hydrophobic region at the edge of tail contact, and the signal is local thermal opening.
+Open: a cutoff **sensitivity check** at 7.5 and 8.0 A, reported as robustness, not a recalibration --
+the 7.00 A is measured from this system's own g(r) and has no free parameter. Also open: res 143's 333
+events are **non-monotonic** in T (76/93/83 at T=0.823-0.838, then 0-3 at the hottest rungs), which a
+genuine exchange signal should not be. Do not quote res 143.
+
+**Neither model has ever been compared to experiment.** `calc_hdx_ht.py:52-54` loads
+`<pdb_dir>/<pdb_id>_{HXMS,NMR,NMR_MS}.csv` through `load_optional_numeric_csv`, and the `r_square` at
+line 575 is computed only if one is present. Both `hdx/pdb/` and `hdx_postfix/pdb/` hold **only** the
+`.pdb`; a search of `/project/trsosnic/yinhan` and `/beagle3/trsosnic/yinhan` for `*_NMR.csv`,
+`*_HXMS.csv`, `*_NMR_MS.csv` and `*NMR_compare*` returns nothing, and no HDX log contains `r_square`.
+**Therefore the Spearman column in 5.3's table cannot be agreement with experiment** -- there is no
+experimental array in the project for it to correlate against -- and it must be the implicit-to-hybrid
+correlation, i.e. how well the two models agree with *each other*. It was cited once in this session as
+evidence of accuracy; that was wrong. Dropping a `<V>_NMR.csv` into `pdb/` makes the r-squared and the
+scatter appear with no code change, which is the cheapest route to an actual accuracy statement.
+Two cautions for that comparison: the implicit arrays are dated **2026-08-19**, predating the GLY,
+rigid-stage and temperature fixes, so the implicit side must be re-run or the comparison confounds model
+with three bug fixes; and with 56-84 of 203 amides censored the regression can only use the resolved
+subset, which is biased toward the least protected amides.
+
+**Which model makes sense, and it depends on the claim.** For lipid-dependent protection, cavity access,
+PE-vs-PG or the RKRK variants, the hybrid is the only option -- an implicit potential is a function of z
+and cannot distinguish two lipids that differ only in headgroup, nor represent the lipid-facing /
+inward-facing asymmetry measured on TM4. For *intrinsic fold stability*, `pp_fail` is the right
+observable and the implicit model is cleaner, cheaper, better sampled and internally self-consistent,
+while the hybrid's lipid term actively obscures it. The counter-argument to keep in view: the upside
+environment and burial terms were **trained against implicit solvent**, so the hybrid is a chimera
+precisely in the terms that decide protection. The hybrid is a superset in practice -- it saves both
+`PS_protein` and `PS` from one trajectory -- so state which of the two any figure quotes. Conflating
+them is what made TM4 look paradoxical.
+
+**Added later the same day, and it retracts a claim made above and on the 09/14 slide.** Between writing
+the paragraphs above and the end of the session I argued, from the implicit model's many identical
+near-zero rates, that implicit showed Englander's *cooperative-unfolding* signature while the hybrid
+showed the native local-fluctuation one. **That was wrong**, for a plain reason: Englander's convergence
+is onto the **finite unfolding rate of a cooperative unit**, whereas implicit's rates converge at
+**zero**, which means uniformly frozen -- the opposite of unfolding. "Same value" is not "converged onto
+an unfolding rate".
+
+Measured directly instead, one replica per model at matched temperature (implicit T=0.851 of 48 rungs,
+hybrid T=0.853 of 28; identical ladder span 0.700-0.900, mean 0.798, so this is not a ladder artifact),
+counting how many interior amides of a helix are open in the **same frame**:
+
+| open amides in one helix, same frame | implicit | hybrid |
+|---|---|---|
+| 0 | 77.2% | 69.8% |
+| 1 | 16.1% | 12.8% |
+| 2 | 4.9% | 9.7% |
+| 3+ | 1.8% | 7.2% |
+| **mean given >=1 open** | **1.39** | **1.99** |
+
+Both distributions fall off monotonically with **no second peak at large counts**, so **neither model
+opens a helix as a unit** and the all-or-nothing picture is wrong for both. Correlation
+`P(i,j open)/(P(i)P(j))` by sequence separation 1..5: implicit `3.0, 2.7, 2.8, 1.6, 0.69`; hybrid
+`4.3, 3.1, 2.6, 3.0, 3.0`. So **the hybrid is the more cooperative and longer-ranged of the two**, and on
+the one-H-bond-at-a-time criterion **implicit is the closer match**. Figure: `fig_helix_opening.png` in
+the 09/14 deck, generator `make_helix_opening_fig.py`, data `figs/coop_out.npz`.
+
+Across all **108 helix-interior amides** of the ten DSSP helices, what actually differs is *freezing*,
+not cooperativity: implicit has **65%** below one event per thousand frames and **35%** at exactly zero,
+against **24%** and **9%** for the hybrid. But it is not uniform -- in **3 of 10** helices the hybrid is
+the more rigid one, overall means are close (0.026 vs 0.034), and implicit fails outright where the
+hybrid does not (res 126 **0.577** vs 0.051; res 150 0.212 vs 0.062; res 25 0.134 vs 0.014). So
+"implicit keeps all helical regions completely rigid" is also **false** and should not be said; the
+defensible statement is that implicit is close to all-or-nothing per amide while the hybrid breathes a
+few percent throughout.
+
+**Net position: do not rank the two models.** Implicit wins the textbook-mechanism comparisons
+(one-at-a-time, short-ranged, clean frayed-terminus/rigid-core profile) and internal self-consistency.
+The hybrid wins the only *quantitative* comparison to a measured number -- its TM4 core at 3.5-4.9
+kcal/mol sits inside the 3-4 (poly-Ala) to 5-6 (Leu) range Langosch reports for TM-helix cores, whereas
+implicit's frozen amides imply >5.4 kcal/mol at best and >7.8 if frames were independent, at or above the
+top of that range. That bound depends on the **effective** number of independent frames, which has not
+been measured; **an autocorrelation-time estimate on the implicit protection state is the one live
+quantitative discriminator** and is the next thing to run. Both errors I made today ran in the same
+direction, toward flattering the hybrid, which is worth remembering when reading any model-ranking claim
+in this file.
 
 ### 5.4 Interpreting a per-residue profile
 
@@ -2968,3 +3121,19 @@ One line each: what was believed, what is true, and why it is worth keeping.
   inherited from the abandoned CGL plus under-resolved lipids driving a displacement cap), and the PMF then
   caused the drift it was meant to prevent. Rule out setup artifacts, timestep and sub-step resolution above
   all, before building a corrective force-field term.
+* **Rewriting `plot_ref_style.py` to draw censored amides as bounds (2026-09-12, reverted same day):**
+  asked to make a sparse-looking dG figure more informative, I replaced the off-scale excursions with
+  hollow carets on each temperature's resolution limit, broke the profile line across every censored
+  amide, and retightened the axis from `(-20,30)` to `(-4,8.6)`. Both ideas were wrong. Breaking the line
+  fragments a profile that is read as one continuous curve per temperature, and putting every censored
+  amide at `dg_limit` asserts that unmeasurably-different values are all equal to ~6 kcal/mol while
+  capping the visible range -- a worse distortion than the excursion it replaced. The excursion rendering
+  was a **deliberate choice already argued in the file's own docstring** ("reads as one continuous
+  excursion rather than a capped plateau ... that is how these profiles are conventionally read"), and I
+  overrode it and presented the result as an improvement. Only the `--temperatures` default (adding
+  T=0.90) survived.
+  **Rules taken from it.** When a file documents *why* it does something, that rationale outranks my
+  judgement about how the output should look; change it only if the user asks or the rationale is
+  demonstrably false, and say which it is. Never collapse right-censored values onto one ceiling value,
+  and never introduce gaps into a curve read as continuous. And when the complaint is "this looks like it
+  lacks data", fix what is plotted (here: which rungs are drawn) before restyling how it is drawn.

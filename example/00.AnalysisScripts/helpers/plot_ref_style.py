@@ -81,8 +81,9 @@ def main():
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("npz", help="<pdb>_dG_profiles.npz from calc_hdx_ht.py")
     parser.add_argument("--out", required=True, help="figure to write")
-    parser.add_argument("--temperatures", default="0.75,0.80,0.85",
-                        help="(default 0.75,0.80,0.85) which tabulated temperatures to draw")
+    parser.add_argument("--temperatures", default="0.75,0.80,0.85,0.90",
+                        help="(default 0.75,0.80,0.85,0.90) which tabulated temperatures to draw; the "
+                             "hottest rung leaves the fewest amides off scale, so it resolves the most")
     parser.add_argument("--structure", default=None,
                         help="reference PDB; when given, the DSSP helix bounds and the helix "
                              "interior/cap/loop medians are printed")
