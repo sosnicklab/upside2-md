@@ -318,6 +318,47 @@ chain therefore lives in Slurm scripts on the cluster.
   `scratchpad/ff3_retraining/{deliver_rf_ff.sh,auto_deliver_rf.sh}` and `watch_extract_500.sh` on
   rockfish.
 
+## 2026-09-13 — glpG VTF delivered, force field confirmed, dG comparison slide
+
+* **Extracted and verified the glpG VTF for Monday.** 1822 frames (blocks 1-32, stride 5) to
+  `~/Downloads/glpG_RKRK_79HIS_run0_remd.vtf`. Checked before handing it over rather than after:
+  TM4 alpha fraction mean 0.791 with no frame under 0.50, TM4 centroid within 7.7 A of the bilayer
+  midplane in every frame, peptide C-N mean 1.324 A. A per-block internal-RMSD probe confirmed only
+  `output_previous_0` is rigid (0.000 A), which is the seed block the extractor already skips.
+* **Confirmed the glpG chain is on ff_3.0 by measurement.** Needed because `run_remd.py` reuses
+  existing replicas and the force field is baked into each `.up`. A verbatim hash sweep answers
+  "ff_2.1" and is wrong; the least-squares scale on the rotamer pair table gives 1.000000 against
+  `ff_3.0`. Recorded as findings 6.6.
+* **Substituted the valid ff2.1 dG reference.** The `glpG_POPEPOPG_dG_2026-08-27/` figures were
+  produced while the protein was frozen by the stage bug, so they are not a force-field comparison.
+  Used the 2026-09-04 `hdx/results/` set instead and re-rendered both hybrid panels at the implicit
+  run's rungs (0.75/0.80/0.85) so the three models can be read side by side. Off-scale amides at
+  T = 0.85 go 43/203 (ff2.1) -> 69/203 (ff3.0); TM4 stays finite in all three.
+* **Deck at 20 slides**, new slide "The same helix, read three ways".
+* Files modified: `findings.md` (5.3d, 6.6), `remote_jobs.md`, `progress.md`,
+  `0914/build_draft.py`, `0914/figs/dG_{implicit,ff21,ff30}.png`.
+* **Not done:** the ff3.0 benchmark TM/RMSD table is still 10 of 22 arms (job 49010900, 57 min in);
+  the long proteins (lambda, top7, ubiquitin) are outstanding.
+
+## 2026-09-13 (later) — slides brought onto the newest data
+
+* **Benchmark: already current.** Checked the queue rather than assuming; nothing finished after
+  scoring job 49010900 exited COMPLETED at 2 h 54 m. Slide 18 rebuilt on its 21-arm table (15/16
+  native, 6/16 de novo): native mean TM 0.583 vs FF2's 0.55 and mean Ca-RMSD 3.78 vs 4.0 A, lower
+  lowest-RMSD on 9 of 15, gpW the only regression. `make_ff3_benchmark_fig.py` now reads the scoring
+  table instead of carrying transcribed numbers.
+* **glpG HDX re-run on the grown trajectory** (Campaign 6, jobs 59041160-63, midway3): 6,121 ->
+  9,465-9,956 frames per replica. All four COMPLETED, 28/28 replicas each. **Nothing that matters
+  moved**, which makes the four-variant equality a converged result rather than one measurement.
+  Retracted the "79ALA_S115T is mildly tighter" reading as sampling noise.
+* Had to submit to midway3: the HDX venv's `bin/python3` points into `/software`, which is
+  per-cluster, so on midway2 python3 falls through to `/usr/bin/python3` with no h5py.
+* Noted but not changed: the HDX analysis topology is built with ff_2.1 tables while the trajectory
+  is ff_3.0. Left alone so Campaign 6 differs from Campaign 5 in frame count alone.
+* Files modified: `findings.md` (5.3d), `remote_jobs.md` (Campaigns 2 and 6), `progress.md`,
+  `0914/build_draft.py`, `0914/make_ff3_benchmark_fig.py`, `0914/figs/{dG_var_*,dG_ff30,fig_ff3_benchmark}.png`.
+* **Still outstanding:** 10 of 16 de novo benchmark arms and alpha3D-native are still simulating.
+
 ## Carried-over open items
 
 - **NP footprint contradicts the paper.** None of Carlson et al.'s five target lysines are contacted

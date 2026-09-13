@@ -2514,6 +2514,95 @@ quantitative discriminator** and is the next thing to run. Both errors I made to
 direction, toward flattering the hybrid, which is worth remembering when reading any model-ranking claim
 in this file.
 
+### 5.3c The protein carries no explicit charge in the hybrid, and what follows from it (2026-09-12)
+
+Measured on both campaigns' configs, so this is systematic rather than one build's mistake. Of the protein
+beads in `martini_potential/charges`, **only 10 are nonzero** -- 2890 beads in the NP system and 1050 in
+glpG, identical in both, 5 at +1 and 5 at -1, summing to exactly 0. They look like the two chain termini
+smeared across all five beads of their residues, which cancels and is negligible.
+
+**This is by design, not a bug.** `martini_sc_table_1body` is fully residue-resolved:
+`restype_order (18,)`, `rotamer_full_energy_eup (18, 6, 38, 96, 13)`, i.e. 18 residue types x 6 rotamers
+x **38 environment bead types**. Protein-environment interaction is carried by tabulated per-residue-type
+fields, which is what the "spline table only" rule requires, instead of explicit Coulomb.
+`charged_res` in `martini_prepare_system_lib.py:246` is `{ASP:-1, GLU:-1, LYS:+1, ARG:+1}`; HIS is
+correctly absent, so **an earlier inference in this session that "all 15 histidines are protonated" was
+wrong** and is retracted. Albumin's sequence charge at pH 7 is -15 (LYS 58 + ARG 24 = +82, ASP 35 +
+GLU 62 = -97); the config simply does not represent residue charges explicitly at all.
+
+**The consequence, which is the part that matters.** The SC-env tables are short-range radial fields, so
+albumin's 179 charged residues have **no long-range Coulomb term** with the anionic MPA coating or with
+the ions. Changing the salt therefore cannot create protein-NP electrostatic steering: at 0.15 M the
+model's Debye length is 3.6 A and counterions-only would give 16.4 A, but neither matters to a protein
+that has no charge to screen. **Do not expect an ionic-strength change to fix the two NP orientations
+that never bind** (they start ~37 A off the surface); that is a model-design property plus starting
+geometry. For the same reason, a charge-driven footprinting prediction of the Carlson kind is not
+something this hybrid can currently reproduce from first principles.
+
+**One real defect, small:** the NP box carries **net +15 e**. The ion generator added 218 excess K+ on the
+assumption that albumin is -15, while the charge array gives it 0. Either the protein should carry -15
+explicitly or the ion count should be 203.
+
+### 5.3d What the retraining did to the dG profile, and which ff2.1 profile is the valid one (2026-09-13)
+
+Three runs of the same protein are now comparable: the implicit-membrane run (2026-06-01), the ff2.1
+hybrid (`<V>/hdx/results/`, 2026-09-04) and the ff3.0 hybrid (`<V>/hdx_postfix/results/`, 2026-09-12).
+Both hybrid runs are post the rigid-stage fix, so the difference between them is the force field.
+
+Rendered at matched rungs 0.75/0.80/0.85 from the saved `_dG_profiles.npz`, non-exchanging amides go
+
+| T | ff2.1 | ff3.0 |
+|---|---|---|
+| 0.75 | 53/203 | 80/203 |
+| 0.80 | 44/203 | 73/203 |
+| 0.85 | 43/203 | 69/203 |
+
+so the retrained core raises protection across the whole chain rather than only in the helix that
+prompted it. **The two sides are not matched in frame count and cannot be made so**: the ff2.1 replicas
+were rebuilt when the new tables were installed, so that trajectory is frozen at 6,121 frames while
+ff3.0 has grown past 9,500. The mismatch is conservative rather than flattering -- more sampling lowers
+the off-scale count, and ff3.0 read 69 at the matched 6,121 frames against 64 at 9,465 -- so the ff2.1
+to ff3.0 gap is if anything understated by using the larger ff3.0 set. Using the `censored` flag instead of the sentinel gives larger counts (66 -> 105 at 0.75)
+because it is a different criterion; quote one or the other, not a mixture.
+
+**TM4 resolves to a finite value in all three runs.** It is not the case that one model returns infinity
+and another returns a few kcal/mol. Per-region at T = 0.85, TM4 censoring is 0/21 under ff2.1 and 1/21
+under ff3.0, with the resolved median rising 2.66 -> 3.03; TM1 over the same change goes 4/22 -> 9/22.
+TM4's censoring is temperature-dependent in a way TM1's is not: at the cold end of the ff3.0 ladder
+(T = 0.70) TM4 reaches 14/21 censored, so the helix is strongly protected there and resolves as the
+ladder warms. A single-rung statement about TM4 is therefore not a statement about the helix.
+
+**The four variants are indistinguishable, and this is converged (updated 2026-09-13).** Repeating the
+whole analysis at 9,465-9,956 frames per replica against the earlier 6,121, a 55-60% increase, moves
+nothing that matters:
+
+| variant | frames | off-scale at T=0.85 | dg_limit | resolved median | TM4 censored |
+|---|---|---|---|---|---|
+| 79HIS | 6121 -> 9465 | 69 -> 64 | 5.90 -> 6.17 | 2.53 -> 2.36 | 1 -> 1 of 21 |
+| 79HIS_S115T | 6121 -> 9782 | 66 -> 62 | 5.95 -> 6.19 | 2.68 -> 2.42 | 0 -> 0 |
+| 79ALA | 6121 -> 9956 | 69 -> 65 | 5.96 -> 6.18 | 2.62 -> 2.68 | 0 -> 0 |
+| 79ALA_S115T | 6121 -> 9723 | 81 -> 68 | 5.94 -> 6.19 | 2.38 -> 2.74 | 0 -> 0 |
+
+The off-scale count falls by a handful in every variant, which is the direction more sampling *must*
+push it: the ESS-based limit deepens uniformly (5.9 -> 6.2), so amides with zero observed opening in
+6,121 frames show at least one in 9,500 and resolve to a finite value. Medians wander a few tenths with
+no trend. **The earlier "79ALA_S115T is mildly tighter" observation was sampling noise** -- flagged as
+premature when it was made, and at the larger frame count it has returned to the pack (68 against 62-65).
+Retract it.
+
+Off-scale amides at T = 0.85 are therefore 64, 62, 65 and 68 of 203 for 79HIS, 79HIS_S115T, 79ALA and
+79ALA_S115T, with resolved medians 2.4, 2.4, 2.7 and 2.7 kcal/mol. TM4 is 0-3 of 21 censored in all four (medians 2.5-3.4) and TM1
+is the censored helix in all four (6-14 of 22). Neither the H79A substitution nor S115T reshapes global
+protection, so the TM1/TM4 asymmetry is a property of the fold and the lipid geometry rather than of the
+active site. The double mutant is mildly tighter at every rung (81-89 off scale against 66-84), which is
+one replica per temperature and not yet worth a claim.
+
+**`glpG_POPEPOPG_dG_2026-08-27/` must not be used as the ff2.1 reference.** Those figures predate the
+2026-09-02 stage fix, so the protein that produced them was frozen by `preprod_protein_mode =
+rigid_body`; their profile is an artifact of a rigid protein with mobile lipids, in which every amide
+whose seed H-bond was intact is censored by construction and the rest is driven purely by lipid
+exposure. The valid ff2.1 reference is the 2026-09-04 `hdx/results/` set.
+
 ### 5.4 Interpreting a per-residue profile
 
 * **Do not use a bundled secondary-structure annotation as ground truth.**
@@ -2690,6 +2779,37 @@ FIRST FIRING TIME PER CRITERION
 * **Term decomposition beats global observables for a local failure** (section 3.2).
 
 ---
+
+### 6.6 Identifying which force field a running replica carries
+
+`run_remd.py` copies a replica from the seed **only if the file does not already exist**, so a chain
+resumed after a force-field install keeps whatever tables it was built with. The force field lives inside
+each `.up`, not in a path the job reads, so the only way to know is to compare the baked tables against
+`parameters/ff_*/`.
+
+The reliable test is a least-squares scale match on the rotamer pair table, because `upside_config`
+rescales it into Upside units on the way in:
+
+```python
+with h5py.File(f'{P}/{tag}/sidechain.h5') as f: ref = f['pair_interaction'][...]
+with h5py.File(up) as f:
+    a = f['input/potential/rotamer/pair_interaction/interaction_param'][...]
+c = (ref.ravel() @ a.ravel()) / (ref.ravel() @ ref.ravel())   # best scale
+```
+
+The match is unambiguous: the right force field gives `c = 1.000000` with a residual at float32 rounding
+(1.6e-6), the wrong one gives `c = 1.107` and a residual of 21. Measured 2026-09-13 on
+`popepopg_REMD_mdw2/glpG-RKRK-79HIS.run.0.up`, which came out `ff_3.0` exactly, confirming all 33 of its
+output blocks are post-retraining.
+
+**A verbatim hash sweep over the parameter files gives the wrong answer here.** Sweeping every dataset and
+asking which `ff_*` directory appears inside the seed reports **ff_2.1**, on 11 matching datasets. The
+reason is that the retraining only touched the protein core, `sidechain.h5` and `environment.h5`; the
+dry-MARTINI SC-env tables in `martini.h5` were not retrained, `ff_3.0/martini.h5` does not exist at all,
+and the seed build therefore pulls that file from `ff_2.1` by design. `hbond.h5` is likewise byte-identical
+between the two. So the verbatim test finds the shared files and misses the two that actually differ, since
+those are transformed before they are written into the `.up`. Compare the transformed tables, not the files.
+
 
 ## 7. System preparation
 

@@ -149,14 +149,41 @@ frames actually written).**
 | 49006602 | 79ALA_S115T | RUNNING 11h3m | 6/9 | temp healthy |
 | 49010274-49010277 | all 4 | PENDING (afterany) | next block | the LAST block; see below |
 
-**THE CHAIN IS ABOUT TO END, verified against the files on 2026-09-12.** `submit_remd.sh:33` now exports
-`REMD_MAX_BLOCKS=5`, and `run_remd.py:204` resubmits only while `blk < MAX_BLOCKS`. Block counts are
-**79HIS 7, 79HIS_S115T 7, 79ALA 10, 79ALA_S115T 6** -- every one already past 5. So the four running jobs
-will print `no resubmit`, the four `afterany` dependents will each run one further block, and then glpG
-stops. **Raising `MAX_BLOCKS` in `submit_remd.sh` is the only thing that continues it, and it must be
-done before the dependents finish** or the campaign has to be restarted from the current replicas.
+**The chain is confirmed on ff_3.0, measured not inferred (2026-09-13).** The tables baked into
+`glpG-RKRK-79HIS.run.0.up` match `parameters/ff_3.0/sidechain.h5` at a least-squares scale of
+**1.000000** with a residual of 1.6e-6, against 1.107 and 21 for `ff_2.1`, so all 33 output blocks in
+the file are post-retraining. This had to be checked because `run_remd.py:63-65` only copies a replica
+from the seed when the file is absent, and a naive verbatim hash sweep reports **ff_2.1** (the
+dry-MARTINI `martini.h5` was never retrained and `ff_3.0/martini.h5` does not exist, so the seed pulls
+it from `ff_2.1` by design). Procedure in findings.md 6.6.
+
+**glpG VTF delivered 2026-09-13** to `~/Downloads/glpG_RKRK_79HIS_run0_remd.vtf` (1822 frames, 186 MB,
+blocks 1-32 at stride 5, `output_previous_0` skipped because it is the frozen seed block, internal RMSD
+0.000). Verified before handover: TM4 alpha fraction mean 0.791 with **no frame below 0.50**, TM4
+centroid within **7.7 A** of the bilayer midplane in every frame, peptide C-N mean 1.324 A with no
+persistent outlier. The earlier "protein left the bilayer" and "TM4 unfolded" reports were measurement
+artifacts, not trajectory faults.
+
+**THE CHAIN ENDS AFTER THE PENDING DEPENDENTS, verified against the files on 2026-09-13.**
+`submit_remd.sh:33` exports `REMD_MAX_BLOCKS=5`, and `run_remd.py:204` resubmits only while
+`blk < MAX_BLOCKS`. Block counts are **79HIS 7, 79HIS_S115T 7, 79ALA 10, 79ALA_S115T 7** -- every one
+already past 5. So the four running jobs print `no resubmit`, the four `afterany` dependents each run
+one further block, and then glpG stops.
+
+**Nothing expires, and an earlier note here claiming otherwise was wrong.** It said `MAX_BLOCKS` had to
+be raised *before the dependents finish* or the campaign would need restarting. That is not how this
+works: `49010274`-`49010277` were submitted with `--export=ALL,...,REMD_MAX_BLOCKS=5` already baked into
+their job records, so editing `submit_remd.sh` now cannot reach them, and they will not resubmit either
+way. Continuing the campaign means editing `MAX_BLOCKS` and running `submit_remd.sh <V>` again, which
+picks up the existing replicas and can be done at any point after the dependents finish. There is no
+deadline to beat.
+
 This supersedes the notes below claiming `MAX_BLOCKS=4` pinned with `=9` dependents; the file was edited
 after those were written, and 79ALA at block 10 is past 9 in any case.
+
+Timing as of 2026-09-13 01:00 CDT: `REMD_WALL_SEC=129600` (36 h) per block, so `49006599` has ~13 h left
+on its block and its dependent would then run into Monday. There is enough data in hand for the Monday
+meeting without extending anything.
 
 **rockfish is retired as a host.** Access came from a former PI's allocation and was stopped on
 2026-09-11; `30791125`-`30791128` were cancelled after 14 h 33 m. That leaves ~14.5 h of post-fix
@@ -192,12 +219,53 @@ survives.
   four variants started at block 2. The replica `.up` files were correctly absent and rebuilt from the
   seeds, so only the counter was affected.
 
+**The two campaigns use DIFFERENT glycine maps, verified by hash 2026-09-12.** Testing each map against
+both mirrors: NP `prod_ff3` is symmetric under the **correct** mirror `i -> (-i) mod n` (max err 0.0000,
+and 3.77 under a plain reversal), while glpG post-fix AND glpG pre_ff3 are symmetric only under the
+**off-by-one** mirror (0.0000 under reversal, 3.35 under the correct one). ALA/SER/HIS controls sit at
+~11 in both, so the test is sound. So NP carries the glycine treatment ff_3.0 was actually trained
+against and glpG does not. **Do not compare the two campaigns on anything glycine-sensitive**, and do not
+"fix" glpG to match without re-reading the note below.
+
+Force field otherwise confirmed identical and genuinely ff3.0 in both: NP's
+`nonlinear_coupling_environment/coeff` is byte-equal to `ff_3.0/environment.h5:energies` (`2c5619ee9b12`;
+ff_2.1 is `ce82e8b9`), and NP's `rotamer/pair_interaction/interaction_param` is byte-equal to the glpG
+post-fix config (`8636da4601c8`). The `ff_2.1` paths still in `build_np_ff3.py` are the documented split
+-- bead geometry, rotamer counts, `bb_env.dat` and the rama reference state stay at ff_2.1 because
+ff_3.0 retrained only `sidechain.h5`'s interaction tables and one array in `environment.h5`. Nothing
+there is stale, and the NP run does NOT need restarting on force-field grounds.
+
 **Still open, deliberately not changed:** all 23 GLY Ramachandran maps carry an off-by-one mirror.
 Correcting it makes TM4 **worse** (TM4a 0.786 -> 0.531), because only the buggy map favours the
 right-handed helix; see findings 3.10c. TM4's residual fraying at the hot rung is a force-field
 property, not a bug.
 
 ### Campaign 2: ff3.0 re-benchmark of Peng et al. JCTC 2022 (launched 2026-09-09 ~23:55 CDT)
+
+**Scoring job 49010900 COMPLETED 0:0 after 2 h 54 m (2026-09-13).** 21 arms scored: 15 of 16 from
+native (alpha3D still simulating) and 6 of 16 de novo. Table at
+`ff3_benchmark/scoring/score_arms.json`, log `bm_score.49010900.out`, copy of the text table in the
+deck at `0914/figs/score_arms.txt`.
+
+| | ff3.0 | FF2 published |
+|---|---|---|
+| native, mean TM | **0.583** | 0.55 |
+| native, mean Ca-RMSD | **3.78 A** | 4.0 A |
+| de novo, mean TM | **0.450** | 0.42 |
+| de novo, mean Ca-RMSD | **6.01 A** | 6.1 A |
+
+These are like-for-like: Fig. S5 reports mean TM and mean Ca-RMSD, which is what the script computes.
+The lowest-Ca-RMSD comparison against Fig. S4 is the per-protein one and mean lowest goes 2.35 -> 1.49 A
+over the 15 natives. **ff3.0 is lower on 9 of 15** (ubiquitin, NuG2, NTL9, hyp, top7, proteinL, cspA,
+proteinG, lambda) and the only regression is gpW, 1.4 -> 2.0. Sorted by FF2 difficulty the pattern is
+clean: level on the six FF2 already folded to ~1 A, better on every harder one.
+
+**Do not quote the de novo aggregate as a result** -- 6 of 16, and the six that finished first are the
+short fast proteins. The native aggregate at 15 of 16 is close enough to complete to quote.
+
+The per-protein residue mapping is calibrated by requiring the native arm's frame 0 to score 0 RMSD
+against the reference; `hyp` and `cspA` need non-zero offsets and that check is what caught the mapping
+bug that made hyp read TM 0.267.
 
 **Live progress 2026-09-12 ~08:55 CDT.** **7/32 COMPLETE** (BBA_native, BBA_denovo, BBL_native,
 gpW_native, NTL9_native, WWdomain_native, WWdomain_denovo); 25 RUNNING at 12-18.5 h of a 36 h wall.
@@ -290,6 +358,24 @@ Rebuilt from scratch rather than patched: the old replicas carry 98 accumulated 
 
 ### NP block-2 analysis, 2026-09-12: two findings that outrank the Carlson comparison
 
+**0. It is NOT the ion concentration; measured 2026-09-12.** The hypothesis was that the NP box carried
+too much salt and denatured albumin. Measured from the config rather than the build script: box 300^3 A,
+**K+ 2423 = 0.149 M**, Cl- 2205 = 0.136 M, against 2439 pairs for exactly 0.15 M. The Cl- deficit is
+counterion balance for the anionic MPA coating and albumin. For contrast the glpG system, which holds its
+fold, runs **Na+ 201 = 0.186 M** nominal, i.e. *more* concentrated. Local condensation does not explain it
+either: K+ enrichment within 8 A of protein beads, first frame -> last, is run 0 `0.33 -> 1.74` (Rg 69.6),
+run 3 `0.27 -> 1.17` (Rg 53.1), run 2 `0.18 -> 3.00` (Rg 34.2). **The correlation runs backwards** -- the
+most ion-enriched run is the most compact -- and 1.2-3.0x counterion enrichment around a charged protein
+at 0.15 M is ordinary polyelectrolyte behaviour.
+
+**The temperature is the number to question instead.** `run_np_prod.py:28` hardcodes
+`NP_TEMP = 0.8647`, measured in the trajectory as the single fixed T = 0.8647 T_up = **303 K**. That value
+comes from Peng's calibration, where **T = 0.86 was assigned 298 K for FF2**, and that calibration has
+**not been redone for ff3.0**. If the scale moved at all, the NP is simply running hot; glpG's ladder by
+comparison starts at 0.70 and its TM4 still frays at the 0.90 end. Cheap test: one orientation at
+T = 0.70-0.75, and see whether albumin stays compact. Also note run 3 kept expanding through the day,
+Rg 33 -> 53 A, so by 2026-09-12 evening all six trajectories are expanding, bound and unbound alike.
+
 **1. The protein unfolds WITHOUT the nanoparticle, so deformation cannot be attributed to it.**
 Independently verified: run 0 reaches **Rg(CA) 64.1 A while 165 A from the NP centre**, having never
 bound (0.3% of frames in contact). Run 3 is also unbound (206 A) but stays compact at 33 A. So at
@@ -364,6 +450,45 @@ picked frame 3004 -- which still carried 4 stretched bonds -- and would have pro
 damage the gate exists to stop. Restart eligibility is therefore `RESTART_CN_MAX = 0`: a restart
 point must have no stretched bond at all. **Do not conflate the two thresholds.** dt stays pinned at
 0.001 in `np_prod.sbatch` and the 2.0 A gate is untouched.
+
+### Campaign 6: HDX dG on the grown trajectory (submitted 2026-09-13, midway3)
+
+| JobID | variant | work dir |
+|---|---|---|
+| 59041160 | `glpG-RKRK-79HIS` | `popepopg_REMD_mdw2/<V>/hdx_10k/` |
+| 59041161 | `glpG-RKRK-79HIS_S115T` | same pattern |
+| 59041162 | `glpG-RKRK-79ALA` | same pattern |
+| 59041163 | `glpG-RKRK-79ALA_S115T` | same pattern |
+
+Same launcher and same settings as Campaign 5 (`HDX_N=28`, `HDX_DISCARD=500`, `HDX_LIVE=1`), so the
+**only** variable changed is how much trajectory is available: usable frames per replica went
+**6,121 -> ~9,600-10,000** (+60%) as the chain ran on. Writes to a new `hdx_10k/` so the Campaign 5
+results that are currently in the 09/14 deck are not overwritten.
+
+**This pipeline runs on midway3 only, and that is not a preference.** The venv it needs,
+`.venv_el8_py311_bak`, has `bin/python3 -> /software/python-3.11.9-el8-x86_64/bin/python3.11`, and
+`/software` is per-cluster: that target exists on midway3 (el8) and not on midway2 (el7), so on midway2
+`python3` falls through to `/usr/bin/python3`, which has no h5py, and the job dies in step 1. The shared
+`env_shared.sh` venv is not a substitute because it carries no pymbar or matplotlib. This is the
+documented exception to the midway2 default.
+
+**All four COMPLETED 0:0 on 2026-09-13, 7-8 min each**, verified rather than taken from the exit code:
+28/28 replicas every variant, 9,465 / 9,782 / 9,956 / 9,723 frames per replica, the off-temperature seed
+block correctly dropped in all of them, and zero FAIL/Traceback lines. Four 79HIS replicas each dropped
+one rolled-back frame, which is the existing detector working.
+
+**Result: the conclusions are unchanged, so the profiles are converged.** Off-scale amides at T = 0.85
+go 69->64, 66->62, 69->65 and 81->68 of 203; the ESS-based resolution limit deepens uniformly from ~5.9
+to ~6.2 kcal/mol, which is why the counts fall; resolved medians wander a few tenths with no trend; TM4
+censoring is unchanged at 0-1 of 21. **The earlier "79ALA_S115T is mildly tighter" reading was sampling
+noise and is retracted** -- at the larger frame count it is back with the others. Detail in findings 5.3d.
+
+**Open question, deliberately not changed for this run.** The HDX analysis topology is built with
+**ff_2.1** tables (`1.config.py` passes `parameters/ff_2.1/{sidechain,environment,hbond}.h5`) while the
+trajectory it analyses is ff_3.0. That topology is used for projection and for the geometric protection
+state, and the MBAR energies come from the joined trajectory rather than from it, so it should not affect
+the result -- but it has not been verified, and it was left alone here so that Campaign 6 differs from
+Campaign 5 in frame count alone. Changing two things at once would make the comparison uninterpretable.
 
 ### Campaign 5: post-fix HDX dG on midway3 (submitted 2026-09-12 ~07:40 CDT)
 
@@ -1261,4 +1386,18 @@ for fn in sorted(run_dir.glob("*.run.*.up")):
 - **A green exit code means nothing** for a self-submitting REMD job. Check the log for DESTROYED/ROLLBACK counts and verify physical observables.
 - **Midway3 home quota**: 28.6 G of 30 G. Jobs can fail oddly if home fills.
 - **Do not run scripts from `/tmp`** on the login node (another user's `/tmp/inspect.py` shadows stdlib).
+- **`/tmp` on a login node is PER-NODE, and reconnects land on different ones.** A `nohup` job launched
+  from midway2-login2 writes `/tmp/<log>` that is invisible from login1, so a later check reports the log
+  missing and the job gone even if it is alive elsewhere. Put anything you intend to read again on
+  `/beagle3` or `/project`, and prefer `sbatch` over `nohup` for work that must outlive an ssh session:
+  a compute-node job survives disconnects and does not compete with other users on a login node.
+- **`pgrep -f <name>` matches your own shell command.** `ssh host 'pgrep -f bm_final && echo running'`
+  reports "running" because the remote `bash -c` command line contains the string, so a dead job looks
+  alive indefinitely. Match the interpreter instead (`ps -u $USER -o cmd | grep python3`), or check for the
+  output file, or use a Slurm job id and `squeue`/`sacct`. This produced two false "still running" reports
+  on 2026-09-12.
+- **A stray module in the working directory shadows the stdlib.** An `inspect.py` left in a scratch
+  directory broke `import numpy` with a circular-import error, because numpy imports `inspect`. The same
+  hazard as the `/tmp` note above but it applies to any working directory; name scratch probes something
+  that is not a stdlib module.
 - **glpG detergent campaign (closed 2026-08-13, model retired 2026-09-09).** Kept for one lesson only: it used a constant `--seed`, so a rollback re-ran the identical failing chunk deterministically, which is why the driver now takes a per-chunk seed. All four variants failed at block 2–3. Its HDX ΔG output is in `~/Downloads/glpG_DDM_micelle_HDX_dG/` and is no longer cited.
