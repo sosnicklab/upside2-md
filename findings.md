@@ -2572,9 +2572,20 @@ TM4's censoring is temperature-dependent in a way TM1's is not: at the cold end 
 (T = 0.70) TM4 reaches 14/21 censored, so the helix is strongly protected there and resolves as the
 ladder warms. A single-rung statement about TM4 is therefore not a statement about the helix.
 
-**The four variants are indistinguishable, and this is converged (updated 2026-09-13).** Repeating the
-whole analysis at 9,465-9,956 frames per replica against the earlier 6,121, a 55-60% increase, moves
-nothing that matters:
+**The four variants are indistinguishable, and this is converged over two independent extensions
+(updated 2026-09-13).** The analysis has now been run at three frame counts as the chain grew:
+6,121 per replica, then 9,465-9,956, then 11,809-12,196. The second extension is the convergence
+proof -- a further 21-25% of data moves the off-scale count by **at most one residue** in every
+variant and leaves TM4 censoring completely unchanged:
+
+| variant | off-scale at T=0.85 | dg_limit | resolved median | TM4 censored |
+|---|---|---|---|---|
+| 79HIS | 69 -> 64 -> 63 | 5.90 -> 6.17 -> 6.30 | 2.53 -> 2.36 -> 2.31 | 1 -> 1 -> 1 of 21 |
+| 79HIS_S115T | 66 -> 62 -> 62 | 5.95 -> 6.19 -> 6.31 | 2.68 -> 2.42 -> 2.30 | 0 -> 0 -> 0 |
+| 79ALA | 69 -> 65 -> 64 | 5.96 -> 6.18 -> 6.29 | 2.62 -> 2.68 -> 2.53 | 0 -> 0 -> 0 |
+| 79ALA_S115T | 81 -> 68 -> 68 | 5.94 -> 6.19 -> 6.31 | 2.38 -> 2.74 -> 2.79 | 0 -> 0 -> 0 |
+
+The first extension moved things by a handful:
 
 | variant | frames | off-scale at T=0.85 | dg_limit | resolved median | TM4 censored |
 |---|---|---|---|---|---|
@@ -3167,6 +3178,84 @@ E. coli GlpG numbering; the base construct is already the catalytically dead S20
 `79HIS`/`79ALA` is WT H145 vs H145A, `S115T` is S181T, and RKRK is the C-terminal tag at 207-210. No proline
 is in the donor list (Upside excludes all six) and there are no chain breaks or resseq gaps.
 ---
+
+## 11b. The Peng 2022 benchmark: what the SI actually says (read 2026-09-14)
+
+Both PDFs are on this Mac and must be read rather than searched for: SI at
+`~/OneDrive - The University of Chicago/ct1c00960_si_001.pdf`, main text alongside it. ACS is
+paywalled and PMC serves a CAPTCHA, so web lookups waste time. The paper is the **HDX** paper,
+"Prediction and Validation of a Protein's Free Energy Surface Using Hydrogen Exchange and
+(Importantly) Its Denaturant Dependence", JCTC 2022, 18, 550-561; the folding benchmark lives in its
+SI, so one citation covers both the benchmark and the soluble-protein HDX result.
+
+**Verified against the SI:**
+* The simulation-parameter table (p10-11) matches `bench_table.py:TABLE_S2` verbatim -- durations and
+  14-rung ladders both.
+* Fig S4's caption lists the terminal-residue exclusions, and they match `RMSD_EXCLUDE` exactly.
+* Fig S4 prints the per-protein lowest Ca-RMSD **as text**, with the largest-cluster centroid in
+  parentheses (DBSCAN on the Ca contact map, 10 A cutoff). So `FF2_BASELINE` was transcribed from
+  printed numbers, not read off bars -- the provenance worry raised on 2026-09-13 is retired.
+* Fig S4 right-hand panels pool **five independent simulations** per protein, lowest-RMSD run solid
+  and the rest dashed. Our arms are one run each at the bottom rung, so our distributions are
+  narrower than theirs by construction.
+
+**Both figures are grids of per-protein DISTRIBUTION CURVES with the set average on top**, columns
+being native-start and unfolded-start, FF1 and FF2 overlaid in each panel. Fig S4 adds a
+predicted-vs-native structure-overlay column.
+
+**Lesson: do not describe a figure as reproducing a published format without having opened that
+figure.** The first version of these panels was built from a one-line paraphrase in our own
+`analyse_bench.py` docstring, labelled "the same plots the paper makes", and was wrong in layout --
+summary markers and violins against grids of distribution curves. The underlying numbers were sound
+and reproducible, which made the error easy to miss. State "same quantities, my layout" unless the
+source figure has actually been read.
+
+
+## 11c. Peng's benchmark trajectories on midway2 are FF1, not FF2 (measured 2026-09-14)
+
+`/project2/trsosnic/condiv_data_upload/trajectories/` holds `<prot>_native.xtc`,
+`<prot>_denovo.xtc` and `<prot>.pdb` for 23 proteins -- the 2022 paper's 16 plus 7 CASP targets
+(T0765/69/71/73, T0803, T0816, T0855). 2.8 GB, owned by `nffaruk`, dated 2018-07-20. Frame counts
+are large: 27k-78k per arm.
+
+**It is FF1.** Scored with `ff3_benchmark/scoring/tmscore.py` and the paper's own terminal-residue
+exclusions, over all 16 benchmark proteins:
+
+| | this data | published FF1 | published FF2 |
+|---|---|---|---|
+| from native | 0.480 | 0.45 | 0.55 |
+| de novo | **0.360** | **0.37** | 0.42 |
+
+The de novo mean matches FF1 to 0.01 and misses FF2 by 0.06. The native mean runs 0.03 above FF1's,
+which is expected because the paper's native figure counts only "excursions within the native basin"
+while this averages every frame.
+
+**A second FF1 set exists in Upside's own format**, found after correcting the search: Upside writes
+`.up` and `.vtf`, never `.xtc`, so the first sweep used the wrong filter (the 2018 `.xtc` files above
+are a converted deposit). `/project2/trsosnic/share/paper_traj_nabil/{from_native,from_denovo}` holds
+`<stem>.run.{0..13}.up` -- **14 replicas**, matching the Table S2 ladder -- for 5 of the 16 proteins
+(cspa, gpW, hyp, nug2, top7), 16,100 frames per block, 28 GB, dated 2018-02.
+
+**That set is FF1 too, and the proof is structural rather than a date.** Its
+`rotamer/pair_interaction/interaction_param` is shape **(20, 20, 62)**, while ff_2.0, ff_2.1 and
+ff_3.0 are all **(20, 20, 54)**. A different spline-knot count is a different force-field generation,
+so it cannot be any ff_2.x/3.x and no rescaling comparison is even meaningful.
+
+**There is no FF2-era benchmark data anywhere on midway2 or midway3.** `/cds3` is the only filesystem
+midway3 adds (`/project` and `/project2` are shared), and a 2.8 TB sweep of `/cds3/trsosnic` found no
+benchmark-protein trajectories from the FF2 era and no `pengxd` space at all. Checked: all of `pengxd/`, the FF2-era
+ConDiv trees (`upside_version/upside-pxd/ConDiv`, `share/pengxd`), and a sweep of `/project2/trsosnic`
+and `/project/trsosnic` for `*_native.xtc` and for TM/RMSD outputs newer than 2021. The only `ff2`
+hits are Adam's 1nqe channel project. So an FF2 per-protein overlay needs either a
+higher-resolution figure from the publisher or a fresh ff_2.1 run of the 32 arms (`bench.sbatch`
+already takes `FF=ff_2.1`).
+
+**Useful by-product: this is an external validation of our scoring path.** Reproducing FF1's
+published de novo mean to 0.01 from real trajectories exercises `tm_score.py`, the residue-mapping
+calibration and the exclusion handling together, which the synthetic tests in `py/tm_score.py` do not.
+Reading the `.xtc` needs mdtraj, installed out-of-tree at `/beagle3/trsosnic/yinhan/pylibs` via
+`pip --target` so the shared venv the glpG chain uses is untouched; add it to `PYTHONPATH`.
+
 
 ## 12. Claims that turned out to be wrong
 

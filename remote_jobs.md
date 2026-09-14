@@ -251,8 +251,8 @@ deck at `0914/figs/score_arms.txt`.
 |---|---|---|
 | native, mean TM | **0.583** | 0.55 |
 | native, mean Ca-RMSD | **3.78 A** | 4.0 A |
-| de novo, mean TM | **0.450** | 0.42 |
-| de novo, mean Ca-RMSD | **6.01 A** | 6.1 A |
+| de novo, mean TM | 0.417 (7 of 16) | 0.42 |
+| de novo, mean Ca-RMSD | 6.18 A (7 of 16) | 6.1 A |
 
 These are like-for-like: Fig. S5 reports mean TM and mean Ca-RMSD, which is what the script computes.
 The lowest-Ca-RMSD comparison against Fig. S4 is the per-protein one and mean lowest goes 2.35 -> 1.49 A
@@ -260,8 +260,16 @@ over the 15 natives. **ff3.0 is lower on 9 of 15** (ubiquitin, NuG2, NTL9, hyp, 
 proteinG, lambda) and the only regression is gpW, 1.4 -> 2.0. Sorted by FF2 difficulty the pattern is
 clean: level on the six FF2 already folded to ~1 A, better on every harder one.
 
-**Do not quote the de novo aggregate as a result** -- 6 of 16, and the six that finished first are the
-short fast proteins. The native aggregate at 15 of 16 is close enough to complete to quote.
+**The de novo aggregate moved when one arm landed, which is the proof that a partial mean is not a
+result.** At 6 of 16 it read TM 0.450 / 6.01 A and looked like a win; NTL9 de novo then finished at
+TM 0.22 and pulled it to **0.417 / 6.18 A**, level with or marginally behind FF2's 0.42 / 6.1 A. One
+arm shifted the mean by 0.033 and flipped its sign relative to the baseline. Quote the native
+aggregate (15 of 16); give de novo as "indistinguishable so far" and expect it to keep moving.
+
+**Rescored 2026-09-13 22:xx as job 49012360** (`score_arms_dist.py`, COMPLETED 0:0 in 2 h 44 m, 22/22
+arms, zero errors). Reproduced the previous run's values exactly where they overlap, e.g. proteinG
+native 0.792 / 2.37 / 0.68. It additionally writes per-frame cold-rung TM and Ca-RMSD to
+`scoring/dist/<arm>.npz`, which is what the paper-format figures are built from.
 
 The per-protein residue mapping is calibrated by requiring the native arm's frame 0 to score 0 RMSD
 against the reference; `hyp` and `cspA` need non-zero offsets and that check is what caught the mapping
@@ -355,6 +363,40 @@ Rebuilt from scratch rather than patched: the old replicas carry 98 accumulated 
 |---|---|---|
 | 49003839 | block 1 of 8 | COMPLETED 2026-09-11 11:06, orientation 1 tore at frame 2948; chain rolled back |
 | **49009692** | block 2 of 8 | RUNNING 9h05m elapsed, **all 6 orientations: 0 stretched bonds**, ~28h wall remaining |
+
+### NP re-measured 2026-09-13 on 69 blocks: the campaign still cannot test Carlson, and is now worse
+
+Measured with a correct minimum image on all six orientations (`NP-1AO6/np_state.py`, completed blocks
+only). Native 1AO6 Rg(CA) is ~27 A and every run starts at 26.0-26.7, so the metric is anchored.
+
+| run | Rg first | Rg last | Rg max | bound % | COM-NP last | contacting residues |
+|---|---|---|---|---|---|---|
+| 0 | 26.3 | 74.3 | 75.3 | 10.7% | 91.4 A | 503-522 |
+| 1 | 26.5 | **130.4** | 130.4 | 97.1% | 143.7 A | 35-293 |
+| 2 | 26.0 | 38.6 | 39.4 | 97.7% | 42.8 A | 38-577 |
+| **3** | 26.5 | **108.7** | 108.7 | **0.1%** | **185.6 A** | never (1 frame) |
+| 4 | 26.7 | 114.4 | 114.4 | 100.0% | 164.3 A | 498-579 |
+| 5 | 26.1 | 41.4 | 42.4 | 97.6% | 32.8 A | 12-438 |
+
+**Run 3 is the control that settles it.** It never binds -- 0.1% of frames in contact, centre of mass
+185 A from the particle -- and it still expands from 26.5 to **108.7 A**. At T = 0.8647 this force field
+denatures albumin in bulk, with no nanoparticle involved. Every "NP-induced deformation" statement is
+therefore unsupported, and Carlson's "opens and exposes its centre" cannot be tested here because the
+opening happens without the particle.
+
+**This is a regression against block 2.** On 2026-09-12 run 3 was the compact unbound case at Rg 33 A and
+run 0 was 64 A. Both have since blown past 100 A and 74 A. The free protein is not drifting to a swollen
+equilibrium, it is still unfolding.
+
+**Run 1 shows what "bound" now means.** 97.1% of frames in contact, Rg 130 A, COM 143 A away: an
+essentially fully extended chain anchored to the particle at one end. That is not adsorption of a folded
+protein and its contact set is not a footprint of albumin.
+
+**Verdict unchanged and now unimprovable by more sampling:** blocks 4-8 add frames to denatured chains.
+The blocker is protein stability, and the one number never revalidated is `run_np_prod.py:28`
+`NP_TEMP = 0.8647`, inherited from Peng's FF2 calibration (T = 0.86 assigned 298 K) and never redone for
+ff3.0. The cheap decisive test is still one orientation at T = 0.70-0.75 with run 3's unbound geometry as
+the control. **Continuing the current production is spending compute on an uninterpretable result.**
 
 ### NP block-2 analysis, 2026-09-12: two findings that outrank the Carlson comparison
 
