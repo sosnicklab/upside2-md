@@ -184,6 +184,26 @@ E_up (`dG(aR->aL)` on the deployed per-residue map; kT = 0.90 E_up at the T = 0.
 the 23 is neutral or right-handed. In the raw library the deepest point of the whole GLY coil map
 sits at phi = **+85**, psi = 0. ff3.0 sets all 23 to exactly 0.000.
 
+**Verified that the bias really does reach every glycine, including mid-helix ones** (the claim the
+whole argument rests on; checked against the deployed `.up`, not inferred):
+
+1. `rama_map_pot`'s only argument is `rama_coord`, i.e. `(phi,psi)`. Its datasets are
+   `rama_pot`, `residue_id`, `rama_map_id`, `rama_map_id_all` and nothing else. No secondary
+   structure, no residue index, no environment, no neighbour coordinates enter the term, so it
+   cannot know a glycine is mid-helix.
+2. All **23 of 23** glycines are biased toward alpha_L on both metrics: `dG(aR->aL)` is negative for
+   every one, and `E(-63,-43) - E(+63,+43)` at the canonical helical points is negative for every
+   one, mean **-1.52 E_up**. The point-wise number is *larger* than the basin-integrated one
+   (mean -0.85), so quoting "about 1 kT per glycine" is conservative.
+3. Repeated sequence triplets get **bitwise-identical** maps wherever they occur. glpG has 5
+   repeats, 3 of which straddle structural contexts: `ALM` at 77 (loop) and 141 (mid-TM4), `GYV` at
+   121 (TM3) and 144 (TM4), `LMH` at 78 (loop) and 83 (TM2). All identical. This also confirms no
+   `secstr_bias` was baked in, consistent with the hybrid builder passing `secstr_bias=""`.
+
+The qualification worth keeping: this is a statement about the Rama term. A mid-helix glycine's
+actual behaviour is the sum of all terms, and the H-bond and environment terms do stabilise the
+helix, so the alpha_L push is opposed rather than unopposed.
+
 **Attribution, and it is not GG.** Summing the per-glycine `dG(aR->aL)` shift over the protein:
 XGX glycines **+16.68 E_up (84%)**, GG glycines +3.14 E_up (16%). Per helix (simulation-PDB DSSP
 boundaries), with the sum of the ff2.1 left-handed bias that ff3.0 removes:
@@ -209,17 +229,64 @@ achiral, so its middle-glycine map is symmetric by theorem and any measured asym
 sampling error. An XGX with L neighbours is chiral, so nothing forces its map to be symmetric, and
 ff3.0 symmetrizes it anyway at all 19 sites. Two measurements bear on how much that costs:
 
-* **Conditioning on an achiral nearest neighbour removes almost none of the asymmetry.** In the raw
-  ff2.1 library, `max|m - mirror(m)|` is **4.17** for `GLY|GLY` against **4.06 +/- 0.55** for the 38
-  `GLY|X` entries (chiral reference: ALA/LEU/SER ~10.1-10.6). On the chirality scalar, `GLY|GLY`
-  gives `dG(aR->aL) = -0.635` against a `GLY|X` mean of `-0.965 +/- 0.276` (all 38 negative). Only
-  **-0.33 E_up of the ~-1.0 E_up bias, about a third, can be a nearest-neighbour effect at all**;
-  the rest sits in an entry whose nearest neighbour is achiral, so it comes from longer-range chiral
-  context (i+/-2 and beyond, secondary structure, packing) that a dimer library cannot represent.
-* **What the true XGX coil value is has not been measured.** All-atom `Ace-SAGAS-NMe` in explicit
-  water is the clean reference for an unstructured chain, with `Ace-GGGGG-NMe` as the control whose
-  answer is known exactly (0) and which therefore calibrates the statistical error bar. Running,
-  see `progress.md`.
+* **The XGX asymmetry is not a statistical artefact, and it is not nearest-neighbour chirality
+  either. It is imported fold context.** Three tests on the raw ff2.1 library settle the first part:
+
+  | test | result | sampling noise predicts |
+  |---|---|---|
+  | pairwise cosine similarity of the antisymmetric part of the 38 `GLY|X` maps | mean **+0.815**, median +0.836, 98.6% of 703 pairs > 0.5; one shared mode carries **82.3%** of the variance | ~0 |
+  | `corr(asymmetry, 1/sqrt(neighbour abundance))` over an 8.5x count range (TRP 1.1% to LEU 9.4%) | **+0.089**; rarest 6 neighbours 4.31 vs commonest 6 3.79 | ~ +1 |
+  | sign of `dG(aR->aL)` across the 38 entries | **38 of 38 negative**, p = 7.3e-12 | 50/50 |
+
+  So the asymmetry is one coherent, reproducible signal. But **the achiral-neighbour `GLY|GLY` entry
+  carries the same antisymmetric pattern**, cosine **+0.889** with that shared mode, against a
+  `GLY|X` mean of 0.905. Not a pooling artefact either: similarity to the mode is uncorrelated with
+  neighbour abundance (+0.076), and the rare `GLY|GLY` entry sits *below* the `GLY|X` mean rather
+  than pinned near 1.0 as backoff-toward-the-marginal would force. The magnitudes agree:
+  `max|m - mirror(m)|` is 4.17 for `GLY|GLY` against 4.06 +/- 0.55 for `GLY|X` (chiral reference
+  ALA/LEU/SER 10.1-10.6).
+
+  **Decomposition of the -0.965 E_up that ff3.0 symmetrizes away:**
+
+  | component | value | what it is |
+  |---|---|---|
+  | present even with an achiral nearest neighbour (`GLY|GLY`) | **-0.635 E_up (66%)** | not nearest-neighbour chirality, and measured below to be glycine-specific: PDB positional selection |
+  | additional part depending on *which* L residue is adjacent | **-0.329 E_up (34%)** | genuine local XGX chirality |
+
+  **The 66% is glycine-specific, not a generic fold-context term shared by all residues.** An
+  earlier draft of this entry called it "fold context that Upside double-counts through its
+  environment/H-bond/sheet terms"; that is wrong and the measurement refutes it. Projecting every
+  residue's `X|ALL` coil map onto the `GLY|GLY` antisymmetric direction:
+
+  | | cosine with the direction | dG change when it is removed |
+  |---|---|---|
+  | GLY | **+0.852** | **+0.538 E_up, 61% of its bias** |
+  | the 19 non-GLY types | mean **-0.164** (range -0.312 to -0.001), **0 of 19 share GLY's sign** | -0.233 E_up, 11% of their bias |
+
+  Chiral residues *anti*-align with it. So this is not a universal offset; it is a pattern only
+  glycine carries. The reason is positional selection in the database: **glycine is the residue
+  evolution puts where the backbone must be left-handed** (left-handed turns, alpha_L bridges,
+  tight loops), because it is the only one sterically able to sit there. A coil library conditioned
+  only on nearest-neighbour identity cannot separate *what conformation a glycine prefers* from
+  *where glycine gets used*. For a chiral residue the same selection signal is swamped by its own
+  C-beta chirality, which is real local physics and must stay; glycine has no C-beta, so nothing
+  local masks it. Consistency check: the `dG(aR->aL)` ordering across residues tracks known
+  alpha_L tolerance, with ASN -0.192 and ASP +0.749 lowest after glycine, and the beta-branched
+  ILE +3.900 / VAL +2.887 / THR +2.876 highest.
+
+  **Why it is still wrong to keep it as a local energy:** it is a prior on *where glycine occurs*,
+  not a conformational energy. Used as a local Rama term it pushes every glycine in the protein
+  toward alpha_L, including mid-helix glycines that are not at such positions at all. **Hence
+  ff3.0C:** subtract that component and keep the neighbour-dependent residual. Built and verified;
+  training as jobs 49027834/49027835.
+* **What the true XGX coil value is has not been measured, and it is the number that decides.**
+  All-atom `Ace-SAGAS-NMe` in explicit water has no fold context at all, so it measures the local
+  part in isolation; `Ace-GGGGG-NMe` is the control whose answer is exactly 0 by achirality and
+  which therefore calibrates the statistical error bar. **The prediction from the decomposition
+  above is that SAGAS lands near -0.33 E_up (-0.96 kJ/mol), not -0.97 E_up.** If it does, the
+  library's glycine asymmetry is two-thirds imported fold context and ff3.0's blanket symmetrization
+  is mostly removing a double-count. If SAGAS instead lands near -0.97 E_up, the asymmetry is local
+  physics and ff3.0 is deleting real information. Running, see `progress.md`.
 
 Practical consequence: the deployed `rama3.dat` removes ~1 E_up (~1 kT) of left-handed bias per
 glycine, 84% of it at sites where mirror symmetry is a modelling choice rather than a requirement.

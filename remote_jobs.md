@@ -139,6 +139,43 @@ that data. Left in place pending a decision.
 Snapshot **2026-09-10 ~19:40 CDT (verified live against `squeue` on both hosts, and against
 frames actually written).**
 
+### Campaign 5: ff3.0B training, GG-only GLY symmetry (midway2, started 2026-09-16 12:19 CDT)
+
+| JobID | what | state |
+|---|---|---|
+| **49027629** | link 1, from `initial_checkpoint.pkl`, 130 minibatches | PENDING (None) |
+| **49027630** | chain link, `continue_gg.sbatch 500` | PENDING (afterany:49027629) |
+
+* **Working dir** `/project/trsosnic/yinhan/upside2-md-mdw2/training/gg-only`. Job ids also in
+  `.chain_jobids` there. Logs `upside-gg-only_<jobid>.out`.
+* **What it is.** A second ConDiv run identical to `training/gly-sym` in every respect except
+  `upside_input/rama.dat`, which symmetrizes only the two `GLY|GLY` dimer entries per group instead
+  of the whole central-GLY row. Only `GLY|GLY` is forced symmetric by achirality; the `GLY|X`
+  entries describe a chiral local unit. Built by `gg-only/symmetrize_gly_gg_only.py` from
+  `gly-sym/upside_input/rama.dat.orig` with the same mirror `i -> (72-i) % 72` and the same
+  `0.5*(m + mirror(m))` average as ff3.0's `symmetrize_gly_rama.py`.
+* **Ramachandran library md5, all three verified against each other:**
+  `996a607b...` raw PDB library (`parameters/common/rama.dat`), `932649af...` ff3.0 whole-row
+  symmetrized (`rama3.dat`, and confirmed to be exactly what `gly-sym/upside_input/rama.dat` is,
+  so the deployed ff3.0 **was** trained against the symmetric library), `234e5ec0...` ff3.0B.
+* **Disk.** The 272 MB of per-protein `.chi/.fasta/.initial.pkl/.states.pkl` are **hardlinked**
+  from `gly-sym/upside_input`, not copied; only `rama.dat` is a separate file (link count verified
+  1 on both sides, so `gly-sym` cannot be corrupted by this run). `run_output` will reach ~6.4 GB.
+  `/project` had 679 G free at launch.
+* **Reference protocol, matched exactly:** 4 nodes / 12 tasks / 8 cpus-per-task = 96 CPUs broadwl,
+  `--mem-per-cpu=2000M`, 36 h wall per link, `--no-requeue`,
+  `--exclude=midway2-0003,midway2-[0342-0345]`, 38 minibatches per epoch, target 500 minibatches.
+  Init reproduced the reference exactly: 456 proteins, 0 excluded, `pack_param` loss 54.1821.
+  At the healthy 565 s/step that is ~78 h over ~4 links; 915 s/step has been seen.
+* **Next action.** When `.chain_progress`/the newest `epoch_*/checkpoint.pkl` reaches step 500,
+  run `extract_ff.py <ckpt> parameters/ff_3.0B_trained`, then the glpG arm test.
+* **Read the result with the reproducibility floor in mind.** `findings.md:1000` requires a retrain
+  claim to clear a **21%** floor, and `findings.md:2277` measures two ConDiv runs from a common
+  ancestor landing 15-17% rms apart. ff3.0B's rama perturbation reaches 5.8% of the glycine dimer
+  entries in the training set (378 of 6523, about 0.4% of all residue-map lookups) and **0% of
+  glpG's TM4**, whose three glycines are all XGX. So this run at n=1 is suggestive, not decisive;
+  the interpretable comparison is the rama-only arm test, which has no refit noise.
+
 ### Campaign 1: glpG production, post-fix, midway2 only (updated 2026-09-12)
 
 | JobIDs | variant | state | block | note |
