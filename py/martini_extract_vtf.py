@@ -250,10 +250,61 @@ def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file, output_group="ou
     return x_len, y_len, z_len
 
 
-def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
+def build_molecule_topology(n_output, bonds):
+    """Bond-walk order and connected-component labels for the output particles.
+
+    The walk is (child, parent) pairs with every parent placed before its children, so applying a
+    minimum-image displacement in that order rebuilds a whole molecule from a single anchor atom.
+    The labels group the particles into molecules; an unbonded particle is a molecule of one."""
+    adjacency = [[] for _ in range(n_output)]
+    for i, j in bonds:
+        if 0 <= i < n_output and 0 <= j < n_output:
+            adjacency[i].append(j)
+            adjacency[j].append(i)
+
+    walk = []
+    molecule_id = np.full(n_output, -1, dtype=np.int64)
+    n_molecules = 0
+    for root in range(n_output):
+        if molecule_id[root] >= 0:
+            continue
+        molecule_id[root] = n_molecules
+        stack = [root]
+        while stack:
+            parent = stack.pop()
+            for child in adjacency[parent]:
+                if molecule_id[child] < 0:
+                    molecule_id[child] = n_molecules
+                    walk.append((child, parent))
+                    stack.append(child)
+        n_molecules += 1
+    return walk, molecule_id, n_molecules
+
+
+def unwrap_molecules(frame_pos, walk, x_len, y_len, z_len):
+    """Make every bonded molecule whole again.
+
+    The integrator stores each particle wrapped into the cell, so a molecule straddling a periodic
+    face comes out torn and its bonds span most of the box when rendered. Walking the bond topology
+    with a minimum-image displacement reassembles each molecule around its anchor atom."""
+    box = np.array([x_len, y_len, z_len], dtype=float)
     out = np.array(frame_pos, copy=True)
-    box = np.array([x_len, y_len, z_len], dtype=np.float32)
-    half_box = 0.5 * box
+    for child, parent in walk:
+        out[child] -= box * np.round((out[child] - out[parent]) / box)
+    return out
+
+
+def centralize_system(frame_pos, residue_names, molecule_id, n_molecules, x_len, y_len, z_len):
+    """Put the protein at the origin and bring every molecule back into the central cell.
+
+    The molecules must already be whole (`unwrap_molecules`). Wrapping is then applied per molecule
+    through its centroid, never per particle. Wrapping particles individually tears every molecule
+    that crosses a face, and rebuilding them afterwards with the bond walk re-seats each one on
+    whichever anchor atom happened to land inside: for glpG that anchor is the floppy N-terminal
+    amide, which threw the entire protein a full box length out of the bilayer in 159 of 1822
+    frames and left a protein-shaped hole behind."""
+    out = np.array(frame_pos, copy=True)
+    box = np.array([x_len, y_len, z_len], dtype=np.float64)
 
     protein_mask = None
     if residue_names is not None:
@@ -265,73 +316,19 @@ def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
         }
         protein_mask = np.array([str(name).upper() in protein_residues for name in residue_names], dtype=bool)
 
-    # Mode 2 output includes backmapped protein backbone residues by their
-    # sequence-derived residue names. Centering by periodic protein COM avoids
-    # boundary-split rendering artifacts.
     if protein_mask is not None and np.any(protein_mask):
-        prot = np.mod(out[protein_mask], box[None, :])
-        protein_center = np.zeros(3, dtype=np.float64)
-        for ax in range(3):
-            angles = 2.0 * np.pi * prot[:, ax] / float(box[ax])
-            s = np.mean(np.sin(angles))
-            c = np.mean(np.cos(angles))
-            if abs(s) < 1e-12 and abs(c) < 1e-12:
-                protein_center[ax] = float(np.mean(prot[:, ax]))
-            else:
-                a = np.arctan2(s, c)
-                if a < 0.0:
-                    a += 2.0 * np.pi
-                protein_center[ax] = float(box[ax]) * a / (2.0 * np.pi)
-        out -= protein_center[None, :]
-    else:
-        if residue_names is not None:
-            lipid_mask = np.array([name == "DOPC" for name in residue_names], dtype=bool)
-            if np.any(lipid_mask):
-                out[:, 2] -= np.mean(out[lipid_mask, 2])
+        out -= out[protein_mask].mean(axis=0)[None, :]
+    elif residue_names is not None:
+        lipid_mask = np.array([name == "DOPC" for name in residue_names], dtype=bool)
+        if np.any(lipid_mask):
+            out[:, 2] -= np.mean(out[lipid_mask, 2])
 
-    out = (out + half_box) % box - half_box
-    return out
-
-
-def build_bond_walk(n_output, bonds):
-    """(child, parent) pairs per connected molecule, parents always before their children.
-
-    Applying a minimum-image displacement in this order reconnects a whole molecule from a single
-    already-placed anchor atom."""
-    adjacency = [[] for _ in range(n_output)]
-    for i, j in bonds:
-        if 0 <= i < n_output and 0 <= j < n_output:
-            adjacency[i].append(j)
-            adjacency[j].append(i)
-
-    walk = []
-    visited = np.zeros(n_output, dtype=bool)
-    for root in range(n_output):
-        if visited[root] or not adjacency[root]:
-            continue
-        visited[root] = True
-        stack = [root]
-        while stack:
-            parent = stack.pop()
-            for child in adjacency[parent]:
-                if not visited[child]:
-                    visited[child] = True
-                    walk.append((child, parent))
-                    stack.append(child)
-    return walk
-
-
-def unwrap_molecules(frame_pos, walk, x_len, y_len, z_len):
-    """Reconnect bonded molecules that centralize_system split across a periodic face.
-
-    Wrapping every particle into the box tears any molecule straddling a face: its bonds then span
-    most of the cell when rendered. Walking the bond topology with a minimum-image displacement
-    restores each molecule without moving it off its periodic image."""
-    box = np.array([x_len, y_len, z_len], dtype=float)
-    out = np.array(frame_pos, copy=True)
-    for child, parent in walk:
-        out[child] -= box * np.round((out[child] - out[parent]) / box)
-    return out
+    counts = np.bincount(molecule_id, minlength=n_molecules).astype(np.float64)
+    centroid = np.stack(
+        [np.bincount(molecule_id, weights=out[:, ax], minlength=n_molecules) / counts for ax in range(3)],
+        axis=1,
+    )
+    return out - box * np.round(centroid[molecule_id] / box)
 
 
 def write_vtf_frame(fh, pos):
@@ -759,7 +756,7 @@ def extract_trajectory(
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
 
-    bond_walk = build_bond_walk(n_output_particles, out_bonds)
+    bond_walk, molecule_id, n_molecules = build_molecule_topology(n_output_particles, out_bonds)
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
@@ -797,14 +794,16 @@ def extract_trajectory(
             else:
                 out_frame = assemble_mode2_frame(frame, mapping, box_lengths=(x_len, y_len, z_len))
 
+            out_frame = unwrap_molecules(out_frame, bond_walk, x_len, y_len, z_len)
             out_frame = centralize_system(
                 out_frame,
                 mapping["output_residue_names"][:n_output_particles],
+                molecule_id,
+                n_molecules,
                 x_len,
                 y_len,
                 z_len,
             )
-            out_frame = unwrap_molecules(out_frame, bond_walk, x_len, y_len, z_len)
             if np.isnan(out_frame).any():
                 raise ValueError(f"NaN coordinates found in frame {frame_idx} for group {output_group}")
             write_vtf_frame(f, out_frame)

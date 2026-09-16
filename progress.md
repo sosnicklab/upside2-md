@@ -359,6 +359,41 @@ chain therefore lives in Slurm scripts on the cluster.
   `0914/build_draft.py`, `0914/make_ff3_benchmark_fig.py`, `0914/figs/{dG_var_*,dG_ff30,fig_ff3_benchmark}.png`.
 * **Still outstanding:** 10 of 16 de novo benchmark arms and alpha3D-native are still simulating.
 
+## 2026-09-14 — VTF periodic-image fix, glpG trajectory re-delivered
+
+* **Root-caused the "protein left the bilayer and left a hole" artifact in the delivered glpG VTF.**
+  Not the last frame only: **159 of 1822 frames**, protein displaced by exactly one box length in x
+  (xy centroid separation from the lipids up to 98.18 A against a 99.77 A box). The trajectory itself
+  is fine: the protein is intact in those frames (no CA-CA above 4.5 A) and the earlier physical
+  checks stand. It was a post-processing fault in `py/martini_extract_vtf.py`.
+* **The cause was wrapping per particle and then rebuilding molecules.** `centralize_system` wrapped
+  every atom into the cell, which tears any molecule crossing a face, and `unwrap_molecules` then
+  rebuilt each one around whichever anchor atom landed inside. For glpG that anchor is atom 0, the
+  floppy N-terminal amide, so every time the tail crossed a face it dragged the whole protein with it.
+* **Fixed by reversing the order and wrapping per molecule.** `build_bond_walk` became
+  `build_molecule_topology`, which also returns a connected-component label per particle;
+  `extract_trajectory` now unwraps first, then centres on the plain protein centroid and wraps each
+  molecule by its own centroid. The circular-mean COM is gone, unnecessary once the protein is whole.
+* **Verified before re-delivering, on the new file:** protein COM exactly 0 in all 3146 frames,
+  **0 displaced frames**, protein-lipid xy centroid separation mean 0.70 A / max 2.20 A, every
+  declared bond under 10 A except the known residue-210 C-O (23.8 A, pre-existing and unrelated).
+* **Re-extracted and downloaded** `glpG-RKRK-79HIS` replica 0, now blocks 1-54 at stride 5 (3146
+  frames, 321 MB, up from 32 blocks / 1822 frames) to
+  `~/Documents/2026/reports/GroupMeetings/0914/glpG_RKRK_79HIS_run0_remd.vtf`; md5 checked at each hop.
+* **Answered the follow-up "should the hole around the protein close?" by measurement: yes, it is
+  post-insertion annular relaxation, but it is slow relative to the run.** Production is fixed-volume
+  (no barostat, no `box` dataset), there is never a through-hole (0 A^2 lipid-free projected area at a
+  5 A probe in every frame), and the protein is static (TM-slab Rg_xy flat at ~12.5 A). The lipids
+  redistribute inward: density rises in every radial bin inside 20 A and falls beyond 25 A. TM-core
+  contact beads +60%; annular lipid count saturates early while contacts per lipid keep rising
+  3.8 -> 4.8. Exponential fit **tau = 29% of the production run**, 90% of plateau only at ~frame 2100
+  of 3146. Recorded as findings 8a with the HDX consequence.
+* **Open, not yet done:** re-run the HDX estimator on the last third only, and measure the same shell
+  curve for the other three variants, before treating the four-variant equality as converged.
+* Files modified: `py/martini_extract_vtf.py`, `findings.md` (3.8, 8a), `progress.md`; on midway2,
+  `/project/trsosnic/yinhan/upside2-md-mdw2/py/martini_extract_vtf.py` (backed up as
+  `.bak_pre_pbcfix`) and `~/project/yinhan/extract_glpg_vtf.py`.
+
 ## Carried-over open items
 
 - **NP footprint contradicts the paper.** None of Carlson et al.'s five target lysines are contacted
@@ -368,3 +403,41 @@ chain therefore lives in Slurm scripts on the cluster.
   `4.calc_D_uptake.py` before trusting any cluster-side HDX result.
 - **TM4 is weak** (0.47-0.65 helix fraction vs TM1's 0.77-0.91) in the pre-install baseline. Cause
   unproven; the arm test bears on it but was not designed to settle it.
+
+## 2026-09-16  GLY Ramachandran symmetry: is it GG or XGX in glpG
+
+**Question (PI).** Is the middle-glycine Rama map naturally symmetric for unfolded GGGGG and SAGAS,
+and is glpG's ff2.1 failure a `GGG` effect? Refined mid-session to: should `XGX` be symmetric as
+ff3.0 assumes, and can ff3.0's glpG improvement be attributed to GG or to XGX?
+
+**Actions.**
+* Scanned the simulated glpG construct (`scratchpad/local_popg_79HIS/glpG-RKRK-79HIS.run.0.up`,
+  210 residues) for glycine motifs. No `GGG`; two `GG` (96-97, 132-133); 19 of 23 glycines are
+  pure XGX. 91% of the dimer-library entries a glycine draws are `GLY|X`.
+* Compared `parameters/common/rama.dat` against `rama3.dat`: only the GLY row differs, in both the
+  `coil` and `sheet` groups, and the operation is exactly `0.5*(m + mirror(m))`.
+* Derived the exact grid mirror from `rama_map_pot.cpp:67` + `LayeredPeriodicSpline2D`, verified it
+  against the axis convention (ALA minimum at phi = -65, PRO restricted to -95..-50), and
+  re-measured the symmetry of a glpG `rama_map_pot` built from each library: 5.856 max asymmetry
+  from `rama.dat`, **0.000000** from `rama3.dat`. Corrected the mirror note and the mislabelled
+  "what is deployed" row in `findings.md`.
+* Priced the ff2.1 -> ff3.0 glycine change per residue and per TM helix. Whole protein: XGX 84%,
+  GG 16%. TM4's three glycines are all XGX and carry the largest shifts; TM1 has no glycine.
+* Launched the all-atom test of the underlying premise: `Ace-GGGGG-NMe` (achiral control, exact
+  answer 0, calibrates the error bar) and `Ace-SAGAS-NMe` (the real XGX measurement), built with
+  `scratchpad/gly_rama_aa/build_peptide.py` (CB chirality calibrated against 19 real L-ALA
+  residues), amber99sb-ildn / TIP3P, 300 K, 3 replicas x 100 ns each at 2 threads.
+
+**Files.** `findings.md` (new section + two corrections), `scratchpad/glpg_gly_context.py`,
+`scratchpad/glpg_gly_by_helix.py`, `scratchpad/gly_rama_symmetry.py`, `scratchpad/gly_rama_aa/`.
+
+**Results so far.** Under ff2.1 all 23 glycines favour the left-handed helix by 0.47-1.23 E_up and
+the raw GLY coil map's global minimum sits at phi = +85. Conditioning on an achiral nearest
+neighbour barely reduces the asymmetry (`GLY|GLY` 4.17 vs `GLY|X` 4.06 +/- 0.55), so at most a third
+of the bias can be a nearest-neighbour effect; the rest is longer-range chiral context a dimer
+library cannot represent.
+
+**Open / running.** The 6 GROMACS replicas (launched 11:52 CDT, ~30 h for the full 100 ns each;
+partial trajectories are readable much sooner via `scratchpad/gly_rama_aa/analyze.sh` then
+`middle_gly.py`). A first driver attempt died because `setup.sh`'s `rm -rf` deleted the driver's own
+working directory; `run_prod.sh` cds to a safe root first.

@@ -157,12 +157,21 @@ from the seed when the file is absent, and a naive verbatim hash sweep reports *
 dry-MARTINI `martini.h5` was never retrained and `ff_3.0/martini.h5` does not exist, so the seed pulls
 it from `ff_2.1` by design). Procedure in findings.md 6.6.
 
-**glpG VTF delivered 2026-09-13** to `~/Downloads/glpG_RKRK_79HIS_run0_remd.vtf` (1822 frames, 186 MB,
-blocks 1-32 at stride 5, `output_previous_0` skipped because it is the frozen seed block, internal RMSD
-0.000). Verified before handover: TM4 alpha fraction mean 0.791 with **no frame below 0.50**, TM4
-centroid within **7.7 A** of the bilayer midplane in every frame, peptide C-N mean 1.324 A with no
-persistent outlier. The earlier "protein left the bilayer" and "TM4 unfolded" reports were measurement
-artifacts, not trajectory faults.
+**glpG VTF re-delivered 2026-09-14** to
+`~/Documents/2026/reports/GroupMeetings/0914/glpG_RKRK_79HIS_run0_remd.vtf` (3146 frames, 321 MB,
+blocks 1-54 at stride 5, `output_previous_0` skipped because it is the frozen seed block, internal RMSD
+0.000). It replaces the 2026-09-13 file, which showed the protein a full box length out of the bilayer
+in 159 of 1822 frames -- a periodic-image fault in `martini_extract_vtf.py`, not in the trajectory
+(findings 3.8). Rebuild it with
+`python3 ~/project/yinhan/extract_glpg_vtf.py <variant> <replica> <out_dir>` on midway2, under
+`module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1` with `HDF5_USE_FILE_LOCKING=FALSE`; it imports
+`/project/trsosnic/yinhan/upside2-md-mdw2/py/martini_extract_vtf.py`, which now carries the fix
+(pre-fix copy kept as `.bak_pre_pbcfix`).
+
+Verified before handover: protein COM exactly 0 in all 3146 frames, **0 displaced frames**,
+protein-lipid xy centroid separation mean 0.70 A / max 2.20 A, every declared bond under 10 A except
+the known residue-210 C-O. The earlier physical checks still stand: TM4 alpha fraction mean 0.791 with
+no frame below 0.50, TM4 centroid within 7.7 A of the bilayer midplane, peptide C-N mean 1.324 A.
 
 **THE CHAIN ENDS AFTER THE PENDING DEPENDENTS, verified against the files on 2026-09-13.**
 `submit_remd.sh:33` exports `REMD_MAX_BLOCKS=5`, and `run_remd.py:204` resubmits only while

@@ -135,19 +135,95 @@ MARTINI Qa/Qd/C1 classification is the parameter-free way to answer it.
 That file tracked the ff3.0 training chain, which is finished, deployed and superseded. Everything
 in it was either done, recorded elsewhere, or wrong. These two were recorded nowhere else.
 
-**The two Ramachandran libraries, and the mirror that differs between them.**
+**The two Ramachandran libraries, and the one mirror that applies to both.**
 `parameters/common/rama.dat` is the OLD force field and is asymmetric in GLY *by design*; do not
-"fix" it. The GLY-symmetric library ff_3.0 must run against is `parameters/common/rama3.dat`. The
-correct GLY mirror is **`m[::-1,::-1]` for `.up` `rama_map_pot` maps but `roll(m[::-1,::-1], 1)` for
-the library's own `dimer_pot`**. Using the wrong one fabricates about 3.3 E_up of asymmetry on
-perfectly good seeds. Always verify against a chiral control (ALA/SER/HIS must still show 10-11 E_up
-of asymmetry, or the mirror hit everything) and against `dG(aR->aL)`, which reads 0.000 on a correct
-GLY map.
+"fix" it. The GLY-symmetric library ff_3.0 must run against is `parameters/common/rama3.dat`.
+`rama_map_pot.cpp:67` bins the angle as `(angle+pi)*nx/(2*pi)` into a `LayeredPeriodicSpline2D`, so
+grid node `i` sits at `-180 + 5*i` deg and the exact mirror is `i -> (72-i) % 72` on both axes:
+
+```python
+mirror = lambda m: np.roll(m[::-1, ::-1], (1, 1), axis=(0, 1))
+```
+
+That single expression is correct for the library's `dimer_pot` **and** for `.up` `rama_map_pot`
+maps, because `write_rama_map_pot` copies the library grid through unchanged. Measured 2026-09-16:
+`rama3.dat`'s GLY row and a glpG `rama_map_pot` built from it are asymmetric by **0.000000** under
+it, and by 3.6-3.8 under the naive `m[::-1, ::-1]`, which is off by one grid point. An earlier note
+here claimed the naive flip was right for `.up` maps; it is not. Always verify against a chiral
+control (ALA must still show ~11 E_up of asymmetry, or the mirror hit everything) and against
+`dG(aR->aL)`, which reads 0.000 on a correct GLY map.
 
 **One GLY experiment is still untested:** whether GLY asymmetry ever contributed *independently* to
 TM4's instability. The control is a de-symmetrized run, a few hours locally. Worth doing only if the
 glycine thread is picked up again; note that the 2026-09-10 measurements argue against glycine being
 the TM4 cause at all, and that the asymmetric reference state is the live GLY defect instead.
+
+## The ff3.0 GLY symmetrization lands on XGX, not on GG (2026-09-16)
+
+PI's question: is the middle-glycine Rama map naturally symmetric, and is glpG's ff2.1 failure a
+`GGG` effect. Measured on the libraries and on the simulated construct.
+
+**There is no `GGG` in glpG, and only two `GG`.** 23 glycines in 210 residues (11.0%), at construct
+positions 1, 12, 17, 28, 49, 96, 97, 104, 106, 120, 128, 132, 133, 136, 143, 149, 156, 162, 174,
+180, 186, 191, 195. The only glycine pairs are **96-97** (`Leu-Gly-Gly-Ala`, inside TM2) and
+**132-133** (`Phe-Gly-Gly-Leu`, the TM3/TM4 loop, i.e. TM4's N-cap). The other 19 glycines have
+non-glycine neighbours on both sides. The library is a *dimer* library, so each glycine draws two
+entries: **4 of the 46 entries are `GLY|GLY`, 42 (91%) are `GLY|X`.**
+
+**The ff2.1 -> ff3.0 Rama change is exactly and only the GLY row.** Comparing `rama.dat` against
+`rama3.dat`: the `coil` GLY row and the `sheet` GLY row differ; all other 20 coil rows and 19 sheet
+rows are identical, and the non-finite masks are unchanged. The symmetrization is the **arithmetic
+mean of the energy map and its mirror**, `0.5*(m + mirror(m))`, exact to 0.000000. Note this is the
+geometric mean of the probabilities, not the Boltzmann mean `-ln<exp(-m)>`; it differs by up to 1.4
+E_up locally and makes glycine's helical basins 0.06-0.25 E_up *shallower* than a correct
+probability average would. That is a helix-propensity error, not a chirality one: both means are
+exactly mirror-symmetric, so `dG(aR->aL) = 0` either way.
+
+**Under ff2.1 every single glycine in glpG is biased toward the LEFT-handed helix**, by 0.47-1.23
+E_up (`dG(aR->aL)` on the deployed per-residue map; kT = 0.90 E_up at the T = 0.90 rung). Not one of
+the 23 is neutral or right-handed. In the raw library the deepest point of the whole GLY coil map
+sits at phi = **+85**, psi = 0. ff3.0 sets all 23 to exactly 0.000.
+
+**Attribution, and it is not GG.** Summing the per-glycine `dG(aR->aL)` shift over the protein:
+XGX glycines **+16.68 E_up (84%)**, GG glycines +3.14 E_up (16%). Per helix (simulation-PDB DSSP
+boundaries), with the sum of the ff2.1 left-handed bias that ff3.0 removes:
+
+| helix | n_GLY | contexts | bias removed | XGX part |
+|---|---|---|---|---|
+| TM1 29-48 | **0** | - | 0.000 | - |
+| TM2 82-103 | 2 | 96 `L-G-G`, 97 `G-G-A` | +1.44 | 0% (both GG) |
+| TM3 105-127 | 2 | 106 `S-G-K`, 120 `S-G-Y` | +1.47 | 100% |
+| **TM4 135-151** | 3 | 136 `T-G-V`, 143 `M-G-Y`, 149 `R-G-E` | **+3.13 = 3.5 kT** | **100%** |
+| TM5 161-175 | 2 | 162 `R-G-L`, 174 `A-G-W` | +1.96 | 100% |
+| TM6 185-207 | 3 | 186 `N-G-A`, 191 `A-G-L`, 195 `V-G-L` | +3.07 | 100% |
+
+So whatever the GLY symmetrization does for glpG, it cannot be a `GG` effect: **TM4's three
+glycines are all XGX and carry the three largest single-residue shifts in the protein** (+1.04,
++0.97, +1.12), while TM1, the healthy control helix, contains no glycine at all and is untouched by
+the change. The two GG pairs sit in TM2 and in the TM4 N-cap loop, neither of which was the failing
+helix.
+
+**Whether XGX *should* be symmetric is a real open question, not a settled one.** The chirality
+argument only forces exact mirror symmetry for an achiral unit: an isolated `Ace-GGGGG-NMe` is
+achiral, so its middle-glycine map is symmetric by theorem and any measured asymmetry is pure
+sampling error. An XGX with L neighbours is chiral, so nothing forces its map to be symmetric, and
+ff3.0 symmetrizes it anyway at all 19 sites. Two measurements bear on how much that costs:
+
+* **Conditioning on an achiral nearest neighbour removes almost none of the asymmetry.** In the raw
+  ff2.1 library, `max|m - mirror(m)|` is **4.17** for `GLY|GLY` against **4.06 +/- 0.55** for the 38
+  `GLY|X` entries (chiral reference: ALA/LEU/SER ~10.1-10.6). On the chirality scalar, `GLY|GLY`
+  gives `dG(aR->aL) = -0.635` against a `GLY|X` mean of `-0.965 +/- 0.276` (all 38 negative). Only
+  **-0.33 E_up of the ~-1.0 E_up bias, about a third, can be a nearest-neighbour effect at all**;
+  the rest sits in an entry whose nearest neighbour is achiral, so it comes from longer-range chiral
+  context (i+/-2 and beyond, secondary structure, packing) that a dimer library cannot represent.
+* **What the true XGX coil value is has not been measured.** All-atom `Ace-SAGAS-NMe` in explicit
+  water is the clean reference for an unstructured chain, with `Ace-GGGGG-NMe` as the control whose
+  answer is known exactly (0) and which therefore calibrates the statistical error bar. Running,
+  see `progress.md`.
+
+Practical consequence: the deployed `rama3.dat` removes ~1 E_up (~1 kT) of left-handed bias per
+glycine, 84% of it at sites where mirror symmetry is a modelling choice rather than a requirement.
+If that choice is wrong it is wrong by at most the true XGX asymmetry, which the SAGAS run bounds.
 
 ## The MARTINI-typed H-bond correction makes things worse; not deployed (2026-09-10, settled)
 
@@ -1700,8 +1776,8 @@ identical but the 23 GLY maps:
 
 | GLY maps | TM4a | TM4b | TM1 | TM3 |
 |---|---|---|---|---|
-| buggy off-by-one mirror (what is deployed) | 0.786 | 0.840 | 0.810 | 0.819 |
-| correct periodic mirror | **0.531** | **0.717** | 0.849 | 0.845 |
+| off-by-one mirror | 0.786 | 0.840 | 0.810 | 0.819 |
+| correct periodic mirror (**this is what `rama3.dat` actually holds**) | **0.531** | **0.717** | 0.849 | 0.845 |
 
 This is what the energetics predicted. For GLY143 the mirror penalty `E(alphaL) - E(alphaR)` is
 **+0.571 E_up** under the buggy mirror, **0.000** under the correct one, and **-0.644** in the raw
@@ -1875,23 +1951,36 @@ has not solved anything.** Check that before reading any number downstream of it
 
 ### 3.8 Two VTF-generation bugs, both fixed at the root (findings 126)
 
-**Bug 1: the library never unwrapped molecules, so every VTF had torn lipids.** `extract_trajectory` wrapped
-every particle into the box via `centralize_system` and then wrote the frame; nothing unwrapped, so any
-molecule straddling a periodic face was left split across the cell, which VMD renders as bonds shooting
-across the box. Measured on the same seed file, 400 frames, 4187 bonds:
+**Bug 1: periodic images. Wrap per molecule, and only after the molecules are whole.** Two faults, found
+five months apart, are the same mistake seen from two sides, so they are recorded as one rule.
 
-| declared bond length | before | after |
-| --- | --- | --- |
-| mean | 6.89 A | 3.85 A |
-| max | **141.00 A** | **6.91 A** |
-| instances > 50 A | 54502 of 1674800 (3.254%) | **0** |
+*First symptom, torn lipids.* `extract_trajectory` wrapped every particle into the box via
+`centralize_system` and wrote the frame; nothing unwrapped, so any molecule straddling a periodic face was
+left split across the cell and VMD drew bonds shooting across the box. Measured on the seed file, 400
+frames, 4187 bonds: mean declared bond 6.89 A, max **141.00 A**, 54502 of 1674800 instances (3.254%) over
+50 A. The 141 A worst case was a PO4-GL1 bond *inside one lipid*, so a protein-only integrity check passes
+while the file is unusable.
 
-The 141 A worst case was a PO4-GL1 bond *inside one lipid*, so a protein-only integrity check passes while
-the file is unusable. Fixed by adding `build_bond_walk` and `unwrap_molecules` next to `centralize_system`
-and calling them in `extract_trajectory` after centring: walk the connected components of the declared bond
-graph once, then apply a minimum-image displacement child-relative-to-parent per frame. No per-species
-knowledge, so it covers protein, lipids and ions. **Check the declared bonds across all frames, not just the
-protein backbone, when validating a VTF.**
+*Second symptom, the protein a full box length out of the bilayer.* Repairing the tear by running the bond
+walk **after** the per-particle wrap only moved the fault. The walk rebuilds each molecule around whichever
+anchor atom the wrap happened to leave inside, and for glpG that anchor is atom 0, the floppy N-terminal
+amide. Whenever the tail crossed a face, the entire 210-residue protein was dragged to the tail's image:
+in `glpG_RKRK_79HIS_run0_remd.vtf`, **159 of 1822 frames**, protein-lipid xy centroid separation up to
+**98.18 A** (= one box length, 99.77 A), coordinates out to x = 121 A in a box of half-width 49.9 A. The
+protein was intact throughout (no CA-CA above 4.5 A) and the underlying trajectory was fine; it rendered
+as the protein sitting outside the membrane beside a protein-shaped hole.
+
+*The fix, 2026-09-14.* Order matters and the wrap must be per molecule:
+`build_molecule_topology` returns the bond walk **and** a connected-component label per particle;
+`extract_trajectory` calls `unwrap_molecules` **first** to make every molecule whole, then
+`centralize_system`, which shifts by the plain protein centroid (no circular mean is needed once the
+protein is whole) and wraps each molecule by `box * round(centroid/box)`. A whole molecule is never torn
+again, so nothing has to be rebuilt around an arbitrary anchor. After: protein COM exactly 0 in all 3146
+frames, 0 displaced frames, protein-lipid xy separation mean 0.70 A / max 2.20 A, no declared bond over
+10 A except the known residue-210 C-O.
+
+**When validating a VTF, check the declared bonds across all frames *and* that every molecule centroid is
+inside the cell.** Either check alone passes one of these two bugs.
 
 **Bug 2: mode 1 on a hybrid system emits the protein twice, and VMD then rejects both copies.**
 `build_mode1_mapping` emits the MARTINI-side protein (1050 atoms: N/CA/C/O x 210 plus 210 BB beads, all
@@ -2961,6 +3050,45 @@ overload does not call `apply_brownian_step` nor skip `brownian_mask`, so `mv` p
 silently mis-integrate them; MARTINI uses `v`, so it is not triggered. And `effective_time_factor` is NEVER
 read by the engine, it is analysis-only metadata by design.
 ---
+
+### 8a. The annular lipid shell is still filling for the first ~2/3 of the glpG production run (2026-09-14)
+
+Asked whether the gap around the protein closing over the trajectory was expected. It is, and it is
+post-insertion relaxation of the boundary lipids, measured on `glpG_RKRK_79HIS_run0_remd.vtf`
+(3146 frames, blocks 1-54, cold rung T = 0.70, 4104 t_up total = 456k steps at dt = 0.009).
+
+**It is not the box and it is not a pore.** Production is **fixed-volume**: there is no `box` dataset in
+any output block and no `input/barostat`; the cell is an attribute on `martini_potential`
+(99.768 x 99.768 x 180 A, constant). The barostat only ran during preparation. And there is never a
+through-hole: lipid-free projected area not covered by the protein is **0 A^2 in every frame** at a 5 A
+probe. What looks like a hole is an under-packed annulus, not a defect in the bilayer.
+
+**It is not the protein either.** TM-slab Rg_xy is 11.6 -> 12.5 A and flat after the first eighth, and
+the lipid midplane stays 1.6-3.1 A from the protein centroid throughout.
+
+**The lipids move inward.** Radial density from the protein surface (12 A core slab, early 30 frames vs
+late 30): every bin inside 20 A gains (+73, +46, +46, +32, +39, +22, +27, +15, +15, +13 beads), every
+bin beyond 25 A loses (-12 to -25), crossover at ~22 A.
+
+**Two stages, and only the first is fast.** Protein-lipid contact beads within 6 A, TM core (res 29-208)
+alone, rise 137 -> 220 (+60%), so this is not the disordered termini lying down (those rise separately,
+18 -> 50). But the *number* of annular lipids saturates early (36 -> ~44 by the second sixth) while
+contacts *per* annular lipid keep climbing 3.8 -> 4.8. The shell fills quickly, then tightens slowly.
+
+**Timescale, and why it matters.** Fitting A - B exp(-t/tau) to total contact beads gives
+**tau = 1190 t_up, 29% of the whole production run**; 90% of plateau is reached only at ~frame 2100 of
+3146. The reverse cumulative mean settles to within 1% only over the last 20-30% of frames
+(last 30% 260.2, last 20% 262.1, last 10% 262.2, against 223.6 for the whole run). Do not convert
+tau to real time through the nominal unit table: `dt` here is locked to `/input/brownian` with the
+friction tuned for a target lipid diffusion, so the physical mapping goes through that tuning, which
+has not been verified for this system.
+
+**Consequence, not yet acted on.** Roughly the first two-thirds of this trajectory is not equilibrated
+with respect to protein-lipid packing, and the HDX protection / membrane-accessibility estimator reads
+exactly that interface. Campaign 6 used all frames. Two things to check before the four-variant
+equality is called converged: re-run the estimator on the last third only, and measure this same shell
+curve for the other three variants -- if the relaxation differs between them, part of the comparison is
+between equilibration states rather than between chemistries.
 
 ## 9. The nanoparticle campaign (1AO6 + MPA-AuNP)
 
