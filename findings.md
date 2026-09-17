@@ -3221,6 +3221,33 @@ Method notes that remain valid:
 
 ## 10. Cluster and operational lessons
 
+### 10.0 Clean up local compute; never leave it running without a live reason (2026-09-16)
+
+User correction, twice in one session. I launched 6 GROMACS replicas on the user's laptop, which
+consumed ~1024% CPU (about 10 of 14 cores) for two hours before they noticed it was hot, and I had
+not flagged the cost when starting them. Then, after agreeing to move the work to midway2, I left
+the local replicas running on the reasoning that stopping would "lose" work in the gap. That was
+wrong: the sampling already done is checkpointed on disk and survives regardless, the cluster job
+rebuilds from scratch so there was no handoff to protect, and the extra sampling during a queue
+wait was ~5% of what the measurement needs, bought at the cost of the exact thing the user asked
+to stop.
+
+Rules for local jobs from now on:
+
+* **Say the cost up front.** Before starting anything local and long-running, state the core count,
+  the expected wall time, and that it will load the machine. The user cannot see `ps`.
+* **Kill it the moment its reason expires.** When work moves to the cluster, when a better path is
+  chosen, or when the user signals they want the machine back, stop immediately. "Keeping it just
+  in case" is not a reason. Data already written is not at risk from stopping.
+* **Stop cleanly so it is resumable.** `kill -TERM` makes GROMACS write a checkpoint and exit;
+  `mdrun -cpi prod.cpt` resumes. Verify the `.cpt` exists before reporting the job stopped.
+* **Audit at the end of any session that launched local compute**: no stray `mdrun`/`upside`/python
+  workers, no orphaned launcher scripts, no watcher loops left polling past their target, and
+  GROMACS `#backup#` files and minimization `.trr` removed.
+* Background watcher loops are fine while their target is live, but they must have a bounded
+  iteration count so they expire on their own rather than polling forever.
+
+
 * **A wedged GPFS makes a dead job look healthy, and `squeue` will not tell you (2026-09-07).** Job
   48981235 was reported `RUNNING` for 3.5 h while all nine of its workers sat in `D` state at
   `00:00:00` CPU, wchan `cxiWaitEventWait` / `lookup_slow`, having never started their compute

@@ -139,42 +139,53 @@ that data. Left in place pending a decision.
 Snapshot **2026-09-10 ~19:40 CDT (verified live against `squeue` on both hosts, and against
 frames actually written).**
 
-### Campaign 5: ff3.0B training, GG-only GLY symmetry (midway2, started 2026-09-16 12:19 CDT)
+### Campaign 5: ff3.0C training, glycine alpha_L selection bias removed (midway2, 2026-09-16)
 
 | JobID | what | state |
 |---|---|---|
-| **49027629** | link 1, from `initial_checkpoint.pkl`, 130 minibatches | PENDING (None) |
-| **49027630** | chain link, `continue_gg.sbatch 500` | PENDING (afterany:49027629) |
+| 49028452 | link 1 | **NODE_FAIL** after 25:37, 4 minibatches done, 0 worker fails |
+| 49028453 | chain link | **NODE_FAIL** after 24:56 on midway2-0010 |
+| **49028632** | chain link, target 500 | PENDING (Priority), est. start **2026-09-17 06:47** |
 
-* **Working dir** `/project/trsosnic/yinhan/upside2-md-mdw2/training/gg-only`. Job ids also in
-  `.chain_jobids` there. Logs `upside-gg-only_<jobid>.out`.
-* **What it is.** A second ConDiv run identical to `training/gly-sym` in every respect except
-  `upside_input/rama.dat`, which symmetrizes only the two `GLY|GLY` dimer entries per group instead
-  of the whole central-GLY row. Only `GLY|GLY` is forced symmetric by achirality; the `GLY|X`
-  entries describe a chiral local unit. Built by `gg-only/symmetrize_gly_gg_only.py` from
-  `gly-sym/upside_input/rama.dat.orig` with the same mirror `i -> (72-i) % 72` and the same
-  `0.5*(m + mirror(m))` average as ff3.0's `symmetrize_gly_rama.py`.
-* **Ramachandran library md5, all three verified against each other:**
-  `996a607b...` raw PDB library (`parameters/common/rama.dat`), `932649af...` ff3.0 whole-row
-  symmetrized (`rama3.dat`, and confirmed to be exactly what `gly-sym/upside_input/rama.dat` is,
-  so the deployed ff3.0 **was** trained against the symmetric library), `234e5ec0...` ff3.0B.
-* **Disk.** The 272 MB of per-protein `.chi/.fasta/.initial.pkl/.states.pkl` are **hardlinked**
-  from `gly-sym/upside_input`, not copied; only `rama.dat` is a separate file (link count verified
-  1 on both sides, so `gly-sym` cannot be corrupted by this run). `run_output` will reach ~6.4 GB.
-  `/project` had 679 G free at launch.
-* **Reference protocol, matched exactly:** 4 nodes / 12 tasks / 8 cpus-per-task = 96 CPUs broadwl,
-  `--mem-per-cpu=2000M`, 36 h wall per link, `--no-requeue`,
-  `--exclude=midway2-0003,midway2-[0342-0345]`, 38 minibatches per epoch, target 500 minibatches.
-  Init reproduced the reference exactly: 456 proteins, 0 excluded, `pack_param` loss 54.1821.
-  At the healthy 565 s/step that is ~78 h over ~4 links; 915 s/step has been seen.
-* **Next action.** When `.chain_progress`/the newest `epoch_*/checkpoint.pkl` reaches step 500,
-  run `extract_ff.py <ckpt> parameters/ff_3.0B_trained`, then the glpG arm test.
-* **Read the result with the reproducibility floor in mind.** `findings.md:1000` requires a retrain
-  claim to clear a **21%** floor, and `findings.md:2277` measures two ConDiv runs from a common
-  ancestor landing 15-17% rms apart. ff3.0B's rama perturbation reaches 5.8% of the glycine dimer
-  entries in the training set (378 of 6523, about 0.4% of all residue-map lookups) and **0% of
-  glpG's TM4**, whose three glycines are all XGX. So this run at n=1 is suggestive, not decisive;
-  the interpretable comparison is the rama-only arm test, which has no refit noise.
+* **Working dir** `/project/trsosnic/yinhan/upside2-md-mdw2/training/gly-ctx`; job ids in
+  `.chain_jobids`; logs `upside-gly-ctx_<jobid>.out`. Progress: **step 4 of 500**, newest
+  checkpoint `epoch_00_minibatch_03`, ~12 min/minibatch which matches the reference rate.
+* **What it is.** A ConDiv run identical to `training/gly-sym` except `upside_input/rama.dat`.
+  The coil GLY row has the `GLY|GLY` antisymmetry subtracted from every entry, removing the
+  glycine alpha_L bias that survives an achiral neighbour while keeping the neighbour-dependent
+  third; the sheet GLY row is mirror-averaged and is **bit-identical to `rama3.dat`**. So ff3.0C
+  differs from ff3.0 in the coil glycine row only. Library md5 `a6260bab02cc1505b01f6ad4913dc8bd`
+  (raw `996a607b`, ff3.0 `932649af`). Per-protein inputs hardlinked from gly-sym.
+* **ff3.0B (`training/gg-only`, GG-only symmetrization) was cancelled**, jobs 49027629/49027630.
+  Its perturbation reached 5.8% of the glycine dimer entries and 0% of glpG's TM4, far below the
+  15-21% retrain reproducibility floor, so it could not have been read at n=1.
+
+#### THE BLOCKER ANYONE RETRAINING WILL HIT FIRST (found 2026-09-16)
+
+**`obj/libupside.so` was rebuilt 2026-09-10 20:55; gly-sym finished 2026-09-09 17:15. No ConDiv
+run works against the current library without a patch, and there is no backup of the old `.so`**
+(only of the `upside` executable, `obj/upside.pre_tempfix_20260910`).
+
+Symptom: every worker dies with
+`ERROR: Wrong number of parameters, expected 760 but got 360` from
+`engine_c_library.cpp:110`, raised as `RuntimeError: Unable to get param deriv`.
+
+Cause: `NonlinearCoupling` holds `coeff` (20x18 = 360) and `weights` (400). When the config's
+`number_independent_weights > 1` (it is 20, from `upside_config`'s `--environment-weights-number`
+default) `get_param_deriv` returns **both**, 760 values. `ConDiv.py` asked for `coeff.shape` alone.
+
+Fix, applied in `gly-ctx/ConDiv.py` with the original kept as `ConDiv.py.bak_pre_envderiv`: ask for
+the full 760 and slice the first 360. `environment.cpp` writes the coeff derivatives to
+`deriv[ctype*n_coeff + starting_bin + i]`, i.e. indices below 360, and appends the weights
+derivatives after, so the slice recovers exactly the gradient ConDiv used before and comparability
+with ff3.0 is preserved. `weights` is not trained and is byte-identical between ff_2.1 and ff_3.0.
+
+**Also required before submitting any new training run:** `gly-ctx/preflight.py`, which builds the
+per-residue Rama maps for all 456 training proteins against a candidate library and checks they are
+finite and in range. It catches a malformed library in two minutes instead of after a Slurm failure.
+A first ff3.0C library was rejected by it: subtracting an antisymmetric component is **not**
+range-preserving (averaging is), and doing it to the sheet group, whose `GLY|GLY` antisymmetry is
+66 E_up out of a 3.8-73.3 range, drove the maps to 0.5-96.3 E_up.
 
 ### Campaign 1: glpG production, post-fix, midway2 only (updated 2026-09-12)
 
