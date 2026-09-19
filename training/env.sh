@@ -30,5 +30,7 @@ fi
 
 export UPSIDE_HOME="$PROJECT_ROOT"
 export PATH="$PROJECT_ROOT/obj:$PATH"
-export PYTHONPATH="$PROJECT_ROOT/py${PYTHONPATH:+:$PYTHONPATH}"
+# $PROJECT_ROOT/training carries the trainer's own helpers (rama_gly_gradient); py/ is
+# shared Upside infrastructure and glycine-specific code does not belong there.
+export PYTHONPATH="$PROJECT_ROOT/py:$PROJECT_ROOT/training${PYTHONPATH:+:$PYTHONPATH}"
 export UPSIDE_SKIP_SOURCE_SH=1

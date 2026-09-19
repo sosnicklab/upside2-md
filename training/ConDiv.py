@@ -49,6 +49,8 @@ import upside_engine as ue
 
 if not is_worker:
     import rotamer_parameter_estimation as rp
+import rama_gly_gradient as rgg
+import upside_config as uc
 
 np.set_printoptions(precision=2, suppress=True)
 
@@ -73,7 +75,7 @@ hydrophobicity_order = [
 ]
 
 Target     = collections.namedtuple('Target',     'fasta native native_path init_path n_res chi')
-UpdateBase = collections.namedtuple('UpdateBase', 'env cov rot hyd hb sheet')
+UpdateBase = collections.namedtuple('UpdateBase', 'env cov rot hyd hb sheet gly')
 
 
 class Update(UpdateBase):
@@ -114,6 +116,10 @@ if not is_worker:
     def print_param(param):
         print('hb    %.6f  (scale on hbond energies)' % param.hb)
         print('sheet %.6f  (common offset on sheet mixing)' % param.sheet)
+        S, A = param.gly
+        print('gly   dG(aR->aL) %+.4f nats   |A| rms %.5f   GLY|GLY asymmetry %.2e'
+              % (_gly_handedness(S + A), np.sqrt((A ** 2).mean()),
+                 np.abs(S - rgg.mirror(S)).max()))
         print('env')
         env_dict = dict(zip(resnames, param.env[:, 1::2]))
         for r in hydrophobicity_order:
@@ -171,12 +177,28 @@ if not is_worker:
 
     d_obj = _d_obj_fn()
 
-    def get_init_param(init_dir):
+    # Fourier truncation order for the glycine map update.  Modes with |kx|,|ky| <= this survive;
+    # on a 72-node grid that is features down to 360/(2*8) = 22 degrees, which is finer than any
+    # Ramachandran basin and far smoother than per-node noise.
+    GLY_FOURIER_ORDER = 8
+
+    def _gly_handedness(m):
+        """dG(aR->aL) on the same basins every other glycine number in this project uses."""
+        n = m.shape[0]
+        t = np.arange(-180., 180., 360. / n)
+        phi, psi = np.meshgrid(t, t, indexing='ij')
+        def basin(a, b, c, d):
+            k = (phi >= a) & (phi <= b) & (psi >= c) & (psi <= d)
+            return -np.log(np.exp(-m[k]).sum())
+        return basin(40., 100., -10., 60.) - basin(-100., -40., -60., 10.)
+
+    def get_init_param(init_dir, rama_library):
         init_param_files = dict(
             env   = os.path.join(init_dir, 'environment.h5'),
             rot   = os.path.join(init_dir, 'sidechain.h5'),
             hb    = os.path.join(init_dir, 'hbond'),
             sheet = os.path.join(init_dir, 'sheet'),
+            rama  = rama_library,
         )
 
         with tb.open_file(init_param_files['rot']) as t:
@@ -193,11 +215,18 @@ if not is_worker:
         # hb is a multiplicative scale on hbond_energy.parameters[:4] and sheet is a common
         # additive offset on every entry of the sheet mixing file, so both start at their
         # identity values and the init files below are exactly ff_2.1.
-        param = Update(*([None] * 6))._replace(
+        # gly is the pair (S, A): the central-glycine coil map split into its mirror-symmetric
+        # and antisymmetric parts, with X|GLY = S + A and GLY|GLY = S.  Training starts at A = 0
+        # on a symmetrised library row, so the handedness is entirely learned and the comparison
+        # against the AWH measurement is not circular.
+        gly = np.stack(rgg.symmetric_start(rama_library))
+
+        param = Update(*([None] * 7))._replace(
             env   = env,
             rot   = rp.pack_param(rotp, covp, hydp, hydplp, rotposp, rotscalarp[:, None]),
             hb    = 1.0,
             sheet = 0.0,
+            gly   = gly,
         )
         return param, init_param_files
 
@@ -235,15 +264,36 @@ if not is_worker:
         np.savetxt(new_param_files['sheet'],
                    np.loadtxt(orig_param_files['sheet']) + params.sheet)
 
+        # gly: rewrite the rama library's central-glycine coil row from the current (S, A).
+        # Nothing else in the 35 MB file changes, and it is not renormalised, because
+        # read_rama_maps_and_weights normalises the mixture itself and a shift here would move
+        # the inner left/right weights in a way the gradient does not model.
+        # Only written when asked.  A library is 35 MB, and keeping one per minibatch would add
+        # 35 GB to run_output over 500 steps for no benefit: param.gly is in every checkpoint, so
+        # the library can be regenerated with write_gly_library whenever it is actually wanted.
+        if 'rama' in new_param_files:
+            rgg.write_gly_library(orig_param_files['rama'], new_param_files['rama'],
+                                  params.gly[0], params.gly[1])
+
     def backprop_deriv(param, deriv_update, reg_scale):
         envd = deriv_update.env[:, :-1].copy()
         envd[:, -2] += deriv_update.env[:, -1]
+        # The raw map gradient is already spread over a 4x4 node neighbourhood by the spline
+        # basis, but 5,184 free values against ~30,000 glycine samples per minibatch is still
+        # noisy.  Band-limit the update so the learned correction is smooth by construction; the
+        # starting map keeps its sharp forbidden-region structure because only the update is
+        # filtered.  Re-project the symmetry afterwards, since S must stay symmetric for
+        # GLY|GLY to stay achiral.
+        gS, gA = deriv_update.gly
+        gS = rgg.project_symmetric(rgg.fourier_lowpass(gS, GLY_FOURIER_ORDER))
+        gA = rgg.project_antisymmetric(rgg.fourier_lowpass(gA, GLY_FOURIER_ORDER))
         return deriv_update._replace(
             rot   = d_obj(param.rot, deriv_update.rot, deriv_update.cov,
                           deriv_update.hyd, reg_scale),
             cov   = 0.,
             hyd   = 0.,
             env   = envd,
+            gly   = np.stack([gS, gA]),
         )
 
 
@@ -251,7 +301,7 @@ if not is_worker:
 # Divergence computation (run inside worker process)
 # ---------------------------------------------------------------------------
 
-def compute_divergence(config_base, pos, hb_scale):
+def compute_divergence(config_base, pos, hb_scale, gly_chain, gly_param):
     try:
         with tb.open_file(config_base) as t:
             rot_shape  = t.root.input.potential.rotamer.pair_interaction.interaction_param.shape
@@ -274,7 +324,15 @@ def compute_divergence(config_base, pos, hb_scale):
     sheet_scale = 1. / (2. * sheet_eps)
 
     engine   = ue.Upside(config_base)
-    contrast = Update([], [], [], [], [], [])
+    contrast = Update([], [], [], [], [], [], [])
+
+    # dE/d(map) is analytic: rama_map_pot is a periodic interpolating bicubic spline and
+    # solve_periodic_2d_spline is a tensor product of 1D solves, so the map enters the energy
+    # linearly and separably and the derivative is a spline-smoothed 2D histogram of the glycine
+    # (phi,psi) samples.  Finite differencing 5,184 map values would cost 10,369x a divergence.
+    n_grid   = gly_chain.n_grid
+    cardinal = rgg.cardinal_function(n_grid)
+    gly_idx  = [r['index'] for r in gly_chain.residues]
 
     # Central difference on the common sheet mixing offset, as in the Theano original: evaluate
     # every frame with the map shifted +eps, then again with -eps.  The other derivatives are
@@ -293,6 +351,12 @@ def compute_divergence(config_base, pos, hb_scale):
         # parameters[:4], so dE/ds = E/s.
         contrast.hb.append(engine.get_output('hbond_energy')[0, 0] / hb_scale)
         contrast.sheet.append(engine.get_output('rama_map_pot')[0, 0] * sheet_scale)
+        if gly_idx:
+            rc = engine.get_output('rama_coord')
+            res_grad = {j: rgg.map_gradient(rc[j][None, :], n_grid, cardinal) for j in gly_idx}
+            contrast.gly.append(np.stack(gly_chain.backprop(gly_param[0], gly_param[1], res_grad)))
+        else:
+            contrast.gly.append(np.zeros((2, n_grid, n_grid)))
 
     engine.set_param(less_sheet, 'rama_map_pot')
     for i in range(pos.shape[0]):
@@ -317,6 +381,7 @@ def run_minibatch(worker_path, param, init_param_files, direc, minibatch,
         env   = os.path.join(direc, 'nesterov_temp__environment.h5'),
         hb    = os.path.join(direc, 'nesterov_temp__hbond'),
         sheet = os.path.join(direc, 'nesterov_temp__sheet'),
+        rama  = os.path.join(direc, 'nesterov_temp__rama.dat'),
     )
     d_obj_param = param + solver.update_for_d_obj()
     expand_param(d_obj_param, init_param_files, d_obj_files)
@@ -366,6 +431,10 @@ def run_minibatch(worker_path, param, init_param_files, direc, minibatch,
                 change.append(div['contrast'])
         except Exception as e:
             print(nm, 'RESULT_READ_FAIL', e)
+
+    # every worker has exited, so the 35 MB library they shared can go
+    if os.path.exists(d_obj_files['rama']):
+        os.remove(d_obj_files['rama'])
 
     if not change:
         raise RuntimeError('All jobs failed')
@@ -440,7 +509,7 @@ def main_worker():
         hbond_energy          = param_files['hb'],
         rama_sheet_mix_energy = param_files['sheet'],
         dynamic_rotamer_1body = True,
-        rama_library          = os.path.join(input_dir, 'rama.dat'),
+        rama_library          = param_files['rama'],
         rama_param_deriv      = True,   # writes more_/less_sheet_rama_pot_* and sheet_eps
         reference_state_rama  = os.path.join(input_dir, 'rama_reference.pkl'),
     )
@@ -479,10 +548,16 @@ def main_worker():
     with tb.open_file(configs[1]) as t:
         pos_free = t.root.output.pos[int(n_frame / 2):, 0]
 
+    # The current (S, A) are already in the library this worker was handed, so they are read
+    # back from it rather than threaded through the command line as a 5,184-value array.
+    gly_chain = rgg.GlycineMapChain(uc.read_fasta(open(fasta)), param_files['rama'],
+                                    param_files['sheet'])
+    gly_param = rgg.read_gly_maps(param_files['rama'])
+
     alldiv = compute_divergence(
         config_base,
         np.concatenate([pos_restrain, pos_free], axis=0),
-        hb_scale,
+        hb_scale, gly_chain, gly_param,
     )
     if alldiv is None:
         raise RuntimeError('DIVERGENCE_FAIL')
@@ -613,7 +688,8 @@ def main_initialize(args):
     # Load initial parameters
     if init_dir != 'cached':
         print('Loading initial parameters...')
-        state['param'], state['init_param_files'] = get_init_param(init_dir)
+        state['param'], state['init_param_files'] = get_init_param(
+            init_dir, os.path.join(protein_dir, 'rama.dat'))
         print('Initial parameters loaded.')
         with open(os.path.join(base_dir, 'condiv_init.pkl'), 'wb') as f:
             cp.dump((init_dir, state['param'], state['init_param_files']), f, -1)
@@ -621,7 +697,7 @@ def main_initialize(args):
         with open(os.path.join(base_dir, 'condiv_init.pkl'), 'rb') as f:
             init_dir, state['param'], state['init_param_files'] = cp.load(f, encoding='latin1')
 
-    # Optimizer: train only rot and env; hb and sheet are fixed at init values
+    # Optimizer: rot, env, hb and sheet, the same four the Theano original trained
     state['initial_alpha'] = Update(
         env   = 0.1,
         cov   = 0.,    # included in rot latent vector, not a separate variable
@@ -632,6 +708,11 @@ def main_initialize(args):
         # makes one step move the hbond energies by the same absolute amount as the original.
         hb    = 0.02 / 1.96,
         sheet = 0.03,  # the original's value, on the same common-offset parameter
+        # The map is in nats with basins a few units deep, so a step of ~0.005 nats lets 500
+        # minibatches move it by up to ~2.5 where the gradient is consistent: the right order for
+        # a handedness that runs from 0 to -1.24, and small enough that a wrong direction shows up
+        # long before it does damage.
+        gly   = 0.02,
     ) * 0.25
 
     state['solver']   = rp.AdamSolver(len(state['initial_alpha']),

@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-19 07:15 CDT.** Eight jobs (six long-running plus `scmiss` and `ff21-restart`), all healthy, none needing intervention.
+Snapshot: **2026-09-19 09:00 CDT.** Eight jobs (six long-running plus `scmiss` and `ff21-restart`), all healthy, none needing intervention.
 Glycine AWH campaign relaunched after a settings defect made the first attempt unconverged
 (49032988/49033468 cancelled; 49033509/49033947/49033985 are the corrected run; see Campaign 6).
 The go/no-go is answered: per-neighbour structure is noise, only the neighbour-average is usable,
@@ -244,46 +244,186 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-18 ~20:00 CDT, verified live against `squeue`.**
+Snapshot **2026-09-19 ~13:30 CDT, verified live against `squeue`.** Finished and cancelled rows are
+deleted; only lessons worth reusing are kept, below the table.
 
-### Campaign 7: why the lambda benchmark arm fails (midway2, 2026-09-18)
-
-| JobID | what | log | state |
+| JobID | what | where / state | next action |
 |---|---|---|---|
-| 49035287 | `diag_lambda_fail.py` — per-rung RMSD, helix integrity, helix-pair geometry, per-residue basin retention, for lambda native + de novo and the proteinB / homeodomain controls | `scoring/lam_diag.49035287.out` | **COMPLETE** |
-| 49035294 | `gly_reweight.py` — reweights lambda's cold-rung ensemble along the one-parameter family `M3 + lam*A` joining ff3.0 (lam 0) to ff2.1 (lam 1) | `scoring/gly_rw.49035294.out` | queued |
-| 49035300 | `energy_split.py` — native vs ensemble total potential, split into rama / rama-ref / glycine-rama / rest | `scoring/en_split.49035300.out` | queued |
+| **49037819** -> **49038531** | AWH rep1 **extension 100 -> 400 ns**, the original 10 left-neighbour dipeptides | R, successor queued | re-derive `A_measured` when it lands |
+| **49037820** -> **49038532** | AWH rep2 extension, same 10 | R, successor queued | the two together set the error bar |
+| **49037918** (+ successor) | AWH **the 10 missing left neighbours**, `LC LF LH LI LK LN LQ LS LW LY`, to 400 ns, self-chaining | R on midway2-0080 | completes the left direction |
+| **49037919** (+ successor) | AWH **right neighbours 1 of 2**, `RA RC RD RE RF RG RH RI RK RL` | R on midway2-0113 | first left/right asymmetry measurement |
+| **49037920** (+ successor) | AWH **right neighbours 2 of 2**, `RM RN RP RQ RR RS RT RV RW RY` | R on midway2-0171 | with the above, all 40 contexts |
+| 49033947 | AWH under **ff14SB**, force-field-dependence check | R on midway2-0349 | compare against ff99SB-ILDN's -0.303 |
+| 49033117 | cluster-side monitor, `cron` partition, self-resubmitting | R on midway2-0466 | nothing |
 
-* **Working dir** `/beagle3/trsosnic/yinhan/ff3_benchmark/scoring`; the ff2.1 lambda config built
-  for the map comparison is `ff3_benchmark/glydiag/lambda_ff21.up`.
-* **Why.** lambda is the worst arm in the benchmark under both force fields and the only protein
-  that regresses in both arms under ff3.0. The question is whether a glycine Ramachandran change
-  can rescue it, since ff2.1 and ff3.0 differ for lambda in exactly six 72x72 glycine maps and
-  nothing else.
+| **49038518** (+ successors) | **Track A: ff3.1 with the glycine map trained**, `training/ff31-gly/`, 500 steps, self-chaining | R | ~4 days over ~4 links; then compare the learned `A` against Track B's |
 
-**Campaign 5 (ff3.0C training, `training/gly-ctx`) is CANCELLED and its jobs are gone**; the AWH
-measurement contradicted its founding premise. Do not resurrect it; see `current_job.md` section 3(b).
+**Restarted from step 0 on 2026-09-19** after a terminal-glycine defect in the gradient
+(findings.md 9q); the first attempt 49037939 reached step 24 and its output is kept as
+`run_output.bak_noterm`. **A hand-made `run_output` needs both `initial_checkpoint.pkl` and
+`ConDiv.py` copied in**, or every worker dies with `exit code 2`.
 
-### Campaign 6: glycine handedness by AWH, relaunched after a settings defect (midway2, 2026-09-18)
+**Restarted from step 0 on 2026-09-19** after a terminal-glycine defect in the gradient
+(findings.md 9q); the first attempt 49037939 reached step 24 and its output is kept as
+`run_output.bak_noterm`. **A hand-made `run_output` needs both `initial_checkpoint.pkl` and
+`ConDiv.py` copied in**, or every worker dies with `exit code 2`.
 
-| JobID | what | state at 2026-09-18 19:20 |
+**`rama_gly_gradient.py` moved from `py/` to `training/` (2026-09-19).** `py/` is shared Upside
+infrastructure and glycine-specific code does not belong there; `training/ConDiv.py` imports the
+module, so it has to be somewhere on `PYTHONPATH`. Every `training/*/env.sh` now exports
+`$PROJECT_ROOT/py:$PROJECT_ROOT/training`.
+
+**ACTION PENDING: `$P/py/rama_gly_gradient.py` is a hardlink and should be deleted once link
+49038518 ends.** That link sourced `env.sh` before the change, so its baked `PYTHONPATH` is `py/`
+only and its workers still resolve the module there. A hardlink rather than a copy means one
+inode and two names, so the two cannot drift apart in the meantime. Verified that the module
+imports and works with `py/` off the path entirely, so removing the name is safe; the next chain
+link (49038519) already picks it up from `training/`.
+
+**Watching Track A.** `grep '^gly' ff31gly_*.out` prints `dG(aR->aL)`, `|A| rms` and the
+`GLY|GLY` asymmetry every step. The handedness starts at exactly 0 and the number to compare
+against is the AWH's **-0.303 nats**. **`GLY|GLY asymmetry` must stay `0.00e+00`**; if it ever
+moves, the symmetric re-projection in `backprop_deriv` has broken and the run is invalid.
+Progress: `find run_output -name checkpoint.pkl -path '*epoch_*' | wc -l` against 500.
+
+**Also watch `hb`.** It is trained, unconstrained, and starts at 1.0. Adam's first step is
+scale-invariant, so early movement of exactly +/-0.00255 per step is just `alpha` and means
+nothing. Sustained drift does: 500 steps in one direction reaches **-0.27** and inverts the sign
+of every hydrogen bond. **Outside roughly 0.8-1.2, stop and diagnose.** Do not add a clamp; the
+original trainer has none and a runaway is real information about the model.
+
+The earlier chain on the measured map (49037907/08) was stopped: that map is now the Track B
+*reference*, and Track A learns its own from a symmetric start so the comparison is not circular.
+
+**`training/ff31-gly/` starts from the ff2.1 original `rama.dat`, NOT `rama31.dat`.** Verified by
+md5. Seeding Track A from the measured map would make the whole comparison circular, and it is a
+one-character mistake to make when cloning a run directory.
+
+**`run_output`: 13 MB per completed step, so ~6.5 GB over 500, but a transient peak of ~8.4 GB.**
+Measured. A completed minibatch directory holds only the parameter files; the in-progress one also
+holds 12 proteins x 8 replica `.h5` trajectories (158 MB each for the largest protein), which each
+worker deletes on success. **So `du` on `run_output` mid-step reads ~9 GB and looks alarming; it
+is not cumulative.** Check `du -sm epoch_*` and compare a finished directory against the live one
+before concluding anything. The 35 MB rama library each step writes is also deleted once its
+workers exit.
+
+**`training/ff31-gly/` starts from the ff2.1 original `rama.dat`, NOT `rama31.dat`.** Verified by
+md5. Seeding Track A from the measured map would make the whole comparison circular, and it is a
+one-character mistake to make when cloning a run directory.
+
+### Disk: the AWH campaign was going to cost ~100 GB, and most of it was unread output
+
+`gly_peptides` was 14 GB for 20 systems at 100 ns, i.e. **645 MB per system per 100 ns**. Scaled to
+40 systems at 400 ns that is **~100 GB**. Broken down for one system:
+
+| file | size / 100 ns | read by anything? |
 |---|---|---|
-| **49033509** | AWH, ff99SB-ILDN, 12 systems, corrected settings | RUNNING on midway2-0228, **84 ns**, 14:20 of 36 h, ends ~17:00 Sep 19 |
-| **49033947** | AWH, ff14SB, same 12 systems | RUNNING on midway2-0349, **60 ns**, 8:57 of 36 h, ends ~22:20 Sep 19 |
-| **49033985** | AWH ff99SB-ILDN **replica 2**, same 12 systems, independent seeds | RUNNING on midway2-0397, **48 ns**, 8:23 of 36 h, ends ~23:00 Sep 19. **Verdict delivered: per-neighbour structure does NOT reproduce (Spearman rho +0.048), only the neighbour-average does.** |
-| ~~49033510, 49033717~~ | earlier ff14SB attempts | **NODE_FAIL on midway2-0011 (48 min) then midway2-0010 (55 min)**, both `ExitCode 0:0`. Exclude list is now `midway2-0003,midway2-[0010-0011],midway2-[0342-0345]`. Builds survive, so each resubmit skips to grompp and resumes from `awh.cpt`. |
+| `awh.part0001.edr` | 96 MB | yes, but only its AWH frames |
+| `awh.part0001_pullx.xvg` | 27 MB | **no** |
+| `awh.part0001_pullf.xvg` | 27 MB | **no** |
+| `awh.part0001.xtc` | 2 MB | no, but cheap |
 
-**Three NODE_FAILs in this campaign** (49032220, 49033510 on 0010-0011, 49033717 on 0010-0011) while
-49033509 has run 5 h clean on midway2-0228. The two failing nodes are adjacent, so this looks like a
-bad pair rather than anything in the job. Keep them excluded.
-| 49032512 | unbiased pentapeptides, independent of AWH | RUNNING on midway2-0030, 25:51 of 36 h, ends ~05:30 Sep 19. Its `afterany` successor **49032513 was cancelled on 2026-09-17**, so this job has no continuation; it stops at its wall. |
-| 49033117 | cluster-side monitor, `cron` partition, self-resubmitting | RUNNING on midway2-0466, 20:43 |
-| **49037796** + **49037797** | **ff3.1 training chain**, dir `training/ff31/`, target 500 steps. ff_2.1 parameters + `rama31.dat` (coil GLY row scaled to 0.20 of the library antisymmetry, `GLY|GLY` symmetric), trained with the strict-modernization ConDiv with hb and sheet unfrozen. 96 CPUs/link, ~26 min/step, ~70 steps per 36 h link, so **~9 days over ~8 links**. The successor is queued BEFORE training starts, so a wall kill cannot silently end the chain. Verify progress with `find run_output -name checkpoint.pkl -path '*epoch_*' | wc -l` against 500. See findings.md 9l. |
-| **49035728** | **`ff21-restart`** on **`broadwl-lc`**, 12 tasks x 8 threads = 96 CPUs, 6 steps, 4 h wall. ConDiv restarted from ff_2.1 under the strict-modernization trainer. Dir `training/ff21-restart/`. **Not a training run**: ff_2.1 is the converged output of the Theano original, so a faithful port's gradient at step 1 should be indistinguishable from minibatch noise. Analyse with `check_converged.py run_output` (after `source env.sh`), **NOT** by parameter movement — Adam's first step is scale-invariant. Covers `rot`/`env` only; `hb`/`sheet` frozen. |
-| 49035314 | `scmiss`, scores the nine unscored benchmark arms, dir `/beagle3/.../ff3_benchmark/scoring/` | RUNNING, 3 of 9 done (NuG2_denovo, alpha3d_denovo, alpha3d_native) |
-| ~~49032235~~ | `np_1AO6_prod` | **CANCELLED 2026-09-18 22:12**: ff3.0 is being replaced, so this was the only job still simulating with it. Stopped at `block_count = 6` of 8, all six `np.run.N.up` intact (~84 GB each, ~500 GB total in `NP-1AO6/prod_ff3/`). Resumable; also the obvious disk reclaim if ff3.0 stays dead. |
-| ~~49032988, 49033468~~ | first AWH attempt | **CANCELLED, unconverged, see below** |
-| ~~49028632, 49031044~~ | ff3.0C ConDiv training | **CANCELLED at 141/500** |
+Two changes to `awh_template.mdp`, both output-only, neither touching the dynamics:
+* **`nstenergy = 5000 -> 50000`**, matching `awh-nstout`. AWH data is written as part of energy
+  frames and `awh-nstout` must be a multiple of `nstenergy`, so equality keeps every AWH frame and
+  drops the 10x redundant plain-energy frames.
+* **`pull-nstxout = 0`, `pull-nstfout = 0`.** The pull code still runs and still drives the AWH
+  bias; only its output files are suppressed. The PMF comes from `gmx awh` on the `.edr`.
+
+**Measured after the change, not projected**: the new systems write **0.93 MB/ns** against the
+extensions' 1.62 MB/ns, a 43% cut. Verified in the tpr (`gmx check -e` reports 16 frames at a
+100 ps timestep, matching `nstenergy = awh-nstout = 50000`, and no pull files exist).
+
+Campaign cost is therefore about **21 GB** on top of the current 12 GB: 30 new systems x 400 ns at
+0.93 MB/ns is 11 GB, and 20 extending systems x 300 more ns at 1.62 MB/ns is 10 GB. That is small
+against `/project`, where the retired NP campaign alone holds ~500 GB, so **no further action is
+warranted**.
+
+**What the remaining bytes are, in case it ever does matter.** At 90 KB per energy frame for a
+14-atom peptide, the `.edr` is almost entirely the AWH 2D grid, not the plain energy terms. So the
+`nstenergy` change mattered much less than removing the pull files did, and the only lever left is
+`awh-nstout`. Raising it 50000 -> 500000 would cut the dominant term 10x and still give 400
+convergence snapshots over 400 ns, which is far more than the ~10 ns spacing any analysis has
+used. It was not done: it needs a third rebuild of all 30 systems to save ~10 GB.
+
+The three new groups were cancelled and resubmitted so they build under the new template; the 20
+already-running systems keep their large `part0001` files, and their closed `part0001_pull?.xvg`
+were deleted for an immediate **1.2 GB** back. Their output settings **cannot** be changed
+mid-flight: `grompp -t` would reset the AWH bias history and throw away 100 ns of learning, and
+`convert-tpr` cannot alter output frequency. Backup: `awh_template.mdp.bak_verbose`.
+
+**The RCC quota tools do not work from midway2**: `mmlsquota` reports "File system project is not
+known to the GPFS cluster" for project, project2 and beagle3, and `rcchelp quota` dies with a
+`TypeError` inside `/project2/rcc/rupat/bin/quota.py`. `df` shows `/project` 77% used and
+`/beagle3` 64%, but those are whole-filesystem numbers, not the group quota. Until a working tool
+turns up, track our own footprint with `du` rather than trusting either.
+
+**ff3.1 training chain details.** ff_2.1 init params plus `rama31.dat`, whose coil GLY row is the
+AWH-measured dipeptide surface and holds **no library data**, trained with the
+strict-modernization ConDiv with `hb` and `sheet` unfrozen. The successor is queued BEFORE
+training starts, so a wall kill cannot silently end the chain. Progress:
+`find run_output -name checkpoint.pkl -path '*epoch_*' | wc -l` against 500. Rebuild the map with
+`py/build_rama_from_awh.py` when the 400 ns extensions land, and restart if the row moves.
+Superseded attempts, all cancelled when the map construction changed: 49037796/97/804 (uniform
+lambda), 49037810/11 (artifact subtraction), 49037815/16 (`S_library + A_measured`, rejected
+because `S_library` is ff3.0), 49037514. The 49037815 output is kept as `run_output.bak_libsym`.
+See findings.md 9i and 9l.
+
+**Cancelling a self-chaining job: cancel the PENDING successor FIRST, then the running link.**
+Doing it the other way spawns a chain you do not know about. `scancel` on the running link
+immediately satisfies the successor's `afterany` dependency, so the successor starts before the
+second `scancel` in the same command lands, and it queues a successor of its own. That happened on
+2026-09-19: two chains ended up writing the same `run_output/epoch_00_minibatch_00` concurrently.
+Both were killed, the partial epoch directories deleted, and one chain resubmitted. Check
+`squeue` after any chain cancellation rather than assuming it worked.
+
+**`awh_extend.sbatch` does not self-chain; `awh_batch.sbatch` does.** The two extension jobs were
+submitted with the former and would have stopped dead at their 36 h wall around 200 ns, with no
+successor and no error. Continuations are now queued on `afterany` (49038531, 49038532) using
+`awh_batch.sbatch`, which takes an optional third argument for the replica subdirectory so it can
+drive `awh_amber99sb-ildn_rep2` as well as rep1. **Anything submitted with `awh_extend.sbatch`
+needs a successor queued by hand.**
+
+**midway2-0080 added to the exclude list** after a NODE_FAIL took 49037918 down at 5:07. The chain
+self-healed: 49037921 resumed from `awh.cpt`, and the affected systems show both
+`awh.part0001.log` and `awh.part0002.log`, so nothing restarted from zero. The list is now
+`midway2-0003,midway2-[0010-0011],midway2-0080,midway2-[0342-0345]`.
+
+**Reading AWH progress: glob `awh.part*.log`, never `awh*.log`.** `gmx awh` leaves an
+`awhtool.log` in the system directory, it sorts last under `ls -v`, and it contains no
+`Step  Time` records. A progress script that takes the last `awh*.log` therefore reports **0 ns**
+for any system that has ever been analysed, which on 2026-09-19 made the `LG` blank look dead when
+it was running normally at 119 ns.
+
+**AWH extension details, and how to analyse it.** `awh_extend.sbatch REPLICA_DIR [TARGET_PS]` in
+`/project/trsosnic/yinhan/gly_peptides/` runs `convert-tpr -until` then `mdrun -cpi -noappend` for
+all 10 dipeptides. **`gmx awh` must read the LAST part file**, `ls -v awh.part*.edr | tail -1`; the
+AWH state is cumulative, so the final part carries the whole PMF and reading `awh.edr` silently
+gives the old 100 ns answer.
+
+**Why extend at all.** The achiral `GLY|GLY` blank is the convergence criterion, not a wall time.
+It must read 0, reads rms 0.032 at 100 ns, and decays as `1/sqrt(t)` (0.233 at 10 ns) while the
+signal converges to 0.071. 400 ns should halve it. Stop on the blank.
+
+**Node exclusions for every job in `gly_peptides`:**
+`midway2-0003,midway2-[0010-0011],midway2-[0342-0345]`. Three NODE_FAILs came from the adjacent
+0010-0011 pair with `ExitCode 0:0`. AWH builds survive a NODE_FAIL, so a resubmit skips to grompp
+and resumes from `awh.cpt`.
+
+**Completed campaigns, kept for their conclusions only:**
+* **Campaign 6 (AWH, 49033509 / 49033985)** delivered the answer, **-0.26 E_up**, and the finding
+  that per-neighbour structure does not reproduce (Spearman rho +0.048). Both were cancelled once
+  their 10 dipeptides had passed 100 ns; 49037819/20 continue from their checkpoints.
+* **Campaign 7 (lambda diagnosis, 49035287/94/300)** is complete: the failure is in helix crossing
+  angles, and no glycine map change rescues it (-0.024 E_up).
+* **Campaign 5 (ff3.0C training, `training/gly-ctx`)** is cancelled and must not be resurrected;
+  the AWH measurement contradicted its founding premise, and the library's per-pair ordering is
+  anti-correlated with the measurement (r = -0.540).
+* **`49032235 np_1AO6_prod`** cancelled 2026-09-18, the last job still simulating with ff3.0. Six
+  `np.run.N.up` intact (~500 GB in `NP-1AO6/prod_ff3/`), resumable, and the obvious disk reclaim.
+* **`49032512` pentapeptides** ran to its wall with no successor. Not usable as a cross-check:
+  Gly5 read -0.224 against an exact 0.
 
 **The first AWH attempt measured nothing, and was cancelled 2026-09-18.** `awh.mdp` had
 `awh1-dimN-diffusion = 5e-5 rad^2/ps` while AWH's own friction metric implies `D ~ 0.77` (10-90%

@@ -969,7 +969,7 @@ ff3.0 symmetrizes it anyway at all 19 sites. Two measurements bear on how much t
   **SUPERSEDED 2026-09-19.** This paragraph read "of ff2.1, ff3.0 and ff3.0C, ff3.0 is the right
   choice... the measurement says the correct handedness is zero". **Both halves are now false.**
   The zero came from unconverged flat surfaces (withdrawn claim 1 in section 12a); the converged
-  AWH gives **-0.26 E_up**, and neither ff2.1 (-1.32) nor ff3.0 (exactly 0) is right. ff3.1 sets
+  AWH gives **-0.303 nats**, and neither ff2.1 (-1.24) nor ff3.0 (exactly 0) is right. ff3.1 sets
   it to the measured value (section 9i, 9l). What survives from the reasoning here is the shape of
   the argument: a handedness error of *some* size should not sit in a local term, and the library
   curves fan out with every one leaning the same way while the measured curves superpose.
@@ -4054,23 +4054,40 @@ returns finite values; `initialize` reports `hb 1.000000`, `sheet 0.000000` and
 
 ---
 
-## 9i. The rama library fails its own achiral control, and how to correct the GLY row (2026-09-19)
+## 9i. What the library's glycine handedness is actually made of (2026-09-19)
 
-**The library says a glycine flanked by glycine is chiral. It cannot be.** Ac-Gly-Gly-NHMe has no
-chirality source: swapping HA2/HA3 maps the molecule to itself, so `dG(aR->aL)` must be exactly 0,
-and the AWH control LG confirms that (rep1 -0.015 on its plateau). Measured on the AWH basins from
-`parameters/common/rama.dat`, the coil `GLY|GLY` entries read **-0.7095 (left neighbour)** and
-**-0.9717 (right)**.
+**CORRECTED 2026-09-19.** This section previously read "the rama library fails its own achiral
+control" and treated the coil `GLY|GLY` entry's **-0.7095** as a direct measurement of the
+library's systematic error, on the grounds that `dG(aR->aL)` there "must be exactly 0". **That
+over-applied the symmetry argument.** Mirror symmetry requires the *whole environment* to be
+achiral. NDRD's `GLY|GLY` is conditioned only on the immediate neighbour being glycine; the rest
+of the chain is still L-amino acids in a chiral fold, so nothing forces it to zero. The only thing
+required to read 0 is a capped `Ac-Gly-Gly-NHMe` **dipeptide**, which is our AWH `LG` control, not
+a library entry.
 
-**This is an internal measurement of the library's systematic error that needs no simulation at
-all**, and it independently corroborates the AWH campaign. The library's XGX average over the 8
-measured neighbours is **-1.3180**; the AWH says the truth is **-0.26**, an overstatement of ~1.06.
-The GG entry says the library overstates by 0.71-0.97 in a context where the truth is known to be
-zero. Two completely independent estimates of the same artifact, agreeing at ~0.7-1.1.
+**The corrected reading is more useful than the discarded one.** The handedness decomposes
+monotonically by how much chiral context is present:
 
-It also explains ff3.0C. Subtracting the GG antisymmetry from every entry (what ff3.0C did) leaves
-about -1.32 + 0.71 = -0.61 against a true -0.26, i.e. it **under-corrects by ~0.35** - matching the
-recorded ff3.0C mean error of -0.256 and its "over-retains alpha_L" verdict in section 3(b).
+| measurement | chiral influences present | dG(aR->aL) |
+|---|---|---|
+| NDRD coil, averaged over neighbours | neighbour side chain + fold + longer-range sequence | **-1.24** |
+| NDRD coil, `GLY\|GLY` entry | fold + longer-range sequence | **-0.71** left, -0.97 right |
+| AWH `Ac-X-Gly-NHMe` | neighbour side chain only | **-0.303** |
+| AWH `Ac-Gly-Gly-NHMe` | none | **0** (measured 0.03, consistent with noise) |
+
+Every row that removes a source of chirality reduces the handedness. **That ordering is the
+signature of real physics at each level, not of a corrupted dataset.** It also splits the library
+number into the part Upside should carry locally (about -0.30, intrinsic to a glycine beside an L
+residue) and the part it already computes with `hbond`, `env` and `sidechain` (about -0.9, fold and
+longer-range context). The second part is the double-counting, and it is the whole defect.
+
+**What this does not change.** ff3.0C is still explained: subtracting the `GG` antisymmetry from
+every entry leaves about -1.24 + 0.71 = -0.53 against a measured -0.303, so it under-corrects,
+matching its recorded mean error of -0.256 and its "over-retains alpha_L" verdict. And ff3.1 still
+corrects the coil group only, but for the reason that always carried the argument: the sheet
+group's helical basins are essentially empty (alpha_R 1.6e-10, alpha_L 8.7e-16), so its apparent
+handedness is a ratio of near-zeros. The "sheet passes its achiral control" phrasing is withdrawn
+along with the rest.
 
 ### Machinery, all verified against the files
 
@@ -4097,15 +4114,110 @@ recorded ff3.0C mean error of -0.256 and its "over-retains alpha_L" verdict in s
   (-1.1823), not the neighbour average (-1.3180). Use -1.32 for the 8 measured neighbours.
 * Some entries (e.g. `LYS`) have an empty basin and return NaN; any rebuild must skip or mask them.
 
-### The correction that follows
+### The correction, superseded twice; the final one is in 9l
 
-`M_new = S + lam*A` on the GLY row, with **lam ~ 0.20** (0.26/1.318), applied uniformly to all XGX
-entries, and **`GLY|GLY` forced to lam = 0** because its true value is known exactly by symmetry.
-Keeping the library's per-neighbour structure scaled is defensible: its spread at lam=0.2 is 0.106,
-inside the AWH per-neighbour noise of 0.178, so our measurement has no power to contradict it,
-while the library's PDB statistics for that structure are solid (sigma 0.012 per entry).
+This section first recorded `M_new = S_library + 0.196*A`, then `M_new = S_library + A_measured`.
+**Both are superseded.** The second was rejected on the observation that `S_library` is exactly
+ff3.0, the fully mirror-symmetrised map, so the construction was ff3.0 plus a correction. **ff3.1
+replaces the glycine coil row outright with the measured surface and keeps no library data in it;
+see 9l.** The provenance of the measured antisymmetric part is unchanged: mean of
+`0.5*(F(phi,psi) - F(-phi,-psi))` over the chiral dipeptides and both replicas, 46x46 at 100%
+coverage, cubic periodic interpolation to 72x72, parity re-imposed exactly afterwards.
 
-Frame it as **ff2.1 with the glycine asymmetry scaled to 0.20**, not as ff3.0 plus something.
+**Units, CORRECTED.** This section originally gave the E_up energy conversion as correct:
+* (a) energy: `dG[kJ/mol] / 2.914952774272` -> -0.260
+* **(b) log-probability: `dG[kJ/mol] / kT(300) = 2.494339` -> -0.303**
+
+**(b) is correct**, and the file settles it in one line: every map in `rama.dat` satisfies
+`sum(exp(-E)) = 1`, so the slot holds `-lnP` and a PMF entering it is divided by `kT`. The
+original argument for (a) reasoned about what the engine would do at 300 K rather than about what
+the file stores. The measurement is the same either way; the two numbers are one surface in two
+conventions.
+
+### Why one surface for every X/GLY pair, settled by measurement
+
+The pairs really do differ. **We have no trustworthy source for how**, and the library's version is
+actively wrong:
+
+| | value |
+|---|---|
+| neighbour-**averaged** antisym surface, rep1 vs rep2 | **r = 0.968**, signal-to-noise **3.89** |
+| **per-neighbour** surfaces, rep1 vs rep2 | r = 0.41-0.92, signal-to-noise **1.48** |
+| achiral LG blank (true value exactly 0) | rms **0.032-0.035**, against per-pair signals of 0.05-0.12 |
+| **library per-pair ordering vs measurement** | **r = -0.540** (rep1 -0.792, rep2 -0.239) |
+| measurement per-pair, rep1 vs rep2 | r = +0.515 |
+
+**The library's pair-to-pair ordering is ANTI-correlated with the measurement.** Not merely
+unresolved - pointing the wrong way. Importing it would make individual pairs worse than a flat
+correction, and it is why ff3.0C, which preserved exactly that structure, scored worse than plain
+ff3.0. Meanwhile our own per-pair signal is barely 2-3x the noise floor of a surface known to be
+flat.
+
+So the flat correction is not a convenience. **It is the only per-pair claim the evidence
+supports.** Consequence, stated plainly: ff3.1's per-pair spread is **0.023** against ff2.1's
+0.524. The map asserts that glycine handedness is essentially neighbour-independent, which is what
+we measured, not what we would have assumed.
+
+### Rejected constructions, and why
+
+| | measured mean | `GLY\|GLY` = 0 | fitted parameter | library data in the GLY row |
+|---|---|---|---|---|
+| uniform `S + 0.196*A` | yes | no, -0.140, needs manual zeroing | 1 | yes |
+| `S + 0.4245*(A - A_GG)` | yes | yes | 1 | yes |
+| shift only, `S + A - 1.49*A_GG` | yes | **no, +0.352** | 1 | yes |
+| `S_library + A_measured` | yes | yes | **0** | yes, the symmetric part, which **is ff3.0** |
+| **measured surface, whole row** | **yes** | **yes** | **0** | **none** |
+
+All four were built and discarded. The trilemma the first three exposed - no one-parameter family
+satisfies mean, `GLY|GLY` and spread simultaneously - is itself evidence that the library's
+glycine row is not a simple additive artifact. The fourth removed the fitted parameter but left
+ff3.0 underneath.
+
+### Is the measurement trustworthy at all? The blank says yes, and bounds the error
+
+**The challenge:** if GROMACS cannot reproduce exact Gly-Gly symmetry, the simulation is wrong and
+its surfaces should not be used. Correct in principle, so it was tested rather than argued.
+
+**LG does not come out at exactly zero.** Its antisymmetric surface reads rms **0.032-0.035 E_up**
+at 100 ns, and its basin asymmetry is **+0.039** where it must be 0. Against a signal of rms 0.071
+that is a single-surface signal-to-noise of only **2.2**.
+
+**But it is sampling noise, not a defect, and two independent tests say so.**
+
+1. **It does not reproduce between replicas: r = +0.157.** A real error - a chirality mistake in
+   the topology, a biased start, a broken AWH grid - would give the *same* residual from any seed.
+   Uncorrelated residuals are what finite sampling looks like.
+2. **It decays with time while the signal plateaus.** LG blank rms: 0.233 (10 ns) -> 0.051 (30) ->
+   0.049 (50) -> 0.042 (70) -> **0.032 (100)**, roughly 1/sqrt(t). The 8-neighbour signal over the
+   same window: 0.080 (40) -> 0.075 (70) -> **0.071 (100)**. **If the signal were also artifact it
+   would decay too. It converges instead.** That contrast is the strongest evidence the measured
+   handedness is real.
+
+**Blank subtraction does NOT help here.** Because the error is random rather than systematic
+(r = 0.157 between replicas, and A vs blank r = -0.288), subtracting a noisy estimate of zero adds
+noise instead of removing bias. The blank is a diagnostic, not a correction.
+
+**Honest error budget on the map as built.** A single surface is S/N 2.2; `A_measured` averages 16
+surfaces and the replica-to-replica difference of the *averaged* surface is 0.018 against a signal
+of 0.069, so S/N ~3.9. The blank's residual basin asymmetry of +0.039 against the signal's -0.194
+puts roughly **20% uncertainty on the basin dG** from this source alone. That is larger than the
++/-0.01 statistical spread previously quoted and should be the number used.
+
+**The blank is the right convergence criterion, and the runs were extended on it.** Jobs
+**49037819** (rep1) and **49037820** (rep2) extend all 10 dipeptides from 100 to **400 ns**, which
+should halve the blank to ~0.016 and take single-surface S/N to ~4.4. Stop on the blank, not on a
+fixed time. After extension, `gmx awh` must read the **last** part file
+(`ls -v awh.part*.edr | tail -1`); the AWH state is cumulative so the final part carries the full
+PMF. If the extended surface shifts `A_measured` materially, rebuild `rama31.dat` before the
+benchmark stage.
+
+### What would be needed to get per-pair values
+
+More sampling, and the amount is known. Per-pair signal-to-noise is 1.48; usable is ~3, which is
+~4x the sampling (noise falls as 1/sqrt(t)), i.e. ~400 ns per system against the present ~100.
+The full row also needs the 13 unmeasured left neighbours **and** the right-direction entries,
+which have never been run: 21 neighbours x 2 directions = 42 systems. At 400 ns that is roughly
+14x the campaign already done. Not started, and not required for the neighbour-average.
 
 ---
 
@@ -4227,50 +4339,508 @@ driven anywhere**, which is what a retrain needs before it can be trusted.
 
 ---
 
-## 9l. ff3.1 built and training launched (2026-09-19)
+## 9l. ff3.1: the glycine coil row is replaced by measurement (2026-09-19)
 
 **ff3.1 = ff_2.1 parameters + `rama31.dat`**, trained with the strict-modernization ConDiv
-(hb and sheet unfrozen, env param-deriv fixed). Jobs **49037796** (running) and **49037797**
-(queued on dependency), chaining to 500 steps in `training/ff31/`.
+(hb and sheet unfrozen, env param-deriv fixed). Jobs **49037907** -> **49037908**, chaining to
+500 steps in `training/ff31/`.
 
-**The map.** Coil central-GLY row only: `M_new = S + 0.20*A`, with `S`/`A` the mirror-symmetric
-and antisymmetric parts under `(phi,psi) -> (-phi,-psi)`. **`GLY|GLY` forced to lambda = 0**, fully
-symmetric, because a glycine flanked by glycine is achiral by construction and its true value is
-known exactly. `lambda = 0.20` comes from the AWH measurement: the two replicas imply 0.1971 and
-0.2062, mean 0.2017. **Do not add digits** - the systematic uncertainty (the rep2 control anomaly,
-~0.09 E_up) makes lambda good to only about +/-0.07.
+**The map. The library's central-glycine coil row is discarded and rebuilt from the AWH surfaces;
+it contains no library data.** Built by `py/build_rama_from_awh.py`, which is saved and documented
+rather than inline. The row holds exactly two maps:
 
-**The sheet group is deliberately untouched, and that is now evidence-based rather than a scope
-decision.** Measured on the same basins, the sheet library **passes its own achiral control**
-(`GLY|GLY` left +0.0011) where the coil library fails it badly (-0.7095). Its apparent 8-neighbour
-average of +14.06 is meaningless: both helical basins are essentially empty there (section 3a
-measured alpha_R 1.6e-10, alpha_L 8.7e-16), so it is a ratio of near-zeros. Scaling it would be
-scaling noise.
+| entry | content | dG(aR->aL) |
+|---|---|---|
+| `X\|GLY`, every neighbour, both directions | `S_meas + A_meas` | **-0.3030 nats** |
+| `GLY\|GLY` | `S_meas` alone | **0 exactly** |
 
-**Verified before launching, at three levels.**
-* *Library*: only the coil GLY row differs from `rama.dat`; sheet diff exactly 0.00e+00;
-  `dimer_weight` identical; NaN mask preserved; 8-neighbour dG **-0.2648** (was -1.3180);
-  `GLY|GLY` **-0.000000** both directions and exactly self-mirror-symmetric.
-* *Built config, end to end*: GLY residues go from mean **-1.234** (range -1.54..-0.87) to
-  **-0.248** (-0.31..-0.17), while a non-GLY sample is **bit-identical at +1.956** in both. The
-  change reaches the simulation and touches only glycine.
-* *Trainer*: `initialize` gives `pack_param residual = 3.38e-30`, `hb 1.000000`, `sheet 0.000000`,
-  456 proteins, 38 minibatches - all matching the ff21-restart baseline.
+`S_meas` averages the symmetric part of all 19 surfaces (10 dipeptides x 2 replicas, less the LR
+replica that had not finished); `A_meas` averages the antisymmetric part of the 17 chiral ones,
+because the achiral blank measures zero rather than a neighbour effect. Periodic cubic
+interpolation 46x46 -> 72x72 with parity re-imposed exactly on the target grid. **Nothing fitted.**
 
-Note the neighbour spread narrows 5x along with the amplitude (-1.54..-0.87 becomes -0.31..-0.17),
-which is the intended consequence of scaling `A`: the library's neighbour structure is kept but
-shrunk, since the AWH could not resolve it (per-neighbour noise 0.178 against a scaled spread
-of ~0.11).
+The two-map split is not a special case bolted on, it is the symmetry argument applied where it
+holds, and its consequence emerges rather than being imposed: `read_weighted_maps` mixes the left
+and right neighbour maps, so `Leu-Gly-Gly` gets **half** the handedness (-0.146) and `Gly-Gly-Gly`
+gets **none**.
 
-**Cost, and where it comes from.** ~26 min/step against gly-sym's ~9.4, so 500 steps is **~9 days**
-across ~8 chain links rather than ~3.3 days. **The entire 2.8x is the sheet finite differences**:
-two extra passes over all 250 frames per minibatch. If sheet training were dropped the cost returns
-to roughly gly-sym's.
+### Why the whole row, and not just the antisymmetric part
+
+The previous construction was `S_library + A_measured`. It was replaced because **`S_library` is
+exactly ff3.0**, the fully mirror-symmetrised map, so the construction amounted to ff3.0 plus a
+correction term: a patch on a map already established as wrong. The argument that had justified
+keeping `S_library` did not survive being measured properly (see 12a, correction 6).
+
+Measured library against measured surface:
+
+| | library | measured | |
+|---|---|---|---|
+| full-surface correlation | | | **r = +0.867** |
+| aR basin free energy | 2.388 | 2.595 | +0.207 |
+| **aL basin free energy** | 1.206 | 2.293 | **+1.087** |
+| beta basin | 2.044 | 1.346 | -0.698 |
+| map mean over the grid | 11.580 | 11.577 | -0.003 |
+| aR->aL saddle, bottleneck path | 6.32 | 4.10 | **-2.22** |
+| global maximum | 18.28 | 25.89 | +7.61 |
+
+**The aR basin barely moves and the map mean is unchanged to three decimals**, so this is not a
+re-scaling of glycine and its weight against the other 19 residue types does not shift. The single
+large disagreement is the aL basin, which is the handedness error itself. The **barrier between
+basins falls**, so glycine samples more freely, not less. The higher global maximum sits in a
+forbidden corner no path crosses, and the library cannot represent that region in any case: with
+44,112 glycines over 5,184 bins, an empty bin is censored at about `ln N = 10.7` above the mean
+however forbidden it really is.
+
+### Units: the map holds `-lnP`, so divide by kT
+
+**Every map in `rama.dat` satisfies `sum(exp(-E)) = 1` to six decimals**, and
+`mixture_potential`'s docstring states the requirement. So an AWH PMF in kJ/mol enters that slot as
+
+```
+E[nats] = PMF / kT(300 K) = PMF / 2.494339
+```
+
+**not** `PMF / 2.914952774272` (kJ/mol per E_up). The two differ by 1.169x. The additive offset of
+the PMF is arbitrary and the normalisation removes it. A replacement must be in the units of the
+thing it replaces. This supersedes the earlier E_up choice, which was made when only an
+antisymmetric *energy* correction was being injected against a dG target quoted in E_up; -0.26 E_up
+and -0.303 nats are the same measurement. ConDiv trains at `T_up ~ 0.80`, and the library carries
+the identical nominal-temperature mismatch, so matching its convention keeps the two comparable.
+
+### What ff3.1 gives up, quantified
+
+* **Per-neighbour structure**: the library resolves it (spread **0.264 nats** across its 42
+  neighbour maps in the populated region, ~1,500 glycines each); ff3.1 asserts none. Our per-pair
+  replica agreement is r = 0.41-0.92 at **S/N 1.48**, against r = 0.968 and **S/N 3.89** for the
+  average, so using per-pair surfaces would inject ~40% noise into every map.
+* **Left/right asymmetry**: the library's left and right glycine maps differ by rms **0.679 nats**.
+  Every dipeptide has X on the N-terminal side, so the right direction has never been measured.
+* Both are smaller than the **1.087 nats** of aL error removed, which is why the trade is worth
+  making. Closing them needs 32 more AWH systems.
+* **The library's per-pair ordering could not be kept regardless**: it is *anti-correlated* with
+  the measurement (r = -0.540; rep1 -0.792, rep2 -0.239) while the replicas agree at +0.515. That
+  is also why ff3.0C, built to preserve it, scored worse than plain ff3.0.
+
+### The sheet group is untouched, and that is evidence-based
+
+Measured on the same basins, the sheet library **passes its own achiral control** (`GLY|GLY` left
++0.0011) where the coil library fails it badly (-0.7095). Its apparent 8-neighbour average of
++14.06 is meaningless: both helical basins are essentially empty there (section 3a measured
+alpha_R 1.6e-10, alpha_L 8.7e-16), so it is a ratio of near-zeros. A capped dipeptide in water also
+measures nothing about a residue in a beta sheet, so there is no replacement to make.
+
+### Verified before launching
+
+* *Library*: everything outside the coil GLY row bit-identical, including the sheet group and both
+  `dimer_weight` arrays; NaN mask preserved; all 42 GLY maps normalise to `1.000000`; exactly two
+  distinct maps in the row; `GLY|GLY` antisymmetric part 0 to machine precision.
+* *The NaN is one whole column, not scattered bins.* 4.545% = 1/22 is the **`CPR` neighbour
+  column**, which is never read, because `read_rama_maps_and_weights` maps a cis-proline
+  *neighbour* onto `PRO`. The builder leaves it untouched.
+* *End to end through `read_weighted_maps`*: non-glycine residues bit-identical; glycines go from
+  ~-1.3 to -0.303; `Leu-Gly-Gly` -0.146; `Gly-Gly-Gly` 0.
+* *Engine*: `1a62` builds and gives a finite total energy of **-226.72** against ff2.1's -228.88.
+
+**Cost: sheet training is essentially free. CORRECTED 2026-09-19.** This first read "~26 min/step,
+2.8x, entirely the sheet finite differences". Wrong, and generalised from a single contended job.
+Measured per-minibatch seconds: **gly-sym (sheet frozen) 650-712**, **ff31 (sheet trained)
+625-705** - indistinguishable. The 2.8x came from `ff21-restart` (1361-1883 s), which ran on
+7 nodes in the 0323-0327/0387-0388 range and was simply slow; same CPU count, same code.
+**Do not cite a sheet-training cost.** 500 steps is ~3.8 days, not ~9.
 
 **Prediction this is falsifiable against.** ff3.0's damage is concentrated in de novo folding
 (section 9d: native +0.039, de novo -0.030, paired p = 0.021). If that is because zeroing the
-glycine alpha_L bias removed turn nucleation, restoring 20% of it should recover de novo arms while
-keeping the native gains. If the de novo arms do not move, that explanation is wrong.
+glycine alpha_L bias removed turn nucleation, restoring the measured part of it should recover the
+de novo arms while keeping the native gains. If the de novo arms do not move, that explanation is
+wrong.
+
+---
+
+## 9n. Framework audit: `hb` is trained, and the formula it rests on is exact (2026-09-19)
+
+Re-checked after `gly` was added, because `hb` was silently frozen once before by the
+Theano -> PyTorch port and the failure mode leaves no trace in a log.
+
+**Against `ConDiv_original.py`, line for line:**
+
+| | original (Theano) | `training/ConDiv.py` now |
+|---|---|---|
+| parameter tuple | `env cov rot hyd hb sheet` | same **plus `gly`** |
+| `initial_alpha` | 0.1 / 0. / 0.5 / 0. / **0.02** / **0.03**, then `* 0.25` | identical, plus `gly = 0.02` |
+| zeroed in `backprop_deriv` | `cov`, `hyd` only | same |
+| hb derivative | `get_output('hbond_energy')[0,0] / hb_strength` | `... / hb_scale` |
+| bound or clip on hb | **none** | none |
+
+**The `dE/ds = E/s` formula is exact, measured rather than assumed.** Scaling
+`hbond.parameter[:4]` and reading the engine back:
+
+| scale | total E | `hbond_energy` | `E_hb / scale` |
+|---|---|---|---|
+| 1.00 | -228.880 | -198.795 | **-198.795258** |
+| 1.01 | -230.868 | -200.783 | -198.795311 |
+| 1.10 | -248.760 | -218.675 | -198.795319 |
+| 0.90 | -209.001 | -178.916 | -198.795369 |
+
+Constant to **5.6e-7**, which is float32 round-off. The 12-entry `parameter` dataset is
+`[-1.961, -1.946, -1.769, -0.406 | 0., 3.820, 2.880, 3.820, -2.094, 3.820, 1.047, 3.820]`: the
+first four are the three rama-dependent energies plus the bias, and entries 4..11 are rama
+boundary and sharpness values in radians. Scaling only `[:4]` is what keeps the potential exactly
+linear, and the table above is the proof that it does.
+
+**The only deviation from the original is deliberate and documented.** The original's parameter
+was an absolute energy near -2.112 at lr 0.02; ours is a multiplicative scale starting at 1.0, so
+the rate is `0.02 / 1.96` to move the hbond energies by the same amount per step. 1.96 rather than
+2.112 because that is ff2.1's own `E_alpha`.
+
+**`hb` is unconstrained, and that is correct.** The original has no clip anywhere, and adding one
+would be a guard on a parameter whose runaway would be real information. **But watch it.** Adam's
+first step is scale-invariant, so the smoke test's -0.00255 per step is exactly `alpha` and says
+nothing about drift. If `hb` moved that way consistently for 500 steps it would reach **-0.27**
+and invert the sign of every hydrogen bond. ff2.1 is a verified fixed point of this objective
+(sign-flip p >= 0.22 on all four parameters), so the gradient there is noise, but the glycine map
+is now moving and `hb` may legitimately drift to compensate. **`hb` leaving roughly 0.8-1.2 is a
+signal to stop and diagnose, not to clamp.**
+
+---
+
+## 9q. Audit of the running Track A job, and a real defect found (2026-09-19)
+
+Prompted by "is there still an error in the current training". There was.
+
+### Terminal glycines were missing from the gradient
+
+`GlycineMapChain` skipped residues 0 and n-1 on the reasoning that termini "use one direction".
+They do, but `read_rama_maps_and_weights` still gives a terminal glycine a **glycine map**
+(`pots[0] = V(seq[0],'right',seq[1])`), so its energy still depends on `(S, A)` and its gradient
+was simply absent.
+
+**99 terminal glycines against 3,212 interior ones: 3.0% of the glycine gradient was missing**,
+and a biased 3%, since chain ends are more flexible than the interior. Fixed by carrying a list of
+(direction, neighbour) pairs per glycine, one entry at a terminus and two inside, so both cases go
+through the same mixture code.
+
+**Why the gate did not catch it: 1a62 has no terminal glycine.** A gradient check only tests the
+branches its test protein happens to exercise. The verifier now prints how many terminal and
+glycine-adjacent glycines the protein has and **warns when a branch is not exercised**, and it is
+run on proteins chosen to cover each branch:
+
+| protein | coverage | dS | dA |
+|---|---|---|---|
+| 1a62 | interior only | 3.8e-5 | 1.6e-3 |
+| 1bfa | + 1 terminal (C) | 3.1e-5 | 3.5e-4 |
+| 1bgf | + 1 terminal (N), 1 glycine-adjacent | 3.6e-5 | **6.7e-5** |
+| 1fjd | + 1 terminal, **5 glycine-adjacent** | **1.4e-6** | 2.8e-4 |
+
+That covers every branch of `residue_map`: interior with two non-glycine neighbours, interior with
+a glycine neighbour, and both termini. 1bfa printed the "not exercised" warning for the
+glycine-adjacent case, which is exactly the signal that was missing before.
+
+### Everything else checked out
+
+* **Analytic gradient still correct** after the `read_gly_maps` rewrite and the file
+  reorganisation: dS agrees with finite differences to 5.0e-5 at the sweep optimum.
+* **The library the workers read carries exactly the checkpoint parameters**, S and A to 9.5e-7,
+  which is the float32 storage floor.
+* **Swapping `read_gly_maps` mid-run was a genuine no-op**, verified on the live training library:
+  the old differencing route and the new projection route agree to 9.5e-7 there, because
+  `write_gly_library` does not renormalise.
+* **Non-glycine coil maps and the entire sheet group drift exactly 0.0** from the ff2.1 original
+  after 24 steps.
+* **The map stays a sane `-lnP`**: `S` has moved 0.0316 rms against its own 12.57 range, `X|GLY`
+  spans 12.62 with a minimum of 4.95, all finite, and `sum(exp(-E))` has drifted only to 1.0012.
+
+### Inputs verified too, not just the code
+
+`training/ff31-gly/init_param/` is **exactly ff_2.1**: `environment.h5`, `sidechain.h5`,
+`hbond` (= `ff_2.1/hbond.h5`) and `sheet` all md5-match, and `upside_input/rama.dat` md5-matches
+the ff2.1 original rather than `rama31.dat`. Worth checking because the directory was built by
+hardlinking from an earlier run, and a stale hardlink would start the whole campaign from the
+wrong force field without any symptom.
+
+At step 0 of the restarted run: `|A|` rms 0.00498 which is exactly `alpha`, as Adam's
+scale-invariant first step requires; `GLY|GLY` asymmetry `0.00e+00`; restrained RMSD 1.02 A.
+
+**The fix's size cannot be measured by comparing the two runs**, because the simulations are
+stochastic: the same minibatch gave restrained/free RMSD 1.02/2.98 in one and 0.87/3.53 in the
+other, and `sheet` moved by `+alpha` in one and `-alpha` in the other. Single-step comparisons
+across runs measure seed noise, not the change. The finite-difference gate is the only rigorous
+test of the gradient and it is what the correction rests on.
+
+### Decision
+
+Training restarted from step 0 on the corrected gradient. 24 steps, about 5 h of a 4-day run, is
+cheap against having the whole trajectory under one correct objective; and the parameters had
+barely left ff2.1 anyway, `rot` drift being indistinguishable from a random walk.
+
+---
+
+## 9p. Is Track A going the right way? Measured at step 23 of 500 (2026-09-19)
+
+Two separate questions: is the glycine map moving toward the independent measurement, and is the
+rest of the force field staying sane.
+
+### The glycine map converges onto the AWH surface it has never seen
+
+`A_learned` against `A_measured` from `rama31.dat`, correlation weighted by where glycines
+actually sit (the 3,212-glycine occupancy histogram of the training set, symmetrised):
+
+| step | `\|A\|` rms | fraction of measured | dG(aR->aL) | **corr with AWH** |
+|---|---|---|---|---|
+| 0 | 0.00498 | 0.06 | -0.0080 | **+0.374** |
+| 4 | 0.01341 | 0.16 | -0.0323 | +0.462 |
+| 8 | 0.01820 | 0.22 | -0.0419 | +0.424 |
+| 12 | 0.02122 | 0.26 | -0.0571 | +0.513 |
+| 16 | 0.02475 | 0.30 | -0.0780 | +0.598 |
+| 20 | 0.02851 | 0.34 | -0.0958 | +0.628 |
+| 23 | 0.02974 | 0.36 | -0.1016 | **+0.639** |
+| AWH reference | 0.0828 | 1.00 | **-0.3030** | |
+
+**The correlation rises monotonically, +0.374 to +0.639.** That is the load-bearing number, and it
+needs no noise model: a parameter diffusing on minibatch noise would have its correlation with a
+*fixed external target* fluctuate about zero, not trend. Two methods sharing no input, contrastive
+divergence on 456 proteins and AWH on capped dipeptides in water, are producing the same surface
+shape in the region glycines occupy, and the agreement improves as training proceeds.
+
+Amplitude and basin dG track each other (0.36 and 0.34 of the measured value), so the map is
+growing by roughly uniform scaling of a converged shape rather than changing shape as it grows.
+
+### Everything else is diffusing, not drifting: ff2.1 is still at its fixed point
+
+Adam's step is about `alpha` in a random direction, so a parameter sitting at a minimum random
+walks with rms drift `alpha*sqrt(n)`. At n = 23:
+
+| parameter | alpha | random-walk prediction | observed | ratio |
+|---|---|---|---|---|
+| `rot` | 0.12500 | 0.5995 | 0.6023 | **1.00** |
+| `env` | 0.02500 | 0.1199 | 0.1292 | **1.08** |
+| `hb` | 0.00255 | 0.0122 | 0.0110 | **0.90** |
+| `sheet` | 0.00750 | 0.0360 | 0.0330 | **0.92** |
+
+**All four land within 10% of pure diffusion.** They are not being dragged anywhere; ff2.1 remains
+a fixed point for them while the glycine map moves. That also settles the `hb` runaway worry: its
+displacement from 1.0 is exactly the random walk, so the early monotone decrease was Adam's
+scale-invariant first steps, not drift.
+
+Restrained RMSD holds at 0.89-0.96 A throughout, so the data ensemble stays native-anchored. Free
+RMSD scatters 1.99-2.80 A with no trend, but minibatches hold different proteins, so nothing can
+be read from that until epoch 1 repeats a protein set.
+
+### What is still open
+
+23 of 500 steps, so the correlation could stall or reverse. Amplitude is at 36% and the question
+the run exists to answer is where it stops: **-0.303 means the double-counting subtraction is
+real; -0.50 means it merely re-derived its own training statistics** (see 9o).
+
+**Two reference-file traps found while measuring this, both mine.** `read_gly_maps` originally
+returned `X|GLY - GLY|GLY`, which is `A` plus a constant whenever the two maps were normalised
+separately, as `build_rama_from_awh.py` does; it now projects out the symmetric and antisymmetric
+parts instead, which is offset-proof and agrees exactly on libraries written by
+`write_gly_library`. And the cluster's `parameters/common/rama31.dat` was still the superseded
+`S_library + A_measured` construction (`|A|` rms 0.0692 against the current 0.0828), so the first
+comparison used the wrong reference. **Check the md5 of a reference file against the repo before
+quoting a number from it.**
+
+---
+
+## 9o. Does training on PDB data fix a PDB-derived bias? (2026-09-19)
+
+The objection: NDRD is `-lnP` over PDB structures, ConDiv trains against PDB structures, so how
+can the second correct the first. It separates into two defects that behave completely
+differently.
+
+**Defect 1, selection bias.** The PDB over-represents crystallisable, soluble, often turn-rich
+proteins, and whatever that does to glycine statistics is inherited by NDRD *and* by the 456
+training proteins. **ConDiv does not fix this and cannot.** Both tracks of ff3.1 would be wrong
+together, and the objection is correct as stated.
+
+**Defect 2, double-counting, and this is the one actually identified in 9i.** NDRD estimates
+`P(phi,psi | neighbour)` marginalised over everything else, so it carries the fold's influence on
+the backbone. Upside then *adds* `hbond + env + sidechain`, which are its own model of the same
+fold. The fold is counted twice. ConDiv estimates a different object: the local term that, **given
+the rest of the force field**, reproduces the observed ensemble. Same data, different estimand,
+and the difference is exactly the double-counted part. **A representational defect is fixed by
+changing the estimator, not by changing the dataset.**
+
+**How big is defect 2? The decomposition in 9i answers it.** Handedness falls monotonically as
+chiral context is removed: -1.24 (all context) -> -0.71 (`GLY|GLY`, fold only) -> -0.303 (capped
+dipeptide) -> 0 (achiral dipeptide). So roughly **-0.30 is local and -0.9 is fold**, and it is the
+-0.9 that Upside already computes elsewhere. That is a large defect, and it is not dataset bias.
+
+### Measured: the two PDB-derived datasets do NOT agree
+
+The objection assumes NDRD and the ConDiv training set carry the same bias. Measured directly on
+the 456 training proteins' native structures (3,212 interior glycines, 46,189 non-glycines;
+dihedral sign validated by non-glycine `phi < 0` at 0.975):
+
+| | `phi > 0` fraction | dG(aR->aL), standard basins |
+|---|---|---|
+| ConDiv training set, raw counts | **0.5959 +/- 0.0088** | **-0.500 +/- 0.054** |
+| NDRD `GLY\|ALL` marginal, same boxes | 0.6411 | -1.182 |
+
+**They differ by 5.1 sigma on `phi > 0` and by 0.68 nats on the basin ratio**, and the gap is not
+an artifact of the basin definition:
+
+| basin definition | training set | NDRD ALL | gap |
+|---|---|---|---|
+| project standard 60x70 | -0.500 +/- 0.054 | -1.182 | 0.682 |
+| wide 80x90 | -0.625 +/- 0.051 | -1.206 | 0.581 |
+| narrow 40x50 | -0.267 +/- 0.061 | -1.069 | 0.802 |
+| shifted +10 deg | -0.447 +/- 0.057 | -1.159 | 0.712 |
+
+The absolute number moves with the boxes, as it must; **the gap does not**, staying at 0.58-0.80
+across all four. Cause not established: it could be the different protein cull, or NDRD's adaptive
+kernel smoothing redistributing density across narrow basins, or how the `ALL` marginal is
+constructed. **Do not attribute it without measuring.**
+
+**What it means for the objection.** "Both datasets are biased the same way" is empirically false
+for this observable: they disagree by more than twice the entire intrinsic handedness. That cuts
+both ways. It supports the concern that PDB-derived glycine numbers are fragile and
+selection-dependent, and it also means Track A is not training toward the library's answer, since
+its own data says -0.50 before any double-counting is subtracted. **The learned local term should
+therefore land between 0 and -0.50**, and the AWH's -0.303 sits inside that window.
+
+**The running job is a falsifiable test of the objection.** Track A starts at exactly 0 handedness
+and trains on PDB structures. If it converges near **-1.24** it has merely re-derived the library
+and the objection is vindicated. If it converges near **-0.303**, the subtraction is real and the
+map is not simply reproducing its training statistics. No intermediate interpretation is needed:
+the two candidate answers differ by 4x.
+
+**What is genuinely independent of the PDB.** Track B only. AMBER99SB-ILDN's backbone torsions are
+fit to quantum chemistry on dipeptides, not to PDB conformational statistics, so the AWH number
+shares no input with either NDRD or the training set. It has its own systematic instead, force
+field dependence, which is what job 49033947 (ff14SB) brackets.
+
+**Honest limit: neither track is experiment.** The literature is explicit that force fields
+disagree on central glycine (ff14SB pPII 0.36 against CHARMM36m 0.48) and that all of them lose to
+experiment. Agreement between Tracks A and B would mean two independent methods agree, not that
+the answer is right.
+
+---
+
+## 9m. The glycine map as a trained parameter: the gradient is analytic (2026-09-19)
+
+**A 72x72 trainable map is affordable only because the gradient is analytic.** `rama_map_pot`
+evaluates a periodic interpolating bicubic spline and `solve_periodic_2d_spline`
+(`src/spline.cpp:262`) is a **tensor product of 1D periodic solves**, so the map-to-energy
+operator is linear, separable and translation invariant:
+
+```
+E = sum_r sum_ij  map_r[i,j] * b(x_r - i) * b(y_r - j)
+```
+
+with one 1D cardinal function `b`. Therefore `dE/d(map_r[i,j])` is a spline-smoothed 2D histogram
+of the glycine `(phi,psi)` samples, computable from `rama_coord` with no engine support and no
+C++ change. **Finite differencing instead would cost 2 extra passes per parameter, 10,369x a
+divergence**, which is exactly why `sheet` is trained as a single scalar rather than 20.
+
+Reconstructing `rama_map_pot` in Python from `rama_coord` and the config's `rama_pot` reproduces
+the engine to **3.3e-6**, which validates the spline half.
+
+### The verification gate found a real bug on its first run
+
+`training/verify_gly_gradient.py` checks the analytic gradient against finite differences taken
+through the whole pipeline, library file -> `upside_config` -> engine. **It failed at 37% error on
+the symmetric direction.** The cause is documented in `up.md` 2.8a: `write_rama_map_pot` ends with
+
+```python
+rama_pot -= (rama_pot*np.exp(-rama_pot)).sum(axis=(-2,-1), keepdims=1)
+```
+
+a **Boltzmann-weighted shift, constant per map**. It changes no force and cancels in every
+basin-to-basin difference, which is why it is invisible in essentially all analysis, but it is a
+*map-dependent* constant and it enters the total potential. With it included, the reconstructed
+per-residue map matches the config to 1.6e-6, the library's float32 resolution.
+
+**The lesson is about the gate, not the bug.** An analytic gradient fails silently: a wrong
+softmax factor or a missing stage trains steadily in the wrong direction for days and never
+raises anything. Nothing here was going to catch this except a finite-difference check through
+the real pipeline.
+
+### Reading a finite-difference check correctly
+
+The result is a sweep, not a single number, because the library stores `dimer_pot` as **float32**:
+
+| direction | analytic | eps=3e-2 | eps=1e-2 | eps=3e-3 | eps=1e-3 |
+|---|---|---|---|---|---|
+| `dS` | -0.778418 | 6.9e-4 | **3.8e-5** | 6.2e-3 | 1.3e-2 |
+| `dA` | +0.219066 | 2.5e-3 | 3.0e-3 | **1.6e-3** | 4.3e-2 |
+
+The rise at small eps is rounding (about 5e-7 per cell against map values of order 10), the rise
+at large eps is real curvature from the log-sum-exp mixtures. **A single eps would have been
+misread either way**: at 1e-3 alone this looks like a 1-4% failure, at 3e-2 alone it looks like a
+pass that has not been tested.
+
+### Parameterisation
+
+Two maps, `S` symmetric and `A` antisymmetric under `(phi,psi) -> (-phi,-psi)`, with
+`X|GLY = S + A` and `GLY|GLY = S`. That makes glycine's molecular symmetry exact where it applies
+and imposes nothing where it does not, with no projection step during training. Training starts
+from `A = 0` and a symmetrised library row, so the handedness is **entirely learned** and the
+comparison against the AWH measurement is a real test rather than a circular one.
+
+**One map serves every neighbour, and that is a loss taken deliberately.** The library's glycine
+row resolves neighbour dependence (spread 0.264 nats over its 42 maps) and left/right asymmetry
+(0.679 nats); this parameterisation discards both at step 0. Keeping them would mean 40 x 5,184
+parameters against ~30,000 glycine samples per minibatch, and the AWH cannot resolve per-pair
+structure either (S/N 1.48 against 3.89 for the average). Whether one map suffices is exactly what
+the 40-context campaign is measuring.
+
+Another trap in the same area: glycine's `dimer_weight` is **not** 1.0 (measured 0.908 and 0.948
+for the two directions). An earlier check printed it with `np.array2string(precision=0)`, which
+rounded it to 1 and would have justified dropping the left/right mixture entirely.
+
+### Wiring it into ConDiv
+
+`gly` is a `(2, 72, 72)` entry in the `Update` tuple holding `(S, A)`, so Adam's existing
+element-wise arithmetic handles it with no solver change. Four details that are not obvious:
+
+* **The worker reads its parameters out of the library it was handed.** `expand_param` writes the
+  current `(S, A)` into a rama library, and the worker recovers them with
+  `read_gly_maps`, since `GLY|GLY` is `S` and any `X|GLY` is `S + A`. No 5,184-value array has to
+  be threaded through the command line next to `hb_scale`.
+* **The library is transient.** It is 35 MB; keeping one per minibatch would add **35 GB** over a
+  500-step run. `run_minibatch` deletes it once every worker has exited, and `param.gly` in the
+  checkpoint is the real record.
+* **The update is band-limited before Adam sees it**, to Fourier modes `|k| <= 8` (features down
+  to 22 degrees), then re-projected onto symmetric/antisymmetric. The lowpass commutes with the
+  mirror, so the projection is not fighting it. `S` must stay symmetric or `GLY|GLY` stops being
+  achiral, and `print_param` reports `max|S - mirror(S)|` every step as a live check.
+* **Per-frame chain rule, not per-minibatch.** The adjoint is linear in the sampled histogram, so
+  the two are equivalent, but per-frame keeps `compute_divergence`'s uniform "one value per frame"
+  contract and costs ~0.8 s per protein. Accumulating per-residue histograms instead would have
+  meant pickling ragged 114 MB arrays.
+
+Verified at initialisation: `pack_param residual = 3.38e-30` unchanged from the baseline,
+`dG(aR->aL) = +0.0000`, `|A| = 0`, `GLY|GLY` asymmetry 0, and the library handed to the workers
+has the whole sheet group and every non-glycine coil map **bit-identical** to ff2.1.
+
+### Two-minibatch smoke test (job 49037934)
+
+| step | `dG(aR->aL)` | `\|A\|` rms | `GLY\|GLY` asymmetry | median RMSD | seconds |
+|---|---|---|---|---|---|
+| start | +0.0000 | 0 | 0 | | |
+| 1 | **-0.0080** | 0.00498 | 0.00e+00 | 1.00 / 3.07 | 686 |
+| 2 | **-0.0128** | 0.00779 | 0.00e+00 | 0.91 / 2.43 | 698 |
+
+**Training the map is free.** 686 and 698 s/minibatch against 650-712 historically with the map
+fixed. That is the payoff from the gradient being analytic: it is a histogram accumulation and a
+torch backward per frame, not 10,369 extra passes.
+
+**The symmetry constraint holds exactly.** `GLY|GLY` asymmetry reads `0.00e+00` at every step, so
+the symmetric re-projection after the Fourier lowpass is doing its job. This is printed every step
+precisely so that a break shows up immediately rather than 300 steps later.
+
+**The learned handedness is left-handed, and that is a real result even at n=2.** Starting from
+*exactly zero*, the protein training set pushes the map toward alpha_L, the same sign as the
+library (-1.24) and as the AWH measurement (-0.303). **Three sources that share no input agree on
+the sign**: PDB statistics, explicit-solvent dipeptide MD, and contrastive divergence against a
+folded-protein ensemble. What ff3.0 asserted, that the answer is zero, is the one value none of
+them support.
+
+Do not read the magnitude from two steps. Adam's first step is scale-invariant, so the ~0.005
+per-step movement is just `alpha` and says nothing about where this converges. `alpha = 0.02`
+(times the global 0.25) was kept because it puts the measured -0.303 about 60 steps away and the
+library's -1.24 about 240, so a 500-step run has room to reach either and then sit.
 
 ---
 
@@ -4609,14 +5179,33 @@ One line each: what was believed, what is true, and why it is worth keeping.
    native seed rather than an ensemble; on the equilibrated last third the effect is -0.024 E_up,
    i.e. zero and if anything destabilising. **A reweighting is only as meaningful as the
    stationarity of the ensemble it reweights, and stationarity must be checked, not assumed.**
-8. **"Each replica's achiral control converges to its own nonzero value."** Partly withdrawn, then
-   partly restored: replica 1's LG decays to -0.015 as it must, but replica 2's sits at +0.094 and
-   has not come down. Unexplained; it does not propagate into the neighbour-average (controls
-   differ by 0.109 while the chiral averages agree to 0.012). **Still open.**
+8. **"Each replica's achiral control converges to its own nonzero value, and rep2's +0.094 is
+   unexplained."** Resolved: it is sampling noise. The residual is uncorrelated between replicas
+   (**r = +0.157**, where a real defect would reproduce) and decays as `1/sqrt(t)` (0.233 at 10 ns
+   -> 0.032 at 100) while the signal converges (0.080 -> 0.071). An artifact would decay too.
+   Blank subtraction was rejected: with the error random, subtracting a noisy estimate of zero
+   adds noise. The lasting consequence is the error bar, **~20% on the basin dG**, not the +/-0.01
+   the replica agreement alone suggests.
 9. **"The trainer's `hb` has never been trained."** Wrong, read off the modern port. The Theano
    original trains it at lr 0.02; the port dropped it. See 9e.
 10. **The sheet gradient is systematically nonzero** (t = +3.91 at n=3). Collapsed to t = -0.01 at
     n=6. See 9k.
+11. **"The library's symmetric part must be kept, because it and the measured one differ by rms
+    1.752 E_up with aR basins of 0.193 against 0.089, 25x the handedness correction."** Wrong, and
+    it was the entire argument for scoping ff3.1 to the antisymmetric part. Those numbers were a
+    *per-pair antisymmetric* statistic, not the symmetric parts. Measured properly the two surfaces
+    correlate at **r = +0.867**, their aR basins agree to **0.207 nats**, and the map mean is
+    unchanged to three decimals by the swap. **Name the quantity before quoting a ratio on it**: a
+    25x gap that turns out to be between two different statistics is worse than no number.
+12. **The units conversion was inverted.** `PMF / 2.914952774272` (kJ/mol per E_up) was given as
+    correct and `PMF / kT(300 K)` as the 17% error. It is the reverse for this purpose: a library
+    map holds `-lnP` normalised to `sum(exp(-E)) = 1`, verified exactly, so a PMF entering that
+    slot is divided by `kT`. **Check the file's own contract before choosing a unit conversion**;
+    here it was one line of arithmetic (`sum(exp(-E))`) and it settled the question outright.
+13. **`S_library + A_measured` presented as free of ff3.0.** `S_library` *is* ff3.0, the fully
+    mirror-symmetrised map, so the construction was ff3.0 plus a correction. Caught by the user,
+    not by me. **When a construction decomposes something, check whether one of the pieces is a
+    thing already rejected.**
 
 Rules these produced: an achiral control passing is necessary and nowhere near sufficient for a
 chirality observable, since its errors cancel by symmetry; only independent replicas at matched

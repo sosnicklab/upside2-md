@@ -121,7 +121,7 @@ pos
 | Node | Key datasets/attrs | Notes |
 |---|---|---|
 | `rama_coord` | (no datasets; just `@arguments=[pos]`) | Computes phi/psi pair |
-| `rama_map_pot` | `residue_id`, `rama_map_id`, `rama_pot (n_res,72,72)` | 5-deg grid, -log(prob); `@restype` string, `@sheet_eps` |
+| `rama_map_pot` | `residue_id`, `rama_map_id`, `rama_pot (n_res,72,72)` | 5-deg grid, one map PER RESIDUE, **not** a library map; `@restype` string, `@sheet_eps`. See 2.8a |
 | `rama_map_pot_ref` | `residue_id`, `rama_map_id_all`, `rama_pot (n_res,72,72)` | Reference-state correction; `@log_pot` |
 
 #### Sidechain rotamer nodes
@@ -413,10 +413,64 @@ residue to the left/right of the central residue.
 `np.roll(np.roll(m[..., ::-1, ::-1], 1, -2), 1, -1)`, because index `i` maps to `(-i) % 72`. A
 plain `[::-1,::-1]` is off by one bin and wrong by ~2.3 in practice.
 
-**Variants in `parameters/common/`:** `rama.dat` (ff2.1, as-published), `rama3.dat` (ff3.0, GLY row
-fully mirror-symmetrised in both groups), `rama31.dat` (ff3.1, coil GLY row = `S + 0.20*A` with
-`GLY|GLY` forced symmetric). They differ **only** in the GLY central row. Note a naive
-`abs(a-b) > tol` comparison reports no difference, because NaN comparisons are False.
+**Values are `-ln P`, normalised so that `sum(exp(-E)) = 1` over the grid.** That is exact: every
+map in `rama.dat` sums to `1.000000`, and `mixture_potential` states the requirement in its
+docstring. They are then used **directly as energies in E_up with no scale factor**, because
+Upside is defined so `kT = 1 E_up` at `T_up = 1` (350.588 K).
+
+**Writing an externally measured surface into a map therefore means dividing by `kT` at the
+temperature it was measured, not by the E_up factor.** A GROMACS PMF in kJ/mol at 300 K enters as
+`PMF / 2.494339`; `PMF / 2.914952774272` would be 1.169x too small. The two are easy to swap,
+so check the normalisation of the map you are replacing: it is one line, and it settles the
+question. See `py/build_rama_from_awh.py`.
+
+**The 4.5% NaN is one whole neighbour column, not scattered bins.** 4.545% = 1/22 is the `CPR`
+column, which is never read: `read_rama_maps_and_weights` maps a cis-proline *neighbour* onto
+`PRO`, keeping CPR only as a central residue. A naive `abs(a-b) > tol` comparison across it reports
+no difference, because NaN comparisons are False.
+
+**Variants in `parameters/common/`:**
+
+| file | what it is |
+|---|---|
+| `rama.dat` | ff2.1, as published |
+| `rama3.dat` | ff3.0, GLY row fully mirror-symmetrised in **both** groups. Retired |
+| `rama31.dat` | the **AWH-measured reference map**, coil GLY row replaced outright by a dipeptide surface and holding no library data: one map for `X\|GLY` carrying the measured handedness, one for `GLY\|GLY` which is its exactly symmetric part |
+
+All differ from `rama.dat` **only** in the central-GLY coil row; the sheet group is untouched in
+every one.
+
+**`rama31.dat` is not ff3.1's training library, despite the name.** ff3.1 learns its glycine map
+with ConDiv instead, starting from a symmetrised row with zero handedness, and `rama31.dat` is the
+independent measurement it will be compared against. Regenerate a library from trained parameters
+with `rama_gly_gradient.write_gly_library`, and rebuild the measured one from AWH output with
+`py/build_rama_from_awh.py`.
+
+### 2.8a How a library map becomes the `rama_pot` the engine reads
+
+`rama_pot` in a config is **one map per residue**, not a library map, and it is four
+transformations away from the file. Anything differentiating or perturbing the library has to go
+through all four, in this order (`read_weighted_maps`, then `write_rama_map_pot`):
+
+1. **Left/right mixture.** `-log(w_l e^{-V_l} + w_r e^{-V_r})` over the two neighbour maps, with
+   `w` from `dimer_weight`. Terminal residues use one direction only.
+2. **Normalisation.** `pots += log(sum(exp(-pots)))`, applied to the coil and sheet mixtures
+   separately, so each is back to `sum(exp(-E)) = 1`.
+3. **Coil/sheet mixture.** The same weighted log-sum-exp, with the sheet side weighted by
+   `sheet_weight * exp(-sheet_mixing[restype])`.
+4. **A Boltzmann-weighted shift:** `rama_pot -= (rama_pot*exp(-rama_pot)).sum()` per map.
+
+**Step 4 is the one that catches people.** It is a constant per map, so it changes no force and
+cancels in every basin-to-basin difference, which is why it is invisible in almost all analysis.
+But it is a *map-dependent* constant and it enters the total potential, so anything computing
+`dE/d(library map)` must include it. Omitting it reproduced the per-residue map with a constant
+7.23 offset and got the symmetric-part gradient wrong by 37%.
+
+Two more traps in the same function. `dimer_weight` for glycine is **not** 1.0 (0.908 and 0.948
+for the two directions in one measured case); printing it with `precision=0` rounds it to 1 and
+invites exactly the wrong simplification. And `read_rama_maps_and_weights` declares `pots` as
+`f4`, so the whole chain is float32-limited: a finite difference on a library map cannot resolve
+better than about `5e-7` per cell against map values of order 10.
 
 ### 2.9 `sheet` (plain text)
 
@@ -546,10 +600,15 @@ unit vector, negated). The SC-CGL table uses `ang1=-n1_dot_n12; ang2=n2_dot_n12`
 Do NOT negate the `cos_theta_grid` in `_build_cgl_target_table`; the sign is
 already embedded in the convention string.
 
-**GLY Ramachandran**: GLY maps must be symmetrized over phi for both the L and D
-wings in `write_rama_map_pot`. The symmetrization must apply unconditionally for
-all GLY residues; any conditional on phi range or alphaR>alphaL will silently
-miss residues and destabilize TM helices.
+**GLY Ramachandran**: glycine handedness belongs in the library file, never in
+`write_rama_map_pot`. There is no symmetrization step in that function and none
+should be added; an earlier note here called for one unconditionally, which was
+ff3.0's since-retired doctrine that forcing every glycine map mirror-symmetric is
+correct. It is not: symmetry is exact only for `GLY|GLY`, because a glycine
+flanked by L-amino acids sits in a chiral environment. ff3.1 builds this into
+`rama31.dat` itself, one map for `X|GLY` and a symmetric one for `GLY|GLY`, so
+the config writer stays ignorant of it and the left/right mixture produces the
+right answer for `Gly-Gly-Gly` on its own. See `GLY_sym.md`.
 
 **Spline tables must reproduce the analytic potential exactly**: verify the
 tables against the analytic form (dry-MARTINI: reaction-field Coulomb with
