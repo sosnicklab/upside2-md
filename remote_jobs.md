@@ -1,9 +1,48 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-Snapshot: **2026-09-12 ~07:00 CDT. rockfish is GONE as a host** -- the user's access ran on a former PI's allocation and was stopped, so `30791125`-`30791128` were cancelled after 14 h 33 m and glpG is now **midway2-only**; the two-cluster replicate design is retired. **glpG post-fix is live and healthy**: all 4 variants on blocks 6-8 of 9; temperature 0.997-1.036 across all 28 rungs. **NP is running clean**: block 2/8, all 6 orientations 0 stretched bonds (rollback driver deployed). **ff3.0 benchmark**: 6/32 COMPLETE (BBA both, BBL_native, NTL9_native, WWdomain both), 26 RUNNING. midway3 idle. **midway2 IP block lifted** -- direct connection via `mdw2_master.exp` works as of 2026-09-12. See findings.md 3.10-3.10d for temperature-fix diagnosis.**
+Snapshot: **2026-09-19 07:15 CDT.** Eight jobs (six long-running plus `scmiss` and `ff21-restart`), all healthy, none needing intervention.
+Glycine AWH campaign relaunched after a settings defect made the first attempt unconverged
+(49032988/49033468 cancelled; 49033509/49033947/49033985 are the corrected run; see Campaign 6).
+The go/no-go is answered: per-neighbour structure is noise, only the neighbour-average is usable,
+so the three AWH jobs run out their walls for that average and nothing further is spent on them.
+ff3.0C training stays cancelled. The PI email and both figures in `~/Downloads`
+are marked `UNCONVERGED_DO_NOT_USE` / `HOLD`. Earlier state, still current unless noted:
+rockfish is GONE as a host, so glpG is **midway2-only** and the two-cluster replicate design is
+retired. glpG post-fix healthy; NP running clean on the rollback driver. **midway2 IP block lifted**
+as of 2026-09-12; key-based ssh is refused, every connection costs a Duo push. See findings.md
+3.10-3.10d for the temperature-fix diagnosis.**
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
 summarised in §8 where they carry a lesson.
+
+---
+
+## 0a. `broadwl-lc` is EMPTY BUT UNUSABLE: its nodes cannot see `/project` (2026-09-18)
+
+**Do not send work there, however idle it looks.** Measured from a job on `midway2-0213`:
+`PROJECT_MISSING`, `PROJECT_NOT_WRITABLE`, `BEAGLE3_MISSING`. The nodes advertise
+`AvailableFeatures=lc,e5-2680v4,64GB,`**`noib`** - no InfiniBand, and `/project` and `/beagle3` are
+served over it. Every input we use (training set, `.venv`, `libupside.so`, checkpoints) is on
+`/project`, so the partition is dead for this project. This is the same trap as `/cds3`.
+
+**The failure signature is silent and easy to misread.** A job whose `--output` path is on
+`/project` dies **instantly** with `ExitCode 0:53`, `Elapsed 00:00:00`, and **no log file at all**,
+because it cannot create the log. Nothing says "filesystem". Do not read that as a bad script: a
+`--wrap="hostname"` probe of the same shape fails identically.
+
+**Two things that wasted time here, worth not repeating.** `sinfo -F`'s "0 idle" counts a
+partially-filled `mix` node as allocated, so it does **not** mean no cores are free; use
+`sinfo -p <part> -o "%.8t %.6D %.10C"` for A/I/O/T cores. And **`/tmp` on a compute node is
+node-local** - a probe writing there "succeeds" and leaves nothing the login node can read, which
+looks like another silent failure. Probe with `--output` under `$HOME`, which is shared.
+
+**A job_submit plugin silently rewrites `#SBATCH --partition=broadwl-lc` to `broadwl`**, with no
+warning, while honouring every other directive. Command-line `-p` is honoured. Verify placement
+with `scontrol show job <id> | grep Partition` rather than trusting the script. (Recorded because
+the same rewrite may apply to other partitions.)
+
+For context on why this was attractive: at 22:50 `broadwl` had **224 pending jobs, 220 outranking
+ours**, 173 nodes `mix`, zero idle; `broadwl-lc` had 18 idle nodes and 504 free cores.
 
 ---
 
@@ -27,6 +66,75 @@ ssh -o BatchMode=yes -f -N -L 2222:128.135.112.69:22 \
 # 2. open the midway2 master over that forward           # USER MUST APPROVE DUO
 expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw2_via_tunnel.exp
 ```
+
+**Key-based ssh is NOT accepted by midway2. Do not try again.** (Tested 2026-09-17, and
+confirmed by the user.) The public key was installed in `~/.ssh/authorized_keys` on midway2 with
+correct 600/700 permissions, and a key-only connection was still refused:
+
+```
+debug1: Offering public key: ~/.ssh/midway3 RSA SHA256:7gJxuwcx...
+debug1: Authentications that can continue: publickey,gssapi-keyex,...,password,keyboard-interactive
+debug2: we did not send a packet, disable method
+```
+
+Retested with `PubkeyAcceptedAlgorithms=+ssh-rsa` in case the legacy SHA-1 signature was the
+blocker; still refused. The server advertises `publickey` but does not honour `authorized_keys`
+for this account, so **every new connection costs a Duo push**. An inert key entry was left in
+`~/.ssh/authorized_keys` on midway2; harmless, remove it if it ever bothers you.
+
+Consequences, and the mitigations that actually work:
+
+* **Minimise connections rather than trying to remove Duo.** The cluster-side monitor
+  (`/project/trsosnic/yinhan/monitor.sh`, run by a self-resubmitting job on the `cron` partition)
+  refreshes `/project/trsosnic/yinhan/STATUS.md` every 30 min and resubmits the training chain if
+  it dies. Nothing depends on a live laptop connection, so a monitoring loop can run every few
+  hours instead of hourly.
+* **`scrontab` is disabled and `crontab` is denied** on this cluster; a long-running job on the
+  `cron` partition is the way to schedule recurring work. A 7-day request hits
+  `QOSMaxWallDurationPerJobLimit`; 36 h with self-resubmission works.
+* **Disabling laptop sleep is not sufficient.** With `caffeinate -is` holding
+  `PreventSystemSleep`, the master still died after ~40 min, so network blips rather than sleep
+  are tearing it down. `mdw2_master.exp` now uses `ServerAliveInterval=30
+  ServerAliveCountMax=20 TCPKeepAlive=yes` (~10 min tolerance, was 3 min).
+* **Run the expect script at most once per attempt.** Retrying it while diagnosing sends a second
+  Duo push to the user's phone, which is intrusive and was done by mistake on 2026-09-18.
+
+**`-o BatchMode=yes` is NOT sufficient on its own — it only protects when the socket FILE is gone.**
+(Learned the hard way 2026-09-19.) If the master dies but `~/.ssh/cm-mdw2.sock` is still on disk,
+ssh tries the stale socket, fails, and then **falls through to a real connection attempt**, spending
+an authentication attempt and printing `Permission denied (publickey,...)`. A few of those and the
+host starts answering `Connection closed by 128.135.112.69 port 22`, which is the IP throttle, and
+the next `mdw2_hold.exp` launch dies with `MASTER_DIED_EARLY` **after** it has already sent a Duo
+push. That is how a single unguarded status call costs a push and locks you out for tens of minutes.
+
+**So: run `-O check` FIRST and only issue the real command if it succeeds.** Never send a bare
+`ssh -S sock host 'cmd'` on the assumption BatchMode will catch a dead master:
+
+```bash
+if ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu >/dev/null 2>&1; then
+    ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu '<cmd>'
+else
+    echo "master down - do NOT retry blindly; see throttle note"
+fi
+```
+
+**When throttled, STOP.** The throttle clears on its own in tens of minutes. Wait at least 30 min
+before one single retry. Do not relaunch the hold script to "see if it works" — each launch spends
+a Duo push on the user's phone before it discovers the throttle.
+
+**ALWAYS put `-o BatchMode=yes` on routine ssh calls.** (Learned 2026-09-17.) A plain
+`ssh -S ~/.ssh/cm-mdw2.sock host 'cmd'` does **not** fail when the socket is dead: it silently
+falls back to a fresh connection, offers the key, then tries password auth twice non-interactively,
+hits `Received disconnect ... Too many authentication failures`, and after a couple of those the
+host starts closing connections immediately (`Connection closed by 128.135.112.69 port 22`). That
+is the IP throttle described below, self-inflicted by a status check. With `BatchMode=yes` the same
+call fails instantly and harmlessly with `Control socket connect: No such file or directory`, which
+is the signal to run the expect script. Check the socket first, and never let a monitoring loop
+retry the expect script more than once per tick.
+
+The throttle appears to clear on its own in tens of minutes. The documented way around it while it
+lasts is the midway3 tunnel (`scratchpad/mdw2_via_mdw3.exp`), which needs a live
+`~/.ssh/cm-mdw3.sock` and therefore its own Duo approval.
 
 Two zsh/tooling traps that cost time here:
 * **zsh does not word-split unquoted variables.** `M2="ssh -S sock host"; $M2 'cmd'` runs silently
@@ -136,29 +244,140 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-10 ~19:40 CDT (verified live against `squeue` on both hosts, and against
-frames actually written).**
+Snapshot **2026-09-18 ~20:00 CDT, verified live against `squeue`.**
 
-### Campaign 5: ff3.0C training, glycine alpha_L selection bias removed (midway2, 2026-09-16)
+### Campaign 7: why the lambda benchmark arm fails (midway2, 2026-09-18)
 
-| JobID | what | state |
+| JobID | what | log | state |
+|---|---|---|---|
+| 49035287 | `diag_lambda_fail.py` — per-rung RMSD, helix integrity, helix-pair geometry, per-residue basin retention, for lambda native + de novo and the proteinB / homeodomain controls | `scoring/lam_diag.49035287.out` | **COMPLETE** |
+| 49035294 | `gly_reweight.py` — reweights lambda's cold-rung ensemble along the one-parameter family `M3 + lam*A` joining ff3.0 (lam 0) to ff2.1 (lam 1) | `scoring/gly_rw.49035294.out` | queued |
+| 49035300 | `energy_split.py` — native vs ensemble total potential, split into rama / rama-ref / glycine-rama / rest | `scoring/en_split.49035300.out` | queued |
+
+* **Working dir** `/beagle3/trsosnic/yinhan/ff3_benchmark/scoring`; the ff2.1 lambda config built
+  for the map comparison is `ff3_benchmark/glydiag/lambda_ff21.up`.
+* **Why.** lambda is the worst arm in the benchmark under both force fields and the only protein
+  that regresses in both arms under ff3.0. The question is whether a glycine Ramachandran change
+  can rescue it, since ff2.1 and ff3.0 differ for lambda in exactly six 72x72 glycine maps and
+  nothing else.
+
+**Campaign 5 (ff3.0C training, `training/gly-ctx`) is CANCELLED and its jobs are gone**; the AWH
+measurement contradicted its founding premise. Do not resurrect it; see `current_job.md` section 3(b).
+
+### Campaign 6: glycine handedness by AWH, relaunched after a settings defect (midway2, 2026-09-18)
+
+| JobID | what | state at 2026-09-18 19:20 |
 |---|---|---|
-| 49028452 | link 1 | **NODE_FAIL** after 25:37, 4 minibatches done, 0 worker fails |
-| 49028453 | chain link | **NODE_FAIL** after 24:56 on midway2-0010 |
-| **49028632** | chain link, target 500 | PENDING (Priority), est. start **2026-09-17 06:47** |
+| **49033509** | AWH, ff99SB-ILDN, 12 systems, corrected settings | RUNNING on midway2-0228, **84 ns**, 14:20 of 36 h, ends ~17:00 Sep 19 |
+| **49033947** | AWH, ff14SB, same 12 systems | RUNNING on midway2-0349, **60 ns**, 8:57 of 36 h, ends ~22:20 Sep 19 |
+| **49033985** | AWH ff99SB-ILDN **replica 2**, same 12 systems, independent seeds | RUNNING on midway2-0397, **48 ns**, 8:23 of 36 h, ends ~23:00 Sep 19. **Verdict delivered: per-neighbour structure does NOT reproduce (Spearman rho +0.048), only the neighbour-average does.** |
+| ~~49033510, 49033717~~ | earlier ff14SB attempts | **NODE_FAIL on midway2-0011 (48 min) then midway2-0010 (55 min)**, both `ExitCode 0:0`. Exclude list is now `midway2-0003,midway2-[0010-0011],midway2-[0342-0345]`. Builds survive, so each resubmit skips to grompp and resumes from `awh.cpt`. |
 
-* **Working dir** `/project/trsosnic/yinhan/upside2-md-mdw2/training/gly-ctx`; job ids in
-  `.chain_jobids`; logs `upside-gly-ctx_<jobid>.out`. Progress: **step 4 of 500**, newest
-  checkpoint `epoch_00_minibatch_03`, ~12 min/minibatch which matches the reference rate.
-* **What it is.** A ConDiv run identical to `training/gly-sym` except `upside_input/rama.dat`.
-  The coil GLY row has the `GLY|GLY` antisymmetry subtracted from every entry, removing the
-  glycine alpha_L bias that survives an achiral neighbour while keeping the neighbour-dependent
-  third; the sheet GLY row is mirror-averaged and is **bit-identical to `rama3.dat`**. So ff3.0C
-  differs from ff3.0 in the coil glycine row only. Library md5 `a6260bab02cc1505b01f6ad4913dc8bd`
-  (raw `996a607b`, ff3.0 `932649af`). Per-protein inputs hardlinked from gly-sym.
-* **ff3.0B (`training/gg-only`, GG-only symmetrization) was cancelled**, jobs 49027629/49027630.
-  Its perturbation reached 5.8% of the glycine dimer entries and 0% of glpG's TM4, far below the
-  15-21% retrain reproducibility floor, so it could not have been read at n=1.
+**Three NODE_FAILs in this campaign** (49032220, 49033510 on 0010-0011, 49033717 on 0010-0011) while
+49033509 has run 5 h clean on midway2-0228. The two failing nodes are adjacent, so this looks like a
+bad pair rather than anything in the job. Keep them excluded.
+| 49032512 | unbiased pentapeptides, independent of AWH | RUNNING on midway2-0030, 25:51 of 36 h, ends ~05:30 Sep 19. Its `afterany` successor **49032513 was cancelled on 2026-09-17**, so this job has no continuation; it stops at its wall. |
+| 49033117 | cluster-side monitor, `cron` partition, self-resubmitting | RUNNING on midway2-0466, 20:43 |
+| **49037796** + **49037797** | **ff3.1 training chain**, dir `training/ff31/`, target 500 steps. ff_2.1 parameters + `rama31.dat` (coil GLY row scaled to 0.20 of the library antisymmetry, `GLY|GLY` symmetric), trained with the strict-modernization ConDiv with hb and sheet unfrozen. 96 CPUs/link, ~26 min/step, ~70 steps per 36 h link, so **~9 days over ~8 links**. The successor is queued BEFORE training starts, so a wall kill cannot silently end the chain. Verify progress with `find run_output -name checkpoint.pkl -path '*epoch_*' | wc -l` against 500. See findings.md 9l. |
+| **49035728** | **`ff21-restart`** on **`broadwl-lc`**, 12 tasks x 8 threads = 96 CPUs, 6 steps, 4 h wall. ConDiv restarted from ff_2.1 under the strict-modernization trainer. Dir `training/ff21-restart/`. **Not a training run**: ff_2.1 is the converged output of the Theano original, so a faithful port's gradient at step 1 should be indistinguishable from minibatch noise. Analyse with `check_converged.py run_output` (after `source env.sh`), **NOT** by parameter movement — Adam's first step is scale-invariant. Covers `rot`/`env` only; `hb`/`sheet` frozen. |
+| 49035314 | `scmiss`, scores the nine unscored benchmark arms, dir `/beagle3/.../ff3_benchmark/scoring/` | RUNNING, 3 of 9 done (NuG2_denovo, alpha3d_denovo, alpha3d_native) |
+| ~~49032235~~ | `np_1AO6_prod` | **CANCELLED 2026-09-18 22:12**: ff3.0 is being replaced, so this was the only job still simulating with it. Stopped at `block_count = 6` of 8, all six `np.run.N.up` intact (~84 GB each, ~500 GB total in `NP-1AO6/prod_ff3/`). Resumable; also the obvious disk reclaim if ff3.0 stays dead. |
+| ~~49032988, 49033468~~ | first AWH attempt | **CANCELLED, unconverged, see below** |
+| ~~49028632, 49031044~~ | ff3.0C ConDiv training | **CANCELLED at 141/500** |
+
+**The first AWH attempt measured nothing, and was cancelled 2026-09-18.** `awh.mdp` had
+`awh1-dimN-diffusion = 5e-5 rad^2/ps` while AWH's own friction metric implies `D ~ 0.77` (10-90%
+range 0.33-3.4), about **15000x too small**, and `awh1-error-init = 5` kJ/mol against a true
+surface range of 20-40. AWH left the initial stage at t = 13.34 ns holding ~1.0 kJ/mol of PMF
+range and then crept up at 0.07 kJ/mol/ns, reaching 2.0 kJ/mol at 25.8 ns. The surface was
+therefore near-flat, which forces every chirality observable to its achiral value, so the
+"handedness is zero" result was an artifact rather than a measurement. Withdrawn in `findings.md`.
+Evidence kept in `gly_peptides/evidence_diffusion_bug/`.
+
+Relaunch carries `diffusion = 0.5` and `error-init = 30`. Neither enters the free-energy
+estimator, so only the convergence rate changed. Backups: `awh.sbatch.bak_pre_diffusion`,
+`awh14.sbatch.bak_pre_diffusion`. Build products (`equil.gro`, topologies, index files) were kept,
+so both jobs skip straight to grompp; production files were cleared so nothing resumes from the
+old AWH state (1.2 G -> 26 M).
+
+**Replica 2 launched 2026-09-18 (49033985), and it is the error bar.** `awh_rep2.sbatch`, dir
+`awh_amber99sb-ildn_rep2/`. The only achiral control, LG, **cannot certify a chiral value**: an
+achiral surface has errors that cancel by symmetry, which is exactly the error mode afflicting the
+chiral systems. LG held a 0.032 E_up spread over 24-33 ns while LA drifted monotonically -0.459 ->
+-0.678 over 15-33 ns, and LP and LL drifted the opposite way toward zero. So between-replica spread
+is the only valid uncertainty available, and no individual `dG` should be quoted without it.
+Independence: identical topology and box, fresh 200 ps equilibration from replica 1's `min.gro`
+with `gen-seed = 20260918`, then `gen-seed = 20260918` and `awh-seed = 776611` in production
+(replica 1 used an auto-generated `awh-seed = 1034933739`). Everything else, including
+`diffusion = 0.5` and `error-init = 30`, is copied from replica 1's own `awh.mdp`.
+
+**Convergence test.** Watch `range` in `awh_an.py` output, the largest PMF over sampled cells.
+Below 15 kJ/mol the row prints `UNCONV` and its `dG` means nothing. **Coverage fraction is not a
+convergence test** and looked healthy all through the failed run.
+
+**The fix is confirmed, and the answer changed.** At 15 ns, 49033509 shows range 50-66 kJ/mol and
+100% coverage, against 2.0 kJ/mol at 25.8 ns before. The handedness is no longer zero. Achiral
+controls: LG +0.005, GGGGG -0.016 E_up, so the noise floor is ~0.02. Chiral neighbours: LA -0.348,
+LL -0.398, LR -0.267, LP -0.162, LE -0.092, LT +0.097, LV +0.053, LD -0.017, LM -0.045. Several are
+far outside the control band, so **XGX asymmetry is real but smaller than the library's** (-0.43 to
+-1.40), which would make ff3.0's exact zero wrong as well, just less wrong than ff2.1. Magnitudes
+are provisional at 15 ns; time-stability has not been checked yet. **SAGAS is not an achiral
+control** (it has L residues), so its +0.289 is a real signal and earlier briefs mislabelled it;
+only LG and GGGGG are achiral.
+
+**Tier 2 is back on.** The 40-system neighbour table (`Ac-X-Gly-NHMe` and `Ac-Gly-X-NHMe` for 20 X,
+already built in `gly_peptides/xg/` and passing `pdb2gmx` in both force fields) is the route to a
+measured replacement for the GLY row of the coil group, since a converged AWH PMF is `-ln P(phi,psi)`
+in kT, which is what `dimer_pot[GLY, dir, X]` stores. For the library's native 5 deg grid the umbrella
+needs `force-constant ~ 330` rather than 128; 128 gives GROMACS' 46-point grid and is kept for the
+cheap handedness re-run.
+
+**NDRD provenance, settled with the licensed data.** The user obtained all four releases. Our
+`coil` group is **`NDRD_TCB`**, identified exactly (correlation 1.00000, max deviation 0.0000
+against `GLY|ALL` both directions). Central-GLY `dG(aR->aL)` by variant: Conly -1.876,
+Tonly -0.839, TCB -0.965, TCBIG -0.410. **No variant is near the measured zero**, and the purest
+coil set is the *most* biased, which refutes the turn-occupancy explanation and kills the idea of
+switching to `Conly`. Full detail and the withdrawn claims are in `findings.md`.
+Licence note: the NDRD files may not be redistributed outside the lab group, so they were analysed
+locally and never copied to the cluster.
+
+#### THE SITE GROMACS ON MIDWAY2 IS UNUSABLE; BUILD YOUR OWN (2026-09-17)
+
+Do not spend time on the `gromacs/*` modules. Measured:
+
+* **`gromacs/2024.1` dies with SIGILL**, even `--version`. It was built for a newer SIMD, and
+  **midway2 has no AVX-512 on any partition** (all Broadwell E5-2680v4/E5-2690v4 or older), so no
+  partition can run it.
+* **`gromacs/2021.1` and `2019.3`** need five stacked modules just to load
+  (`intel/19.1.1 intelmpi/2019.up7+intel-19.1.1 cuda/11.5 mkl gcc/10.1.0` for 2021.1; `cuda` and
+  `mkl` satisfy the CUDA build's link deps, `gcc/10.1.0` supplies `GLIBCXX_3.4.21`), and then their
+  MPI-built tools crash anyway: `pdb2gmx` gives SIGSEGV under `mpirun` and **SIGFPE** on a second
+  run, and under `srun` Intel MPI fails in `PMPI_Init_thread`/`MPIDU_bc_table_create`.
+
+**Working build recipe** (verified 2026-09-17, `/project/trsosnic/yinhan/gmx_build/build_gmx.sbatch`):
+
+```
+module load cmake/3.26 gcc/10.1.0          # 3.11 default is too old for GROMACS 2024
+cmake ../gromacs-2024.4 -DCMAKE_INSTALL_PREFIX=/project/trsosnic/yinhan/gmx2024 \
+  -DGMX_MPI=OFF -DGMX_THREAD_MPI=ON -DGMX_SIMD=AVX2_256 -DGMX_GPU=OFF -DGMX_DOUBLE=OFF \
+  -DGMX_BUILD_OWN_FFTW=ON -DGMX_BUILD_OWN_FFTW_URL=file://$B/fftw-3.3.8.tar.gz -DBUILD_TESTING=OFF
+```
+
+Gives `GROMACS 2024.4, mixed precision, thread_mpi, AVX2_256, fftw-3.3.8`. Thread-MPI is the point:
+no MPI initialisation at all, so 12 independent `gmx mdrun -nt 2` processes just work, no `mpirun`
+and no `srun` wrapping.
+
+Four traps, all hit:
+
+1. **GROMACS pins FFTW by MD5.** `GMX_BUILD_OWN_FFTW_URL` does not relax the check, so the tarball
+   must be **fftw-3.3.8** (`8aac833c943d8e90d51b697b27d4384d`). 3.3.10 fails verification at 12%.
+2. **Download the tarballs on the login node**, which has outbound internet; compute nodes do not.
+3. **Do not `source GMXRC.bash` under `set -u`** -- it references an unbound `GMXLDLIB` and aborts
+   the script, which is why job 49032104 reported FAILED after installing successfully. Set
+   `LD_LIBRARY_PATH=$PREFIX/lib64:$PREFIX/lib` by hand instead.
+4. **Run `pdb2gmx` from a clean working directory.** It scans the cwd for force-field directories
+   and throws `filesystem error: status: Permission denied` on any socket it cannot stat; a Cursor
+   ssh socket in `/tmp` was enough to make it exit 1.
 
 #### THE BLOCKER ANYONE RETRAINING WILL HIT FIRST (found 2026-09-16)
 
@@ -1175,7 +1394,28 @@ healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis betwe
 
 ## 3. NP campaign — `np_1AO6_prod`
 
-**Unfolding is the expected result, not a failure.** 1AO6 albumin spreads on the MPA-AuNP surface. Rising Rg (currently up to 230.9 Å on run.3, block 3) is the intended observable and must **not** be reported as a blow-up. Judge health on non-finite frames, peptide C–N bonds, and `avg_kinetic_energy/1.5kT`. (Contrast glpG, where Rg ~19 Å is the health signal.)
+**Unfolding is the expected result, not a failure.** 1AO6 albumin spreads on the MPA-AuNP surface,
+so a large Rg must **not** be reported as a blow-up. Judge health on non-finite frames, peptide C-N
+bonds, and `avg_kinetic_energy/1.5kT`. (Contrast glpG, where Rg ~19 Å is the health signal.)
+
+**The Rg printed in `np.<jobid>.out` is NOT periodic-image corrected, so do not read the campaign's
+result off it** (measured 2026-09-18 on block 6). It is computed on the stored coordinates directly,
+so on any face where the adsorbed chain straddles a box boundary it is inflated by roughly the number
+of box lengths spanned. Logged vs minimum-image Rg, referencing every backbone atom to the MPA shell
+centre: run0 123.1/128.8, run1 **184.0/76.4**, run2 96.9/102.9, run3 **332.5/118.7**, run4
+**170.6/73.4**, run5 80.8/80.3. Three of six faces are inflated 2.3-2.8x, and run3's headline
+"Rg 332 Å" in a 300 Å box is a boundary crossing, not more spreading. The minimum-image values are
+themselves only reliable where the chain stays inside half a box; run0 (max 172 Å) and run5 (164 Å)
+exceed that, so treat those two as unresolved rather than agreeing.
+
+**The protein is adsorbed on all six faces**, which is what the footprint analysis needs and what Rg
+failed to show. Backbone atoms within 8 Å of the MPA shell: run0 257, run1 1128, run2 913, run3 399,
+run4 780, run5 1243, of 2312. Nothing has escaped the nanoparticle. Spreading is still real
+(minimum-image Rg 73-129 Å against native albumin's ~27 Å), just smaller than the log implies.
+**Use the contact count, not Rg, as the adsorption observable.** Atom layout in `/input/pos`:
+backbone `0:2312` (578 res, stride 4), protein sidechain beads `2312:~3200`, Au core `~3200:3750`,
+MPA carboxylate shell `3750:3950` (use this to locate the NP, it is unambiguous), ions `3950:8608`.
+Box is 300 Å cubic (`martini_potential` attrs `x_len/y_len/z_len`).
 
 **Dir** `~/project/NP-1AO6/` — `prod/` holds `np.run.{0..5}.up` + `np.<jobid>.out`, `block_count`. **Current configs are the envfull+300Å rebuild** (protein-protein terms injected, 4628 ions at 0.15 M KCl, 8608 atoms); block_count reset to 0.
 **Driver** `run_np_prod.py` · **sbatch** `np_prod.sbatch` (sets `NP_DT=0.001`) · **submit** `submit_np.sh`

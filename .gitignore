@@ -32,4 +32,10 @@ parameters/dryMARTINI/*.h5
 *scratchpad*
 backup/*
 training/*
+# ...but keep the training infrastructure itself; run directories and data stay ignored.
+!training/README.md
+!training/*.py
+!training/*.sh
+!training/*.sbatch
+!training/pdb_list
 *.bak_*

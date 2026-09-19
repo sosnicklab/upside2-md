@@ -21,9 +21,6 @@ n_knot_hb      = 10
 hb_dr          = 0.625
 sc_dr          = 0.7
 
-# GLY is residue-type index 7 in the ALA-sorted ordering:
-# ALA ARG ASN ASP CYS GLN GLU GLY HIS ILE LEU LYS MET PHE PRO SER THR TRP TYR VAL
-GLY_IDX = 7
 
 # ---------------------------------------------------------------------------
 # Core unpacking: latent vector → structured parameter tensors
@@ -62,28 +59,14 @@ def unpack_param_maker(lparam):
     # -----------------------------------------------------------------------
     angular_logits = read_param((n_restype, n_restype, n_knot_angular))
 
-    # GLY symmetry correction:
-    # GLY has no chirality — swapping HA2↔HA3 leaves the molecule unchanged.
-    # Its pair-interaction angular profile must therefore be palindromic so
-    # that the force field assigns the same energy regardless of which HA is
-    # "pointing toward" the partner residue.  We enforce this by averaging the
-    # logits with their reversed-index counterparts before applying sigmoid.
-    flip = torch.arange(n_knot_angular - 1, -1, -1, dtype=torch.long)
-    gly_row     = angular_logits[GLY_IDX : GLY_IDX + 1, :, :]      # (1, 20, 15)
-    gly_sym     = 0.5 * (gly_row + gly_row[:, :, flip])            # palindromic
-    angular_logits_corrected = torch.cat([
-        angular_logits[:GLY_IDX, :, :],
-        gly_sym,
-        angular_logits[GLY_IDX + 1:, :, :]
-    ], dim=0)                                                        # (20, 20, 15)
-    angular_spline_sc = torch.sigmoid(angular_logits_corrected)      # (20, 20, 15)
+    angular_spline_sc = torch.sigmoid(angular_logits)                 # (20, 20, 15)
 
     clamped_1 = clamp_spline(read_symm(n_knot_sc - 3))              # (20, 20, 12)
     clamped_2 = clamp_spline(read_symm(n_knot_sc - 3))              # (20, 20, 12)
 
     rot_param = torch.cat([
         angular_spline_sc,
-        angular_spline_sc.permute(1, 0, 2),   # dp2 — transpose of dp1; GLY col is also palindromic
+        angular_spline_sc.permute(1, 0, 2),   # dp2 — transpose of dp1
         clamped_1,
         clamped_2,
     ], dim=-1)                                                       # (20, 20, 54)
@@ -114,7 +97,7 @@ def unpack_param_maker(lparam):
     hydpl_com         = read_param((n_fix, 3))
     hydpl_dir_unnorm  = read_param((n_fix, 3))
     hydpl_dir_norm    = hydpl_dir_unnorm / torch.sqrt(
-        (hydpl_dir_unnorm ** 2).sum(dim=-1, keepdim=True) + 1e-12
+        (hydpl_dir_unnorm ** 2).sum(dim=-1, keepdim=True)
     )
     hydpl_param = torch.cat(
         [hydpl_com, hydpl_dir_norm, torch.zeros((n_fix, 1), dtype=lparam.dtype)],
@@ -127,7 +110,7 @@ def unpack_param_maker(lparam):
     rotpos_com        = read_param((n_rotpos, 3))
     rotpos_dir_unnorm = read_param((n_rotpos, 3))
     rotpos_dir_norm   = rotpos_dir_unnorm / torch.sqrt(
-        (rotpos_dir_unnorm ** 2).sum(dim=-1, keepdim=True) + 1e-12
+        (rotpos_dir_unnorm ** 2).sum(dim=-1, keepdim=True)
     )
     rotpos_param = torch.cat([rotpos_com, rotpos_dir_norm], dim=-1)  # (86, 6)
 
@@ -186,23 +169,15 @@ def _clamp_middle(full_spline):
 def _init_x0(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
     """Construct a warm-start latent vector from structured parameter arrays.
 
-    This is an approximate inversion of unpack_param_maker.  Most blocks
-    are exact; the GLY row of angular_logits is initialised to the (non-
-    palindromic) logit of the ff_2.1 angular profile — the optimizer will
-    find the closest palindromic approximation from there.
+    This is an approximate inversion of unpack_param_maker.  It only sets the
+    starting point for pack_param's solve; the residual check there is what
+    establishes that the result is right.  The Theano original started from a
+    flat 0.5 vector instead.
     """
     parts = []
 
-    # 1. angular_logits (20, 20, 15): logit of dp1 angular slice of rot.
-    # Pre-symmetrize the GLY row: the palindrome constraint makes the loss
-    # independent of the antisymmetric component, and starting at the
-    # palindromic average sets the gradient to zero there, so L-BFGS-B
-    # converges without any GLY-specific iterations.
-    angular_dp1 = np.asarray(rotp[:, :, :n_knot_angular])
-    gly = angular_dp1[GLY_IDX]
-    angular_dp1_ws = angular_dp1.copy()
-    angular_dp1_ws[GLY_IDX] = 0.5 * (gly + gly[:, ::-1])
-    parts.append(_logit(angular_dp1_ws).ravel())
+    # 1. angular_logits (20, 20, 15): logit of dp1 angular slice of rot
+    parts.append(_logit(rotp[:, :, :n_knot_angular]).ravel())
 
     # 2. clamped_symm_1 middle (20, 20, 9): interior knots of radial block 1
     parts.append(_clamp_middle(rotp[:, :, n_knot_angular*2:n_knot_angular*2 + n_knot_sc]).ravel())
@@ -255,11 +230,7 @@ def _init_x0(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
 
 
 def pack_param(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
-    """Inverse of unpack_params: find latent vector x s.t. unpack_params(x) ≈ inputs.
-
-    Because the GLY palindrome constraint prevents an exact fit to a
-    non-palindromic GLY angular profile, convergence is checked loosely.
-    """
+    """Inverse of unpack_params: find latent vector x s.t. unpack_params(x) ≈ inputs."""
     targets = [
         torch.tensor(np.asarray(t), dtype=torch.float64)
         for t in [rotp, covp, hydp, hydplp, rotposp, rotscalarp]
@@ -278,16 +249,15 @@ def pack_param(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
         obj_and_grad, x0, jac=True, method='L-BFGS-B',
         options={'maxiter': 20000, 'ftol': 1e-15, 'gtol': 1e-10},
     )
-    # The GLY palindrome constraint produces an irreducible residual of
-    # 0.5 * sum((gly_dp1 - gly_dp1_flipped)^2) — the optimizer reaching a
-    # stationary point is the correct convergence criterion, not a loss < 1.
-    if not result.success:
+    # Gate on the residual, as the Theano original does: the unpacking must
+    # reproduce the input arrays, and a stationary point that does not is a
+    # failure, not a convergence.
+    if not (result.fun < 1.6e-4):
         raise ValueError(
-            f'pack_param optimizer did not converge: {result.message} '
-            f'(final loss={result.fun:.4g})'
+            f'Failed to converge: residual {result.fun:.4g} >= 1.6e-4 '
+            f'({result.message})'
         )
-    print(f'pack_param converged: final loss = {result.fun:.6g} '
-          f'({result.message})')
+    print(f'pack_param residual = {result.fun:.6g}')
     return result.x
 
 

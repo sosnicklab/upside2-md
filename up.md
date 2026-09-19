@@ -265,9 +265,30 @@ Knot layout for `pair_interaction[i,j,:]`: two angular sections (r1 direction, r
 
 ### 2.2 `hbond.h5`
 
-Root dataset `parameter (12,)` float64: 12 cubic spline knots parameterizing
-the backbone H-bond energy as a function of H...O distance. Loaded directly
-into the `hbond_energy` node.
+Root dataset `parameter (12,)` float64, loaded into the `hbond_energy` node as its
+`parameters` dataset. **These are not spline knots and not a function of H...O distance.** They
+are three energies plus a bias, then four (boundary, sharpness) pairs in **radians** that classify
+each residue by its (phi,psi):
+
+| idx | name | ff_2.1 value | meaning |
+|---|---|---|---|
+| 0 | `E_alpha` | -1.9609 | per-hbond energy when phi < 0 and psi in (-120, 60) deg |
+| 1 | `E_beta` | -1.9463 | per-hbond energy when phi < 0 and psi outside that window |
+| 2 | `E_other` | -1.7690 | per-hbond energy when **phi in (0, 165) deg** |
+| 3 | `E_bias` | -0.4058 | applied via a sigmoid on the per-peptide hbond count |
+| 4,5 | `boundary_turn1`, `sharpness_turn1` | 0 deg, 3.8197 | phi window lower edge |
+| 6,7 | `boundary_turn2`, `sharpness_turn2` | 165 deg, 3.8197 | phi window upper edge |
+| 8,9 | `boundary_helix1`, `sharpness_helix1` | -120 deg, 3.8197 | psi window lower edge |
+| 10,11 | `boundary_helix2`, `sharpness_helix2` | 60 deg, 3.8197 | psi window upper edge |
+
+`Ehbond[i] = E_alpha*helix + E_beta*sheet + E_other*turn`, and the three scores sum exactly to 1.
+A sharpness of 3.8197 gives a 15 deg ramp at each edge (`compact_sigmoid` saturates at |x| = 1/s).
+
+Two consequences worth knowing. **The "turn" branch is exactly the positive-phi region**, so a
+hydrogen bond at phi > 0 is worth **+0.192 E_up less** than the same bond at phi < 0 — in practice
+a glycine penalty, since glycine is the residue that populates it. And the total potential is
+**exactly linear in `parameters[:4]`** (verified to 7e-7 against the engine), which is what makes
+`--hb-scale` and the trainer's `dE/ds = E/s` correct.
 
 ### 2.3 `environment.h5`
 
@@ -282,6 +303,12 @@ Protein burial/environment potential. Root datasets:
 | `coverage_param` | `(20,1,4)` | Coverage function parameters per residue |
 | `energies` | `(20,18)` | Energy table indexed by coverage bin; `@inv_dx=2.0`, `@offset=-0.5` |
 | `weights` | `(400,)` | 20x20 inter-residue environment weight matrix |
+
+**Trap.** In the `.up` these become `nonlinear_coupling_environment/coeff (20,18)` and
+`weights (400,)`, but the engine's parameter vector for that node is **both concatenated,
+coeff then weights, 360 + 400 = 760**. Requesting `coeff.shape` alone from `get_param_deriv`
+fails with `Wrong number of parameters, expected 760 but got 360`. Request the full vector and
+slice.
 
 ### 2.4 `bb_env.dat`
 
@@ -374,19 +401,36 @@ HDF5 file with two top-level groups:
 | `/sheet` | `dimer_pot (20,2,20,72,72)` float32, `dimer_weight (20,2,20)` float32. Axes: central_restype (20, no CPR), direction, neighbor_restype, phi_bin, psi_bin. Source: PDB beta-sheet subset. |
 
 The 72x72 grid covers phi in [-180, 175] and psi in [-180, 175] in 5-degree
-steps. Values are -log(probability), so lower is more probable. The `@restype`
-attribute lists the residue ordering; `@dir=[left, right]` means the residue
-to the left/right of the central residue.
+steps. Values are -log(probability), so lower is more probable, **used directly as an energy in
+E_up with no scale factor**. Maps are normalised at build time
+(`pots -= -log(sum(exp(-pots)))`), an additive constant that cancels in any basin-to-basin
+difference. About 4.5% of the coil array is NaN (unpopulated bins); the NaN pattern is itself
+mirror-symmetric. The `@restype` attribute lists the residue ordering (the coil neighbour axis has
+22 entries, the last being `ALL`, the marginal over neighbours); `@dir=[left, right]` means the
+residue to the left/right of the central residue.
+
+**Chirality operation.** `(phi,psi) -> (-phi,-psi)` on this grid is a reversal **with a roll**,
+`np.roll(np.roll(m[..., ::-1, ::-1], 1, -2), 1, -1)`, because index `i` maps to `(-i) % 72`. A
+plain `[::-1,::-1]` is off by one bin and wrong by ~2.3 in practice.
+
+**Variants in `parameters/common/`:** `rama.dat` (ff2.1, as-published), `rama3.dat` (ff3.0, GLY row
+fully mirror-symmetrised in both groups), `rama31.dat` (ff3.1, coil GLY row = `S + 0.20*A` with
+`GLY|GLY` forced symmetric). They differ **only** in the GLY central row. Note a naive
+`abs(a-b) > tol` comparison reports no difference, because NaN comparisons are False.
 
 ### 2.9 `sheet` (plain text)
 
-One float per line. Contains 63 values that are the spline knots of the
-sheet-content mixing energy used by `rama_map_pot` to interpolate between
-coil and sheet Ramachandran maps. Written as:
+One float per line, **20 values: one sheet-mixing energy per residue type**, ordered by the
+`@restype` attribute of `rama.dat`'s `/sheet` group. Not spline knots.
+`write_rama_map_pot` asserts `size == len(sheet_restype)`, so a file of any other length is
+rejected. Each residue's coil and sheet maps are blended as
+`mixture_potential([coil_w, sheet_w*exp(-sheet_mixing)], [coil_pot, sheet_pot])`.
 
-```
-line 1..63: cubic spline knots for sheet mixing potential
-```
+Sweeping a residue's value across its whole range barely moves the alpha_R/alpha_L balance,
+because the sheet endpoint is empty in both helical basins; it mainly adds beta. Under
+`--rama-param-deriv` the config also gains `more_/less_sheet_rama_pot_<TYPE>` pairs at
+`eps = 5e-4` for finite-difference training, plus a `..._ALL` pair with every type shifted
+together (used to train a single common offset).
 
 ### 2.10 `rama_reference.pkl`
 

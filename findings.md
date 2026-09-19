@@ -158,6 +158,561 @@ TM4's instability. The control is a de-symmetrized run, a few hours locally. Wor
 glycine thread is picked up again; note that the 2026-09-10 measurements argue against glycine being
 the TM4 cause at all, and that the asymmetric reference state is the live GLY defect instead.
 
+## VERDICT: the per-neighbour glycine structure is not reproducible; only the average is (2026-09-18)
+
+Two independent replicas (49033509 and 49033985, differing only in `gen-seed`/`awh-seed`) compared
+at matched 36-45 ns, means over four snapshots, aligned basins:
+
+| sys | rep1 | rep2 | diff |
+|---|---|---|---|
+| **LG, achiral, true value 0** | **+0.033** | **+0.110** | 0.077 |
+| LA | -0.677 | -0.649 | **0.028** |
+| LM | -0.595 | -0.240 | 0.355 |
+| LL | -0.296 | -0.103 | 0.194 |
+| LP | -0.283 | -0.387 | 0.104 |
+| LE | -0.261 | -0.027 | 0.235 |
+| LT | -0.185 | -0.294 | 0.109 |
+| LD | -0.151 | -0.438 | 0.286 |
+| LV | -0.130 | -0.253 | 0.123 |
+
+**1. The per-neighbour ordering has zero reproducibility.** Spearman rho = **+0.048, p = 0.91**.
+Per-neighbour disagreement averages 0.179 and has NOT shrunk from 0.147 at 30 ns, so it is not a
+sampling-time problem. **The neighbour dependence seen in replica 1 was that replica's own noise**,
+and the "ordering is stable over 48-57 ns" claim is withdrawn: stable within a replica, meaningless
+across replicas. This is the third time a within-run stability check has been falsified by an
+independent run, after the 15 ns zero and the four-snapshot LA window.
+
+**2. Each replica's achiral control converges to a different nonzero value.** LG is *stable* in
+both, ranges 0.023 and 0.029, but sits at +0.033 and +0.110 against a true value of exactly 0. So
+stability of the control does not imply correctness of the control. Subtracting it makes the
+neighbour-averaged agreement worse (0.054 corrected vs 0.024 raw), so it is not a simple additive
+bias shared with the chiral systems. **Unexplained. Resolve before publishing any number**, since
+0.077 is comparable to the effect being measured. Candidates: AWH still in its linear phase at
+45 ns; the 46x46 grid's handling of basin edges; correlation with initial-stage exit time.
+
+**3. The neighbour-average reproduces and is the only usable result.** Raw means -0.322 and -0.299,
+agreeing to **0.024**, roughly 7x tighter than the per-neighbour scatter. Take glycine's
+neighbour-independent asymmetry as **-0.31 E_up, uncertainty ~0.08 set by the control offset**.
+
+**Consequences.** The library's neighbour-averaged value on the same basins is about -1.13 E_up, so
+it is ~3.6x too alpha_L-biased, **and zero is not right either**. Neighbour-averaged errors: ff2.1
+~0.82, ff3.0 ~0.31, so ff3.0 is ~2.6x better and still wrong by ~0.31. **Do not run the remaining
+28 peptides**; they would measure structure that two replicas agree is noise. The deliverable
+collapses from a 40-map row to a single uniform constant, which is a much smaller change to the
+force field and needs no further sampling campaign beyond tightening that one average.
+
+## Two scripts, two alpha basin definitions, and a mirror-symmetric blind spot (2026-09-18)
+
+Second occurrence of the same class of error, so it is worth a rule. `awh_an.py`, which writes
+`STATUS.md`, used `AR = phi[-100,-30] psi[-70,-10]` / `AL = phi[30,100] psi[10,70]`, while the
+time-series script `/tmp/ts.py` used `AR = phi[-100,-40] psi[-60,10]` / `AL = phi[40,100]
+psi[-10,60]`. I compared 51 ns from one against 57.6 ns from the other and reported that every
+value had drifted toward zero. Most of that was the change of ruler: at 57 ns the same system reads
+-0.556 on one definition and -0.450 on the other, a 0.106 difference.
+
+**Why it hid for so long: both definitions are exact mirror images**, so both give exactly 0 for an
+achiral system. The LG control therefore read ~0 under either one and never flagged the mismatch.
+A control that is insensitive to the thing that differs cannot detect it.
+
+Fixed by aligning `awh_an.py` to the time-series boxes (backup `awh_an.py.bak_pre_boxalign`), with
+a comment in the file recording why. **Historical `STATUS.md` numbers predating this use the old
+boxes and are not comparable to the series.**
+
+**Rule: a derived quantity's definition must live in exactly one place.** Two scripts computing
+"the same" observable with independently written region bounds will diverge, and if the difference
+happens to be invisible to your control, you will not notice until two numbers that should match
+do not. When comparing any two values, first confirm they came from the same definition.
+
+## A four-snapshot window understates the wander; "LA is settled" was a window artifact (2026-09-18)
+
+I reported LA as the first settled chiral value on a four-snapshot window (30-39 ns, range 0.028).
+Extending to seven snapshots spanning 33-51 ns:
+
+| sys | mean | range over 18 ns | range on the 4-pt window | value at 51 ns |
+|---|---|---|---|---|
+| LG (control) | **+0.025** | 0.046 | 0.033 | +0.020 |
+| LA | -0.663 | **0.106** | 0.028 | -0.600 |
+| LM | -0.560 | 0.159 | 0.104 | -0.485 |
+| **LL** | **-0.303** | **0.049** | 0.049 | -0.313 |
+| LP | -0.300 | 0.103 | 0.056 | -0.315 |
+
+**Retract "LA is settled".** Its four-point range of 0.028 was luck of the window; over 18 ns it is
+0.106, and at 51 ns it reads -0.600, the least negative since 30 ns, so it is drifting back up. What
+survives is weaker but still useful: LA stays between -0.600 and -0.706 across the whole window, so
+it is decisively nonzero even though its magnitude is not pinned to better than ~0.1.
+
+**LL is now the best-converged chiral value**, range 0.049 over 18 ns against the control's 0.046,
+mean -0.303. LP has independently landed at -0.300. LA and LM are both drifting up from their
+extremes, so the apparent two-group structure is closing rather than firming up.
+
+**A systematic worth tracking: the control is not centred on zero.** LG reads +0.020 to +0.046 on
+every one of the last six snapshots, mean +0.025, when its true value is exactly 0. That is a small
+one-sided bias, not scatter. If it is a property of the estimator rather than of that system, every
+chiral value carries roughly +0.025 too and should be shifted by -0.025. Do not apply that
+correction yet; check whether replica 2's control shows the same sign and size.
+
+**Rule: quote the wander over the longest available window, not a fixed four snapshots.** A short
+window can make a drifting value look converged, which is how this slipped through.
+
+## The achiral control certifies nothing, demonstrated directly by two replicas at matched sampling (2026-09-18)
+
+I had been arguing on symmetry grounds that an achiral control cannot bound the error on a chiral
+value, because the achiral surface's errors cancel by symmetry. Replica 2 (49033985, `gen-seed`
+20260918, `awh-seed` 776611) makes it concrete. Both replicas at **matched 7 ns**, `dG(aR->aL)` in
+E_up:
+
+| sys | replica 1 | replica 2 | difference |
+|---|---|---|---|
+| **LG, achiral, true value exactly 0** | **-0.002** | **-0.264** | **0.262** |
+| LA | -0.372 | -1.196 | 0.824 |
+| LE | -0.254 | +0.469 | 0.723 |
+| LP | +0.005 | -0.484 | 0.489 |
+| LV | +0.141 | -0.167 | 0.308 |
+| LL | -0.305 | -0.520 | 0.215 |
+| LD | -0.660 | -0.822 | 0.162 |
+| LM | -0.003 | -0.154 | 0.151 |
+| LT | -0.027 | -0.128 | 0.101 |
+
+Typical seed-to-seed difference is ~0.4 against a total signal spread of 0.6, so **at 7 ns the
+measurement carries no information at all**. The control line is the proof: LG must be exactly 0,
+replica 1 read -0.002 and replica 2 read -0.264 at the same sampling. Replica 1's control landing
+on zero early was luck, and had I checked only replica 1 I would have read that as convergence.
+
+**Rule to carry forward: for a chirality observable, an achiral control passing is necessary and
+nowhere near sufficient. Only independent replicas at matched sampling bound the error.** Replica 1
+needed roughly 40 ns before its control tightened to a 0.042 spread and LA settled, so the replica
+comparison must be made at matched ~40 ns. My earlier 15 ns threshold was wrong.
+
+One detail not to over-read: replica 2's LA at 7 ns is -1.196 while replica 1 approached its
+settled -0.664 from above (-0.372 at 7 ns). Converging from opposite sides would be the good
+outcome, but at this sampling it means nothing.
+
+## Superseded: the "neighbour dependence is real" chain (2026-09-18, collapsed 2026-09-19)
+
+Two entries stood here recording an intermediate claim and its qualification: at 27 ns the
+per-neighbour ordering looked real, and at 37 ns it needed qualifying because per-system wander was
+large. **Both are superseded by the replica comparison** in the VERDICT section above: the ordering
+does not reproduce (Spearman rho +0.048 between replicas) and only the neighbour-average survives.
+They are removed rather than kept, because a claim, its hedge, and its withdrawal read as three
+findings when they are one.
+
+The two things from them worth keeping are recorded elsewhere: `gmx awh -more` silently returns
+zero `fe_t*.xvg` files when the interactive shell lacks `module load gcc/10.1.0` (midway2's system
+libstdc++ has no GLIBCXX_3.4.20, and the sbatch scripts load it while a bare ssh command does not);
+and a per-neighbour ordering stable **within** one replica is not evidence, because the noise is
+correlated in time within a run.
+
+
+## Glycine is the only residue needing a resampled map, and the library's ordering proves why (2026-09-18)
+
+Question: does the Rama map need remeasuring for all 20 residues, or just glycine? Measured from
+the ff2.1 coil library, central residue, averaged over the 20 left neighbours:
+
+| res | alpha_R | alpha_L | P(phi>0) | dG(aR->aL) kT |
+|---|---|---|---|---|
+| **GLY** | 8.98% | **30.95%** | **0.650** | **-1.238** |
+| ASN | 18.87% | 13.36% | 0.144 | +0.352 |
+| HIS | 21.57% | 8.00% | 0.090 | +1.021 |
+| ASP | 25.59% | 6.38% | 0.076 | +1.388 |
+| ALA | 27.04% | 4.49% | 0.055 | +1.837 |
+| LEU | 24.58% | 3.32% | 0.040 | +2.039 |
+| SER | 28.64% | 2.70% | 0.039 | +2.421 |
+| THR | 23.73% | 0.71% | 0.015 | +3.586 |
+| VAL | 18.76% | 0.58% | 0.016 | +3.690 |
+| ILE | 18.81% | 0.26% | 0.011 | +4.390 |
+| PRO | 20.53% | 0.00% | 0.000 | +12.621 |
+
+(others between; GLY alpha_L is 7x the mean of the other nineteen, which is 4.28%.)
+
+**Glycine is the only residue where alpha_L is favoured at all.** Every other residue has positive
+`dG`, and the ordering is exactly what local Cbeta sterics predict: ASN and HIS most alpha_L
+tolerant (ASN's sidechain can hydrogen bond to the backbone and it is the classic left-handed turn
+residue after glycine), then unbranched, then beta-branched THR/VAL/ILE at 0.71/0.58/0.26%, then
+PRO at exactly zero because the ring blocks it. **That ordering is a local property, so for the
+other nineteen residues the library's handedness is local physics and needs no correction.**
+
+Glycine has no Cbeta, so it has no local mechanism to produce handedness at all. Any handedness in
+its map must come from context, which is why it is the one residue where the fold contamination is
+both large and provable.
+
+**The broader ensemble mismatch still affects all 20**, since the library is folded-protein
+statistics by construction. The difference is detectability: for glycine the fold-driven part is
+31% of the map's population and has the wrong sign against any local expectation; for the others it
+sits on top of a large genuinely-local signal with no independent way to separate it short of
+measuring. ConDiv also trains `rot`/`env` with the library fixed, so contamination common to all
+residues is partly absorbed; glycine escapes that absorption by being an outlier in size and sign.
+
+**Recommendation: resample glycine only.** Cost scale: one residue's full row is 40 peptides, about
+a day per force field. All 20 would be 800 peptides, roughly 20 days per force field, and for the
+other nineteen there is no evidence a correction is needed. If one more were ever worth checking it
+is **ASN**: 13.36% alpha_L, three times the next highest, and the residue most likely to share
+glycine's turn-context contamination.
+
+## The coil/sheet mixture has NO glycine handedness knob, so the conditional-map redesign cannot work (2026-09-18)
+
+Tested locally, and the result kills the redesign I had proposed (a runtime blend between the
+fold-conditioned and fold-free maps driven by `env`, using the `lambda` hook that
+`RamaMapPot2` already provides at `src/rama_map_pot.cpp:95`).
+
+**The architecture already is a two-ensemble mixture.** `read_weighted_maps`
+(`py/upside_config.py:750`) builds each residue's map as `mixture_potential([w_coil,
+w_sheet*exp(-E)], [coil, sheet])` with `E = sheet_mixing_energy`, one value per residue type,
+evaluated at config time and baked into a static `rama_pot`. `E` is already trainable:
+`write_rama_map_pot` emits finite-difference arrays `more_sheet_rama_pot_*` /
+`less_sheet_rama_pot_*` at `upside_config.py:772-813`. `parameters/ff_2.1/sheet` and
+`parameters/ff_3.0/sheet` are byte-identical, so it was frozen through the ff3.0 retrain.
+
+**Sweeping that knob over its entire range does not move glycine handedness at all.**
+ALA-GLY-ALA, ff2.1, `dG(aR->aL)` in kT:
+
+| E_sheet | sheet fraction | dG | alpha_R | alpha_L | beta |
+|---|---|---|---|---|---|
+| +4.000 | 0.1% | **-0.971** | 11.3% | 29.9% | 3.1% |
+| -0.544 (current GLY) | 10.7% | **-0.971** | 10.1% | 26.7% | 8.5% |
+| -2.000 | 34.0% | **-0.971** | 7.5% | 19.8% | 20.4% |
+| -6.000 | 96.6% | **-0.971** | 0.4% | 1.0% | 52.5% |
+| -10.000 | 99.9% | **-0.971** | 0.0% | 0.0% | 54.3% |
+
+Invariant to three decimals across three orders of magnitude in mixing weight.
+
+**The mechanism, and it is not a coincidence.** The two maps differ enormously in handedness
+(sheet `dG` runs +7.8 to +41.3 kT against coil's -1.1 to -1.6), but the sheet endpoint is
+*empty in both helical basins*: for GLY|ALA its alpha_R fraction is 1.6e-10 and alpha_L is
+8.7e-16, against beta 0.533. A Boltzmann mixture is `p ~ w_c p_c + w_s p_s`, so adding sheet
+weight contributes essentially nothing to either helical basin, dilutes both by the same factor,
+and piles population into beta. **The ratio, which is the handedness, is untouched.**
+
+**Consequences.**
+* The static knob cannot fix it, so **unfreezing `sheet_mixing_energy` in training is pointless
+  for this purpose** and no training run should be spent on it.
+* A *dynamic* mixture cannot fix it either, since it interpolates between the same two endpoints.
+  The redesign is dead on arrival, not merely risky. Withdraw it.
+* Tuning `E` to hit `P(phi>0) = 0.5` (which happens at E = -1.336) is a trap: it reaches that
+  number by inflating beta from 8.5% to 13.7% while alpha_L/alpha_R stays at 23.7/9.0, and the
+  resulting map differs from ff3.0's symmetrized one by up to **3.00 kT**. Right in one scalar,
+  wrong in the physics. `P(phi>0)` is too coarse a target; use `dG(aR->aL)`.
+* **In this architecture, editing the map itself is the only way to change glycine handedness.**
+  That is what ff3.0 does. So symmetrization was not one option among several, it was the only
+  reachable one short of replacing the maps with measured surfaces.
+
+## ff3.0C stays cancelled: scored against the real measurement it is worse than plain ff3.0 (2026-09-18)
+
+Once 49033509 produced a real surface (range 50-66 kJ/mol at 15 ns, against 2.0 before), the three
+variants could be scored against it on identical basins. The ff3.0C library no longer exists on
+disk, so its values were rebuilt from its construction rule, coil group minus `antisym(GLY|GLY)`.
+Nine chiral neighbours, `dG(aR->aL)` in E_up:
+
+| model | RMS error | max \|error\| | mean error |
+|---|---|---|---|
+| **ff3.0, all zero** | **0.211** | 0.398 | +0.131 |
+| ff3.0C | 0.376 | 0.558 | -0.289 |
+| ff2.1 | 0.780 | 0.980 | -0.741 |
+
+ff3.0C removes about half of ff2.1's error and then overshoots: mean error -0.289 means it retains
+too much alpha_L across the board, which is the over-retention suspected earlier but unquantifiable
+while the surfaces were flat.
+
+**The decisive number is the neighbour correlation, because that is ff3.0C's entire premise.**
+ff3.0C keeps the library's neighbour specificity and removes only the common part, so it is right
+only if that specificity is real. Against the measurement it correlates at **r = -0.19**, versus
+ff2.1's -0.20. Both are slightly anti-correlated, so ff3.0C preserves a neighbour pattern the data
+contradicts. THR is the clean example: ff2.1 (-0.859) and ff3.0C (-0.394) both make it strongly
+alpha_L-favouring, and the measurement has it as the most alpha_R-favouring of the ten (+0.097).
+
+So the 141 checkpoints already spent were fitting the wrong target and the remaining 359 would not
+repair it. **Leave it cancelled.** Two limits on this: the measurement is 15 ns and time-stability
+is unchecked, and ff3.0's RMS win is partly luck, since zero scores well when the true values are
+small rather than because zero is correct. The measurement says the answer is a nonzero,
+neighbour-dependent asymmetry about a third the library's size, which no existing variant has, so
+the Tier 2 measured map is the route rather than any reweighting of the library.
+
+## Why the lambda benchmark arm fails, and what a glycine map can and cannot do about it (2026-09-18)
+
+lambda is the worst arm in the Peng benchmark under both force fields, and the user asked what
+breaks it and whether the force field now being developed would repair it. Everything below is
+measured on midway2 from the ff3.0 arms in `/beagle3/trsosnic/yinhan/ff3_benchmark`; scripts are in
+`scoring/` (`diag_lambda_fail.py`, `gly_reweight.py`, `energy_split.py`, `helix_by_rmsd.py`).
+
+### How badly it fails, against FF2 on the same statistic
+
+Peng's own per-protein TM distributions were digitised into
+`0914/figs/ff2_curves_s5.npz`, so FF2 and ff3.0 can be compared arm by arm on the mean TM rather
+than on the lowest-RMSD frame.
+
+| arm | FF2 `<TM>` | ff3.0 `<TM>` | ff3.0 `<Ca-RMSD>` | lowest |
+|---|---|---|---|---|
+| lambda native | 0.413 | **0.359** | **8.59 A** | 4.21 A |
+| lambda de novo | 0.373 | **0.314** | **10.97 A** | 4.06 A |
+
+Over the 15 scored natives ff3.0 raises the mean TM from 0.541 to 0.583, so the benchmark as a
+whole improves. lambda and WW domain are the only two arms that regress in **both** arms, and
+lambda is the only one that is also an outright failure: at L = 78 its 8.59 A sits against
+ubiquitin's 2.58 A at L = 73 and top7's 2.23 A at L = 92. **ff3.0 did not fix lambda; it made it
+about 0.055 TM worse in each arm.**
+
+### The failure is bundle assembly, not secondary structure
+
+Helices taken from the reference's own (phi,psi): H0 3-23, H1 27-34, H2 38-46, H3 53-63, H4 72-78
+(0-based, as the deposited file is numbered).
+
+| | H0 | H1 | H2 | H3 | H4 |
+|---|---|---|---|---|---|
+| local Ca-RMSD, helix fitted to itself | 1.53 | 1.52 | **2.84** | 0.62 | 1.72 |
+| deviation after global superposition | 7.85 | 7.39 | 8.70 | 8.63 | 10.97 |
+
+Every helix holds its own shape to 0.6-2.8 A while the assembly is 8.6 A out. The error is in how
+the helices are placed relative to one another, and specifically in their **crossing angles**: the
+two pairs that are near-parallel in the native come out near-perpendicular, H0-H3 28 -> 69 deg and
+H1-H4 22 -> 86 deg, while every centroid distance is within 4 A. proteinB and homeodomain, run and
+analysed identically as controls, reproduce every crossing angle to within 17 deg.
+
+The cold rung is not simply too hot: the ladder's unfolding transition sits between T = 0.878
+(mean 11.7 A) and T = 0.893 (22.6 A), well above the cold rung at 0.780. **Not one of 23,337
+cold-rung frames reaches 4 A**; the best is 4.21 A.
+
+### The native arm never equilibrates. It decays for the whole run and is still decaying at the end
+
+This is the most important single measurement, and it reframes everything downstream. Cold-rung
+Ca-RMSD blocked by simulation time over the full Table S2 duration:
+
+| t (x1000 time units) | `<RMSD>` | median | %< 6 A | %< 5 A |
+|---|---|---|---|---|
+| 0-211 | 6.41 | 5.43 | 62.4 | 36.2 |
+| 633-845 | 7.20 | 7.02 | 39.5 | 0.1 |
+| 1267-1478 | 8.64 | 8.67 | 6.2 | 0.4 |
+| 1900-2111 | 8.96 | 8.33 | 0.1 | 0.0 |
+| **2323-2534 (last)** | **10.39** | **10.86** | **0.0** | **0.0** |
+
+The de novo arm runs the other way and lands in the same place: 10.63 in its first block, **11.46 in
+its last**. So the two arms converge on one ensemble at 10-11.5 A, and **that misassembled ensemble
+is ff3.0's equilibrium for lambda**. The near-native population is memory of the native seed, and
+it is gone by two thirds of the way through.
+
+Two consequences. First, the reported `<RMSD>` of 8.59 A and `<TM>` of 0.359 are averages over an
+unfinished decay and flatter the force field; the converged value is nearer 10.4 A. Second, any
+statistic computed on the whole native arm mixes decay with equilibrium. `score_arms_dist.py`
+discards `BURN = 2000` frames, which is only the first of the twelve blocks above, so this affects
+the published-comparison numbers for every arm whose native is not stable. It does not affect
+proteinB (99.3% under 4 A throughout) or the other well-folded arms, but it must be checked before
+any arm's native number is quoted as an equilibrium property.
+
+### The Ramachandran term is nearly flat with respect to lambda's fold quality
+
+The trajectory stores the total potential per frame, and the Ramachandran part can be recomputed
+exactly from the config's own maps, so the total splits with no re-run:
+
+| Ca-RMSD bin | n | total | rama | glycine rama | everything else |
+|---|---|---|---|---|---|
+| 5-6 | 3367 | **-218.9** | -13.4 | -4.11 | -216.2 |
+| 8-9 | 4448 | -204.5 | -15.3 | -3.69 | -199.1 |
+| 10-12 | 6936 | -200.7 | -12.3 | -3.09 | -199.2 |
+
+The near-native bin **is** the energy minimum, by about 18 E_up against the collapsed bin, so the
+force field does prefer near-native; it simply does not prefer it enough against the misfolded
+ensemble's entropy, and its own near-native basin is centred at 5-6 A rather than 1-2 A. The
+discrimination lives almost entirely outside the Ramachandran term: correlation with Ca-RMSD is
++0.232 for the total, +0.205 for the non-rama part, **+0.075 for rama and +0.119 for the glycine
+part of rama**.
+
+**Do not use frame 0's energy as a reference.** The proteinB control settles this: its deposited
+structure scores +162.7 E_up against an ensemble mean of -153.9 while folding perfectly (99.3% of
+frames under 4 A), because the deposited coordinates are unrelaxed in this force field. lambda's
+deposited structure happens to sit only +11.2 E_up above its ensemble, which means its reference
+file is an MD-relaxed model, not that its native is marginal.
+
+### Glycine in lambda, and what the developing force field would do
+
+For lambda, ff2.1 and ff3.0 differ in **exactly six 72x72 maps and nothing else** (verified
+residue by residue against a freshly built ff2.1 config, `glydiag/lambda_ff21.up`). Its six
+glycines carry precisely the library-average bias: dG(aR->aL) = -1.238 E_up under ff2.1, exactly
+0 under ff3.0. They are mixed in handedness, which is why no context-free map suits the protein:
+24, 35, 47 are natively aL and all three are loop C-caps of H0, H1 and H2; 40 and 42 are natively
+aR and both sit **inside** H2; 37 is beta.
+
+At the native structure the two effects cancel to within the construction's own ambiguity:
+restoring the full ff2.1 asymmetry changes the native's energy by **-0.311 E_up** with the
+library's per-neighbour antisymmetric part and **+0.111 E_up** with the neighbour-averaged one.
+The sign is not even determined.
+
+The candidate force field is one number on this axis. Writing `M(lam) = M_ff3.0 + lam*A`, with A
+the antisymmetric part symmetrization removed, **lam* = 0.217 reproduces the AWH campaign's
+-0.27 E_up**. Reweighting the cold-rung ensemble along lam, on the whole run and on the last third
+(the only part that is near equilibrium), native arm:
+
+| lam | whole run `<RMSD>` | P(<6 A) | ddG(<7 A) | | last third `<RMSD>` | P(<6 A) | ddG(<7 A) | ESS |
+|---|---|---|---|---|---|---|---|---|
+| 0 (ff3.0) | 8.41 | 18.9% | 0 | | 9.46 | 0.04% | 0 | 100% |
+| **0.217 (candidate)** | 8.19 | 25.7% | **+0.258** | | **9.50** | **0.04%** | **-0.024** | 91% |
+| 0.5 | 7.80 | 36.4% | +0.612 | | 9.57 | 0.06% | -0.100 | 61% |
+| 1 (ff2.1's maps) | 7.15 | 52.7% | +1.103 | | 9.63 | 0.07% | -0.342 | 13% |
+
+**The whole-run column is an artefact and must not be quoted.** It reweights the decay away from
+the native seed, so it is dominated by frames the force field is in the process of leaving. On the
+equilibrated third the correlation between the perturbation and Ca-RMSD flips sign, from +0.171 to
+**-0.064**, and the candidate's effect becomes **-0.024 E_up, which is zero to within anything
+measurable, in the destabilising direction**. Larger lam is worse, not better: the full ff2.1
+asymmetry costs -0.342 E_up and raises `<RMSD>` from 9.46 to 9.63. The de novo arm's last third
+agrees that there is nothing there: P(<6 A) = 0.00% at every lam.
+
+**Three reasons this is not a fix.**
+
+1. **At equilibrium the effect is zero.** -0.024 E_up at lam*, with 91% effective sample size, so
+   this is a measurement and not a sampling limitation.
+2. **No reweighting can create a frame that was never sampled.** P(< 4 A) is exactly 0 at every
+   lam because none of 25,337 cold-rung frames is below 4.21 A, and in the last third none is
+   below 5.71 A.
+3. **What little sign there is points the wrong way.** Restoring more of the library's asymmetry
+   makes the equilibrated ensemble worse, consistent with the per-residue split below: the
+   perturbation lands on H2, the helix that fails.
+
+### The fold comes apart at H2, and H2 is the glycine-rich helix
+
+Helix state resolved by how folded the frame is (`helix_by_rmsd.py`), native arm, cold rung. Local
+Ca-RMSD of each helix fitted to itself, and the fraction of that helix's residues in the
+right-handed basin:
+
+| Ca-RMSD bin | n | H0 | H1 | **H2** | H3 | H4 | H0 aR | H1 aR | **H2 aR** | H3 aR | H4 aR |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0-5 | 864 | 1.17 | 0.54 | **1.28** | 0.35 | 0.82 | 98% | 99% | **89%** | 95% | 94% |
+| 5-6 | 3921 | 1.35 | 0.65 | **3.16** | 0.37 | 1.53 | 95% | 98% | **36%** | 93% | 85% |
+| 7-8 | 4814 | 1.49 | 1.68 | **2.29** | 0.36 | 2.26 | 96% | 85% | **62%** | 97% | 68% |
+| 10-12 | 7343 | 1.61 | 1.52 | **3.15** | 0.97 | 1.18 | 92% | 88% | **33%** | 93% | 92% |
+
+H3 (53-63) is rigid everywhere, 0.35-0.97 A and 93-99% aR. H0 (3-23) holds to 1.2-1.7 A. **H2
+(38-46) is the one that fails**: intact only in the 0-5 A shell, and by 5-6 A it is already at
+3.16 A with barely a third of its residues right-handed. Its sequence is `QSGVGALFN`, two internal
+glycines in nine residues, and it is the helix whose loss coincides with the fold's departure.
+
+**Correction to an earlier reading in this session.** I first pooled everything under 6 A and
+concluded that the most native-like frames had H2 broken with five of six glycines left-handed.
+That is true of the 5-6 A shell, which outnumbers the 0-5 A shell four to one, and false of the
+0-5 A shell itself, where H2 is intact at 89% aR. The glycine statistic was reporting the shell,
+not the near-native state.
+
+Glycine native-basin retention across the whole arm is 51% against 81% for lambda's non-glycines,
+but that is not by itself evidence of a glycine defect: in proteinB and homeodomain, whose folds
+hold, the single native-aL glycine is retained at 99.3% and 94.8%. Glycine straying tracks the
+collapse of the helix it sits in.
+
+### The candidate force field takes energy from the helix that is failing
+
+Split the candidate's perturbation at the native conformation residue by residue, at
+lam* = 0.217 with the neighbour-averaged antisymmetric part:
+
+| residue | native basin | where | lam* x A (E_up) |
+|---|---|---|---|
+| 40 | aR | **inside H2** | **+0.202** |
+| 42 | aR | **inside H2** | **+0.101** |
+| 24 | aL | H0 C-cap | -0.032 |
+| 35 | aL | H1 C-cap | -0.136 |
+| 47 | aL | H2 C-cap | -0.041 |
+| 37 | beta | loop | -0.070 |
+| **net** | | | **+0.024** |
+
+The net is zero to within the construction's ambiguity, but the distribution is not: the candidate
+**penalises the native conformation of H2's two internal glycines by +0.30 E_up = 0.39 kT**, and
+returns the same amount to three loop glycines that are already sitting in their native basins
+(retention 64-82%). It withdraws support from the one helix whose failure starts the collapse.
+
+### Bottom line
+
+lambda fails because ff3.0 (and FF2 before it) cannot hold its five-helix bundle: helix H2 unravels
+first, the remaining helices then repack with the wrong crossing angles, and the native arm decays
+all the way to the de novo arm's ensemble at 10-11.5 A without equilibrating. The error is carried
+by the packing terms, not the local backbone term, and the glycine Ramachandran row is nearly
+orthogonal to it. On the equilibrated part of the trajectory the candidate
+force field does nothing to it (-0.024 E_up at lam*, ESS 91%), and what sign it has is
+destabilising, consistent with it withdrawing 0.39 kT from H2. **Lambda is not a glycine-handedness
+test case and should not be used to justify or to veto the map rebuild.**
+
+## The library's glycine alpha_L preference is an accurate description of folded proteins (2026-09-18)
+
+Measured directly from the 16 ff3.0 benchmark natives (`ff3_benchmark/pdb/`), classifying every
+interior glycine by its own native (phi,psi) computed from N/CA/C:
+
+**42 of 67 interior glycines sit at phi > 0, which is 63%.** The NDRD TCB library puts 66% of
+central-glycine weight at phi > 0. Those agree to within the counting error of 67 residues.
+
+| protein | interior G | phi>0 | alpha_R | beta | fraction phi>0 |
+|---|---|---|---|---|---|
+| protL, ww, bba, nug2, homeo, protB | 1-4 each | all | 0 | 0 | 100% |
+| top7, ubq | 5, 5 | 4, 4 | 0, 1 | 1, 0 | 80% |
+| hyp | 7 | 5 | 2 | 0 | 71% |
+| gpW | 3 | 2 | 0 | 1 | 67% |
+| ntl9 | 5 | 3 | 1 | 1 | 60% |
+| cspa, lambda, protG | 10, 6, 4 | 5, 3, 2 | 1, 2, 0 | 4, 1, 2 | 50% |
+| bbl | 4 | 1 | 1 | 1 | 25% |
+| a3d | 5 | 0 | 4 | 1 | 0% |
+
+**So the library is not wrong about folded proteins; it is right about them.** This is the
+double-counting question reduced to a single number. The `dimer_pot` row for glycine faithfully
+reports where glycine actually sits in folded structures, and an isolated capped peptide is a
+different ensemble that must be at 50% when achiral. Symmetrizing is therefore a **modelling
+choice about which ensemble the local term should represent**, defensible as pushing fold
+information out of a local term and into `hbond`/`env`/`sidechain` where it belongs. It is not a
+bug fix, and calling it one overstates it. The cost of symmetrizing is that the local term stops
+helping place the 63% of glycines that genuinely are at phi > 0, and the fold terms have to carry
+that alone.
+
+**lambda is a mixed-handedness case, which is why no single map suits it.** It is the weakest FF2
+native (5.4 A) and the user asked whether glycine explains that. Content does not: 6 of 80 = 7.5%,
+8th of 16, against cspA 14.5% and NTL9 12.8%. But its glycines split by handedness:
+
+| res | context | phi | psi | native region |
+|---|---|---|---|---|
+| 25 | L-G-L | +56.7 | +43.9 | alpha_L |
+| 36 | M-G-M | +76.2 | +28.7 | alpha_L |
+| 38 | M-G-Q | -107.0 | +160.0 | beta/pPII |
+| 41 | S-G-V | -65.5 | -38.2 | alpha_R |
+| 43 | V-G-A | -57.8 | -39.4 | alpha_R |
+| 48 | N-G-I | +64.2 | +33.0 | alpha_L |
+
+ff2.1's strong alpha_L bias is wrong for 41 and 43; ff3.0's exact zero is wrong for 25, 36 and 48.
+**Only the fold terms can distinguish those positions, so neither map can fix lambda.** This is the
+opposite of glpG TM4, where all three glycines are XGX inside a helix at alpha_R and the spurious
+alpha_L bias was pulling them out, which is why removing it helped there. All six of lambda's
+glycines are XGX with no GG pair, and four cluster in residues 36-43 (`MGMGQSGVGA`), the densest
+9-residue glycine window in the set alongside bbl.
+
+**The weak-case correlation is suggestive and cannot be tested properly.** The five weakest FF2
+cases recorded in `remote_jobs.md` (lambda, hyp, protG, cspA, NTL9) average 10.4% glycine against
+6.4% for the other eleven. With n = 5, no severity ranking, and the confound that glycine-rich
+chains are floppier for reasons unrelated to the Rama map, that is not evidence.
+
+**Correction 2026-09-18: the score table was never deleted.** The claim that `ff3_benchmark/`
+holds only `pdb/` was wrong. `scoring/score_arms.json` and all 23 `scoring/dist/*.npz` are on
+midway2, and the per-frame cold-rung TM and Ca-RMSD arrays in the npz files are enough to rebuild
+any summary without touching a trajectory.
+
+## midway2 auth: one launch spent five password attempts and locked the account (2026-09-18)
+
+`mdw2_hold.exp` used `exp_continue` on the password prompt, so a rejected password was re-sent on
+every re-prompt. One launch produced three keyboard-interactive `Password:` prompts and two
+`Permission denied, please try again.` rounds before the server answered **"Too many authentication
+failures"** and dropped the connection. The account's small failed-attempt budget went in a single
+command, and this is the second time this budget has been burned by a script rather than by a wrong
+guess (the first was a plain `ssh -S <socket>` falling back to password auth on a dead socket).
+
+Three fixes, all in `mdw2_hold.exp` (backup `mdw2_hold.exp.bak_pre_onetry`):
+* **Send the password at most once.** A second prompt means the first was rejected, so abort with
+  `PASSWORD_REJECTED` rather than spend the rest of the budget. Also match `Permission denied` and
+  `Too many authentication failures` explicitly and exit on them.
+* **`PubkeyAuthentication=no -o IdentitiesOnly=yes`.** midway2 does not honour `authorized_keys`
+  for this account, so every key the client offers is a wasted attempt against the server's
+  `MaxAuthTries`. `~/.ssh/config` points `Host midway2` at `~/.ssh/midway3`, and nine `.pub` files
+  sit in `~/.ssh`, so the client had keys to waste.
+* **`NumberOfPasswordPrompts=1`** as a second line of defence at the ssh layer.
+
+The stored password itself extracts correctly (15 characters, non-empty, from a file last modified
+May 2025), so either it has been rotated since or the rejections were the lockout already in
+effect. Distinguishing the two needs one manual login by the user, not another script attempt.
+
+**Lesson: any automated credential send must be one-shot.** A retry loop around a rejected
+credential is not resilience, it is an account lockout with extra steps. Treat a second prompt as a
+hard stop. And when a diagnostic would itself consume the scarce resource, do not run it: there is
+no syntax check for an expect script that does not also execute it, so verify balance and content
+statically instead (`expect -n -c 'source ...'` DOES connect; I ran it by mistake and had to kill it).
+
 ## The ff3.0 GLY symmetrization lands on XGX, not on GG (2026-09-16)
 
 PI's question: is the middle-glycine Rama map naturally symmetric, and is glpG's ff2.1 failure a
@@ -252,6 +807,177 @@ ff3.0 symmetrizes it anyway at all 19 sites. Two measurements bear on how much t
   |---|---|---|
   | present even with an achiral nearest neighbour (`GLY|GLY`) | **-0.635 E_up (66%)** | not nearest-neighbour chirality, and measured below to be glycine-specific: PDB positional selection |
   | additional part depending on *which* L residue is adjacent | **-0.329 E_up (34%)** | genuine local XGX chirality |
+
+  **RESOLVED 2026-09-18 by direct measurement: the intrinsic handedness is ZERO, and ff3.0 is
+  right.** Two independent results, both replacing the speculation that used to sit here.
+
+  > **WITHDRAWN 2026-09-18, the AWH runs are not converged and every number below is an
+  > artifact of that.** AWH's own friction metric implies a coordinate diffusion of
+  > `D ~ 0.77 rad^2/ps` (10-90% range 0.33-3.4), while `awh.mdp` sets
+  > `awh1-dimN-diffusion = 5e-5`, about **15000x too small**. AWH therefore treats samples as far
+  > more correlated than they are and grows the free-energy estimate far too slowly: it left the
+  > initial stage at t = 13.34 ns with a total PMF range of only ~1.0 kJ/mol and is now creeping up
+  > at ~0.07 kJ/mol/ns, reaching 2.0 kJ/mol at 25.8 ns. A glycine Ramachandran surface spans
+  > 20-40 kJ/mol, so the measured surface is **nearly flat**, and the unreached region sits pinned
+  > at the current maximum rather than at its true value.
+  >
+  > **This is why the handedness came out zero.** A flat surface is trivially mirror-symmetric, so
+  > `P(phi>0) = 0.500`, `dG(aR->aL) = 0` and the achiral controls agreeing with the chiral systems
+  > are all forced by the lack of dynamic range, not measured. The compression is toward exactly
+  > the answer that was reported, so none of it is evidence. The same applies to the flat phi
+  > marginal (density contrast 1.2) and to the region-population table further down.
+  >
+  > **Lesson: for a biased-sampling run, check the estimator's dynamic range against the physically
+  > expected range before reading any observable off it.** Coverage fraction and the stability of a
+  > derived scalar both looked healthy here and both are worthless as convergence tests: an
+  > unconverged AWH estimate is smooth, stable and symmetric, which mimics a converged achiral
+  > result. The tell was visible the whole time, a PMF whose maximum equalled the value of every
+  > unsampled cell, and I read that ceiling as a measurement. Also: `awh1-error-init` (5 kJ/mol
+  > here) must be set to the expected magnitude of the free-energy variation, not left small, or
+  > AWH exits the initial stage before the estimate has any range.
+  >
+  > Re-running with `diffusion = 0.5` (from AWH's own friction metric) and `error-init = 30` is a
+  > correction to two AWH rate parameters. Neither enters the free-energy estimator, so this
+  > changes only the convergence rate and not what is being measured.
+
+  **1. AWH on isolated capped peptides gives zero, with no neighbour dependence.** 2D AWH on
+  (phi,psi) of a central glycine in `Ace-X-Gly-NMe`, amber99sb-ildn/TIP3P, 300 K, 21 ns per
+  system, coverage plateaued at 83-85%. `dG(aR->aL)` in E_up:
+
+  | control / neighbour | value | | neighbour | value |
+  |---|---|---|---|---|
+  | `Ace-Gly-Gly-NMe` (achiral, true 0) | **+0.009** | | MET | -0.013 |
+  | `Ace-GGGGG-NMe` (achiral, true 0) | **-0.034** | | GLU | -0.038 |
+  | ALA | -0.035 | | VAL | -0.037 |
+  | ASP | +0.006 | | LEU | -0.036 |
+  | PRO | -0.016 | | ARG | +0.017 |
+  | THR | +0.000 | | | |
+
+  Both achiral controls land within **0.034 E_up** of their known zero, so that is the error bar,
+  and **all ten neighbours fall inside it**. GGGGG converged monotonically +0.312 -> +0.160 ->
+  -0.034. So glycine has no intrinsic handedness and no resolvable neighbour-dependent handedness.
+
+  **The FULL surface is symmetric, not just the two basins.** `dG(aR->aL)` only compares two small
+  windows, whereas ff3.0 forces `E(phi,psi) = E(-phi,-psi)` at all 5184 grid points, so the stronger
+  claim was tested directly: RMS of `F(phi,psi) - F(-phi,-psi)` over all sampled cells, additive
+  offset removed, on the 46x46 AWH grid (`gly_peptides/fullsym.py`). Reported in kT, since the
+  library values are `-ln(prob)` and therefore already in kT while E_up is an Upside-internal unit
+  that should not be imposed on public library data; GROMACS free energies were divided by RT at
+  300 K. The achiral controls give **0.011** (Gly-Gly) and **0.028** (GGGGG) kT, the noise floor
+  since their surfaces must be exactly symmetric. The eight chiral neighbours give **0.018 to
+  0.047**, indistinguishable from it. For scale the library's glycine maps are asymmetric by ~4 kT
+  at their worst point, about a hundred times the resolution here. So full-map symmetrization for every neighbour pair, which is
+  what ff3.0 actually does, is supported and not just the handedness scalar. The limit is
+  "within resolution": any real asymmetry is below ~0.02-0.04 E_up.
+
+  **2. Every NDRD variant disagrees with that, and the variant ordering refutes the turn
+  explanation.** The user obtained all four NDRD releases. Our `coil` group is **`NDRD_TCB`**,
+  identified exactly: correlation 1.00000 and max deviation 0.0000 against `GLY|ALL` in both
+  directions. Central-GLY `dG(aR->aL)`:
+
+  | variant | residues | `GLY|GLY` | `GLY|X` mean | `GLY|ALL` |
+  |---|---|---|---|---|
+  | Conly, coil only | 13945 | -1.258 | **-1.876** | -1.764 |
+  | Tonly, turns only | 27532 | -0.586 | -0.839 | -0.788 |
+  | **TCB, ours** | 44112 | -0.635 | -0.965 | -0.903 |
+  | TCBIG, +pi and 3-10 helix | 62345 | -0.373 | -0.410 | -0.373 |
+
+  **Two earlier claims in this file were wrong and are withdrawn.**
+  * *"The authors attribute glycine's distribution to type II turn occupancy, so the alpha_L bias
+    is turn contamination."* If that were the driver, `Tonly` would be the most biased. It is not:
+    **`Conly`, the purest coil, is the most biased at -1.876, and `TCBIG` with the most secondary
+    structure is the least at -0.410.** The Ting et al. quote was about glycine favouring pPII as a
+    right neighbour; extending it to handedness was unsupported. **The mechanism is now unexplained**
+    and should be left that way rather than replaced with another plausible story.
+  * *"Use `NDRD_Conly` for the glycine row instead of hand-subtracting."* This would have made the
+    defect roughly **twice as bad**. Do not do it.
+
+  **What survives is the stronger statement:** no PDB-derived coil subset is near zero (-0.37 to
+  -1.88) while the isolated peptide is 0.000 +/- 0.034, so this is a flat disagreement between PDB
+  coil statistics and local peptide physics, not a question of choosing the right structural subset.
+  ff3.0's blanket symmetrization removes a bias that does not belong in a local conformational term,
+  and zero is what the measurement says. **ff3.0 is the correct model of the three.** ff3.0C
+  over-retains ~0.25 E_up on average, and the neighbour specificity it was built to preserve does
+  not exist in the isolated peptides. ff2.1 is wrong by ~0.94 E_up per glycine.
+
+  **ff3.0 is symmetric but is NOT a correct glycine map, and that distinction matters.**
+  Symmetrizing only touches the antisymmetric component. Every test above (`dG(aR->aL)`, the
+  full-map mirror comparison) probes exactly that component, so none of them says anything about
+  the symmetric part, which is where nearly all the map's content lives. Comparing region
+  populations from the AWH surfaces against ff3.0's own map, same (phi,psi) boxes, mean over the
+  ten neighbours:
+
+  | region | all-atom | ff3.0 map | ratio |
+  |---|---|---|---|
+  | pPII | 4.5% | 11.6% | 2.6 |
+  | beta | 6.1% | 4.0% | 0.65 |
+  | alpha_R | 3.6% | 10.0% | 2.8 |
+  | alpha_L | 3.6% | 10.0% | 2.7 |
+  | bridge, phi ~ 0 | >=2.3% | 0.1% | <=0.03 |
+
+  ff3.0 has alpha_R = alpha_L = 10.0% exactly, so the symmetry is right, but it carries ~2.8x too
+  much helical population and ~2.6x too much pPII. This is consistent with the literature finding
+  that coil libraries carry ~2.3x the helical and turn population of peptides, and with glycine in
+  water being pPII-dominated with its basin shifted relative to alanine's.
+
+  **The bridge row is a lower bound, not a measurement, and the reason is a coverage artifact I
+  first misread as physics.** AWH coverage is not uniform over the grid: at 23 ns every column with
+  `|phi| >= 50` is 46/46 visited, while the `|phi| < 50` band is only 41-48% visited (it was 22% at
+  13 ns and is still filling). Masking unvisited cells therefore discards most of the bridge band,
+  so the all-atom bridge population is a floor and the true ratio against the library's 0.1% is
+  larger than 0.03, by an unknown factor. This also corrects the earlier convergence note: total
+  coverage looks flat near 84% only because the still-growing band is a small share of the grid.
+  **The band is also where any phi ~ 0 claim has to come from, so make no quantitative bridge
+  statement from these surfaces until that band closes.** The handedness scalar and the full-map
+  mirror test are unaffected, since both draw only on fully covered columns.
+
+  **The phi marginal is the clean version of the same point, and it needs no undersampled band.**
+  Marginalizing over psi and averaging the ten neighbours, over `|phi| >= 50` only:
+
+  | source | P(phi > 0) | max/min of the density |
+  |---|---|---|
+  | NDRD TCB (ff2.1) | 0.6548 (spread 0.567-0.764) | 20.2 |
+  | ff3.0, symmetrized | 0.5000 exactly | 10.6 |
+  | all-atom, ff99SB-ILDN | 0.4998 (spread 0.4960-0.5026) | **1.2** |
+  | all-atom achiral controls | 0.4982 / 0.5013 / 0.4960 | |
+
+  The three achiral controls (`LG`, `GGGGG`, `SAGAS`) must give exactly 0.5000, and they give
+  0.4960-0.5013, so **+/-0.004 is the method's noise floor on this observable**. All nine chiral
+  neighbours sit inside that band. The library's 0.1548 offset is ~40x that band.
+
+  **Trap: on a periodic grid, the boundary column breaks the mirror symmetry and fakes a bias.**
+  Both grids run `-180 + k*delta` with no `+180` column, so the negative half has one more column
+  than the positive half. Summing `phi > 0` naively therefore reported `P = 0.481-0.486` for the
+  achiral controls, a spurious -0.015, which is 4x the real noise floor and would have been read as
+  a physical right-handed preference. The `phi = -180` column must be split evenly between the two
+  halves. Same defect would hit any chirality observable computed by counting grid cells, and it is
+  invisible unless an exactly-achiral control is in the set.
+
+  So symmetrizing moves `P(phi>0)` from 0.652 to the measured 0.485-0.497 and leaves the *shape*
+  untouched: the library confines glycine to two narrow phi peaks at about +/-85 deg, a 10-20 fold
+  density contrast, where the measurement finds phi essentially free, a contrast of 1.2. Stating it
+  this way avoids the bridge region entirely and is the more defensible form of "symmetric but not
+  correct".
+
+  **Plot it per pair, never as a mean.** The figure draws all 12 measured curves and all 10 library
+  curves individually, because the claim being made is that the symmetry holds for every XG pair.
+  A mean over the ten cannot distinguish "each pair is symmetric" from "the pairs are asymmetric in
+  cancelling directions", which is the exact question being asked. Shown separately the 12 measured
+  curves superpose, and the 10 library curves fan out with every one leaning the same way. Figure:
+  `~/Downloads/gly_fig1_phi_distribution.{png,pdf}`.
+
+  **SUPERSEDED 2026-09-19.** This paragraph read "of ff2.1, ff3.0 and ff3.0C, ff3.0 is the right
+  choice... the measurement says the correct handedness is zero". **Both halves are now false.**
+  The zero came from unconverged flat surfaces (withdrawn claim 1 in section 12a); the converged
+  AWH gives **-0.26 E_up**, and neither ff2.1 (-1.32) nor ff3.0 (exactly 0) is right. ff3.1 sets
+  it to the measured value (section 9i, 9l). What survives from the reasoning here is the shape of
+  the argument: a handedness error of *some* size should not sit in a local term, and the library
+  curves fan out with every one leaning the same way while the measured curves superpose.
+
+  **Caveat, and the one thing still open:** this is one force field. The literature is explicit that
+  force fields disagree on central glycine (ff14SB pPII 0.36 vs CHARMM36m 0.48) and that all of them
+  lose to experiment. Stage B with `amber14sb` would bracket that systematic; the peptides are built
+  and pass `pdb2gmx` in both force fields.
 
   **The 66% is glycine-specific, not a generic fold-context term shared by all residues.** An
   earlier draft of this entry called it "fold context that Upside double-counts through its
@@ -355,17 +1081,25 @@ continuously from 134 to 149, a pristine helix. Residue 140 in particular is per
 (O140...N144 = 2.85 A) despite being typed `C5`, so that SS call is a mis-assignment rather than a
 real break, and it is energetically inert anyway.
 
-**A separate real defect, found on the way and worth fixing on its own merits.** `rama_map_pot`'s
-GLY maps in the built config are exactly symmetric (max asymmetry 0.000000), so that fix holds. But
-the shared reference state `rama_map_pot_ref` is a single map applied to all 210 residues and is
-chirally asymmetric by 1.07, worth **+0.32 E_up** between the two helical basins. It is added
-directly as energy (`*pot += value`, `rama_map_pot.cpp`). For every non-GLY residue the residue map
-swamps it (net alphaR favoured by 2.07). For GLY, whose own map is now exactly symmetric, it is the
-only chirality term left, so **every glycine is pushed toward alphaL by +0.37 E_up**. That is
-measurable: GLY residues sit below their own helix's mean occupancy in every helix. It is the same
-class of bug as the GLY symmetrization fix, in the one place that fix did not reach. It is **not**
-the TM4 cause: glycine density does not predict which helix fails (r = +0.23, wrong sign, and TM3
-carries 17.9% GLY at 0.928 occupancy).
+**A suspected separate defect in the reference state. CORRECTED 2026-09-19: the effect is ~25x
+smaller than stated and is negligible.** The original claim was that `rama_map_pot_ref`, a single
+map applied to every residue, is "chirally asymmetric by 1.07, worth +0.32 E_up between the two
+helical basins", so that "every glycine is pushed toward alphaL by +0.37 E_up" once its own map is
+symmetric. **Re-measured on a built config, the reference map's Boltzmann basin free-energy
+difference is `dG(aR->aL) = -0.0139 E_up`** (plain mean difference -0.0068; max pointwise asymmetry
+0.5213).
+
+The error is a method one worth remembering: **a pointwise maximum asymmetry is not a basin free
+energy.** A map can differ from its mirror by ~0.5 at individual grid points and still integrate to
+~0.01 across a 195-cell basin, because the asymmetry largely cancels. Quoting the max as though it
+were the thermodynamic effect overstated it by a factor of ~25.
+
+Consequence for ff3.1: the reference state does **not** undermine the corrected glycine map. It
+contributes -0.014 against the -0.26 the map now carries, i.e. about 5%. What survives from the
+original entry: `rama_map_pot`'s GLY maps in the built config are exactly symmetric under ff3.0 as
+intended, the reference is added directly as energy (`*pot += value`, `rama_map_pot.cpp`), and the
+reference is **not** the TM4 cause — glycine density does not predict which helix fails (r = +0.23,
+wrong sign, and TM3 carries 17.9% GLY at 0.928 occupancy).
 
 **What is left.** TM4 is the most protein-buried helix (13.55 backbone coverage against a 9.66
 protein mean), and burial correlates *positively* with helix stability across segments (r = +0.52),
@@ -419,91 +1153,38 @@ It did not, so glpG production was left alone on both clusters. The term is stil
 that a hybrid config should carry, and the NP ff3.0 rebuild includes it for that reason, but it is
 not the TM4 answer and must not be sold as one.
 
-## Lipid-coverage scan: what was built, and the sign caveat (2026-09-10, running)
+## Lipid-aware coverage: the route, the measurement, and why it died (2026-09-10, closed)
 
-Implemented and launched. Three findings about feasibility, each correcting an earlier estimate of
-mine, and one caveat that limits what the result can mean.
+Two entries stood here, a build note and a coverage measurement that narrowed the hypothesis to the
+hydrophobe term. **The hypothesis is now dead**: "Where TM4 actually loses helix" showed TM4 is the
+*least* lipid-exposed helix in the protein (2.0 backbone beads with a lipid neighbour inside 12 A
+against TM1's 10.7, and 7 of 22 with none at all, total dry-MARTINI energy against all 3627 lipid
+beads = 0.000). Every protein-lipid explanation is excluded for TM4, which is why this scan, the
+backbone-environment term and the MARTINI-typed channel all returned nothing. Merged 2026-09-19.
 
-**It needs no C++.** Three properties of the engine make a lipid coverage channel a config-only
-change: node types resolve by **prefix** (`deriv_engine.cpp:598`), so a group named
-`hbbb_coverage_lipid` is instantiated as the registered `hbbb_coverage`; `rotamer` takes a
-**variable-length** `prob_nodes` list (`rotamer.cpp:1174-1178`) and uses each node's output
-**directly as a 1-body energy** (`rotamer.cpp:868-870`); and `hbbb_coverage`'s interaction is
-`HbondEnvironmentCoverageInteraction2` with **n_dim2 = 3**, so its second group can be bare
-positions. The trained `hbond_coverage` type cannot be used: it needs n_dim2 = 6, a direction
-vector, and lipid beads have none. Each prob node must have n_elem = 747, the sidechain bead count
-(`rotamer.cpp:702`), which group1 satisfies.
+**The measurement that motivated it, still correct as a measurement.** Mean of 3 seeds, first 6
+frames against last 6: `hbond_coverage` rises for both helices and does not discriminate (TM4
+0.383 -> 0.536, TM1 0.580 -> 0.792), while **`hbond_coverage_hydrophobe` collapses 48.2% for TM4
+(3.948 -> 2.047) against 15.2% for TM1**. The discrimination is real; the causal chain was never
+proven, because both coverage nodes are arguments to the `rotamer` node rather than multipliers on
+the backbone H-bond energy, so the route to helix stability is indirect.
 
-Built as `scratchpad/lipid_coverage_test/inject_lipid_coverage.py` (gitignored): group1 = the 747
-sidechain beads, group2 = the 3627 LIPID beads with ids offset by 100000 so the built-in
-|id1-id2|<=2 exclusion cannot fire, `interaction_param` (1,1,4) = r0, r_sharpness, dot0=-2 (angular
-sigmoid ~1, making it a pure radial burial count), dot_sharpness.
+**Reusable engine facts, which are why this was buildable config-only and are worth keeping:**
+* Node types resolve by **prefix** (`deriv_engine.cpp:598`), so a group named
+  `hbbb_coverage_lipid` instantiates the registered `hbbb_coverage`.
+* `rotamer` takes a **variable-length** `prob_nodes` list (`rotamer.cpp:1174-1178`) and uses each
+  node's output **directly as a 1-body energy** (`rotamer.cpp:868-870`). Each prob node must have
+  `n_elem = 747`, the sidechain bead count (`rotamer.cpp:702`).
+* `hbbb_coverage` uses `HbondEnvironmentCoverageInteraction2` with **n_dim2 = 3**, so its second
+  group can be bare positions. The trained `hbond_coverage` type cannot: it needs n_dim2 = 6, a
+  direction vector, which lipid beads do not have.
+* **Sign caveat.** The interaction returns a **non-negative** count used directly as energy, so
+  such a channel can only *penalise* lipid proximity, never reward it. It therefore cannot express
+  the hypothesised fix (removing a spurious desolvation penalty from lipid-solvated H-bonds).
+* Making the *trained* coverage lipid-aware is an **engine change in `src/environment.cpp`**, not a
+  script edit: both coverage nodes take exactly two argument nodes and `index2` indexes into the
+  sidechain placement node's own bead list.
 
-**Sign caveat, and it matters.** This interaction returns a **non-negative** count and it is used
-directly as energy, so the channel can only *penalise* lipid proximity, never reward it. Measured
-at the seed: baseline E = -24944.285, and with the channel +15.0 (r0=4), +72.2 (r0=6), +183.0
-(r0=8), all finite, |deriv|max 310-351. So this is **not** the hypothesised fix, which would
-*remove* a spurious desolvation penalty from lipid-solvated H-bonds. What it actually tests is
-whether biasing sidechains toward protein burial and away from lipid rescues TM4. That is a
-related but distinct proposition, and the parameters are chosen rather than trained.
-
-**Readout is the trend, not any value.** r0 = 4.0, 6.0, 8.0 against the existing `armB500_s1234`
-baseline, same protocol and seed. Monotonic TM4 improvement with r0 would support the mechanism and
-justify doing it properly with a trained, signed term; flat or non-monotonic refutes this route.
-
-## Coverage test (2026-09-10): the hypothesis survives, narrowed to the HYDROPHOBE term
-
-Ran the cheap precursor to the lipid-aware-coverage experiment. Two things came out of it, one a
-correction to my own cost estimate.
-
-### Correction: the fix is NOT a Python edit
-
-I estimated "2 hours, extend the neighbour list in `martini_inject_coverage.py`". Reading the code,
-that is wrong. Both coverage nodes take **exactly two argument nodes**,
-`["protein_hbond", <sidechain placement node>]`, and `index2` indexes directly into the sidechain
-placement node's bead list. Group2 *is* that node's output. Lipid beads cannot be appended from
-Python without either giving the node a third input group or putting MARTINI beads into the
-sidechain placement node, which would corrupt the rotamer solver. **Making coverage lipid-aware is
-an engine change in `src/environment.cpp`, not a script edit.**
-
-### What was measured instead, and what it shows
-
-`upside_engine.get_output()` exposes both coverage nodes directly, so the *premise* is testable
-without touching C++: does the coverage associated with TM4 actually collapse, and does it collapse
-more than for a helix that stays folded? Mean of 3 seeds, first 6 frames against last 6:
-
-| term / helix | early | late | change |
-|---|---|---|---|
-| `hbond_coverage` TM4 | 0.383 | 0.536 | +0.153 (rises) |
-| `hbond_coverage` TM1 | 0.580 | 0.792 | +0.212 (rises) |
-| **`hbond_coverage_hydrophobe` TM4** | 3.948 | 2.047 | **-1.901, a 48.2% collapse** |
-| `hbond_coverage_hydrophobe` TM1 | 3.359 | 2.848 | -0.511, 15.2% |
-
-against helix outcomes of TM4 0.97 -> 0.67 and TM1 0.97 -> 0.92 over the same window.
-
-**The plain `hbond_coverage` term rises for both helices and does not discriminate.** The
-**hydrophobe** term collapses **3x more for TM4 than TM1**, and that is the one term whose
-discrimination matches the helix outcome. It is also exactly the term lipid should contribute to:
-acyl tails are hydrophobic and do bury the backbone, yet contribute zero here.
-
-### Caveats, stated because they bound the claim
-
-* `get_output` returns shape **(747, 1)** for both nodes, i.e. one value per *sidechain bead*, and
-  both coverage nodes are **arguments to the `rotamer` node**, not direct multipliers on the
-  backbone H-bond energy. So the route from this term to backbone helix stability is indirect,
-  through the coupled sidechain solver. The correlation is real; the causal chain is not proven.
-* An earlier probe of mine reported `hbond_coverage` TM4 dropping 24.6%. That used only column 0 of
-  the output and is superseded by the table above, which averages the full output with a consistent
-  `id2` mapping for both terms.
-
-### Verdict
-
-The hypothesis is **not refuted and is now sharper**: it is the hydrophobic backbone-burial
-coverage, not the sidechain-competition coverage, that fails at TM4. That is worth the engine work.
-The next step is a third input group on `HbondEnvironmentCoverageInteraction` in
-`src/environment.cpp` so MARTINI beads can contribute hydrophobic coverage, then rerun the
-three-arm test. Note the trained tables were fitted with protein-only coverage, so a positive
-result is evidence about the mechanism, not a deployable force field.
 
 ## RE-ANALYSIS: the real cause of TM4 unfolding (2026-09-10). Supersedes the splay-causes-melt story.
 
@@ -654,326 +1335,91 @@ within-table comparison across the four variants is like for like.
 A matching ff3.0 single-temperature test of the other three variants was launched 2026-09-10 to
 confirm the ordering carries over; the WT arm of that test is the one already reported.
 
-## Why TM4 still partially unfolds under ff3.0 (diagnosed 2026-09-10, from the VTF)
+## Superseded: "why TM4 still partially unfolds under ff3.0" (2026-09-10, folded in 2026-09-19)
 
-User inspected the ff3.0 trajectory and saw TM4 better than ff_2.1 but still partly unfolded. That
-is correct, and the trajectory mean (0.817) hides it: TM4 starts essentially perfect and decays.
+Its per-residue table duplicates "Where TM4 actually loses helix" above, and its causal claim —
+"the cause is the bundle opening" — is the splay-causes-melt story the RE-ANALYSIS withdrew.
 
-**It is a progressive melt in the MIDDLE of TM4, not end-fraying.** Per residue, first fifth of the
-run against the last fifth, mean of 3 seeds, with the i->i+4 backbone H-bond distance at the end:
-
-| res | early | late | i->i+4 O...N late |
-|---|---|---|---|
-| 139 TYR | 0.992 | **0.432** | 6.44 A |
-| 140 ALA | 0.992 | **0.333** | 6.36 A |
-| 141 LEU | 0.996 | **0.342** | 5.22 A |
-| 142 MET | 0.996 | 0.543 | 4.32 A |
-
-A formed helix H-bond is ~3.0 A, and 146->150 is still 3.57 A, so the break is local to 139-142
-with a second weak patch at 134-137. **The seed has 134-151 fully helical**, so none of this is
+The one measurement not repeated elsewhere, worth keeping: at the end of the run the i->i+4
+backbone O...N distances across the break are **6.44 A (139), 6.36 (140), 5.22 (141), 4.32 (142)**
+against ~3.0 A for a formed helix, while 146->150 is still 3.57 A. So the break is genuinely local
+to 139-142 with a weaker patch at 134-137, and the seed has 134-151 fully helical, so none of it is
 inherited from the starting structure.
 
-**The cause is the bundle opening, not anything specific to TM4's sequence.** TM4 begins
-**completely protein-buried, 0.0 lipid beads per residue**, and ends with lipid at every residue
-while losing **40% of its packing contacts** to the other five helices (10.2 -> 6.1 per residue).
 
-Same process in every arm; ff3.0 slows it without stopping it:
+## TM4 and the glpG bundle: the 2026-09-09 local three-arm round, consolidated
 
-| arm | TM4 helix early -> late | lipid beads early -> late | packing early -> late |
-|---|---|---|---|
-| control ff_2.1 | 0.87 -> 0.41 | 2 -> 31 | 41 -> 31 |
-| trained 269 + coverage | 0.99 -> 0.81 | 2 -> 22 | 42 -> 34 |
-| trained 500 + coverage | 0.97 -> 0.67 | 1 -> 20 | 44 -> 36 |
+Four separate entries stood here (bundle splay, "is TM4 resolved", "what makes TM4 look unstable",
+and the step-500 local check). They recorded one round of three-arm single-temperature MD
+(3 seeds x 3 arms, T=0.70, 300000 steps, 0 non-finite frames) and several claims that the
+2026-09-10 re-analysis above then overturned. Merged 2026-09-19; only what survives is kept.
 
-ff3.0 keeps more packing and admits ~35% less lipid than ff_2.1, which is the visible improvement,
-but the mechanism is untouched.
+### Superseded, and by what
 
-**Honest limit on the causal claim.** Across the 18 core residues the per-residue correlation
-between helix loss and packing loss is only **+0.21**, and with lipid gain **+0.09**. So the link is
-global, TM4 as a whole loses support and melts somewhere in the middle, and is NOT a residue-level
-"this contact broke so this turn opened".
+* **"The bundle splays, TM4 loses packing, and the helix then melts."** Withdrawn. On first
+  differences every coupling collapses to r = 0.21-0.26 and the lipid-helix lag falls inside one
+  sampling interval; the apparent r = 0.64 was a shared-trend artifact. See the RE-ANALYSIS above.
+* **"TM4's helix is fine, the defect is purely tertiary."** Wrong. TM4 does lose helix, sharply and
+  locally at 134-142, the buried midplane half.
+* **"The old force field's TM4 weakness is fixed (0.528 -> 0.817/0.898)."** Not established. Those
+  are trajectory means over arms that had not equilibrated; the control had bottomed out by q3
+  while both trained arms were still falling, the step-500 arm six times faster. Comparing means
+  across a converged arm and two unconverged ones flatters the unconverged ones.
 
-### The specific candidate defect: the coverage term is blind to lipid
+### What survives, and is still used
 
-`hbond_coverage` and `hbond_coverage_hydrophobe` take `id2` = 747 **protein sidechain beads** and
-`id1` = 630 protein backbone atoms. No MARTINI bead enters either (verified in the config). Those
-terms modulate backbone H-bond strength by burial.
+**The TM4 window is capped and the pass criterion is unreachable.** `TM4 = (131, 152)` in
+`tm_health.py`, `decide_arm.py` and `final_analysis.py`, but the crystal-derived seed has 131 PHE,
+132 GLY, 133 GLY and 152 ASP non-helical before any dynamics — the helix starts at 134 LEU. **The
+metric is capped at 18/22 = 0.818 against a stated pass criterion of > 0.8**, so a perfect TM4
+scores 0.818. TM1's ceiling is 20/21 = 0.952, and that asymmetry alone manufactures much of the
+"TM4 is half of TM1" impression. **Report TM4 on 134-151 and TM1 on 30-48**, or quote the ceiling
+alongside. Do not widen the helix criterion instead: the window is what is wrong.
 
-In a soluble protein, trained on 456 soluble proteins, "not covered by protein" always means
-"exposed to water", where the backbone H-bond competes with water and should be weakened. In a
-bilayer it can instead mean "surrounded by acyl tails", which shield an H-bond at least as well as
-protein does. The model cannot tell those apart, so as TM4 goes from protein-buried to
-lipid-solvated its coverage collapses and its H-bonds are penalised as if they had been dunked in
-water. That is exactly when and where the helix melts.
+**The GLY phi pass criterion is invalid and must be re-derived.** `BASELINE_TM_pre_ff3.txt` demands
+GLY49 and GLY133 median phi negative, but **the seed itself has GLY49 at +94.1 and GLY133 at
++141.6**, failing at t=0. Both are helix caps, where a left-handed or extended glycine is normal.
+Same class of error as the window. Do not certify or condemn a force field on it.
 
-It also predicts the observed ordering: TM4 is the most buried helix at the start (0.22 lipid
-beads/residue against TM1's 0.55) so it suffers the largest coverage change, and it is TM4 rather
-than TM1 that degrades (TM4 0.817 vs TM1 0.919).
+**Two physical causes tested and ruled out.** *Buried charge*: ARG148/GLU150 sit 11.1 A from the
+bilayer centre, but 10 charged residues are buried below 12 A protein-wide and only 2 are in TM4,
+and they are paired (ARG148-GLU150 4.1 A, ARG151-ASP152 3.4 A), not naked. *Glycine as an internal
+helix breaker*: within the true core the glycines are not the weak positions — under the step-500
+arm they are the **better** ones (0.911 at GLY against 0.799 at non-GLY). The two glycines that
+never go helical, 132 and 133, are the cap.
 
-**This is a hypothesis consistent with the data, not a proven cause.** It is directly testable:
-include MARTINI beads in the coverage calculation and rerun the same three-arm test. If TM4 holds,
-the mechanism is confirmed. Note that would be a model-structure change requiring retraining and
-validation, not a parameter tweak, and must not be done by scaling SC-env or BB-env.
+**The bundle measurements themselves stand**, and one of them matters most. Per-helix CA-RMSD is
+1.7-3.0 A while the assembly is 4.9-7.5 A out, so each helix holds its own shape; the bundle
+spreads in-plane and pancakes along the normal; and lipid intercalates into inter-helical space,
+5 beads in the seed against 36-46 after. **ff3.0 does not slow the invasion at all**: the rate is
++5.5 to +6.2 beads per 1000 time units in all three arms including the untrained control. It
+starts the invasion later, so it ends lower, but the rate is untouched and shows no sign of
+saturating. Only the in-plane Rg is genuinely flat by the end, and only for the trained arms.
 
-## The remaining glpG problem is NOT TM4: the helix bundle splays and lipid wedges into it (2026-09-09)
+**Step 269 -> 500 is a trade, not progress.** Paired on matched seeds: TM4 -0.109 (t = -7.6),
+TM1 +0.047, Rg +0.86 A to 20.35 against a 20.4 A crystal, worst peptide C-N 11.16 -> 4.06 A. Every
+seed moves the same way in every observable. The training objective is flat between those steps, so
+the parameters diffuse and different observables diffuse in opposite directions. **There is no
+monotone "more training is better"**, which is the strongest argument for averaging over the
+plateau rather than taking whatever step training stopped at.
 
-TM4's helix is fine. Decomposing the residual core CA-RMSD on the 9 local trajectories shows the
-defect is tertiary, not secondary.
+**Do not read single-temperature MD against the REMD-derived > 0.8 criterion.** That number comes
+from 28-replica REMD; single-temperature MD at T=0.70 is harsher (control 0.441 here against 0.645
+at the T=0.70 rung of the REMD baseline). Only the paired, relative comparison is trustworthy.
 
-**Individual helices are intact; the bundle is not.** CA-RMSD of each helical segment fitted to
-itself, against the whole-core value:
-
-| arm | whole core | mean per-helix | worst helix |
-|---|---|---|---|
-| control | 7.47 | 2.96 | 5.40 |
-| trained 269 | 5.33 | 2.07 | 2.98 |
-| trained 500 | **4.89** | **1.71** | 2.38 (TM4) |
-
-Every helix holds its own shape to 1.2-2.4 A while the assembly is 4.9 A out. Dropping the two
-short peripheral helices (19-26, 50-57) changes almost nothing (4.96 -> 4.77), so this is the TM
-core repacking, not floppy termini.
-
-**The bundle splays laterally and flattens.** Against the seed (mean inter-helix centroid distance
-16.19 A, Rg_xy 11.16, Rg_z 9.39):
-
-| arm | inter-helix dist | Rg in-plane | Rg along normal |
-|---|---|---|---|
-| control | +4.36 | +4.34 | -1.62 |
-| trained 269 | +1.72 | +2.50 | -1.26 |
-| trained 500 | +2.32 | +2.42 | -1.16 |
-
-The helices spread apart in the membrane plane and the bundle pancakes along the normal.
-
-**Lipid wedges into the bundle.** Dry-MARTINI beads within 7 A of two or more different TM helices,
-i.e. sitting in inter-helical space:
-
-| | seed | control | trained 269 | trained 500 |
-|---|---|---|---|---|
-| intercalated lipid beads | **5** | 46.2 | 41.0 | **36.1** |
-
-A 7-fold invasion. ff3.0 cuts it by ~25% against the control but does not come close to restoring
-crystal packing.
-
-**Nothing has equilibrated except the lateral splay.** An earlier version of this note said the
-step-500 core RMSD had "plateaued". That was wrong: it came from an arbitrary quintile threshold.
-Fitting the actual slope over the second half of each run, per 1000 time units, mean +/- sd over
-the 3 seeds:
-
-| metric | control | trained 269 | trained 500 |
-|---|---|---|---|
-| whole-core RMSD | +0.440 +/- 0.545 | +0.309 +/- 0.077 | **+0.123 +/- 0.068** |
-| per-helix RMSD | +0.384 +/- 0.164 | +0.526 +/- 0.208 | +0.279 +/- 0.205 |
-| Rg in-plane | +0.278 +/- 0.390 | **-0.033 +/- 0.258** | **-0.034 +/- 0.156** |
-| intercalated lipid | +6.150 +/- 3.578 | +5.500 +/- 4.604 | +5.751 +/- 2.909 |
-
-Only **Rg in-plane** is genuinely flat, and only for the two trained arms: the lateral splaying
-does stop, at about +2.4 A of spread. Everything else is still moving at 2700 time units.
-
-The step-500 core RMSD rises at +0.123 A per 1000 time units, roughly 2.5x slower than step 269 but
-**not zero**. Its per-helix RMSD is also still climbing. So step 500 slows the fold degradation, it
-does not halt it, and 4.9 A is a snapshot of an ongoing process rather than an endpoint.
-
-**The most important number here: ff3.0 does not slow lipid invasion at all.** The intercalation
-rate is statistically identical across all three arms, +5.5 to +6.2 beads per 1000 time units,
-including the untrained control. The trained force field starts the invasion later and so ends with
-a lower count (36 against 46), but the *rate* is untouched. Lipid is still entering the bundle at
-the end of every run, with no sign of saturating.
-
-This also corrects the ranking claim made from TM4 helix fraction: step 500 is better than step 269
-on fold drift rate, but neither is stable, and longer sampling should be expected to make both
-worse. The 12 h REMD arms sample far longer than 2700 time units.
-
-**Ruled out: that TM4 is preferentially attacked.** TM4 is the *least* lipid-exposed helix, in the
-seed (0.22 beads/residue against TM1's 0.55) and after the run (+1.00, the smallest increase of the
-six). Correlation between helix glycine content and lipid-contact increase is **negative**,
-r = -0.41. TM4 is a buried, central, glycine-rich helix with small side chains: it barely touches
-lipid itself, and depends almost entirely on packing against its neighbours. That is why it reads
-as fragile when the bundle loosens, even though nothing is attacking it directly.
-
-### Hypothesis for the cause, NOT yet tested
+### The open hypothesis, still untested
 
 An asymmetry in the hybrid model. `exclude_intra_protein_martini = 1`, so dry-MARTINI supplies
 **zero** intra-protein attraction and all helix-helix packing comes from the Upside core force
-field, which is trained on **458 soluble proteins with zero membrane content**. Protein-lipid
-attraction, meanwhile, is full-strength dry-MARTINI. Lipid therefore competes for the same
-hydrophobic surfaces with an interaction that was never balanced against the protein-protein term,
-and wins, prying the bundle open. Consistent with training reporting median RMSD ~0.93 A on its
-soluble set while this membrane protein settles 4.9 A out.
+field, trained on 458 soluble proteins with no membrane content — while protein-lipid attraction is
+full-strength dry-MARTINI. Lipid competes for the same hydrophobic surfaces against an interaction
+never balanced against the protein-protein term, and wins. Consistent with training reporting
+median RMSD ~0.93 A on its soluble set while this membrane protein settles 4.9 A out.
 
-This is a hypothesis. It cannot be tested by scaling SC-env or BB-env down, which the project
-forbids and which would break the physical model. A legitimate test would compare the same protein
-against a different surrounding phase, or measure whether the splay tracks protein-lipid contact
-energy frame by frame.
+It **cannot** be tested by scaling SC-env or BB-env down, which the project forbids and which would
+break the physical model. A legitimate test compares the same protein against a different
+surrounding phase, or measures whether the splay tracks protein-lipid contact energy frame by frame.
 
-## Is TM4 resolved? NOT YET. Helix fraction says yes, fold integrity does not (2026-09-09)
-
-Measured on the same 9 local trajectories, against the metrics the failure was actually recorded
-on rather than helix fraction alone.
-
-| arm | TM4 core 134-151 | TM1 core 30-48 | helical-core CA-RMSD | GLY49 phi | GLY133 phi |
-|---|---|---|---|---|---|
-| control | 0.528 | 0.832 | 7.62 A | +41.3 | +18.2 |
-| trained 269 + coverage | 0.898 | 0.867 | 5.66 A | +93.9 | -18.6 |
-| trained 500 + coverage | 0.817 | 0.919 | **5.07 A** | +42.5 | +31.8 |
-| recorded pre-ff3 REMD failure | - | - | **4.15 A** | +75.9 | +67.7 |
-
-**The two proxies disagree, and they disagree about which force field is better.** Step 500 beats
-step 269 on core RMSD (5.07 vs 5.66), TM1 (0.919 vs 0.867) and Rg (20.35 vs 19.48 against a 20.4 A
-crystal), and loses only on TM4 helix fraction (0.817 vs 0.898). Picking a winner on TM4 alone
-would invert the ranking given by the other three.
-
-**Core CA-RMSD does not clear the bar.** Every arm, including the best, sits above the 4.15 A that
-was recorded as the *failure*. Two caveats that stop this being conclusive: this is
-single-temperature MD at T=0.70 for 2700 time units, not the 28-replica REMD the 4.15 A came from,
-and the core here is the 162 residues helical in the seed, which may be a larger and looser
-selection than whatever the 4.15 A was measured over. **The two numbers may not be commensurable;
-re-measure with a matched core definition before treating the comparison as real.** What is solid
-is the internal contrast: ff3.0 cuts core drift from 7.62 to 5.07 A.
-
-**The GLY phi pass criterion is not met by any arm, and is itself suspect.**
-`BASELINE_TM_pre_ff3.txt` requires GLY49 and GLY133 median phi negative (alphaR). No arm achieves
-both. But **the crystal-derived seed itself has GLY49 at +94.1 and GLY133 at +141.6**, i.e. it
-fails the criterion at t=0, before any dynamics. Both are helix caps (section above), and a cap
-glycine in a left-handed or extended conformation is normal. This is the same class of error as the
-TM4 window: a criterion that the native starting structure does not satisfy. **Do not certify or
-condemn a force field on this criterion until it is re-derived from the reference structure.**
-
-### Verdict
-
-Not resolved, and specifically:
-
-* **Resolved:** the old force field's genuine TM4 weakness (core helix 0.528) is fixed, to 0.817-0.898
-  against TM1's 0.867-0.919, i.e. near parity. And most of the apparent "TM4 is half of TM1" gap is
-  the capped measurement window, now diagnosed.
-* **Not established:** that the *fold* is fixed. Core CA-RMSD is the metric the deliverable depends
-  on and no arm demonstrably beats the failure baseline on it.
-* **Not usable as evidence:** the GLY phi criterion, until re-derived.
-* **Thin:** n=3, one temperature, one variant, local MD. The 28-replica REMD arm tests are the real
-  measurement and had not reported when this was written.
-
-## What actually makes TM4 look unstable (diagnosed 2026-09-09)
-
-Asked what destabilises TM4 besides GLY symmetry. Diagnosed on the 9 local trajectories. The
-dominant cause is **the definition of the metric**, not the physics, and two plausible physical
-causes were tested and ruled out.
-
-### 1. The TM4 window includes a 3-residue non-helical cap. This is most of the effect.
-
-`TM4 = (131, 152)` in `tm_health.py`, `decide_arm.py` and `final_analysis.py`. Dihedrals of the
-**crystal-derived seed itself**, before any dynamics:
-
-| res | aa | phi | psi | helical? |
-|---|---|---|---|---|
-| 131 | PHE | -134.9 | +161.5 | no |
-| 132 | GLY | -160.4 | +147.6 | no |
-| 133 | GLY | +141.6 | +146.7 | no |
-| 134 | LEU | -76.2 | -0.6 | **yes, the helix starts here** |
-| 151 | ARG | -89.3 | -25.2 | yes |
-| 152 | ASP | -140.8 | +73.6 | no |
-
-So 4 of the 22 residues in the window are loop/cap in the starting structure and cannot be
-helical. **The metric is capped at 18/22 = 0.818**, against a stated pass criterion of >0.8. A
-perfect TM4 helix scores 0.818. `tm_health.py`'s own comment says "GLY133 at N-cap", so the cap was
-known and included anyway.
-
-TM1 has the same problem, but far milder: only GLY49 is a cap, ceiling 20/21 = 0.952. **That
-asymmetry alone manufactures much of the "TM4 is half of TM1" impression.**
-
-Measured over the true helix instead:
-
-| arm | TM4 131-152 | TM4 **134-151** | TM1 29-49 | TM1 **30-48** |
-|---|---|---|---|---|
-| control, ff_2.1 no coverage | 0.441 | 0.528 | 0.800 | 0.832 |
-| trained 269 + coverage | 0.782 | **0.898** | 0.832 | 0.867 |
-| trained 500 + coverage | 0.673 | **0.817** | 0.879 | 0.919 |
-
-As a fraction of the achievable ceiling, armB269 reaches **96%** and armB500 **82%**. armB269 was
-essentially at the maximum the metric permits.
-
-### 2. Ruled out: buried charge
-
-TM4 ends ARG148, GLY149, GLU150, ARG151, ASP152, and ARG148/GLU150 sit 11.1 A from the bilayer
-centre, inside the acyl region (headgroup planes at +19.0/-21.1 A, thickness 40.1 A). But this is
-**not special to TM4**: 10 charged residues are buried below 12 A across the protein, only 2 of them
-in TM4. And they are paired, not naked: ARG148-GLU150 4.1 A, ARG151-ASP152 3.4 A. Not a strain.
-
-### 3. Ruled out: glycine content as an internal helix breaker
-
-TM4 is glycine-rich, 5 of 22 (23%) at 132, 133, 136, 143, 149, against 1 of 21 (5%) for TM1, which
-is a real sequence difference and the obvious suspect. But within the true helix core the glycines
-are **not** the weak positions:
-
-| arm | helix fraction at GLY | at non-GLY | deficit |
-|---|---|---|---|
-| control | 0.486 | 0.536 | -0.050 |
-| armB269 | 0.854 | 0.907 | -0.053 |
-| armB500 | 0.911 | 0.799 | **+0.113** |
-
-Under the final force field the glycines are the *better* positions. The two glycines that never go
-helical, 132 and 133, are the cap from section 1. So glycine content makes TM4 *susceptible*, and
-GLY rama symmetry was needed to stop the alphaL bias, but internal glycine is not what limits TM4
-now.
-
-### What is left
-
-Under the old force field TM4 was genuinely weak: core 0.528 against TM1's 0.832. The trained
-tables plus coverage nodes fix that, to 0.898 (step 269) and 0.817 (step 500) against TM1's 0.867
-and 0.919, i.e. near parity. What remains is the step-269 -> step-500 regression measured above,
-which is force-field drift, not a TM4-specific defect.
-
-### Consequences
-
-* **Report TM4 on 134-151, not 131-152**, or report the ceiling alongside it. As written, the
-  >0.8 criterion demands ~100% helicity of every core residue.
-* **`decide_arm.py` scores the arms on the same capped window**, so both cluster arms are being
-  judged against a 0.818 ceiling. That does not bias the M-vs-R *comparison*, since both arms share
-  it, but any absolute "TM4 passed/failed" read from the arm test is measured against the wrong
-  scale.
-* Do not "fix" this by widening the helix criterion. The window is what is wrong, and the seed's own
-  dihedrals say where the helix starts.
-
-## Local TM4 check of the FINAL step-500 force field (2026-09-09): NOT resolved, and worse than step 269
-
-Three arms, three matched RNG seeds, the identical protocol used for the 2026-09-07 four-arm run
-(same seed file `6a8285d1...`, dt 0.009, T=0.70, `--disable-recentering`, 300000 steps, 400 frames).
-All 9 runs finished clean, 0 non-finite frames.
-
-| arm | diverged | TM4 helix | TM1 helix | Rg mean | max C-N |
-|---|---|---|---|---|---|
-| CONTROL, ff_2.1, no coverage | 0/3 | 0.441 [0.298-0.633] | 0.800 | 20.15 | 4.16 |
-| ARM B269, trained step-269 + coverage | 0/3 | **0.782** [0.657-0.863] | 0.832 | 19.48 | 11.16 |
-| ARM B500, trained step-500 + coverage | 0/3 | **0.673** [0.543-0.744] | 0.879 | 20.35 | 4.06 |
-
-**The two anchors reproduced the 2026-09-07 reference exactly**, to three decimals including the
-replicate ranges, so the binary rebuild of 2026-09-07 21:34 (the `MonteCarloSampler` virtual
-destructor) changed nothing and ARM B500 is directly comparable.
-
-**Training from step 269 to 500 made TM4 worse, consistently.** Paired on matched seeds:
-
-| observable | per-seed change 269 -> 500 | mean | t(2) |
-|---|---|---|---|
-| TM4 | -0.114, -0.131, -0.082 | **-0.109** | -7.6 |
-| TM1 | +0.040, +0.063, +0.039 | +0.047 | +6.0 |
-| Rg | +0.17, +1.11, +1.31 | +0.86 A | +2.5 |
-
-Every seed moves the same way in every observable, so this is a real effect at n=3, not scatter.
-
-**It is a trade, not a pure regression.** Step 500 is *better* on everything except TM4: TM1 rises
-0.832 -> 0.879, the over-compaction flagged in `planned_job.md` is gone (Rg 19.48 -> 20.35 against a
-20.4 A crystal, essentially exact), and the worst peptide C-N bond drops 11.16 -> 4.06 A, i.e. the
-one stretched bond in ARM B269 is gone.
-
-**This is the random walk showing up in an observable.** The training objective is flat between
-step 269 and 500, so the parameters diffuse; TM4 and TM1 then diffuse in *opposite* directions.
-There is no monotone "more training is better", which is the same conclusion the parameter-drift
-analysis reached, now confirmed downstream. It is also the strongest argument yet for averaging over
-the plateau rather than picking whatever step training happened to stop at.
-
-**Do NOT read 0.673 against the >0.8 REMD criterion directly.** That criterion comes from
-`BASELINE_TM_pre_ff3.txt`, which is 28-replica REMD; this is single-temperature MD at T=0.70 and is
-harsher, as the control shows (0.441 here against 0.645 for 79HIS at the T=0.70 rung of the REMD
-baseline). The trustworthy result is the *paired, relative* one: step 500 is 0.109 below step 269 on
-TM4 under identical conditions. Whether either clears 0.8 is what the 28-replica arm tests measure.
 
 ## ff3.0 convergence: the objective converged, the parameters never will (measured 2026-09-09)
 
@@ -3217,9 +3663,670 @@ Method notes that remain valid:
   to gold" taken at the argmax-C-N residue per frame is meaningless while the argmax wanders: pin the
   residue first, then track it.
 
+### 9.x The driver's logged Rg is not periodic-image corrected (measured 2026-09-18)
+
+`np.<jobid>.out` prints an Rg computed on the stored coordinates with no minimum-image correction, so
+on any face where the adsorbed chain crosses a box boundary it is inflated by roughly the number of box
+lengths spanned. On block 6, logged vs minimum-image Rg (every backbone atom referenced to the MPA shell
+centre, box 300 A): run0 123.1/128.8, run1 184.0/76.4, run2 96.9/102.9, run3 332.5/118.7, run4
+170.6/73.4, run5 80.8/80.3. Three of six faces inflated 2.3-2.8x. run3's `Rg = 332 A` **in a 300 A box**
+is the tell: the value exceeded the box and was still being read as structure.
+
+The physical state is the opposite of what that number suggests. The protein is adsorbed on every face,
+with 257/1128/913/399/780/1243 of 2312 backbone atoms within 8 A of the MPA shell, and no atom further
+than 172 A from it. Spreading is real (minimum-image Rg 73-129 A against native albumin's ~27 A) but
+smaller than logged. **Use the contact count as the adsorption observable; Rg needs an unwrap the driver
+does not do.**
+
+Two things to carry forward. First, this is the same defect as the VTF per-molecule wrap: a global shape
+descriptor computed per-atom across a periodic boundary reports a structure that does not exist, and it
+fails silently because the number stays finite and moves smoothly. Second, **a length that exceeds the
+box is a self-evident failure of the measurement and should be caught by inspection** — 332 A in a 300 A
+box had been recorded in `remote_jobs.md` as the campaign's headline observable ("rising Rg, currently up
+to 230.9 A") without anyone comparing it to the box it lived in. Compare every length observable against
+the box before reading it.
+
+The minimum-image correction is itself only valid while the chain stays inside half a box. run0 (max
+172 A) and run5 (164 A) exceed 150 A, so those two faces are unresolved, not confirmed.
+
+---
+
+## 9b. A converged-looking window can sit inside a drift (glycine AWH, 2026-09-18)
+
+The neighbour-averaged glycine asymmetry was quoted as **-0.31 E_up** from replica 1's 36-45 ns
+window, where it looked settled and where replica 2 independently agreed to 0.023. Both facts were
+true and the number was still wrong. Extending replica 1 to 84 ns shows the average deepens to
+-0.331 at 38 ns, drifts back, and only **plateaus from 62 ns at -0.269** (spread 0.019, sd 0.004
+over 22 ns, 218 snapshots). The 36-45 ns window sat on the near-stationary turning point of a drift,
+which is the one place a drifting series looks converged.
+
+**Replica agreement at matched time does not establish convergence.** Two replicas run the same
+protocol and drift the same way, so they agree with each other while both are wrong. Matched-time
+agreement bounds the seed-to-seed error and nothing else. Convergence needs the single-replica
+time series, run past the point where it stops moving, and the plateau has to be longer than the
+feature you are calling a plateau.
+
+The achiral control makes the same point in reverse. LG was recorded as converging to a
+replica-specific nonzero value (+0.033 rep1, +0.110 rep2) and called an unexplained systematic that
+blocked publication. It was slow convergence: rep1's LG goes +0.188 (2 ns) -> +0.041 (46 ns) ->
+**-0.020 (62-84 ns)**. At 46 ns the control had not converged either, so it could not have certified
+anything. **Check the control's own time series before treating its offset as a systematic.**
+
+Control subtraction does not repair a pre-plateau value here: corrected, the average still runs
+-0.355 at 36 ns to -0.251 at 82 ns. The drift is convergence of the estimate, not a common additive
+bias, so nothing short of more sampling fixes it.
+
+---
+
+## 9c. hbond is a function of the rama COORDINATE, and its turn branch is the glycine region (2026-09-18)
+
+`RamaMapPot` and `HBondEnergy` are sibling potentials on the same `rama` CoordNode
+(`src/hbond.cpp:490`). hbond never reads the rama map table, so editing `rama.dat` changes no hbond
+parameter or input. But `HBondEnergy` classifies each residue by (phi,psi) and picks a different
+per-hbond energy from it:
+
+    Ehbond[i] = E_alpha*helix_score + E_beta*sheet_score + E_other*turn_score
+    potential = sum_i hb_number1[i] * Ehbond[i]
+
+Decoding the 12 values in `hbond.h5` (radians in, clean degrees out, which is itself evidence they
+were hand-set): turn = **phi in (0, 165) deg** -> E_other **-1.769**; helix = phi<0 and psi in
+(-120, 60) -> E_alpha **-1.961**; sheet = phi<0, psi outside -> E_beta **-1.946**. Boundaries
+0/165/-120/60 deg, all four sharpnesses identical at 3.81972 (a 15 deg ramp).
+`compact_sigmoid` is 1 for large negative argument and 0 for large positive
+(`src/vector_math.h:700`), which is what fixes the window directions.
+
+**The turn branch is exactly the positive-phi region, i.e. the glycine question.** A hydrogen bond
+at phi>0 is worth **+0.192 E_up less** than the same bond at phi<0, and glycine is the residue that
+lives there (alpha_L 30.95%, ASN second at 13.4%). The coupling runs both ways:
+`rama_sens(0,i) += hb_number1[i]*dPhi[i]`, so a hydrogen-bonded residue is pushed toward phi<0 in
+proportion to its bond count, ~0.38 E_up for a doubly-bonded helical glycine, against ff2.1's rama
+pull of -1.238 E_up toward alpha_L. Rama wins by ~3x. That is a mechanism for glpG TM4 and for
+lambda's H2, and it cross-checks section 5(a): 0.217 x 1.238 x 2 glycines ~ 0.54 against the
+measured +0.30 E_up cost at lam*.
+
+**CORRECTION (same day, from the original trainer): hbond WAS trained.** See 9e. The claim first
+written here, that hbond was never fitted, was read off the modern port and is wrong.
+
+**ff3.0 is NOT a valid precedent for any of this** (user correction, 2026-09-19). "Every previous
+generation trained only `rot` and `env`" is an observation about the ff3.0-era pipeline, and that
+pipeline is being discarded. It cannot be cited to justify leaving `hb` frozen. **The references
+are the Theano original and measurement, nothing else.** By the original's standard `hb` was
+trained (lr 0.02) and a strict modernization owes us that; the freeze is a **deviation to be
+fixed**, not a status quo.
+
+**What remains true independent of ff3.0, and is the real obstacle:** the modern hbond node is a
+different node from the one the original trained (one scalar `protein_hbond_energy = -2.112` with
+no rama dependence, versus 12 parameters with three rama-dependent energies), so restoring `hb` is
+a modelling decision about how to map one onto the other, not a mechanical port. And the wiring is
+absent in four places, so a nonzero learning rate alone does nothing.
+
+**Do not retrain hbond jointly with a rama map change.** (1) What was fitted was a single
+global strength against that era's rama map, and the current 12 values are not that fit, so there
+is a training history but no current calibration to preserve. (2) `E_other` and the glycine rama
+alpha_L depth are near-degenerate: both set what a hydrogen-bonded glycine pays for phi>0, so
+fitting both on the same data is under-determined by construction. (3) The 12 parameters are
+**global across all 20 residue types**, so tuning them for glycine perturbs every arm.
+
+The quantity actually in question is one scalar, `E_other - E_alpha = 0.192 E_up`, and it needs no
+trainer plumbing at all: edit the value, rebuild configs, run the arm.
+
+---
+
+## 9d. ff3.0 vs FF2 splits by native/de-novo, not by topology (measured 2026-09-18)
+
+Recomputing every scored arm against the digitised FF2 curves
+(`0914/figs/ff2_curves_s5.npz`, `<TM> = sum(x*y)/sum(y)`) against `score_arms.json`:
+
+* **native: mean delta +0.042, 11 of 15 improved**
+* **de novo: mean delta -0.041, 3 of 10 improved**
+
+Paired within each protein (delta_native - delta_denovo). **COMPLETE: all 32 arms scored,
+n=16 pairs** (`score_arms.json`, 2026-09-19 00:11):
+
+**13 of 16 positive, mean +0.069, sign test p = 0.021, paired t = +3.20 (p ~ 0.006).**
+Native n=16 mean **+0.039** (11 improved); de novo n=16 mean **-0.030** (5 improved).
+
+proteinG +0.199, cspA +0.181, WWdomain +0.175, NTL9 +0.164, alpha3d +0.159, ubiquitin +0.124,
+proteinL +0.056, top7 +0.054, proteinB +0.049, homeodomain +0.028, BBL +0.008, lambda +0.006,
+BBA +0.001; reversals gpW -0.007, NuG2 -0.021, hyp **-0.077**.
+
+**The split is established.** But note how it moved while scoring was in flight: p = 0.039 (n=9),
+**0.092 (n=13)**, 0.035 (n=15), 0.021 (n=16). It left and re-entered significance, and any of those
+snapshots would have been reported as the answer had the run stopped there. **Do not read a
+partially-scored benchmark as a result.** `hyp_denovo` at +0.166 stays a genuine counterexample
+that a clean "ff3.0 hurts de novo folding" story does not accommodate.
+
+**This kills the "failing proteins are helical bundles" reading.** The worst de novo regression in
+the set is **WWdomain_denovo at -0.206, and WW domain is a three-stranded antiparallel beta sheet
+with no helix at all**; alpha3d_denovo (-0.177) is an alpha bundle and top7_denovo (-0.040) is
+alpha/beta. The regressions span every topology and sort by arm type instead.
+
+**It also gives the `hb` proposal nothing to explain.** hbond is applied identically in a native and
+a de novo arm, so it has no mechanism that produces a native/de-novo asymmetry, and that asymmetry
+is the largest structured signal in the benchmark.
+
+**Two candidate causes, not yet separated.** (a) Physical: glycine alpha_L nucleates turns, de novo
+folding has to form turns from an extended chain while native arms start with them formed, and
+ff3.0 zeroed a preference the AWH measurement puts at -0.27 rather than 0. (b) Artifact: the
+whole-run scoring trap of section 5(d) has **opposite sign in the two arm types** - native arms
+decay away from the native seed so a whole-run mean flatters them, de novo arms build up toward
+folded so a whole-run mean penalises them. (b) alone predicts this split with no physics.
+**Unproven either way.** The last-third re-score separates them, costs core-hours on data already
+on disk, and should run before alpha3d_native is read, because that arm is confounded identically.
+
+---
+
+## 9e. The original ConDiv trained `hb` and `sheet`; the port dropped both (2026-09-18)
+
+Source: `~/OneDrive - The University of Chicago/ConDiv.tar`,
+`./ConDiv/remd-4000-8RP-1th-test/ConDiv_original.py`. Checked after the user pointed out that the
+modern trainer is a translation and may not be faithful.
+
+**The original trained both terms.** Learning rates (lines 539-546) are `env 0.1, cov 0., rot 0.5,
+hyd 0., hb 0.02, sheet 0.03`, all times 0.25 — `hb` and `sheet` **nonzero**. `backprop_deriv`
+(227-235) zeroes only `cov` and `hyd`, so both gradients reach the optimizer. The hb gradient is
+`contrast.hb.append(engine.get_output('hbond_energy')[0,0]/hb_strength)` (line 322), the
+logarithmic derivative of a scale factor, exact because the energy was strictly linear in it.
+`sheet` was trained by finite difference on `more_sheet_rama_pot` / `less_sheet_rama_pot` with
+`sheet_eps` (296-299, 313, 327-331).
+
+**Both were single scalars**, stored as plain text floats: `init_param/hbond` = **-2.11195901181**,
+`init_param/sheet` = **-0.268097395769**, read at 191-192 and written back at 216-217.
+
+**What the migration changed.** `hbond_energy` went from one scalar attribute
+(`_v_attrs.protein_hbond_energy`) times an hbond count, to a 12-element `parameters` dataset with
+three rama-dependent energies (-1.961 / -1.946 / -1.769) plus eight boundary and sharpness values.
+`sheet` went from one scalar to 20 per-residue-type values; `parameters/ff_3.0/sheet[0] = -0.2648`
+is recognisably a descendant of the original -0.2680. So **two trained scalars were replaced by
+richer hand-set parameterisations**, which is what the modern docstring means by "incompatible with
+the scalar-based legacy interface". Function inventories otherwise match one-for-one (only Py2->3
+renames), so this was a deliberate drop at an interface change, not a silent translation bug. The
+consequence is the same either way: two fitted degrees of freedom became unfitted and were never
+revalidated.
+
+**Consequence 1: the rama dependence of hbond is itself post-training.** The original energy was
+strictly linear in one scalar, which is *why* `E/hb_strength` was exact; a three-way helix/sheet/turn
+split by (phi,psi) would have broken that formula. So the +0.192 E_up positive-phi penalty in 9c was
+introduced at the rewrite, has never been fitted to anything, and sits exactly on the glycine region.
+
+**Consequence 2: reviving the original's training needs almost nothing, and scanning it needs
+nothing.** `apply_param_scale(hb_scale=...)` at `py/upside_config.py:2028-2035` already multiplies
+`hbond_energy.parameters[:4]`, and it is exposed as `--hb-scale` (line 2240). Energy is linear in
+those four, so the original's `E/hb_scale` derivative still holds exactly. **A `--hb-scale` scan is
+a config-rebuild, zero code changed.** The five-change estimate in current_job.md 5c applies to
+training the 12 parameters individually, not to this.
+
+---
+
+## 9f. Audit of the ConDiv port against the original (2026-09-18)
+
+Original `ConDiv_original.py` (577 lines, Py2) vs `training/gly-sym/ConDiv.py` (615 lines, Py3).
+Function inventories match one-for-one modulo renames (`__div__`->`__truediv__`,
+`get_d_obj`->`_d_obj_fn`).
+
+**It is not a Python version update. The autodiff backend was swapped, Theano -> PyTorch.** That is
+the largest structural change and the one most able to hide a defect. Checked term by term and it
+is faithful: student-t (`nu=3`, `scale=200`), all three expectation profiles (`cov` at `r-2`, `rot`
+at `r-2`, `hyd` at `r-1`, each `5*cutoff(.,0.2)`), `lower_bound` at **-6** on all three, the same
+six-term regulariser, the same coupling trick for grad-through-simulation, float64 throughout.
+The `.view(-1,1,1)` broadcast **is** equivalent to Theano's `[None,None,:,None,None]`: trailing
+alignment against a 5-D energy tensor puts the knot axis on dim 2 either way. **No defect here.**
+
+**Correctly handled Py2 hazard.** `n_res = len(native_pos)/3` is floor division in Py2 and true
+division in Py3; the port uses `// 3`. `Update._do_binary` still propagates `None`, so the
+now-`None` `hb`/`sheet` fields flow harmlessly. Constants all match: `n_threads 8`,
+`native_restraint 1/3**2`, `rmsd_k 15`, `minibatch_size 12`, `sim_time 4000`, Adam `env 0.1`,
+`rot 0.5`, times 0.25. Contrast assembly identical: `x[:n].mean(0) - x[n:].mean(0)`.
+
+**The one behavioural change is the `hb`/`sheet` freeze** (9e), touching six places: learning rates,
+`backprop_deriv`, `contrast.hb/sheet` collection, `get_init_param`, `expand_param`, `print_param`.
+
+**Cosmetic, no behaviour change:** `new_files` in `run_minibatch` omits the `sheet` key while
+`d_obj_files` includes it (harmless only because `expand_param` never touches it, but inconsistent);
+`--slurmd-debug=0` dropped from srun; `swap_stats` no longer recorded (diagnostic loss);
+`protein_dir` no longer stored in state (the original stored it and never read it back); `rmsd_k`
+comment changed from "atoms" to "residues" with identical slicing. Added, not in the original: a
+non-slurm fallback and `RESULT_READ_FAIL` handling.
+
+**NOT VERIFIED, and it matters.** The restraint call changed from
+`ru.upside_config(..., restraint_spring = 1/3**2)` to
+`ru.advanced_config(..., restraint_spring_constant = 1/3**2)`. Both reach
+`make_restraint_group` (`py/advanced_config.py:1488`) and the value is passed through unchanged,
+but whether upside1's `restraint_spring` and upside2's `restraint_spring_constant` carry the same
+definition cannot be settled from these two files. **The restrained ensemble is one half of the
+contrast, so if that constant's meaning shifted, every gradient in every generation shifted with
+it.** Needs the upside1 tree to close.
+
+### 9f.1 `rotamer_parameter_estimation.py`, Theano -> Torch
+
+The objective delegates all spline math to `rp`, which was ported too. The **Theano original
+survives in the master repo** (`upside2-md-master/py/rotamer_parameter_estimation.py`, 442 lines,
+`import theano`, `import cPickle`), so this is a direct comparison, not an inference.
+
+**Faithful.** Constants identical (`n_fix 3`, `n_rotpos 86`, `n_restype 20`, `n_knot_angular 15`,
+`n_knot_sc 12`, `n_knot_hb 10`, `hb_dr 0.625`, `sc_dr 0.7`). `quadspline_energy` identical: same
+(1/6, 2/3, 1/6) B-spline weights, same `ev(uni) + ev(dp1)*ev(dp2)*ev(direc)` structure, and
+Theano's `[:,:,:,None,None]` on a 3-D input gives the same 5-D result as Torch's
+`[..., :, None, None]`. **That settles the broadcast question in 9f**: the energy is 5-D with the
+knot axis on dim 2, so ConDiv's `.view(-1,1,1)` right-aligns to exactly where Theano's
+`[None,None,:,None,None]` put it. `read_symm` (`0.5*(x + x^T)`), `clamp_spline`
+(`c0 = middle[1:2]`, `cn2 = -0.5*cn3`, `cn1 = cn3`) and every shape identical. **The lparam read
+ORDER is identical** (angular, clamped, clamped; then cov ang/ang/clamp/clamp; hyd likewise; then
+hydpl com/dir, rotpos com/dir, rotscalar), so a latent vector saved under Theano unpacks the same
+way under Torch. `AdamSolver` identical: same defaults (`alpha 1e-2, beta1 0.8, beta2 0.96,
+epsilon 1e-6`) and same update math; the only change is `except:` narrowed to
+`except (TypeError, IndexError)`, which is equivalent for the types actually passed (a 6-field
+`Update` for alpha, floats for the rest).
+
+**Dropped, and unused by ConDiv:** `direc_energy`, `multimin`, `quadspline_prob`,
+`quadspline_neglognorm`, `quadspline_expectation`, `bind_param_and_evaluate`, the four
+`UpsideEnergyGap`/`UpsideTrajEnergy` Theano Ops, `sgd_sweep`, `rmsprop_sweep`, `SGD_Solver`,
+`low_rank_approximation`.
+
+**Two real deviations.**
+
+1. **A GLY palindromic symmetrisation was ADDED** (`GLY_IDX = 7`, current file lines 65-79): the
+   GLY row of the rotamer pair-interaction angular logits is averaged with its reverse
+   (`0.5*(gly_row + gly_row[:,:,flip])`) before the sigmoid, and the `dp2` transpose carries it to
+   the GLY column. **The Theano master contains zero mentions of GLY, palindrome or flip.** This is
+   deliberate (the ConDiv docstring documents it) but it is a model change, not a port.
+2. **`+ 1e-12` inserted inside the sqrt** of both direction normalisations (`hydpl_dir`,
+   `rotpos_dir`). Numerically negligible in float64 for a unit-length vector (~5e-13 relative), but
+   it is an added epsilon guard that would silently absorb a degenerate zero-length direction
+   instead of producing NaN.
+
+**Deviation 1 needs checking against how the ff2.1/ff3.0 comparison is framed.** `current_job.md`
+section 1 says the two force fields "differ in exactly one thing: the GLY row of the Ramachandran
+dimer library". But this is a **second, independent glycine symmetrisation**, living in the rotamer
+angular profile rather than the rama map, and it is applied during training, so it lands in
+`sidechain.h5` — which is one of the only two files that differ between `ff_2.1` and `ff_3.0`.
+Section 5(a)'s "ff2.1 and ff3.0 differ in exactly six 72x72 maps and nothing else" is measured on
+`glydiag/lambda_ff21.up`, a config built by swapping only the maps, so it describes "ff3.0 holding
+ff2.1's rama maps" rather than ff2.1 itself. **Whether the rotamer GLY palindrome is intended as
+part of ff3.0, and whether it was present when ff3.0 was trained, is not established here and
+should be, because it changes what the ff2.1-vs-ff3.0 comparison is a comparison of.**
+
+**Two defects inherited faithfully from the original, both affecting any retrain's
+reproducibility.** `training_list` is sorted by `(n_res, code)` with the comment "ensure each
+minibatch has roughly the same mix of protein sizes", and then `np.random.shuffle` is called on it
+immediately, which destroys exactly the ordering the strided slicing `[i::n_mb]` was meant to
+exploit. And that shuffle is **unseeded**, so minibatch composition differs run to run.
+
+---
+
+## 9g. The trainer was reverted to a strict modernization (2026-09-18)
+
+User instruction: ff3.0 is no longer trusted and no replacement glycine treatment has been decided,
+so the training workflow should be a strict modernization of the Theano original and nothing more.
+A GLY-symmetric variant gets branched later, once the AWH measurement says what glycine should do.
+
+`py/rotamer_parameter_estimation_baseline.py` already WAS that strict modernization; the active
+`rotamer_parameter_estimation.py` was that file plus the GLY palindrome. Rather than keep a
+near-duplicate pair, the strict version is now the only `rotamer_parameter_estimation.py` and the
+`_baseline` copy is deleted. **The GLY version is recoverable from git**: blob
+`72ae60be`, commit `28185321`.
+
+Three things removed, all absent from the Theano master:
+
+1. **The GLY palindrome** (`GLY_IDX = 7`): `0.5*(gly_row + gly_row[:,:,flip])` on the angular logits
+   before the sigmoid, plus the matching pre-symmetrisation of the GLY row in `_init_x0`.
+2. **`+ 1e-12` inside the sqrt** of both direction normalisations. Numerically ~5e-13 relative, but
+   the original has no epsilon and it would absorb a degenerate zero-length direction.
+3. **A weakened convergence gate in `pack_param`, which is the one that mattered.** The Theano
+   original requires the residual itself to be small, `if not (discrep < 1.6e-4): raise`. The
+   modern version had replaced that with a bare `if not result.success:`, commented as justified
+   because "the GLY palindrome constraint produces an irreducible residual". That is a threshold
+   weakened to accommodate an added constraint: with the palindrome imposed, a non-palindromic input
+   GLY row **cannot** be fitted, so the exactness check had to go. Removing the constraint removes
+   the reason, and the **`< 1.6e-4` residual gate is restored**.
+
+**Verified on real force-field parameters, not just by reading.** Round-tripping
+`sidechain.h5` through `pack_param` -> `unpack_params` under the strict version:
+
+| | GLY angular `max abs(x - flip(x))` | pack residual | round-trip max abs error |
+|---|---|---|---|
+| `ff_2.1` | **0.999593** (strongly non-palindromic) | **2.6e-30** | **2.2e-16** |
+| `ff_3.0` | **0** (exactly palindromic) | 6.7e-11 | 8.9e-07 |
+
+Two things fall out. **ff2.1's GLY row fits to machine precision**, 26 orders of magnitude inside
+the restored 1.6e-4 gate, which proves the loose gate was needed only to accommodate the added
+constraint and nothing else. And **ff3.0's shipped `sidechain.h5` has an exactly palindromic GLY
+angular row**, `max abs(x - flip(x)) = 0` against ff2.1's 0.9996 — independent measured confirmation
+that the second symmetrisation is baked into the released ff3.0 parameters, not just the trainer.
+
+Kept, and why: `_init_x0`'s warm start (the original starts from a flat `0.5+zeros`) and the tighter
+`maxiter/ftol/gtol`. Both only choose where the solve starts and how hard it tries; the restored
+residual gate is what establishes the answer is right, so a better starting point cannot launder a
+bad result.
+
+**The cluster copy is NOT synced.** `/project/trsosnic/yinhan/upside2-md-mdw2/py/` still carries
+both files with the GLY version active. No training is running, so nothing is affected now, but
+sync before launching one. Do **not** edit `training/gly-sym/ConDiv.py` or `training/gly-ctx/ConDiv.py`
+or their `run_output/` copies: those are the record of what produced the existing checkpoints.
+
+---
+
+## 9h. `hb` and `sheet` unfrozen, restoring what the original trained (2026-09-19)
+
+User instruction: whatever the port froze must be unfrozen, then re-run the ff2.1 fixed-point
+check. The original trains `hb` (lr 0.02) and `sheet` (lr 0.03); the port zeroed both. Neither
+could be restored mechanically because both nodes changed shape, so each needed a remapping.
+
+**`hb` -> one multiplicative scale `s` on `hbond_energy.parameters[:4]`.** Original: a single
+energy `protein_hbond_energy = -2.112` with `potential = hb_strength * N`, hence
+`dE/d(hb_strength) = E/hb_strength`. Modern: 12 entries, of which the first four
+(`E_alpha, E_beta, E_other, E_bias`) are energies and the last eight are rama boundaries and
+sharpnesses. **Linearity measured, not assumed**: scaling `parameters[:4]` by 1.01 scaled the
+hbond energy by 1.01000071, by 0.97 -> 0.97000080, i.e. exact to ~7e-7 (engine float32). So
+`dE/ds = E/s` is the original's formula unchanged, and `get_output('hbond_energy')` supplies `E`
+(a `potential_term` node returns 1x1, `src/engine_c_library.cpp:176`). **No C++ change.**
+Rejected: a common additive offset, which is prettier in units (the three rama scores sum exactly
+to 1, so `dE/d(offset) = n_hbond`) but needs `get_n_hbond` exposed — it exists at
+`src/deriv_engine.cpp:646` and is absent from `engine_c_library`.
+
+**`sheet` -> one common offset on all 20 per-residue-type values.** Original: one scalar `-0.268`
+differenced against a single `more_/less_sheet_rama_pot` pair. Modern `--rama-param-deriv` emits a
+pair **per residue type**. Training all of them is not affordable: `n_frame = 250` and each
+direction costs two extra full passes, so 20 types is ~41x the divergence cost against 3x for one
+common scalar — and 3x is exactly what the original paid. Added
+`more_/less_sheet_rama_pot_ALL` to `write_rama_map_pot` (`py/upside_config.py`, additive, existing
+datasets untouched). `eps = 5e-4` is unchanged from master; **do not tune it**.
+
+**Learning rates.** `sheet = 0.03` verbatim. `hb = 0.02/1.96`, because the original's 0.02 acted on
+a parameter of magnitude ~2.1 while the scale starts at 1.0; dividing by the reference energy makes
+one step move the hbond energies by the same absolute amount.
+
+**Known precision limit, worth remembering before reading the sheet gradient.** The rama energies
+are ~788 and the more/less difference is ~2.3e-3, only ~25x the float32 resolution at that
+magnitude, so each frame's sheet derivative carries barely more than one significant digit. It
+averages over 250 frames x 12 proteins, but a small sheet gradient should not be over-interpreted.
+
+**Reading the result.** `rot`/`env` remain the clean port-fidelity test. **A nonzero `hb` or
+`sheet` gradient does NOT by itself mean the port is broken**: ff2.1's 12-entry `hbond.h5` and
+20-value `sheet` file were not produced by the original trainer (whose outputs were the scalars
+-2.112 and -0.268) but by the node rewrite, so they may simply not sit at a ConDiv optimum. That
+measurement is useful for the next force field either way.
+
+Verified before submitting: config gains `sheet_eps = 0.0005` plus the `ALL` pair (max
+more-minus-less 9.76e-4 ~ 2*eps) alongside 18 per-type pairs; the full divergence path runs and
+returns finite values; `initialize` reports `hb 1.000000`, `sheet 0.000000` and
+`pack_param residual = 3.38e-30`. Running as **49037514**.
+
+---
+
+## 9i. The rama library fails its own achiral control, and how to correct the GLY row (2026-09-19)
+
+**The library says a glycine flanked by glycine is chiral. It cannot be.** Ac-Gly-Gly-NHMe has no
+chirality source: swapping HA2/HA3 maps the molecule to itself, so `dG(aR->aL)` must be exactly 0,
+and the AWH control LG confirms that (rep1 -0.015 on its plateau). Measured on the AWH basins from
+`parameters/common/rama.dat`, the coil `GLY|GLY` entries read **-0.7095 (left neighbour)** and
+**-0.9717 (right)**.
+
+**This is an internal measurement of the library's systematic error that needs no simulation at
+all**, and it independently corroborates the AWH campaign. The library's XGX average over the 8
+measured neighbours is **-1.3180**; the AWH says the truth is **-0.26**, an overstatement of ~1.06.
+The GG entry says the library overstates by 0.71-0.97 in a context where the truth is known to be
+zero. Two completely independent estimates of the same artifact, agreeing at ~0.7-1.1.
+
+It also explains ff3.0C. Subtracting the GG antisymmetry from every entry (what ff3.0C did) leaves
+about -1.32 + 0.71 = -0.61 against a true -0.26, i.e. it **under-corrects by ~0.35** - matching the
+recorded ff3.0C mean error of -0.256 and its "over-retains alpha_L" verdict in section 3(b).
+
+### Machinery, all verified against the files
+
+* **Decomposition is exact.** `M = S + A` with `S = 0.5*(M + mirror(M))` and
+  `A = 0.5*(M - mirror(M))`.
+* **The mirror is `(phi,psi) -> (-phi,-psi)` with a roll**, not a plain reverse:
+  `np.roll(np.roll(m[..., ::-1, ::-1], 1, -2), 1, -1)`. This reproduces `rama3.dat`'s GLY row from
+  `rama.dat`'s **bit exactly (max diff 0.000e+00)**; a plain reverse is wrong by 2.27. The grid is
+  72x72 starting at -180 with 5 deg spacing, so index `i -> (-i) % 72`.
+* **NaNs are already mirror-symmetric** (0 bins where a cell is NaN and its mirror is not), so the
+  symmetrisation needs no NaN special-casing. 4.5% of the coil library is NaN.
+* **Only the GLY row differs** between `rama.dat` and `rama3.dat`, in both coil and sheet (max diff
+  3.15 coil, 33.7 sheet). Beware: a naive `>1e-9` comparison reports "no difference" because NaN
+  comparisons are False.
+* **`dG` is linear in the scaling to excellent accuracy**: `dG(lam) ~ -1.318*lam`
+  (lam=1 -> -1.3180, 0.5 -> -0.6613, 0.3 -> -0.3971, 0.2 -> -0.2648, 0 -> exactly 0). So the
+  calibration is a division, with no basin-shape ambiguity.
+* **Units are E_up directly.** `read_weighted_maps` applies no scale factor, and the per-map
+  normalisation `pots -= -log(sum(exp(-pots)))` is an additive constant that **cancels in dG**.
+  Confirmed against a built config: per-GLY dG runs -0.83 to -1.54.
+* **The reference-state map is negligible here**: `rama_map_pot_ref` contributes **-0.0139** to
+  glycine handedness, shifting per-residue dG by ~0.03.
+* The **-1.13 E_up** recorded elsewhere as "the library value" is the `GLY|ALL` marginal
+  (-1.1823), not the neighbour average (-1.3180). Use -1.32 for the 8 measured neighbours.
+* Some entries (e.g. `LYS`) have an empty basin and return NaN; any rebuild must skip or mask them.
+
+### The correction that follows
+
+`M_new = S + lam*A` on the GLY row, with **lam ~ 0.20** (0.26/1.318), applied uniformly to all XGX
+entries, and **`GLY|GLY` forced to lam = 0** because its true value is known exactly by symmetry.
+Keeping the library's per-neighbour structure scaled is defensible: its spread at lam=0.2 is 0.106,
+inside the AWH per-neighbour noise of 0.178, so our measurement has no power to contradict it,
+while the library's PDB statistics for that structure are solid (sigma 0.012 per entry).
+
+Frame it as **ff2.1 with the glycine asymmetry scaled to 0.20**, not as ff3.0 plus something.
+
+---
+
+## 9j. The env param-deriv bug, and why it bit again (corrected 2026-09-19)
+
+**CORRECTION.** This was first written as "all training has been broken for nine days, nobody
+caught it". **That is wrong and the claim is withdrawn.** The bug was already diagnosed and
+recorded in `plan.md`, and already **fixed in `training/gly-ctx/ConDiv.py`**, which then trained
+141 minibatches between 2026-09-16 and 2026-09-18 — well after the rebuild. What actually happened
+is narrower and more useful: **the fix was applied to `gly-ctx` only and never propagated to
+`gly-sym`**, and `ff21-restart` was cloned from `gly-sym`. So a known, solved bug was inherited by
+copying from the un-patched directory.
+
+**The lesson is about propagation, not discovery.** `plan.md` even said it: "Patched in
+`gly-ctx/ConDiv.py` only; any other training dir will need the same fix." Clone from the most
+recently *fixed* directory, not the most recently *successful* one — `gly-sym` had 498 checkpoints
+and looked like the better template, and it was the broken one.
+
+The bug itself, below, is real and the fix is correct; it was independently re-derived and matches
+`gly-ctx`'s approach line for line (request the full vector, slice, reshape).
+
+**Symptom.** Every worker dies at
+`contrast.env.append(engine.get_param_deriv(env_shape, 'nonlinear_coupling_environment'))` with
+`RuntimeError: Unable to get param deriv`, and the engine prints
+`ERROR: Wrong number of parameters, expected 760 but got 360`.
+
+**Cause.** `360 + 400 = 760`. The env node's config group holds `coeff (20,18) = 360` **and**
+`weights (400)`; the engine's parameter vector for that node is now **both**, while `ConDiv.py`
+sizes its request from `coeff.shape` alone. So the request is 360 where the engine has 760.
+
+**Dated.** `obj/libupside.so` was rebuilt **2026-09-10 20:55**; `gly-sym`'s newest checkpoint is
+**2026-09-09 17:15**, i.e. it never ran against the new binary, which is why its copy was never
+corrected. `gly-ctx` ran **2026-09-16 to 2026-09-18** against the new binary with the patch, and
+shows zero occurrences of the error.
+
+**Proven not to be the hb/sheet work.** The env derivative fails identically with the new
+`set_param(more_sheet, 'rama_map_pot')` call removed, and that `set_param` itself succeeds
+(648,000 floats accepted). Failures reached 4 of 12 workers with 0 `divergence.pkl` before the job
+was cancelled; all 12 would have failed and `run_minibatch` would have raised "All jobs failed".
+
+**Fix.** Request the full 760 and take the `coeff` slice, e.g.
+`engine.get_param_deriv((760,), 'nonlinear_coupling_environment')[:360].reshape(20,18)`, keeping
+`backprop_deriv`'s `env[:, :-1]` handling unchanged. **Confirm the ordering first** (coeff-then-
+weights vs weights-then-coeff) by comparing `engine.get_param` against the config arrays — do not
+assume it. The alternative, rebuilding the binary from source matching the config writer, is worse:
+it would change the running engine under everything else.
+
+**Where the fix now lives:** `training/ConDiv.py` in the repo, `training/ff31/ConDiv.py` and
+`training/ff21-restart/ConDiv.py` on the cluster, and `training/gly-ctx/ConDiv.py` (the original).
+`gly-sym`'s copy is still un-patched and should not be used as a template.
+
+---
+
+## 9k. VERDICT: the ported trainer sits at ff2.1's fixed point (2026-09-19)
+
+Job 49037578, `COMPLETED` 0:0 in 2:45:49, six minibatches, 12/12 workers every step, zero
+failures. ConDiv restarted from ff_2.1 under the strict-modernization trainer with **`hb` and
+`sheet` unfrozen** and ff_2.1's own unsymmetrised `rama.dat`.
+
+**All four trained parameters show gradients indistinguishable from minibatch noise.** Exact
+sign-flip test on `||mean g|| / mean|g|` (null: `E[g] = 0`, so each of the 6 gradients may flip
+sign; p is the fraction of the 2^6 assignments giving a ratio at least as large):
+
+| param | observed | pure noise (1/sqrt 6) | p_exact |
+|---|---|---|---|
+| env   | 0.439 | 0.408 | **0.219** |
+| rot   | 0.326 | 0.408 | **1.000** |
+| hb    | 0.438 | 0.408 | **0.469** |
+| sheet | 0.006 | 0.408 | **1.000** |
+
+Scalar t-tests agree: `hb` mean +17.2, sd 51.0, t = +0.82; `sheet` mean -0.014, sd 3.57,
+t = -0.01. Health throughout: median Ca-RMSD 0.92-1.01 restrained against a ~1.0 A target, 2.08-2.61
+free.
+
+**What this does and does not establish.** It shows **ff_2.1 is a STATIONARY POINT** of the ported
+trainer: started from the original's converged output, there is no systematic direction to move in.
+It does **NOT** show the trainer **converges to** ff_2.1 — that would require starting elsewhere and
+returning, and every step here began at or beside ff_2.1. Stationarity is necessary for ff_2.1 to
+be the optimum, not sufficient.
+
+**Power is limited, so read it as ruling out a LARGE drift only.** With n=6 the sign-flip test's
+smallest achievable p is 1/64 = 0.016. For `env`, per-step `|g| ~ 11.4` and the observed excess
+over the noise floor is ~0.35 in those units: a systematic component at 40-50% of the per-step
+gradient would have shown clearly, one at 10-20% would not. Coverage is 6 of 38 minibatches, one
+sixth of an epoch, 72 protein-draws from 456.
+
+**A sign test was also run, because the t-test is not robust to the heavy tails seen here.** It
+agrees: signed scalar gradients are 4 of 6 positive for both `hb` and `sheet` (p = 0.69). Notably
+both **reverse sign on the last two steps** (`hb` +101.9, +3.3, +24.1, +39.7, then -39.1, -26.9),
+which is Adam oscillating about a nearby minimum rather than drifting away from one.
+
+**The test that would establish convergence, not just stationarity:** perturb ff_2.1 by a known
+amount in a known direction, run a SINGLE minibatch, and check the gradient points back. That
+measures the restoring force directly for ~26 min instead of a full run. Perturbing toward ff_3.0's
+parameters is the variant worth doing, since that is the direction of interest.
+
+### Two methodological lessons, both earned the hard way
+
+**1. A partial-n statistic will lie to you, and it did so three times tonight.** The `sheet`
+gradient read **t = +3.91 (p = 0.059) at n=3**, **+0.20 at n=5**, **-0.01 at n=6** - the early
+"signal" was three small samples before two order-of-magnitude outliers arrived (0.17/0.44/0.31
+then 5.86/5.08/1.80). The benchmark did the same thing, p = 0.039 (n=9) -> 0.092 (n=13) -> 0.035
+(n=15) -> 0.021 (n=16). **Do not report an interim n as an answer.**
+
+**2. `check_converged.py`'s pairwise-cosine t-statistic is anti-conservative and should not carry
+a conclusion.** It treats the n(n-1)/2 pairs as independent when they share vectors. At n=6 it
+reports `rot` cosine t = -1.92, which looks nearly significant and is not; note also that the sign
+is **negative**, whereas a systematic drift would give **positive** cosine. **Use the sign-flip
+test on the ratio**: it is exact, non-parametric, needs no independence assumption, and is cheap
+at 2^n for small n.
+
+### Caveat that survives the verdict
+
+`hb` and `sheet` were never at a ConDiv optimum to begin with - ff_2.1's 12-entry `hbond.h5` and
+20-value `sheet` file came from the node rewrite, not from the original trainer, whose outputs were
+the single scalars -2.112 and -0.268. Their passing is therefore weaker evidence than `rot`/`env`,
+which are the clean fidelity test. What the result does establish is that **no parameter is being
+driven anywhere**, which is what a retrain needs before it can be trusted.
+
+---
+
+## 9l. ff3.1 built and training launched (2026-09-19)
+
+**ff3.1 = ff_2.1 parameters + `rama31.dat`**, trained with the strict-modernization ConDiv
+(hb and sheet unfrozen, env param-deriv fixed). Jobs **49037796** (running) and **49037797**
+(queued on dependency), chaining to 500 steps in `training/ff31/`.
+
+**The map.** Coil central-GLY row only: `M_new = S + 0.20*A`, with `S`/`A` the mirror-symmetric
+and antisymmetric parts under `(phi,psi) -> (-phi,-psi)`. **`GLY|GLY` forced to lambda = 0**, fully
+symmetric, because a glycine flanked by glycine is achiral by construction and its true value is
+known exactly. `lambda = 0.20` comes from the AWH measurement: the two replicas imply 0.1971 and
+0.2062, mean 0.2017. **Do not add digits** - the systematic uncertainty (the rep2 control anomaly,
+~0.09 E_up) makes lambda good to only about +/-0.07.
+
+**The sheet group is deliberately untouched, and that is now evidence-based rather than a scope
+decision.** Measured on the same basins, the sheet library **passes its own achiral control**
+(`GLY|GLY` left +0.0011) where the coil library fails it badly (-0.7095). Its apparent 8-neighbour
+average of +14.06 is meaningless: both helical basins are essentially empty there (section 3a
+measured alpha_R 1.6e-10, alpha_L 8.7e-16), so it is a ratio of near-zeros. Scaling it would be
+scaling noise.
+
+**Verified before launching, at three levels.**
+* *Library*: only the coil GLY row differs from `rama.dat`; sheet diff exactly 0.00e+00;
+  `dimer_weight` identical; NaN mask preserved; 8-neighbour dG **-0.2648** (was -1.3180);
+  `GLY|GLY` **-0.000000** both directions and exactly self-mirror-symmetric.
+* *Built config, end to end*: GLY residues go from mean **-1.234** (range -1.54..-0.87) to
+  **-0.248** (-0.31..-0.17), while a non-GLY sample is **bit-identical at +1.956** in both. The
+  change reaches the simulation and touches only glycine.
+* *Trainer*: `initialize` gives `pack_param residual = 3.38e-30`, `hb 1.000000`, `sheet 0.000000`,
+  456 proteins, 38 minibatches - all matching the ff21-restart baseline.
+
+Note the neighbour spread narrows 5x along with the amplitude (-1.54..-0.87 becomes -0.31..-0.17),
+which is the intended consequence of scaling `A`: the library's neighbour structure is kept but
+shrunk, since the AWH could not resolve it (per-neighbour noise 0.178 against a scaled spread
+of ~0.11).
+
+**Cost, and where it comes from.** ~26 min/step against gly-sym's ~9.4, so 500 steps is **~9 days**
+across ~8 chain links rather than ~3.3 days. **The entire 2.8x is the sheet finite differences**:
+two extra passes over all 250 frames per minibatch. If sheet training were dropped the cost returns
+to roughly gly-sym's.
+
+**Prediction this is falsifiable against.** ff3.0's damage is concentrated in de novo folding
+(section 9d: native +0.039, de novo -0.030, paired p = 0.021). If that is because zeroing the
+glycine alpha_L bias removed turn nucleation, restoring 20% of it should recover de novo arms while
+keeping the native gains. If the de novo arms do not move, that explanation is wrong.
+
 ---
 
 ## 10. Cluster and operational lessons
+
+### 10.0 Three analysis lessons from the lambda diagnosis (2026-09-18)
+
+**A reweighting is only as meaningful as the stationarity of the ensemble it reweights, and
+stationarity has to be measured.** I reweighted lambda's whole cold-rung native arm along the
+glycine-asymmetry axis and reported that the candidate force field stabilises the near-native
+basin by 0.55 kT. The arm is a monotonic decay away from its native seed, not an ensemble: blocked
+by time it runs 6.41 -> 10.39 A and is still rising in the final block. On the equilibrated last
+third the same calculation gives -0.024 E_up, and the correlation between the perturbation and
+Ca-RMSD flips sign, +0.171 -> -0.064. The whole-run number was reweighting frames the force field
+was in the process of leaving. **Block the observable against time before reweighting anything, and
+quote the converged window.** The effective sample size was 83% in both cases, so ESS says nothing
+about this failure mode.
+
+**Pooling shells can invert a conclusion when one shell dominates.** From glycine (phi,psi) pooled
+over all frames under 6 A I concluded that lambda's most native-like states have helix H2 broken
+with five of six glycines left-handed. Resolved by shell, the 0-5 A states have H2 intact at 89%
+right-handed and it is the 5-6 A shell, four times larger, that is broken. The pooled statistic was
+reporting the larger shell. **Resolve by bin before reading a conditional average.**
+
+**Never import a module whose top level does work.** `score_arms_dist.py` runs the whole scoring
+loop at import and calls `json.dump(..., "score_arms.json")` after each arm. Importing it for two
+helper functions started a 2.7 h rescore on the login node and truncated `score_arms.json` from 23
+arms to 3 before I noticed. It was rebuilt exactly from the intact `scoring/dist/*.npz` per-frame
+arrays, which is the only reason nothing was lost. Two habits follow: **duplicate the few constants
+and helpers rather than importing a script**, and **check what a module does at import before
+importing it**, particularly when it writes files.
+
+
+### 10.0a Writing: stop using emphatic counted negatives (2026-09-17)
+
+User correction. I wrote "**Zero of glpG's 187 non-glycine residues change at all**" when the fact
+is simply that nothing outside the glycine row changes. The tell is a bundle: an emphatic zero with
+a precise denominator, bolded, plus a trailing intensifier, all spent on a routine sanity check
+rather than on evidence. I had been doing this repeatedly -- "Not one of the 23 is neutral",
+"0 of 19 share glycine's sign", "none of them shares".
+
+Rule: **a count is for when the count is the evidence, not for emphasis.** "38 of 38 entries are
+negative, p = 7e-12" earns the construction because the tally is the argument. "No non-glycine
+residue changes" does not, so write it that way: short, unbolded, no denominator, no "at all".
+
+Related habits to avoid in user-facing text, for the same reason: bolding a phrase to manufacture
+drama, opening a sentence with the conclusion restated for effect, and trailing intensifiers
+("at all", "whatsoever", "entirely"). The repo already bans em dashes and the "not X, not Y, but Z"
+triplet; this is the same family.
+
+Second correction the same day: **the word "caveat" gives it away**, along with the rest of the
+LLM-overused vocabulary ("robust", "crucial", "leverage", "delve", "underscore", "nuanced",
+"comprehensive", "it is worth noting that", "that said", "moreover"). Full list and the plain
+replacements are now in `~/.claude/CLAUDE.md` under User Interaction Rules, since they apply to
+every project. Say "one problem is" or "the limitation is", or just state the limitation and skip
+the label.
 
 ### 10.0 Clean up local compute; never leave it running without a live reason (2026-09-16)
 
@@ -3482,6 +4589,42 @@ Reading the `.xtc` needs mdtraj, installed out-of-tree at `/beagle3/trsosnic/yin
 ## 12. Claims that turned out to be wrong
 
 One line each: what was believed, what is true, and why it is worth keeping.
+
+### 12a. The glycine campaign, 2026-09-18/19 (migrated from current_job.md before it was retired)
+
+1. **"Glycine handedness is zero."** Artifact of unconverged flat surfaces. `awh1-dimN-diffusion`
+   was 5e-5 rad^2/ps when AWH's own friction metric implies ~0.77, about 15000x too small, so the
+   PMF range was 2.0 kJ/mol at 25.8 ns instead of 20-40. A flat surface is trivially symmetric.
+   Fixed to `diffusion = 0.5`, `error-init = 30`; range then 50-66 kJ/mol.
+2. **The beta-branching rule** (VAL and THR positive because branched). Both crossed zero by 30 ns.
+   Do NOT run ILE as a decisive test.
+3. **Pentapeptide controls.** GGGGG must read 0 and reads -0.224. Not usable.
+4. **"LA is settled" at 0.028.** A four-snapshot window artifact; over 18 ns it is 0.106.
+5. **"Everything drifted toward zero" between 51 and 57.6 ns.** A basin-definition artifact.
+6. **ff3.0C's premise**, that the library's neighbour specificity is real. Contradicted: its
+   neighbour ordering correlates with the measurement at r = -0.565 against ff2.1's -0.596, both
+   anti-correlated.
+7. **"The candidate glycine map stabilises lambda's near-native basin by 0.55 kT."** Withdrawn the
+   same evening. It came from reweighting the *whole* native arm, which is a decay away from the
+   native seed rather than an ensemble; on the equilibrated last third the effect is -0.024 E_up,
+   i.e. zero and if anything destabilising. **A reweighting is only as meaningful as the
+   stationarity of the ensemble it reweights, and stationarity must be checked, not assumed.**
+8. **"Each replica's achiral control converges to its own nonzero value."** Partly withdrawn, then
+   partly restored: replica 1's LG decays to -0.015 as it must, but replica 2's sits at +0.094 and
+   has not come down. Unexplained; it does not propagate into the neighbour-average (controls
+   differ by 0.109 while the chiral averages agree to 0.012). **Still open.**
+9. **"The trainer's `hb` has never been trained."** Wrong, read off the modern port. The Theano
+   original trains it at lr 0.02; the port dropped it. See 9e.
+10. **The sheet gradient is systematically nonzero** (t = +3.91 at n=3). Collapsed to t = -0.01 at
+    n=6. See 9k.
+
+Rules these produced: an achiral control passing is necessary and nowhere near sufficient for a
+chirality observable, since its errors cancel by symmetry; only independent replicas at matched
+sampling bound the error (at 7 ns LG read -0.002 in rep1 and -0.264 in rep2); quote wander over the
+longest available window, never a fixed four snapshots; a derived quantity's definition must live
+in exactly one place; and for biased sampling, check the estimator's dynamic range against the
+physically expected range before reading any observable off it.
+
 
 * **findings 87 (withdrawn by findings 88, cited elsewhere as findings-88):** the glpG blow-ups were a
   timestep failure at protein-lipid contacts. Wrong: `omega*dt` had been computed for contacts that were all O sites, whose force the engine
