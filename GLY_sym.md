@@ -342,7 +342,7 @@ library's symmetric part does not survive measurement (see §5, *What changed, a
 | AWH extension to 400 ns, both replicas | halve the blank | running (49037819/20) |
 | library vs measured, full surface | can the library be discarded? | **yes**: they correlate at r = +0.867 and their αR basins agree to 0.207 nats; the disagreement is the αL basin, 1.087 nats |
 | saddle barriers and map mean after replacement | does glycine change weight or freeze? | no: mean 11.580 → 11.577, αR→αL barrier 6.32 → 4.10 nats |
-| AWH under ff14SB as well as ff99SB-ILDN | force-field dependence | in progress |
+| AWH under ff14SB as well as ff99SB-ILDN | force-field dependence | **agree to 0.045 nats**: -0.246 against -0.291, both blanks on zero |
 | unbiased Gly₅ / SAGAS pentapeptides | independent cross-check | **not usable**: Gly₅ reads −0.224 against an exact 0 |
 | 32-arm folding benchmark, ff3.0 vs FF2 | what ff3.0 actually did | native **+0.039**, de novo **−0.030**, paired p = 0.021 |
 | ConDiv restart from ff2.1 | is the trainer trustworthy? | ff2.1 is a stationary point (sign-flip p ≥ 0.22) |

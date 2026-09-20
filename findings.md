@@ -4574,71 +4574,96 @@ barely left ff2.1 anyway, `rot` drift being indistinguishable from a random walk
 
 ---
 
-## 9p. Is Track A going the right way? Measured at step 23 of 500 (2026-09-19)
+## 9r. The handedness is not an artifact of one force field (ff14SB, 2026-09-19)
 
-Two separate questions: is the glycine map moving toward the independent measurement, and is the
-rest of the force field staying sane.
+`gly_awh14` (49033947) finished its 10 dipeptides at 100 ns and its result had never been
+extracted: its `fe_t*.xvg` files stopped at ~45 ns, stale from an earlier analysis run, and LR,
+GGGGG and SAGAS had none at all. Re-extracted with `gmx awh -b 95000` on the last part file.
+
+| system | ff14SB | ff99SB-ILDN |
+|---|---|---|
+| LA | -0.519 | -0.447 |
+| LM | -0.328 | -0.301 |
+| LP | -0.418 | -0.352 |
+| LL | -0.591 | -0.396 |
+| LT | -0.043 | -0.129 |
+| LE | -0.013 | -0.090 |
+| LV | -0.206 | -0.309 |
+| LD | -0.124 | -0.179 |
+| LR | +0.026 | -0.413 |
+| **LG blank, must be 0** | **-0.010** | **-0.029** |
+| **chiral mean (n=9)** | **-0.246** | **-0.291** |
+
+**The two force fields agree to 0.045 nats**, inside the ~20% uncertainty already quoted, and both
+blanks sit on zero. Glycine's left-handed bias is therefore not an artifact of `amber99sb-ildn`:
+an independently refit AMBER variant gives the same answer, and both are nowhere near the
+library's -1.24 or ff3.0's exact 0.
+
+**Per-system values do not agree** (LR reads +0.026 against -0.413, LL -0.591 against -0.396),
+which is the same per-pair resolution limit seen between replicas of a single force field
+(S/N 1.48). It is the mean that reproduces, not the neighbour structure, and that is consistent
+with everything else measured here.
+
+**Honest limit: both are AMBER.** The literature's disagreement is largest between families
+(ff14SB pPII 0.36 against CHARMM36m 0.48), so CHARMM36m would be the stronger test and has not
+been run. Two AMBER variants agreeing bounds the within-family systematic, not the across-family
+one.
+
+**Not extended.** ff14SB has no successor and stops at 100 ns while the rest of Track B runs to
+400. That is deliberate: the bracketing question it exists to answer is settled at 100 ns, and
+its per-system values could not be resolved at 400 ns either.
+
+---
+
+## 9p. Is Track A going the right way? Re-measured on the corrected run (2026-09-19)
+
+The first measurement of this was taken under the incomplete gradient (terminal glycines missing,
+9q) and had to be redone. **It reproduces.**
 
 ### The glycine map converges onto the AWH surface it has never seen
 
-`A_learned` against `A_measured` from `rama31.dat`, correlation weighted by where glycines
-actually sit (the 3,212-glycine occupancy histogram of the training set, symmetrised):
+`A_learned` against `A_measured` from `rama31.dat`, correlation weighted by the symmetrised
+glycine occupancy histogram of the 456-protein training set:
 
 | step | `\|A\|` rms | fraction of measured | dG(aR->aL) | **corr with AWH** |
 |---|---|---|---|---|
-| 0 | 0.00498 | 0.06 | -0.0080 | **+0.374** |
-| 4 | 0.01341 | 0.16 | -0.0323 | +0.462 |
-| 8 | 0.01820 | 0.22 | -0.0419 | +0.424 |
-| 12 | 0.02122 | 0.26 | -0.0571 | +0.513 |
-| 16 | 0.02475 | 0.30 | -0.0780 | +0.598 |
-| 20 | 0.02851 | 0.34 | -0.0958 | +0.628 |
-| 23 | 0.02974 | 0.36 | -0.1016 | **+0.639** |
+| 0 | 0.00498 | 0.06 | -0.0040 | **+0.015** |
+| 4 | 0.01219 | 0.15 | -0.0286 | +0.372 |
+| 8 | 0.01903 | 0.23 | -0.0452 | +0.455 |
+| 12 | 0.02448 | 0.30 | -0.0566 | +0.474 |
+| 16 | 0.02909 | 0.35 | -0.0680 | +0.457 |
+| 20 | 0.03327 | 0.40 | -0.0916 | +0.522 |
+| 23 | 0.03613 | 0.44 | -0.1055 | **+0.538** |
 | AWH reference | 0.0828 | 1.00 | **-0.3030** | |
 
-**The correlation rises monotonically, +0.374 to +0.639.** That is the load-bearing number, and it
-needs no noise model: a parameter diffusing on minibatch noise would have its correlation with a
-*fixed external target* fluctuate about zero, not trend. Two methods sharing no input, contrastive
-divergence on 456 proteins and AWH on capped dipeptides in water, are producing the same surface
-shape in the region glycines occupy, and the agreement improves as training proceeds.
+The superseded run reached +0.639 at the same step; +0.538 here is within the run-to-run scatter
+of a quantity this noisy. **What matters is that the correlation trends rather than fluctuating**:
+a parameter diffusing on minibatch noise would have its correlation with a *fixed external target*
+wander about zero. Contrastive divergence on 456 proteins and AWH on capped dipeptides share no
+input and are converging on the same surface shape where glycines actually sit.
 
-Amplitude and basin dG track each other (0.36 and 0.34 of the measured value), so the map is
-growing by roughly uniform scaling of a converged shape rather than changing shape as it grows.
+### The rest of the force field is not being dragged anywhere
 
-### Everything else is diffusing, not drifting: ff2.1 is still at its fixed point
+Random-walk prediction is `alpha*sqrt(n)` for a parameter sitting at a minimum, at n = 24:
 
-Adam's step is about `alpha` in a random direction, so a parameter sitting at a minimum random
-walks with rms drift `alpha*sqrt(n)`. At n = 23:
+| parameter | random walk | observed | ratio |
+|---|---|---|---|
+| `rot` | 0.6124 | 0.6062 | **0.99** |
+| `env` | 0.1225 | 0.1349 | **1.10** |
+| `hb` | 0.0125 | 0.0025 | **0.20** |
+| `sheet` | 0.0367 | 0.0189 | **0.51** |
 
-| parameter | alpha | random-walk prediction | observed | ratio |
-|---|---|---|---|---|
-| `rot` | 0.12500 | 0.5995 | 0.6023 | **1.00** |
-| `env` | 0.02500 | 0.1199 | 0.1292 | **1.08** |
-| `hb` | 0.00255 | 0.0122 | 0.0110 | **0.90** |
-| `sheet` | 0.00750 | 0.0360 | 0.0330 | **0.92** |
+`rot` and `env` diffuse at exactly the noise rate. `hb` and `sheet` move **less** than a random
+walk, which is stronger than diffusion: their gradient is actively restoring them toward ff2.1.
+`hb` sits 0.0025 from 1.0 after 24 steps, so the runaway worry is closed. `GLY|GLY` asymmetry
+reads `0.00e+00` at every step.
 
-**All four land within 10% of pure diffusion.** They are not being dragged anywhere; ff2.1 remains
-a fixed point for them while the glycine map moves. That also settles the `hb` runaway worry: its
-displacement from 1.0 is exactly the random walk, so the early monotone decrease was Adam's
-scale-invariant first steps, not drift.
+### Still open
 
-Restrained RMSD holds at 0.89-0.96 A throughout, so the data ensemble stays native-anchored. Free
-RMSD scatters 1.99-2.80 A with no trend, but minibatches hold different proteins, so nothing can
-be read from that until epoch 1 repeats a protein set.
-
-### What is still open
-
-23 of 500 steps, so the correlation could stall or reverse. Amplitude is at 36% and the question
-the run exists to answer is where it stops: **-0.303 means the double-counting subtraction is
-real; -0.50 means it merely re-derived its own training statistics** (see 9o).
-
-**Two reference-file traps found while measuring this, both mine.** `read_gly_maps` originally
-returned `X|GLY - GLY|GLY`, which is `A` plus a constant whenever the two maps were normalised
-separately, as `build_rama_from_awh.py` does; it now projects out the symmetric and antisymmetric
-parts instead, which is offset-proof and agrees exactly on libraries written by
-`write_gly_library`. And the cluster's `parameters/common/rama31.dat` was still the superseded
-`S_library + A_measured` construction (`|A|` rms 0.0692 against the current 0.0828), so the first
-comparison used the wrong reference. **Check the md5 of a reference file against the repo before
-quoting a number from it.**
+24 of 500. Recent rate is about -0.0046 per step in dG, which would reach -0.303 near step 65 if
+it stayed linear, and it should decelerate instead. **Where it stops is the whole experiment:
+-0.303 means the double-counting subtraction is real, -0.50 means it merely re-derived its own
+training statistics (9o).** Both are reachable well before step 500.
 
 ---
 
