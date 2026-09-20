@@ -4615,83 +4615,57 @@ its per-system values could not be resolved at 400 ns either.
 
 ---
 
-## 9p. Is Track A going the right way? Re-measured on the corrected run (2026-09-19)
+## 9p. Track A trajectory, and two over-readings of my own (2026-09-20, step 90)
 
-The first measurement of this was taken under the incomplete gradient (terminal glycines missing,
-9q) and had to be redone. **It reproduces.**
+| step | `\|A\|` frac of measured | dG(aR->aL) | corr with AWH |
+|---|---|---|---|
+| 10 | 0.26 | -0.0504 | +0.464 |
+| 30 | 0.53 | -0.1461 | +0.578 |
+| 40 | 0.59 | -0.1446 | +0.471 |
+| 50 | 0.65 | -0.1565 | +0.446 |
+| 60 | 0.70 | -0.1900 | +0.469 |
+| 70 | 0.77 | -0.2261 | +0.488 |
+| 80 | 0.84 | -0.2516 | +0.473 |
+| **89** | **0.90** | **-0.2920** | **+0.541** |
+| AWH reference | 1.00 | **-0.3030** | |
 
-### The glycine map converges onto the AWH surface it has never seen
+**Two wrong calls, both from reading short windows.** At step 35 I reported the map "may be
+settling near HALF the measured value", on the strength of three reversed dG increments and a
+`|A|` increment of 0.00002. At step 48 I reported that the correlation trend "has not held up",
+on a decline from +0.578 to +0.436. **Both were stalls.** dG resumed falling and is now at -0.292;
+the correlation bottomed at +0.446 and recovered to +0.541. This is the third time in this project
+a short window has been read as a result (after the sheet gradient at n=3 and the benchmark
+p-value at n=9), and the first two were other people's numbers while these were mine.
 
-`A_learned` against `A_measured` from `rama31.dat`, correlation weighted by the symmetrised
-glycine occupancy histogram of the 456-protein training set:
+**Do not now read the -0.292 as agreement either.** The per-step rate over the last eight steps is
+-0.0036, -0.0055, -0.0045, -0.0047, -0.0051, -0.0043, -0.0058, -0.0031: **steady at about -0.0046
+with no deceleration.** The map is *passing through* the measured value, not converging on it. If
+the rate holds it reaches -0.303 at about step 92 and -0.50, the training set's own native
+statistic, at about **step 135**.
 
-| step | `\|A\|` rms | fraction of measured | dG(aR->aL) | **corr with AWH** |
-|---|---|---|---|---|
-| 0 | 0.00498 | 0.06 | -0.0040 | **+0.015** |
-| 4 | 0.01219 | 0.15 | -0.0286 | +0.372 |
-| 8 | 0.01903 | 0.23 | -0.0452 | +0.455 |
-| 12 | 0.02448 | 0.30 | -0.0566 | +0.474 |
-| 16 | 0.02909 | 0.35 | -0.0680 | +0.457 |
-| 20 | 0.03327 | 0.40 | -0.0916 | +0.522 |
-| 23 | 0.03613 | 0.44 | -0.1055 | **+0.538** |
-| AWH reference | 0.0828 | 1.00 | **-0.3030** | |
+**So the two hypotheses of 9o are both still live** and the present number is a waypoint. The test
+is whether the rate decays over the next ~45 steps. Deceleration near -0.303 supports the
+double-counting account; arrival at -0.50 means the map has re-derived its own training
+statistics.
 
-The superseded run reached +0.639 at the same step; +0.538 here is within the run-to-run scatter
-of a quantity this noisy. **What matters is that the correlation trends rather than fluctuating**:
-a parameter diffusing on minibatch noise would have its correlation with a *fixed external target*
-wander about zero. Contrastive divergence on 456 proteins and AWH on capped dipeptides share no
-input and are converging on the same surface shape where glycines actually sit.
+**And the reference is known to be biased** (9s): `A_measured` comes from `Ac-X-Gly-NHMe`, which
+caps the far side achirally where the library entry marginalises over real L-amino acids. Passing
+near it therefore carries less weight than it appears to.
 
-### The rest of the force field is not being dragged anywhere
-
-Random-walk prediction is `alpha*sqrt(n)` for a parameter sitting at a minimum, at n = 24:
+### Other parameters at step 90
 
 | parameter | random walk | observed | ratio |
 |---|---|---|---|
-| `rot` | 0.6124 | 0.6062 | **0.99** |
-| `env` | 0.1225 | 0.1349 | **1.10** |
-| `hb` | 0.0125 | 0.0025 | **0.20** |
-| `sheet` | 0.0367 | 0.0189 | **0.51** |
+| `rot` | 1.1859 | 1.1031 | 0.93 |
+| `env` | 0.2372 | 0.2734 | 1.15 |
+| `hb` | 0.0242 | 0.0113 | 0.47 |
+| `sheet` | 0.0712 | **0.1103** | **1.55** |
 
-`rot` and `env` diffuse at exactly the noise rate. `hb` and `sheet` move **less** than a random
-walk, which is stronger than diffusion: their gradient is actively restoring them toward ff2.1.
-`hb` sits 0.0025 from 1.0 after 24 steps, so the runaway worry is closed. `GLY|GLY` asymmetry
-reads `0.00e+00` at every step.
-
-### It is decelerating hard, and may be settling near HALF the measured value (step 35)
-
-The linear extrapolation from step 24 was wrong. dG per step: about -0.006 through step 27, then
--0.0035, -0.0016, -0.0021, **+0.0010, +0.0024** - it has stopped falling and turned back. `|A|`
-rms tells the same story more cleanly, its last four increments being 0.00082, 0.00067, 0.00030,
-**0.00002**.
-
-| | learned, step 35 | measured (AWH) | fraction |
-|---|---|---|---|
-| `\|A\|` rms | 0.04573 | 0.0828 | **0.55** |
-| dG(aR->aL) | -0.1464 | -0.3030 | **0.49** |
-| corr with AWH | +0.527 (peak +0.578 at step 30) | | |
-
-**This is not an artifact of the Fourier truncation.** Checked directly: `|k| <= 8` preserves
-**99.8%** of the measured surface's power and reproduces its dG to -0.3027 against -0.3030. Even
-`|k| <= 4` keeps 98.9%. The smoothing is transparent at this scale, so a 55% amplitude is a real
-result about the objective, not a ceiling I imposed.
-
-**Do not call it converged at 35 steps.** One epoch is 38 minibatches and none has repeated yet,
-so every step so far has scored a different protein set; a run of glycine-poor minibatches looks
-exactly like a plateau. Three points of reversal is the same evidence that produced two withdrawn
-claims earlier in this project (the sheet gradient at n=3, the benchmark p-value at n=9). **The
-honest checkpoint is step ~76, two full epochs**, where minibatch sets repeat and like can be
-compared with like.
-
-**If it does hold near -0.15**, that is a third answer neither hypothesis in 9o anticipated:
-not -0.303 (the dipeptide value) and not -0.50 (the training set's own statistics), but about
-half the former. The natural reading would be that Upside's `hbond`, `env` and `sidechain` terms
-already supply roughly half the glycine handedness, so the local term only needs the remainder -
-which is the double-counting argument working, just more strongly than the PDB-versus-dipeptide
-gap suggested. A competing explanation to rule out first: the data ensemble is Upside's own
-restrained trajectory, not the deposited coordinates, so as the map moves both ensembles move and
-the contrast damps. That is inherent to contrastive divergence and would need a restraint-strength
-test to separate.
+`rot`, `env` and `hb` are still diffusing. **`sheet` is the one parameter that may be genuinely
+drifting**, at 1.55x a random walk and sitting at -0.110. Negative `sheet` raises
+`exp(-sheet_mixing)` and so increases every residue's sheet-map weight, which is a plausible
+compensation as the glycine map moves. Worth watching; not yet outside what n=90 noise allows.
+`GLY|GLY` asymmetry remains exactly 0.
 
 ---
 
