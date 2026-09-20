@@ -37,29 +37,61 @@ everywhere throws away something real.
 
 ---
 
-## 2. What is actually wrong with ff2.1's glycine row
+## 2. The physical cause: alpha_L glycine is placed, not preferred
 
-Upside's local term is the neighbour-dependent Ramachandran library **NDRD_TCB** of
-[Ting, Wang, Shapovalov, Mitra, Jordan & Dunbrack, *PLoS Comput Biol* **6**(4): e1000763 (2010)](https://journals.plos.org/ploscompbiol/article?id=10.1371%2Fjournal.pcbi.1000763).
+Before any measurement, the mechanism.
 
-Measured on our own basins (`αR: φ∈[−100,−40], ψ∈[−60,10]`; `αL: φ∈[40,100], ψ∈[−10,60]`; exact
-mirror images, 195 grid cells each), the library's central-glycine row gives a neighbour-averaged
-`dG(αR→αL)` of **−1.24 nats** — a large left-handed preference. (Quoted as −1.32 in earlier
-text, which used the E_up energy conversion; see the units discussion in §5.)
+**Glycine is achiral at C-alpha.** Two hydrogens; swap them and the molecule is unchanged. A
+left-handed backbone conformation is intrinsically no more favourable to glycine than a
+right-handed one. So glycine's strong occupancy of **alpha_L** in the PDB — the left-handed
+alpha-helical basin at phi ~ +60 deg, psi ~ +45 deg, the exact mirror of alpha_R — cannot be a
+property of the residue. It has to come from the environment, through this chain:
 
-**It is not sampling noise.** This is the previous version's central error. The library carries
-44,112 glycine residues; binomial noise on `P(φ>0)` is 0.0023 while the library sits 0.155 away
-from 0.5, about **68σ**. Per-neighbour entries at ~1,500 residues have σ = 0.012 against an
-observed neighbour spread of ±0.10. The asymmetry is a real, well-resolved feature of the PDB.
+1. **L-amino acids build right-handed elements.** Right-handed alpha-helices, right-twisted
+   beta-sheets. This is the only fundamental chirality in the system.
+2. **Connecting those elements compactly requires occasional left-handed positions.** A chain that
+   is uniformly right-handed cannot turn back on itself efficiently. Type I' and II' beta-turns,
+   and the left-handed bridge, each need a residue sitting in **alpha_L**.
+3. **alpha_L is sterically forbidden to anything with a C-beta.** Rotating to positive phi drives
+   C-beta into the preceding carbonyl. That is the classic Ramachandran exclusion.
+4. **Glycine has no C-beta, so alpha_L costs it nothing.** Asn and Asp manage it too, helped by
+   side-chain-to-backbone hydrogen bonds, but glycine dominates.
+5. **So evolution places glycine wherever a fold needs alpha_L.**
 
-**It is not wrong about the PDB either.** Measured independently from the 16 ff3.0 benchmark
-native structures, **42 of 67 interior glycines sit at φ > 0 (63%)**, against the library's 66%.
+**Glycine's alpha_L population is therefore a placement effect: a statement about where glycines
+are put, not about what glycine prefers.**
 
-**The defect is an ensemble mismatch that double-counts.** The library is `−ln P` over residues in
-*folded* structures, so it carries `E_local + E_fold,effective`. Upside adds that to `hbond + env +
-sidechain`, which are its own model of the fold. The fold's influence on (φ,ψ) is therefore counted
-twice. Worse, the term is context-free: it applies a 63% average αL preference to *every* glycine,
-which is right for glycines in left-handed turns and actively wrong for glycines inside helices.
+### Why that breaks when it is used as a local energy
+
+The statistic is **context-specific**; the term is **context-free**. NDRD averages over every
+environment and hands Upside one number saying "glycine prefers alpha_L", which is then applied to
+every glycine everywhere. Two failure modes result, pointing opposite ways:
+
+* **At turn glycines the force field pushes twice.** The hydrogen bonding and packing that *create*
+  the turn are computed explicitly by `hbond` and `env`; the map adds the statistical shadow of
+  those same interactions on top.
+* **At helix glycines it pushes the wrong way.** A glycine inside a helix belongs in alpha_R like
+  everything around it. None of the turn statistics apply, but the alpha_L bias is applied anyway,
+  working against the helical hydrogen bonding that should hold it.
+
+### Why glycine and essentially no other residue
+
+For the other nineteen, C-beta forbids alpha_L **regardless of context**. Their map value is the
+same in a turn as in a helix, it is set by local sterics, and it is genuine local physics that
+belongs in a local term. Glycine is the one residue whose alpha_L occupancy is decided by
+architecture rather than by its own atoms, so it is the one residue whose map entry is largely a
+record of where the fold put it.
+
+### The part that is real
+
+A capped dipeptide with a single L-neighbour still shows a modest left-handed bias, and that one is
+genuine local physics: the neighbour's C-beta and carbonyl make the immediate environment weakly
+chiral with no fold involved. That belongs in the map. **The entire disagreement is over how much
+of the library's value is this, and how much is architecture.**
+
+---
+
+## 2a. What the numbers say
 
 **The library's handedness decomposes cleanly by how much chiral context is removed**, and that is
 what identifies the double-counted part:

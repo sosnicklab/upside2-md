@@ -4706,10 +4706,84 @@ proteins, and whatever that does to glycine statistics is inherited by NDRD *and
 training proteins. **ConDiv does not fix this and cannot.** Both tracks of ff3.1 would be wrong
 together, and the objection is correct as stated.
 
-**Defect 2, double-counting, and this is the one actually identified in 9i.** NDRD estimates
-`P(phi,psi | neighbour)` marginalised over everything else, so it carries the fold's influence on
-the backbone. Upside then *adds* `hbond + env + sidechain`, which are its own model of the same
-fold. The fold is counted twice. ConDiv estimates a different object: the local term that, **given
+**Defect 2, double-counting, and this is the one actually identified in 9i.** NDRD's map value is
+`-ln P(phi,psi | central, neighbour)` over residues in folded PDB structures, which makes it a
+**potential of mean force**: the free energy along (phi,psi) after integrating out side chains,
+hydrogen bonds, burial, packing and solvent, conditioned on being a folded protein. Upside's
+potential is `E_rama + E_hbond + E_env + E_sidechain + ...`, so each of those three appears twice,
+once averaged into the PMF and once as its own explicit term.
+
+**Why it bites glycine and essentially nothing else.** For the other 19 types, C-beta sterically
+forbids most of alpha_L, so the intrinsic term dominates the handedness and context is a small
+correction on a large steric effect. Glycine has no C-beta, so alpha_L is intrinsically allowed
+and whether a glycine sits there is decided almost entirely by context: turn type, left-handed
+bridge, local H-bonding. Context is exactly what `hbond`, `env` and `sidechain` compute. **So for
+glycine the double-counted part is the dominant part of the handedness**, and the 9i decomposition
+measures it: of the library's -1.24, about -0.30 is intrinsic and about -0.94 is context.
+
+### "Double counting" is the wrong word: ff2.1 is a CONSTRAINED OPTIMUM
+
+Challenged 2026-09-19: why is this double counting rather than Upside deliberately fitting
+side chain, hbond and env *in the presence of* the rama map, so that the total is one consistent
+model? **That reframing is better than the original and is largely right.** ConDiv fitted
+`rot`/`env`/`hb`/`sheet` with the map held fixed, so nothing is literally added twice; the total
+is a self-consistent fit and the split into "terms" is to that extent arbitrary.
+
+**The precise statement is that ff2.1 is a constrained optimum, and the constraint binds.**
+
+**Compensation exists.** `HBondEnergy` is a sibling of `RamaMapPot` on the same `rama` CoordNode
+and classifies each residue by (phi,psi): turn = `phi in (0,165) deg` -> `E_other`, and **the turn
+branch is exactly the positive-phi region, i.e. the glycine question** (9c). A hydrogen bond at
+phi>0 is worth 0.192 E_up less than the same bond at phi<0. `hb` was trained (9e). So ConDiv did
+have a phi-dependent handle and could have used it.
+
+**But the compensation is rank-deficient. CORRECTED 2026-09-19:** an earlier version of this said
+the available compensation is "global", which is wrong - `env` *is* per-residue-type (8
+coefficients each; GLY has its own row). The accurate statement is about **which two properties a
+term has**:
+
+| term | residue-type specific? | (phi,psi) resolved? |
+|---|---|---|
+| `env` | **yes**, 8 coefficients per type | no, a function of burial |
+| `sidechain` | yes, per-type pair interactions | no, and **identically absent for GLY** (`ref_pos[fasta=='GLY',3] = np.nan`, `fix_state = 0`) |
+| `hbond` | **no**, 3 branch energies shared by all 20 | **yes**, `E_alpha`/`E_beta`/`E_other` selected by (phi,psi) |
+| **rama map** | **yes** | **yes** |
+
+**The rama map is the only term in ff2.1 that is simultaneously residue-type-specific and
+(phi,psi)-resolved.** Freezing it therefore removes the only degree of freedom capable of
+expressing a residue-specific conformational preference. Nothing else can represent "glycine, in
+alpha_L, specifically": `env` can make glycine happier when buried but not at a particular
+(phi,psi), and `hbond` can reweight the turn region but not for one residue type. The fit can only
+**spread** the error, and spreading it distorts every other residue's turn energy, which is a
+transferability cost rather than a training-set cost.
+
+**This applies to all 20 residue types, not just glycine.** Every NDRD map is a PMF over folded
+structures, so all of them carry fold contributions that Upside also models explicitly. What
+differs is the *fraction*: for the other 19, the map's dominant feature is C-beta steric exclusion
+of alpha_L, which is genuine local physics and correctly belongs in a local term, so the
+contaminated part is a correction on top of a large real signal. Glycine has no C-beta, so its
+handedness is ~76% context (-0.94 of -1.24). **Glycine is not a special case, it is the case where
+the universal problem is largest and where two independent measurements exist to check it.** The
+same argument predicts the other 19 maps are also mis-scaled as local terms; the machinery built
+here would extend to them, and that has not been attempted.
+
+**The proof that the constraint binds is Track A itself.** If ff2.1 were the *joint* optimum, the
+glycine map's gradient at ff2.1 would be indistinguishable from noise, exactly as `rot`, `env`,
+`hb` and `sheet` are (9p: ratios 0.99, 1.10, 0.20, 0.51 against a random walk). It is not. `|A|`
+moved coherently from 0 to 0.046 and its **direction** correlates +0.53 with a measurement that
+shares no input with the training set. A constrained optimum is not the unconstrained optimum, and
+releasing the constraint is what makes the difference visible.
+
+**Two qualifications that matter.** First, Upside is not naive about reference states: it writes
+`rama_map_pot_ref`, a reference-state correction. But that is a **single residue-type-independent
+density applied to every residue**, so it can remove a global bias and not a context-dependent,
+residue-specific one. Second, and more consequentially, **ff2.1's other terms were fitted by
+ConDiv with the rama map held fixed.** Training would therefore have partially compensated for the
+map's excess already, pulling `hbond`/`env`/`sidechain` to keep the total right. That compensation
+is necessarily global (4 hbond energies, 360 env coefficients) and cannot selectively undo
+glycine's alpha_L. **This is the most likely explanation for Track A plateauing near half the
+dipeptide value (9p): part of the excess was absorbed elsewhere long ago, so the map only has to
+give back the unabsorbed remainder.** ConDiv estimates a different object: the local term that, **given
 the rest of the force field**, reproduces the observed ensemble. Same data, different estimand,
 and the difference is exactly the double-counted part. **A representational defect is fixed by
 changing the estimator, not by changing the dataset.**
