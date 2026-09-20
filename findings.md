@@ -4658,12 +4658,40 @@ walk, which is stronger than diffusion: their gradient is actively restoring the
 `hb` sits 0.0025 from 1.0 after 24 steps, so the runaway worry is closed. `GLY|GLY` asymmetry
 reads `0.00e+00` at every step.
 
-### Still open
+### It is decelerating hard, and may be settling near HALF the measured value (step 35)
 
-24 of 500. Recent rate is about -0.0046 per step in dG, which would reach -0.303 near step 65 if
-it stayed linear, and it should decelerate instead. **Where it stops is the whole experiment:
--0.303 means the double-counting subtraction is real, -0.50 means it merely re-derived its own
-training statistics (9o).** Both are reachable well before step 500.
+The linear extrapolation from step 24 was wrong. dG per step: about -0.006 through step 27, then
+-0.0035, -0.0016, -0.0021, **+0.0010, +0.0024** - it has stopped falling and turned back. `|A|`
+rms tells the same story more cleanly, its last four increments being 0.00082, 0.00067, 0.00030,
+**0.00002**.
+
+| | learned, step 35 | measured (AWH) | fraction |
+|---|---|---|---|
+| `\|A\|` rms | 0.04573 | 0.0828 | **0.55** |
+| dG(aR->aL) | -0.1464 | -0.3030 | **0.49** |
+| corr with AWH | +0.527 (peak +0.578 at step 30) | | |
+
+**This is not an artifact of the Fourier truncation.** Checked directly: `|k| <= 8` preserves
+**99.8%** of the measured surface's power and reproduces its dG to -0.3027 against -0.3030. Even
+`|k| <= 4` keeps 98.9%. The smoothing is transparent at this scale, so a 55% amplitude is a real
+result about the objective, not a ceiling I imposed.
+
+**Do not call it converged at 35 steps.** One epoch is 38 minibatches and none has repeated yet,
+so every step so far has scored a different protein set; a run of glycine-poor minibatches looks
+exactly like a plateau. Three points of reversal is the same evidence that produced two withdrawn
+claims earlier in this project (the sheet gradient at n=3, the benchmark p-value at n=9). **The
+honest checkpoint is step ~76, two full epochs**, where minibatch sets repeat and like can be
+compared with like.
+
+**If it does hold near -0.15**, that is a third answer neither hypothesis in 9o anticipated:
+not -0.303 (the dipeptide value) and not -0.50 (the training set's own statistics), but about
+half the former. The natural reading would be that Upside's `hbond`, `env` and `sidechain` terms
+already supply roughly half the glycine handedness, so the local term only needs the remainder -
+which is the double-counting argument working, just more strongly than the PDB-versus-dipeptide
+gap suggested. A competing explanation to rule out first: the data ensemble is Upside's own
+restrained trajectory, not the deposited coordinates, so as the map moves both ensembles move and
+the contrast damps. That is inherent to contrastive divergence and would need a restraint-strength
+test to separate.
 
 ---
 
