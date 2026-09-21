@@ -4637,7 +4637,47 @@ the correlation bottomed at +0.446 and recovered to +0.541. This is the third ti
 a short window has been read as a result (after the sheet gradient at n=3 and the benchmark
 p-value at n=9), and the first two were other people's numbers while these were mine.
 
-**Do not now read the -0.292 as agreement either.** The per-step rate over the last eight steps is
+**UPDATE, step 110.** It did pass through -0.303 as predicted, ran on to **-0.3594**, and has now
+**turned around**: -0.3594, -0.3585, -0.3577, -0.3559, -0.3559, -0.3541. Overshoot then return is
+what Adam at constant learning rate does around an optimum. At step 110:
+
+| | learned | AWH reference | ratio |
+|---|---|---|---|
+| `\|A\|` rms | 0.08556 | 0.0828 | **1.03** |
+| dG(aR->aL) | -0.3541 | -0.3030 | 1.17 |
+| corr with AWH | **+0.594** at step 105, the highest of the run | | |
+
+**Amplitude now matches the independent measurement to 3%, and the shape correlation is at its
+maximum.** It also stopped well short of the -0.50 that the training set's own natives give, which
+was the alternative hypothesis.
+
+**And the overshoot direction is the one the reference bias predicts.** 9s establishes that
+`A_measured` is an underestimate, because `Ac-X-Gly-NHMe` caps the far side achirally where the
+library marginalises over real L-amino acids. A corrected reference would be *more* negative than
+-0.303, which is the side Track A settled on. Suggestive, not evidence: the corrected reference
+has not been computed.
+
+**UPDATE, step 147: the plateau broke again, and that is THREE wrong calls.** At step 121 I
+reported dG "has plateaued" at -0.359 on a 20-step slope of -0.00016, and argued it was 12x
+flatter than the descent that followed the step-35 false plateau. It resumed anyway. Current
+slopes: last 10 **-0.00342/step**, last 20 -0.00458, last 30 -0.00404, last 40 -0.00290. dG is
+around **-0.44** and still falling; `|A|` is at **1.27x** the measured amplitude and still growing.
+
+**The lesson, which supersedes every earlier "plateau" reading in this section.** ConDiv's glycine
+gradient arrives in bursts: an epoch is 38 minibatches and the 456 proteins differ greatly in
+glycine content, so runs of glycine-poor minibatches produce stalls of ~20 steps that look
+exactly like convergence. **No window shorter than a full epoch means anything for this
+parameter.** At epoch scale (40 steps) the slope is -0.0029/step and unambiguously nonzero.
+
+**And the naive epoch-scale extrapolation is uncomfortable**: 353 steps remaining at -0.0029 would
+carry dG past -1.4, beyond the library's own -1.24. Rates decay, so that is not a forecast, but it
+makes a real possibility explicit: **if the released map simply re-derives the library value, the
+double-counting account collapses**, because ConDiv would be saying ff2.1's glycine row was right
+all along. That outcome is live and would be the most informative of the three.
+
+**Treat nothing in this trajectory as converged before step 500.**
+
+**Do not read a single waypoint as agreement.** The per-step rate over the last eight steps is
 -0.0036, -0.0055, -0.0045, -0.0047, -0.0051, -0.0043, -0.0058, -0.0031: **steady at about -0.0046
 with no deceleration.** The map is *passing through* the measured value, not converging on it. If
 the rate holds it reaches -0.303 at about step 92 and -0.50, the training set's own native
@@ -4661,8 +4701,17 @@ near it therefore carries less weight than it appears to.
 | `hb` | 0.0242 | 0.0113 | 0.47 |
 | `sheet` | 0.0712 | **0.1103** | **1.55** |
 
-`rot`, `env` and `hb` are still diffusing. **`sheet` is the one parameter that may be genuinely
-drifting**, at 1.55x a random walk and sitting at -0.110. Negative `sheet` raises
+`rot`, `env` and `hb` are still diffusing, and by step 110 `hb` has returned to **0.996723**,
+ratio 0.12, so the runaway question is firmly closed.
+
+**`sheet` IS genuinely drifting**: ratio 1.47 -> 1.55 -> **2.43** at step 110, sitting at -0.191.
+**This is expected rather than alarming.** ff2.1's 20-value `sheet` file was never a ConDiv
+output; it came from the node rewrite, whose predecessor trained a single scalar -0.268. So
+`sheet` is finding a ConDiv optimum for the first time, and a systematic drift is what that looks
+like. Negative `sheet` raises `exp(-sheet_mixing)` and so increases every residue's sheet-map
+weight. Worth tracking because it changes the coil/sheet balance for all 20 types, but it is not
+evidence of a defect. Earlier text called it "the one parameter that may be genuinely drifting" at
+1.55x and sitting at -0.110. Negative `sheet` raises
 `exp(-sheet_mixing)` and so increases every residue's sheet-map weight, which is a plausible
 compensation as the glycine map moves. Worth watching; not yet outside what n=90 noise allows.
 `GLY|GLY` asymmetry remains exactly 0.

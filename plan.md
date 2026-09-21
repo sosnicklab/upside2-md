@@ -163,6 +163,15 @@ in `rama.dat`. A PMF in kJ/mol therefore enters as `PMF / kT(300 K) = PMF / 2.49
       nucleation, restoring the measured part of it should recover de novo while keeping native. If
       the de novo arms do not move, that explanation is wrong.
 
+### Phase 6 - architecture change, CONDITIONAL (NOT STARTED)
+- [ ] Only if Phase 5's de novo arms regress while native arms hold. See **`architecture.md`**:
+      make the glycine map's antisymmetric part depend on the neighbours' conformations,
+      suppressed in helical context and kept everywhere else. Deliberately one-sided, because a
+      symmetric context detector would remove the nucleation prior that de novo folding needs.
+- [ ] Cheap precursor, no force-field change: split the 456 training natives' glycines by whether
+      their neighbours are in alpha_R and compare alpha_L occupancy. Quantifies how much a context
+      term would have to do.
+
 ## Known Errors / Blockers
 
 * **Clone training directories from `gly-ctx` or `ff31`, never from `gly-sym`.** `gly-sym` has 498
