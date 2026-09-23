@@ -155,7 +155,27 @@ in `rama.dat`. A PMF in kJ/mol therefore enters as `PMF / kT(300 K) = PMF / 2.49
       AWH's -0.303, and `GLY|GLY asymmetry` which must stay 0
 - [ ] `extract_ff.py` -> `parameters/ff_3.1_trained`
 
-### Phase 5 - compare the two tracks, then benchmark (NOT STARTED)
+### Phase 5 - compare the two tracks, then benchmark (AUTO-SUBMITTING)
+- [x] **Validation auto-submits when training reaches 500.** `train_gly.sbatch`'s "target met"
+      branch now runs `training/validate_ff31.sbatch`, which extracts the force field, checks it,
+      and submits all 32 Peng arms with `FF=ff_3.1_trained`. A `--dependency` could not be used:
+      the chain creates links one at a time, so the final job id does not exist at submit time.
+- [x] `training/extract_ff31.py` writes **all five** trained files by calling ConDiv's own
+      `expand_param`. The older `extract_ff.py` writes only `sidechain.h5` and `environment.h5`,
+      which would have benchmarked a force field that was part trained and part ff_2.1.
+- [x] `bench_run.py` patched: a parameter directory containing its own `rama.dat` now supplies it,
+      so ff3.1's trained glycine map is actually used. Without this the benchmark would have run
+      trained sidechain/env/hbond against **ff_2.1's glycine row**, the one thing ff3.1 changes.
+      `environment_potential_type = 0` extended to `ff_3.1_trained`.
+- [x] Verified end to end on the current checkpoint: all five files written, `GLY|GLY` asymmetry
+      0, `bb_env.dat` copied, and a protG benchmark config builds with finite energy (-140.84).
+- [x] **glpG wired up and submits itself**, all four variants, on midway2 broadwl via
+      `popepopg_REMD_mdw2`. Patched rather than rebuilt so the membrane, ions and starting
+      coordinates stay bit-identical and the force field is the only difference; rebuilding
+      would confound it with the initial condition on exactly the observable of interest.
+      Seeds are the live ones, which alone carry the `inner_steps = 4` temperature fix.
+
+### Phase 5b - what the benchmark decides (NOT STARTED)
 - [ ] Learned `A` against measured `A`: basin dG, full-surface correlation, per-neighbour structure
 - [ ] Re-run the 32 benchmark arms and score on the **last third**, not the whole run
 - [ ] **The falsifiable prediction:** ff3.0 loses on de novo arms (-0.030) while gaining on native

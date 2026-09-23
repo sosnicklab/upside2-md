@@ -281,6 +281,55 @@ inode and two names, so the two cannot drift apart in the meantime. Verified tha
 imports and works with `py/` off the path entirely, so removing the name is safe; the next chain
 link (49038519) already picks it up from `training/`.
 
+**Validation is armed and will submit itself.** When `train_gly.sbatch` sees step >= 500 it
+runs `training/validate_ff31.sbatch`, which extracts `parameters/ff_3.1_trained` and submits 32
+benchmark arms (16 Peng proteins x native/denovo) to `broadwl`, each self-chaining via
+`bench.sbatch`. Nothing needs doing by hand. If the log line
+"WARNING: validation was NOT submitted" appears, run `validate_ff31.sbatch` manually.
+
+**`parameters/ff_3.1_trained` does not exist yet, deliberately.** A dry-run copy was created to
+test the pipeline and then deleted, so that nothing can benchmark a mid-training force field by
+accident. `validate_ff31.sbatch` creates it from the final checkpoint.
+
+### glpG for ff3.1: patched into the midway2 tree, submits itself
+
+`validate_ff31.sbatch` patches the trained force field into the four seeds in
+**`popepopg_REMD_mdw2`** and submits all four REMD chains on **broadwl**, 28 replicas each
+(`REMD_N` follows `--cpus-per-task=28`), `REMD_T_HI=0.90`, `REMD_MAX_BLOCKS=5`. No midway3 step.
+
+**An earlier version of this section was wrong.** It said glpG needed `caslake` and therefore
+midway3. That came from reading only `popepopg_REMD/` (48 replicas, caslake) and concluding from
+`sinfo` that midway2 could not host it. **`popepopg_REMD_mdw2` already exists and has run all
+four variants to COMPLETED on broadwl** (jobs 48890657-60, ~1d10h each). Check job history before
+concluding a cluster cannot run something.
+
+**Seeds are the LIVE ones, not the pristine ff2.1 backups**, because only they carry
+`inner_steps = 4` on `/input/brownian`. That temperature fix is worth TM4 helix fraction 0.893
+against 0.346 (findings 3.10a). It is an HDF5 *attribute*, so patching arrays preserves it;
+patching the pristine backup instead would silently throw it away.
+
+**Measured scope.** The live seed differs from the pristine ff_2.1 seed in exactly two arrays,
+`rama_map_pot/rama_pot` and `rotamer/.../interaction_param`, which carry ff3.0. Those are
+precisely what the patch overwrites, and ff3.0 is superseded. Patching touches exactly three
+arrays (those two plus `hbond_energy/parameters`) and nothing else; verified array-by-array.
+
+| check | result |
+|---|---|
+| method gate: round trip ff_2.1 into a **pristine** seed | **3.55e-15** |
+| round trip into a **live** seed | fails at 3.26, **as it must** -- live seeds carry ff3.0 |
+| arrays changed by the patch | exactly 3, the intended ones |
+| `inner_steps` after patching | **4**, preserved |
+| engine, live ff3.0 seed | -24957.682 finite, rama 56.338, hbond -408.530 |
+| engine, ff3.1 patched | -24965.998 finite, rama 68.505, hbond -425.492 |
+
+The gate runs on a pristine seed because that is the only place a round trip *can* succeed; a
+failure on a live seed would carry no information. Method proven once, then applied.
+
+Seeds are backed up to `*.bak_pre_ff31_<stamp>` before patching, and a failed patch restores
+them. Stale ff3.0 replica directories are removed so `block_count` restarts.
+
+**Criterion: helix stability over time, TM4 above all.**
+
 **Watching Track A.** `grep '^gly' ff31gly_*.out` prints `dG(aR->aL)`, `|A| rms` and the
 `GLY|GLY` asymmetry every step. The handedness starts at exactly 0 and the number to compare
 against is the AWH's **-0.303 nats**. **`GLY|GLY asymmetry` must stay `0.00e+00`**; if it ever
