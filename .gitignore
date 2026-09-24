@@ -39,10 +39,9 @@ training/*
 !training/*.sbatch
 !training/pdb_list
 
-# Glycine-map scripts kept out of the repo (2026-09-19).  rama_gly_gradient is NOT here: it
-# moved to training/ and stays tracked, because training/ConDiv.py imports it and a clean clone
-# has to be able to run the trainer.
+# Kept out of the repo (2026-09-19): the AWH map builder, an analysis tool. The trainer's helpers
+# in training/ (rama_gly_gradient, and verify_gly_gradient, the gate that must pass before the
+# glycine row is trained) are tracked.
 py/build_rama_from_awh.py
-training/verify_gly_gradient.py
 
 *.bak_*

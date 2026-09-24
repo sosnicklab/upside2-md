@@ -1,19 +1,22 @@
 # ConDiv core force-field training
 
-Contrastive-divergence training of the Upside core force field. This directory holds the
-**infrastructure only** — no training data. `.gitignore` keeps `training/*` out of the repo and
+Contrastive-divergence training of the Upside core force field with **ff2.1's own workflow**: Peng
+et al., JCTC 2022, SI "Parameterization by Contrastive Divergence". This directory holds the
+**infrastructure only**, no training data. `.gitignore` keeps `training/*` out of the repo and
 re-includes just these files, so a run directory created here stays untracked.
 
 ## Files
 
 | file | what it is |
 |---|---|
-| `ConDiv.py` | the trainer |
-| `rama_gly_gradient.py` | analytic gradient of the energy w.r.t. the glycine Ramachandran map, plus the library reader/writer. Lives here rather than in `py/`, which is shared Upside infrastructure, and is imported by `ConDiv.py` via `$PROJECT_ROOT/training` on `PYTHONPATH` (set by `env.sh`) |
-| `check_converged.py` | is a given force field a stationary point of the objective? |
+| `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (`/project2/trsosnic/okleinmann/condiv/condiv2.py`); its docstring lists every difference and why |
+| `rama_gly_gradient.py` | analytic gradient of the energy w.r.t. the glycine row of the Ramachandran library, plus its reader/writer and the GLY\|GLY symmetry constraint. Used only with `TRAIN_GLY = True` |
+| `check_converged.py` | has a run updated every file, is every group at a fixed point, has it plateaued? |
+| `train_chain.sbatch` | self-chaining Slurm job; submits `<run>/after_training.sbatch` when the target is reached |
+| `extract_ff.py` | a checkpoint -> the six parameter files, through the run's own `expand_param` |
+| `patch_glpg.py` | patch a force field into a glpG hybrid seed without rebuilding it |
+| `validate_ff.sh` | release a trained force field and submit the Peng benchmark and glpG validation |
 | `env.sh` | module/venv/PYTHONPATH setup, derives `PROJECT_ROOT` from its own location |
-| `init.sh` | pack a force field into the latent vector, build minibatches |
-| `train_chain.sbatch` | self-chaining Slurm job |
 | `pdb_list` | the 456-protein training-set manifest (a list, not data) |
 
 ## What a run directory needs
@@ -21,96 +24,81 @@ re-includes just these files, so a run directory created here stays untracked.
 `training/<name>/` with:
 
 ```
-init_param/     environment.h5, sidechain.h5, hbond, sheet   (e.g. from parameters/ff_2.1)
+init_param/     environment.h5, bb_env.dat, sidechain.h5, hbond.h5, sheet   (parameters/ff_2.1)
 upside_input/   per protein: <code>.fasta, <code>.initial.pkl, <code>.chi
-                plus rama.dat and rama_reference.pkl
+                plus rama.dat (the library the run reads) and rama_reference.pkl
 pdb_list        copy from here
+env.sh          copy of this directory's env.sh, adjusted if the tree differs
 ```
 
 `upside_input/` is ~265 MB and is **not** in the repo. Hardlink it from an existing run
-(`cp -al`) rather than copying, then replace `rama.dat` if the run uses a different library.
-`init_param/hbond` is `parameters/ff_X/hbond.h5` renamed; the others keep their names.
-
-`upside_input/rama.dat` is whichever library the run trains against, copied under that name
-(ff3.1 uses `parameters/common/rama31.dat`). `rama_reference.pkl` is a single 72x72 density
-applied to **every** residue, so it does not depend on the library's per-residue maps and is not
-regenerated when one changes.
+(`cp -al`) rather than copying. For training from ff2.1, `upside_input/rama.dat` is
+`parameters/common/rama.dat`.
 
 ## Running
 
 ```bash
-bash init.sh training/myrun                       # check the printed pack_param residual
-sbatch train_chain.sbatch training/myrun 500      # 500 minibatches, self-chaining
-python3 check_converged.py training/myrun/run_output
+cd training/myrun && source env.sh
+python3 ../ConDiv.py initialize init_param upside_input pdb_list run_output
+sbatch ../train_chain.sbatch . 76                 # 4 epochs of 19 minibatches, self-chaining
+python3 ../check_converged.py .
 ```
 
-Progress is `find run_output -name checkpoint.pkl -path '*epoch_*' | wc -l` against the target.
-38 minibatches per epoch, 12 proteins each.
+`initialize` copies `ConDiv.py` and `rama_gly_gradient.py` into `run_output/`, and every later
+step, the driver included, runs that copy: a run is never continued by later code. `TRAIN_GLY` is
+read at initialisation and kept in the run's state.
 
-## What this trainer trains
+## One training step
 
-`rot`, `env`, `hb`, `sheet` and `gly`. The first four are what the Theano original trained; `gly`
-is new. Two of the original four needed remapping because their nodes changed shape since:
+Per protein, one replica-exchange run of 14 systems for 8000 time units, all starting from the
+native: a native-restrained replica, 12 free replicas at T = 0.8 to 1.1, and a self-avoiding
+random walk (SARW) with H-bond, side-chain burial and rotamer pair energies scaled to zero. From
+the second half:
 
-* **`hb`** is a multiplicative scale on `hbond_energy.parameters[:4]`. The potential is exactly
-  linear in those four (measured to 7e-7 against the engine), so `dE/ds = E/s`, which is the
-  original's formula unchanged.
-* **`sheet`** is a single common offset on all 20 per-residue-type mixing energies, differenced
-  against the `more_/less_sheet_rama_pot_ALL` pair that `write_rama_map_pot` emits under
-  `--rama-param-deriv`. Training all 20 types separately would cost ~41x the divergence instead
-  of 3x, because each finite-difference direction is two extra passes over all 250 frames.
+* **NSE** = `<dV/da>_native - <dV/da>_free`, the free ensemble being the three coldest free
+  replicas each reweighted exactly to T0 and mixed 0.6/0.3/0.1;
+* **DSE** = `<dV/da>_SARW - <dV/da>_unfolded`, the unfolded ensemble being the frames of the two
+  replicas bracketing the Rg midpoint (the Tm estimate) with Rg above 0.67 Rg(coldest) + 0.33
+  Rg(hottest). A protein with no such frames contributes NSE only, and the step log says which;
+* contrast = NSE + 0.3 DSE, summed over the 24 proteins of the minibatch, into Adam.
 
-* **`gly`** is the central-glycine coil Ramachandran map, as a pair `(S, A)` of 72x72 arrays that
-  are mirror-symmetric and mirror-antisymmetric under `(phi,psi) -> (-phi,-psi)`. The library's
-  glycine coil row is written from them as `X|GLY = S + A` and `GLY|GLY = S`, so a glycine
-  flanked by glycines stays achiral by construction while every other context is free. Training
-  starts at `A = 0` on a symmetrised row, so the handedness is learned rather than assumed.
+## What it trains
 
-  **One map serves every neighbour.** Per-neighbour maps would be 40 x 5,184 parameters against
-  ~30,000 glycine samples per minibatch, and the AWH measurement cannot resolve per-pair structure
-  either (S/N 1.48). So the row loses the library's neighbour dependence at step 0. Whether that
-  is acceptable is exactly what the 40-context AWH campaign is measuring.
+Exactly ff2.1's set: `rot` (pair, coverage and hydrophobe interactions), the sigmoid burial
+`scale`, `center`, `sharpness` for 20 types and the 400 weights, the backbone term's `scale`, the
+three secondary-structure H-bond energies and the second-H-bond term, and the 20 sheet mixing
+energies (by central differences per residue type present).
 
-  Its gradient is **analytic, not finite-differenced**: `rama_map_pot` is a periodic interpolating
-  bicubic spline built from a tensor product of 1D solves, so the map enters the energy linearly
-  and separably and `dE/d(map[i,j])` is a spline-smoothed 2D histogram of the glycine `(phi,psi)`
-  samples. Finite differencing 5,184 values would cost 10,369x a divergence. The chain rule from
-  the per-residue map back to `(S, A)` runs through four log-sum-exp stages and is done by torch
-  autograd rather than by hand. **Run `verify_gly_gradient.py` after touching any of it** (see
-  below).
+**Not trained, as in ff2.1's own training**, because the engine returns no derivative: the
+backbone term's `center`, `sharpness` and `hbond_weight` (commented out in
+`BackboneSigmoidCoupling::get_param_deriv`, in master too) and `hbond.h5` entries 4-11, the rama
+boundaries and sharpnesses. Their learning rates are 0 so `check_converged.py` does not list them.
 
-Sheet training is **effectively free**: measured 625-705 s/minibatch with it on, against 650-712
-historically with it off. A step is ~11 min on 96 CPUs, so 500 minibatches is ~3.8 days.
+**With `TRAIN_GLY = True`**, additionally the central-glycine coil row: all 42 finite maps, each
+its own parameter, starting from ff2.1's; the two GLY|GLY maps are projected mirror-symmetric at
+the start and after every update, and each update is Fourier band-limited. The gradient is
+analytic: `rama_map_pot` is a periodic interpolating bicubic spline, so the map enters the energy
+linearly and `dE/d(map)` is a spline-smoothed histogram of the glycine `(phi,psi)` samples. The
+chain rule back through the left/right and coil/sheet mixtures is torch autograd. **Run
+`verify_gly_gradient.py` after touching any of it.**
 
 ## Traps
 
-* **`--ntasks` must equal the minibatch size (12).** Each task is one protein worker.
-* **The env parameter vector is `coeff` then `weights` (360 + 400 = 760).** Requesting
-  `coeff.shape` alone fails with `Wrong number of parameters, expected 760 but got 360` and kills
-  every worker. A 2026-09-10 `libupside.so` rebuild introduced this and broke all training for
-  nine days before anyone ran a job; `compute_divergence` now requests the full vector and slices.
+* **`--ntasks` must equal the minibatch size (24) and `--cpus-per-task` the 14 systems.**
+* **The local Mac binary traps (SIGTRAP) at exit whenever Monte Carlo pivot moves are on**, after
+  every frame completes, so every worker reports `RUN_FAIL` locally. Test workers on midway2, whose
+  binary runs them cleanly.
 * **Opening a `.up` with PyTables before constructing `ue.Upside` makes the engine fail to
-  initialize.** Construct the engine first, then read arrays.
-* **`run_output/ConDiv.py` must exist.** Only `initialize` makes that copy
-  (`state['worker_path']`), so restarting from an existing `initial_checkpoint.pkl` in a
-  hand-made directory leaves every worker dying with `can't open file '.../run_output/ConDiv.py'`
-  and the link failing on `All jobs failed`. The real reason is in
-  `run_output/epoch_*/<code>.output_worker`, never in the Slurm log, which shows only `exit code 2`.
-* **A rama library is 35 MB, so it is never kept per minibatch.** `expand_param` writes one for
-  the workers to share and `run_minibatch` deletes it once they exit; keeping one per step would
-  add 35 GB over a 500-step run. The parameters themselves live in `param.gly` in every
-  checkpoint, so the library is regenerated with `rgg.write_gly_library` when it is wanted.
-* **Do not judge convergence by parameter movement.** Adam's first step is scale-invariant: the
-  update is `-alpha*g/(|g|+eps)`, so parameters move by ~`alpha` regardless of gradient size.
-  Read the raw gradients, which `check_converged.py` recovers from the Adam accumulators.
-* **A hand-made `run_output/` needs `ConDiv.py` copied into it.** Only `initialize` makes that
-  copy (`state['worker_path']`), so restarting from an existing `initial_checkpoint.pkl` in a
-  fresh directory leaves every worker exiting with
-  `can't open file '.../run_output/ConDiv.py'` and the link dying on `All jobs failed`. The
-  per-worker reason is in `run_output/epoch_*/<code>.output_worker`, not in the Slurm log, which
-  shows only `exit code 2`.
+  initialise.** Construct the engine first, then read arrays.
+* **`run_output/ConDiv.py` must exist.** Only `initialize` makes it, so a hand-made `run_output/`
+  leaves every worker dying with `can't open file '.../run_output/ConDiv.py'`. The per-worker
+  reason is in `run_output/epoch_*/<code>.output_worker`, never in the Slurm log.
+* **A rama library is 35 MB, so it is never kept per minibatch.** It is written for the workers
+  and deleted once they exit; the glycine row lives in `param.gly` in every checkpoint.
+* **Do not judge convergence by parameter movement.** Adam's steps are scale-invariant. Read the
+  raw gradients, which `check_converged.py` recovers from the Adam accumulators.
 * **Do not use `broadwl-lc`.** Its nodes are `noib` and cannot see `/project`; jobs die instantly
-  with `ExitCode 0:53` and no log, because they cannot create the output file.
+  with `ExitCode 0:53` and no log.
 
 ## `verify_gly_gradient.py`, and why it is not optional
 
@@ -118,24 +106,21 @@ historically with it off. A step is ~11 min on 96 CPUs, so 500 minibatches is ~3
 python3 verify_gly_gradient.py <training_dir> [protein_code]
 ```
 
-It checks the analytic `gly` gradient against finite differences taken through the entire
-pipeline: library file -> `upside_config` -> engine. **An analytic gradient fails silently** — a
-missing stage or a flipped softmax factor trains steadily in the wrong direction for days without
-raising anything. On its first run it failed at 37% and found a real omission, the per-map
-Boltzmann shift that `write_rama_map_pot` applies last (`up.md` 2.8a).
+It checks the glycine gradient end to end, library file -> `upside_config` -> engine: the spline,
+every glycine's reconstructed per-residue map against the `rama_pot` upside_config wrote (with all
+42 maps perturbed, which pins the direction/neighbour indexing), and directional finite
+differences for all maps, the GLY|GLY maps and one X|GLY map. **An analytic gradient fails
+silently**: on its first run an earlier version failed at 37% and found the per-map Boltzmann
+shift that `write_rama_map_pot` applies last (`up.md` 2.8a).
 
 **Read the eps sweep, not a single column.** The library stores `dimer_pot` as float32, so small
-eps is rounding noise and large eps picks up real curvature from the log-sum-exp mixtures; the
-agreement is the minimum of the bowl. At the optimum it is 3.8e-5. Judging by `eps=1e-3` alone
-would have called a correct gradient a 1-4% failure.
+eps is rounding noise and large eps picks up curvature from the log-sum-exp mixtures; the
+agreement is the minimum of the bowl.
 
 ## Reading `check_converged.py`
 
-The sound statistic is `||mean g|| / mean|g|` against `1/sqrt(n)`, tested exactly by sign-flipping
-the per-step gradients. **The pairwise-cosine t-statistic it also prints is anti-conservative** —
-it treats the `n(n-1)/2` pairs as independent when they share vectors — so do not let it carry a
-conclusion. And a systematic drift shows as *positive* cosine; negative means oscillation about a
-minimum.
-
-Expect scalar gradients (`hb`, `sheet`) to be heavy-tailed. A signal at n=3 can vanish by n=6; do
-not read a partial run.
+The sound fixed-point statistic is `||mean g|| / mean|g|` against `1/sqrt(n)`. **The
+pairwise-cosine t-statistic is anti-conservative**, because it treats the `n(n-1)/2` pairs as
+independent when they share vectors, so do not let it carry a conclusion. A systematic drift shows
+as *positive* cosine; negative means oscillation about a minimum. Scalar gradients are
+heavy-tailed, and nothing should be judged on less than one epoch.

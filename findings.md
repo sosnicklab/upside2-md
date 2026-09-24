@@ -4574,6 +4574,162 @@ barely left ff2.1 anyway, `rot` drift being indistinguishable from a random walk
 
 ---
 
+## 9v. The FF2 trainer: found, adapted, and what the port had wrong (2026-09-24)
+
+**Only one FF2 dual-target trainer exists**: O. Kleinmann's Python 3 port of Peng's code,
+`/project2/trsosnic/okleinmann/condiv/condiv2.py` (git history from 2025-08; the first commit is
+already his working copy, so Peng's pristine file is not recoverable, and `/home/pengxd` is
+unreadable). Everything else searched is FF1 or membrane: `~/Documents/ConDiv` is the FF1 Theano
+original, `~/Documents/Train` = `Train(1).zip` is the 2022 membrane-potential trainer,
+`upside_version/upside-pxd/ConDiv` (2019) is an intermediate with spline burial and no DSE.
+
+**What the port had drifted on, against the SI**, all corrected in `training/ConDiv.py`:
+* **lambda = 0.0** (`balance_target`), so his run never used the DSE objective at all;
+* 6 free replicas up to T ~0.97 (SI: 12 from 0.8 to 1.1), 1000 time units (SI: 8000), minibatch
+  21 (SI: 24);
+* replica reweighting exponent `E*(T0-Ti)/Ti`, which is T0 times the correct `E*(1/Ti - 1/T0)`;
+* a `dE < -200` clamp in place of a normalisation, and a guard that silently dropped the DSE term
+  whenever the last free replica's final energy exceeded 1000.
+
+His 101-step run ended with the backbone scale flipped from -0.30 to +0.12. **Its negative PRO
+burial sharpness is ff2.1's own value (-0.28)**, not his drift, contrary to what I first said.
+
+**Engine limits that ff2.1's training shared.** `BackboneSigmoidCoupling::get_param_deriv`
+computes only the `scale` derivative (the other three are commented out, in master too), and
+`HBondEnergy::get_param_deriv` only entries 0-3. So ff2.1's workflow never trained the backbone
+term's center, sharpness and hbond weight, nor the eight H-bond rama boundaries. The user chose to
+keep that exactly. The smoke worker confirmed it: those three contrasts are exactly 0.
+
+**Validation on midway2 so far.** 19 x 24 minibatches as in the SI; ff2.1 starts at the SI's
+H-bond energies (-1.961/-1.946/-1.769; second-H-bond -0.406). Smoke worker (2xf6, 600 time
+units): exit 0, all 14 groups finite, the SARW replica at 0 H-bonds and Rg 24 A, an unfolded
+ensemble found. The local Mac binary cannot run workers: it traps at exit whenever MC pivot moves
+are on (README trap).
+
+## 9u. The trainer uses FF1's burial function; ff2.1 as published uses FF2's (2026-09-24)
+
+`environment.h5` holds two burial functions: `energies` (20x18 spline, read by
+`--environment-potential-type=0`, node `nonlinear_coupling_environment`) and `scale`/`center`/
+`sharpness` (sigmoid, type 1, `sigmoid_coupling_environment`). `upside_config` **defaults to 1**,
+every example leaves it at the default, and the FF2 SI says the spline "is replaced by the
+sigmoid-like function" in FF2. ConDiv hard-codes 0, and its 760-value `env` parameter is exactly the
+360 spline entries plus 400 weights.
+
+**The two are not the same function in ff2.1.** Native ubiquitin, same coordinates:
+
+| | side-chain burial, native | expanded 1.6x | native minus expanded |
+|---|---|---|---|
+| ff_2.1, type 1 (sigmoid, as published) | -47.49 | -26.90 | **-20.6** |
+| ff_2.1, type 0 (spline) | -12.88 | -12.25 | **-0.6** |
+| ff_3.0 trained, type 0 | -15.75 | -16.38 | +0.6 |
+
+ff2.1's spline table barely distinguishes native from expanded: it is a vestige, not a copy of the
+sigmoid. So **every ConDiv run in this port started from a force field that is not ff2.1**, and
+trained FF1's functional form: spline burial, no backbone term. The trained ff_3.0's sigmoid
+fields are ff2.1's untouched, so running it at the default type 1 silently gives ff2.1's burial.
+
+Consequences:
+* The ff3.0-vs-ff2.1 benchmark compared two different burial functional forms: `bench_run.py`
+  sets type 0 for ff3.0 and leaves ff2.1 at the default 1.
+* The "ff2.1 is a fixed point" test (Phase 2) ran ff2.1's parameters in a Hamiltonian ff2.1 does
+  not use. It says little about port fidelity for `env`.
+* The engine can train the FF2 form: `SigmoidCoupling::get_param_deriv` returns analytic
+  derivatives for scale, center and sharpness per type, and `BackboneSigmoidCoupling` for all four
+  backbone-term parameters.
+
+**`Train(1).zip` (OneDrive) is not the soluble FF2 trainer.** It is Peng's 2022 membrane-potential
+trainer: `UpdateBase` is `cb icb hb ihb`, the four blocks of `membrane.h5`, with the soluble force
+field (`ff_2.2` in `/home/pengxd/upside-ff2.0v`) held fixed. It confirms how FF2-era runs were
+configured, `environment_type = 1` with `bb_environment` on, but contains no code that trains
+`rot`, `env`, `hb`, the backbone term, or an unfolded-state objective.
+
+## 9t. The trainer omits FF2's backbone desolvation term entirely (2026-09-24)
+
+`bb_env.dat` came out of training byte-identical to ff2.1's because **the trainer never builds the
+node it parameterises**. `main_worker`'s config kwargs pass `environment_potential` but no
+`bb_environment_potential`, so no training simulation contains `bb_sigmoid_coupling_environment`,
+and `extract_ff31.py` copies ff2.1's file only because `upside_config` requires one. The term is
+not frozen; it is absent. Every deployment (Peng benchmark, examples) includes it.
+
+**Where this comes from.** The Theano original (`~/Documents/ConDiv/remd-4000-8RP-1th-test/
+ConDiv_original.py`, Upside 18.10.08) is FF1-era: its `Update` is `env cov rot hyd hb sheet` and
+its configs have no backbone term. Peng et al. 2022 SI: FF2 was made "by adding an explicit
+backbone desolvation term", a multibody burial term on the N-H and C-O vectors, and "all
+parameters can be optimized simultaneously". Porting the FF1 trainer faithfully reproduced FF1's
+Hamiltonian, not FF2's. Same class of defect as `hb` and `sheet` being dropped (9f).
+
+**It is not small, and it favours the UNFOLDED state.** Native ubiquitin under the new ff_3.0 with
+the term on: total -148.6, of which `bb_sigmoid_coupling_environment` -16.8, as large as the rama
+term (-17.0). The same coordinates expanded 1.6x about the centroid give **-43.8**: `scale` is
+-0.30 and `compact_sigmoid` is 1 at low burial, so the term pays for each **solvent-exposed**
+backbone NH/CO. It is FF2's unfolded-state stabiliser ("the solvation of the backbone and the
+H-bonds stabilizes the DSE", SI). An earlier version of this paragraph said it favoured compact
+structure; that was wrong.
+
+**Two couplings make it worse than a missing term.** (1) Its `hbond_weight` feeds H-bond state
+into the burial, so `hb` (trained up to 1.045) was fit without it. (2) The node stores a copy of
+`environment.h5`'s per-type `weights`, which were trained as part of `env` with no backbone
+contribution to their gradient.
+
+**This weakens the earlier ff2.1 fixed-point result.** That test (p >= 0.22) ran in the same
+Hamiltonian without the term; if ff2.1 was trained with it on, the test either lacked power or
+the missing term happens to cost little gradient at ff2.1.
+
+**A second FF2 ingredient is also missing.** The same SI describes a dual objective,
+`d alpha = d alpha_NSE + lambda * d alpha_DSE`, where the DSE part trains the unfolded ensemble
+toward a self-avoiding random walk; it "increased folding cooperativity and reduced the amount of
+residual H-bonded structure". The trainer has only the native-state objective.
+
+## 9s. Track A final: converged, and not toward GROMACS (2026-09-24, step 500)
+
+Script: `training/ff31-gly/analysis/gly_final.py` on the cluster. GROMACS map rebuilt from rep1,
+all 40 contexts at 400 ns (rep2 stopped near 77 ns and is reported only as a check). Correlations
+are Pearson over the whole central-glycine coil row, 42 maps; "pop" restricts to the 3,138 of 5,184
+cells that carry 99% of the probability in either GROMACS or the ff2.1 row mean.
+
+| | vs ff2.1 all | vs ff2.1 pop | vs GROMACS all | vs GROMACS pop | dG X\|GLY |
+|---|---|---|---|---|---|
+| ff3.1 step 0 | 0.973 | 0.963 | 0.881 | 0.699 | 0.000 |
+| ff3.1 step 500 | 0.967 | 0.950 | 0.878 | 0.703 | -0.885 |
+| GROMACS | 0.863 | 0.679 | 1 | 1 | -0.150 |
+
+ff2.1's own X|GLY maps average -1.245.
+
+**`parameters/common/rama31.dat` rebuilt from these data (2026-09-24): -0.154.** The first rebuild
+gave -0.150 because `build_rama_from_awh.py` excluded only `LG` from the handedness average;
+`RG` is the same Ac-Gly-Gly-NHMe molecule measured at the other glycine, equally achiral, and
+counting it as chiral averaged a near-zero handedness into the other 38. `--blank` now takes a list
+and defaults to `LG,RG`. The Sep 19 build, from partial data, is in `backup/`.
+
+**Reading.** Training changed the handedness and left the map's shape alone. It drifted slowly
+and monotonically away from ff2.1 and did not move toward GROMACS at all (0.699 -> 0.703 in the
+populated region). The learned antisymmetric pattern correlates +0.11 with GROMACS's and +0.30
+with the PDB library's: training re-derived a PDB-like handedness, which is what it was fed.
+
+**The GROMACS target is -0.15 to -0.31, not the -0.31 quoted until now.** Upside combines the left
+and right neighbour maps as a probability mixture (`_mixture`, logsumexp), so a glycine between
+two X|GLY maps sees that map's own handedness. The like-for-like number is the context-averaged
+dipeptide map, -0.150. The -0.307 figure is left + right, and holds only if neighbour effects add
+in a real tripeptide, which is untested. ff3.1 sits 3x to 6x beyond either.
+
+**Converged, not undertrained, not step-limited.** Over the last two epochs (steps 424-500):
+
+* The data's push on dG per step: mean -0.0029, sd 0.039, **t = -0.66**. No consistent direction.
+* Whole-map gradient `||mean g|| / mean|g|` = 0.112 against 0.114 for pure noise; pairwise cosine
+  -0.001; lag-1 cosine -0.03.
+* **Adam utilisation 0.32**: rms step over alpha on populated cells. For pure noise with
+  beta1 = 0.8, `|m|/sqrt(v)` is `sqrt((1-b1)/(1+b1))` = 0.33. A step-size limit would show near 1.
+* dG change per 100 steps: -0.345, -0.180, -0.235, -0.054, -0.071. What residual drift remains
+  points further toward alpha_L, away from GROMACS.
+
+**Why it stops at -0.9: the map compensates for the rest of the force field.** ConDiv drives
+Upside's glycines to reproduce the training natives, whose own handedness is -0.50. The map
+overshoots that because another term leans the other way: `hbond` gives any phi > 0 residue
+`E_other` = -1.769 against `E_alpha` = -1.961, a 0.19 E_up penalty per H-bond on alpha_L that is
+shared by all 20 residue types. The map is the only per-type (phi,psi) term, so it absorbs
+the difference. **More steps or a larger alpha cannot close the GROMACS gap**; the objective's
+optimum is here. Only fixing the map, or changing the architecture (architecture.md), moves it.
+
 ## 9r. The handedness is not an artifact of one force field (ff14SB, 2026-09-19)
 
 `gly_awh14` (49033947) finished its 10 dipeptides at 100 ns and its result had never been
@@ -4995,6 +5151,85 @@ library's -1.24 about 240, so a 500-step run has room to reach either and then s
 ---
 
 ## 10. Cluster and operational lessons
+
+### 10.0a2 Editing a self-chaining script does not change its queued successor (2026-09-23)
+
+**Slurm copies the batch script into the job record at submit time.** A self-chaining job queues
+its own successor at start, so by the time you find a bug in the script the successor already
+holds the old text, and fixing the file on disk does nothing for it. Read back what a queued job
+will really run:
+
+```
+scontrol write batch_script <jobid> /tmp/js.sh && grep -n <the-thing-you-fixed> /tmp/js.sh
+```
+
+Then cancel and resubmit that successor with the same `--dependency`. Cancel the **pending
+successor** while the running link keeps going; the reverse order leaves the successor free to
+start on the same `run_output` as the still-dying parent, which is how this campaign once ended up
+with two concurrent writers.
+
+The bug that exposed this is worth its own warning: **a branch that runs only on success, only at
+the end, is untested by construction.** `train_gly.sbatch` handed off to
+`sbatch "$T/validate_ff31.sbatch"` where `$T` is the run directory, while the script lives one
+level up in `training/`. Twelve chain links had exercised every other line. The handoff would have
+printed a warning into an unwatched log and quietly queued none of the 32 benchmark arms or 4 glpG
+chains. Verify the terminal branch by hand before the run that will finally reach it.
+
+### 10.0b A Slurm job can fail with no error text at all (2026-09-23)
+
+Training link 49047139 died 8 h 36 m into a 36 h wall with exit 7. Its `.out` file contained **no
+traceback, no "WORKER_FAIL", nothing**, and all twelve `*.output_worker` files were 0 bytes. Read
+that way it looks like a code bug with the evidence deleted.
+
+The cause was legible only at the Slurm step level:
+
+```
+sacct -j <id> -o JobID%16,State%16,ExitCode,MaxRSS,NodeList%30 -P | awk -F'|' 'NR==1 || $3!="0:0"'
+```
+
+which showed steps `.492`-`.503` all `CANCELLED 0:7`: **killed by signal 7, SIGBUS**, twelve tasks
+across four nodes at the same moment. `ExitCode` in `sacct` is `exit:signal`, so `7:0` on the batch
+step and `0:7` on the job steps are different things and the second is the informative one.
+
+Two rules from this:
+
+* **When a job log ends mid-sentence, go to `sacct` step level before reading the code.** A
+  parent's buffered stdout is lost when the run dies, so the log's last line is where the buffer
+  last flushed, not where the failure was. Here the log stopped at 11:22, the workers kept writing
+  until 11:31, and the job was not reaped until 12:15.
+* **Check the physics at the moment of death before assuming a blow-up.** Every worker was near
+  frame 1985/4000 with Rg 14.5 A, ~110 hbonds and potential near -200. Healthy. That is what rules
+  out the force field and points at infrastructure.
+
+**The successor job is the third witness, and it is the one that settles it.** The chain queues
+its replacement with `--dependency=afterany`, so the kill should have been survivable. Instead
+49053769 started at 12:18:02 and its batch step was `CANCELLED` at **the same second**, elapsed
+zero, and `ff31gly_49053769.out` was never created. A batch step that dies before it can open its
+own output file did not run a single line of the script. So in the 11:26-12:18 window those nodes
+could not read mmap'd files on `/project` (SIGBUS) and could not create one either.
+
+That is three independent symptoms pointing the same way, and it means the chain mechanism is
+sound: it was defeated by the filesystem, not by its own logic. **No GPFS log was available**, so
+the mechanism is inferred from the symptoms rather than confirmed at the source.
+
+Disk *capacity* was the obvious suspect and was **not** the cause: `/project` had 445 G free,
+inodes at 20%, and a 200 MB write+delete succeeded at 1.7 GB/s once it recovered. Measure it
+rather than assuming it; see remote_jobs.md for which quota command reports which fileset.
+
+### 10.0c A target checked only at restart does not bound anything (2026-09-23)
+
+`train_gly.sbatch` tested `STEP >= TARGET` at link start and then unconditionally ran
+`STEPS_PER_LINK=150`. Resuming at step 491 of a 500 target would have run to 641: roughly 29 h of
+training past the point the campaign was defined to stop, and validation blocked behind it. The
+bug was invisible for twelve links because 150 divides evenly into where the earlier links landed.
+
+**A self-chaining job needs the bound applied to the work, not only to the decision to start it.**
+The fix is one line, `REMAINING=$(( TARGET - STEP ))` clamped against `STEPS_PER_LINK`.
+
+Related: **delete a partially written output directory before resuming.** `main_worker` reads
+`<name>.divergence.pkl` by path with no freshness check, so a stale one left by an aborted attempt
+would be consumed as a fresh result for a worker that failed in the retry. The aborted
+`epoch_12_minibatch_35` happened to contain none, but only because it died early.
 
 ### 10.0 Three analysis lessons from the lambda diagnosis (2026-09-18)
 

@@ -812,12 +812,6 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
             less_sheet[sheet_rids == rid] -= eps
             create_array(grp, 'more_sheet_rama_pot_'+s, read_weighted_maps(seq, rama_library_h5, more_sheet))
             create_array(grp, 'less_sheet_rama_pot_'+s, read_weighted_maps(seq, rama_library_h5, less_sheet))
-
-        # One pair with every residue type shifted together, for training a single common sheet
-        # mixing scalar.  This is the parameter the Theano ConDiv trained; the per-type pairs above
-        # would need two extra passes over the frames each, where this needs two in total.
-        create_array(grp, 'more_sheet_rama_pot_ALL', read_weighted_maps(seq, rama_library_h5, sheet + eps))
-        create_array(grp, 'less_sheet_rama_pot_ALL', read_weighted_maps(seq, rama_library_h5, sheet - eps))
  
     if secstr_bias:
         assert len(rama_pot.shape) == 3

@@ -12,15 +12,13 @@ So dE/d(map_r[i,j]) is just a spline-smoothed 2D histogram of the glycine (phi,p
 Finite differencing instead would cost 2 extra passes per parameter, i.e. 10,369x a divergence
 for a 72x72 map, which is why `sheet` is trained as a single scalar.
 
-PARAMETERISATION. Two maps, `S` symmetric and `A` antisymmetric under (phi,psi) -> (-phi,-psi):
-
-    X|GLY  (every neighbour, both directions) = S + A
-    GLY|GLY                                   = S
-
-That is exactly the constraint the physics demands. A glycine flanked by L-amino acids sits in a
-chiral environment and may be biased; a glycine flanked by glycines has no chirality source, so
-its map must be mirror symmetric. Writing the pair as S and A makes GLY|GLY symmetric by
-construction, with no projection step during training, while S + A stays unconstrained.
+PARAMETERISATION. Every finite map in the library's central-glycine coil row is its own
+parameter: one map per (direction, neighbour), 42 in the ff2.1 layout (2 directions x 21 neighbour
+types; the CPR column is NaN and never read, because a cis-proline neighbour maps onto PRO). The
+two GLY|GLY maps are held exactly mirror-symmetric under (phi,psi) -> (-phi,-psi), each on its
+own, because a glycine flanked by glycines has no chirality source; every X|GLY map is left free,
+because an L-amino-acid neighbour makes the environment chiral. The constraint is kept by
+projecting both the starting maps and every update, so it holds to machine precision throughout.
 
 THE CHAIN RULE IS DONE BY AUTOGRAD, DELIBERATELY. Between the library maps and the per-residue
 map the engine actually sees, `read_weighted_maps` applies a normalisation, a weighted log-sum-exp
@@ -59,17 +57,20 @@ def sample_weights(u, n_grid, cardinal):
     return cardinal(off)
 
 
-def map_gradient(coords, n_grid, cardinal=None):
+def map_gradient(coords, n_grid, cardinal=None, weights=None):
     """dE/d(map[i,j]) accumulated over samples.
 
     coords: (n_sample, 2) array of (phi, psi) in radians for ONE residue over frames.
-    Returns (n_grid, n_grid). Summed, not averaged; the caller decides the normalisation.
+    weights: optional per-sample weights; an ensemble average is `weights` summing to one.
+    Returns (n_grid, n_grid). Summed with the given weights (1 each by default).
     """
     if cardinal is None:
         cardinal = cardinal_function(n_grid)
     g = grid_coords(coords, n_grid)
     wx = sample_weights(g[:, 0], n_grid, cardinal)
     wy = sample_weights(g[:, 1], n_grid, cardinal)
+    if weights is not None:
+        wy = wy * np.asarray(weights, dtype=float)[:, None]
     return wx.T @ wy
 
 
@@ -80,7 +81,7 @@ def energy_from_map(coords, rama_pot, cardinal=None):
 
 
 # ---------------------------------------------------------------------------
-# The mixture half: d(per-residue map)/d(S, A), by autograd
+# The mixture half: d(per-residue map)/d(row maps), by autograd
 # ---------------------------------------------------------------------------
 
 def _normalize(p):
@@ -97,13 +98,15 @@ def _mixture(weights, potentials):
 
 
 class GlycineMapChain:
-    """Forward map from (S, A) to the per-residue maps the engine sees, for glycine residues.
+    """Forward map from the glycine row's maps to the per-residue maps the engine sees.
 
     Holds everything about one protein that does not change during training: which residues are
-    glycine, their neighbours, the coil and sheet mixing weights, and the sheet maps.
+    glycine, which row map each of their neighbour branches reads, the coil and sheet mixing
+    weights, and the sheet maps. `keys` is the (direction, neighbour) index of every parameter
+    map, as returned by `row_keys`.
     """
 
-    def __init__(self, seq, rama_library, sheet_mixing_energy, central='GLY'):
+    def __init__(self, seq, rama_library, sheet_mixing_energy, keys, central='GLY'):
         seq = list(seq)
         self.seq = seq
         self.central = central
@@ -122,20 +125,22 @@ class GlycineMapChain:
         gi_s = sheet_restype.index(central)
         sidx = {r: i for i, r in enumerate(sheet_restype)}
         cidx = {r: i for i, r in enumerate(self.coil_restype)}
+        kidx = {(int(d), int(n)): k for k, (d, n) in enumerate(keys)}
 
-        def s_nb(name):                      # sheet group has no CPR
+        # read_rama_maps_and_weights reads a cis-proline NEIGHBOUR as PRO in both groups
+        def c_nb(name):
+            return cidx['PRO'] if name == 'CPR' else cidx[name]
+
+        def s_nb(name):
             return sidx['PRO'] if name == 'CPR' else sidx[name]
 
         self.residues = []
         for i, c in enumerate(seq):
             if c != central:
                 continue
-            # read_rama_maps_and_weights mixes left and right for an interior residue but uses a
-            # SINGLE direction at each terminus, and a terminal glycine still gets a glycine map,
-            # so its energy still depends on (S, A). Skipping termini left 3.0% of the glycine
-            # gradient missing across the 456-protein training set, and a biased 3%: chain ends
-            # are more flexible than the interior. Both cases are handled here by carrying a list
-            # of (direction, neighbour) pairs that has one entry at a terminus and two inside.
+            # A terminal glycine reads one direction and an interior one mixes two, as in
+            # read_rama_maps_and_weights. Skipping termini once left 3.0% of the glycine gradient
+            # missing across the training set, and a biased 3%: chain ends are more flexible.
             if i == 0:
                 pairs = [('right', seq[1])]
             elif i == len(seq) - 1:
@@ -143,57 +148,51 @@ class GlycineMapChain:
             else:
                 pairs = [('left', seq[i - 1]), ('right', seq[i + 1])]
 
-            cw_i = [float(cw[gi_c, self.coil_dir.index(d), cidx['PRO'] if nb == 'CPR' else cidx[nb]])
-                    for d, nb in pairs]
+            dirs = [self.coil_dir.index(d) for d, _ in pairs]
+            cw_i = [float(cw[gi_c, d, c_nb(nb)]) for d, (_, nb) in zip(dirs, pairs)]
             sw_i = [float(sw[gi_s, sheet_dir.index(d), s_nb(nb)]) for d, nb in pairs]
             sp_i = np.stack([spot[gi_s, sheet_dir.index(d), s_nb(nb)] for d, nb in pairs])
-            # the per-residue weight is the mean over directions used, which for one direction
-            # is just that weight
             self.residues.append(dict(
                 index=i,
-                is_central=[nb == central for _, nb in pairs],
+                map_k=[kidx[(d, c_nb(nb))] for d, (_, nb) in zip(dirs, pairs)],
                 coil_w=cw_i,
                 sheet_w=sw_i,
                 sheet_pot=torch.as_tensor(sp_i, dtype=torch.float64),
                 sheet_mix=float(sheet_mix[sidx[central]]),
+                # the per-residue weight is the mean over the directions used
                 coil_mix_w=float(np.mean(cw_i)),
                 sheet_mix_w=float(np.mean(sw_i)),
             ))
 
-    def residue_map(self, S, A, r):
+    def residue_map(self, G, r):
         """The map upside_config writes for glycine residue r, as a differentiable tensor.
 
         Every stage of `read_weighted_maps` plus the Boltzmann-weighted shift that
         `write_rama_map_pot` applies last. That shift is a constant per map, so it changes no
-        force and is invisible in any basin-to-basin difference, but it is map-dependent and it
-        enters the total energy, so it carries gradient. Leaving it out made the reconstructed
-        map wrong by a constant 7.23 and the dS gradient wrong by 37%.
+        force, but it enters the total energy, so it carries gradient. Leaving it out made the
+        reconstructed map wrong by a constant 7.23 and the gradient wrong by 37%.
         """
-        v_xg = S + A
-        v_gg = S
-        branches = torch.stack([v_gg if is_c else v_xg for is_c in r['is_central']])
+        branches = torch.stack([G[k] for k in r['map_k']])
         coil = _normalize(_mixture(r['coil_w'], branches))
         sheet = _normalize(_mixture(r['sheet_w'], r['sheet_pot']))
         m = _mixture([r['coil_mix_w'], r['sheet_mix_w'] * np.exp(-r['sheet_mix'])],
                      torch.stack([coil, sheet]))
         return m - (m * torch.exp(-m)).sum()
 
-    def backprop(self, S, A, residue_grads):
-        """Given dE/d(per-residue map) for each glycine, return (dE/dS, dE/dA) as numpy."""
-        St = torch.as_tensor(S, dtype=torch.float64).clone().requires_grad_(True)
-        At = torch.as_tensor(A, dtype=torch.float64).clone().requires_grad_(True)
-        total = St.new_zeros(())
+    def backprop(self, G, residue_grads):
+        """Given dE/d(per-residue map) for each glycine, return dE/dG, shape of G, as numpy."""
+        Gt = torch.as_tensor(np.asarray(G), dtype=torch.float64).clone().requires_grad_(True)
+        total = Gt.new_zeros(())
         for r in self.residues:
             g = residue_grads.get(r['index'])
             if g is None:
                 continue
-            total = total + (self.residue_map(St, At, r)
+            total = total + (self.residue_map(Gt, r)
                              * torch.as_tensor(g, dtype=torch.float64)).sum()
         if not total.requires_grad:
-            z = np.zeros_like(np.asarray(S, dtype=float))
-            return z, z.copy()
+            return np.zeros_like(np.asarray(G, dtype=float))
         total.backward()
-        return St.grad.numpy(), At.grad.numpy()
+        return Gt.grad.numpy()
 
 
 def _decode(attr):
@@ -218,85 +217,77 @@ def project_antisymmetric(m):
 
 
 # ---------------------------------------------------------------------------
-# Writing the trained maps back into a library
+# The glycine row as a parameter: keys, reading, writing, the constraint
 # ---------------------------------------------------------------------------
 
-def write_gly_library(source, out, S, A, central='GLY'):
-    """Copy `source` and set its central-`central` coil row to X|GLY = S+A, GLY|GLY = S.
-
-    Nothing else is touched: the sheet group, every other central residue, both weight arrays and
-    the all-NaN CPR neighbour column (never read, since a cis-proline *neighbour* maps to PRO)
-    come through unchanged. No renormalisation is applied, because `read_rama_maps_and_weights`
-    normalises the mixture itself and an extra shift here would change the inner left/right
-    mixing weights in a way the gradient does not model.
-    """
-    import shutil
-    shutil.copy(source, out)
-    xg = np.asarray(S) + np.asarray(A)
-    gg = np.asarray(S)
-    with tb.open_file(out, 'a') as t:
-        coil = t.root.coil
-        restype = _decode(coil._v_attrs.restype)
-        g = restype.index(central)
-        pot = coil.dimer_pot[:]
-        for d in range(pot.shape[1]):
-            for n in range(pot.shape[2]):
-                if np.isnan(pot[g, d, n]).all():
-                    continue
-                pot[g, d, n] = gg if n == g else xg
-        coil.dimer_pot[:] = pot
-    return out
-
-
-def read_gly_maps(library, central='GLY'):
-    """Recover (S, A) from any library whose central-`central` coil row holds two maps.
-
-    `S` is the symmetric part of the `GLY|GLY` map and `A` is the **antisymmetric part of an
-    `X|GLY` map**, rather than the difference of the two. Differencing looks equivalent and is
-    not: `build_rama_from_awh.py` normalises each map separately, so the two carry different
-    additive constants and `X|GLY - GLY|GLY` returns `A` plus an offset. That offset is symmetric,
-    so projecting removes it, and for a library written by `write_gly_library` (which does not
-    renormalise) the two routes agree exactly anyway.
-
-    This is also how a worker gets its current parameters: they are already in the library file it
-    was handed, so no 5,184-value array has to be threaded through the command line.
-    """
+def row_keys(library, central='GLY'):
+    """(direction, neighbour) indices of every finite map in the central row, and which are GLY|GLY."""
     with tb.open_file(library) as t:
         coil = t.root.coil
         restype = _decode(coil._v_attrs.restype)
         g = restype.index(central)
-        S = coil.dimer_pot[g, 0, g][:]
-        xg = None
-        for n in range(coil.dimer_pot.shape[2]):
-            if n == g:
-                continue
-            m = coil.dimer_pot[g, 0, n][:]
-            if np.isfinite(m).all():
-                xg = m
-                break
-    if xg is None:
-        raise ValueError(f'{library} has no finite X|{central} coil map')
-    return (project_symmetric(np.asarray(S, dtype=float)),
-            project_antisymmetric(np.asarray(xg, dtype=float)))
+        row = coil.dimer_pot[g]
+    keys = np.array([(d, n) for d in range(row.shape[0]) for n in range(row.shape[1])
+                     if np.isfinite(row[d, n]).all()], dtype=int)
+    return keys, keys[:, 1] == g
 
 
-def symmetric_start(source, central='GLY'):
-    """The starting S for training: the library's coil row symmetrised, with A = 0.
-
-    Training then begins assuming no glycine handedness and has to find it in the protein data,
-    which is what makes the comparison against the AWH measurement a real test rather than a
-    circular one.
-    """
-    with tb.open_file(source) as t:
+def read_row(library, keys, central='GLY'):
+    """The row's maps in `keys` order, shape (n_map, n_grid, n_grid)."""
+    with tb.open_file(library) as t:
         coil = t.root.coil
-        restype = _decode(coil._v_attrs.restype)
-        g = restype.index(central)
-        m = coil.dimer_pot[g, 0, restype.index('ALL') if 'ALL' in restype else -1][:]
-    if not np.isfinite(m).all():
-        raise ValueError('starting map has non-finite entries')
-    S = project_symmetric(m)
-    S = S + np.log(np.exp(-S).sum())      # cosmetic: match the library's sum(exp(-E)) == 1.
-    return S, np.zeros_like(S)            # A constant shift cancels in every downstream mixture.
+        g = _decode(coil._v_attrs.restype).index(central)
+        row = coil.dimer_pot[g]
+    return np.stack([row[d, n] for d, n in keys]).astype(float)
+
+
+def write_row(source, out, keys, G, central='GLY'):
+    """Copy `source` and replace its central row's maps with G.
+
+    Nothing else in the file changes: the sheet group, every other central residue, both weight
+    arrays and the all-NaN CPR neighbour column come through as they were. No renormalisation is
+    applied, because `read_rama_maps_and_weights` normalises the mixture itself and a shift here
+    would move the inner left/right mixing in a way the gradient does not model.
+    """
+    import shutil
+    shutil.copy(source, out)
+    with tb.open_file(out, 'a') as t:
+        coil = t.root.coil
+        g = _decode(coil._v_attrs.restype).index(central)
+        pot = coil.dimer_pot[:]
+        for k, (d, n) in enumerate(keys):
+            pot[g, d, n] = G[k]
+        coil.dimer_pot[:] = pot
+    return out
+
+
+def constrain(G, is_gg):
+    """Project the GLY|GLY maps onto their mirror-symmetric part; X|GLY maps pass through."""
+    G = np.array(G, dtype=float)
+    G[is_gg] = project_symmetric(G[is_gg])
+    return G
+
+
+def start_row(library, central='GLY'):
+    """The starting row: the library's own maps with each GLY|GLY map symmetrised.
+
+    ff2.1's GLY|GLY maps are not mirror-symmetric (ff2.1 dG(aR->aL) -0.72 on an achiral pair), so
+    they are projected once; every X|GLY map starts exactly at ff2.1's value.
+    """
+    keys, is_gg = row_keys(library, central)
+    return keys, is_gg, constrain(read_row(library, keys, central), is_gg)
+
+
+def handedness(m):
+    """dG(aR->aL) in nats on the basins every glycine number in this project uses."""
+    n = m.shape[-1]
+    t = np.arange(-180., 180., 360. / n)
+    phi, psi = np.meshgrid(t, t, indexing='ij')
+
+    def basin(a, b, c, d):
+        k = (phi >= a) & (phi <= b) & (psi >= c) & (psi <= d)
+        return -np.log(np.exp(-m[..., k]).sum(-1))
+    return basin(40., 100., -10., 60.) - basin(-100., -40., -60., 10.)
 
 
 # ---------------------------------------------------------------------------

@@ -4,8 +4,9 @@
 would justify building it has not fired, and may not. Section 6 is the decision gate; read it
 before writing any code.
 
-Written 2026-09-20 from the ff3.1 glycine investigation. Background and evidence live in
-`GLY_sym.md` (the physics) and `findings.md` 9i, 9m-9r (the measurements).
+Written 2026-09-20 from the glycine investigation, updated 2026-09-24. Background and evidence
+live in `GLY_sym.md` (the physics) and `findings.md` 9i, 9m-9v (the measurements). The ff3.0 being
+trained now (plan.md) is the uniform-map baseline this proposal has to beat.
 
 ---
 
@@ -69,8 +70,9 @@ Make the **antisymmetric part** of the glycine map depend on the conformations o
 E_rama(i) = S(phi_i, psi_i) + w(neighbours of i) * A(phi_i, psi_i)
 ```
 
-* `S` symmetric and `A` antisymmetric under `(phi,psi) -> (-phi,-psi)`, the parameterisation
-  already used by the trainable map (`training/rama_gly_gradient.py`).
+* `S` symmetric and `A` antisymmetric under `(phi,psi) -> (-phi,-psi)`: the two parts of each
+  trainable `X|GLY` map (`training/rama_gly_gradient.py` trains the 42 maps whole; `S` and `A` are
+  their projections, `rama_gly_gradient.project_symmetric` / `project_antisymmetric`).
 * `w` is a smooth scalar in roughly `[0,1]`, near **0** when both neighbours sit in alpha_R
   (helical context) and near **1** otherwise.
 
@@ -121,8 +123,9 @@ defined for that case rather than reading past the array.
 residues instead of a single pre-mixed map. Everything else keeps one layer with `A = 0`, so
 non-glycine behaviour is bit-identical.
 
-**Training, `training/rama_gly_gradient.py`.** The analytic gradient extends directly: `dE/dA`
-picks up the factor `w`, and new derivatives appear with respect to `w`'s own parameters. The
+**Training, `training/rama_gly_gradient.py`.** The analytic gradient extends directly: the
+antisymmetric projection of each map's gradient picks up the factor `w`, and new derivatives
+appear with respect to `w`'s own parameters. The
 existing finite-difference gate (`training/verify_gly_gradient.py`) must be extended to cover
 them, and must be run on proteins that exercise helical, turn and terminal glycines. **An analytic
 gradient fails silently; the gate is the only thing that catches it.**
@@ -134,15 +137,17 @@ mirror-symmetric by construction.
 ## 6. Decision gate
 
 **Do not build this until the trigger fires.** It is not established that ff2.1 fails on glycine:
-in the 32-arm ff3.0 benchmark only the native/de-novo **asymmetry** is significant
+in the 32-arm benchmark of the original ff3.0 (FF1-form trainer, every glycine map symmetrised)
+only the native/de-novo **asymmetry** is significant
 (13/16, p = 0.021); neither arm alone reaches p = 0.21, and `hyp_denovo` at +0.166 is an outright
 counterexample. Adding machinery to fix an undemonstrated problem is how force fields accumulate
 cruft.
 
 Order of operations:
 
-1. Finish Track A training, extract `parameters/ff_3.1_trained`.
-2. Run the 32-arm benchmark, scoring on the **last third** of each arm.
+1. Finish training ff3.0 from ff2.1 with ff2.1's own workflow and per-neighbour glycine maps
+   (plan.md, Phase 2); `validate_ff.sh` releases it and starts the benchmark automatically.
+2. Score the 32-arm benchmark on the **last third** of each arm.
 3. **Trigger: de novo arms regress again while native arms hold.** That is evidence the fold terms
    cannot nucleate turns on their own, which is exactly what this change addresses. If a corrected
    uniform map holds both arms, the architecture was always sufficient and this document should be
@@ -161,10 +166,10 @@ have to do. It needs no force-field change and a few minutes of reading structur
   value that buys energy without physical meaning.
 * **One-sidedness is a modelling assumption**, not a derived result. It is chosen to match the
   benchmark's native/de-novo asymmetry, so it must be tested against a prediction made *before*
-  seeing the ff3.1 result, not fitted to it afterwards.
+  seeing the retrained ff3.0 result, not fitted to it afterwards.
 * **It only treats glycine.** The same conflation applies to all 20 residue types; for the other
   nineteen the contaminated fraction is small because C-beta sterics dominate, but the argument
   does not stop at glycine and the machinery would generalise. Resist scope creep until glycine is
   demonstrably fixed.
 * **Training cost.** The gradient stays analytic, so the cost is bounded, but the gate must be
-  re-run and a fresh 500-step run is ~4 days.
+  re-run and a fresh 76-step run of the FF2 workflow is ~27 h.

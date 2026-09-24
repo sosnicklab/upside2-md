@@ -1,9 +1,25 @@
-# Glycine Ramachandran handedness: the problem, the measurement, and ff3.1
+# Glycine Ramachandran handedness: the problem, the measurement, and ff3.0
 
 Rewritten 2026-09-19. The previous version of this file made three claims that our own
 measurements and its own cited literature contradict; they are listed at the end under
 [Corrections](#corrections-to-the-previous-version) so the error is on the record rather than
 silently deleted.
+
+## 0. Where this stands (2026-09-24)
+
+* **The measurement is finished**: all 40 `Ac-X-Gly-NHMe` / `Ac-Gly-X-NHMe` contexts at 400 ns
+  (replica 1; replica 2 stopped near 77 ns). Left neighbours average **-0.20 nats**, right
+  neighbours **-0.11**. The map Upside actually applies mixes the two neighbour maps as
+  probabilities, so the like-for-like value is the context-averaged surface, **-0.154**, which is
+  what `parameters/common/rama31.dat` now holds. If the two neighbour effects add in a real
+  tripeptide the target would be nearer -0.31; that is untested. The -0.303 quoted in the
+  sections below is the 100 ns value from the first 10 left contexts, kept as the record.
+* **The first learned map is not evidence.** Track A as first run (the "ff3.1" of this file,
+  one shared `S + A` map) converged to -0.885, but its trainer was a port of FF1's, not ff2.1's:
+  spline burial, no backbone desolvation term, no unfolded-state objective (findings 9t-9v).
+* **ff3.0 is being trained now**, from ff2.1 with ff2.1's own FF2 dual-target workflow
+  (`training/ConDiv.py`), with every one of the 42 `X|GLY` maps its own parameter starting at
+  ff2.1's value and the `GLY|GLY` maps held exactly mirror-symmetric (§5, Track A).
 
 ---
 
@@ -101,7 +117,7 @@ what identifies the double-counted part:
 | NDRD coil, averaged over neighbours | neighbour side chain **+** fold **+** longer-range sequence | **−1.24** |
 | NDRD coil, `GLY\|GLY` entry | fold **+** longer-range sequence | **−0.71** (left), −0.97 (right) |
 | AWH capped `Ac-Gly-Gly-NHMe` | none | **0** (measured 0.03 ± noise) |
-| AWH capped `Ac-X-Gly-NHMe` | neighbour side chain only | **−0.303** |
+| AWH capped `Ac-X-Gly-NHMe` / `Ac-Gly-X-NHMe`, 400 ns | neighbour side chain only | **−0.20** (left), −0.11 (right) |
 
 Each row removes a source of chirality and the handedness falls. **That monotonic ordering is the
 signature of real physics at every level, not of a corrupted dataset**, and it separates the
@@ -115,7 +131,7 @@ the symmetry argument in §1" and called −0.71 a failed control. That over-app
 argument needs the **whole environment** achiral; NDRD's `GLY|GLY` is conditioned only on the
 immediate neighbour being glycine, while the rest of the chain is still L-amino acids in a chiral
 fold. Only the capped dipeptide is required to read 0, and that is our AWH `LG` control, not a
-library entry. Nothing downstream depended on the discarded claim: ff3.1 corrects the coil group
+library entry. Nothing downstream depended on the discarded claim: the correction is to the coil group
 because the sheet group's helical basins are essentially empty (α_R 1.6e-10, α_L 8.7e-16), so its
 apparent handedness is a ratio of near-zeros.
 
@@ -163,7 +179,7 @@ For an all-L protein it is the wrong default, for exactly the reason in §1.
 Atomistic force fields sidestep the question entirely by deriving backbone torsions from quantum
 chemistry on the glycine dipeptide rather than PDB statistics, which yields a symmetric surface
 without any explicit symmetrisation. **The problem is specific to statistical potentials**, and
-that is the argument for ff3.1's route: take the glycine surface from a dipeptide calculation, as
+that is the argument for the measured-map route: take the glycine surface from a dipeptide calculation, as
 the atomistic force fields do, rather than repairing a PDB-derived one.
 
 ---
@@ -179,9 +195,8 @@ against the thing it was imported into. So there are now two routes, sharing no 
 | **Track A** | ConDiv learns the glycine map from the 456-protein training set | a map consistent with Upside's own force field and the native ensemble |
 | **Track B** | 2D AWH on all 40 capped `X-Gly` / `Gly-X` dipeptides | an independent physical map from explicit-solvent MD |
 
-**Track A starts from zero handedness**, a symmetrised library row with `A = 0`, so what it learns
-is not seeded from Track B and the comparison between them is a real test. Agreement is evidence;
-disagreement localises which term is wrong.
+**Track A is not seeded from Track B**: it starts from ff2.1's own glycine maps, so the comparison
+between them is a real test. Agreement is evidence; disagreement localises which term is wrong.
 
 ### The measurement
 
@@ -194,8 +209,9 @@ Two fully independent replicas with different seeds, each run to its own converg
 | replica 1 | 62–100 ns (n=381) | **−0.305 nats** | −0.015 |
 | replica 2 | 62–75 ns (n=133) | **−0.319 nats** | +0.094 |
 
-**The answer is −0.303 nats (≈ −0.76 kJ/mol, −0.18 kcal/mol, −0.26 E_up): small, left-handed,
-and definitely not zero.** Neither ff2.1 (−1.24) nor ff3.0 (0) is right; the library overstates by
+**At 100 ns the answer was −0.303 nats (≈ −0.76 kJ/mol, −0.18 kcal/mol, −0.26 E_up): small,
+left-handed, and definitely not zero.** The finished 400 ns campaign over all 40 contexts put it at
+−0.20 for left neighbours and −0.11 for right ones (§0). Neither ff2.1 (−1.24) nor ff3.0 (0) is right; the library overstates by
 ~4×.
 
 Two things the campaign established that are as important as the number:
@@ -214,7 +230,8 @@ Two things the campaign established that are as important as the number:
 
 **The library's central-glycine coil row is discarded and rebuilt from the AWH surfaces, with no
 library data in it at all.** This is `parameters/common/rama31.dat`. It was briefly the training
-map and is now the **reference** Track A will be compared against. Built by `py/build_rama_from_awh.py`; the row holds exactly two distinct maps:
+map and is now the **reference** Track A is compared against, rebuilt 2026-09-24 from the
+finished 400 ns data with both Gly-Gly blanks (`LG`, `RG`) excluded from the handedness. Built by `py/build_rama_from_awh.py`; the row holds exactly two distinct maps:
 
 | entry | content |
 |---|---|
@@ -234,8 +251,8 @@ average. The consequence falls out on its own, without a rule: `read_weighted_ma
 and right neighbour maps, so `Leu-Gly-Gly` gets **half** the handedness (−0.146) and `Gly-Gly-Gly`
 gets **none**.
 
-Result: `dG(αR→αL)` = **−0.303 nats** for `X|Gly` against the library's −1.24, and **exactly 0**
-for `Gly|Gly`.
+Result: `dG(αR→αL)` = **−0.154 nats** for `X|Gly` in the 2026-09-24 rebuild (−0.303 in the
+100 ns build) against the library's −1.24, and **exactly 0** for `Gly|Gly`.
 
 ### Units: the map holds −lnP, and that fixes the conversion
 
@@ -267,7 +284,7 @@ convention keeps the two comparable.
 
 Against `rama.dat`, measured on the built library:
 
-| | ff2.1 | ff3.1 |
+| | ff2.1 | `rama31.dat` (100 ns build) |
 |---|---|---|
 | `dG(αR→αL)`, mean over 20 left neighbours | −1.238 | **−0.288** |
 | αR basin free energy | 2.388 | 2.595 |
@@ -292,7 +309,7 @@ no matter how forbidden it really is.
 Honest accounting, because this is the real cost of the change:
 
 * **Per-neighbour structure.** The library resolves it (spread 0.264 nats across its 42 neighbour
-  maps in the populated region, on ~1,500 glycines each). ff3.1 asserts none. Our own measurement
+  maps in the populated region, on ~1,500 glycines each). `rama31.dat` asserts none. Our own measurement
   cannot resolve it: per-pair replica agreement is r = 0.41–0.92 at S/N **1.48**, against r = 0.968
   and S/N **3.89** for the average. Using noisy per-pair surfaces would inject roughly 40% noise
   into every map, which is worse than asserting the measured mean.
@@ -314,11 +331,13 @@ plain ff3.0.
   β-sheet. Leaving it alone is not a patch; it is declining to substitute a measurement of a
   different thing.
 
-### Track A: the same two maps, learned instead of measured
+### Track A: every glycine map, learned inside ff2.1's own workflow
 
-Identical parameterisation, `X|Gly = S + A` and `Gly|Gly = S`, so the symmetry constraint is the
-same. The difference is where the numbers come from: contrastive divergence against the
-456-protein training set, starting at `A = 0`.
+Every one of the 42 finite maps of the central-glycine coil row is its own parameter, starting at
+ff2.1's value; the two `Gly|Gly` maps are projected mirror-symmetric at the start and after every
+update, and each update is Fourier band-limited. The numbers come from contrastive divergence
+against the 456-protein training set, run with ff2.1's own FF2 dual-target workflow, so the maps
+are fitted alongside every other ff2.1 parameter rather than on top of a frozen force field.
 
 **This addresses the §2 defect at its cause rather than correcting for it.** The library
 double-counts the fold because it is `−lnP` over folded structures and Upside then adds its own
@@ -326,17 +345,17 @@ double-counts the fold because it is `−lnP` over folded structures and Upside 
 reproduces the native ensemble *given the rest of the force field*, which is exactly the
 subtraction that double-counting needs.
 
-**The gradient is analytic**, which is the only reason a 5,184-value trainable map is affordable.
+**The gradient is analytic**, which is the only reason 42 trainable 72×72 maps are affordable.
 `rama_map_pot` is a periodic interpolating bicubic spline built from a tensor product of 1D
 solves, so the map enters the energy linearly and separably and `dE/d(map[i,j])` is a
-spline-smoothed 2D histogram of the glycine (φ,ψ) samples. Finite differencing would cost 10,369×
-a divergence. See `findings.md` §9m; the check that it is the real gradient is
-`training/verify_gly_gradient.py`, which failed at 37% on its first run and found a genuine
-omission.
+spline-smoothed 2D histogram of the glycine (φ,ψ) samples. `training/verify_gly_gradient.py`
+checks it against finite differences end to end, and reconstructs every glycine's per-residue map
+against the engine's, which pins the direction and neighbour indexing.
 
-**Both tracks assert one map for all 40 neighbour contexts**, for the same reason: neither can
-resolve per-pair structure. That is the one assumption they share, and the 40-context AWH campaign
-is what tests it.
+**The first run of Track A used one shared map for every neighbour** (`X|Gly = S + A`,
+`Gly|Gly = S`, starting at `A = 0`) and a trainer that was FF1's rather than ff2.1's; its −0.885 is
+not evidence (§0). Per-neighbour maps restore the structure the library resolves; Track B cannot
+resolve it per pair (S/N 1.48), so it serves as the reference for the average.
 
 ### Constructions that were built and rejected
 
@@ -371,16 +390,16 @@ library's symmetric part does not survive measurement (see §5, *What changed, a
 | 2D AWH, 10 dipeptides × 2 replicas, 100 ns | measure the surface | **−0.303 nats**, replicas agree to 0.012 |
 | `Ac-Gly-Gly-NHMe` achiral control | must read 0 | rms 0.032–0.035; **sampling noise, not a defect** (see below) |
 | blank vs time, and rep1 vs rep2 | is the residual an artifact? | decays 0.233→0.032 as `1/√t`, uncorrelated across replicas (r = +0.157) |
-| AWH extension to 400 ns, both replicas | halve the blank | running (49037819/20) |
+| AWH to 400 ns, all 40 contexts | halve the blank, add right neighbours | done (replica 1): left −0.20, right −0.11, context-averaged −0.154 |
 | library vs measured, full surface | can the library be discarded? | **yes**: they correlate at r = +0.867 and their αR basins agree to 0.207 nats; the disagreement is the αL basin, 1.087 nats |
 | saddle barriers and map mean after replacement | does glycine change weight or freeze? | no: mean 11.580 → 11.577, αR→αL barrier 6.32 → 4.10 nats |
 | AWH under ff14SB as well as ff99SB-ILDN | force-field dependence | **agree to 0.045 nats**: -0.246 against -0.291, both blanks on zero |
 | unbiased Gly₅ / SAGAS pentapeptides | independent cross-check | **not usable**: Gly₅ reads −0.224 against an exact 0 |
 | 32-arm folding benchmark, ff3.0 vs FF2 | what ff3.0 actually did | native **+0.039**, de novo **−0.030**, paired p = 0.021 |
-| ConDiv restart from ff2.1 | is the trainer trustworthy? | ff2.1 is a stationary point (sign-flip p ≥ 0.22) |
+| ConDiv restart from ff2.1 | is the trainer trustworthy? | the FF1-form port looked stationary (p ≥ 0.22) but was the wrong trainer; ff2.1's own FF2 workflow, 24 steps from ff2.1: 8 of 9 groups at a fixed point, dhb a small residual of two nearly cancelling objectives (findings 9v) |
 
-**The benchmark result gives ff3.1 a falsifiable prediction.** ff3.0 gains on native arms and loses
-on de novo ones. If that is because zeroing the glycine αL bias removed turn nucleation — glycine
+**The benchmark result gives the retrained ff3.0 a falsifiable prediction.** The original ff3.0
+gained on native arms and lost on de novo ones. If that is because zeroing the glycine αL bias removed turn nucleation — glycine
 being the classic turn residue, and de novo folding having to build turns from an extended chain —
 then restoring the measured part of it should recover de novo performance while keeping the native
 gains. **If the de novo arms do not move, that explanation is wrong.**
@@ -413,8 +432,7 @@ alone suggests.
 **So the blank, not a fixed wall time, is the stopping criterion.** All 10 dipeptides in both
 replicas are extended from 100 ns to **400 ns** (jobs 49037819, 49037820), which should halve the
 blank and take a single surface to S/N ~4.4. `A_measured` will be re-derived from the extended data
-and `rama31.dat` rebuilt if it moves materially. Training on the current map proceeds in parallel,
-since the construction is unchanged and only the surface it is built from can shift.
+and `rama31.dat` rebuilt if it moves materially. It did: rebuilt 2026-09-24 at −0.154.
 
 ---
 
@@ -427,8 +445,9 @@ is a reversal **with a roll**, because index `i` maps to `(−i) mod 72`:
 mirror = lambda m: np.roll(np.roll(m[..., ::-1, ::-1], 1, -2), 1, -1)
 ```
 
-A plain `m[::-1, ::-1]` is off by one bin and wrong by ~2.3 in practice. This reproduces ff3.0's
-`rama3.dat` from `rama.dat` bit-exactly, which is how the convention was confirmed.
+A plain `m[::-1, ::-1]` is off by one bin and wrong by ~2.3 in practice. This reproduced the
+original ff3.0's `rama3.dat` (since removed; in git history) from `rama.dat` bit-exactly, which is
+how the convention was confirmed.
 
 Exactly 4.5% of the coil array is NaN, and that is not scattered unpopulated bins: it is **one
 whole neighbour column, `CPR`**, which is never read, because `read_rama_maps_and_weights` maps a
@@ -440,8 +459,8 @@ it, because NaN comparisons are False.
 including the sheet group and both weight arrays; the NaN mask is preserved; all 42 GLY maps
 normalise to `1.000000`; the row holds exactly two distinct maps; `GLY|GLY` is antisymmetric-part
 zero to machine precision. End to end through `read_weighted_maps`, non-glycine residues are
-bit-identical and glycines move from ≈ −1.3 to −0.303, with `Leu-Gly-Gly` at −0.146 and a glycine
-between two glycines at 0. In the engine, `1a62` gives a finite total energy of −226.72 against
+bit-identical and glycines move from ≈ −1.3 to the measured value (−0.303 in the 100 ns build this
+check was run on), with `Leu-Gly-Gly` at about half of it and a glycine between two glycines at 0. In the engine, `1a62` gives a finite total energy of −226.72 against
 ff2.1's −228.88.
 
 A **second, separate** glycine symmetrisation also existed: ff3.0's trainer forced the GLY row of
@@ -458,7 +477,7 @@ documented anywhere in the ff3.0 write-up. It has been removed; see `findings.md
    double-counting the fold, not noise.
 2. **"Glycine's Ramachandran distribution is intrinsically symmetric about φ=0."** True only for an
    isolated glycine or an achiral neighbourhood. With L-neighbours the conditional distribution has
-   no symmetry requirement, and we measure it to be −0.303 nats.
+   no symmetry requirement, and we measure it to be −0.20 nats for a left L-neighbour.
 3. **Baruch-Shpigler 2017 was cited as confirming "GLY occupies both φ-quadrants essentially
    equally".** The paper finds the opposite: glycine is *"practically always conformationally
    chiral"*. The citation supported the reverse of its own conclusion.
@@ -470,7 +489,7 @@ documented anywhere in the ff3.0 write-up. It has been removed; see `findings.md
 5. **"Symmetrize ALL GLY maps unconditionally."** This is ff3.0, now retired: it replaces a −1.24
    error with a −0.30 one rather than removing it.
 
-## Corrections made while building ff3.1
+## Corrections made while building the measured map
 
 6. **"The library's symmetric part must be kept, because it and the measured one differ by rms
    1.752 E_up with αR basins of 0.193 against 0.089, 25× the handedness correction."** Wrong, and
@@ -478,7 +497,7 @@ documented anywhere in the ff3.0 write-up. It has been removed; see `findings.md
    *per-pair antisymmetric* statistic, not the symmetric parts. Measured properly, the library and
    the dipeptide surfaces correlate at **r = +0.867**, their αR basins agree to **0.207 nats**, and
    the map mean is unchanged to three decimals by the swap. The genuine disagreement is the αL
-   basin, 1.087 nats, which is the handedness error itself. The objection that scoped ff3.1 to the
+   basin, 1.087 nats, which is the handedness error itself. The objection that scoped the measured map to the
    antisymmetric part did not survive being measured.
 7. **The units choice was inverted.** The earlier text gave `PMF / 2.914952774272` (kJ/mol per
    E_up) as correct and `PMF / kT(300 K)` as the 17% error. It is the other way round for this

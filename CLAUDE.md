@@ -7,7 +7,7 @@ Before editing any `.up` simulation input file, force-field `.h5` parameter file
 - The HDF5 structure of `.up` files (all `/input` datasets, all `/input/potential` node types and their dataset schemas, the `/output` trajectory layout)
 - Every force-field parameter file (`sidechain.h5`, `hbond.h5`, `environment.h5`, `bb_env.dat`, `martini.h5`, `dopc.h5`, `rama.dat`, `sheet`, `membrane.h5`)
 - Hybrid-specific groups (`hybrid_bb_map`, `hybrid_remap`, `cgl_gle`, `barostat`, `stage_parameters`)
-- Critical conventions: angle storage as cosines, CGL target angle sign, GLY symmetrization, spline table exactness, thermostat timescales
+- Critical conventions: angle storage as cosines, CGL target angle sign, GLY Ramachandran handedness (it lives in the library file, never in the config writer), spline table exactness, thermostat timescales
 
 ## Physical Model Integrity
 **CRITICAL: Do not modify, scale to zero, or disable core physics interactions.**
@@ -107,14 +107,11 @@ Why it works, each point measured rather than assumed:
   `env_shared.sh` puts `pyrt/lib` on `LD_LIBRARY_PATH` for `libpython3.9.so.1.0`.
   Carries numpy, pytables, prody and h5py; verified importing on both clusters.
 
-**Filesystem headroom, and a trap.** `df` is misleading: `/project2` shows 787 T free while the
-trsosnic *group* quota there allows only ~195 G more. By real headroom: `/project` ~1.5 T,
-`/beagle3` ~1.4 T, `/cds3` ~0.8 T (unusable from compute nodes), `/project2` ~0.2 T. Check the
-group quota, not `df`.
-
-**Naming.** The repo ships `parameters/ff_3.0`. The clusters additionally keep `ff_3.0_trained` and
-`ff_3.0_trained_rf` under `/project/.../upside2-md-mdw2` because the running glpG chain scripts
-reference those paths; do not rename those while that chain is live.
+**Filesystem headroom, and a trap.** Check the *fileset* or *group* quota, never `df` on a mount
+point, which reports the whole device (`/project` shows 6.3 PB). From midway2, `df` on the
+subdirectory (`df -h /project/trsosnic`) reports the fileset, and `rcchelp quota` reports only home,
+scratch and the `/project2` group. Measured 2026-09-24: `/project` ~445 G free, `/beagle3` ~1.4 T,
+`/project2` at 97% of its 1.49 T soft group quota, `/cds3` unusable from compute nodes.
 
 ### Slurm Environment Setup
 

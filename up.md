@@ -316,14 +316,20 @@ Plain-text, one float per line. Four values defining the backbone-environment
 sigmoid coupling:
 
 ```
-line 1: center    (zero-crossing of sigmoid)
-line 2: scale     (energy scale factor)
-line 3: sharpness (sigmoid width)
-line 4: hbond_weight (H-bond contribution weight)
+line 1: scale        (energy scale factor; ff_2.1 -0.3014)
+line 2: center       (zero-crossing of sigmoid; 2.0)
+line 3: sharpness    (sigmoid width; 0.5)
+line 4: hbond_weight (H-bond contribution weight; 2.0)
 ```
 
-These parameterize `bb_sigmoid_coupling_environment`. The sign convention is
-that large positive coverage (buried) shifts the backbone energy down.
+This is the order `write_bb_environment` reads (`bb_env_param[0]` is `scale`); an earlier version
+of this table had the first two swapped. These parameterize `bb_sigmoid_coupling_environment`, the
+FF2 backbone desolvation term, which also stores a copy of `environment.h5`'s per-type `weights`.
+With `scale` negative (ff_2.1 -0.30) and `compact_sigmoid` equal to 1 at low burial, the term rewards **solvent-exposed** backbone NH/CO and is zero when they are buried: it stabilises the unfolded state. Measured on ubiquitin, -16.8 native against -43.8 expanded.
+
+**The ConDiv trainer never builds this node** (no `bb_environment_potential` in its config
+kwargs), so none of the trained force fields saw it during training even though every deployment
+uses it. See findings.md 9t.
 
 ### 2.5 `membrane.h5`
 
@@ -429,22 +435,22 @@ column, which is never read: `read_rama_maps_and_weights` maps a cis-proline *ne
 `PRO`, keeping CPR only as a central residue. A naive `abs(a-b) > tol` comparison across it reports
 no difference, because NaN comparisons are False.
 
-**Variants in `parameters/common/`:**
+**Where each library lives:**
 
 | file | what it is |
 |---|---|
-| `rama.dat` | ff2.1, as published |
-| `rama3.dat` | ff3.0, GLY row fully mirror-symmetrised in **both** groups. Retired |
-| `rama31.dat` | the **AWH-measured reference map**, coil GLY row replaced outright by a dipeptide surface and holding no library data: one map for `X\|GLY` carrying the measured handedness, one for `GLY\|GLY` which is its exactly symmetric part |
+| `parameters/common/rama.dat` | ff2.1, as published. Shared, because ff2.1 never trained it |
+| `parameters/ff_3.0/rama.dat` | ff3.0's **trained** library, once released (not in the tree until training finishes): ff2.1's with each of the 42 central-GLY coil maps trained separately and the two `GLY\|GLY` maps exactly mirror-symmetric |
+| `parameters/common/rama31.dat` | the **AWH-measured reference map**, coil GLY row replaced outright by a dipeptide surface and holding no library data: one map for `X\|GLY` carrying the measured handedness, one for `GLY\|GLY` which is its exactly symmetric part. Built 2026-09-24 by `py/build_rama_from_awh.py` from replica 1, all 40 contexts at 400 ns, both Gly-Gly blanks (`LG`, `RG`) excluded from the handedness: `X\|GLY` dG(aR->aL) = -0.154. A comparison target, not a force field |
 
-All differ from `rama.dat` **only** in the central-GLY coil row; the sheet group is untouched in
-every one.
+All differ from `common/rama.dat` **only** in the central-GLY coil row; the sheet group is
+untouched in every one.
 
-**`rama31.dat` is not ff3.1's training library, despite the name.** ff3.1 learns its glycine map
-with ConDiv instead, starting from a symmetrised row with zero handedness, and `rama31.dat` is the
-independent measurement it will be compared against. Regenerate a library from trained parameters
-with `rama_gly_gradient.write_gly_library`, and rebuild the measured one from AWH output with
-`py/build_rama_from_awh.py`.
+**A trained library belongs in its force field's directory, not in `common/`.** Once the map is a
+trained parameter it is as specific to one force field as `sidechain.h5`, and pairing ff3.0's
+other files with `common/rama.dat` silently gives ff2.1's glycine map. Regenerate a library from
+trained parameters with `rama_gly_gradient.write_row`, and rebuild the measured one from AWH
+output with `py/build_rama_from_awh.py`.
 
 ### 2.8a How a library map becomes the `rama_pot` the engine reads
 
@@ -542,7 +548,7 @@ Force-field files (read-only, never modified at runtime):
     environment.h5 -> burial/environment potential
     membrane.h5    -> implicit membrane potential
     bb_env.dat     -> backbone-environment coupling (4 floats)
-    sheet          -> sheet-mixing energy knots (63 floats)
+    sheet          -> sheet-mixing energy, one value per residue type (20 floats)
   parameters/common/
     rama.dat       -> Ramachandran library (HDF5)
     rama_reference.pkl -> reference state
@@ -550,18 +556,23 @@ Force-field files (read-only, never modified at runtime):
     dopc.h5        -> CGL pair PMFs and SC-CGL interaction tables
   parameters/ff_2.1/
     martini.h5     -> MARTINI non-bonded spline tables
-  parameters/ff_3.0/
-    sidechain.h5   -> ConDiv-retrained rotamer tables (training step 500, deployed 2026-09-09)
-    environment.h5 -> retrained; unused by glpG, which has no environment node
-    hbond.h5       -> byte-identical copy of ff_2.1; hbond was held fixed during training
+  parameters/ff_3.0/            (NOT PRESENT until the current training releases it)
+    sidechain.h5   -> trained rotamer tables
+    environment.h5 -> trained sigmoid burial scale/center/sharpness and weights (type 1)
+    hbond.h5       -> trained H-bond energies and second-H-bond term; entries 4-11 as ff_2.1
+    sheet          -> trained per-type sheet mixing energies
+    bb_env.dat     -> trained backbone-term scale; center/sharpness/hbond weight as ff_2.1
+    rama.dat       -> trained Ramachandran library (see 2.8); use this, not common/rama.dat
 ```
 
-`ff_3.0` retrains only `pair_interaction`, `coverage_interaction`, `hydrophobe_interaction` and the
-environment energies, starting from `ff_2.1`. `hydrophobe_placement` and `rotamer_center_fixed` are
-unchanged to 1e-13. Take `bb_env.dat`, `sheet`, `membrane.h5` and `martini.h5` from `ff_2.1`; they
-were not retrained. The clusters hold the same force field as `ff_3.0_trained`, plus rockfish's
-independently trained `ff_3.0_trained_rf`, each with a `STEP` file that the arm-test scripts gate
-on; the repo copy carries no `STEP` because nothing here reads it.
+**`parameters/ff_3.0` is absent from the tree on purpose (2026-09-24).** Both earlier versions were
+trained with a port of FF1's trainer rather than ff2.1's: spline burial, no backbone desolvation
+term, no unfolded-state objective (findings 9t-9v). The first also forced every glycine map
+mirror-symmetric; the second trained a single shared glycine map. Both are in `backup/`
+(gitignored) and in git history. ff3.0 is being retrained from ff2.1 with ff2.1's own FF2
+dual-target workflow (`training/ConDiv.py`, plan.md); `training/validate_ff.sh` writes it here when
+that run finishes. Build configs from all six files with the default
+`--environment-potential-type=1`, and take `membrane.h5` and `martini.h5` from `ff_2.1`.
 
 ---
 
@@ -603,12 +614,13 @@ already embedded in the convention string.
 **GLY Ramachandran**: glycine handedness belongs in the library file, never in
 `write_rama_map_pot`. There is no symmetrization step in that function and none
 should be added; an earlier note here called for one unconditionally, which was
-ff3.0's since-retired doctrine that forcing every glycine map mirror-symmetric is
+the superseded ff3.0's doctrine that forcing every glycine map mirror-symmetric is
 correct. It is not: symmetry is exact only for `GLY|GLY`, because a glycine
-flanked by L-amino acids sits in a chiral environment. ff3.1 builds this into
-`rama31.dat` itself, one map for `X|GLY` and a symmetric one for `GLY|GLY`, so
-the config writer stays ignorant of it and the left/right mixture produces the
-right answer for `Gly-Gly-Gly` on its own. See `GLY_sym.md`.
+flanked by L-amino acids sits in a chiral environment. The retrained ff3.0
+builds this into `parameters/ff_3.0/rama.dat` itself, a map per neighbour for
+`X|GLY` and mirror-symmetric ones for `GLY|GLY`, so the config writer stays
+ignorant of it and the left/right mixture produces the right answer for
+`Gly-Gly-Gly` on its own. See `GLY_sym.md`.
 
 **Spline tables must reproduce the analytic potential exactly**: verify the
 tables against the analytic form (dry-MARTINI: reaction-field Coulomb with

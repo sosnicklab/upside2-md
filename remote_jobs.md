@@ -244,42 +244,152 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-19 ~13:30 CDT, verified live against `squeue`.** Finished and cancelled rows are
+Snapshot **2026-09-24 ~11:52 CDT, verified live against `squeue`.** Finished and cancelled rows are
 deleted; only lessons worth reusing are kept, below the table.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49037819** -> **49038531** | AWH rep1 **extension 100 -> 400 ns**, the original 10 left-neighbour dipeptides | R, successor queued | re-derive `A_measured` when it lands |
-| **49037820** -> **49038532** | AWH rep2 extension, same 10 | R, successor queued | the two together set the error bar |
-| **49037918** (+ successor) | AWH **the 10 missing left neighbours**, `LC LF LH LI LK LN LQ LS LW LY`, to 400 ns, self-chaining | R on midway2-0080 | completes the left direction |
-| **49037919** (+ successor) | AWH **right neighbours 1 of 2**, `RA RC RD RE RF RG RH RI RK RL` | R on midway2-0113 | first left/right asymmetry measurement |
-| **49037920** (+ successor) | AWH **right neighbours 2 of 2**, `RM RN RP RQ RR RS RT RV RW RY` | R on midway2-0171 | with the above, all 40 contexts |
-| 49033947 | AWH under **ff14SB**, force-field-dependence check | R on midway2-0349 | compare against ff99SB-ILDN's -0.303 |
-| 49033117 | cluster-side monitor, `cron` partition, self-resubmitting | R on midway2-0466 | nothing |
+| **49073314** | Phase 1 extension, dhb diagnostic, `training/ff21-fixedpoint`, steps 19 -> 25 | R, step 25 running | ends ~12:10; cancels 49073315, rewrites `fixedpoint_report.txt` |
+| 49073315 | its insurance successor | PD | cancelled at step 25 |
+| **49074120** | **Phase 2: ff3.0 from ff2.1**, `training/ff30`, 76 steps, `TRAIN_GLY = True` | PD, `afterany:49073314` | ~27 h in one link, so ends **~2026-09-25 15:00-20:00 CDT**; then submits `after_training.sbatch` -> `validate_ff.sh ff_3.0` |
 
-| **49038518** (+ successors) | **Track A: ff3.1 with the glycine map trained**, `training/ff31-gly/`, 500 steps, self-chaining | R | ~4 days over ~4 links; then compare the learned `A` against Track B's |
+**dhb diagnosis (steps 20-24), settled.** The native-state and 0.3 x unfolded-state gradients
+nearly cancel at ff2.1 for every H-bond parameter (dhb: NSE mean +19.8, lambda*DSE mean -15.3, net
++4.5 +/- 9 changing sign; backbone scale -114 vs +127), which is what ff2.1 having been trained
+with lambda = 0.3 predicts. The reweighting fix reduces rather than causes the pull (the port's
+weights add ~+1.8 each step). dhb is a mildly unconverged ff2.1 parameter, not a port error.
+**Glycine gate passed on midway2** (job 49073372, 6.6 min) before phase 2 was initialised.
 
-**Restarted from step 0 on 2026-09-19** after a terminal-glycine defect in the gradient
-(findings.md 9q); the first attempt 49037939 reached step 24 and its output is kept as
-`run_output.bak_noterm`. **A hand-made `run_output` needs both `initial_checkpoint.pkl` and
-`ConDiv.py` copied in**, or every worker dies with `exit code 2`.
+Step 20 lost 4pqz to `srun: Invalid job credential` on the first launch at job start, a Slurm
+race; every later step ran 24/24. If it recurs at every link start, add a settle delay before the
+first launch.
 
-**Restarted from step 0 on 2026-09-19** after a terminal-glycine defect in the gradient
-(findings.md 9q); the first attempt 49037939 reached step 24 and its output is kept as
-`run_output.bak_noterm`. **A hand-made `run_output` needs both `initial_checkpoint.pkl` and
-`ConDiv.py` copied in**, or every worker dies with `exit code 2`.
+**Phase 1 (19 steps, job 49056803) COMPLETED 0:0 at 09:15**; report in
+`fixedpoint_report_19steps.txt`. Every trained file updates; 8 of 9 groups at a fixed point; **dhb
+(second-H-bond term) is not**: -0.406 -> -0.448, t = +2.98, still drifting. The hand-off worked:
+target reached, successor cancelled, report job 49073246 submitted and completed in 37 s.
 
-**`rama_gly_gradient.py` moved from `py/` to `training/` (2026-09-19).** `py/` is shared Upside
-infrastructure and glycine-specific code does not belong there; `training/ConDiv.py` imports the
-module, so it has to be somewhere on `PYTHONPATH`. Every `training/*/env.sh` now exports
-`$PROJECT_ROOT/py:$PROJECT_ROOT/training`.
+**`run_output/ConDiv.py` in this run carries TEMPORARY DIAGNOSTIC code** (marked `DIAGNOSTIC`); the
+clean copy is `run_output/ConDiv.py.clean` (md5 = repo `training/ConDiv.py`). Restore it, or
+discard this run, before this directory is used for anything else. Phase 2 initialises a fresh run
+from the repo trainer, so it does not inherit the diagnostic.
 
-**ACTION PENDING: `$P/py/rama_gly_gradient.py` is a hardlink and should be deleted once link
-49038518 ends.** That link sourced `env.sh` before the change, so its baked `PYTHONPATH` is `py/`
-only and its workers still resolve the module there. A hardlink rather than a copy means one
-inode and two names, so the two cannot drift apart in the meantime. Verified that the module
-imports and works with `py/` off the path entirely, so removing the name is safe; the next chain
-link (49038519) already picks it up from `training/`.
+**Nothing else is queued.** The 32 Peng arms and 4 glpG chains of the FF1-form ff3.0 were cancelled
+2026-09-24 ~01:45 at the user's request; that force field is superseded (findings 9t-9v).
+
+### The FF2 trainer on midway2 (2026-09-24)
+
+`training/ConDiv.py` is now the FF2 dual-target trainer (findings 9v, plan.md). Deployed md5-matched
+to `$P/training/`, with `extract_ff.py`, `patch_glpg.py`, `validate_ff.sh`, `check_converged.py`,
+`train_chain.sbatch`; the old trainer and helpers are in `$P/backup_training_ff1form/`.
+
+**Measured step cost, full protocol** (`worker_test/`, job 49056799): 5vhg, 150 residues, the
+largest in the set, 1242 s; 1ean, 114 residues, 897 s. A step waits for its slowest worker, so
+**~21-22 min per step**; `STEPS_PER_LINK = 90` fits a 36 h wall. Both unfolded properly on the SI's
+ladder (mean Rg 14 -> 46 A and 13 -> 36 A across T = 0.8-1.1), so the DSE target is real.
+
+**Schedule (estimates):**
+
+| stage | length | expected end |
+|---|---|---|
+| Phase 1, 19 steps from ff2.1 | ~7 h | 2026-09-24 ~09:30 CDT |
+| read the report; glycine gate on midway2; initialise phase 2 | ~1-2 h | 09-24 ~12:00 |
+| Phase 2, 76 steps, `TRAIN_GLY = True`, ff2.1 -> ff3.0 | ~28 h + queue | **2026-09-25 ~18:00-24:00** |
+| validation, auto-submitted: 32 Peng arms | ~7 days (longest arms ~51 k time units/h) | ~10-02 |
+| validation, auto-submitted: 4 glpG REMD chains, 5 x 36 h blocks | ~7.5 days | ~10-03 |
+
+**Phase 2's hand-off.** Its run directory gets an `after_training.sbatch` that runs
+`bash $P/training/validate_ff.sh "$SLURM_SUBMIT_DIR" ff_3.0`: extract through the run's own
+`expand_param`, back up and overwrite `parameters/ff_3.0` in `$P` and in the /beagle3 deployment
+(md5-verified), move the superseded `runs/*_ff_3.0` benchmark directories to `runs_superseded/`,
+submit the 32 arms, gate the glpG patch on a pristine ff_2.1 seed, patch the 4 live seeds, clear
+their replicas and submit the 4 chains. `train_chain.sbatch` submits it itself when the target is
+reached and cancels its insurance successor, so no 336-CPU job has to queue just to call sbatch.
+
+**`bench_run.py` changed 2026-09-24** (backup `bench_run.py.bak_ff1form_20260924`): the type-0
+burial override for ff_3.0 and the `rama3.dat` fallback are gone, since the new ff3.0 is FF2-form.
+Nothing may benchmark the old FF1-form ff_3.0 with it.
+
+### The 2026-09-23 training failure: an infrastructure kill, not a defect
+
+Link **49047139** ran 42 minibatches cleanly (steps 449 -> 491) and then **FAILED with exit 7**
+8 h 36 m in, far inside its 36 h wall. What the evidence says:
+
+* All 12 workers of minibatch 35 were killed by **signal 7 (SIGBUS)**, `sacct` steps `.492`-`.503`
+  all `CANCELLED 0:7`, spread across **four different nodes** (midway2-[0276-0279]). A bad node
+  kills 3 tasks, not 12, so this is not node-local and the nodes were **not** added to `--exclude`.
+* The physics was healthy at the moment of death: every worker was near frame 1985/4000 with
+  Rg 14.5 A, ~110 hbonds and potential around -200. Not a blow-up.
+* **No traceback anywhere**, and all 12 `*.output_worker` files are 0 bytes. The job's own `.out`
+  stopped being written at 11:22 while the workers kept writing until 11:26-11:31, and the job was
+  not reaped until 12:15.
+* **Disk was not the cause, checked directly.** `/project` trsosnic fileset: 3.5 T of 3.9 T, 445 G
+  free, inodes 216 K of 1.1 M (20%). A 200 MB write+delete on `/project` succeeded at 1.7 GB/s.
+  `/project2` group is the tight one at 1.45 T of a 1.49 T soft quota (97%), but nothing in this
+  campaign writes there. `rcchelp quota` is the tool that reports the group numbers; plain `df` on
+  the mount point shows the whole 6.3 P filesystem and tells you nothing, while `df` on the
+  **subdirectory** does report the fileset.
+
+* **The successor settles it.** The chain queues its replacement with `--dependency=afterany`, so
+  this should have been survivable. 49053769 started 12:18:02 and was `CANCELLED` the same second
+  with zero elapsed, and its `.out` file was never created: it died before it could open its own
+  output file. Those nodes could neither read nor create files on `/project` between 11:26 and
+  12:18.
+
+SIGBUS on mmap'd HDF5 across four nodes, plus a batch step that cannot create its output file
+52 minutes later, is a transient `/project` outage. **No GPFS log was available**, so this is
+inferred from symptoms rather than confirmed at the source. The chain logic itself is sound and
+needed no change; recovery was to resume.
+
+### The validation handoff was broken and would have fired nothing (found and fixed 2026-09-23)
+
+`train_gly.sbatch` ended its "target met" branch with `sbatch "$T/validate_ff31.sbatch"`, but `$T`
+is the **run directory** `training/ff31-gly/` and the script has always lived one level up in
+`training/`. The `||` fallback would have printed "WARNING: validation was NOT submitted" into a
+log nobody was watching, and the 32 Peng arms and 4 glpG chains would simply never have been
+queued. Fixed by defining `UP=` and calling `$UP/training/validate_ff31.sbatch`.
+
+**Why it survived this long: that branch runs exactly once, at the very end of a four-day chain.**
+Every other line of the script had been exercised twelve times. A code path that only executes on
+success, at the end, is untested by construction; check it by hand before the run that will use it.
+
+**And the fix alone was not enough, which is the reusable part.** Slurm **snapshots the batch
+script at submit time**. The successor 49056522 had already been queued by the running job, so it
+still carried the old path and editing the file on disk changed nothing for it. Dump what a queued
+job will actually execute:
+
+```
+scontrol write batch_script <jobid> /tmp/js.sh && grep -n <the-thing-you-fixed> /tmp/js.sh
+```
+
+That showed 49056522 still on `$T/validate_ff31.sbatch`, so it was cancelled and resubmitted as
+49056550 with `--dependency=afterany:49056521`. Cancelling a **pending successor** while the
+running link continues is the safe direction; the dangerous one, cancelling the running link first
+and leaving the successor to start on the same `run_output`, is what produced two concurrent
+writers earlier in this campaign.
+
+**Pre-flight check that was run after the fix**, all present: `bench.sbatch` and `logs/` under
+`$B`, `submit_remd.sh` under `$GM`, `ff_2.1/bb_env.dat`, the pristine `glpG-RKRK-79HIS` handoff
+seed, all four live glpG seeds, and `extract_ff31.py`/`patch_glpg_ff31.py`/`rama_gly_gradient.py`
+md5-identical to the repo copies. `parameters/ff_3.1_trained` correctly does not exist yet.
+
+### Two things fixed during the recovery
+
+**`train_gly.sbatch` overshot its own target.** The `STEP >= TARGET` test only runs at link start,
+and the link then always ran `STEPS_PER_LINK=150`. Resuming at 491 of a 500 target would have run
+to 641, roughly 29 h of pointless training before validation could fire. The last link now runs
+`TARGET - STEP` steps. Backup at `train_gly.sbatch.bak_overshoot`.
+
+**The aborted minibatch directory had to go before resuming.** `run_output/epoch_12_minibatch_35`
+held 13 GB of half-written `.h5` and no `checkpoint.pkl` and no `divergence.pkl`. Deleting it took
+`run_output` from 19 G to 6.1 G. Leaving a partial minibatch directory in place is a real hazard:
+`main_worker` reads `<name>.divergence.pkl` by path, so a stale one from an earlier attempt would
+be picked up as a fresh result for a worker that failed.
+
+**Pending cleanup, safe to defer.** `$P/py/rama_gly_gradient.py` on the cluster is a hardlink to
+`$P/training/rama_gly_gradient.py`, left from the move out of `py/`. One inode, two names, so the
+two cannot drift; `ff31-gly/env.sh` now carries both directories on `PYTHONPATH`, so the `py/`
+name can be deleted whenever nothing is running.
 
 **Validation is armed and will submit itself.** When `train_gly.sbatch` sees step >= 500 it
 runs `training/validate_ff31.sbatch`, which extracts `parameters/ff_3.1_trained` and submits 32
@@ -290,6 +400,12 @@ benchmark arms (16 Peng proteins x native/denovo) to `broadwl`, each self-chaini
 **`parameters/ff_3.1_trained` does not exist yet, deliberately.** A dry-run copy was created to
 test the pipeline and then deleted, so that nothing can benchmark a mid-training force field by
 accident. `validate_ff31.sbatch` creates it from the final checkpoint.
+
+**Disk headroom for the glpG half of the validation, measured 2026-09-23.** Each of the four
+variant directories in `popepopg_REMD_mdw2` holds ~150 GB of ff3.0 replicas, 604 GB for the four,
+against only 445 G free on `/project`. This is safe only because `validate_ff31.sbatch` does
+`rm -rf "$GM/$V"` immediately before submitting that variant's replacement, so the space is
+returned ahead of the write. Do not reorder that loop.
 
 ### glpG for ff3.1: patched into the midway2 tree, submits itself
 
@@ -1273,45 +1389,38 @@ scripts, and the four-arm experiment record is unreadable here. Do not plan a st
 `scratchpad/ff3_retraining/*` without first checking it is present.
 
 
-### Disk: check BOTH the group quota and the fileset, either can bind
+### Disk: from midway2, `df` on the subdirectory is the ONLY number you get for `/project`
 
-**Corrected 2026-09-09.** This section previously said the group quota is the binding limit and
-`df` is misleading, and quoted `used 1.45T / hard 1.64T`. **Those are `/project2`'s numbers, not
-`/project`'s**, a different filesystem, and not where any of this data lives. `rcchelp quota`
-reports four separate `trsosnic` group rows and the one that governs `/project/trsosnic` is the
-`Midway3 GPFS mounted at /project` section (see §1 for the full table).
+**Rewritten 2026-09-23 after re-measuring.** The earlier version of this section told you to read
+the `Midway3 GPFS mounted at /project` row out of `rcchelp quota`, and to use a `check_quota.py`
+helper. Both instructions are dead: on midway2 `rcchelp quota` now emits 14 lines covering only
+**home, scratch and project2**, with no `/project` and no `/beagle3` row, and no `check_quota.py`
+exists anywhere in the repo or on either cluster.
 
-The two limits for `/project/trsosnic`, measured 2026-09-09:
+What actually works, all three verified 2026-09-23:
 
 ```
-group quota (rcchelp, "mounted at /project" section):  used 2.36T  soft 3.49T  hard 3.84T -> 1516 G free
-fileset (statvfs / df on /project/trsosnic):           3929 G total, 2.4T used            -> 1514 G free
+df -h /project/trsosnic     -> 3.9T total  3.5T used   445G free  89%   (the FILESET, correct)
+df -ih /project/trsosnic    -> 1.1M inodes 216K used   898K free  20%
+df -h /project              -> 6.3P total                                (the whole device, useless)
+rcchelp quota               -> home, scratch, project2 group only
+mmlsquota                   -> "File system project is not known", the GPFS client is not here
 ```
 
-They agree to within 2 G, so neither is misleading here and **`df` on the fileset is a sound
-number**, what was misleading was reading the wrong quota row. The safe check is `min()` of the
-two, since a fileset smaller than the group limit inverts which one binds. `check_quota.py` now
-does exactly this; use it rather than reading `rcchelp` by eye.
+`df` on the **subdirectory** reports the fileset because GPFS `--filesetdf` is on; `df` on the
+**mount point** reports the 6.3 PB device. That distinction is the whole trap.
 
-Do **not** run `df` or `statvfs` on `/project` itself: that is the whole 6.3 PB `midway3_cap`
-device and reports 1.7 PB free. Use `/project/trsosnic`.
+**Current headroom, and the trend, which is the part that matters:**
 
-Exceeding the hard limit fails writes with ENOSPC, which can corrupt an HDF5 file mid-write, the
-worst possible failure for an unattended run. Note the quota accounting updates on a timer, so it
-lags a large delete by minutes; verify with `du` instead of waiting for the number to move.
+| fileset | 2026-09-09 | 2026-09-23 | note |
+|---|---|---|---|
+| `/project/trsosnic` | 1514 G free | **445 G free** | ~1.1 T consumed in two weeks |
+| `/beagle3/trsosnic` | - | 1.4 T free (4.2 T of 5.5 T) | the benchmark tree is only 42 G |
+| `/project2/trsosnic` (group) | - | 1.45 T of a 1.49 T soft quota, **97%** | nothing in this campaign writes there |
 
-**Footprints measured 2026-09-07:** training `run_output` ~17 MB per minibatch (~10 GB for a full
-600-step run); a glpG seed is 191 MB, so a 28-replica arm costs 5.2 GB before trajectory growth and
-the two-arm test ~14 GB all-in; each glpG variant's live replicas run 22.5 GB and the whole variant
-directory reaches 43-53 GB once trajectories accumulate. `decide_and_launch` deletes the live
-replicas before resubmitting, so the relaunch is net **-69 GB**, not a cost.
-
-**2026-09-07 cleanup, 69 GB reclaimed.** Deleted three sets of replica trajectory backups whose data
-this file already rules out — `.bak_alphaL_run` (112 files, 27.5 G, alphaL era), `.bak_broken_gly_2`
-(112 files, 25.8 G, pre-GLY-fix) and NP `.bak_broken_gly` (6 files, 14.9 G). All seed-level backups
-were kept (`.bak_rigid_stage`, `.bak_broken_gly` seeds, `.bak_alphaL_restart`, 2.25 GB total) since
-they are the cheap record of seed state. Take care with the patterns: glpG has a *seed* set named
-`.bak_broken_gly` that must survive while NP's *replica* set of the same name is the 14.9 GB target.
+`/project` is the one to watch. The four glpG variant directories in `popepopg_REMD_mdw2` hold
+~150 GB each and `popepopg_REMD` holds another 638 G; those two trees plus `NP-1AO6` at 491 G are
+1.75 T of the 3.5 T used.
 
 ### sbatch propagates the submitter's environment — this broke the whole chain once
 
