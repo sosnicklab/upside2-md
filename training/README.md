@@ -16,6 +16,8 @@ re-includes just these files, so a run directory created here stays untracked.
 | `extract_ff.py` | a checkpoint -> the six parameter files, through the run's own `expand_param` |
 | `patch_glpg.py` | patch a force field into a glpG hybrid seed without rebuilding it |
 | `validate_ff.sh` | release a trained force field and submit the Peng benchmark and glpG validation |
+| `convergence_gate.py` | exact sign-flip test of every trained group over the last epoch: exit 0 converged, 3 not |
+| `gate_or_continue.sh` | run by a run's `after_training.sbatch`: gate, then release and validate, or train one more epoch |
 | `env.sh` | module/venv/PYTHONPATH setup, derives `PROJECT_ROOT` from its own location |
 | `pdb_list` | the 456-protein training-set manifest (a list, not data) |
 
@@ -43,6 +45,12 @@ python3 ../ConDiv.py initialize init_param upside_input pdb_list run_output
 sbatch ../train_chain.sbatch . 76                 # 4 epochs of 19 minibatches, self-chaining
 python3 ../check_converged.py .
 ```
+
+**What happens at the target.** `train_chain.sbatch` submits `<run>/after_training.sbatch`. For
+a release run that calls `gate_or_continue.sh <run> <ff_name> <max_epochs>`: `convergence_gate.py`
+judges the last full epoch, and a converged run is released and validated by `validate_ff.sh`,
+while an unconverged one is trained one more epoch and judged again, up to `<max_epochs>`, after
+which it stops for review. A failure of the gate itself stops everything.
 
 `initialize` copies `ConDiv.py` and `rama_gly_gradient.py` into `run_output/`, and every later
 step, the driver included, runs that copy: a run is never continued by later code. `TRAIN_GLY` is

@@ -54,9 +54,11 @@ reconstruction 3e-6, directional finite differences 6e-5 to 1.3e-3).
 ### Phase 2 - train ff3.0 from ff2.1 (QUEUED 2026-09-24 ~11:55)
 - [x] `TRAIN_GLY = True`; `training/ff30` initialised from ff2.1; gate re-run on midway2
 - [x] `bench_run.py`'s type-0 override and `rama3.dat` fallback removed
-- [ ] 76 steps (job 49074120), ~27 h in one link; its `after_training.sbatch` runs
-      `validate_ff.sh ff_3.0`: release to both trees with backup, then the 32 Peng arms and 4 glpG
-      chains
+- [ ] 76 steps (job 49074120), ~27 h in one link, then the convergence gate
+      (`convergence_gate.py`, exact sign-flip test per group over the last epoch, family-wise 5%):
+      converged -> `validate_ff.sh ff_3.0` releases to both trees and starts the 32 Peng arms and 4
+      glpG chains; not converged -> one more epoch (~7 h) and judge again, up to 13 epochs, then
+      stop for review. Calibrated on ff2.1: all groups p 0.74-1.0 except dhb, p = 0.002
 - [ ] Copy the released `parameters/ff_3.0` into the local repo
 
 ### Phase 3 - validation (NOT STARTED)

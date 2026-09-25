@@ -85,13 +85,16 @@ for this account, so **every new connection costs a Duo push**. An inert key ent
 Consequences, and the mitigations that actually work:
 
 * **Minimise connections rather than trying to remove Duo.** The cluster-side monitor
-  (`/project/trsosnic/yinhan/monitor.sh`, run by a self-resubmitting job on the `cron` partition)
-  refreshes `/project/trsosnic/yinhan/STATUS.md` every 30 min and resubmits the training chain if
-  it dies. Nothing depends on a live laptop connection, so a monitoring loop can run every few
+  (`/project/trsosnic/yinhan/monitor.sh`, run by `monitor_loop.sbatch` on one `broadwl` core)
+  refreshes `/project/trsosnic/yinhan/STATUS.md` every 30 min. It only reports; the training chain
+  insures itself, and a dead chain shows as **CHAIN DOWN** in STATUS.md. Nothing depends on a live laptop connection, so a monitoring loop can run every few
   hours instead of hourly.
-* **`scrontab` is disabled and `crontab` is denied** on this cluster; a long-running job on the
-  `cron` partition is the way to schedule recurring work. A 7-day request hits
-  `QOSMaxWallDurationPerJobLimit`; 36 h with self-resubmission works.
+* **`scrontab` is disabled and `crontab` is denied** on this cluster, and `pi-trsosnic` has **no
+  association with the `cron` partition** (`sbatch -p cron` is refused; the old monitor, believed
+  to be on cron, actually ran on `broadwl`). A 1-core `broadwl` job is the way to schedule recurring
+  work. A 7-day request hits `QOSMaxWallDurationPerJobLimit`; 36 h works, **provided the successor
+  is queued at the start** (`--dependency=afterany:$SLURM_JOB_ID`). The first monitor resubmitted at
+  the end of its loop, overran the wall and died silently on 2026-09-19.
 * **Disabling laptop sleep is not sufficient.** With `caffeinate -is` holding
   `PreventSystemSleep`, the master still died after ~40 min, so network blips rather than sleep
   are tearing it down. `mdw2_master.exp` now uses `ServerAliveInterval=30
@@ -244,14 +247,20 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-24 ~11:52 CDT, verified live against `squeue`.** Finished and cancelled rows are
-deleted; only lessons worth reusing are kept, below the table.
+Snapshot **2026-09-24 21:50 CDT, verified live against `squeue`.** Finished and cancelled rows are
+deleted; only lessons worth reusing are kept, below the table. Phase 1 extension (49073314) completed
+2026-09-24 in 2:06; its successor 49073315 was cancelled as planned.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49073314** | Phase 1 extension, dhb diagnostic, `training/ff21-fixedpoint`, steps 19 -> 25 | R, step 25 running | ends ~12:10; cancels 49073315, rewrites `fixedpoint_report.txt` |
-| 49073315 | its insurance successor | PD | cancelled at step 25 |
-| **49074120** | **Phase 2: ff3.0 from ff2.1**, `training/ff30`, 76 steps, `TRAIN_GLY = True` | PD, `afterany:49073314` | ~27 h in one link, so ends **~2026-09-25 15:00-20:00 CDT**; then submits `after_training.sbatch` -> `validate_ff.sh ff_3.0` |
+| **49074120** | **Phase 2: ff3.0 from ff2.1**, `training/ff30`, 76 steps, `TRAIN_GLY = True` | R 9:43 of 36 h, 13 nodes; 26/76 steps done (`epoch_01_minibatch_07` running), ~22 min/step, no errors in log | step 76 ~**2026-09-25 16:00 CDT**; then `after_training.sbatch` -> `gate_or_continue.sh`: converged -> `validate_ff.sh ff_3.0`; not -> +1 epoch (~7 h), up to 13 |
+| 49074122 | its insurance successor (`train_chain.sbatch`) | PD, `afterany:49074120` | resumes the chain only if 49074120 dies before step 76 |
+| 49082029 | `ff30_monitor`, `/project/trsosnic/yinhan/monitor_loop.sbatch` -> `monitor.sh` | R on midway2-0461, 36 h | writes `STATUS.md` every 30 min (queue, step, errors, GLY-row line from `training/ff30/analysis/gly_status.py`); log `monitor_loop.out` |
+| 49082147 | its successor | PD, `afterany:49082029` | takes over at the wall; to stop the monitor cancel **both** |
+
+Log `/project/trsosnic/yinhan/upside2-md-mdw2/training/ff30/condiv-train_49074120.out`; checkpoints
+`.../training/ff30/run_output/epoch_EE_minibatch_MM`. Monitor rewritten for Phase 2 and restarted
+2026-09-24 21:48; the ff3.0C/AWH version is kept as `monitor.sh.bak_ff30C_awh`.
 
 **dhb diagnosis (steps 20-24), settled.** The native-state and 0.3 x unfolded-state gradients
 nearly cancel at ff2.1 for every H-bond parameter (dhb: NSE mean +19.8, lambda*DSE mean -15.3, net

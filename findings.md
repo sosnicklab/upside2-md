@@ -4574,6 +4574,27 @@ barely left ff2.1 anyway, `rot` drift being indistinguishable from a random walk
 
 ---
 
+## 9w. Phase 2 glycine row, step 26 of 76: leaving ff2.1 slowly, not toward GROMACS (2026-09-24)
+
+Script: `training/ff30/analysis/gly_status.py` on the cluster, one row per checkpoint, the last row
+also in `STATUS.md`. GROMACS row = central-GLY coil row of the rebuilt `rama31.dat` (X|GLY
+dG -0.154). Same populated-cell mask as 9s (3,137 of 5,184). Displacement since step 0 is projected
+on `GROMACS - ff2.1`, split into symmetric (shape) and antisymmetric (handedness) parts.
+
+| step | dG X\|GLY | rms from ff2.1 | rms from GROMACS | corr vs GROMACS | progress sym / cos | progress anti / cos |
+|---|---|---|---|---|---|---|
+| 0 | -1.245 | 0 | 1.596 | 0.680 | 0 | 0 |
+| 10 | -1.233 | 0.022 | 1.593 | 0.679 | 0.23% / +0.21 | 0.11% / +0.03 |
+| 26 | -1.205 | 0.044 | 1.588 | 0.679 | 0.59% / +0.25 | 0.24% / +0.04 |
+
+**Reading.** The row drifts steadily and monotonically away from ff2.1 (+0.0015 nats of dG per
+step, slightly accelerating), GLY|GLY stays exactly symmetric, and the correlation with GROMACS
+does not move. The handedness part of the displacement is nearly orthogonal to the GROMACS
+direction (cos +0.04); the shape part is weakly aligned (+0.25). dG moving toward zero is not by
+itself movement toward GROMACS: Track A converged at -0.885 from the other side (9s), so this run
+may be heading for the same objective optimum rather than for -0.154. That is a hypothesis to test
+at the step-76 gate, not a result.
+
 ## 9v. The FF2 trainer: found, adapted, and what the port had wrong (2026-09-24)
 
 **Only one FF2 dual-target trainer exists**: O. Kleinmann's Python 3 port of Peng's code,
