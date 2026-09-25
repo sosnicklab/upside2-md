@@ -247,18 +247,26 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-24 21:50 CDT, verified live against `squeue`.** Finished and cancelled rows are
-deleted; only lessons worth reusing are kept, below the table. Phase 1 extension (49073314) completed
-2026-09-24 in 2:06; its successor 49073315 was cancelled as planned.
+Snapshot **2026-09-25 16:33 CDT, verified live against `squeue`.** Finished and cancelled rows are
+deleted; only lessons worth reusing are kept, below the table. 49074120 ran steps 0-76 in 26:49; the
+gate (49119011) passed every group except `gly` (p = 0) and submitted epoch 5 as 49119019. That job
+was **cancelled by us after step 77** (43 min; step 77 took 2316 s on a 21-node spread against the
+usual ~1240 s) to double the glycine step size in the step-77 checkpoint (plan.md, Revised
+2026-09-25). Its insurance successor resumes from step 77.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49074120** | **Phase 2: ff3.0 from ff2.1**, `training/ff30`, 76 steps, `TRAIN_GLY = True` | R 9:43 of 36 h, 13 nodes; 26/76 steps done (`epoch_01_minibatch_07` running), ~22 min/step, no errors in log | step 76 ~**2026-09-25 16:00 CDT**; then `after_training.sbatch` -> `gate_or_continue.sh`: converged -> `validate_ff.sh ff_3.0`; not -> +1 epoch (~7 h), up to 13 |
-| 49074122 | its insurance successor (`train_chain.sbatch`) | PD, `afterany:49074120` | resumes the chain only if 49074120 dies before step 76 |
+| **49119234** | **Phase 2 epoch 5, resumed**, `training/ff30`, steps 78 -> 95, glycine alpha 0.01 | PD (Priority) | ~6.3 h once running; at 95 the gate judges steps 77-95: converged -> `validate_ff.sh ff_3.0`, not -> next epoch, up to 13 epochs (step 247) |
 | 49082029 | `ff30_monitor`, `/project/trsosnic/yinhan/monitor_loop.sbatch` -> `monitor.sh` | R on midway2-0461, 36 h | writes `STATUS.md` every 30 min (queue, step, errors, GLY-row line from `training/ff30/analysis/gly_status.py`); log `monitor_loop.out` |
 | 49082147 | its successor | PD, `afterany:49082029` | takes over at the wall; to stop the monitor cancel **both** |
 
-Log `/project/trsosnic/yinhan/upside2-md-mdw2/training/ff30/condiv-train_49074120.out`; checkpoints
+**The step-77 checkpoint is edited.** `run_output/epoch_04_minibatch_00/checkpoint.pkl` has
+`solver.alpha.gly` 0.01 and an `alpha_changes` record; the untouched original is
+`checkpoint.pkl.bak_gly_alpha_0.005` beside it (named so the chain's `find -name checkpoint.pkl`
+skips it). Edit and field-by-field check: `training/ff30/analysis/set_gly_alpha.py`, `verify_ck.py`.
+**`scontrol hold` does nothing to a job that has already started**: check `squeue` state first.
+
+Log `/project/trsosnic/yinhan/upside2-md-mdw2/training/ff30/condiv-train_<jobid>.out`; checkpoints
 `.../training/ff30/run_output/epoch_EE_minibatch_MM`. Monitor rewritten for Phase 2 and restarted
 2026-09-24 21:48; the ff3.0C/AWH version is kept as `monitor.sh.bak_ff30C_awh`.
 

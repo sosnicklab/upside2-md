@@ -38,6 +38,14 @@ the start and after every update; updates are Fourier band-limited per map. The 
 is gated by `training/verify_gly_gradient.py` (passed 2026-09-24 on 1bgf: spline 1e-6, map
 reconstruction 3e-6, directional finite differences 6e-5 to 1.3e-3).
 
+**Revised 2026-09-25: glycine step size doubled from step 77, 0.005 -> 0.01 (after the global
+factor).** The glycine alpha is the project's own choice, not part of ff2.1's workflow, and it was
+the limit: over steps 58-76 each cell moved in a consistent direction (sign consistency 0.70
+against 0.23 for noise) while Adam's per-step utilisation sat near the noise floor (0.37 against
+0.33), the signature of a weak steady pull whose drift scales with alpha. Only `solver.alpha.gly`
+in the step-77 checkpoint was changed (backup `checkpoint.pkl.bak_gly_alpha_0.005`); the nine ff2.1
+groups keep their rates and had passed the gate. The destination is unchanged; only the rate.
+
 ## Execution Phases
 
 ### Phase 1 - validate the trainer on ff2.1 (DONE 2026-09-24)
@@ -54,7 +62,9 @@ reconstruction 3e-6, directional finite differences 6e-5 to 1.3e-3).
 ### Phase 2 - train ff3.0 from ff2.1 (QUEUED 2026-09-24 ~11:55)
 - [x] `TRAIN_GLY = True`; `training/ff30` initialised from ff2.1; gate re-run on midway2
 - [x] `bench_run.py`'s type-0 override and `rama3.dat` fallback removed
-- [ ] 76 steps (job 49074120), ~27 h in one link, then the convergence gate
+- [ ] 76 steps done 2026-09-25 (49074120, 26:49); gate at 76: all groups ok except `gly` (p = 0).
+      Epoch 5 was cancelled after step 77 to double the glycine alpha (above) and resumes from 77
+      as 49119234, target 95. The convergence gate
       (`convergence_gate.py`, exact sign-flip test per group over the last epoch, family-wise 5%):
       converged -> `validate_ff.sh ff_3.0` releases to both trees and starts the 32 Peng arms and 4
       glpG chains; not converged -> one more epoch (~7 h) and judge again, up to 13 epochs, then

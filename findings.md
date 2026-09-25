@@ -4574,26 +4574,57 @@ barely left ff2.1 anyway, `rot` drift being indistinguishable from a random walk
 
 ---
 
-## 9w. Phase 2 glycine row, step 26 of 76: leaving ff2.1 slowly, not toward GROMACS (2026-09-24)
+## 9w. Phase 2 glycine row, step 34 of 76: leaving ff2.1 slowly, not toward GROMACS (2026-09-25)
 
 Script: `training/ff30/analysis/gly_status.py` on the cluster, one row per checkpoint, the last row
 also in `STATUS.md`. GROMACS row = central-GLY coil row of the rebuilt `rama31.dat` (X|GLY
-dG -0.154). Same populated-cell mask as 9s (3,137 of 5,184). Displacement since step 0 is projected
-on `GROMACS - ff2.1`, split into symmetric (shape) and antisymmetric (handedness) parts.
+dG -0.154). Same populated-cell mask as 9s. Displacement since step 0 is projected on
+`GROMACS - ff2.1`, split into symmetric (shape) and antisymmetric (handedness) parts.
+
+**The two GLY|ALL maps are excluded, because nothing reads them.** `ALL` is a pooled-neighbour
+column of the library, and the only reader of it is the `product` combining rule
+(`upside_config.py`, `V(c,'right','ALL')`). The default and only rule in use is `mixture`: nothing
+in `py/`, `training/` or `example/` on either tree selects `product`, and `run_upside.upside_config`,
+the wrapper ConDiv calls, cannot pass the option. Their Adam gradient is exactly zero at every
+step, so they sit at ff2.1's values in any trained row. Including them diluted every row mean by
+2/40, which is why the training log's `gly` line (still over 40 maps) reads slightly less drift.
+All 38 X|GLY maps and both GLY|GLY maps train; the GLY|GLY pair stays exactly mirror-symmetric.
 
 | step | dG X\|GLY | rms from ff2.1 | rms from GROMACS | corr vs GROMACS | progress sym / cos | progress anti / cos |
 |---|---|---|---|---|---|---|
-| 0 | -1.245 | 0 | 1.596 | 0.680 | 0 | 0 |
-| 10 | -1.233 | 0.022 | 1.593 | 0.679 | 0.23% / +0.21 | 0.11% / +0.03 |
-| 26 | -1.205 | 0.044 | 1.588 | 0.679 | 0.59% / +0.25 | 0.24% / +0.04 |
+| 0 | -1.248 | 0 | 1.599 | 0.681 | 0 | 0 |
+| 10 | -1.236 | 0.022 | 1.595 | 0.680 | 0.25% / +0.22 | 0.12% / +0.03 |
+| 20 | -1.216 | 0.036 | 1.592 | 0.680 | 0.48% / +0.25 | 0.20% / +0.04 |
+| 34 | -1.189 | 0.058 | 1.588 | 0.680 | 0.80% / +0.25 | 0.40% / +0.05 |
 
-**Reading.** The row drifts steadily and monotonically away from ff2.1 (+0.0015 nats of dG per
-step, slightly accelerating), GLY|GLY stays exactly symmetric, and the correlation with GROMACS
-does not move. The handedness part of the displacement is nearly orthogonal to the GROMACS
-direction (cos +0.04); the shape part is weakly aligned (+0.25). dG moving toward zero is not by
-itself movement toward GROMACS: Track A converged at -0.885 from the other side (9s), so this run
-may be heading for the same objective optimum rather than for -0.154. That is a hypothesis to test
-at the step-76 gate, not a result.
+**Reading.** The row drifts steadily and monotonically away from ff2.1 (about +0.002 nats of dG
+per step, slightly accelerating) and the correlation with GROMACS does not move. The handedness
+part of the displacement is nearly orthogonal to the GROMACS direction (cos +0.05); the shape part
+is weakly aligned (+0.25). dG moving toward zero is not by itself movement toward GROMACS: Track A
+converged at -0.885 from the other side (9s), so this run may be heading for the same objective
+optimum rather than for -0.154. That is a hypothesis to test at the step-76 gate, not a result.
+
+**Gate at step 76: every group at a fixed point except `gly` (p = 0).** enve/envc/envs/envw
+0.999-1.0, bbenve 0.95, rot 1.0, hb 0.73, dhb 0.07, sheet 0.999.
+
+**The glycine row was step-size limited, so its alpha was doubled from step 77** (`analysis/gly_stepsize.py`).
+Over steps 58-76, on the used maps' populated cells:
+
+| | epoch 1 | epoch 4 | pure noise |
+|---|---|---|---|
+| Adam utilisation, rms step / alpha | 0.42 | 0.37 | 0.33 = sqrt((1-b1)/(1+b1)) |
+| sign consistency of each cell's steps over the epoch | 0.59 | 0.70 | 0.23 = 1/sqrt(19) |
+| dG X\|GLY change per epoch | +0.031 | +0.031 | 0 |
+
+Per-step utilisation at the noise floor with a consistent direction over the epoch is a weak,
+steady pull under noisy per-step gradients: Adam's normalised step is mostly noise, and the net
+drift is proportional to alpha. This is the opposite of Track A at step 500 (9s), where
+utilisation was at the noise floor and the direction was not consistent either, so no step size
+would have helped there. The four epochs gave +0.031, +0.038, +0.039, +0.031, so no clear
+deceleration yet.
+
+Every other trained group was checked moving and every frozen one unchanged at step 34
+(`analysis/ff_change_check.py`, checkpoint and written files against `init_param`).
 
 ## 9v. The FF2 trainer: found, adapted, and what the port had wrong (2026-09-24)
 
