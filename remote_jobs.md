@@ -260,6 +260,26 @@ usual ~1240 s) to double the glycine step size in the step-77 checkpoint (plan.m
 | 49082029 | `ff30_monitor`, `/project/trsosnic/yinhan/monitor_loop.sbatch` -> `monitor.sh` | R on midway2-0461, 36 h | writes `STATUS.md` every 30 min (queue, step, errors, GLY-row line from `training/ff30/analysis/gly_status.py`); log `monitor_loop.out` |
 | 49082147 | its successor | PD, `afterany:49082029` | takes over at the wall; to stop the monitor cancel **both** |
 
+**Unattended path, audited 2026-09-25 17:10 (the laptop is offline most of 2026-09-26).** Nothing below
+needs a login:
+1. `train_chain.sbatch` links, each queuing its insurance successor first. **New:** a link refuses
+   to start if the last three links all started from the same step (`ff30/.chain_starts`), so a
+   repeating failure stops instead of resubmitting 336 CPUs forever. Delete `.chain_starts` to retry.
+2. At each target `after_training.sbatch` -> `gate_or_continue.sh`: not converged -> next epoch
+   (target +19), up to 13 epochs (step 247), then stop for review; converged -> `validate_ff.sh ff_3.0`.
+3. `validate_ff.sh` extracts the newest checkpoint, releases `parameters/ff_3.0` to the mdw2 tree
+   and `/beagle3/.../upside2-md` (old ones to `backup/`), moves old `ff3_benchmark/runs/*_ff_3.0`
+   aside, submits the 32 Peng arms (self-chaining), passes the glpG patch round trip on the
+   pristine ff_2.1 seed, patches the 4 live seeds (backups `*.bak_pre_ff_3.0_<stamp>`), **deletes
+   the 4 variant directories** (only the one-block ff3.1 test runs of 2026-09-24, jobs
+   49056702-05; the pre-ff3 baseline is text in `BASELINE_TM_pre_ff3.txt`) and submits 4 REMD chains.
+   Dry-run on the step-77 checkpoint: extraction gives all six files, round trip worst 3.6e-15,
+   live-seed patch ok, `sbatch --test-only` accepts a bench arm, a REMD chain, a training link and
+   the gate; bench env verified correct under an inherited training venv. Disk: /project 989 G,
+   /beagle3 1.4 T free.
+4. `STATUS.md` now reads `CHAIN DOWN` only when no training/gate job is queued and no gate verdict
+   exists for the newest step, and shows the latest gate job's verdict and release/launch lines.
+
 **The step-77 checkpoint is edited.** `run_output/epoch_04_minibatch_00/checkpoint.pkl` has
 `solver.alpha.gly` 0.01 and an `alpha_changes` record; the untouched original is
 `checkpoint.pkl.bak_gly_alpha_0.005` beside it (named so the chain's `find -name checkpoint.pkl`

@@ -55,6 +55,16 @@ if [ "$STEP" -ge "$TARGET" ]; then
     exit 0
 fi
 
+# A link that finishes no step leaves its successor the same resume point. That is right after a
+# node failure, but a failure that repeats would resubmit these 336 CPUs without end, so three
+# links in a row that start from the same step stop the chain. Delete .chain_starts to retry.
+touch .chain_starts
+if [ "$(tail -3 .chain_starts | grep -cx "$STEP")" -eq 3 ]; then
+    echo "STOPPED: the last three links all started from step $STEP and finished none" >&2
+    exit 1
+fi
+echo "$STEP" >> .chain_starts
+
 # The last link runs only the steps that remain.
 REMAINING=$(( TARGET - STEP ))
 if [ "$REMAINING" -lt "$STEPS_PER_LINK" ]; then

@@ -69,6 +69,8 @@ groups keep their rates and had passed the gate. The destination is unchanged; o
       converged -> `validate_ff.sh ff_3.0` releases to both trees and starts the 32 Peng arms and 4
       glpG chains; not converged -> one more epoch (~7 h) and judge again, up to 13 epochs, then
       stop for review. Calibrated on ff2.1: all groups p 0.74-1.0 except dhb, p = 0.002
+- [x] Unattended path audited and dry-run 2026-09-25 (remote_jobs.md); `train_chain.sbatch` stops
+      after three links in a row fail at the same step
 - [ ] Copy the released `parameters/ff_3.0` into the local repo
 
 ### Phase 3 - validation (NOT STARTED)
