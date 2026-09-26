@@ -276,7 +276,7 @@ struct NodeHolder {
         float dev = 0.f;
         for(int d: range(n_rot)) 
             for(int nn: range(n_elem)) 
-                dev = max(cur_belief(d,nn)-old_belief(d,nn), dev);
+                dev = max(fabsf(cur_belief(d,nn)-old_belief(d,nn)), dev);
         return dev;
     }
 
