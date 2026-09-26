@@ -7,7 +7,7 @@
 #SBATCH --mem-per-cpu=2000M
 #SBATCH --time=36:00:00
 #SBATCH --no-requeue
-#SBATCH --exclude=midway2-0003,midway2-[0010-0011],midway2-[0342-0345]
+#SBATCH --exclude=midway2-0003,midway2-[0010-0011],midway2-0037,midway2-[0342-0345]
 #SBATCH --output=%x_%j.out
 
 # Self-chaining FF2 dual-target ConDiv training.
@@ -27,8 +27,10 @@
 # is never continued by later code.
 #
 # --exclude carries midway2-[0010-0011], an adjacent pair that produced three NODE_FAILs in one
-# campaign while other nodes ran clean for 14 h.  If a NODE_FAIL happens outside that pair, say so
-# rather than just adding the node: the bad-pair explanation would then be wrong.
+# campaign while other nodes ran clean for 14 h, and midway2-0037, which failed two links of the
+# ff30 run within three hours (2026-09-26 05:30 and 08:15) while every other node ran clean. Each
+# is excluded for its own record of failures, not for being near another; a NODE_FAIL on any
+# other node is new evidence and should be recorded as such, not just added here.
 
 set -eo pipefail
 RUN_DIR="$(cd "${1:?usage: sbatch train_chain.sbatch <run_dir> <target_steps>}" && pwd)"

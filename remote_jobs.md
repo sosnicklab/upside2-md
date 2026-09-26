@@ -247,18 +247,29 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-25 16:33 CDT, verified live against `squeue`.** Finished and cancelled rows are
-deleted; only lessons worth reusing are kept, below the table. 49074120 ran steps 0-76 in 26:49; the
-gate (49119011) passed every group except `gly` (p = 0) and submitted epoch 5 as 49119019. That job
-was **cancelled by us after step 77** (43 min; step 77 took 2316 s on a 21-node spread against the
-usual ~1240 s) to double the glycine step size in the step-77 checkpoint (plan.md, Revised
-2026-09-25). Its insurance successor resumes from step 77.
+Snapshot **2026-09-26 13:20 CDT, verified live against `squeue`.** Finished and cancelled rows are
+deleted; only lessons worth reusing are kept, below the table. Gates at 76, 95 and 114: all NOT
+CONVERGED, every group p > 0.07 except `gly` (p = 0). **midway2-0037 killed two links**, 49120384
+(05:30, steps 96-100 done) and 49120386 (08:15, steps 101-108 done); each insurance successor took
+over within seconds and no step was lost. 0037 is now in `train_chain.sbatch`'s `--exclude` and was
+added to the queued successor 49120552 with `scontrol update ... ExcNodeList`. The running link
+49120551 still has 0037.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49119234** | **Phase 2 epoch 5, resumed**, `training/ff30`, steps 78 -> 95, glycine alpha 0.01 | PD (Priority) | ~6.3 h once running; at 95 the gate judges steps 77-95: converged -> `validate_ff.sh ff_3.0`, not -> next epoch, up to 13 epochs (step 247) |
-| 49082029 | `ff30_monitor`, `/project/trsosnic/yinhan/monitor_loop.sbatch` -> `monitor.sh` | R on midway2-0461, 36 h | writes `STATUS.md` every 30 min (queue, step, errors, GLY-row line from `training/ff30/analysis/gly_status.py`); log `monitor_loop.out` |
-| 49082147 | its successor | PD, `afterany:49082029` | takes over at the wall; to stop the monitor cancel **both** |
+| **49120551** | **Phase 2 epoch 7**, `training/ff30`, steps 115 -> 133, glycine alpha 0.01 | R since 10:20, 12 nodes incl. 0037, ~20 min/step | step 133 ~17:00; then the gate judges 115-133 |
+| 49120552 | its insurance successor, excludes 0037 | PD, `afterany:49120551` | resumes only if 49120551 dies |
+| 49082147 | `ff30_monitor`, `/project/trsosnic/yinhan/monitor_loop.sbatch` -> `monitor.sh` | R on midway2-0152 since 09:48, 36 h | writes `STATUS.md` every 30 min (queue, step, errors, GLY-row line from `training/ff30/analysis/gly_status.py`); log `monitor_loop.out` |
+| 49120529 | its successor | PD, `afterany:49082147` | takes over at the wall; to stop the monitor cancel **both** |
+
+**Step 81 ran on 5 of 24 proteins (2026-09-25 ~20:00).** 19 worker launches failed at once with
+`srun: error: ... Job credential expired`, a transient Slurm credential failure on every node of
+the step, and the driver summed whatever returned. The step's parameter changes are within the
+spread of steps 77-83 (Adam momentum carries most of each step), so it was kept. `ConDiv.py` now
+raises when any worker fails, so the successor repeats the step whole (repo, `training/` and
+`ff30/run_output/` copies identical, md5 e71a2225; backups `*.bak_pre_workerfail`). 49119234 finished
+step 95 on the old code with no further failures; every link since runs the fix.
+Every other step of all three links used the full 24.
 
 **Unattended path, audited 2026-09-25 17:10 (the laptop is offline most of 2026-09-26).** Nothing below
 needs a login:

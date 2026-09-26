@@ -71,6 +71,8 @@ groups keep their rates and had passed the gate. The destination is unchanged; o
       stop for review. Calibrated on ff2.1: all groups p 0.74-1.0 except dhb, p = 0.002
 - [x] Unattended path audited and dry-run 2026-09-25 (remote_jobs.md); `train_chain.sbatch` stops
       after three links in a row fail at the same step
+- [x] A failed worker now fails the step instead of being dropped (step 81 had run on 5 of 24
+      proteins after an `srun` credential failure; its update was ordinary and was kept)
 - [ ] Copy the released `parameters/ff_3.0` into the local repo
 
 ### Phase 3 - validation (NOT STARTED)

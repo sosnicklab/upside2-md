@@ -21,6 +21,7 @@ modernised and restored to the published protocol. Differences from that file, e
     T0 times the correct E*(1/Ti - 1/T0); and a dE < -200 clamp stood in for a normalisation,
     now an exact max-subtracted one. The port's guard that silently dropped the DSE term when a
     replica's final energy exceeded 1000 is removed: a blown-up replica must fail, not vanish.
+    For the same reason a failed worker fails the step; the port summed whatever returned.
   * added, switched by TRAIN_GLY: the central-glycine row of the Ramachandran library, 42 maps
     each trained on its own, GLY|GLY held mirror-symmetric (rama_gly_gradient.py). With it off
     the library is read unchanged, as in ff2.1's training.
@@ -315,10 +316,11 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
                                 stdout=open('%s/%s.output_worker' % (direc, nm), 'w'),
                                 stderr=sp.STDOUT)
 
-    rmsd, change, no_dse = dict(), [], []
+    rmsd, change, no_dse, failed = dict(), [], [], []
     for nm, j in jobs.items():
         if j.wait() != 0:
             print(nm, 'WORKER_FAIL')
+            failed.append(nm)
             continue
         with open('%s/%s.divergence.pkl' % (direc, nm), 'rb') as f:
             div = cp.load(f)
@@ -328,8 +330,10 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
             no_dse.append(nm)
     if train_gly:
         os.remove(d_obj_files['rama'])     # every worker has exited
-    if not change:
-        raise RuntimeError('All jobs failed')
+    # A step from part of the minibatch is a different objective, so it is never taken: the step
+    # fails and the chain's successor repeats it from the last checkpoint.
+    if failed:
+        raise RuntimeError('%i of %i workers failed: %s' % (len(failed), len(jobs), ' '.join(failed)))
 
     d_param = backprop_deriv(
         param, Update(*[None if x[0] is None else np.sum(x, axis=0) for x in zip(*change)]),
