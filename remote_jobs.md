@@ -1,5 +1,7 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
+**2026-09-26: rotamer-BP stopping-test bug fixed in master; cluster install armed at the ff3.0 gate; 16-arm validation running. See §0c.**
+
 Snapshot: **2026-09-19 09:00 CDT.** Eight jobs (six long-running plus `scmiss` and `ff21-restart`), all healthy, none needing intervention.
 Glycine AWH campaign relaunched after a settings defect made the first attempt unconverged
 (49032988/49033468 cancelled; 49033509/49033947/49033985 are the corrected run; see Campaign 6).
@@ -245,6 +247,72 @@ files. But **11 of its 13 GB is `example/16.MARTINI/outputs/water_T*`**, water-d
 output from 2025-10-30 that is not in git and exists nowhere else. Deleting the directory discards
 that data. Left in place pending a decision.
 
+## 0c. Rotamer belief-propagation stopping-test bug: fix, deployment, validation (2026-09-26)
+
+**The bug** (reported by John Jumper via Tobin). `NodeHolder::max_deviation` in `src/rotamer.cpp`
+took `max(cur_belief - old_belief, dev)` with no absolute value. Beliefs are rescaled each iteration
+so the dominant rotamer stays at 1, so an update that only *sharpens* (others fall) gives dev = 0 and
+the solver stops as if converged. It has been there since the original rotamer commit: ff2.1 was
+trained with it, and the running ff3.0 training uses it.
+
+**The fix** is `fabsf(...)` on that line (279). Status by tree:
+
+| tree | status |
+|---|---|
+| `master` (GitHub) | fixed in `288d1fec`, pushed by the user 2026-09-26 |
+| `martini-dev` | fixed; master merged in by PR #48 (`11044069`) 2026-09-26 |
+| `/project/trsosnic/yinhan/upside2-md-mdw2` (midway2) | **still old binary**; installs at the ff3.0 gate, below |
+| `/beagle3/trsosnic/yinhan/upside2-md` (midway2 + midway3) | **still old binary**; installs at the ff3.0 gate, below |
+
+**Static-frame result (local, 2026-09-26).** 8 training proteins (50-146 res), ff2.1, 91 frames each
+(native + T 0.80/0.95/1.10), old vs fixed library vs a tol=1e-6 reference. The early stop fires in
+~45% of frames but the error is small: |dE| <= 0.029 E_up, force error 7e-5 (median) / 3e-3 (max) of
+the RMS force, ConDiv rotamer-gradient error ~1e-4 relative; the energy bias is one-signed (converged
+is higher, mean 0.0009 E_up). Conclusion given to the user: ff2.1 and ff3.0 do not need retraining.
+
+**Simulation validation for Tobin: jobs 49120982-49120997 (16 arms, running).** ff_2.1, native-start
+14-replica REMD with the Peng benchmark protocol (Table S2 ladder and duration, dt 0.009, frame 100),
+proteinG / homeodomain / WWdomain / NTL9 x {bug, fix} x seeds {1, 2}. Trajectories of the two
+binaries decorrelate within a few hundred time units, so the test is statistical: bug-minus-fix
+against the seed-to-seed spread (z = delta / sigma_seed). All 16 checked healthy at the first 100
+frames (C-N 1.33-1.34 +- 0.13 A as in the ff_3.0 benchmark, KE/1.5kT 0.99-1.00). Expected done
+~1.5 days (WW, NTL9) and 2.5-3 days (proteinG, homeodomain) from 2026-09-26 18:55.
+* dir `/beagle3/trsosnic/yinhan/bp_validation`: `obj_bug/`, `obj_fix/` (deployment source built
+  twice, differing only in the fix; `obj_bug` reproduces the deployed binary bitwise), `bp_run.py`
+  (copy of `ff3_benchmark/bench_run.py`: binary, seed, ff_2.1 native), `bp.sbatch`, `submit_all.sh`
+* logs `logs/<prot>_<build>_s<seed>_<jobid>.out`, data `runs/<prot>_<build>_s<seed>/`; each arm
+  resubmits itself every ~29 h under the same job name, so track with `squeue -u yinhanw | grep bp_`
+  and completion with `ls runs/*/COMPLETE`
+* analyse on the midway2 login node after `source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh`:
+  `python3 analyse_bp.py [protein ...]` gives per-T Q, CA-RMSD, Rg and E per build, bug-fix vs the
+  seed spread, melting midpoints and speed. Two seeds give only a rough sigma: |z| ~ 1 is "not
+  resolved"; only |z| well above 2 across the ladder is an effect
+* local static-frame harness (gen.py, eval.py, cmp.py) was in the session scratchpad, not kept
+
+**Deployment: armed in the ff3.0 gate (2026-09-26 19:27), NOT yet fired.** The cluster copy of
+`upside2-md-mdw2/training/gate_or_continue.sh` carries ONE TEMPORARY line in its converged branch,
+before `validate_ff.sh`: `bash /project/trsosnic/yinhan/bpfix_stage/install_bpfix.sh`. So training
+finishes on the old binary and all ff3.0 validation (Peng benchmark, glpG chains) runs on the fixed
+one, with no trajectory spanning two binaries.
+* staged builds `/project/trsosnic/yinhan/bpfix_stage/mdw2/obj` and
+  `/beagle3/trsosnic/yinhan/bpfix_stage/beagle3/obj`: each tree's own source plus the one line, on the
+  tree's filesystem so install is a rename; the same recipe unpatched (`obj_ref`) reproduced each
+  tree's binary bitwise
+* the script checks both trees first (source against `src_manifest.md5`, staged binaries against
+  `obj_manifest.md5`) and installs nothing on any mismatch; keeps old binaries as
+  `obj/*.bak_pre_bpfix_<stamp>`; writes `<tree>/BPFIX_INSTALLED`; always restores the gate script
+  from `bpfix_stage/gate_or_continue.sh.orig` (md5 9ee8a3ab = repo). Sandbox-tested: install,
+  repeat no-op, refuse-on-change
+* **do not edit `src/` in either tree until it has fired**, or it will refuse
+* a "train on" verdict leaves it armed. "Stopped for review" also leaves it armed: then run
+  `install_bpfix.sh` by hand when nothing uses the trees, or restore the gate from `.orig`
+* after the gate: `cat <tree>/BPFIX_INSTALLED` and the `[bpfix]` lines in `ff30-gate_*.out`; then
+  update the status table above
+* the BP test is unaffected: its arms use `obj_bug`/`obj_fix`, and the deployed library its Python
+  imports is replaced by rename, so a loaded copy keeps its inode
+
+---
+
 ## 1. Current jobs
 
 Snapshot **2026-09-26 18:58 CDT, verified live against `squeue`.** Finished and cancelled rows are
@@ -262,14 +330,8 @@ ran on it to step 133 without a third failure.
 | 49120529 | its successor | PD, `afterany:49082147` | takes over at the wall; to stop the monitor cancel **both** |
 | **49120982-49120997** | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>`: proteinG, homeodomain, WWdomain, NTL9 x buggy/fixed rotamer-BP binary x 2 seeds, ff_2.1 native REMD, Peng protocol | R since 2026-09-26 ~18:55, 1 node each, self-resubmitting every ~29 h | when all 16 have `COMPLETE`, run `analyse_bp.py` and report to Tobin |
 
-**BP validation (for Tobin, 2026-09-26).** Dir `/beagle3/trsosnic/yinhan/bp_validation`: binaries
-`obj_bug/` and `obj_fix/` (deployment source built twice, differing only in `fabsf` in
-`NodeHolder::max_deviation`; `obj_bug` reproduces the deployed binary bitwise), runner `bp_run.py`
-(copy of `ff3_benchmark/bench_run.py`), logs `logs/<prot>_<build>_s<seed>_<jobid>.out`, data
-`runs/<prot>_<build>_s<seed>/`. Analyse on the midway2 login node after `source
-/beagle3/trsosnic/yinhan/upside2-md/env_shared.sh`: `python3 analyse_bp.py` (per-T Q, RMSD, Rg, E;
-bug-fix difference against the seed spread; melting midpoints; speed). Resubmitted chunks get new
-job ids under the same job names, so track by `squeue -u yinhanw | grep bp_`.
+**Rotamer-BP bug fix and its validation: see §0c.** The 16 `bp_*` arms above and the fix install
+armed in the ff3.0 gate are both described there.
 
 **Step 81 ran on 5 of 24 proteins (2026-09-25 ~20:00).** 19 worker launches failed at once with
 `srun: error: ... Job credential expired`, a transient Slurm credential failure on every node of
