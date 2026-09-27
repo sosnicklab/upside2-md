@@ -247,20 +247,29 @@ that data. Left in place pending a decision.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-26 13:20 CDT, verified live against `squeue`.** Finished and cancelled rows are
-deleted; only lessons worth reusing are kept, below the table. Gates at 76, 95 and 114: all NOT
-CONVERGED, every group p > 0.07 except `gly` (p = 0). **midway2-0037 killed two links**, 49120384
-(05:30, steps 96-100 done) and 49120386 (08:15, steps 101-108 done); each insurance successor took
-over within seconds and no step was lost. 0037 is now in `train_chain.sbatch`'s `--exclude` and was
-added to the queued successor 49120552 with `scontrol update ... ExcNodeList`. The running link
-49120551 still has 0037.
+Snapshot **2026-09-26 18:58 CDT, verified live against `squeue`.** Finished and cancelled rows are
+deleted; only lessons worth reusing are kept, below the table. Gates at 76, 95, 114 and 133: all NOT
+CONVERGED, every group p > 0.07 except `gly` (p = 0). **midway2-0037 killed two links** on
+2026-09-26 (49120384 at 05:30, 49120386 at 08:15); each insurance successor took over within
+seconds and no step was lost. 0037 is in `train_chain.sbatch`'s `--exclude` since 13:20; 49120551
+ran on it to step 133 without a third failure.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49120551** | **Phase 2 epoch 7**, `training/ff30`, steps 115 -> 133, glycine alpha 0.01 | R since 10:20, 12 nodes incl. 0037, ~20 min/step | step 133 ~17:00; then the gate judges 115-133 |
-| 49120552 | its insurance successor, excludes 0037 | PD, `afterany:49120551` | resumes only if 49120551 dies |
+| **49120927** | **Phase 2 epoch 8**, `training/ff30`, steps 134 -> 152, glycine alpha 0.01 | R since 16:50, 12 nodes, ~20.8 min/step | step 152 ~23:30; then the gate judges 134-152 |
+| 49120928 | its insurance successor | PD, `afterany:49120927` | resumes only if 49120927 dies |
 | 49082147 | `ff30_monitor`, `/project/trsosnic/yinhan/monitor_loop.sbatch` -> `monitor.sh` | R on midway2-0152 since 09:48, 36 h | writes `STATUS.md` every 30 min (queue, step, errors, GLY-row line from `training/ff30/analysis/gly_status.py`); log `monitor_loop.out` |
 | 49120529 | its successor | PD, `afterany:49082147` | takes over at the wall; to stop the monitor cancel **both** |
+| **49120982-49120997** | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>`: proteinG, homeodomain, WWdomain, NTL9 x buggy/fixed rotamer-BP binary x 2 seeds, ff_2.1 native REMD, Peng protocol | R since 2026-09-26 ~18:55, 1 node each, self-resubmitting every ~29 h | when all 16 have `COMPLETE`, run `analyse_bp.py` and report to Tobin |
+
+**BP validation (for Tobin, 2026-09-26).** Dir `/beagle3/trsosnic/yinhan/bp_validation`: binaries
+`obj_bug/` and `obj_fix/` (deployment source built twice, differing only in `fabsf` in
+`NodeHolder::max_deviation`; `obj_bug` reproduces the deployed binary bitwise), runner `bp_run.py`
+(copy of `ff3_benchmark/bench_run.py`), logs `logs/<prot>_<build>_s<seed>_<jobid>.out`, data
+`runs/<prot>_<build>_s<seed>/`. Analyse on the midway2 login node after `source
+/beagle3/trsosnic/yinhan/upside2-md/env_shared.sh`: `python3 analyse_bp.py` (per-T Q, RMSD, Rg, E;
+bug-fix difference against the seed spread; melting midpoints; speed). Resubmitted chunks get new
+job ids under the same job names, so track by `squeue -u yinhanw | grep bp_`.
 
 **Step 81 ran on 5 of 24 proteins (2026-09-25 ~20:00).** 19 worker launches failed at once with
 `srun: error: ... Job credential expired`, a transient Slurm credential failure on every node of
