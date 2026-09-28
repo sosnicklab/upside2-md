@@ -4600,9 +4600,16 @@ All 38 X|GLY maps and both GLY|GLY maps train; the GLY|GLY pair stays exactly mi
 **Reading.** The row drifts steadily and monotonically away from ff2.1 (about +0.002 nats of dG
 per step, slightly accelerating) and the correlation with GROMACS does not move. The handedness
 part of the displacement is nearly orthogonal to the GROMACS direction (cos +0.05); the shape part
-is weakly aligned (+0.25). dG moving toward zero is not by itself movement toward GROMACS: Track A
-converged at -0.885 from the other side (9s), so this run may be heading for the same objective
-optimum rather than for -0.154. That is a hypothesis to test at the step-76 gate, not a result.
+is weakly aligned (+0.25). dG moving toward zero is not by itself movement toward GROMACS.
+
+**Track A is not a reference point for this run, and I used it as one until step 196.** Track A's
+-0.885 (9s) is the fixed point of the earlier trainer, which was FF1's workflow (spline burial, no
+backbone desolvation, no unfolded-state objective; 9t-9v), so it is the optimum of a different
+objective. The expectation that this run would settle there was a transfer between two different
+trainings and should not have been made. Measured: ΔG passed -0.885 at step ~182 without slowing
+(-0.896 at 175, -0.857 at 196, ~0.002 nats/step), while its distance from GROMACS keeps growing
+(1.5678 -> 1.5691) and the correlation keeps falling (0.681 at step 0 -> 0.669). Where this
+objective's glycine optimum lies is unknown until the drift stops.
 
 **Gate at step 76: every group at a fixed point except `gly` (p = 0).** enve/envc/envs/envw
 0.999-1.0, bbenve 0.95, rot 1.0, hb 0.73, dhb 0.07, sheet 0.999.

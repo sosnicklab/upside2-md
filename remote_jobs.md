@@ -315,17 +315,20 @@ one, with no trajectory spanning two binaries.
 
 ## 1. Current jobs
 
-Snapshot **2026-09-26 18:58 CDT, verified live against `squeue`.** Finished and cancelled rows are
-deleted; only lessons worth reusing are kept, below the table. Gates at 76, 95, 114 and 133: all NOT
-CONVERGED, every group p > 0.07 except `gly` (p = 0). **midway2-0037 killed two links** on
-2026-09-26 (49120384 at 05:30, 49120386 at 08:15); each insurance successor took over within
-seconds and no step was lost. 0037 is in `train_chain.sbatch`'s `--exclude` since 13:20; 49120551
-ran on it to step 133 without a third failure.
+Snapshot **2026-09-27 20:05 CDT, verified live against `squeue`.** Finished and cancelled rows are
+deleted; only lessons worth reusing are kept, below the table. Gates at 76, 95, 114, 133, 152, 171, 190
+and 209: all NOT CONVERGED, every group p > 0.07 except `gly` (p = 0). Node failures, each absorbed by the
+insurance successor with no step lost (`.chain_starts` 95 100 108 114 133 152 155 162 171):
+* **midway2-0037** killed 49120384 (2026-09-26 05:30) and 49120386 (08:15); excluded since 13:20.
+* 49122490 (2026-09-27 00:45) and 49122492 (03:30): **failed node not identified**. Neither log names
+  it (only the batch host 0017), no candidate rebooted, all back in service, so a node dropping off
+  the network briefly. Common to both: 0017-0018, 0374-0379, 0387-0389; 0374-0379 ran clean in
+  49122804 and 49123236, leaving 0017, 0018, 0387-0389. Not excluded: no single node is implicated.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49120927** | **Phase 2 epoch 8**, `training/ff30`, steps 134 -> 152, glycine alpha 0.01 | R since 16:50, 12 nodes, ~20.8 min/step | step 152 ~23:30; then the gate judges 134-152 |
-| 49120928 | its insurance successor | PD, `afterany:49120927` | resumes only if 49120927 dies |
+| **49125428** | **Phase 2 epoch 12**, `training/ff30`, steps 210 -> 228, glycine alpha 0.01 | R since 19:44, midway2-[0246-0257], ~20.8 min/step | step 228 ~02:30; the gate then runs epoch 13 (229-247), the last: at 247 the gate stops for review whatever its verdict unless converged |
+| 49125429 | its insurance successor | PD, `afterany:49125428` | resumes only if 49125428 dies |
 | 49082147 | `ff30_monitor`, `/project/trsosnic/yinhan/monitor_loop.sbatch` -> `monitor.sh` | R on midway2-0152 since 09:48, 36 h | writes `STATUS.md` every 30 min (queue, step, errors, GLY-row line from `training/ff30/analysis/gly_status.py`); log `monitor_loop.out` |
 | 49120529 | its successor | PD, `afterany:49082147` | takes over at the wall; to stop the monitor cancel **both** |
 | **49120982-49120997** | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>`: proteinG, homeodomain, WWdomain, NTL9 x buggy/fixed rotamer-BP binary x 2 seeds, ff_2.1 native REMD, Peng protocol | R since 2026-09-26 ~18:55, 1 node each, self-resubmitting every ~29 h | when all 16 have `COMPLETE`, run `analyse_bp.py` and report to Tobin |
