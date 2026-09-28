@@ -1692,6 +1692,72 @@ one protein's metadata to another system's trajectory. Instances found and fixed
   can match more than one identity must be resolved by the identity, not by `[0]`.** Both now call
   `helpers/function.py:select_state_file`, which raises naming the state and the available files.
 
+### 1.8 Each Ramachandran map is its own conditional distribution
+
+User correction, 2026-09-27. Every library map `(central X, direction, neighbour Y)` is
+`P(phi,psi | X, Y)` over its own set of PDB sites, and the fold-context selection that shaped it belongs
+to those sites alone. `GLY|GLY` says nothing about `GLY|ALA`, and central GLY says nothing about central
+ALA. So a correction, a symmetry or a "shared mode" measured on one map must never be transferred to
+another, and pooled maps (`ALL`, neighbour averages) must not be used to derive a per-map correction.
+The error that prompted this: a Bayes argument (`P(phi,psi|aa) ~ P(aa|phi,psi) P_bb`) was used to claim
+the contamination is one function shared by all residues, and GLY's antisymmetric part was then
+subtracted from every row. That step silently assumes evolution selects residues by (phi,psi) alone; it
+selects by the whole site (burial, packing, turn type), so each map carries its own selection factor.
+The same kind of cross-map inference underlies the "present even with an achiral nearest neighbour
+(`GLY|GLY`), 66%" decomposition in the XGX section below; read it with this rule in mind. The one real
+coupling between maps is statistical: NDRD's hierarchical Dirichlet process shares mixture components
+across neighbour maps, so rare pairs are pulled toward their pooled map. That is estimation, not physics.
+
+Corollary, also from a user correction the same day: separating local physics from fold selection in a
+map needs a second, per-pair source of information. If that source is Upside's own native-state
+simulations (a per-map reference ratio, `map += ln(H_free/H_restrained)`), it is ConDiv's native term in
+closed form, not a new design; `glycine_contrast` in `training/ConDiv.py` already forms exactly those
+histograms. The only per-pair sources independent of the model are physics or experiment on that pair.
+Before presenting a design as new, write down the objective of the existing pipeline and compare.
+
+### 1.9 NDRD's site set is loops only; Upside applies the map to every residue (2026-09-27)
+
+Ting et al. 2010: 3,038 PISCES chains (<= 1.7 A, R <= 0.25, < 50% identity, EDS density), bottom 20%
+of density per residue type removed, Stride assignment, then only loop residues at least three
+positions from any H or E; TCB also drops 3-10/pi helices and their neighbours. **TCB is 44,112
+residues of all types**, about 110 per directional map on average (NDRD pools rare maps through its
+hierarchical Dirichlet process). The 456 training proteins have 49,172 interior residues with
+defined (phi,psi), a median of 107 per directional map, but only ~8,700 TCB-like residues
+(backbone-only DSSP reconstruction, no 3-10 exclusion, so approximate). Same boxes throughout,
+ln(aR/aL) for GLY: NDRD TCB -1.19, 456 TCB-like -1.31, **456 all residues -0.58**; ALA aR fraction
+0.26 / 0.40 / 0.61. The glycine alpha_L excess is therefore mostly a property of the loop-only site
+selection, and a map trained against loop sites leaves every helix and strand residue outside
+its objective. In ConDiv the SARW replica zeroes H-bond, burial and rotamer-pair energies but keeps
+rama (`zero_for_sarw`), so the DSE term on a map compares the unfolded ensemble with the map's own
+distribution: a self-consistency condition, not an external target.
+
+### 1.10 A basin offset must be a weight on its basin: partition, sharp edges, renormalise
+
+User corrections, 2026-09-28, to the first cut of `training/rama_basin.py`. Three conditions make an
+additive offset on a map a pure change of basin depth that leaves every basin's shape alone:
+* **The basins must partition the torus.** Four basins left phi > 0 outside alpha_L untrained for
+  every non-glycine map, so probability could drain into a region with no control. An `other`
+  basin closes it (for a central glycine it is split into beta' and pPII', the mirrors GLY|GLY pairs).
+* **The edges must be sharp.** The 10 deg logistic scale borrowed from `secstr_bias` is a 44 deg
+  transition: an 80 deg basin such as beta has no point above w = 0.99, so an offset tilted the basin
+  (realised at a median 90% of its value where the probability lies, 28% of each map's probability
+  in transitions). At a 3 deg scale (13 deg transitions, the sharpest the 5 deg grid carries) the
+  figures are 98% and 8%, and with offsets of +-1 the within-basin spread of the energy change is a
+  median 0.03 nats. The residue is where two populated basins meet (beta/pPII at phi = -100).
+* **Each map must be renormalised.** `read_rama_maps_and_weights` mixes the left and right maps
+  without normalising them first, so an offset that raised a whole map would also move weight to its
+  partner map. Renormalising after the offsets confines every change to one map's own basins.
+
+**And the update must be a regularised Newton step, not a log-ratio of counts** (found in the first
+real round, 2026-09-28). Basins that hold no residues in either ensemble (a proline's phi > 0, say)
+give ln(p_free/p_native) as a ratio of two near-zero numbers: steps of up to 1.76 nats in round 1,
+58 of 4,240 above 0.5, and a random walk thereafter. A Dirichlet prior spread by base population does
+not stop it, since it gives those basins almost no pseudo-counts. The MAP step with a Gaussian prior
+on the offset, `eta [T0 N dp - T0^2 c/sigma^2] / [N p(1-p) + T0^2/sigma^2]`, is the log-ratio step
+where N p is large and bounded where it is small; on the same data its largest step is 0.44, the
+largest ones all rest on several residues of evidence, and an offset with no evidence halves each
+round.
+
 ---
 
 ## 2. The hybrid model: what each side supplies
@@ -4387,9 +4453,10 @@ Measured library against measured surface:
 re-scaling of glycine and its weight against the other 19 residue types does not shift. The single
 large disagreement is the aL basin, which is the handedness error itself. The **barrier between
 basins falls**, so glycine samples more freely, not less. The higher global maximum sits in a
-forbidden corner no path crosses, and the library cannot represent that region in any case: with
-44,112 glycines over 5,184 bins, an empty bin is censored at about `ln N = 10.7` above the mean
-however forbidden it really is.
+forbidden corner no path crosses, and the library cannot represent that region in any case: the
+TCB set holds 44,112 residues of all types (Ting et al. 2010), glycine only a share, so over 5,184
+bins an empty glycine bin is censored below `ln 44112 = 10.7` above the mean however forbidden it
+really is.
 
 ### Units: the map holds `-lnP`, so divide by kT
 

@@ -10,16 +10,15 @@ writes each step and there is no second implementation to drift. Produces, in ou
     bb_env.dat      backbone desolvation term
     hbond.h5        the twelve H-bond parameters
     sheet           the 20 sheet mixing energies
-    rama.dat        the trained library if the run trained the glycine row, otherwise a copy of
-                    the library it read
+    rama.dat        the library with every map's trained basin offsets applied
 """
 
 import os
 import pickle as cp
-import shutil
 import sys
 
 import numpy as np
+import tables as tb
 
 
 def main():
@@ -28,8 +27,8 @@ def main():
     ckpt, out = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2])
     os.makedirs(out, exist_ok=True)
 
-    # Import the ConDiv (and rama_gly_gradient) that PRODUCED this checkpoint: `initialize` puts
-    # both in run_output, and the pickles reference the trainer's classes.
+    # Import the ConDiv (and rama_basin) that PRODUCED this checkpoint: `initialize` puts both in
+    # run_output, and the pickles reference the trainer's classes.
     run_output = os.path.dirname(os.path.dirname(ckpt))
     sys.path.insert(0, run_output)
     import ConDiv
@@ -37,10 +36,10 @@ def main():
     for n in dir(ConDiv):
         if n[0].isupper():
             setattr(__main__, n, getattr(ConDiv, n))
-    rgg = ConDiv.rgg
+    rb = ConDiv.rb
 
     state = cp.load(open(ckpt, 'rb'))
-    param, init, row = state['param'], state['init_param_files'], state['row']
+    param, init, rama = state['param'], state['init_param_files'], state['rama']
     for k, v in init.items():
         if not os.path.exists(v):
             sys.exit(f'initial parameter file missing: {k} -> {v}')
@@ -48,23 +47,22 @@ def main():
     new = dict(rot=os.path.join(out, 'sidechain.h5'), env=os.path.join(out, 'environment.h5'),
                bbenv=os.path.join(out, 'bb_env.dat'), hb=os.path.join(out, 'hbond.h5'),
                sheet=os.path.join(out, 'sheet'), rama=os.path.join(out, 'rama.dat'))
-    ConDiv.expand_param(param, init, new, row)
-    if param.gly is None:
-        shutil.copyfile(init['rama'], new['rama'])
+    ConDiv.expand_param(param, init, new, rama)
 
     print(f'checkpoint {ckpt}')
     print(f'  step {state["solver"].step_num}, next epoch {state["epoch"]} minibatch {state["i_mb"]}')
     print(f'  hb {np.array2string(param.hb[:3], precision=4)}  dhb {param.dhb[0]:.4f}'
           f'  bb scale {param.bbenve:.4f}  sheet mean {np.mean(param.sheet):.4f}')
-    if param.gly is not None:
-        gg = param.gly[row['is_gg']]
-        asym = np.abs(gg - rgg.mirror(gg)).max()
-        print(f'  gly X|GLY dG(aR->aL) mean {rgg.handedness(param.gly)[~row["is_gg"]].mean():+.4f}'
-              f'  GLY|GLY asymmetry {asym:.2e}  (must be 0)')
-        if asym > 1e-9:
-            sys.exit('FAILED: GLY|GLY is not mirror-symmetric')
-    else:
-        print('  glycine row not trained; rama.dat is the library the run read')
+    with tb.open_file(new['rama']) as t:
+        pot = t.root.coil.dimer_pot[:]
+    gg = np.stack([pot[c, d, n] for c, d, n in rama['keys'][rama['is_gg']]]).astype(float)
+    asym = np.abs(gg - rb.mirror(gg)).max()
+    s = rb.offset_summary(rama)
+    print(f'  rama round {rama["round"]}, {rb.n_param(rama)} offsets, max |offset| '
+          f'{s["max_offset"]:.4f}, X|GLY mean(dL-dR) {s["gly_dL_minus_dR"]:+.4f}'
+          f'  GLY|GLY asymmetry {asym:.2e}  (must be 0)')
+    if asym != 0.:
+        sys.exit('FAILED: GLY|GLY is not mirror-symmetric')
 
     missing = [k for k, v in new.items() if not os.path.getsize(v)]
     if missing:

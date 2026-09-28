@@ -10,15 +10,16 @@ re-includes just these files, so a run directory created here stays untracked.
 | file | what it is |
 |---|---|
 | `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (`/project2/trsosnic/okleinmann/condiv/condiv2.py`); its docstring lists every difference and why |
-| `rama_gly_gradient.py` | analytic gradient of the energy w.r.t. the glycine row of the Ramachandran library, plus its reader/writer and the GLY\|GLY symmetry constraint. Used only with `TRAIN_GLY = True` |
+| `rama_basin.py` | the Ramachandran basin offsets: one offset set per (central, direction, neighbour) map on its fixed NDRD base, the library writer, per-residue basin populations and the once-per-epoch update |
+| `verify_rama_basin.py` | gate: every map's offset reaches exactly the residues that read it, through `upside_config` |
 | `check_converged.py` | has a run updated every file, is every group at a fixed point, has it plateaued? |
 | `train_chain.sbatch` | self-chaining Slurm job; submits `<run>/after_training.sbatch` when the target is reached |
 | `extract_ff.py` | a checkpoint -> the six parameter files, through the run's own `expand_param` |
 | `patch_glpg.py` | patch a force field into a glpG hybrid seed without rebuilding it |
 | `validate_ff.sh` | release a trained force field and submit the Peng benchmark and glpG validation |
 | `convergence_gate.py` | exact sign-flip test of every trained group over the last epoch: exit 0 converged, 3 not |
-| `gate_or_continue.sh` | run by a run's `after_training.sbatch`: gate, then release and validate, or train one more epoch |
-| `env.sh` | module/venv/PYTHONPATH setup, derives `PROJECT_ROOT` from its own location |
+| `gate_or_continue.sh` | run by a run's `after_training.sbatch`: gate, then stop for review, or train one more epoch |
+| `env.sh` | per-cluster Python with identical package versions (midway2: this tree's `.venv`; midway3: the shared /beagle3 venv; locally the repo `.venv`), always this tree's `py/` and `obj/`; finds `PROJECT_ROOT` from its own location |
 | `pdb_list` | the 456-protein training-set manifest (a list, not data) |
 
 ## What a run directory needs
@@ -31,6 +32,9 @@ upside_input/   per protein: <code>.fasta, <code>.initial.pkl, <code>.chi
                 plus rama.dat (the library the run reads) and rama_reference.pkl
 pdb_list        copy from here
 env.sh          copy of this directory's env.sh, adjusted if the tree differs
+slurm.args      the cluster's sbatch flags, given on the command line of every submission:
+                midway3  --partition=caslake
+                midway2  --partition=broadwl --exclude=<the nodes listed in train_chain.sbatch>
 ```
 
 `upside_input/` is ~265 MB and is **not** in the repo. Hardlink it from an existing run
@@ -41,20 +45,22 @@ env.sh          copy of this directory's env.sh, adjusted if the tree differs
 
 ```bash
 cd training/myrun && source env.sh
+python3 ../verify_rama_basin.py .                 # must PASS before anything is trained
 python3 ../ConDiv.py initialize init_param upside_input pdb_list run_output
-sbatch ../train_chain.sbatch . 76                 # 4 epochs of 19 minibatches, self-chaining
+sbatch $(cat slurm.args) ../train_chain.sbatch . 76   # 4 epochs of 19 minibatches, self-chaining
 python3 ../check_converged.py .
 ```
 
-**What happens at the target.** `train_chain.sbatch` submits `<run>/after_training.sbatch`. For
-a release run that calls `gate_or_continue.sh <run> <ff_name> <max_epochs>`: `convergence_gate.py`
-judges the last full epoch, and a converged run is released and validated by `validate_ff.sh`,
-while an unconverged one is trained one more epoch and judged again, up to `<max_epochs>`, after
-which it stops for review. A failure of the gate itself stops everything.
+**What happens at the target.** `train_chain.sbatch` submits `<run>/after_training.sbatch`, which
+calls `gate_or_continue.sh <run> <ff_name> <max_epochs>`: `convergence_gate.py` judges the last
+full epoch. A converged run is released and validated by `validate_ff.sh` (the Peng benchmark and
+the glpG chains, submitted to midway2's broadwl, so the run must be on midway2); an unconverged one
+is trained one more epoch and judged again, up to `<max_epochs>`, after which it stops for review.
+A failure of the gate itself stops everything. The rama offsets' training and held-out mismatch is
+in `run_output/rama_rounds.txt`, one line per epoch.
 
-`initialize` copies `ConDiv.py` and `rama_gly_gradient.py` into `run_output/`, and every later
-step, the driver included, runs that copy: a run is never continued by later code. `TRAIN_GLY` is
-read at initialisation and kept in the run's state.
+`initialize` copies `ConDiv.py` and `rama_basin.py` into `run_output/`, and every later step, the
+driver included, runs that copy: a run is never continued by later code.
 
 ## One training step
 
@@ -68,7 +74,9 @@ the second half:
 * **DSE** = `<dV/da>_SARW - <dV/da>_unfolded`, the unfolded ensemble being the frames of the two
   replicas bracketing the Rg midpoint (the Tm estimate) with Rg above 0.67 Rg(coldest) + 0.33
   Rg(hottest). A protein with no such frames contributes NSE only, and the step log says which;
-* contrast = NSE + 0.3 DSE, summed over the 24 proteins of the minibatch, into Adam.
+* contrast = NSE + 0.3 DSE, summed over the 24 proteins of the minibatch, into Adam;
+* per residue, the basin populations of the native-restrained replica and of the NSE's free
+  ensemble, added to every map the residue reads, for the rama offsets (no DSE term).
 
 ## What it trains
 
@@ -82,13 +90,22 @@ backbone term's `center`, `sharpness` and `hbond_weight` (commented out in
 `BackboneSigmoidCoupling::get_param_deriv`, in master too) and `hbond.h5` entries 4-11, the rama
 boundaries and sharpnesses. Their learning rates are 0 so `check_converged.py` does not list them.
 
-**With `TRAIN_GLY = True`**, additionally the central-glycine coil row: all 42 finite maps, each
-its own parameter, starting from ff2.1's; the two GLY|GLY maps are projected mirror-symmetric at
-the start and after every update, and each update is Fourier band-limited. The gradient is
-analytic: `rama_map_pot` is a periodic interpolating bicubic spline, so the map enters the energy
-linearly and `dE/d(map)` is a spline-smoothed histogram of the glycine `(phi,psi)` samples. The
-chain rule back through the left/right and coil/sheet mixtures is torch autograd. **Run
-`verify_gly_gradient.py` after touching any of it.**
+**Additionally, the Ramachandran basin offsets.** Every coil map of the library, k = (central,
+direction, neighbour), keeps its NDRD values as a fixed base and gets one offset per basin, after
+which the map is renormalised as the NDRD maps are. So an offset is a weight factor on its basin:
+the shape inside each basin is the base's, and only the basins' depths, their frequencies, are
+trained. The basins partition the torus, with 13 deg edges: alpha_R, alpha_L, beta, pPII and
+`other` (phi > 0 outside alpha_L), and for a central glycine `other` split into its mirror halves
+beta' and pPII'. 840 maps and 4,234 offsets. Each map is its own parameter set: nothing is tied or
+pooled across maps, and a map's offsets act only on the residues that read it. GLY|GLY's base is
+symmetrised and each of its offsets is held equal to its mirror basin's, so it stays exactly
+mirror-symmetric. At the end of every epoch each offset takes a damped Newton step on the MAP objective: the native basin counts
+over every residue reading the map under the model's populations, with a Gaussian prior of width 1
+nat on the offset. Where a basin holds many residues this is `0.5 * T0 * ln(p_free / p_native)`;
+where it holds almost none the prior bounds the step, and an offset with no evidence decays to 0. There is no DSE term on the offsets: the SARW
+replica keeps the rama term, so it would compare the unfolded ensemble with the map itself. 46
+proteins (10%) are held out of the update and reported beside it each round in
+`run_output/rama_rounds.txt`. **Run `verify_rama_basin.py` after touching any of it.**
 
 ## Traps
 
@@ -98,32 +115,34 @@ chain rule back through the left/right and coil/sheet mixtures is torch autograd
   binary runs them cleanly.
 * **Opening a `.up` with PyTables before constructing `ue.Upside` makes the engine fail to
   initialise.** Construct the engine first, then read arrays.
+* **A worker that `srun` never starts is relaunched; one that ran and failed fails the step.** 24
+  steps issued at once sometimes lose a few to `Task launch ... failed: Job credential expired` on
+  healthy nodes. `srun`'s own messages go to `<code>.srun`; a `Task launch` failure there relaunches
+  that worker at once, up to twice, and the link log says `never started ..., relaunching`.
 * **`run_output/ConDiv.py` must exist.** Only `initialize` makes it, so a hand-made `run_output/`
   leaves every worker dying with `can't open file '.../run_output/ConDiv.py'`. The per-worker
   reason is in `run_output/epoch_*/<code>.output_worker`, never in the Slurm log.
-* **A rama library is 35 MB, so it is never kept per minibatch.** It is written for the workers
-  and deleted once they exit; the glycine row lives in `param.gly` in every checkpoint.
+* **A rama library is 35 MB, so it is never kept per minibatch.** One is written per epoch,
+  `run_output/rama_round_NN.dat`, for that epoch's workers; the offsets themselves are in every
+  checkpoint.
 * **Do not judge convergence by parameter movement.** Adam's steps are scale-invariant. Read the
   raw gradients, which `check_converged.py` recovers from the Adam accumulators.
 * **Do not use `broadwl-lc`.** Its nodes are `noib` and cannot see `/project`; jobs die instantly
   with `ExitCode 0:53` and no log.
 
-## `verify_gly_gradient.py`, and why it is not optional
+## `verify_rama_basin.py`, and why it is not optional
 
 ```bash
-python3 verify_gly_gradient.py <training_dir> [protein_code]
+python3 verify_rama_basin.py <training_dir> [protein_code]
 ```
 
-It checks the glycine gradient end to end, library file -> `upside_config` -> engine: the spline,
-every glycine's reconstructed per-residue map against the `rama_pot` upside_config wrote (with all
-42 maps perturbed, which pins the direction/neighbour indexing), and directional finite
-differences for all maps, the GLY|GLY maps and one X|GLY map. **An analytic gradient fails
-silently**: on its first run an earlier version failed at 37% and found the per-map Boltzmann
-shift that `write_rama_map_pot` applies last (`up.md` 2.8a).
-
-**Read the eps sweep, not a single column.** The library stores `dimer_pot` as float32, so small
-eps is rounding noise and large eps picks up curvature from the log-sum-exp mixtures; the
-agreement is the minimum of the bowl.
+It checks the whole path, library file -> `upside_config` -> the per-residue maps in the `.up`
+file: the basins are continuous across phi = +-180, exactly mirror-symmetric and partition the
+torus; one map's offset changes that map's coil entry and nothing else, every written map is
+normalised, and GLY|GLY stays exactly symmetric under random offsets; and for the most-read map, the first and last residues' maps, a GLY|GLY map and an
+X|GLY map, perturbing the offsets changes exactly the residues `residue_keys` says read that map,
+raising each inside the basin it was raised in. **An indexing slip fails silently**: it trains one
+pair's offsets on another pair's residues and never raises anything.
 
 ## Reading `check_converged.py`
 

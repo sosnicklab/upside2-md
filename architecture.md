@@ -71,8 +71,9 @@ E_rama(i) = S(phi_i, psi_i) + w(neighbours of i) * A(phi_i, psi_i)
 ```
 
 * `S` symmetric and `A` antisymmetric under `(phi,psi) -> (-phi,-psi)`: the two parts of each
-  trainable `X|GLY` map (`training/rama_gly_gradient.py` trains the 42 maps whole; `S` and `A` are
-  their projections, `rama_gly_gradient.project_symmetric` / `project_antisymmetric`).
+  `X|GLY` map, which the trainer holds as its NDRD base plus basin offsets
+  (`training/rama_basin.py`); `S` and `A` are that map's mirror-symmetric and antisymmetric
+  projections.
 * `w` is a smooth scalar in roughly `[0,1]`, near **0** when both neighbours sit in alpha_R
   (helical context) and near **1** otherwise.
 
@@ -123,12 +124,11 @@ defined for that case rather than reading past the array.
 residues instead of a single pre-mixed map. Everything else keeps one layer with `A = 0`, so
 non-glycine behaviour is bit-identical.
 
-**Training, `training/rama_gly_gradient.py`.** The analytic gradient extends directly: the
-antisymmetric projection of each map's gradient picks up the factor `w`, and new derivatives
-appear with respect to `w`'s own parameters. The
-existing finite-difference gate (`training/verify_gly_gradient.py`) must be extended to cover
-them, and must be run on proteins that exercise helical, turn and terminal glycines. **An analytic
-gradient fails silently; the gate is the only thing that catches it.**
+**Training, `training/rama_basin.py`.** The offsets are moved by basin-population matching, not by
+an energy gradient, so `w`'s own parameters would need their own update, and the reach gate
+(`training/verify_rama_basin.py`) would have to cover the neighbour term, run on proteins that
+exercise helical, turn and terminal glycines. **An indexing slip fails silently; the gate is the
+only thing that catches it.**
 
 **Constraints that still bind.** Master-branch parity for every existing configuration, no guards,
 spline tables remain exact representations of their potential, and `GLY|GLY` must stay

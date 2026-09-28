@@ -1,18 +1,23 @@
 #!/bin/bash
 #SBATCH --job-name=condiv-train
 #SBATCH --account=pi-trsosnic
-#SBATCH --partition=broadwl
 #SBATCH --ntasks=24
 #SBATCH --cpus-per-task=14
 #SBATCH --mem-per-cpu=2000M
 #SBATCH --time=36:00:00
 #SBATCH --no-requeue
-#SBATCH --exclude=midway2-0003,midway2-[0010-0011],midway2-0037,midway2-[0342-0345]
 #SBATCH --output=%x_%j.out
 
 # Self-chaining FF2 dual-target ConDiv training.
 #
-#   sbatch train_chain.sbatch <run_dir> <target_steps>
+#   sbatch $(cat <run_dir>/slurm.args) train_chain.sbatch <run_dir> <target_steps>
+#
+# <run_dir>/slurm.args holds the cluster's flags: the partition, and on midway2 the excluded
+# nodes. They are given on the command line of every submission, first link, successor and gate
+# alike, because RCC's submit filter can remap #SBATCH partition directives, and because a
+# midway2 node list is invalid on midway3. For midway2:
+#   --partition=broadwl --exclude=midway2-0003,midway2-[0010-0011],midway2-0037,midway2-[0342-0345]
+# and for midway3:  --partition=caslake
 #
 # --ntasks must equal the minibatch size (24) and --cpus-per-task the systems per protein (14:
 # restrained native, 12 free replicas, SARW); each task is one protein worker dispatched by srun.
@@ -26,16 +31,17 @@
 # The driver is the run directory's own copy of ConDiv.py, written at initialisation, so a run
 # is never continued by later code.
 #
-# --exclude carries midway2-[0010-0011], an adjacent pair that produced three NODE_FAILs in one
-# campaign while other nodes ran clean for 14 h, and midway2-0037, which failed two links of the
-# ff30 run within three hours (2026-09-26 05:30 and 08:15) while every other node ran clean. Each
-# is excluded for its own record of failures, not for being near another; a NODE_FAIL on any
-# other node is new evidence and should be recorded as such, not just added here.
+# The midway2 exclusions carry midway2-[0010-0011], an adjacent pair that produced three
+# NODE_FAILs in one campaign while other nodes ran clean for 14 h, and midway2-0037, which failed
+# two links of the ff30 run within three hours (2026-09-26 05:30 and 08:15) while every other node
+# ran clean. Each is excluded for its own record of failures, not for being near another; a
+# NODE_FAIL on any other node is new evidence and should be recorded as such, not just added.
 
 set -eo pipefail
 RUN_DIR="$(cd "${1:?usage: sbatch train_chain.sbatch <run_dir> <target_steps>}" && pwd)"
 TARGET="${2:?usage: sbatch train_chain.sbatch <run_dir> <target_steps>}"
 TRAIN_DIR="$(cd "$RUN_DIR/.." && pwd)"     # run dirs live directly under training/
+SLURM_ARGS=$(cat "$RUN_DIR/slurm.args")
 
 MB_PER_EPOCH=19            # 456 proteins / 24
 STEPS_PER_LINK=90          # a step is ~21 min (5vhg, 150 res, 1242 s measured), so ~32 h in the 36 h wall
@@ -74,7 +80,7 @@ if [ "$REMAINING" -lt "$STEPS_PER_LINK" ]; then
 fi
 echo "this link runs $STEPS_PER_LINK steps"
 
-SUCCESSOR=$(sbatch --parsable --dependency=afterany:$SLURM_JOB_ID \
+SUCCESSOR=$(sbatch --parsable $SLURM_ARGS --dependency=afterany:$SLURM_JOB_ID \
                    "$TRAIN_DIR/train_chain.sbatch" "$RUN_DIR" "$TARGET") \
     || echo "WARNING: successor was not queued, the chain stops after this link"
 
@@ -85,7 +91,7 @@ if [ "$STEPS_PER_LINK" -eq "$REMAINING" ]; then
     echo "target $TARGET reached"
     [ -n "$SUCCESSOR" ] && scancel "$SUCCESSOR"
     if [ -f "$RUN_DIR/after_training.sbatch" ]; then
-        sbatch "$RUN_DIR/after_training.sbatch" \
+        sbatch $SLURM_ARGS "$RUN_DIR/after_training.sbatch" \
             || echo "WARNING: after_training.sbatch was NOT submitted; submit it by hand"
     fi
 fi

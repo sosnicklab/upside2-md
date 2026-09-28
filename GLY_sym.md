@@ -300,9 +300,10 @@ deep in the library, coming back to where it was measured. **The map's mean is u
 decimals**, so glycine's weight relative to the other 19 residue types does not shift. And the
 **barrier between the basins falls**, so glycine samples more freely rather than less, despite the
 measured surface having a higher global maximum (25.9 against 18.3). That maximum sits in a
-genuinely forbidden corner no path crosses, and the library cannot represent it anyway: with
-44,112 glycines over 5,184 bins, an empty bin is censored at roughly `ln N ≈ 10.7` above the mean
-no matter how forbidden it really is.
+genuinely forbidden corner no path crosses, and the library cannot represent it anyway: its TCB
+set holds 44,112 residues of all types (Ting et al. 2010), glycine only a share of them, so over
+5,184 bins an empty glycine bin is censored below `ln 44112 ≈ 10.7` above the mean no matter how
+forbidden it really is.
 
 ### What is given up by using one surface for every neighbour
 
@@ -472,7 +473,8 @@ documented anywhere in the ff3.0 write-up. It has been removed; see `findings.md
 ## Corrections to the previous version
 
 1. **"PDB-derived GLY maps are asymmetric due to finite sampling noise."** False. The asymmetry is
-   ~68σ against binomial noise on 44,112 residues, and it matches an independent count of the
+   far outside binomial noise even for a few thousand glycines (the 44,112 of the TCB set counts
+   all residue types, not glycines), and it matches an independent count of the
    benchmark natives (63% vs 66%). It is a real property of folded proteins; the defect is
    double-counting the fold, not noise.
 2. **"Glycine's Ramachandran distribution is intrinsically symmetric about φ=0."** True only for an

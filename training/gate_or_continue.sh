@@ -5,7 +5,9 @@
 #
 # Run by <run_dir>/after_training.sbatch, which train_chain.sbatch submits when the run reaches its
 # target. convergence_gate.py judges the last full epoch:
-#   exit 0 (every group at a fixed point)  -> validate_ff.sh releases <ff_name> and starts validation
+#   exit 0 (every group at a fixed point)  -> validate_ff.sh releases <ff_name> and submits the Peng
+#                                             benchmark and the glpG chains (on midway2's broadwl,
+#                                             so the run must be on midway2)
 #   exit 3 (a group still pulled)          -> train_chain.sbatch again, target one epoch further,
 #                                             unless <max_epochs> is reached: then stop for review
 #   anything else (the gate itself failed) -> stop; nothing is released and training does not go on
@@ -43,7 +45,7 @@ case $RC in
         else
             NEXT=$(( STEP + MB_PER_EPOCH ))
             echo "step $STEP: not converged, training on to step $NEXT"
-            sbatch "$TRAIN_DIR/train_chain.sbatch" "$RUN_DIR" "$NEXT"
+            sbatch $(cat "$RUN_DIR/slurm.args") "$TRAIN_DIR/train_chain.sbatch" "$RUN_DIR" "$NEXT"
         fi
         ;;
     *)

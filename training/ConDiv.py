@@ -22,9 +22,12 @@ modernised and restored to the published protocol. Differences from that file, e
     now an exact max-subtracted one. The port's guard that silently dropped the DSE term when a
     replica's final energy exceeded 1000 is removed: a blown-up replica must fail, not vanish.
     For the same reason a failed worker fails the step; the port summed whatever returned.
-  * added, switched by TRAIN_GLY: the central-glycine row of the Ramachandran library, 42 maps
-    each trained on its own, GLY|GLY held mirror-symmetric (rama_gly_gradient.py). With it off
-    the library is read unchanged, as in ff2.1's training.
+  * added: every directional map of the Ramachandran library gets trained basin offsets on its
+    fixed NDRD base (rama_basin.py). Each (central, direction, neighbour) map is its own
+    parameter set, GLY|GLY is held mirror-symmetric, and the offsets move once per epoch by a
+    damped Newton step matching free to native-restrained basin populations over the residues
+    that read the map, with a Gaussian prior on each offset and without a DSE term. A tenth of
+    the proteins is held out of that update as a check.
 
 One training step, per protein (main_worker):
   - 14 systems in one replica-exchange run: a native-restrained replica, 12 free replicas and one
@@ -36,13 +39,15 @@ One training step, per protein (main_worker):
     replicas bracketing the Rg midpoint (the Tm estimate) whose Rg exceeds
     0.67*Rg(coldest) + 0.33*Rg(hottest).
   - contrast = NSE + lambda * DSE, summed over the minibatch, fed to Adam.
+  - rama offsets: per-residue basin populations of the native-restrained replica and of the free
+    ensemble (the NSE mix), accumulated per map over the epoch and applied at its end.
 """
 
 import sys
 import os
 
-# The script runs from its run directory's copy, next to the rama_gly_gradient.py it was
-# initialised with, which therefore takes precedence over the one in training/.
+# The script runs from its run directory's copy, next to the rama_basin.py it was initialised
+# with, which therefore takes precedence over the one in training/.
 _here = os.path.dirname(os.path.abspath(__file__))
 for _p in (os.path.join(os.environ['UPSIDE_HOME'], 'py'), _here):
     if _p not in sys.path:
@@ -67,7 +72,7 @@ import torch
 import run_upside as ru
 import upside_engine as ue
 import upside_config as uc
-import rama_gly_gradient as rgg
+import rama_basin as rb
 
 if not is_worker:
     import rotamer_parameter_estimation as rp
@@ -92,12 +97,8 @@ dse_weight      = 0.3                                    # SI: lambda
 sarw_scale      = 0.0                                    # SARW: H-bond, burial, rotamer off
 nse_mix         = (0.60, 0.30, 0.10)                     # the port's mix of the 3 coldest replicas
 alpha_scale     = 0.5                                    # the port's global learning-rate factor
-GLY_FOURIER_ORDER = 8                                    # smoothing of each glycine map update
-
-# False reproduces ff2.1's own workflow, which is run first from ff2.1 to check that every file
-# updates and every group plateaus. True adds the GLY|GLY symmetry and trains the glycine row.
-# It is read once, at initialisation, and kept in the run's state.
-TRAIN_GLY = True
+heldout_fraction = 0.1                                   # proteins kept out of the rama offset update
+heldout_seed    = 20260928
 
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
             'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL']
@@ -105,7 +106,7 @@ hydrophobicity_order = ['ASP', 'GLU', 'LYS', 'HIS', 'ARG', 'GLY', 'ASN', 'GLN', 
                         'THR', 'PRO', 'CYS', 'VAL', 'MET', 'TYR', 'ILE', 'LEU', 'PHE', 'TRP']
 
 Target = collections.namedtuple('Target', 'fasta native native_path init_path n_res chi')
-FIELDS = 'enve envc envs envw bbenve bbenvc bbenvs bbenvw cov rot hyd hb dhb sheet gly'.split()
+FIELDS = 'enve envc envs envw bbenve bbenvc bbenvs bbenvw cov rot hyd hb dhb sheet'.split()
 UpdateBase = collections.namedtuple('UpdateBase', FIELDS)
 
 
@@ -147,19 +148,14 @@ def hb_join(hb, dhb):
 
 if not is_worker:
 
-    def print_param(param, row):
+    def print_param(param, rama):
         print('hb    %s   dhb %.4f' % (np.array2string(param.hb[:3], precision=4), param.dhb[0]))
         print('sheet mean %.4f' % np.mean(param.sheet))
         print('bb env scale %.4f  center %.4f  sharpness %.4f  hbond_weight %.4f'
               % (param.bbenve, param.bbenvc, param.bbenvs, param.bbenvw))
-        if param.gly is not None:
-            dg = rgg.handedness(param.gly)
-            gg = param.gly[row['is_gg']]
-            print('gly   X|GLY dG(aR->aL) mean %+.4f [%+.3f, %+.3f]   GLY|GLY dG %s   '
-                  'asymmetry %.2e'
-                  % (dg[~row['is_gg']].mean(), dg[~row['is_gg']].min(), dg[~row['is_gg']].max(),
-                     np.array2string(dg[row['is_gg']], precision=4),
-                     np.abs(gg - rgg.mirror(gg)).max()))
+        print('rama  round %i, %i offsets, max |offset| %.4f, library %s'
+              % (rama['round'], rb.n_param(rama), np.abs(rama['offset']).max(),
+                 os.path.basename(rama['library'])))
         print('env   scale center sharpness weight')
         env = dict(zip(resnames, np.vstack([param.enve, param.envc, param.envs,
                                             param.envw[:20]]).T))
@@ -208,7 +204,7 @@ if not is_worker:
 
     d_obj = _d_obj_fn()
 
-    def get_init_param(init_dir, rama_library, train_gly):
+    def get_init_param(init_dir, rama_library):
         files = dict(
             env   = os.path.join(init_dir, 'environment.h5'),
             bbenv = os.path.join(init_dir, 'bb_env.dat'),
@@ -227,20 +223,15 @@ if not is_worker:
         bbe, bbc, bbs, bbw = np.loadtxt(files['bbenv'])
         with tb.open_file(files['hb']) as t:
             hb, dhb = hb_split(t.root.parameter[:])
-        if train_gly:
-            keys, is_gg, gly = rgg.start_row(rama_library)
-            row = dict(keys=keys, is_gg=is_gg)
-        else:
-            gly, row = None, None
 
         param = Update(*([None] * len(FIELDS)))._replace(
             enve=enve, envc=envc, envs=envs, envw=envw,
             bbenve=bbe, bbenvc=bbc, bbenvs=bbs, bbenvw=bbw,
             rot=rp.pack_param(rotp, covp, hydp, hydplp, rotposp, np.zeros((rotposp.shape[0], 1))),
-            hb=hb, dhb=dhb, sheet=np.loadtxt(files['sheet']), gly=gly)
-        return param, files, row
+            hb=hb, dhb=dhb, sheet=np.loadtxt(files['sheet']))
+        return param, files
 
-    def expand_param(params, orig, new, row):
+    def expand_param(params, orig, new, rama):
         """Write params to the files a worker (or a deployment) reads."""
         rotp, covp, hydp, hydplp, rotposp, _ = rp.unpack_params(params.rot)
         shutil.copyfile(orig['rot'], new['rot'])
@@ -266,59 +257,91 @@ if not is_worker:
 
         np.savetxt(new['sheet'], params.sheet)
 
-        # The library is 35 MB, so it is written only where asked: for the workers when the
-        # glycine row is trained, never for the per-step record, since param.gly is in every
-        # checkpoint. Untrained, the workers read the original library directly.
-        if 'rama' in new and params.gly is not None:
-            rgg.write_row(orig['rama'], new['rama'], row['keys'], params.gly)
+        # The library is 35 MB, so it is written only where asked: once per round for the workers
+        # and by extract_ff, never for the per-step record, since the offsets are in every
+        # checkpoint.
+        if 'rama' in new:
+            rb.write_library(rama, orig['rama'], new['rama'])
 
-    def backprop_deriv(param, deriv, reg_scale, row):
-        # Each glycine map's update is band-limited so the learned correction is smooth, and the
-        # GLY|GLY maps are re-projected so they stay exactly mirror-symmetric. Untrained, the
-        # component is a zero gradient on a None parameter, which Update carries as None.
-        if deriv.gly is None:
-            gly = 0.
-        else:
-            g = np.stack([rgg.fourier_lowpass(m, GLY_FOURIER_ORDER) for m in deriv.gly])
-            gly = rgg.constrain(g, row['is_gg'])
+    def backprop_deriv(param, deriv, reg_scale):
         return deriv._replace(
             rot=d_obj(param.rot, deriv.rot, deriv.cov, deriv.hyd, reg_scale),
-            cov=0., hyd=0., gly=gly)
+            cov=0., hyd=0.)
+
+    def finish_round(state):
+        """End of an epoch: move every rama offset once, log the round, write the next library."""
+        rama = state['rama']
+        before = rb.summary(rama, rama['acc_train'], rama['acc_held'])
+        step = rb.update(rama, rama['acc_train'])
+        rama['history'].append(dict(before, **rb.offset_summary(rama), round=rama['round'],
+                                    max_step=float(np.abs(step).max())))
+        rama['library'] = os.path.join(state['base_dir'], 'rama_round_%02i.dat' % rama['round'])
+        rb.write_library(rama, state['init_param_files']['rama'], rama['library'])
+        rama['acc_train'], rama['acc_held'] = rb.empty_accumulator(rama), rb.empty_accumulator(rama)
+        with open(os.path.join(state['base_dir'], 'rama_rounds.txt'), 'a') as f:
+            h = rama['history'][-1]
+            f.write('round %2i  sites %6.0f / %5.0f held out  free-native mismatch %.4f / %.4f '
+                    'held out  max step %.4f  max |offset| %.4f  X|GLY mean(dL-dR) %+.4f\n'
+                    % (h['round'], h['sites_train'], h['sites_held'], h['mismatch_train'],
+                       h['mismatch_held'], h['max_step'], h['max_offset'], h['gly_dL_minus_dR']))
 
 
 # ---------------------------------------------------------------------------
 # Minibatch
 # ---------------------------------------------------------------------------
 
-def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_scale, row):
+def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_scale, rama):
     os.makedirs(direc, exist_ok=True)
     print(direc)
 
-    train_gly = param.gly is not None
+    # the workers read this round's library; every other file is written for this step
     d_obj_files = dict((k, os.path.join(direc, 'nesterov_temp__' + os.path.basename(v)))
-                       for k, v in init_files.items())
-    if not train_gly:
-        d_obj_files['rama'] = init_files['rama']
-    expand_param(param + solver.update_for_d_obj(), init_files, d_obj_files, row)
+                       for k, v in init_files.items() if k != 'rama')
+    d_obj_files['rama'] = rama['library']
+    expand_param(param + solver.update_for_d_obj(), init_files, d_obj_files, rama)
 
     has_slurm = shutil.which('srun') is not None
-    files_arg = b64encode(cp.dumps(dict(files=d_obj_files, train_gly=train_gly))).decode('ascii')
-    jobs = collections.OrderedDict()
-    for nm, t in minibatch[::-1]:
+    files_arg = b64encode(cp.dumps(dict(files=d_obj_files))).decode('ascii')
+    targets = dict(minibatch)
+
+    def launch(nm):
+        t = targets[nm]
         args = [sys.executable, worker_path, 'worker', nm, direc, t.fasta, t.init_path,
                 str(t.n_res), t.chi, files_arg]
         if has_slurm:
+            # srun's own messages go to <code>.srun, the worker's output to <code>.output_worker
             args = ['srun', '--nodes=1', '--ntasks=1', '--cpus-per-task=%i' % n_threads,
                     '--output=%s/%s.output_worker' % (direc, nm)] + args
-            jobs[nm] = sp.Popen(args, close_fds=True)
-        else:
-            jobs[nm] = sp.Popen(args, close_fds=True,
-                                stdout=open('%s/%s.output_worker' % (direc, nm), 'w'),
-                                stderr=sp.STDOUT)
+            return sp.Popen(args, close_fds=True, stderr=open('%s/%s.srun' % (direc, nm), 'w'))
+        return sp.Popen(args, close_fds=True, stdout=open('%s/%s.output_worker' % (direc, nm), 'w'),
+                        stderr=sp.STDOUT)
+
+    def never_launched(nm):
+        path = '%s/%s.srun' % (direc, nm)
+        return has_slurm and os.path.exists(path) and 'Task launch' in open(path).read()
+
+    # A worker whose srun never started it ('Task launch ... failed', e.g. an expired job
+    # credential when 24 steps start at once) has not run, so it is launched again as soon as that
+    # is seen, up to twice; a worker that ran and failed is never relaunched.
+    jobs = collections.OrderedDict((nm, launch(nm)) for nm, _ in minibatch[::-1])
+    tries, rc = dict((nm, 1) for nm in jobs), dict()
+    while len(rc) < len(jobs):
+        for nm, j in list(jobs.items()):
+            if nm in rc or j.poll() is None:
+                continue
+            if j.returncode != 0 and never_launched(nm) and tries[nm] < 3:
+                print('%s never started (srun launch failed), relaunching' % nm)
+                sys.stdout.flush()
+                tries[nm] += 1
+                jobs[nm] = launch(nm)
+            else:
+                rc[nm] = j.returncode
+        time.sleep(5.)
 
     rmsd, change, no_dse, failed = dict(), [], [], []
-    for nm, j in jobs.items():
-        if j.wait() != 0:
+    step_train, step_held = rb.empty_accumulator(rama), rb.empty_accumulator(rama)
+    for nm in jobs:
+        if rc[nm] != 0:
             print(nm, 'WORKER_FAIL')
             failed.append(nm)
             continue
@@ -328,16 +351,25 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
         change.append(div['contrast'])
         if not div['has_dse']:
             no_dse.append(nm)
-    if train_gly:
-        os.remove(d_obj_files['rama'])     # every worker has exited
+        rb.accumulate(step_held if nm in rama['heldout'] else step_train, rama,
+                      uc.read_fasta(open(targets[nm].fasta)), div['rama_free'], div['rama_native'])
     # A step from part of the minibatch is a different objective, so it is never taken: the step
     # fails and the chain's successor repeats it from the last checkpoint.
     if failed:
         raise RuntimeError('%i of %i workers failed: %s' % (len(failed), len(jobs), ' '.join(failed)))
 
+    # The rama offsets move once per round; each step adds to the round's accumulators and keeps
+    # its own moment-matching gradient for the convergence gate.
+    for acc, add in ((rama['acc_train'], step_train), (rama['acc_held'], step_held)):
+        for f_ in acc:
+            acc[f_] += add[f_]
+    np.savez(os.path.join(direc, 'rama_step.npz'), grad=rb.step_gradient(rama, step_train),
+             **{'train_' + k: v for k, v in step_train.items()},
+             **{'held_' + k: v for k, v in step_held.items()})
+
     d_param = backprop_deriv(
         param, Update(*[None if x[0] is None else np.sum(x, axis=0) for x in zip(*change)]),
-        reg_scale, row)
+        reg_scale)
 
     with open('%s/rmsd.pkl' % direc, 'wb') as f:
         cp.dump(rmsd, f, -1)
@@ -348,10 +380,10 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
     new_files = dict((k, os.path.join(direc, os.path.basename(v)))
                      for k, v in init_files.items() if k != 'rama')
     new_param = param + solver.update_step(d_param)
-    expand_param(new_param, init_files, new_files, row)
+    expand_param(new_param, init_files, new_files, rama)
     solver.log_state(direc)
     print()
-    print_param(new_param, row)
+    print_param(new_param, rama)
     return new_param
 
 
@@ -388,10 +420,10 @@ def radius_of_gyration(pos):
 def compute_divergence(args):
     """Per-frame dV/da for every trained parameter, under the free (unrestrained) Hamiltonian.
 
-    Returns an Update of per-frame arrays; `gly` holds the glycines' (phi,psi) per frame, since
-    the glycine-map derivative is linear in the samples and is formed after frame weighting.
+    Returns an Update of per-frame arrays and every residue's (phi,psi) per frame, from which the
+    rama offsets' basin populations are formed after frame weighting.
     """
-    config_base, traj, sheet_fd, start, gly_idx = args
+    config_base, traj, sheet_fd, start = args
     pos = read_output(traj, start)
     with tb.open_file(config_base) as t:
         p = t.root.input.potential
@@ -412,6 +444,7 @@ def compute_divergence(args):
 
     engine = ue.Upside(config_base)
     c = Update(*[[] for _ in FIELDS])
+    rama_coord = []
     for x in pos:
         engine.energy(x)
         c.rot.append(engine.get_param_deriv(rot_s, 'rotamer'))
@@ -429,7 +462,7 @@ def compute_divergence(args):
         c.hb.append(hb)
         c.dhb.append(dhb)
         c.sheet.append(np.zeros(len(sheet_restype)))
-        c.gly.append(engine.get_output('rama_coord')[gly_idx])
+        rama_coord.append(engine.get_output('rama_coord'))
 
     if sheet_fd:
         # Central difference on each present residue type's sheet mixing energy, as the port.
@@ -440,43 +473,14 @@ def compute_divergence(args):
                 for i, x in enumerate(pos):
                     engine.energy(x)
                     c.sheet[i][rid] += sign * engine.get_output('rama_map_pot')[0, 0] / (2. * eps)
-    return Update(*[np.array(x) for x in c])
-
-
-def glycine_contrast(seq, files, div, w, sel, gly_idx):
-    """The glycine row's contrast, with the same ensembles, signs and lambda as every other field.
-
-    The map derivative is linear in the samples, so each ensemble's per-residue derivative is a
-    weighted spline histogram of its (phi,psi); they are combined first and pushed through the
-    left/right and coil/sheet mixtures once.
-    """
-    gi = FIELDS.index('gly')
-    keys, _ = rgg.row_keys(files['rama'])
-    G = rgg.read_row(files['rama'], keys)
-    chain = rgg.GlycineMapChain(seq, files['rama'], files['sheet'], keys)
-    n_grid = G.shape[-1]
-    card = rgg.cardinal_function(n_grid)
-    n_nat = len(div[0][gi])
-    terms = [(div[0][gi], np.full(n_nat, 1. / n_nat), 1.),
-             (np.concatenate([div[i][gi] for i in (1, 2, 3)]), w, -1.)]
-    if sel is not None:
-        n_s = len(div[6][gi])
-        u = np.concatenate([div[4][gi][sel[0]], div[5][gi][sel[1]]])
-        terms += [(div[6][gi], np.full(n_s, 1. / n_s), dse_weight),
-                  (u, np.full(len(u), 1. / len(u)), -dse_weight)]
-    res_grad = {}
-    for j_, r in enumerate(gly_idx):
-        res_grad[r] = sum(sign * rgg.map_gradient(coords[:, j_], n_grid, card, weights)
-                          for coords, weights, sign in terms)
-    return chain.backprop(G, res_grad)
+    return Update(*[np.array(x) for x in c]), np.array(rama_coord)
 
 
 def main_worker():
     tstart = time.time()
     code, direc, fasta, init_path, n_res, chi = sys.argv[2:8]
     n_res = int(float(n_res))
-    payload = cp.loads(b64decode(sys.argv[8].encode('ascii')))
-    files, train_gly = payload['files'], payload['train_gly']
+    files = cp.loads(b64decode(sys.argv[8].encode('ascii')))['files']
     n_frame = int(sim_time / frame_interval)
     start = int(equil_fraction * n_frame)
 
@@ -518,8 +522,6 @@ def main_worker():
     if j.job.wait() != 0:
         raise RuntimeError('RUN_FAIL')
 
-    seq = uc.read_fasta(open(fasta))
-    gly_idx = [i for i, s in enumerate(seq) if s == 'GLY'] if train_gly else []
     trajs = [read_output(c_, start) for c_ in configs]
     rg = [radius_of_gyration(x) for x in trajs]
     rmsd = [ru.traj_rmsd(ca(x)[:, rmsd_k:-rmsd_k], ca(init)[rmsd_k:-rmsd_k]) for x in trajs[:2]]
@@ -535,12 +537,12 @@ def main_worker():
         sel = [np.where(rg[r] > left_Rg)[0] for r in (rid_left, rid_right)]
         has_dse = sum(len(s) for s in sel) > 0
 
-    jobs = [(configs[1], configs[i], True, start, gly_idx) for i in range(4)]
+    jobs = [(configs[1], configs[i], True, start) for i in range(4)]
     if has_dse:
-        jobs += [(configs[1], configs[r], False, start, gly_idx) for r in (rid_left, rid_right)]
-        jobs += [(configs[1], configs[-1], False, start, gly_idx)]
+        jobs += [(configs[1], configs[r], False, start) for r in (rid_left, rid_right)]
+        jobs += [(configs[1], configs[-1], False, start)]
     with Pool(processes=len(jobs)) as pool:
-        div = pool.map(compute_divergence, jobs)
+        div, coords = zip(*pool.map(compute_divergence, jobs))
 
     # NSE free ensemble: replicas 1-3 each reweighted to T0 exactly, then mixed 0.6/0.3/0.1.
     engine = ue.Upside(configs[1])
@@ -566,16 +568,11 @@ def main_worker():
         sarw = mean(div[6])
         contrast = [c_ + dse_weight * (s - u) for c_, s, u in zip(contrast, sarw, unf)]
 
-    # Glycine rows: the map derivative is linear in the frame samples, so each ensemble's
-    # per-residue derivative is a weighted 2D histogram, combined with the same signs and
-    # lambda as above and pushed through the mixture once.
-    gi = FIELDS.index('gly')
-    contrast[gi] = None
-    if train_gly:
-        contrast[gi] = glycine_contrast(seq, files, div, w, sel if has_dse else None, gly_idx)
-
+    # Rama offsets: the NSE's own two ensembles, as per-residue basin populations. No DSE term.
     divergence = dict(
         contrast=Update(*contrast),
+        rama_native=rb.residue_populations(coords[0]),
+        rama_free=rb.residue_populations(np.concatenate(coords[1:4]), w),
         rmsd_restrain=rmsd[0].mean(), rmsd=rmsd[1].mean(),
         has_dse=bool(has_dse), mean_rg=mRg, walltime=time.time() - tstart)
 
@@ -604,13 +601,14 @@ def main_loop(state_bytes, max_iter):
         state['param'] = run_minibatch(state['worker_path'], state['param'],
                                        state['init_param_files'], state['mb_direc'],
                                        state['minibatches'][state['i_mb']], state['solver'],
-                                       float(state['n_prot']), state['row'])
+                                       float(state['n_prot']), state['rama'])
         print('\n%.0f seconds elapsed this minibatch' % (time.time() - tstart))
         sys.stdout.flush()
         state['i_mb'] += 1
         if state['i_mb'] >= len(state['minibatches']):
             state['i_mb'] = 0
             state['epoch'] += 1
+            finish_round(state)
         state_bytes = cp.dumps(state, -1)
         with open(os.path.join(state['mb_direc'], 'checkpoint.pkl'), 'wb') as f:
             f.write(state_bytes)
@@ -624,7 +622,7 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
     # the checkpoint carries the exact code that produced it
     state['worker_path'] = os.path.join(base_dir, 'ConDiv.py')
     shutil.copy(__file__, state['worker_path'])
-    shutil.copy(os.path.join(_here, 'rama_gly_gradient.py'), base_dir)
+    shutil.copy(os.path.join(_here, 'rama_basin.py'), base_dir)
 
     names = [x.split()[0] for x in open(protein_list)]
     assert names[0] == 'prot'
@@ -648,21 +646,31 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
     print('Constructed %i minibatches of size %i (%i proteins)'
           % (n_mb, minibatch_size, state['n_prot']))
 
-    state['train_gly'] = TRAIN_GLY
-    state['param'], state['init_param_files'], state['row'] = get_init_param(
-        init_dir, os.path.join(protein_dir, 'rama.dat'), TRAIN_GLY)
+    state['param'], state['init_param_files'] = get_init_param(
+        init_dir, os.path.join(protein_dir, 'rama.dat'))
+
+    rama = rb.init_state(state['init_param_files']['rama'])
+    codes = sorted(nm for mb in state['minibatches'] for nm, _ in mb)
+    rng = np.random.RandomState(heldout_seed)
+    rama['heldout'] = set(rng.choice(codes, int(round(heldout_fraction * len(codes))), replace=False))
+    rama['acc_train'], rama['acc_held'] = rb.empty_accumulator(rama), rb.empty_accumulator(rama)
+    rama['T0'], rama['steps_per_round'] = float(T_free[0]), n_mb
+    rama['library'] = os.path.join(base_dir, 'rama_round_00.dat')
+    rb.write_library(rama, state['init_param_files']['rama'], rama['library'])
+    state['rama'] = rama
+    print('rama offsets: %i maps, %i offsets, %i proteins held out of their update'
+          % (len(rama['keys']), rb.n_param(rama), len(rama['heldout'])))
 
     # The port's learning rates, times its global factor. bbenvc/bbenvs/bbenvw are 0 because the
-    # engine returns no derivative for them, as in ff2.1's training. gly is 0.01 so that after
-    # the factor each map moves ~0.005 nats per step.
+    # engine returns no derivative for them, as in ff2.1's training.
     state['initial_alpha'] = Update(
         enve=0.10, envc=0.05, envs=0.02, envw=0.10,
         bbenve=0.05, bbenvc=0.00, bbenvs=0.00, bbenvw=0.00,
-        cov=0., rot=0.25, hyd=0., hb=0.02, dhb=0.01, sheet=0.03, gly=0.01) * alpha_scale
+        cov=0., rot=0.25, hyd=0., hb=0.02, dhb=0.01, sheet=0.03) * alpha_scale
     state['solver'] = rp.AdamSolver(len(FIELDS), alpha=state['initial_alpha'])
     state['epoch'], state['i_mb'] = 0, 0
     print('\nOptimizing with solver', state['solver'], '\n')
-    print_param(state['param'], state['row'])
+    print_param(state['param'], state['rama'])
     return state
 
 

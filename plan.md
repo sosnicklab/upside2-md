@@ -1,92 +1,145 @@
-# ff3.0: ff2.1's own training workflow, then the glycine row
+# ff3.0: ff2.1's own training workflow, with the Ramachandran maps trained as per-pair basin offsets
 
 ## Project Goal
 
-Train ff3.0 from ff2.1 with **exactly ff2.1's training workflow**, modernised only, plus two project
-additions: the GLY|GLY maps held mirror-symmetric and the central glycine row of the Ramachandran
-library trained. The result is released as `parameters/ff_3.0`, which is absent from the tree
-until then: both earlier versions were trained with FF1's workflow and were removed.
+Train ff3.0 from ff2.1 with **exactly ff2.1's training workflow**, modernised only, plus one project
+addition: every Ramachandran library map gets a small set of trained basin offsets, so the map
+supplies only what Upside's other terms do not already explain at the training natives. The result
+is released as `parameters/ff_3.0`, which is absent from the tree until then.
+
+Why: the NDRD maps are statistics over loop sites of folded proteins, so they carry evolutionary
+placement (glycine is put where a fold needs alpha_L) as well as local physics, and Upside adds them
+as a pure energy to every residue. Glycine's alpha_L excess is mostly a property of that loop-only
+site selection: ln(aR/aL) is -1.19 in NDRD and -0.58 over all residues of the 456 training natives
+(findings 1.9).
 
 ## Architecture and Key Decisions
 
-**Why the trainer was replaced (findings 9t, 9u).** The previous port reproduced Peng's FF1 Theano
-trainer, not FF2's. It trained the spline burial table (type 0) where ff2.1 uses the sigmoid (type
-1; -12.9 vs -47.5 on native ubiquitin), never built the backbone desolvation node, had no
-unfolded-state objective, and never trained the 400 burial weights.
+**Trainer (unchanged).** `training/ConDiv.py`, O. Kleinmann's Python 3 port of Peng's FF2 dual-target
+trainer, restored to the Peng et al. 2022 SI: per protein and step one native-restrained replica, 12
+free replicas at T = 0.8 to 1.1, one SARW replica; 8000 time units, second half analysed; contrast =
+NSE + 0.3 * DSE; 456 proteins in 19 minibatches of 24. Every difference from the port is justified in
+the file's docstring.
 
-**Source: the only FF2 dual-target trainer that exists.** O. Kleinmann's Python 3 port of Peng's
-code, `/project2/trsosnic/okleinmann/condiv/condiv2.py`, adapted into `training/ConDiv.py`. Every
-difference from it is listed and justified in that file's docstring: Theano -> torch and mdtraj ->
-numpy (modernisation); lambda, replicas, length and minibatch restored to the SI (the port had
-drifted and ran with lambda = 0); the replica reweighting exponent fixed (it was T0 times the
-correct one); a guard that silently dropped the DSE term removed.
+**ff2.1's parameter set (unchanged, user's choice 2026-09-24).** rot (pair, coverage, hydrophobe), the
+20 x 3 sigmoid burial parameters and 400 weights, the backbone term's scale, the three H-bond
+energies and the second-H-bond term, the 20 sheet values. Not trained, as in ff2.1, because the
+engine returns no derivative: the backbone term's center, sharpness and hbond weight, and `hbond.h5`
+entries 4-11. About 42,000 values, mostly spline coefficients of smooth 1D functions held by priors.
 
-**Protocol (Peng et al. 2022 SI).** Per protein and step: one native-restrained replica, 12 free
-replicas at T = 0.8 to 1.1, one SARW replica; 8000 time units, second half analysed; contrast =
-NSE + 0.3 * DSE; 456 proteins in 19 minibatches of 24; 4 epochs = 76 steps; 24 workers x 14 cores.
+**Revised 2026-09-27: the Ramachandran maps are trained as per-pair basin offsets, replacing the
+full-map glycine row.** The glycine row trained 289 Fourier modes per map on a median of 169 native
+sites per map (12,138 values on 3,204 glycines) and has failed the convergence gate at every
+checkpoint through step 209 while every other group passes. Training all 800 maps that way would be
+231,200 values on a median of 107 sites per map, fewer than one site per value. So:
 
-**Exactly ff2.1's parameter set, by the user's choice (2026-09-24).** Trained: rot (pair,
-coverage, hydrophobe), the 20 x 3 sigmoid burial parameters and 400 weights, the backbone term's
-scale, the three H-bond energies and the second-H-bond term, the 20 sheet values. Not trained,
-exactly as in ff2.1's training, because the engine returns no derivative: the backbone term's
-center, sharpness and hbond weight (commented out in master's `get_param_deriv`), and `hbond.h5`
-entries 4-11. Non-glycine Ramachandran rows stay the library.
+* **Parameter.** For each directional map k = (central X, direction, neighbour Y):
+  `E_k(phi,psi) = E_k,NDRD(phi,psi) + sum_b c_k,b * w_b(phi,psi)`. The NDRD map is the fixed base
+  (steric boundaries and within-basin shape); only the basin balance is trained.
+* **Basins, and each offset is a weight on one basin (user, 2026-09-28).** The map is renormalised
+  after the offsets are added, as the NDRD maps are, so the shape inside every basin is the base's
+  and only its depth, its frequency, is trained. The basins partition the torus, so no probability
+  can move into an untrained region: alpha_R (phi < 0, -100 < psi < 50), beta (phi < -100, psi
+  outside that band), pPII (-100 < phi < 0, psi outside it), alpha_L (mirror of alpha_R) and
+  `other` (phi > 0 outside alpha_L). For a central glycine, which populates `other`, it is split
+  into its mirror halves beta' and pPII' so that GLY|GLY can pair each basin with its mirror.
+  Edges are logistic with a 3 deg scale (13 deg from 10% to 90%, the sharpest the 5 deg grid
+  represents): measured on the NDRD maps, an offset is realised at a median 98% of its value where
+  a basin's probability lies, and with offsets of +-1 the energy change inside a basin spreads by
+  a median 0.03 nats around its single depth shift. The 10 deg edges of `secstr_bias` would tilt
+  the shape instead (44 deg transitions, no flat interior in beta). 5 offsets per map, 6 for a
+  central glycine: 4,234 over the 840 maps.
+* **Each pair is its own parameter set (user's rule, findings 1.8).** Offsets are indexed by
+  (central, direction, neighbour) and are never tied, pooled or shared: the offsets of ALA|GLY are
+  never used for GLY|GLY, or for any other map. The prior of each map is centred on that map's own
+  NDRD values. An offset of map k is applied to the coil and sheet entries of pair k only, so it
+  acts only on residues whose left or right pair is k.
+* **Target and update (user's design).** After each full round over the training proteins, for every
+  map and basin: basin population of the native-restrained replica against the free replicas (the
+  three coldest, reweighted to T0 and mixed 0.6/0.3/0.1, as ConDiv's NSE), accumulated over all
+  residues that use the map. **Revised 2026-09-28:** each offset takes a damped (0.5) Newton step on
+  the MAP objective, the native basin counts under the model's populations with a Gaussian prior of
+  width 1 nat on the offset (the penalty first proposed, which the first implementation had replaced
+  with Dirichlet pseudo-counts). With many residues in a basin this is `0.5 T0 ln(p_free/p_native)`;
+  with almost none the prior bounds the step and an unsupported offset decays to zero. The
+  pseudo-count version gave steps of 1.76 nats in round 1 in basins with no residues in either
+  ensemble (a ratio of two near-zero numbers); on the same data the MAP step's largest is 0.44 and
+  none exceeds 0.5. The restrained replica is the target because it has the same thermal breadth
+  as the free replicas; a static crystal histogram would sharpen the wells to cancel it.
+* **Data.** Over all residues of the 456 natives: median 107 sites per map, 24 maps under 20, 12
+  under 10; cis-proline maps about 5 each (115 cis-prolines). About 21 sites per offset for the
+  median map, which resolves basin populations to ~0.2-0.3 nats.
+* **No new engine or config code.** Trained offsets are written into a library file of the same
+  format as `rama.dat`, read by the unchanged `upside_config.py`.
+* **Held-out check.** 10% of the 456 proteins are kept out of the map update and simulated each
+  round; overfitting shows as held-out agreement stalling while training agreement improves.
 
-**Glycine row, phase 2 only (`TRAIN_GLY`).** All 42 finite maps of the central-GLY coil row are
-separate parameters starting from ff2.1's; the two GLY|GLY maps are projected mirror-symmetric at
-the start and after every update; updates are Fourier band-limited per map. The analytic gradient
-is gated by `training/verify_gly_gradient.py` (passed 2026-09-24 on 1bgf: spline 1e-6, map
-reconstruction 3e-6, directional finite differences 6e-5 to 1.3e-3).
+**GLY|GLY stays mirror-symmetric (user, 2026-09-27).** Its NDRD base is symmetrized, and within that
+one map each offset is held equal to its mirror basin's (alpha_R with alpha_L, beta with beta',
+pPII with pPII'). The constraint lives inside one map, so it does not break per-pair independence.
 
-**Revised 2026-09-25: glycine step size doubled from step 77, 0.005 -> 0.01 (after the global
-factor).** The glycine alpha is the project's own choice, not part of ff2.1's workflow, and it was
-the limit: over steps 58-76 each cell moved in a consistent direction (sign consistency 0.70
-against 0.23 for noise) while Adam's per-step utilisation sat near the noise floor (0.37 against
-0.33), the signature of a weak steady pull whose drift scales with alpha. Only `solver.alpha.gly`
-in the step-77 checkpoint was changed (backup `checkpoint.pkl.bak_gly_alpha_0.005`); the nine ff2.1
-groups keep their rates and had passed the gate. The destination is unchanged; only the rate.
+**No DSE term on the offsets (user, 2026-09-27).** In ConDiv the SARW
+replica keeps the rama term and runs at the hottest temperature, so the DSE term on a map compares
+the unfolded ensemble with the map's own distribution, not with data. The offsets are then shaped by
+the native-state term and the prior only; the DSE term still trains every nonlocal group as in ff2.1.
 
 ## Execution Phases
 
 ### Phase 1 - validate the trainer on ff2.1 (DONE 2026-09-24)
-- [x] Adapt the port; switchable glycine row; `check_converged.py`, `train_chain.sbatch`,
-      `extract_ff.py`, `patch_glpg.py`, `validate_ff.sh` written for it
-- [x] Glycine gradient gate passes, locally and on midway2
-- [x] Smoke worker and full-length timing on midway2: ~21 min/step (5vhg, 150 res, 1242 s)
-- [x] One epoch (19 steps) from ff2.1: every trained file updates; 8 of 9 groups at a fixed point
-- [x] The ninth, dhb (second-H-bond term), diagnosed over 5 more steps: the native and 0.3 x
-      unfolded gradients nearly cancel at ff2.1 (the balance lambda = 0.3 training leaves), and
-      the reweighting fix reduces rather than causes the residual. A mildly unconverged ff2.1
-      parameter, not a port error (findings 9v)
+Port adapted and gated; one epoch from ff2.1 leaves 8 of 9 groups at a fixed point, and the ninth
+(dhb) is a mildly unconverged ff2.1 parameter, not a port error (findings 9v).
 
-### Phase 2 - train ff3.0 from ff2.1 (QUEUED 2026-09-24 ~11:55)
-- [x] `TRAIN_GLY = True`; `training/ff30` initialised from ff2.1; gate re-run on midway2
-- [x] `bench_run.py`'s type-0 override and `rama3.dat` fallback removed
-- [ ] 76 steps done 2026-09-25 (49074120, 26:49); gate at 76: all groups ok except `gly` (p = 0).
-      Epoch 5 was cancelled after step 77 to double the glycine alpha (above) and resumes from 77
-      as 49119234, target 95. The convergence gate
-      (`convergence_gate.py`, exact sign-flip test per group over the last epoch, family-wise 5%):
-      converged -> `validate_ff.sh ff_3.0` releases to both trees and starts the 32 Peng arms and 4
-      glpG chains; not converged -> one more epoch (~7 h) and judge again, up to 13 epochs, then
-      stop for review. Calibrated on ff2.1: all groups p 0.74-1.0 except dhb, p = 0.002
-- [x] Unattended path audited and dry-run 2026-09-25 (remote_jobs.md); `train_chain.sbatch` stops
-      after three links in a row fail at the same step
-- [x] A failed worker now fails the step instead of being dropped (step 81 had run on 5 of 24
-      proteins after an `srun` credential failure; its update was ordinary and was kept)
-- [ ] Copy the released `parameters/ff_3.0` into the local repo
+### Phase 2 - full-map glycine row (CANCELLED 2026-09-28 at step 223)
+Cancelled at the user's discretion: its glycine group failed the gate at every checkpoint (p = 0),
+its X|GLY handedness had drifted back to -0.82 (the library is -0.97), and it put the DSE term on
+the maps. Last checkpoint `training/ff30/run_output/epoch_11_minibatch_13`, kept for comparison;
+extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_20260928/`.
 
-### Phase 3 - validation (NOT STARTED)
+### Phase 3 - basin offsets, implementation and tests (DONE 2026-09-28)
+- [x] `training/rama_basin.py`: basins partitioning the torus (continuous across phi = +-180,
+      exactly mirror-symmetric on the grid), 840 maps and 4,234 offsets keyed by (central,
+      direction, neighbour), library writer (coil entries only, every map renormalised), per-residue
+      populations, Dirichlet-prior log-ratio update
+- [x] `training/verify_rama_basin.py` PASSES locally and on midway3: one offset moves only its own
+      map's entry, reaches exactly the residues that read it (most-read map, both termini,
+      GLY|GLY, X|GLY) and raises them inside its basin; GLY|GLY exactly symmetric
+- [x] `ConDiv.py`: full-map glycine path removed; per-step accumulation, `rama_step.npz` for the
+      gate, round update at each epoch end, 46 proteins held out; `extract_ff.py`,
+      `convergence_gate.py` (offsets as a sign-flip-tested group) and a synthetic round checked
+      locally: glycine offsets move the right way, untouched maps stay exactly 0, the gate flags a
+      systematic pull
+- [x] Cluster-portable: `env.sh` picks midway2's tree venv where its interpreter exists, else the
+      shared /beagle3 venv (torch 2.6.0+cpu added, the same versions); both verified to import the
+      tree's engine; partition and node exclusions per run in `slurm.args`; a converged gate stops
+      for review instead of releasing
+
+### Phase 4 - train ff3.0 from ff2.1 with basin offsets (RUNNING since 2026-09-28 01:33, midway2)
+- [x] Initialise from ff2.1 with all offsets zero (`training/ff30_basin`); first target 76 steps,
+      then one epoch at a time up to 13 epochs. Step 0 done: 24/24 workers, 4,688 map-sites, free
+      and native basin populations within ~0.02 of each other at ff2.1
+- [x] First offset update at the end of epoch 0 (step 19). Its noise-driven steps were found at the
+      status check; the chain was stopped during step 20, steps 19-20 set aside
+      (`ff30_basin/rewound_20260928_0851/`), round 1 recomputed from the same epoch-0 data with the
+      MAP step (free-native mismatch 0.025 training, 0.060 held out), and training resumed from
+      step 19 at 08:56
+- [x] Release path dry-run on the round-1 checkpoint: extraction, glpG round-trip gate (3.6e-15),
+      live-seed patch, and `sbatch --test-only` for a Peng arm, a glpG chain, the gate and a
+      training link. At convergence the gate installs the rotamer-BP fix, releases ff_3.0 and
+      submits the Peng benchmark and the glpG chains unattended
+- [ ] Held-out agreement per round; stop and review if it stalls while training agreement improves
+- [ ] Release `parameters/ff_3.0` and copy it into the local repo
+
+### Phase 5 - validation (NOT STARTED)
 - [ ] Peng benchmark, 16 proteins x native/de novo, scored on the last third, paired against ff2.1
 - [ ] glpG, four variants: helix stability over time, TM4 above all
 
 ## Known Errors / Blockers
 
+* **Left and right offsets of one central residue are nearly degenerate.** Every interior residue
+  reads one left and one right map, so raising all left maps of a residue type and lowering its
+  right maps changes little. The per-map prior fixes the split; watch that pair of directions in
+  the gate.
 * **The local Mac `obj/upside` traps (SIGTRAP, exit 133) at exit whenever Monte Carlo pivot moves
-  are on**, even for one system, after every frame completes. The midway2 binary ran
-  `mc_interval = 5` for 500 steps cleanly, so trainer tests run on midway2. Not yet diagnosed; the
-  Mac binary dates from 2026-08-24.
+  are on**, even for one system. The midway2 binary runs them cleanly, so trainer tests run there.
 * **Do not use `broadwl-lc`.** Its nodes are `noib` and cannot see `/project`.
-* **`/project` has ~445 G free.** The glpG REMD trees hold ~1.26 T; `NP-1AO6` ~0.5 T is the
-  obvious reclaim.
-* **Quote ~20% uncertainty on the AWH glycine handedness** (findings 9s); the like-for-like target
-  is -0.15 to -0.31 depending on whether neighbour effects add.
+* **`/project` has ~445 G free.** The glpG REMD trees hold ~1.26 T; `NP-1AO6` ~0.5 T is the reclaim.
