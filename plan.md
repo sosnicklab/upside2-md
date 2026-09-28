@@ -52,8 +52,9 @@ checkpoint through step 209 while every other group passes. Training all 800 map
 * **Each pair is its own parameter set (user's rule, findings 1.8).** Offsets are indexed by
   (central, direction, neighbour) and are never tied, pooled or shared: the offsets of ALA|GLY are
   never used for GLY|GLY, or for any other map. The prior of each map is centred on that map's own
-  NDRD values. An offset of map k is applied to the coil and sheet entries of pair k only, so it
-  acts only on residues whose left or right pair is k.
+  NDRD values. An offset of map k is applied to the coil entry of pair k only, so it acts only on
+  residues whose left or right pair is k; never to the sheet group, since a central cis-proline
+  reads PRO's sheet entry and an offset there would act on both.
 * **Target and update (user's design).** After each full round over the training proteins, for every
   map and basin: basin population of the native-restrained replica against the free replicas (the
   three coldest, reweighted to T0 and mixed 0.6/0.3/0.1, as ConDiv's NSE), accumulated over all
@@ -77,6 +78,13 @@ checkpoint through step 209 while every other group passes. Training all 800 map
 **GLY|GLY stays mirror-symmetric (user, 2026-09-27).** Its NDRD base is symmetrized, and within that
 one map each offset is held equal to its mirror basin's (alpha_R with alpha_L, beta with beta',
 pPII with pPII'). The constraint lives inside one map, so it does not break per-pair independence.
+**Revised 2026-09-28 (findings 1.11):** the sheet GLY|GLY entry is symmetrized too, because
+`upside_config` mixes every coil map with its sheet map and NDRD's GLY|GLY sheet map holds 94% of
+its weight at phi < 0 (a glycine between glycines got ln(beta/beta') = +0.14 to +0.32). And
+symmetrizing now averages probabilities, pooling every site with its mirror image, instead of
+energies: the energy mean is a geometric mean of probabilities, which would empty the sheet map's
+pPII on both sides, and gave the coil maps' helical basins 0.205 and 0.229 of the probability
+each, against 0.213 and 0.246 for the probability mean.
 
 **No DSE term on the offsets (user, 2026-09-27).** In ConDiv the SARW
 replica keeps the rama term and runs at the hottest temperature, so the DSE term on a map compares
@@ -91,7 +99,7 @@ Port adapted and gated; one epoch from ff2.1 leaves 8 of 9 groups at a fixed poi
 
 ### Phase 2 - full-map glycine row (CANCELLED 2026-09-28 at step 223)
 Cancelled at the user's discretion: its glycine group failed the gate at every checkpoint (p = 0),
-its X|GLY handedness had drifted back to -0.82 (the library is -0.97), and it put the DSE term on
+its GLY|X handedness had drifted back to -0.82 (the library is -0.97), and it put the DSE term on
 the maps. Last checkpoint `training/ff30/run_output/epoch_11_minibatch_13`, kept for comparison;
 extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_20260928/`.
 
@@ -102,7 +110,7 @@ extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_2026
       populations, Dirichlet-prior log-ratio update
 - [x] `training/verify_rama_basin.py` PASSES locally and on midway3: one offset moves only its own
       map's entry, reaches exactly the residues that read it (most-read map, both termini,
-      GLY|GLY, X|GLY) and raises them inside its basin; GLY|GLY exactly symmetric
+      GLY|GLY, GLY|X) and raises them inside its basin; GLY|GLY exactly symmetric
 - [x] `ConDiv.py`: full-map glycine path removed; per-step accumulation, `rama_step.npz` for the
       gate, round update at each epoch end, 46 proteins held out; `extract_ff.py`,
       `convergence_gate.py` (offsets as a sign-flip-tested group) and a synthetic round checked
@@ -126,6 +134,12 @@ extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_2026
       live-seed patch, and `sbatch --test-only` for a Peng arm, a glpG chain, the gate and a
       training link. At convergence the gate installs the rotamer-BP fix, releases ff_3.0 and
       submits the Peng benchmark and the glpG chains unattended
+- [x] GLY|GLY made symmetric in the map the engine gets (findings 1.11): sheet entry symmetrized,
+      probability mean for coil and sheet, `extract_ff.py` and `verify_rama_basin.py` (new step 4,
+      the per-residue map) check both; verifier PASSES on the run. Chain stopped during step 29 on
+      2026-09-28 12:25, steps 19-29 (29 unfinished) set aside (`ff30_basin/rewound_20260928_1225/`), round-1
+      library rewritten from the same offsets (identical outside GLY|GLY), resumed from step 19.
+      Epoch 0 and round 1's offsets came from the old GLY|GLY maps; round 2 onward uses the new ones
 - [ ] Held-out agreement per round; stop and review if it stalls while training agreement improves
 - [ ] Release `parameters/ff_3.0` and copy it into the local repo
 

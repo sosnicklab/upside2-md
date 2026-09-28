@@ -76,3 +76,11 @@ below and its detail is in `findings.md` 9i-9s and git history.
   replaced by the MAP Newton step with a Gaussian prior (largest 0.44 on the same data), rewound to
   step 19 and resumed (49126332). Gate restored to release and validate automatically, BP fix re-armed
   before release; release path dry-run passed; stray macOS `._*` files removed from the cluster tree.
+* 09-28 midday, user's GLY check (findings 1.11): coil GLY|GLY exact, but the engine map of a glycine
+  between glycines was not, through the raw NDRD sheet entry; GLY|X deepened alpha_R vs NDRD in 30 of
+  38 maps (mean +0.06), all still alpha_L-favoured. Fixed: `rama_basin.py` symmetrises the sheet
+  GLY|GLY entry and uses the probability mean for coil and sheet; `extract_ff.py` and
+  `verify_rama_basin.py` gate on both; "X|GLY" label corrected to GLY|X. Tests: local (all other
+  entries bitwise unchanged, engine map exact), verifier PASS on the run, three GGG/terminal-GG
+  configs built through `upside_config` exact. Stopped the chain during step 29, set steps 19-29
+  aside, rewrote the round-1 library, resumed from step 19 (49126777). Docs: README, up.md, plan.

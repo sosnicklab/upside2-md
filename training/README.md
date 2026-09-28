@@ -98,8 +98,10 @@ trained. The basins partition the torus, with 13 deg edges: alpha_R, alpha_L, be
 `other` (phi > 0 outside alpha_L), and for a central glycine `other` split into its mirror halves
 beta' and pPII'. 840 maps and 4,234 offsets. Each map is its own parameter set: nothing is tied or
 pooled across maps, and a map's offsets act only on the residues that read it. GLY|GLY's base is
-symmetrised and each of its offsets is held equal to its mirror basin's, so it stays exactly
-mirror-symmetric. At the end of every epoch each offset takes a damped Newton step on the MAP objective: the native basin counts
+symmetrised, as the mean of its probabilities and its mirror's, and each of its offsets is held
+equal to its mirror basin's; its sheet entry, which `upside_config` mixes into the same residues,
+is symmetrised the same way, so a glycine between glycines gets an exactly mirror-symmetric map.
+At the end of every epoch each offset takes a damped Newton step on the MAP objective: the native basin counts
 over every residue reading the map under the model's populations, with a Gaussian prior of width 1
 nat on the offset. Where a basin holds many residues this is `0.5 * T0 * ln(p_free / p_native)`;
 where it holds almost none the prior bounds the step, and an offset with no evidence decays to 0. There is no DSE term on the offsets: the SARW
@@ -138,10 +140,12 @@ python3 verify_rama_basin.py <training_dir> [protein_code]
 
 It checks the whole path, library file -> `upside_config` -> the per-residue maps in the `.up`
 file: the basins are continuous across phi = +-180, exactly mirror-symmetric and partition the
-torus; one map's offset changes that map's coil entry and nothing else, every written map is
-normalised, and GLY|GLY stays exactly symmetric under random offsets; and for the most-read map, the first and last residues' maps, a GLY|GLY map and an
-X|GLY map, perturbing the offsets changes exactly the residues `residue_keys` says read that map,
-raising each inside the basin it was raised in. **An indexing slip fails silently**: it trains one
+torus; one map's offset changes that map's coil entry and nothing else, the sheet group is
+untouched but for GLY|GLY, every written map is normalised, and GLY|GLY's coil and sheet entries
+stay exactly symmetric under random offsets; for the most-read map, the first and last residues'
+maps, a GLY|GLY map and a GLY|X map, perturbing the offsets changes exactly the residues
+`residue_keys` says read that map, raising each inside the basin it was raised in; and a glycine
+that reads only GLY|GLY maps gets an exactly symmetric map from the coil/sheet mixture. **An indexing slip fails silently**: it trains one
 pair's offsets on another pair's residues and never raises anything.
 
 ## Reading `check_converged.py`

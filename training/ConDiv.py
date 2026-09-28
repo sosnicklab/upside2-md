@@ -281,7 +281,7 @@ if not is_worker:
         with open(os.path.join(state['base_dir'], 'rama_rounds.txt'), 'a') as f:
             h = rama['history'][-1]
             f.write('round %2i  sites %6.0f / %5.0f held out  free-native mismatch %.4f / %.4f '
-                    'held out  max step %.4f  max |offset| %.4f  X|GLY mean(dL-dR) %+.4f\n'
+                    'held out  max step %.4f  max |offset| %.4f  GLY|X mean(dL-dR) %+.4f\n'
                     % (h['round'], h['sites_train'], h['sites_held'], h['mismatch_train'],
                        h['mismatch_held'], h['max_step'], h['max_offset'], h['gly_dL_minus_dR']))
 

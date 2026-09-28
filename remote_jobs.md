@@ -309,14 +309,14 @@ be run by hand while `ff30_basin` trains**, since it swaps `$P/obj` under the ru
 
 ## 1. Current jobs
 
-Snapshot **2026-09-28 11:33 CDT, verified live against `squeue` on midway2** (midway3 last checked
+Snapshot **2026-09-28 12:55 CDT, verified live against `squeue` on midway2** (midway3 last checked
 10:40, nothing of ours queued or running there). Finished and cancelled rows are deleted; only
 lessons worth reusing are kept, below the table.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49126332** | **ff3.0 retrain, basin offsets**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed after the round-1 rewind | R since 08:56, midway2-[0246-0257], broadwl; at 11:33 on step 26 (`epoch_01_minibatch_07`), 1218-1273 s/step this link, no worker failures or relaunches | 50 steps ~17.5 h, inside the wall; step 76 ~2026-09-29 05:00, then `after_training.sbatch` gates it |
-| 49126333 | its insurance successor | PD, `afterany:49126332` | resumes only if 49126332 dies |
+| **49126777** | **ff3.0 retrain, basin offsets**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed from step 19 after the GLY\|GLY sheet fix (second rewind, below) | R since 12:27, midway2-[0246-0257], broadwl; step 19 done in 1198 s (24/24 workers, DSE 24/24, median RMSD 0.91 / 2.69 A against 0.93 / 2.63 on the first attempt), step 20 running; live worker maps equal the new library exactly | 57 steps at ~1245 s ~20 h, inside the wall; step 76 ~2026-09-29 08:00, then `after_training.sbatch` gates it |
+| 49126778 | its insurance successor | PD, `afterany:49126777` | resumes only if 49126777 dies |
 | **49125873, 49125874, 49125875, 49125877, 49125878, 49125879, 49125880, 49126021** (8 running) | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>` (§0c); 8 of 16 `COMPLETE` on 2026-09-28 11:33 (NTL9 and WWdomain, all 4 each, NTL9 at ~28 time units/s). Remaining at the start of this link: proteinG 1.38-1.55 M of 3.37 M, homeodomain 1.50-1.52 M of 3.12 M | R, 1 node each, self-resubmitting every ~29 h under the same names | at the first link's rate, proteinG finishes ~2026-09-28 22:00-24:00 and homeodomain ~2026-09-29 03:30, both inside this link; then run `analyse_bp.py` and report to Tobin. They write to `/beagle3`; see the degradation note below |
 
 ### ff30_basin: ff3.0 from ff2.1 with per-pair basin offsets (started 2026-09-28)
@@ -361,6 +361,21 @@ Starts from ff2.1 with every offset zero. `verify_rama_basin.py` passed on midwa
   `ff30_basin/rewound_20260928_0851/` (outside `run_output/`, so the chain cannot resume from them);
   round 1 was recomputed from the same epoch-0 simulations with the MAP step (largest 0.44) using the
   run's own updated `rama_basin.py` and `ConDiv.py`, and training resumed from step 19.
+* **Rewound again, 2026-09-28 12:25, for the GLY|GLY fix (findings 1.11).** The engine's map for a
+  glycine between glycines was not mirror-symmetric, through the raw NDRD sheet GLY|GLY entry.
+  `rama_basin.py` now symmetrises that entry too, by the probability mean for coil and sheet.
+  49126332 was stopped during step 29; steps 19-29, the old code, the old `rama_round_01.dat`,
+  `rama_rounds.txt` and `.chain_starts` are in `ff30_basin/rewound_20260928_1225/`.
+  `rama_round_01.dat` was rewritten from the step-19 checkpoint (same offsets, bitwise identical
+  outside GLY|GLY, GLY|GLY asymmetry 66.5 -> 0), the round log's "X|GLY" label corrected to GLY|X,
+  `verify_rama_basin.py` PASSES on the run, and three configs with GGG or terminal-GG glycines built
+  through `upside_config` are exactly symmetric. Replaced files are in
+  `$P/training/backup_pre_ggsheet_20260928/`. The two unfinished steps' replica trajectories and
+  configs (step 29 here, step 20 in `rewound_20260928_0851/`, 87 G, no worker of either had
+  finished, no checkpoint, referenced by nothing) were deleted at 12:45; logs and parameter files
+  are kept and each directory has a `README.txt`. Deployed md5s: `ConDiv.py` fd9115d5, `rama_basin.py`
+  0b1bec68 (both also in `run_output/`), `extract_ff.py` 9f9d3d3b, `verify_rama_basin.py` 12cbb4d6,
+  `README.md` f8445629.
 * **Deployed 2026-09-28**, md5-verified against the repo: `ConDiv.py`, `rama_basin.py`,
   `verify_rama_basin.py`, `extract_ff.py`, `convergence_gate.py`, `gate_or_continue.sh`,
   `train_chain.sbatch`, `env.sh`, `README.md` in `$P/training/`. The replaced files, the removed
@@ -483,7 +498,7 @@ mmlsquota                   -> "File system project is not known", the GPFS clie
 
 | fileset | 2026-09-09 | 2026-09-23 | 2026-09-28 | note |
 |---|---|---|---|---|
-| `/project/trsosnic` | 1514 G free | 445 G free | **983 G free** (2.9 T of 3.9 T; inodes 21%) | `training/` is 108 G, of which `ff30` 54 G; `ff30_basin` needs ~15 MB per step |
+| `/project/trsosnic` | 1514 G free | 445 G free | **953 G free** at 12:45 (inodes 21%) | `training/` is ~108 G, of which `ff30` 54 G; a finished `ff30_basin` step keeps 35 MB, a running one holds ~40 G of replicas until its workers finish, and a step killed mid-run leaves them behind |
 | `/beagle3/trsosnic` | - | 1.4 T free (4.2 T of 5.5 T) | 1.4 T free | badly degraded for small-file writes on 09-28, see §1 |
 | `/project2/trsosnic` (group) | - | 1.45 T of a 1.49 T soft quota, **97%** | - | nothing in these campaigns writes there |
 | midway3 home | - | 28.6 of 30 G | 21 G | |

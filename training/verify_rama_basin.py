@@ -9,12 +9,15 @@ path the trainer uses is checked, library file -> upside_config -> the per-resid
 
   1. basins: continuous across phi = +-180, exactly mirror-symmetric on the grid, and each map's
      active basins partition the torus, so no probability can move into an untrained region;
-  2. writer: one map's offset changes that map's coil entry and nothing else in the library, every
-     written map is normalised like the NDRD maps (an offset is a weight factor on its basin), and
-     GLY|GLY stays exactly mirror-symmetric under random offsets;
+  2. writer: one map's offset changes that map's coil entry and nothing else in the library, the
+     sheet group is untouched but for GLY|GLY, every written map is normalised like the NDRD maps
+     (an offset is a weight factor on its basin), and GLY|GLY's coil and sheet entries stay exactly
+     mirror-symmetric under random offsets;
   3. reach: for several maps, perturbing that map's offsets changes the per-residue maps of
      exactly the residues `residue_keys` says read it, and raises each of them inside the basin
-     it was raised in, relative to outside.
+     it was raised in, relative to outside;
+  4. engine map: a glycine that reads only GLY|GLY maps, terminal or between two glycines, gets an
+     exactly mirror-symmetric map from upside_config's coil/sheet mixture.
 
     python3 verify_rama_basin.py <training_dir> [protein_code]
 
@@ -34,7 +37,7 @@ sys.path.insert(0, os.path.join(os.environ.get('UPSIDE_HOME', '..'), 'py'))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import rama_basin as rb                 # noqa: E402
 import run_upside as ru                 # noqa: E402
-from upside_config import read_fasta    # noqa: E402
+from upside_config import read_fasta, read_weighted_maps    # noqa: E402
 
 
 def pick_protein(D):
@@ -87,6 +90,10 @@ def main():
     # --- 2: writer -----------------------------------------------------------------------------
     with tb.open_file(src) as t:
         src_coil, src_sheet = t.root.coil.dimer_pot[:], t.root.sheet.dimer_pot[:]
+        sheet_restype = rb._decode(t.root.sheet._v_attrs.restype)
+    gs = sheet_restype.index('GLY')
+    sheet_other = np.ones(src_sheet.shape[:3], dtype=bool)
+    sheet_other[gs, :, gs] = False
 
     def coil_of(state, name):
         with tb.open_file(rb.write_library(state, src, os.path.join(work, name))) as t:
@@ -97,11 +104,12 @@ def main():
     coil, sheet = coil_of(st, 'one.dat')
     moved = {tuple(x) for x in np.argwhere(np.any(np.nan_to_num(coil - coil0) != 0, axis=(-1, -2)))}
     expect = {tuple(st['keys'][k])}
-    sheet_same = np.array_equal(sheet, src_sheet, equal_nan=True)
+    sheet_same = np.array_equal(sheet[sheet_other], src_sheet[sheet_other], equal_nan=True)
     plain = ~st['is_gg']
     zero_dev = max(np.abs(coil0[c, d, n].astype(float) - src_coil[c, d, n]).max()
                    for c, d, n in st['keys'][plain])
-    norm = max(abs(np.log(np.exp(-coil[c, d, n].astype(float)).sum())) for c, d, n in st['keys'])
+    norm = max(abs(np.log(np.exp(-m.astype(float)).sum()))
+               for m in [coil[c, d, n] for c, d, n in st['keys']] + list(sheet[gs, :, gs]))
     st['offset'][:] = 0.
     acc = rb.empty_accumulator(st)
     acc['n'][:] = 50.
@@ -110,13 +118,11 @@ def main():
     st['T0'], st['steps_per_round'] = 0.8, 19
     rb.update(st, acc)
     lib = rb.write_library(st, src, os.path.join(work, 'rand.dat'))
-    with tb.open_file(lib) as t:
-        gg = np.stack([t.root.coil.dimer_pot[c, d, n] for c, d, n in st['keys'][st['is_gg']]])
-    asym = np.abs(gg - rb.mirror(gg)).max()
+    asym = rb.gly_gly_asymmetry(lib)
     print(f'2. writer      one offset moved {sorted(tuple(int(i) for i in x) for x in moved)} '
-          f'(expected {tuple(int(i) for i in st["keys"][k])}); sheet untouched: {sheet_same}; '
-          f'zero offsets reproduce the source to {zero_dev:.1e}; every map normalised to '
-          f'{norm:.1e}; GLY|GLY asymmetry under random offsets {asym:.1e}')
+          f'(expected {tuple(int(i) for i in st["keys"][k])}); sheet untouched but GLY|GLY: '
+          f'{sheet_same}; zero offsets reproduce the source to {zero_dev:.1e}; every map normalised '
+          f'to {norm:.1e}; GLY|GLY coil and sheet asymmetry under random offsets {asym:.1e}')
     ok &= moved == expect and sheet_same and zero_dev < 1e-4 and norm < 1e-4 and asym == 0.
 
     # --- 3: reach, through upside_config -------------------------------------------------------
@@ -160,6 +166,15 @@ def main():
         print(f'   {name:>16}  {st["restype"][c]}|{st["dirs"][dd]}|{st["restype"][n]} '
               f'{rb.BASINS[b]:>8}: {len(changed)} residues changed, {len(use[kk])} read it, '
               f'same set {changed == use[kk]}; weakest in-basin rise {contrast:+.3f}')
+
+    # --- 4: the map the engine gets, through upside_config's coil/sheet mixture ----------------
+    seq = ['GLY', 'GLY', 'GLY', 'ALA']
+    sheet_E = np.loadtxt(os.path.join(D, 'init_param', 'sheet'))
+    pots = read_weighted_maps(seq, lib, sheet_E[[sheet_restype.index(s) for s in seq]])
+    res_asym = [float(np.abs(p - rb.mirror(p)).max()) for p in pots[:2]]
+    print(f'4. engine map  G-G-G-A under random offsets, |E - mirror(E)| of the terminal glycine '
+          f'{res_asym[0]:.1e}, of the glycine between glycines {res_asym[1]:.1e}')
+    ok &= max(res_asym) == 0.
 
     shutil.rmtree(work)
     print('\n' + ('PASS: every offset reaches exactly its own residues.' if ok else

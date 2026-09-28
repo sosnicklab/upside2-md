@@ -1758,6 +1758,36 @@ where N p is large and bounded where it is small; on the same data its largest s
 largest ones all rest on several residues of evidence, and an offset with no evidence halves each
 round.
 
+### 1.11 GLY|GLY symmetry and GLY|X handedness, measured on the live ff30_basin state (2026-09-28)
+
+User request: GLY|GLY must be held symmetric by the code, and GLY|X (central GLY) should deepen
+alpha_R against alpha_L relative to NDRD. Checked on the round-1 state with
+`/project/trsosnic/yinhan/checks/gly_rama_check.py`; the GLY|GLY defect found was then fixed.
+
+* **The coil GLY|GLY entries were already exact**: symmetrised base, `_tie` gives each basin and
+  its mirror the same counts so their Newton steps are identical (tie error 0.0), and `maps()`
+  projects. Grid convention verified: the engine (`rama_map_pot.cpp:66`) and `upside_config` both put
+  node i at -180 + 5i deg, which is what `rb.mirror`'s roll assumes.
+* **The map the engine got was not symmetric**, because `read_weighted_maps` mixes every coil map
+  with its sheet map and the sheet GLY|GLY entries were raw NDRD (94% of their weight at phi < 0:
+  beta 0.80, pPII 0.14, beta' 0.06). For the middle G of A-G-G-G-A: ln(aR/aL) = 0.0000 (the sheet
+  maps are empty in both helical basins), but ln(beta/beta') = +0.14 at the trained sheet energy and
+  +0.32 at ff2.1's, max |E - mirror(E)| 1.0-1.8.
+* **Fix (2026-09-28):** `write_library` symmetrises the sheet GLY|GLY entries too, which only a
+  central glycine next to a glycine reads, and `symmetrise` averages probabilities (pools each site
+  with its mirror image) for coil and sheet alike. Averaging energies, as before, is a geometric mean
+  of probabilities: it would put the sheet map at beta 0.5 / pPII 0 per side instead of 0.43 / 0.07,
+  and gave the coil maps' helical basins 0.205 and 0.229 each instead of 0.213 and 0.246. Result:
+  the engine map of a glycine between glycines, or of a terminal glycine next to one, is exactly
+  symmetric (0.0), and every library entry outside GLY|GLY is bitwise unchanged. `extract_ff.py` and
+  `verify_rama_basin.py` (step 4) now gate on both.
+* **GLY|X moves toward alpha_R, but only relative to NDRD**: after round 1, c_aL > c_aR in 30 of 38
+  maps (mean +0.060, N-weighted +0.059; right PRO +0.58, left TRP -0.17, right VAL -0.12 at N = 207),
+  and for the engine's X-G-Y maps ln(aR/aL) goes -1.21 -> -1.16, deepened in 312 of 361. Every map
+  still favours alpha_L. It cannot reach alpha_R > alpha_L, because the target itself is alpha_L-rich:
+  native-restrained central glycines sit at aR 0.19 / aL 0.40, and the free ensemble is already
+  within ~0.02 of that. Partial epoch 1 (training) still had free - native aR -0.015, aL +0.018.
+
 ---
 
 ## 2. The hybrid model: what each side supplies

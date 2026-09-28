@@ -18,7 +18,10 @@ never tied, pooled or shared between maps: the offsets of ALA|GLY act on no map 
 are added to the coil entry of their own pair only, never to the sheet group, because a central
 cis-proline reads PRO's sheet entry and an offset there would act on both. The one constraint lives
 inside single maps: GLY|GLY has an achiral pair, so its base is symmetrised and each of its offsets
-is held equal to its mirror basin's.
+is held equal to its mirror basin's. Its sheet entry is symmetrised too, since upside_config mixes
+every residue's coil map with its sheet map, and NDRD's GLY|GLY sheet map holds 94% of its weight at
+phi < 0. Symmetrising averages a map's probabilities with its mirror's, i.e. pools every site with
+its mirror image.
 
 HOW THEY ARE UPDATED. Once per training round (one epoch), per map and basin, the basin population
 of the native-restrained replica is compared with that of the free replicas over every residue that
@@ -112,6 +115,16 @@ def mirror(m):
     return np.roll(np.roll(m[..., ::-1, ::-1], 1, -2), 1, -1)
 
 
+def symmetrise(m):
+    """The mirror-symmetric map whose probabilities are the mean of m's and its mirror's.
+
+    Averaging the energies instead would take the geometric mean of the probabilities, which
+    empties any basin whose mirror is empty (the sheet map's pPII). Exact: every point and its
+    mirror are given the same pair of numbers, and logaddexp is symmetric in them.
+    """
+    return np.log(2.) - np.logaddexp(-m, -mirror(m))
+
+
 # ---------------------------------------------------------------------------
 # The parameter set: one offset vector per directional map
 # ---------------------------------------------------------------------------
@@ -135,7 +148,7 @@ def base_maps(state):
             pot = t.root.coil.dimer_pot[:].astype(float)
         base = np.stack([pot[c, d, n] for c, d, n in state['keys']])
         g = state['is_gg']
-        base[g] = 0.5 * (base[g] + mirror(base[g]))
+        base[g] = symmetrise(base[g])
         _base_cache[src] = base
     return _base_cache[src]
 
@@ -205,10 +218,12 @@ def maps(state):
 
 
 def write_library(state, source, out):
-    """Copy `source` and replace each key's coil entry with its current, normalised map.
+    """Copy `source`, replace each key's coil entry with its current, normalised map and
+    symmetrise the GLY|GLY sheet entries.
 
-    Nothing else changes: the sheet group, the ALL and cis-proline neighbour columns and both weight
-    arrays come through as they were.
+    Nothing else changes: the rest of the sheet group, the ALL and cis-proline neighbour columns and
+    both weight arrays come through as they were. Only a central glycine next to a glycine reads the
+    GLY|GLY sheet entry (a cis-proline reads PRO's), so symmetrising it acts on no other residue.
     """
     import shutil
     shutil.copy(source, out)
@@ -218,7 +233,22 @@ def write_library(state, source, out):
         for k, (c, d, n) in enumerate(state['keys']):
             pot[c, d, n] = m[k]
         t.root.coil.dimer_pot[:] = pot
+        sheet = t.root.sheet.dimer_pot[:]
+        g = _decode(t.root.sheet._v_attrs.restype).index('GLY')
+        sheet[g, :, g] = _normalise(symmetrise(sheet[g, :, g].astype(float)))
+        t.root.sheet.dimer_pot[:] = sheet
     return out
+
+
+def gly_gly_asymmetry(library):
+    """Largest |E - mirror(E)| over the GLY|GLY coil and sheet entries of a library file."""
+    with tb.open_file(library) as t:
+        asym = []
+        for grp in (t.root.coil, t.root.sheet):
+            g = _decode(grp._v_attrs.restype).index('GLY')
+            m = grp.dimer_pot[:][g, :, g].astype(float)
+            asym.append(np.abs(m - mirror(m)).max())
+    return max(asym)
 
 
 def residue_keys(state, seq):
@@ -316,7 +346,8 @@ def summary(state, acc_train, acc_held):
 
 
 def offset_summary(state):
-    """Largest offset, and the mean alpha_L minus alpha_R offset over the X|GLY maps."""
+    """Largest offset, and the mean alpha_L minus alpha_R offset over the GLY|X maps (central
+    glycine, neighbour not glycine)."""
     gly = state['restype'].index('GLY')
     xg = (state['keys'][:, 0] == gly) & ~state['is_gg']
     return dict(max_offset=float(np.abs(state['offset']).max()),

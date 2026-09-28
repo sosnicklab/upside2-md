@@ -10,7 +10,8 @@ writes each step and there is no second implementation to drift. Produces, in ou
     bb_env.dat      backbone desolvation term
     hbond.h5        the twelve H-bond parameters
     sheet           the 20 sheet mixing energies
-    rama.dat        the library with every map's trained basin offsets applied
+    rama.dat        the library with every map's trained basin offsets applied, GLY|GLY's coil
+                    and sheet entries mirror-symmetric
 """
 
 import os
@@ -18,7 +19,6 @@ import pickle as cp
 import sys
 
 import numpy as np
-import tables as tb
 
 
 def main():
@@ -53,14 +53,11 @@ def main():
     print(f'  step {state["solver"].step_num}, next epoch {state["epoch"]} minibatch {state["i_mb"]}')
     print(f'  hb {np.array2string(param.hb[:3], precision=4)}  dhb {param.dhb[0]:.4f}'
           f'  bb scale {param.bbenve:.4f}  sheet mean {np.mean(param.sheet):.4f}')
-    with tb.open_file(new['rama']) as t:
-        pot = t.root.coil.dimer_pot[:]
-    gg = np.stack([pot[c, d, n] for c, d, n in rama['keys'][rama['is_gg']]]).astype(float)
-    asym = np.abs(gg - rb.mirror(gg)).max()
+    asym = rb.gly_gly_asymmetry(new['rama'])
     s = rb.offset_summary(rama)
     print(f'  rama round {rama["round"]}, {rb.n_param(rama)} offsets, max |offset| '
-          f'{s["max_offset"]:.4f}, X|GLY mean(dL-dR) {s["gly_dL_minus_dR"]:+.4f}'
-          f'  GLY|GLY asymmetry {asym:.2e}  (must be 0)')
+          f'{s["max_offset"]:.4f}, GLY|X mean(dL-dR) {s["gly_dL_minus_dR"]:+.4f}'
+          f'  GLY|GLY coil and sheet asymmetry {asym:.2e}  (must be 0)')
     if asym != 0.:
         sys.exit('FAILED: GLY|GLY is not mirror-symmetric')
 
