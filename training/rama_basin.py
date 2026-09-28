@@ -1,20 +1,32 @@
 """Per-pair basin offsets on the Ramachandran library, trained by matching basin populations.
 
-WHAT IS TRAINED. Every directional map of the library's coil group, k = (central residue,
+THE PARAMETER. A trained directional map of the library's coil group, k = (central residue,
 direction, neighbour), keeps its NDRD values as a fixed base and gets a few smooth basin offsets:
 
     E_k(phi,psi) = E_k,base(phi,psi) + sum_b c_k,b * w_b(phi,psi)
 
 Each map is renormalised afterwards, as the NDRD maps are (sum exp(-E) = 1), so an offset is a
 weight factor on its basin's probability: the shape inside every basin is the base's, and only the
-depth of each basin, its frequency, is trained. That is where the fold placement the NDRD statistics
-carry shows up (glycine's alpha_L excess, the extra helix). The basins partition the torus, so no
-probability can move into an untrained region: alpha_R, alpha_L, beta, pPII and `other` (phi > 0
-outside alpha_L) per map, and for a central glycine, which populates `other`, that region split into
-its two mirror halves beta' and pPII'.
+depth of each basin, its frequency, is trained. The basins partition the torus: alpha_R, alpha_L,
+beta, pPII and `other` (phi > 0 outside alpha_L), and for a central glycine, which populates
+`other`, that region split into its two mirror halves beta' and pPII'. In a trained map the
+untrained basins together are the reference, whose weight follows from the normalisation, so no
+region is left uncontrolled.
+
+WHICH MAPS. Only those where the literature and ff2.1's own error both point to a local defect
+(findings 1.13); every other map is written unchanged. 158 offsets on 60 maps:
+  * GLY|X (38 maps): alpha_R, alpha_L, beta. Glycine has no C-beta, and its PDB map records where
+    folds place it rather than its own preference; ff2.1's free simulations over-populate alpha_L.
+  * GLY|GLY (2 maps): helix and beta, each tied to its mirror (below).
+  * X|right|PRO (20 maps, every central type but glycine, cis-proline included): alpha_R, beta.
+    The ring's C-delta of proline i+1 clashes with N and C-beta of residue i in alpha_R, by far the
+    largest neighbour effect, and ff2.1's worst miss. upside_config mixes a residue's left and
+    right maps at about equal weight, so this map reaches its residues at about half strength.
+Neighbour effects elsewhere are small, and 456 proteins cannot resolve per-pair corrections of
+their size (findings 1.12).
 
 EACH PAIR IS ITS OWN PARAMETER SET. Offsets are indexed by (central, direction, neighbour) and are
-never tied, pooled or shared between maps: the offsets of ALA|GLY act on no map but ALA|GLY. They
+never tied, pooled or shared between maps: the offsets of GLY|ALA act on no map but GLY|ALA. They
 are added to the coil entry of their own pair only, never to the sheet group, because a central
 cis-proline reads PRO's sheet entry and an offset there would act on both. The one constraint lives
 inside single maps: GLY|GLY has an achiral pair, so its base is symmetrised and each of its offsets
@@ -48,9 +60,11 @@ import tables as tb
 
 BASINS = ('alpha_R', 'alpha_L', 'beta', 'pPII', "beta'", "pPII'", 'other')
 N_BASIN = len(BASINS)
-# the basin each basin maps onto under (phi,psi) -> (-phi,-psi); `other` is active only on maps
-# without a central glycine, where no mirror tie applies
+# the basin each basin maps onto under (phi,psi) -> (-phi,-psi)
 MIRROR = (1, 0, 4, 5, 2, 3, 6)
+# each map's full partition of the torus: six basins for a central glycine, five otherwise
+PARTITION_GLY = (0, 1, 2, 3, 4, 5)
+PARTITION = (0, 1, 2, 3, 6)
 # Logistic edge scale. At 3 deg the 10-90% transition is 13 deg, two to three grid cells, the
 # sharpest the engine's spline represents cleanly; an offset is then realised at a median 98% of
 # its value where a basin's probability lies, and 8% of a map's probability sits in transitions.
@@ -159,7 +173,8 @@ def init_state(library):
     Keys are every (central, direction, neighbour) that `read_rama_maps_and_weights` can read in
     mixture mode: every central residue type of the coil group (cis-proline included), both
     directions, and the 20 standard neighbours (a cis-proline neighbour is read as PRO, and ALL is
-    used only by the product rule).
+    used only by the product rule). All of them accumulate statistics; only the maps with active
+    basins are trained.
     """
     with tb.open_file(library) as t:
         coil = t.root.coil
@@ -169,17 +184,18 @@ def init_state(library):
     neighbours = [n for n, r in enumerate(restype) if r not in ('ALL', 'CPR')]
     keys = np.array([(c, d, n) for c in range(pot.shape[0]) for d in range(len(dirs))
                      for n in neighbours if np.isfinite(pot[c, d, n]).all()], dtype=int)
-    gly = restype.index('GLY')
+    gly, pro, right = restype.index('GLY'), restype.index('PRO'), dirs.index('right')
     is_gg = (keys[:, 0] == gly) & (keys[:, 2] == gly)
+    gly_x = (keys[:, 0] == gly) & ~is_gg
+    pre_pro = (keys[:, 0] != gly) & (keys[:, 1] == right) & (keys[:, 2] == pro)
     state = dict(source=os.path.abspath(library), keys=keys, restype=restype, dirs=dirs,
                  is_gg=is_gg)
-    base = base_maps(state)
+    base_maps(state)
 
     active = np.zeros((len(keys), N_BASIN), dtype=bool)
-    active[:, :4] = True
-    central_gly = keys[:, 0] == gly
-    active[central_gly, 4:6] = True
-    active[~central_gly, 6] = True
+    active[np.ix_(gly_x, [0, 1, 2])] = True
+    active[np.ix_(is_gg, [0, 1, 2, 4])] = True
+    active[np.ix_(pre_pro, [0, 2])] = True
     state.update(active=active, offset=np.zeros((len(keys), N_BASIN)), round=0, history=[])
     return state
 
@@ -218,19 +234,21 @@ def maps(state):
 
 
 def write_library(state, source, out):
-    """Copy `source`, replace each key's coil entry with its current, normalised map and
+    """Copy `source`, replace each trained map's coil entry with its current, normalised map and
     symmetrise the GLY|GLY sheet entries.
 
-    Nothing else changes: the rest of the sheet group, the ALL and cis-proline neighbour columns and
-    both weight arrays come through as they were. Only a central glycine next to a glycine reads the
-    GLY|GLY sheet entry (a cis-proline reads PRO's), so symmetrising it acts on no other residue.
+    Nothing else changes: the untrained maps, the rest of the sheet group, the ALL and cis-proline
+    neighbour columns and both weight arrays come through as they were. Only a central glycine next
+    to a glycine reads the GLY|GLY sheet entry (a cis-proline reads PRO's), so symmetrising it acts
+    on no other residue.
     """
     import shutil
     shutil.copy(source, out)
     m = maps(state)
     with tb.open_file(out, 'a') as t:
         pot = t.root.coil.dimer_pot[:]
-        for k, (c, d, n) in enumerate(state['keys']):
+        for k in np.where(state['active'].any(axis=1))[0]:
+            c, d, n = state['keys'][k]
             pot[c, d, n] = m[k]
         t.root.coil.dimer_pot[:] = pot
         sheet = t.root.sheet.dimer_pot[:]
@@ -336,12 +354,20 @@ def update(state, acc):
 
 
 def summary(state, acc_train, acc_held):
-    """A round's mismatch at the offsets it ran with: the fraction of residue time in a different
-    basin between the free and native ensembles (total variation), averaged over residues."""
+    """A round's mismatch at the offsets it ran with, over the trained maps: the fraction of residue
+    time in a different basin of the map's partition between the free and native ensembles (total
+    variation), averaged over the residues that read them."""
+    trained = state['active'].any(axis=1)
+    part = np.zeros_like(state['active'])
+    gly = state['keys'][:, 0] == state['restype'].index('GLY')
+    part[np.ix_(gly, PARTITION_GLY)] = True
+    part[np.ix_(~gly, PARTITION)] = True
+
     def mismatch(acc):
-        d = 0.5 * np.abs(np.where(state['active'], acc['free'] - acc['native'], 0.)).sum(axis=1)
-        return float(d.sum() / max(acc['n'].sum(), 1.))
-    return dict(sites_train=float(acc_train['n'].sum()), sites_held=float(acc_held['n'].sum()),
+        d = 0.5 * np.abs(np.where(part, acc['free'] - acc['native'], 0.)).sum(axis=1)
+        return float(d[trained].sum() / max(acc['n'][trained].sum(), 1.))
+    return dict(sites_train=float(acc_train['n'][trained].sum()),
+                sites_held=float(acc_held['n'][trained].sum()),
                 mismatch_train=mismatch(acc_train), mismatch_held=mismatch(acc_held))
 
 

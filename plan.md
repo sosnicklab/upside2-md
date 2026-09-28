@@ -3,9 +3,10 @@
 ## Project Goal
 
 Train ff3.0 from ff2.1 with **exactly ff2.1's training workflow**, modernised only, plus one project
-addition: every Ramachandran library map gets a small set of trained basin offsets, so the map
-supplies only what Upside's other terms do not already explain at the training natives. The result
-is released as `parameters/ff_3.0`, which is absent from the tree until then.
+addition: the Ramachandran maps where the literature and ff2.1's own error both point to a local
+defect, the glycine-centred and pre-proline maps, get a few trained basin offsets each; every other
+map stays at NDRD. The result is released as `parameters/ff_3.0`, which is absent from the tree
+until then.
 
 Why: the NDRD maps are statistics over loop sites of folded proteins, so they carry evolutionary
 placement (glycine is put where a fold needs alpha_L) as well as local physics, and Upside adds them
@@ -47,8 +48,21 @@ checkpoint through step 209 while every other group passes. Training all 800 map
   represents): measured on the NDRD maps, an offset is realised at a median 98% of its value where
   a basin's probability lies, and with offsets of +-1 the energy change inside a basin spreads by
   a median 0.03 nats around its single depth shift. The 10 deg edges of `secstr_bias` would tilt
-  the shape instead (44 deg transitions, no flat interior in beta). 5 offsets per map, 6 for a
-  central glycine: 4,234 over the 840 maps.
+  the shape instead (44 deg transitions, no flat interior in beta).
+* **Which maps are trained. Revised 2026-09-28 evening (user; findings 1.12, 1.13).** Training all
+  840 maps (3,394 identifiable offsets) was noise-limited: split-half reliability 0.09, the true
+  per-pair corrections (SD ~0.04 nats) below one epoch's noise (0.07-0.08), ~70% of that noise from
+  the protein set itself, so the fixed 456 proteins, kept for the comparison with ff2.1, cannot
+  resolve it. The literature ranks pre-proline first (the CD(i+1) clash removes alpha_R) and glycine
+  next (no CB; the PDB map carries placement), and finds other neighbour effects small; ff2.1's
+  free simulations miss most on exactly these (pre-PRO alpha_R +3.2 points, z 9.7; GLY alpha_L +2.1,
+  z 4.8). Trained, 158 offsets on 60 maps: GLY|X (38 maps) alpha_R, alpha_L, beta; GLY|GLY (2)
+  helix and beta, each tied to its mirror; X|right|PRO (20, every central type but GLY) alpha_R and
+  beta. In each trained map the untrained basins together are the reference, whose weight follows
+  from the normalisation, so the basins still partition the torus. Every other map is written
+  unchanged. The mixture only half-transmits the pre-proline map, so its offsets fix that miss in
+  part; the product rule of Ting et al. would fix it, but divides by glycine's alpha_L-rich pooled
+  map and so breaks GLY|GLY symmetry (findings 1.13), and is not adopted.
 * **Each pair is its own parameter set (user's rule, findings 1.8).** Offsets are indexed by
   (central, direction, neighbour) and are never tied, pooled or shared: the offsets of ALA|GLY are
   never used for GLY|GLY, or for any other map. The prior of each map is centred on that map's own
@@ -73,7 +87,7 @@ checkpoint through step 209 while every other group passes. Training all 800 map
 * **No new engine or config code.** Trained offsets are written into a library file of the same
   format as `rama.dat`, read by the unchanged `upside_config.py`.
 * **Held-out check.** 10% of the 456 proteins are kept out of the map update and simulated each
-  round; overfitting shows as held-out agreement stalling while training agreement improves.
+  round. Its mismatch must be read against its own sample-size floor (Known Errors).
 
 **GLY|GLY stays mirror-symmetric (user, 2026-09-27).** Its NDRD base is symmetrized, and within that
 one map each offset is held equal to its mirror basin's (alpha_R with alpha_L, beta with beta',
@@ -140,6 +154,11 @@ extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_2026
       2026-09-28 12:25, steps 19-29 (29 unfinished) set aside (`ff30_basin/rewound_20260928_1225/`), round-1
       library rewritten from the same offsets (identical outside GLY|GLY), resumed from step 19.
       Epoch 0 and round 1's offsets came from the old GLY|GLY maps; round 2 onward uses the new ones
+- [x] Trained maps reduced to the 158-offset set (2026-09-28 16:08): `rama_basin.py`, `ConDiv.py`,
+      `verify_rama_basin.py`, README; local tests; chain stopped during step 29, steps 19-29 set
+      aside, round 1 recomputed from the epoch-0 simulations with the same held-out proteins,
+      verifier PASS on the run, live worker maps checked (untrained residues exactly NDRD), resumed
+      from step 19 (remote_jobs.md)
 - [ ] Held-out agreement per round; stop and review if it stalls while training agreement improves
 - [ ] Release `parameters/ff_3.0` and copy it into the local repo
 
@@ -149,6 +168,15 @@ extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_2026
 
 ## Known Errors / Blockers
 
+* **The held-out check in Phase 4 is ill-posed as written (findings 1.12).** The held-out mismatch
+  (0.0597) is its own sample-size floor (random 46-protein training subsets: 0.0585 +- 0.0021), so it
+  cannot fall with training. It must be compared against that floor, or replaced by a split-sample
+  statistic.
+* **Pre-proline is fixed only in part.** The left/right mixture adds the left map's alpha_R back at
+  about half weight (findings 1.13); the trained X|right|PRO offsets can remove only the right map's
+  share. A full fix needs a combining rule that keeps GLY|GLY symmetric; none is adopted yet.
+* **Beta for the PI's sheet modelling.** No residue type has a significant beta miss at ff2.1, and
+  per-pair beta has no signal in these data; per-type beta is ff2.1's sheet mixing energy, trained.
 * **Left and right offsets of one central residue are nearly degenerate.** Every interior residue
   reads one left and one right map, so raising all left maps of a residue type and lowering its
   right maps changes little. The per-map prior fixes the split; watch that pair of directions in

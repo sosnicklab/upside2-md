@@ -22,12 +22,13 @@ modernised and restored to the published protocol. Differences from that file, e
     now an exact max-subtracted one. The port's guard that silently dropped the DSE term when a
     replica's final energy exceeded 1000 is removed: a blown-up replica must fail, not vanish.
     For the same reason a failed worker fails the step; the port summed whatever returned.
-  * added: every directional map of the Ramachandran library gets trained basin offsets on its
-    fixed NDRD base (rama_basin.py). Each (central, direction, neighbour) map is its own
-    parameter set, GLY|GLY is held mirror-symmetric, and the offsets move once per epoch by a
-    damped Newton step matching free to native-restrained basin populations over the residues
-    that read the map, with a Gaussian prior on each offset and without a DSE term. A tenth of
-    the proteins is held out of that update as a check.
+  * added: basin offsets on the Ramachandran maps where a local defect is established, the
+    glycine-centred and pre-proline maps (rama_basin.py), 158 on 60 maps; every other map stays at
+    NDRD. Each (central, direction, neighbour) map is its own parameter set, GLY|GLY is held
+    mirror-symmetric, and the offsets move once per epoch by a damped Newton step matching free to
+    native-restrained basin populations over the residues that read the map, with a Gaussian prior
+    on each offset and without a DSE term. A tenth of the proteins is held out of that update as a
+    check.
 
 One training step, per protein (main_worker):
   - 14 systems in one replica-exchange run: a native-restrained replica, 12 free replicas and one
@@ -658,8 +659,9 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
     rama['library'] = os.path.join(base_dir, 'rama_round_00.dat')
     rb.write_library(rama, state['init_param_files']['rama'], rama['library'])
     state['rama'] = rama
-    print('rama offsets: %i maps, %i offsets, %i proteins held out of their update'
-          % (len(rama['keys']), rb.n_param(rama), len(rama['heldout'])))
+    print('rama offsets: %i of %i maps trained, %i offsets, %i proteins held out of their update'
+          % (rama['active'].any(axis=1).sum(), len(rama['keys']), rb.n_param(rama),
+             len(rama['heldout'])))
 
     # The port's learning rates, times its global factor. bbenvc/bbenvs/bbenvw are 0 because the
     # engine returns no derivative for them, as in ff2.1's training.

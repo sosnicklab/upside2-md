@@ -1787,6 +1787,141 @@ alpha_R against alpha_L relative to NDRD. Checked on the round-1 state with
   still favours alpha_L. It cannot reach alpha_R > alpha_L, because the target itself is alpha_L-rich:
   native-restrained central glycines sit at aR 0.19 / aL 0.40, and the free ensemble is already
   within ~0.02 of that. Partial epoch 1 (training) still had free - native aR -0.015, aL +0.018.
+* **Per-pair independence verified on the live state** (`checks/pair_independence.py`): all 840
+  readable (central incl. CPR, direction, neighbour) pairs are keys, none dropped, all read by
+  training residues; 5 offsets per map, 6 for a central glycine, only the two GLY|GLY maps tied
+  (4,234 free); perturbing the data of each of the 4,240 (map, basin) cells moves only that offset
+  (and its mirror in GLY|GLY), perturbing each map's offsets changes only that map, and every base is
+  the map's own NDRD entry. The one coupling is in the data, not the parameters: an interior
+  residue reads a left and a right map, and its populations are credited in full to both.
+
+### 1.12 What ff30_basin trains, and what 456 proteins can resolve (2026-09-28)
+
+Measured on the live checkpoint and the 456 epoch-0 per-protein results (all at zero offsets), with
+`/project/trsosnic/yinhan/checks/param_data_audit.py`.
+
+* **Parameters.** ConDiv's Adam groups, as in ff2.1: 30,800 side-chain spline coefficients that
+  receive a derivative (of a 31,420-entry latent; the other 620 are placements, which get none),
+  environment 460 (400 weights, 20 each scale, center, sharpness), sheet mixing 20, H-bond 3 of 11
+  plus dhb 1, backbone scale 1: **31,285**. Plus **4,234** rama basin offsets. ~35,500 in all.
+* **The ff2.1 groups** are ff2.1's own, on ff2.1's own proteins and protocol, and started at a fixed
+  point (Phase 1). Pair data: 306k CA-CA < 10 A contacts over 210 pair types, median 1,200, fewest
+  TRP-TRP 84.
+* **The rama offsets are noise-limited per pair.** Training sites per map: median 94, 76 maps under
+  20, minimum 0. Residues of evidence per offset (N p): median 9.6; 1,240 offsets have under 1 (phi > 0
+  basins of non-glycine maps; the prior holds them at 0). Round 1's step: bootstrap over proteins
+  gives median |z| 0.92 and 8.8% with |z| > 2, against 0.67 and 4.6% for pure noise; split-half
+  correlation 0.07 (0.20 with >= 20 residues of evidence), so the full set's reliability is ~0.14.
+  Split-half covariance puts the true per-pair corrections at SD ~0.04 nats; one epoch estimates
+  them with noise SD 0.074 (0.046 where evidence >= 50), and with eta = 0.5 and fresh data each
+  epoch the offsets will wander ~0.04 about their fixed point, as large as the signal.
+* **What the data do resolve is the aggregate**: the GLY|X alpha_L - alpha_R step averaged over the
+  38 maps is +0.060 +- 0.011 (5 sigma), though only 6 maps are individually above 2 sigma. The same
+  pattern as the 2026-09-18 verdict: the average is reproducible, the per-neighbour structure is not.
+* **The free-native mismatch is mostly its sample-size floor.** Held-out 0.0597 equals random
+  46-protein training subsets (0.0585 +- 0.0021); 205 proteins give 0.0320, all 410 give 0.0249.
+  Scaling the floor as 1/sqrt(N) leaves ~0.015 of residue time as real disagreement. So the planned
+  held-out check (held-out mismatch falling with training) cannot see overfitting or improvement.
+* **Fewer basins per map, measured on the same data** (`checks/basin_schemes.py`; each map keeps its
+  own offsets; a renormalised map with K basins has K-1 identifiable offsets, so the current
+  4,234 are 3,394 identifiable, the other 840 pinned only by the prior):
+
+  | per-map basins | identifiable | median evidence | reliability, one epoch |
+  |---|---|---|---|
+  | current (aR aL beta pPII other; GLY + beta' pPII') | 3,394 | 5.6 | 0.09 |
+  | aR, extended, phi > 0; GLY: aR aL ext ext' | 1,716 | 9.4 | 0.22 |
+  | same, phi > 0 left at NDRD where its NDRD weight < 5% | 1,290 | 21.5 | 0.26 |
+  | aR vs rest; GLY|X aR, aL vs rest; GLY|GLY helix vs rest | 878 | 39.3 | 0.35 |
+
+  In the last, the true per-map log-odds corrections have SD 0.061 nats and one epoch's estimate
+  has noise 0.083. Keeping beta as its own basin (aR, beta vs rest; GLY|X aR, aL, beta vs rest;
+  GLY|GLY helix and beta, tied) gives 1,718 identifiable at reliability 0.17.
+* **Which offsets carry signal, by type** (`checks/basin_types_beta.py`, split-half): per pair,
+  GLY|X alpha_L is the best resolved (reliability 0.52-0.71), X|Y alpha_R is weak (0.18-0.19), and
+  **X|Y beta (relative to pPII) has no detectable signal (signal SD 0.000, reliability ~0)**. Averaged
+  over neighbours and directions to one value per central residue type, beta reaches 0.40-0.52 and
+  alpha_R 0.48-0.55. So on these proteins beta is resolved only at the residue-type level, which is
+  the level of ff2.1's own `sheet` mixing energies (20, trained every step).
+* **Most of that noise is the protein set, not the simulations.** 153 training proteins run twice
+  today at identical round-1 offsets (steps 19-25, before and after the GLY|GLY fix, central-glycine
+  maps excluded) give per-map estimates correlated 0.69-0.71, so ~70% of an estimate's variance is
+  reproducible protein-specific context and ~30% sampling. Averaging epochs removes only the 30%:
+  the coarsest scheme would reach ~0.46 reliability at best on these 410 proteins.
+
+### 1.13 Which residues need a trained map: literature and ff2.1's own mismatch (2026-09-28)
+
+**Where ff2.1's free simulations miss the native basin populations** (epoch 0, 410 training
+proteins, bootstrap over proteins; `checks/rama_by_type.py`). Per central type the misses are small,
+at most 1.6 percentage points (at most 0.09 kT): most types lose 1-1.6 points of alpha_R to pPII
+(z 3-4.6), a pattern common to all of them; GLY has alpha_L +2.1 (z 4.8). No type has a significant
+beta miss (largest z 2.3). By neighbour, no left neighbour has any |z| > 3; on the right, **PRO is
+the largest miss of all: alpha_R +3.2 points (z 9.7)**, then GLY (pPII +2.3, z 5.9) and VAL/ILE
+(pPII -1.1, z -4.5).
+
+**The pre-proline miss is made by the left/right MIXTURE** (`checks/prepro_mixture.py`). For 1,543
+residues followed by PRO (ordinary left neighbour), alpha_R is 0.063 in the right map, 0.337 in the
+left map, **0.172 in Upside's mixture**, 0.052 under the product rule, **0.083 native**, 0.106 in the
+free simulation. The mixture adds the left map's alpha_R back at about half weight: the library's
+mixing weights are nearly equal (0.83 typical, 0.92 for X|right|PRO). So a basin offset on the
+pre-proline map fixes it only in part. Ting et al. 2010 combine the two neighbours by the product
+rule (left and right identities independent given phi,psi, normaliser S = 0.5-1.5 for proline);
+`upside_config` has it as `--rama-library-combining-rule product`. Against the mixture it moves
+pre-PRO alpha_R by -12 points and leaves other residues nearly unchanged (median largest basin
+change 3 points, no net shift). **But it breaks GLY|GLY symmetry**: it divides by glycine's
+neighbour-averaged map (ln(aR/aL) -1.13), so the middle glycine of G-G-G gets ln(aR/aL) +1.1.
+
+**Literature (survey 2026-09-28; full text read unless marked).** Pre-Pro is by far the largest
+neighbour effect: alpha -30.6, beta +22.6, pPII +15.2 points in the TCB set, from N(i) and CB(i)
+clashing with CD(i+1) (Ting 2010 Table 6; Ho & Brasseur 2005). Distinct classes: Gly, trans-Pro,
+cis-Pro, pre-Pro, Ile/Val (MolProbity, Williams 2018), Ala partly; other neighbour effects are small
+(non-Gly/Pro neighbours within ~12 Hellinger units, Ting Fig. 7). Force fields mostly use three
+classes (generic, Gly, Pro: CHARMM36, a99SB-disp, UNRES); "a global correction to the backbone is
+sufficient for most residues" (Best, de Sancho & Mittal 2012, via sub-agent). The TCB set is 62%
+turns, and the effects of a right-hand Gly and a left-hand Pro reverse sign between turn and coil,
+so they are placement, not intrinsic (Ting). Beta propensity ranks locally by sterics (Street & Mayo
+1999, R = 0.92), its size is context-dependent (Minor & Kim 1994, abstract). Jumper 2018 added the
+sheet parameter "to counteract an observed tendency for our model to overstabilize helices"; FF2
+made it per amino acid (Peng 2022 SI eq. S2).
+
+**A reduced set that keeps only what is resolved** (`checks/reduced_set.py`, split-half): GLY|X
+(aR, aL, beta), GLY|GLY (helix, beta; tied), X|right|PRO (aR, beta): 158 offsets on 60 maps. GLY|X
+alpha_L per pair reliability 0.72 (class mean +0.11 +- 0.02 nats); X|right|PRO alpha_R per pair 0.05
+but class mean +0.30 +- 0.04 nats, i.e. one steric effect common to every residue before a proline.
+**Adopted 2026-09-28** (user; plan.md), without the optional right-GLY/VAL/ILE classes (+120).
+
+**References for 1.13.** [FT] full text read, [Abs] abstract only, [Ag] read in full by a sub-agent
+and not re-checked here. The extracted texts of the open-access papers were in the session
+scratchpad only; the PDFs of Peng 2022 are in `~/OneDrive - The University of Chicago/`.
+
+Titles and pages were checked against the retrieved texts; where a text was not retrieved, only
+the author, journal, volume and first page reported by the survey are given.
+
+| reference | read | what it contributes |
+|---|---|---|
+| Ting D, Wang G, Shapovalov M, Mitra R, Jordan MI, Dunbrack RL. Neighbor-dependent Ramachandran probability distributions of amino acids developed from a hierarchical Dirichlet process model. PLoS Comput Biol 2010;6:e1000763 | FT | the NDRD/TCB library; pre-Pro basin shifts (Table 6: A -30.6, B +22.6, P +15.2 points); inter-type distances (Tables 3-4, Fig. 7); TCB is 62% turns (Table 2); left/right combined by the product rule under conditional independence given phi,psi (Methods). Its printed B and P phi ranges look swapped |
+| Ho BK, Brasseur R. The Ramachandran plots of glycine and pre-proline. BMC Struct Biol 2005;5:14 | FT | pre-Pro mechanism: N(i) and CB(i) clash with CD(i+1) in alpha; zeta region |
+| Hollingsworth SA, Karplus PA. A fresh look at the Ramachandran plot and the occurrence of standard structures in proteins. Biomol Concepts 2010;1:271-283 | FT | the glycine PDB map is asymmetric because PDB statistics record which residue wins a site |
+| Williams CJ et al. MolProbity: more and better reference data for improved all-atom structure validation. Protein Sci 2018;27:293-315 | FT (Ramachandran section) | six validation classes: general, Gly, trans-Pro, cis-Pro, pre-Pro, Ile/Val |
+| Lovell SC et al. Proteins 2003;50:437-450 (title not verified) | Abs | the earlier validation categories |
+| Jha AK, Colubri A, Zaman MH, Koide S, Sosnick TR, Freed KF. Helix, sheet, and polyproline II frequencies and strong nearest neighbor effects in a restricted coil library. Biochemistry 2005;44:9691-9702 | FT | turn removal cuts the helical basin 37.0% -> 21.9%; neighbour effects up to 4-fold, context-dependent; coil beta vs strand frequency R = 0.84 |
+| Jha AK, Colubri A, Freed KF, Sosnick TR. Statistical coil model of the unfolded state: resolving the reconciliation problem. PNAS 2005;102:13099-13104 | FT | neighbour effects raise the apoMb RDC correlation 0.41 -> 0.71 |
+| Avbelj F, Baldwin RL. Origin of the neighboring residue effect on peptide backbone conformation. PNAS 2004;101:10967-10972 | FT | aromatic/beta-branched neighbours shift mean phi only ~ -2 deg in pPII |
+| Street AG, Mayo SL. Intrinsic beta-sheet propensities result from van der Waals interactions between side chains and the local backbone. PNAS 1999;96:9074-9076 | FT | beta propensity ranks locally by sterics, R = 0.92 |
+| Minor DL, Kim PS. Nature 1994;367:660-663 and Nature 1994;371:264-267 (titles not verified) | Abs | beta propensity largely set by tertiary context at edge strands |
+| Smith CK, Regan L. Science 1995;270:980-982 (title not verified) | Abs | cross-strand pair energies as large as propensities |
+| Avbelj F, Baldwin RL. Role of backbone solvation in determining thermodynamic beta propensities of the amino acids. PNAS 2002;99:1309 | Ag | beta scales correlate at central, not edge, sites |
+| Hagarman A et al. J Am Chem Soc 2010;132:540-551 (title not verified) | Abs | Ala ~80% pPII in GxG |
+| Jumper JM, Faruk NF, Freed KF, Sosnick TR. Trajectory-based training enables protein simulations with accurate folding and Boltzmann ensembles in cpu-hours. PLoS Comput Biol 2018;14:e1006578 | FT | Upside's rama term from NDRD TCB; the sheet parameter added "to counteract an observed tendency for our model to overstabilize helices" |
+| Peng X et al. Prediction and validation of a protein's free energy surface using hydrogen exchange and (importantly) its denaturant dependence. J Chem Theory Comput 2022;18:550-561, and SI | FT | FF2: TCB and sheet maps mixed by gamma, per amino acid (SI eqs. S1-S2); secondary-structure-dependent H-bond strengths |
+| Best RB et al. Optimization of the additive CHARMM all-atom protein force field targeting improved sampling of the backbone phi, psi and side-chain chi1 and chi2 dihedral angles. J Chem Theory Comput 2012;8:3257-3273 | Ag | CHARMM36 CMAP in generic/Gly/Pro classes |
+| Best RB, de Sancho D, Mittal J. Residue-specific alpha-helix propensities from molecular simulation. Biophys J 2012;102:1462 | Ag | "a global correction to the backbone is sufficient for most residues" |
+| Tian C et al. ff19SB: amino-acid-specific protein backbone parameters trained against quantum mechanics energy surfaces in solution. J Chem Theory Comput 2020;16:528-552 | Ag | residue-specific CMAPs, several reused across residues |
+| Jiang F, Zhou CY, Wu YD. Residue-specific force field based on the protein coil library. RSFF1: modification of OPLS-AA/L. J Phys Chem B 2014;118:6983 | Ag | residue groups {E,Q,K,R,M,L}, {F,Y,W}, {V,I} |
+| Alford RF et al. The Rosetta all-atom energy function for macromolecular modeling and design. J Chem Theory Comput 2017;13:3031 | Ag | pre-Pro has its own Ramachandran table |
+| Choi JM, Pappu RV. J Chem Theory Comput 2019;15:1355 (title not verified) | Ag | coil libraries break glycine's inversion symmetry |
+
+Not verified by the survey: Swindells, MacArthur & Thornton 1995 numbers, the RSFF2 groupings, and
+a per-residue count of how much turns inflate alpha_L for Gly, Asn and Asp.
 
 ---
 

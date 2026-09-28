@@ -1,10 +1,11 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-09-28: ff3.0 retrain with per-pair Ramachandran basin offsets RUNNING on midway2
-(`training/ff30_basin`, §1); the full-map glycine chain `ff30` was cancelled at step 223. At
-convergence the gate installs the rotamer-BP fix (§0c), releases ff_3.0 and submits the Peng
-benchmark and the glpG chains unattended. `/beagle3` was badly degraded for small-file writes on
-09-28 (§1).**
+**2026-09-28 16:35: ff3.0 retrain RUNNING on midway2 (`training/ff30_basin`, §1), with basin
+offsets on 60 Ramachandran maps only (GLY|X, GLY|GLY, X|right|PRO; 158 offsets; the other 780 maps
+NDRD), resumed from step 19 at 16:10 after the third rewind of 09-28. The full-map glycine chain
+`ff30` was cancelled at step 223. At convergence the gate installs the rotamer-BP fix (§0c),
+releases ff_3.0 and submits the Peng benchmark and the glpG chains unattended. BP validation: 8 of
+16 arms complete. `/beagle3` was badly degraded for small-file writes on 09-28 (§1).**
 
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
@@ -309,33 +310,37 @@ be run by hand while `ff30_basin` trains**, since it swaps `$P/obj` under the ru
 
 ## 1. Current jobs
 
-Snapshot **2026-09-28 12:55 CDT, verified live against `squeue` on midway2** (midway3 last checked
+Snapshot **2026-09-28 17:25 CDT, verified live against `squeue` on midway2** (midway3 last checked
 10:40, nothing of ours queued or running there). Finished and cancelled rows are deleted; only
 lessons worth reusing are kept, below the table.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49126777** | **ff3.0 retrain, basin offsets**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed from step 19 after the GLY\|GLY sheet fix (second rewind, below) | R since 12:27, midway2-[0246-0257], broadwl; step 19 done in 1198 s (24/24 workers, DSE 24/24, median RMSD 0.91 / 2.69 A against 0.93 / 2.63 on the first attempt), step 20 running; live worker maps equal the new library exactly | 57 steps at ~1245 s ~20 h, inside the wall; step 76 ~2026-09-29 08:00, then `after_training.sbatch` gates it |
-| 49126778 | its insurance successor | PD, `afterany:49126777` | resumes only if 49126777 dies |
-| **49125873, 49125874, 49125875, 49125877, 49125878, 49125879, 49125880, 49126021** (8 running) | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>` (§0c); 8 of 16 `COMPLETE` on 2026-09-28 11:33 (NTL9 and WWdomain, all 4 each, NTL9 at ~28 time units/s). Remaining at the start of this link: proteinG 1.38-1.55 M of 3.37 M, homeodomain 1.50-1.52 M of 3.12 M | R, 1 node each, self-resubmitting every ~29 h under the same names | at the first link's rate, proteinG finishes ~2026-09-28 22:00-24:00 and homeodomain ~2026-09-29 03:30, both inside this link; then run `analyse_bp.py` and report to Tobin. They write to `/beagle3`; see the degradation note below |
+| **49127867** | **ff3.0 retrain, basin offsets on 60 maps (158 offsets)**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed from step 19 after the reduction to the trained set (third rewind, below) | R since 16:10, midway2-[0247-0258], broadwl; steps 19-21 done in 1253-1263 s (24/24 workers each, no failures, DSE 24/24, median RMSD 0.91-1.00 / 2.69-2.99 A), step 22 running since ~17:13; live step-19 worker maps equal the new library exactly, residues reading no trained map exactly NDRD | 54 steps at ~1258 s ~19 h, inside the wall; step 76 ~2026-09-29 12:00, then `after_training.sbatch` gates it |
+| 49127868 | its insurance successor | PD, `afterany:49127867` | resumes only if 49127867 dies |
+| **49125873, 49125874, 49125875, 49125877, 49125878, 49125879, 49125880, 49126021** (8 running) | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>` (§0c); 8 of 16 `COMPLETE` (NTL9 and WWdomain, all 4 each, NTL9 at ~28 time units/s); still 8 at 17:25, all 8 remaining arms running. Remaining at the start of this link: proteinG 1.38-1.55 M of 3.37 M, homeodomain 1.50-1.52 M of 3.12 M | R, 1 node each, self-resubmitting every ~29 h under the same names | measured 13:42 on this link's own rate (proteinG 17.6-18.9, homeodomain 15.2-15.4 time units/s), proteinG finishes 2026-09-28 20:45 to 09-29 00:40 and homeodomain 09-29 03:15-04:05, all inside this link (homeodomain needs 27.1-27.9 h of the ~29.2 h per link); then run `analyse_bp.py` and report to Tobin. They write to `/beagle3`; see the degradation note below |
 
 ### ff30_basin: ff3.0 from ff2.1 with per-pair basin offsets (started 2026-09-28)
 
-**What it is** (plan.md, findings 1.8-1.10): ff2.1's own FF2 workflow, plus 4,234 trained basin
-offsets on the 840 Ramachandran coil maps, each (central, direction, neighbour) map its own
-parameter set, GLY|GLY mirror-symmetric, updated once per epoch by the log-ratio of free to
+**What it is** (plan.md, findings 1.8-1.13): ff2.1's own FF2 workflow, plus 158 trained basin
+offsets on 60 Ramachandran coil maps: GLY|X (alpha_R, alpha_L, beta), GLY|GLY (helix and beta, tied
+to their mirrors) and X|right|PRO (alpha_R, beta); the other 780 maps are NDRD unchanged. Each map is
+its own parameter set, updated once per epoch by a damped Newton step matching free to
 native-restrained basin populations, no DSE term on them. 46 proteins are held out of that update.
-Starts from ff2.1 with every offset zero. `verify_rama_basin.py` passed on midway3 before launch.
+Epoch 0 ran at ff2.1 with every offset zero; round 1 was recomputed for the 60-map set from those
+simulations. `verify_rama_basin.py` PASSES on the run (2026-09-28 16:05).
 
 * **Where:** `$P=/project/trsosnic/yinhan/upside2-md-mdw2`, run dir `$P/training/ff30_basin`
   (`init_param` = ff_2.1 md5-verified; `upside_input` hardlinked from `ff30`, its `rama.dat` =
   `parameters/common/rama.dat`). Log `ff30_basin/condiv-train_<jobid>.out`; per-worker errors only in
   `run_output/epoch_*/<code>.output_worker`; checkpoints `run_output/epoch_EE_minibatch_MM`.
-* **What to watch:** `run_output/rama_rounds.txt`, one line per epoch: sites, free-native mismatch
-  (the fraction of residue time in a different basin) for training and held-out proteins, largest
-  step and offset, mean alpha_L - alpha_R offset over the X|GLY maps. Round 1: mismatch 0.025
-  training, 0.060 held out, largest step 0.44. Held-out mismatch falling with training mismatch is
-  the healthy sign; held-out stalling while training keeps falling is overfitting.
+* **What to watch:** `run_output/rama_rounds.txt`, one line per epoch: sites of the trained maps,
+  free-native mismatch over those maps (the fraction of residue time in a different basin) for
+  training and held-out proteins, largest step and offset, mean alpha_L - alpha_R offset over the
+  GLY|X maps. Round 1: 7,528 / 882 sites, mismatch 0.0403 training / 0.0814 held out, largest step
+  0.44, GLY|X mean(dL-dR) +0.060. Round 2 comes after step 37 (~2026-09-28 23:00). **Read the
+  held-out mismatch against its sample-size floor**, not as falling or stalling: with only 46
+  proteins it sits near its floor whatever the offsets do (findings 1.12).
 * **Cluster flags live in `ff30_basin/slurm.args`** (now the midway2 broadwl line with the node
   exclusions) and every submission reads them; to move the run to midway3, write
   `--partition=caslake` there. `env.sh` picks the Python by cluster: midway2 the tree's `.venv`,
@@ -361,6 +366,20 @@ Starts from ff2.1 with every offset zero. `verify_rama_basin.py` passed on midwa
   `ff30_basin/rewound_20260928_0851/` (outside `run_output/`, so the chain cannot resume from them);
   round 1 was recomputed from the same epoch-0 simulations with the MAP step (largest 0.44) using the
   run's own updated `rama_basin.py` and `ConDiv.py`, and training resumed from step 19.
+* **Rewound a third time, 2026-09-28 16:08, to train only 60 maps (findings 1.12-1.13, plan.md).**
+  Training all 840 maps was noise-limited on 456 proteins; literature and ff2.1's own error point to
+  GLY|X, GLY|GLY and X|right|PRO, 158 offsets; the other 780 maps stay NDRD. 49127867's predecessor
+  49126777 was stopped during step 29; steps 19-29, the old code and library, `rama_rounds.txt`,
+  `.chain_starts` and the previous step-18 checkpoint (`checkpoint_epoch00_mb18_all_maps.pkl`) are in
+  `ff30_basin/rewound_20260928_1608/`; the unfinished step 29's 315 replica files (42 G, no
+  checkpoint) were deleted. Round 1 was recomputed from the epoch-0 simulations with the run's own
+  `rama_basin.update` and `ConDiv.finish_round` (`/project/trsosnic/yinhan/checks/recompute_round1.py`;
+  same held-out proteins; trained offsets equal the previous ones to 2e-16; every non-rama part of
+  the checkpoint identical); `extract_ff.py` releases from it, `verify_rama_basin.py` PASSES. Replaced
+  files in `$P/training/backup_pre_reduced_20260928/`; deployed md5s: `ConDiv.py` 83e309da,
+  `rama_basin.py` 0dc41a35 (both also in `run_output/`), `verify_rama_basin.py` 1657ef0e, `README.md`
+  94f507a4. The round log's mismatch is now over the trained maps only (0.0403 / 0.0814 held out),
+  not comparable with the earlier all-map figure.
 * **Rewound again, 2026-09-28 12:25, for the GLY|GLY fix (findings 1.11).** The engine's map for a
   glycine between glycines was not mirror-symmetric, through the raw NDRD sheet GLY|GLY entry.
   `rama_basin.py` now symmetrises that entry too, by the probability mean for coil and sheet.
@@ -409,7 +428,7 @@ Never pipe `source env.sh`: a pipe runs it in a subshell and the environment is 
 
 **ff30 (full-map glycine row) CANCELLED 2026-09-28 00:25 at step 223** (49125428 and successor
 49125429, and its monitor 49120529 / 49125766, which watched only ff30; `STATUS.md` is stale from
-then). Its glycine group failed every gate from 76 to 209 (p = 0) and its X|GLY handedness had
+then). Its glycine group failed every gate from 76 to 209 (p = 0) and its GLY|X handedness had
 drifted back to -0.82. The run dir (54 G) and the last checkpoint `ff30/run_output/epoch_11_minibatch_13`
 are kept for comparison; extract with the old extractor,
 `$P/training/backup_pre_basin_20260928/extract_ff.py`, since the current one reads basin offsets.

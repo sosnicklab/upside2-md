@@ -621,7 +621,9 @@ builds this into `parameters/ff_3.0/rama.dat` itself, a trained map per
 neighbour for `GLY|X` (central glycine, neighbour X) and mirror-symmetric
 `GLY|GLY` entries in both the coil and the sheet group, so the config writer
 stays ignorant of it and the coil/sheet and left/right mixtures give the middle
-glycine of `Gly-Gly-Gly` an exactly symmetric map on their own. See `GLY_sym.md`.
+glycine of `Gly-Gly-Gly` an exactly symmetric map on their own. Its only other
+trained maps are the pre-proline ones (`X|right|PRO`); every other map is the
+NDRD map unchanged. See `GLY_sym.md` and `training/README.md`.
 
 **Spline tables must reproduce the analytic potential exactly**: verify the
 tables against the analytic form (dry-MARTINI: reaction-field Coulomb with

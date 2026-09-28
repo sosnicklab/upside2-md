@@ -84,3 +84,10 @@ below and its detail is in `findings.md` 9i-9s and git history.
   entries bitwise unchanged, engine map exact), verifier PASS on the run, three GGG/terminal-GG
   configs built through `upside_config` exact. Stopped the chain during step 29, set steps 19-29
   aside, rewrote the round-1 library, resumed from step 19 (49126777). Docs: README, up.md, plan.
+* 09-28 afternoon: audit of what is trained and what 456 proteins resolve (findings 1.12): per-pair
+  offsets noise-limited, ~70% of the noise from the protein set. Literature survey (sub-agent) plus
+  ff2.1's own misses by residue type and neighbour (findings 1.13): pre-proline alpha_R is the largest
+  miss, made by the left/right mixture; glycine next; others small. Deployed the 158-offset set
+  (GLY|X, GLY|GLY, X|right|PRO; the rest NDRD): code and verifier rewritten, local tests, verifier
+  PASS on the run, round 1 recomputed from epoch 0, resumed from step 19 (49127867). Literature
+  recorded with read status in findings 1.13.

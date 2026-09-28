@@ -10,8 +10,8 @@ re-includes just these files, so a run directory created here stays untracked.
 | file | what it is |
 |---|---|
 | `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (`/project2/trsosnic/okleinmann/condiv/condiv2.py`); its docstring lists every difference and why |
-| `rama_basin.py` | the Ramachandran basin offsets: one offset set per (central, direction, neighbour) map on its fixed NDRD base, the library writer, per-residue basin populations and the once-per-epoch update |
-| `verify_rama_basin.py` | gate: every map's offset reaches exactly the residues that read it, through `upside_config` |
+| `rama_basin.py` | the Ramachandran basin offsets: one offset set per trained (central, direction, neighbour) map on its fixed NDRD base (the glycine-centred and pre-proline maps), the library writer, per-residue basin populations and the once-per-epoch update |
+| `verify_rama_basin.py` | gate: the trained set is as specified, every untrained map stays NDRD, and every offset reaches exactly the residues that read its map, through `upside_config` |
 | `check_converged.py` | has a run updated every file, is every group at a fixed point, has it plateaued? |
 | `train_chain.sbatch` | self-chaining Slurm job; submits `<run>/after_training.sbatch` when the target is reached |
 | `extract_ff.py` | a checkpoint -> the six parameter files, through the run's own `expand_param` |
@@ -90,14 +90,19 @@ backbone term's `center`, `sharpness` and `hbond_weight` (commented out in
 `BackboneSigmoidCoupling::get_param_deriv`, in master too) and `hbond.h5` entries 4-11, the rama
 boundaries and sharpnesses. Their learning rates are 0 so `check_converged.py` does not list them.
 
-**Additionally, the Ramachandran basin offsets.** Every coil map of the library, k = (central,
-direction, neighbour), keeps its NDRD values as a fixed base and gets one offset per basin, after
-which the map is renormalised as the NDRD maps are. So an offset is a weight factor on its basin:
-the shape inside each basin is the base's, and only the basins' depths, their frequencies, are
-trained. The basins partition the torus, with 13 deg edges: alpha_R, alpha_L, beta, pPII and
-`other` (phi > 0 outside alpha_L), and for a central glycine `other` split into its mirror halves
-beta' and pPII'. 840 maps and 4,234 offsets. Each map is its own parameter set: nothing is tied or
-pooled across maps, and a map's offsets act only on the residues that read it. GLY|GLY's base is
+**Additionally, the Ramachandran basin offsets.** A trained coil map of the library, k = (central,
+direction, neighbour), keeps its NDRD values as a fixed base and gets offsets on some of its
+basins, after which the map is renormalised as the NDRD maps are. So an offset is a weight factor
+on its basin: the shape inside each basin is the base's, and only the basins' depths, their
+frequencies, are trained. The basins partition the torus, with 13 deg edges: alpha_R, alpha_L,
+beta, pPII and `other` (phi > 0 outside alpha_L), and for a central glycine `other` split into its
+mirror halves beta' and pPII'; a trained map's untrained basins together are its reference. Only
+the maps where the literature and ff2.1's own error both show a local defect are trained, 158
+offsets on 60 maps: GLY|X (alpha_R, alpha_L, beta), GLY|GLY (helix and beta) and X|right|PRO
+(alpha_R, beta; the ring's C-delta clashes with residue i in alpha_R). The other 780 maps stay at
+NDRD, because their neighbour effects are small and 456 proteins cannot resolve them per pair
+(findings 1.12-1.13). Each map is its own parameter set: nothing is tied or pooled across maps, and
+a map's offsets act only on the residues that read it. GLY|GLY's base is
 symmetrised, as the mean of its probabilities and its mirror's, and each of its offsets is held
 equal to its mirror basin's; its sheet entry, which `upside_config` mixes into the same residues,
 is symmetrised the same way, so a glycine between glycines gets an exactly mirror-symmetric map.
@@ -140,12 +145,14 @@ python3 verify_rama_basin.py <training_dir> [protein_code]
 
 It checks the whole path, library file -> `upside_config` -> the per-residue maps in the `.up`
 file: the basins are continuous across phi = +-180, exactly mirror-symmetric and partition the
-torus; one map's offset changes that map's coil entry and nothing else, the sheet group is
-untouched but for GLY|GLY, every written map is normalised, and GLY|GLY's coil and sheet entries
-stay exactly symmetric under random offsets; for the most-read map, the first and last residues'
-maps, a GLY|GLY map and a GLY|X map, perturbing the offsets changes exactly the residues
-`residue_keys` says read that map, raising each inside the basin it was raised in; and a glycine
-that reads only GLY|GLY maps gets an exactly symmetric map from the coil/sheet mixture. **An indexing slip fails silently**: it trains one
+torus, and the trained set is exactly the 60 maps above; one map's offset changes that map's coil
+entry and nothing else, under random offsets every untrained map and the sheet group but GLY|GLY
+are bitwise the source, every written map is normalised, and GLY|GLY's coil and sheet entries stay
+exactly symmetric; for a GLY|X, a GLY|GLY and a pre-proline map and for the first and last
+residues' maps, perturbing the offsets changes exactly the residues `residue_keys` says read that
+map, raising each inside the basin it was raised in; a residue that reads only untrained maps keeps
+its NDRD map exactly; and a glycine that reads only GLY|GLY maps gets an exactly symmetric map from
+the coil/sheet mixture. **An indexing slip fails silently**: it trains one
 pair's offsets on another pair's residues and never raises anything.
 
 ## Reading `check_converged.py`
