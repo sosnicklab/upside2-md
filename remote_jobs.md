@@ -1,8 +1,9 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-09-28 16:35: ff3.0 retrain RUNNING on midway2 (`training/ff30_basin`, §1), with basin
+**2026-09-28 17:45: ff3.0 retrain RUNNING on midway2 (`training/ff30_basin`, §1), with basin
 offsets on 60 Ramachandran maps only (GLY|X, GLY|GLY, X|right|PRO; 158 offsets; the other 780 maps
-NDRD), resumed from step 19 at 16:10 after the third rewind of 09-28. The full-map glycine chain
+NDRD), resumed from step 19 at 16:10 after the third rewind of 09-28; steps 19-22 done, step 23
+running. The full-map glycine chain
 `ff30` was cancelled at step 223. At convergence the gate installs the rotamer-BP fix (§0c),
 releases ff_3.0 and submits the Peng benchmark and the glpG chains unattended. BP validation: 8 of
 16 arms complete. `/beagle3` was badly degraded for small-file writes on 09-28 (§1).**
@@ -38,9 +39,6 @@ warning, while honouring every other directive. Command-line `-p` is honoured. V
 with `scontrol show job <id> | grep Partition` rather than trusting the script. (Recorded because
 the same rewrite may apply to other partitions.)
 
-For context on why this was attractive: at 22:50 `broadwl` had **224 pending jobs, 220 outranking
-ours**, 173 nodes `mix`, zero idle; `broadwl-lc` had 18 idle nodes and 504 free cores.
-
 ---
 
 ## 0. Connect first (needs a Duo push on the user's phone)
@@ -48,14 +46,13 @@ ours**, 173 nodes `mix`, zero idle; `broadwl-lc` had 18 idle nodes and 504 free 
 Key-based auth is NOT enabled; password + Duo is the only method. The ControlMaster socket expires
 roughly hourly, so expect to redo this most sessions.
 
-**midway2** (POPE/POPG REMD campaign): Direct connection confirmed working 2026-09-12 -- the IP block
-that was present through 2026-09-10 has been lifted. Use `mdw2_master.exp` directly:
+**midway2** (training, BP validation, and the glpG chains at the ff3.0 release):
 ```bash
 ssh -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu   # alive?
 expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw2_master.exp    # if not: USER MUST APPROVE DUO
 ssh -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu '<command>'
 ```
-If the IP block returns and direct access fails, tunnel through midway3 as a fallback:
+If midway2 blocks or throttles this IP, tunnel through midway3 as a fallback:
 ```bash
 # 1. port-forward midway2:22 to localhost:2222 over the existing midway3 master (no Duo)
 ssh -o BatchMode=yes -f -N -L 2222:128.135.112.69:22 \
@@ -81,17 +78,15 @@ for this account, so **every new connection costs a Duo push**. An inert key ent
 
 Consequences, and the mitigations that actually work:
 
-* **Minimise connections rather than trying to remove Duo.** The cluster-side monitor
-  (`/project/trsosnic/yinhan/monitor.sh`, run by `monitor_loop.sbatch` on one `broadwl` core)
-  refreshes `/project/trsosnic/yinhan/STATUS.md` every 30 min. It only reports; the training chain
-  insures itself, and a dead chain shows as **CHAIN DOWN** in STATUS.md. Nothing depends on a live laptop connection, so a monitoring loop can run every few
-  hours instead of hourly.
+* **Minimise connections rather than trying to remove Duo.** The training chain and the BP arms
+  insure themselves (§1), so nothing depends on a live laptop connection and a status check every
+  few hours is enough. **No cluster-side monitor runs now**: `monitor.sh` watched only `ff30` and was
+  stopped with it, so `/project/trsosnic/yinhan/STATUS.md` is stale from 2026-09-27 23:54.
 * **`scrontab` is disabled and `crontab` is denied** on this cluster, and `pi-trsosnic` has **no
-  association with the `cron` partition** (`sbatch -p cron` is refused; the old monitor, believed
-  to be on cron, actually ran on `broadwl`). A 1-core `broadwl` job is the way to schedule recurring
-  work. A 7-day request hits `QOSMaxWallDurationPerJobLimit`; 36 h works, **provided the successor
-  is queued at the start** (`--dependency=afterany:$SLURM_JOB_ID`). The first monitor resubmitted at
-  the end of its loop, overran the wall and died silently on 2026-09-19.
+  association with the `cron` partition** (`sbatch -p cron` is refused). A 1-core `broadwl` job is
+  the way to schedule recurring work. A 7-day request hits `QOSMaxWallDurationPerJobLimit`; 36 h
+  works, **provided the successor is queued at the start** (`--dependency=afterany:$SLURM_JOB_ID`):
+  a monitor that resubmitted at the end of its loop overran the wall and died silently.
 * **Disabling laptop sleep is not sufficient.** With `caffeinate -is` holding
   `PreventSystemSleep`, the master still died after ~40 min, so network blips rather than sleep
   are tearing it down. `mdw2_master.exp` now uses `ServerAliveInterval=30
@@ -104,8 +99,8 @@ Consequences, and the mitigations that actually work:
 ssh tries the stale socket, fails, and then **falls through to a real connection attempt**, spending
 an authentication attempt and printing `Permission denied (publickey,...)`. A few of those and the
 host starts answering `Connection closed by 128.135.112.69 port 22`, which is the IP throttle, and
-the next `mdw2_hold.exp` launch dies with `MASTER_DIED_EARLY` **after** it has already sent a Duo
-push. That is how a single unguarded status call costs a push and locks you out for tens of minutes.
+the next expect launch dies **after** it has already sent a Duo push. That is how a single
+unguarded status call costs a push and locks you out for tens of minutes.
 
 **So: run `-O check` FIRST and only issue the real command if it succeeds.** Never send a bare
 `ssh -S sock host 'cmd'` on the assumption BatchMode will catch a dead master:
@@ -119,22 +114,20 @@ fi
 ```
 
 **When throttled, STOP.** The throttle clears on its own in tens of minutes. Wait at least 30 min
-before one single retry. Do not relaunch the hold script to "see if it works" — each launch spends
-a Duo push on the user's phone before it discovers the throttle.
+before one single retry. Do not relaunch the expect script to "see if it works" — each launch
+spends a Duo push on the user's phone before it discovers the throttle. The way around it while it
+lasts is the midway3 tunnel above, which needs a live `~/.ssh/cm-mdw3.sock` and therefore its own
+Duo approval.
 
 **ALWAYS put `-o BatchMode=yes` on routine ssh calls.** (Learned 2026-09-17.) A plain
 `ssh -S ~/.ssh/cm-mdw2.sock host 'cmd'` does **not** fail when the socket is dead: it silently
 falls back to a fresh connection, offers the key, then tries password auth twice non-interactively,
 hits `Received disconnect ... Too many authentication failures`, and after a couple of those the
 host starts closing connections immediately (`Connection closed by 128.135.112.69 port 22`). That
-is the IP throttle described below, self-inflicted by a status check. With `BatchMode=yes` the same
+is the IP throttle described above, self-inflicted by a status check. With `BatchMode=yes` the same
 call fails instantly and harmlessly with `Control socket connect: No such file or directory`, which
 is the signal to run the expect script. Check the socket first, and never let a monitoring loop
 retry the expect script more than once per tick.
-
-The throttle appears to clear on its own in tens of minutes. The documented way around it while it
-lasts is the midway3 tunnel (`scratchpad/mdw2_via_mdw3.exp`), which needs a live
-`~/.ssh/cm-mdw3.sock` and therefore its own Duo approval.
 
 Two zsh/tooling traps that cost time here:
 * **zsh does not word-split unquoted variables.** `M2="ssh -S sock host"; $M2 'cmd'` runs silently
@@ -146,13 +139,13 @@ Data is at `~/project/yinhan/popepopg_REMD_mdw2/`.
 
 **`/project` is the SAME filesystem on midway2 and midway3** (both mount `midway3_cap`), so
 `/project/trsosnic/yinhan/upside2-md-mdw2/` is fully readable from midway3. Checkpoint progress,
-chain logs, `.ff_installed`/`.production_relaunched` flags and force-field directories can all be
-checked **without a midway2 login at all**, useful when the IP block or a login outage is in the
-way. Only `squeue`/`sacct` need midway2 itself; the two clusters have separate Slurm controllers and
-separate accounting databases, so `sacct --clusters=all` on midway3 does **not** see midway2 jobs.
+chain logs and force-field directories can all be checked **without a midway2 login at all**,
+useful when an IP block or a login outage is in the way. Only `squeue`/`sacct` need midway2
+itself; the two clusters have separate Slurm controllers and separate accounting databases, so
+`sacct --clusters=all` on midway3 does **not** see midway2 jobs.
 Python env: `source /software/modules/init/bash && module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1 && export HDF5_USE_FILE_LOCKING=FALSE`
 
-**midway3** (NP campaign):
+**midway3**:
 ```bash
 ssh -S ~/.ssh/cm-mdw3.sock -O check yinhanw@midway3.rcc.uchicago.edu   # alive?
 expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw3_master.exp    # if not: USER MUST APPROVE DUO
@@ -160,27 +153,6 @@ ssh -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu '<command>'
 ```
 `~/project` on midway3 is a symlink to `/project/trsosnic/yinhan/` (note: **yinhan**, not yinhanw).
 Load the python env with `source ~/project/NP-1AO6/env.sh` before any h5py work.
-
-**rockfish** (JHU ARCH — added 2026-09-07 as the outage-proof host for ff3.0 training):
-```bash
-ssh -o BatchMode=yes -o ConnectTimeout=25 rockfish '<command>'   # key auth, NO Duo
-# ~/.ssh/rockfish, user ywang268. Strip the banner by emitting your own marker first:
-ssh -o BatchMode=yes rockfish 'echo === ; <command>' | sed -n '/^===/,$p'
-# A BINARY file needs base64, not cat: the banner is on stdout and prepends 1659 bytes.
-ssh -o BatchMode=yes rockfish 'echo __B64__; base64 <file>' 2>/dev/null \
-  | sed -n '/^__B64__$/,$p' | tail -n +2 | base64 -d > local_file   # then check md5 both sides
-```
-Key-based, so this host needs no interactive second factor and can be polled freely. The login
-banner (survey notice + quota tables) is **not** a clean shell: it breaks `rsync` outright
-(`protocol incompatibility`) and `scp` with `Received message too long`, so transfer with
-`tar czf - … | ssh rockfish "tar xzf - -C …"` or `cat file | ssh rockfish "cat > dest"`. Host key was
-verified over two independent network paths (this Mac and midway3) before being recorded, since ARCH
-publishes no fingerprints:
-`ED25519 SHA256:V58d1zhfocFT/JR90J3HqMw6uJTLhn+Nc58NfnoJqM8`.
-
-Paths: repo `/scratch4/rherna21/ywang268/upside2-md-rf` (`$RF`), scratch4 group quota 15 TB with
-4.4 TB free. `module` needs `source /etc/profile.d/modules.sh` first — `lmod.sh` does not exist and
-without it `module load` silently does nothing.
 
 ---
 
@@ -204,20 +176,14 @@ Why this works, all measured rather than assumed:
   `gcc/10.1.0`, because its system libstdc++ lacks `GLIBCXX_3.4.20` and the binary will not load
   without it; midway3 does not need gcc.
 
-Deployed by rsync from `/project/trsosnic/yinhan/upside2-md-mdw2` (430 MB: `src py obj parameters
-cmake example` and the install scripts), **excluding `training/`**, which is 6.6 GB of ConDiv
-campaign data that does not belong in a code deployment. `parameters/ff_3.0_trained/sidechain.h5`
-verified `c67351ca...` on beagle3.
+Deployed by rsync from `/project/trsosnic/yinhan/upside2-md-mdw2` (`src py obj parameters cmake
+example` and the install scripts), **excluding `training/`**, which is ConDiv campaign data that
+does not belong in a code deployment. Benchmark output goes to `/beagle3` so it does not compete
+with `/project`.
 
-**Filesystem headroom, and a trap.** `df` is misleading on `/project2`: it shows 787 T free while
-the trsosnic *group* quota there allows only **195 G** more. By group headroom the usable
-filesystems are `/project` (1516 G), `/beagle3` (1434 G), `/cds3` (789 G, unusable from compute
-nodes) and `/project2` (195 G). beagle3 was chosen so benchmark output does not compete with the
-live glpG campaign on `/project`.
-
-**Naming:** the cluster keeps `ff_3.0_trained` / `ff_3.0_trained_rf` because the running chain
-scripts reference those paths. The repo uses the plain `ff_3.0` slot. Do not rename on the cluster
-while the arm test is running.
+**Naming:** the release writes `parameters/ff_3.0` in both trees. The old `ff_3.0_trained` /
+`ff_3.0_trained_rf` directories are still on the cluster but no live script references them
+(checked 2026-09-28).
 
 ### Other Upside copies (inventory 2026-09-09)
 
@@ -225,8 +191,8 @@ Owned by yinhanw:
 
 | path | size | branch | last touched | disposition |
 |---|---|---|---|---|
-| `/project/trsosnic/yinhan/upside2-md-mdw2` | 8.3 G | martini-dev | today | **ACTIVE**, all 3 running jobs use it |
-| `/beagle3/trsosnic/yinhan/upside2-md` | 6.4 G | martini-dev | today | **the shared deployment**, refreshed from stale 2026-08-27 |
+| `/project/trsosnic/yinhan/upside2-md-mdw2` | 8.3 G | martini-dev | live | **ACTIVE**, `ff30_basin` training and the ff3.0 release |
+| `/beagle3/trsosnic/yinhan/upside2-md` | 6.4 G | martini-dev | live | **the shared deployment** |
 | `/scratch/midway2/yinhanw/upside2-md-water-diff` | 13 G | water-diff | 2025-10-30 | idle; see below |
 | `/scratch/midway2/yinhanw/upside2-md` | 176 M | **master** | 2026-01-28 | keep, master |
 | `/home/yinhanw/upside2-md` | 256 M | **master** | 2025-11-19 | keep, master |
@@ -265,13 +231,12 @@ trained with it, and the running ff3.0 training uses it.
 the RMS force, ConDiv rotamer-gradient error ~1e-4 relative; the energy bias is one-signed (converged
 is higher, mean 0.0009 E_up). Conclusion given to the user: ff2.1 and ff3.0 do not need retraining.
 
-**Simulation validation for Tobin: jobs 49120982-49120997 (16 arms, running).** ff_2.1, native-start
+**Simulation validation for Tobin: 16 arms, live job ids and progress in §1.** ff_2.1, native-start
 14-replica REMD with the Peng benchmark protocol (Table S2 ladder and duration, dt 0.009, frame 100),
 proteinG / homeodomain / WWdomain / NTL9 x {bug, fix} x seeds {1, 2}. Trajectories of the two
 binaries decorrelate within a few hundred time units, so the test is statistical: bug-minus-fix
 against the seed-to-seed spread (z = delta / sigma_seed). All 16 checked healthy at the first 100
-frames (C-N 1.33-1.34 +- 0.13 A as in the ff_3.0 benchmark, KE/1.5kT 0.99-1.00). Expected done
-~1.5 days (WW, NTL9) and 2.5-3 days (proteinG, homeodomain) from 2026-09-26 18:55.
+frames (C-N 1.33-1.34 +- 0.13 A as in the ff_3.0 benchmark, KE/1.5kT 0.99-1.00).
 * dir `/beagle3/trsosnic/yinhan/bp_validation`: `obj_bug/`, `obj_fix/` (deployment source built
   twice, differing only in the fix; `obj_bug` reproduces the deployed binary bitwise), `bp_run.py`
   (copy of `ff3_benchmark/bench_run.py`: binary, seed, ff_2.1 native), `bp.sbatch`, `submit_all.sh`
@@ -310,15 +275,15 @@ be run by hand while `ff30_basin` trains**, since it swaps `$P/obj` under the ru
 
 ## 1. Current jobs
 
-Snapshot **2026-09-28 17:25 CDT, verified live against `squeue` on midway2** (midway3 last checked
-10:40, nothing of ours queued or running there). Finished and cancelled rows are deleted; only
+Snapshot **2026-09-28 17:45 CDT, verified live against `squeue` on midway2** (midway3 checked
+17:46, nothing of ours queued or running there). Finished and cancelled rows are deleted; only
 lessons worth reusing are kept, below the table.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49127867** | **ff3.0 retrain, basin offsets on 60 maps (158 offsets)**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed from step 19 after the reduction to the trained set (third rewind, below) | R since 16:10, midway2-[0247-0258], broadwl; steps 19-21 done in 1253-1263 s (24/24 workers each, no failures, DSE 24/24, median RMSD 0.91-1.00 / 2.69-2.99 A), step 22 running since ~17:13; live step-19 worker maps equal the new library exactly, residues reading no trained map exactly NDRD | 54 steps at ~1258 s ~19 h, inside the wall; step 76 ~2026-09-29 12:00, then `after_training.sbatch` gates it |
+| **49127867** | **ff3.0 retrain, basin offsets on 60 maps (158 offsets)**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed from step 19 after the reduction to the trained set (third rewind, below) | R since 16:10, midway2-[0247-0258], broadwl; steps 19-22 done in 1253-1263 s (24/24 workers each, no failures, DSE 24/24, median RMSD 0.91-1.00 / 2.43-2.99 A), step 23 running since ~17:34; live step-19 worker maps equal the new library exactly, residues reading no trained map exactly NDRD | 54 steps at ~1258 s ~19 h, inside the wall; step 76 ~2026-09-29 12:00, then `after_training.sbatch` gates it |
 | 49127868 | its insurance successor | PD, `afterany:49127867` | resumes only if 49127867 dies |
-| **49125873, 49125874, 49125875, 49125877, 49125878, 49125879, 49125880, 49126021** (8 running) | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>` (§0c); 8 of 16 `COMPLETE` (NTL9 and WWdomain, all 4 each, NTL9 at ~28 time units/s); still 8 at 17:25, all 8 remaining arms running. Remaining at the start of this link: proteinG 1.38-1.55 M of 3.37 M, homeodomain 1.50-1.52 M of 3.12 M | R, 1 node each, self-resubmitting every ~29 h under the same names | measured 13:42 on this link's own rate (proteinG 17.6-18.9, homeodomain 15.2-15.4 time units/s), proteinG finishes 2026-09-28 20:45 to 09-29 00:40 and homeodomain 09-29 03:15-04:05, all inside this link (homeodomain needs 27.1-27.9 h of the ~29.2 h per link); then run `analyse_bp.py` and report to Tobin. They write to `/beagle3`; see the degradation note below |
+| **49125873, 49125874, 49125875, 49125877, 49125878, 49125879, 49125880, 49126021** (8 running) | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>` (§0c); 8 of 16 `COMPLETE` (NTL9 and WWdomain, all 4 each, NTL9 at ~28 time units/s); still 8 at 17:45, all 8 remaining arms running and healthy (low T folded, Rg ~10 A and ~50 hbonds; high T unfolded). This link at 17:45: proteinG 0.96-1.21 M of its 1.38-1.55 M, homeodomain 0.97-0.99 M of its 1.50-1.52 M | R, 1 node each, self-resubmitting every ~29 h under the same names | measured 17:45 on this link's own rate (proteinG 17.7-19.0, homeodomain 15.2-15.6 time units/s), proteinG finishes 2026-09-28 20:35 to 09-29 00:30 and homeodomain 09-29 03:00-03:55, all inside this link (homeodomain needs 26.8-27.7 h of the ~29.2 h per link); then run `analyse_bp.py` and report to Tobin. They write to `/beagle3`; see the degradation note below |
 
 ### ff30_basin: ff3.0 from ff2.1 with per-pair basin offsets (started 2026-09-28)
 
@@ -360,57 +325,37 @@ simulations. `verify_rama_basin.py` PASSES on the run (2026-09-28 16:05).
   a row starting from the same step stop the chain rather than loop. The one gap: the gate job itself
   has no successor, so if it dies the chain waits for a login (`sbatch $(cat slurm.args)
   after_training.sbatch` from the run dir).
-* **Round 1 was rewound (2026-09-28 08:51).** Its log-ratio step with Dirichlet pseudo-counts moved
-  offsets by up to 1.76 nats in basins with no residues in either ensemble. The chain was stopped
-  during step 20; steps 19-20 and the old-rule checkpoint, code, library and round log are in
-  `ff30_basin/rewound_20260928_0851/` (outside `run_output/`, so the chain cannot resume from them);
-  round 1 was recomputed from the same epoch-0 simulations with the MAP step (largest 0.44) using the
-  run's own updated `rama_basin.py` and `ConDiv.py`, and training resumed from step 19.
-* **Rewound a third time, 2026-09-28 16:08, to train only 60 maps (findings 1.12-1.13, plan.md).**
-  Training all 840 maps was noise-limited on 456 proteins; literature and ff2.1's own error point to
-  GLY|X, GLY|GLY and X|right|PRO, 158 offsets; the other 780 maps stay NDRD. 49127867's predecessor
-  49126777 was stopped during step 29; steps 19-29, the old code and library, `rama_rounds.txt`,
-  `.chain_starts` and the previous step-18 checkpoint (`checkpoint_epoch00_mb18_all_maps.pkl`) are in
-  `ff30_basin/rewound_20260928_1608/`; the unfinished step 29's 315 replica files (42 G, no
-  checkpoint) were deleted. Round 1 was recomputed from the epoch-0 simulations with the run's own
-  `rama_basin.update` and `ConDiv.finish_round` (`/project/trsosnic/yinhan/checks/recompute_round1.py`;
-  same held-out proteins; trained offsets equal the previous ones to 2e-16; every non-rama part of
-  the checkpoint identical); `extract_ff.py` releases from it, `verify_rama_basin.py` PASSES. Replaced
-  files in `$P/training/backup_pre_reduced_20260928/`; deployed md5s: `ConDiv.py` 83e309da,
-  `rama_basin.py` 0dc41a35 (both also in `run_output/`), `verify_rama_basin.py` 1657ef0e, `README.md`
-  94f507a4. The round log's mismatch is now over the trained maps only (0.0403 / 0.0814 held out),
-  not comparable with the earlier all-map figure.
-* **Rewound again, 2026-09-28 12:25, for the GLY|GLY fix (findings 1.11).** The engine's map for a
-  glycine between glycines was not mirror-symmetric, through the raw NDRD sheet GLY|GLY entry.
-  `rama_basin.py` now symmetrises that entry too, by the probability mean for coil and sheet.
-  49126332 was stopped during step 29; steps 19-29, the old code, the old `rama_round_01.dat`,
-  `rama_rounds.txt` and `.chain_starts` are in `ff30_basin/rewound_20260928_1225/`.
-  `rama_round_01.dat` was rewritten from the step-19 checkpoint (same offsets, bitwise identical
-  outside GLY|GLY, GLY|GLY asymmetry 66.5 -> 0), the round log's "X|GLY" label corrected to GLY|X,
-  `verify_rama_basin.py` PASSES on the run, and three configs with GGG or terminal-GG glycines built
-  through `upside_config` are exactly symmetric. Replaced files are in
-  `$P/training/backup_pre_ggsheet_20260928/`. The two unfinished steps' replica trajectories and
-  configs (step 29 here, step 20 in `rewound_20260928_0851/`, 87 G, no worker of either had
-  finished, no checkpoint, referenced by nothing) were deleted at 12:45; logs and parameter files
-  are kept and each directory has a `README.txt`. Deployed md5s: `ConDiv.py` fd9115d5, `rama_basin.py`
-  0b1bec68 (both also in `run_output/`), `extract_ff.py` 9f9d3d3b, `verify_rama_basin.py` 12cbb4d6,
-  `README.md` f8445629.
-* **Deployed 2026-09-28**, md5-verified against the repo: `ConDiv.py`, `rama_basin.py`,
-  `verify_rama_basin.py`, `extract_ff.py`, `convergence_gate.py`, `gate_or_continue.sh`,
-  `train_chain.sbatch`, `env.sh`, `README.md` in `$P/training/`. The replaced files, the removed
-  `rama_gly_gradient.py` / `verify_gly_gradient.py` and the stale `$P/py/rama_gly_gradient.py` are in
+* **Deployed in `$P/training/`, md5-verified against the repo 2026-09-28 17:50:** `ConDiv.py`
+  83e309da and `rama_basin.py` 0dc41a35 (both also in `run_output/`), `verify_rama_basin.py`
+  1657ef0e, `extract_ff.py` 9f9d3d3b, `convergence_gate.py` 60a3cfbc, `train_chain.sbatch` f8ebc95c,
+  `env.sh` 1a202218, `README.md` 94f507a4. `gate_or_continue.sh` differs from the repo (0a653ade) only
+  by the armed BP-fix line (§0c). The pre-basin files, the removed `rama_gly_gradient.py` /
+  `verify_gly_gradient.py` and the stale `$P/py/rama_gly_gradient.py` are in
   `$P/training/backup_pre_basin_20260928/`.
-* **First try on midway3 (59635685) was cancelled after 10 min PENDING (Resources)**, as the user
-  asked, and resubmitted on midway2, where it started at once. `sbatch --test-only` had predicted a
-  13:36 start on both clusters, so its estimate is no guide to the real wait.
-* **The first midway2 link (49125951) lost 4 of 24 workers at launch** to `srun: error: Task launch
-  for StepId=... failed: Job credential expired`, 2-3 min after the 24 steps were issued together,
-  on nodes whose other steps ran fine: a launch race, not a node fault. It was cancelled before the
-  step completed, with its successor, and the trainer now relaunches a worker whose `srun` never
-  started it (`<code>.srun` says `Task launch`), as soon as that is seen, up to twice; a worker that
-  ran and failed still fails the step. The run was re-initialised with that code (no step had
-  finished; its log is in `ff30_basin/aborted_20260928_0126/`). A relaunch shows in the link log as
-  `<code> never started (srun launch failed), relaunching`.
+* **Rewound three times on 2026-09-28**, each time recomputing round 1 from the same epoch-0
+  simulations and resuming from step 19. Each rewound directory is outside `run_output/`, so the chain
+  cannot resume from it, and holds that attempt's steps, old code, library, round log,
+  `.chain_starts` and a `README.txt`; its unfinished step's replicas (no checkpoint) were deleted.
+  * 08:51, `rewound_20260928_0851/`: the log-ratio step with Dirichlet pseudo-counts moved offsets by
+    up to 1.76 nats in basins with no residues in either ensemble; replaced by the MAP step (largest
+    0.44).
+  * 12:25, `rewound_20260928_1225/` (replaced files in `backup_pre_ggsheet_20260928/`): the GLY|GLY
+    map was not mirror-symmetric, through the raw NDRD sheet GLY|GLY entry (findings 1.11);
+    `rama_basin.py` now symmetrises it by the probability mean for coil and sheet (asymmetry
+    66.5 -> 0).
+  * 16:08, `rewound_20260928_1608/` (replaced files in `backup_pre_reduced_20260928/`, plus the
+    all-map step-18 checkpoint `checkpoint_epoch00_mb18_all_maps.pkl`): training all 840 maps was
+    noise-limited on 456 proteins, so only the 60 maps above are trained (findings 1.12-1.13).
+    Recomputed by `/project/trsosnic/yinhan/checks/recompute_round1.py`; trained offsets equal the
+    previous ones to 2e-16 and every non-rama part of the checkpoint is identical. The round log's
+    mismatch is over the trained maps only, not comparable with the earlier all-map figure.
+* **`sbatch --test-only`'s start estimate is no guide to the real wait**: it predicted 13:36 on both
+  clusters, then the midway3 submission sat PENDING (Resources) while midway2 started at once.
+* **`srun: Job credential expired` at launch is a race, not a node fault**: the first link lost 4 of
+  24 workers 2-3 min after the 24 steps were issued together, on nodes whose other steps ran fine.
+  The trainer now relaunches a worker whose `srun` never started (`<code>.srun` says `Task launch`),
+  up to twice, logging `<code> never started (srun launch failed), relaunching`; a worker that ran
+  and failed still fails the step.
 
 **`/beagle3` is badly degraded for small-file writes (measured 2026-09-28 ~01:10).** 200 one-line
 files: `/beagle3` 51 s from midway3 and 503 s from midway2, against 0.06-0.27 s on `/project` and
@@ -426,9 +371,8 @@ midway3 the `/beagle3` venv, both torch 2.6.0+cpu, numpy 1.23.5, scipy 1.13.1, t
 tree's engine. `env_shared.sh` uses the same test only to choose a module init, which is harmless.
 Never pipe `source env.sh`: a pipe runs it in a subshell and the environment is lost.
 
-**ff30 (full-map glycine row) CANCELLED 2026-09-28 00:25 at step 223** (49125428 and successor
-49125429, and its monitor 49120529 / 49125766, which watched only ff30; `STATUS.md` is stale from
-then). Its glycine group failed every gate from 76 to 209 (p = 0) and its GLY|X handedness had
+**ff30 (full-map glycine row) CANCELLED 2026-09-28 00:25 at step 223.** Its glycine group failed
+every gate from 76 to 209 (p = 0) and its GLY|X handedness had
 drifted back to -0.82. The run dir (54 G) and the last checkpoint `ff30/run_output/epoch_11_minibatch_13`
 are kept for comparison; extract with the old extractor,
 `$P/training/backup_pre_basin_20260928/extract_ff.py`, since the current one reads basin offsets.
@@ -441,72 +385,41 @@ Two lessons from its chain carry over to every run:
 
 ### The FF2 trainer on midway2 (2026-09-24)
 
-`training/ConDiv.py` is now the FF2 dual-target trainer (findings 9v, plan.md). Deployed md5-matched
-to `$P/training/`, with `extract_ff.py`, `patch_glpg.py`, `validate_ff.sh`, `check_converged.py`,
-`train_chain.sbatch`; the old trainer and helpers are in `$P/backup_training_ff1form/`.
+`training/ConDiv.py` is the FF2 dual-target trainer (findings 9v, plan.md); the old FF1-form trainer
+and helpers are in `$P/backup_training_ff1form/`.
 
 **Measured step cost, full protocol** (`worker_test/`, job 49056799): 5vhg, 150 residues, the
 largest in the set, 1242 s; 1ean, 114 residues, 897 s. A step waits for its slowest worker, so
 **~21-22 min per step**; `STEPS_PER_LINK = 90` fits a 36 h wall. Both unfolded properly on the SI's
 ladder (mean Rg 14 -> 46 A and 13 -> 36 A across T = 0.8-1.1), so the DSE target is real.
 
-**What `validate_ff.sh` does at release** (now run by hand, see ff30_basin above): extract through
-the run's own `expand_param`, back up and overwrite `parameters/ff_3.0` in `$P` and in the /beagle3
-deployment (md5-verified), move the superseded `runs/*_ff_3.0` benchmark directories to
-`runs_superseded/`, submit the 32 Peng arms (~7 days), gate the glpG patch on a pristine ff_2.1
-seed, patch the 4 live seeds, clear their replicas and submit the 4 REMD chains (~7.5 days). It
-submits to broadwl, so it runs from midway2.
+**What `validate_ff.sh` does at release** (run by the gate at convergence, see ff30_basin above):
+extract through the run's own `expand_param`, back up and overwrite `parameters/ff_3.0` in `$P`
+and in the /beagle3 deployment (md5-verified), move the superseded `runs/*_ff_3.0` benchmark
+directories to `runs_superseded/`, submit the 32 Peng arms (~7 days), gate the glpG patch on a
+pristine ff_2.1 seed, patch the 4 live seeds, clear their replicas and submit the 4 REMD chains
+(~7.5 days). It submits to broadwl, so it runs from midway2.
 
 **`bench_run.py` changed 2026-09-24** (backup `bench_run.py.bak_ff1form_20260924`): the type-0
 burial override for ff_3.0 and the `rama3.dat` fallback are gone, since the new ff3.0 is FF2-form.
 Nothing may benchmark the old FF1-form ff_3.0 with it.
 
-### The 2026-09-23 training failure: an infrastructure kill, not a defect
+### A link killed by SIGBUS on several nodes at once is a transient `/project` outage
 
-Link **49047139** ran 42 minibatches cleanly (steps 449 -> 491) and then **FAILED with exit 7**
-8 h 36 m in, far inside its 36 h wall. What the evidence says:
-
-* All 12 workers of minibatch 35 were killed by **signal 7 (SIGBUS)**, `sacct` steps `.492`-`.503`
-  all `CANCELLED 0:7`, spread across **four different nodes** (midway2-[0276-0279]). A bad node
-  kills 3 tasks, not 12, so this is not node-local and the nodes were **not** added to `--exclude`.
-* The physics was healthy at the moment of death: every worker was near frame 1985/4000 with
-  Rg 14.5 A, ~110 hbonds and potential around -200. Not a blow-up.
-* **No traceback anywhere**, and all 12 `*.output_worker` files are 0 bytes. The job's own `.out`
-  stopped being written at 11:22 while the workers kept writing until 11:26-11:31, and the job was
-  not reaped until 12:15.
-* **Disk was not the cause, checked directly.** `/project` trsosnic fileset: 3.5 T of 3.9 T, 445 G
-  free, inodes 216 K of 1.1 M (20%). A 200 MB write+delete on `/project` succeeded at 1.7 GB/s.
-  `/project2` group is the tight one at 1.45 T of a 1.49 T soft quota (97%), but nothing in this
-  campaign writes there. `rcchelp quota` is the tool that reports the group numbers; plain `df` on
-  the mount point shows the whole 6.3 P filesystem and tells you nothing, while `df` on the
-  **subdirectory** does report the fileset.
-
-* **The successor settles it.** The chain queues its replacement with `--dependency=afterany`, so
-  this should have been survivable. 49053769 started 12:18:02 and was `CANCELLED` the same second
-  with zero elapsed, and its `.out` file was never created: it died before it could open its own
-  output file. Those nodes could neither read nor create files on `/project` between 11:26 and
-  12:18.
-
-SIGBUS on mmap'd HDF5 across four nodes, plus a batch step that cannot create its output file
-52 minutes later, is a transient `/project` outage. **No GPFS log was available**, so this is
-inferred from symptoms rather than confirmed at the source. The chain logic itself is sound and
-needed no change; recovery was to resume.
+On 2026-09-23 all 12 workers of one step died with **signal 7 (SIGBUS)** across four nodes, with
+healthy physics, no traceback and 0-byte `*.output_worker` files, and the `afterany` successor died
+in the same second it started, before it could create its `.out`. Disk space was checked and was not
+the cause. A bad node kills its own 3 tasks, not 12 across four nodes, so nothing was excluded; the
+chain logic needed no change and recovery was to resume. No GPFS log was available, so this is
+inferred from symptoms.
 
 ### Disk: from midway2, `df` on the subdirectory is the ONLY number you get for `/project`
 
-**Rewritten 2026-09-23 after re-measuring.** The earlier version of this section told you to read
-the `Midway3 GPFS mounted at /project` row out of `rcchelp quota`, and to use a `check_quota.py`
-helper. Both instructions are dead: on midway2 `rcchelp quota` now emits 14 lines covering only
-**home, scratch and project2**, with no `/project` and no `/beagle3` row, and no `check_quota.py`
-exists anywhere in the repo or on either cluster.
-
-What actually works, all three verified 2026-09-23:
-
 ```
-df -h /project/trsosnic     -> 3.9T total  3.5T used   445G free  89%   (the FILESET, correct)
-df -ih /project/trsosnic    -> 1.1M inodes 216K used   898K free  20%
-df -h /project              -> 6.3P total                                (the whole device, useless)
-rcchelp quota               -> home, scratch, project2 group only
+df -h /project/trsosnic     -> the FILESET (size, used, free), correct
+df -ih /project/trsosnic    -> fileset inodes
+df -h /project              -> 6.3P total, the whole device, useless
+rcchelp quota               -> home, scratch, project2 group only; no /project or /beagle3 row
 mmlsquota                   -> "File system project is not known", the GPFS client is not here
 ```
 
@@ -526,56 +439,25 @@ mmlsquota                   -> "File system project is not known", the GPFS clie
 ~150 GB each and `popepopg_REMD` holds another 638 G; those two trees plus `NP-1AO6` at 491 G are
 1.75 T of the 3.5 T used.
 
-### sbatch propagates the submitter's environment — this broke the whole chain once
+### A nested sbatch inherits `SLURM_*` from the job that calls it
 
-**2026-09-06, found the hard way.** `check_continue.sbatch` requests `#SBATCH --mem=8G`, which puts
-`SLURM_MEM_PER_NODE` in its environment. `sbatch` hands that environment to the job it submits, and
-`srun_mdw2.sh` requests `--mem-per-cpu`, which sets `SLURM_MEM_PER_CPU`. With both present every
-worker launch died instantly:
+A submitting script that requests `--mem` passes `SLURM_MEM_PER_NODE` to the job it submits; if that
+job's `srun` requests `--mem-per-cpu`, every worker launch dies instantly with
+`srun: fatal: SLURM_MEM_PER_CPU, SLURM_MEM_PER_GPU, and SLURM_MEM_PER_NODE are mutually exclusive.`
+This broke a training chain's only resubmit path on 2026-09-06, unseen because every earlier job had
+been submitted from an interactive shell. **Any script that submits another job must unset those
+three variables after its `#SBATCH` block**, or match the child's memory-request type. Unsetting them
+does not change the running job's own allocation.
 
-```
-srun: fatal: SLURM_MEM_PER_CPU, SLURM_MEM_PER_GPU, and SLURM_MEM_PER_NODE are mutually exclusive.
-```
+### Slurm snapshots the batch script at submission
 
-All 12 workers failed, `run_minibatch` raised `All jobs failed`, and the job exited in under a
-minute. `check_continue` resubmitted, the new job died the same way, three times — then the
-forward-progress guard correctly aborted the chain at `stall 3/3` with training frozen at 236/600.
-
-**This path had never executed before.** Every training job until then was submitted by hand from an
-interactive shell, which has no `SLURM_MEM_*` set. The one job `check_continue` did submit was
-cancelled before it ran. So the chain's only resubmit path was broken from the day it was written and
-nothing revealed it. Had it stayed hidden, the unattended run would have aborted and produced nothing.
-
-Fixed by unsetting the three mutually-exclusive variables after the `#SBATCH` block in every script
-that submits another job — `check_continue.sbatch`, `run_arm_test.sbatch`, `decide_and_launch.sbatch`.
-Unsetting them does not change the running job's own allocation; Slurm has already granted it.
-
-Verified by execution, not inspection: `check_continue` was rerun with no dependency so it performed a
-real resubmission, and the resulting job showed 0 `mutually exclusive` errors, 12/12 worker outputs,
-96 replica `.h5` files (12 workers x 8 replicas), 0 `WORKER_FAIL`, and `MinMemoryCPU=2000M` as the
-only memory variable.
-
-**The general rule: a nested `sbatch` inherits `SLURM_*` from the job that calls it.** Before adding
-any new submitting script, sanitize that environment or match the memory-request *type* of the child.
-`remd.sbatch`, `np_prod.sbatch` and `armtest_remd.sbatch` set no `--mem` at all, so they were never
-exposed — but they are equally reliant on the caller not leaking a conflicting pair.
-
-### Slurm snapshots the batch script at submission — two bugs came from this
-
-**A requeue restarts training from a STALE checkpoint and destroys newer ones.** Job 48977118 was
-requeued by Slurm after a node failure (0010 → 0011). A requeue reruns the batch script *verbatim
-with its original arguments*, so it resumed from the `epoch_02_minibatch_07` it had been submitted
-with, and `main_loop`'s `rmtree` deleted checkpoints 08–21 on the way back up. Net progress was zero
-from 15:32 to 17:37 and the wall clock resets on every requeue, so it would never have terminated on
-its own. Fixed two ways in `srun_mdw2.sh`: `#SBATCH --no-requeue`, and the script now resolves the
-newest checkpoint on disk at run time and ignores a staler argument (it logs when they differ).
-Verify with `scontrol show job <id> | grep Requeue` — must be `Requeue=0`.
-
-**An edit to a `.sbatch` does not reach jobs already queued.** `check_continue` 48977123 was submitted
-at 12:47 and ran at 17:37, using its 12:47 snapshot — so it submitted 200 steps even though the file
-on disk had said `STEPS_PER_JOB=180` for hours. 200 × 637 s = 35 h 23 min against a 36 h wall, and a
-wall-limit kill is the trigger for the latent NaN path. **After editing any script in the chain,
-cancel and resubmit the already-queued jobs that use it, or the edit silently does nothing.**
+* **A requeue reruns the script verbatim with its original arguments**, so a requeued training link
+  resumed from the stale checkpoint it was submitted with and `main_loop`'s `rmtree` deleted the
+  newer ones. Chain scripts carry `#SBATCH --no-requeue` and resolve the newest checkpoint on disk at
+  run time. Verify with `scontrol show job <id> | grep Requeue` (must be `Requeue=0`).
+* **An edit to a `.sbatch` does not reach jobs already queued.** After editing any script in a chain,
+  cancel and resubmit the queued jobs that use it; check what a queued job will run with
+  `scontrol write batch_script <id>`.
 
 ## 1b. Data and decisions that outlive their jobs
 
@@ -608,7 +490,7 @@ as running; they are in git history). What must not be forgotten:
 
 ## 2. THE TWO CAMPAIGNS ARE DIFFERENT SIMULATIONS
 
-Conflating them caused several errors this session, including a threshold copied from NP that killed a
+Conflating them has caused several errors, including a threshold copied from NP that killed a
 healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis between them.**
 
 | | **NP** (`np_1AO6_prod`) | **glpG** (`remd_glpG-*`) |
@@ -652,14 +534,6 @@ All seeds OK.
 
 A broken seed shows `sym_err ~ 3–6` and `aL < aR`. **Do not submit if any seed shows BROKEN.**
 
-**Current state (2026-09-01)**: Seeds rebuilt from `hybrid_prep/` MARTINI structures using corrected
-upside_config.py. Protein is in alphaR (BioPython phi_std ≈ -60° for TM1 body). All 6 helical GLY
-maps symmetric. helix_fraction using phi_std ∈ [-130,-20] should be nonzero from the start.
-
-**WARNING — dihedral sign error in the VTF analysis script above**: the homemade `dihedral()` function
-returns `-phi_std`. For alphaR residues (true phi_std ≈ -60°), it reports ≈ +60°. Use BioPython's
-`calc_dihedral` for any phi verification instead of the function defined above.
-
 ### Step 2 — check helix health from a VTF trajectory (after first chunk)
 
 Extract a VTF for the T=0.70 replica (slot 0) and analyse phi/psi:
@@ -701,7 +575,7 @@ def dihedral(a, b, c, d):
     l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
     if l1<1e-10 or l2<1e-10: return np.nan
     n1/=l1; n2/=l2
-    m1=np.cross(n1,b2/np.linalg.norm(b2))
+    m1=np.cross(b2/np.linalg.norm(b2),n1)
     return np.degrees(np.arctan2(np.dot(m1,n2),np.dot(n1,n2)))
 
 def helix_fraction(atoms, frames, chain="A", res_range=(131, 152)):
@@ -792,14 +666,14 @@ Also useful: protein Rg, and `avg_kinetic_energy/1.5kT` at the end of a log (hea
 short of its wall limit. A COMPLETED job that did not resubmit means the gate fired — check the log.
 
 **glpG (updated driver)**: a rollback looks like `[remd] ROLLBACK #N filename: reason` followed by
-`rolled back M/48 replicas; continuing chain`. The chain does NOT terminate. The NaN output is rotated
+`rolled back M/N replicas; continuing chain`. The chain does NOT terminate. The NaN output is rotated
 to `output_previous_N` as normal history; the rolled-back replica restarts the next chunk from its
 pre-chunk positions. A replica that repeatedly blows up gets rolled back repeatedly; it does not get
 dropped from the ladder. Watch for high rollback counts on the same file — that indicates a replica with
 a persistent physics problem that won't self-correct.
 
-**Rollback mechanism**: before each chunk `run_remd.py` snapshots `/input/pos` (3.6 MB total for 48
-replicas). On NaN detection it overwrites the last `output/pos` frame and `output/potential[-1]` with
+**Rollback mechanism**: before each chunk `run_remd.py` snapshots `/input/pos` of every replica.
+On NaN detection it overwrites the last `output/pos` frame and `output/potential[-1]` with
 the pre-chunk values so that `reseed()` on the next iteration picks up the clean state.
 
 **These driver scripts are NOT in git.** They live on the cluster at
@@ -811,7 +685,7 @@ A running job keeps the version it loaded at start; edits take effect at the **n
 
 ## 7. If the chain terminates — manual rollback procedure
 
-**glpG (old driver, or gate fired before rollback logic):** patch last output frame of each NaN file
+**glpG (if the chain stops rather than rolling back):** patch last output frame of each NaN file
 with the last finite frame from `output_previous_0` (end of block 1), then resubmit.
 
 ```python
@@ -840,7 +714,7 @@ for fn in sorted(run_dir.glob("*.run.*.up")):
 
 - **NP dt hard limit: 0.001.** dt=0.005 caused backbone blow-ups during unfolding (large-amplitude spring instability at t>250, proven by A/B). Never raise above 0.001.
 - **Do not transfer thresholds between NP and glpG.** A CN_MAX borrowed from NP false-positived on a healthy glpG chunk (2.52 Å vs healthy max 2.659 Å) and cost a 6 h block. The two jobs have different physics.
-- **glpG NaN propagation via REMD exchange.** A single blow-up in one replica spreads to all 48 via exchange within ~60 steps (IEEE 754: `NaN < 0.f` = false). The NaN cascade fix (`!isfinite(lboltz_diff)`) and the per-chunk rollback driver address this.
+- **glpG NaN propagation via REMD exchange.** A single blow-up in one replica spreads to every replica via exchange within ~60 steps (IEEE 754: `NaN < 0.f` = false). The NaN cascade fix (`!isfinite(lboltz_diff)`) and the per-chunk rollback driver address this.
 - **A green exit code means nothing** for a self-submitting REMD job. Check the log for DESTROYED/ROLLBACK counts and verify physical observables.
 - **Midway3 home quota is 30 G** (21 G used on 2026-09-28, 28.6 G on 09-23). Jobs can fail oddly if home fills.
 - **Do not run scripts from `/tmp`** on the login node (another user's `/tmp/inspect.py` shadows stdlib).
@@ -864,8 +738,7 @@ Lessons kept from the campaigns removed on 2026-09-28, one line each:
 - **Cancel a chain's PENDING successor before its running link**, then check `squeue`; the other
   order starts the successor.
 - **Delete a half-written minibatch directory before resuming**: a stale `divergence.pkl` is reused.
-- **Slurm snapshots the script at submission**: check a queued job with `scontrol write batch_script
-  <id>`, and hand-check success-only end-of-chain branches, which never run until the end.
+- **Hand-check success-only end-of-chain branches**, which never run until the end.
 - **glpG: patch the LIVE seeds** (they carry `inner_steps = 4` on `/input/brownian`); prove the method
   by an ff_2.1 round trip on a pristine seed. A release must remove each ~150 GB variant directory
   before resubmitting it.
@@ -891,5 +764,6 @@ Lessons kept from the campaigns removed on 2026-09-28, one line each:
 - **HDX figures:** keep continuous off-scale excursions and `Y_LIMITS=(-20,30)`, and never render
   censored amides as carets or bounds (user-directed). Cluster HDX scripts drift from the repo;
   re-upload before trusting results.
-- **`sacct` on midway3 can hold zombie RUNNING rows**; `squeue` is the authority.
+- **`sacct` on midway3 can hold zombie RUNNING rows** (53233848 and 53233852 from 2026-08-11 still
+  show under `-S <today>`, while `sacct -j` says `COMPLETED`); `squeue` is the authority.
 - **Exclude midway3-0014.**
