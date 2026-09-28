@@ -309,15 +309,15 @@ be run by hand while `ff30_basin` trains**, since it swaps `$P/obj` under the ru
 
 ## 1. Current jobs
 
-Snapshot **2026-09-28 10:40 CDT, verified live against `squeue` on both clusters.** Finished and
-cancelled rows are deleted; only lessons worth reusing are kept, below the table. Nothing of ours is
-queued or running on midway3.
+Snapshot **2026-09-28 11:33 CDT, verified live against `squeue` on midway2** (midway3 last checked
+10:40, nothing of ours queued or running there). Finished and cancelled rows are deleted; only
+lessons worth reusing are kept, below the table.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49126332** | **ff3.0 retrain, basin offsets**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed after the round-1 rewind | R since 08:56, midway2-[0246-0257], broadwl; at 10:40 on step 23, 1238 s/step this link, no worker failures or relaunches | 57 steps ~21 h, inside the wall; step 76 ~2026-09-29 06:00, then `after_training.sbatch` gates it |
+| **49126332** | **ff3.0 retrain, basin offsets**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed after the round-1 rewind | R since 08:56, midway2-[0246-0257], broadwl; at 11:33 on step 26 (`epoch_01_minibatch_07`), 1218-1273 s/step this link, no worker failures or relaunches | 50 steps ~17.5 h, inside the wall; step 76 ~2026-09-29 05:00, then `after_training.sbatch` gates it |
 | 49126333 | its insurance successor | PD, `afterany:49126332` | resumes only if 49126332 dies |
-| **49125869, 49125872, 49125873, 49125874, 49125875, 49125877, 49125878, 49125879, 49125880, 49126021** (10 running) | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>` (§0c); 6 of 16 `COMPLETE` on 2026-09-28 10:40 (NTL9 s1 bug and fix, WWdomain all 4) | R, 1 node each, self-resubmitting every ~29 h under the same names | when all 16 have `COMPLETE`, run `analyse_bp.py` and report to Tobin. They write to `/beagle3`; see the degradation note below |
+| **49125873, 49125874, 49125875, 49125877, 49125878, 49125879, 49125880, 49126021** (8 running) | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>` (§0c); 8 of 16 `COMPLETE` on 2026-09-28 11:33 (NTL9 and WWdomain, all 4 each, NTL9 at ~28 time units/s). Remaining at the start of this link: proteinG 1.38-1.55 M of 3.37 M, homeodomain 1.50-1.52 M of 3.12 M | R, 1 node each, self-resubmitting every ~29 h under the same names | at the first link's rate, proteinG finishes ~2026-09-28 22:00-24:00 and homeodomain ~2026-09-29 03:30, both inside this link; then run `analyse_bp.py` and report to Tobin. They write to `/beagle3`; see the degradation note below |
 
 ### ff30_basin: ff3.0 from ff2.1 with per-pair basin offsets (started 2026-09-28)
 
