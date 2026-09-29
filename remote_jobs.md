@@ -232,7 +232,21 @@ trained with it, and the running ff3.0 training uses it.
 the RMS force, ConDiv rotamer-gradient error ~1e-4 relative; the energy bias is one-signed (converged
 is higher, mean 0.0009 E_up). Conclusion given to the user: ff2.1 and ff3.0 do not need retraining.
 
-**Simulation validation for Tobin: 16 arms, live job ids and progress in §1.** ff_2.1, native-start
+**Simulation validation for Tobin: all 16 arms COMPLETE 2026-09-29 03:50, analysed; not yet
+reported to Tobin (the user's call).** Output `bp_validation/analysis_20260929.txt`, 25-32k
+frames/replica after equilibration. Result:
+* WWdomain is the only protein resolved against the seed spread: at T 0.764-0.879 the bug arms are
+  less native, Q lower by 0.02-0.04 (z -1.8 to -12), RMSD higher by 0.1-0.3 A, E higher by 1-3; T_mid
+  0.859 bug vs 0.861 fix (~0.7 K).
+* NTL9 goes the same way at low T (Q 0.25 bug vs 0.30 fix, z -2 to -4; RMSD +1.0-1.3 A, z 1.1-1.8),
+  but its folded population is low under ff_2.1 here and T_mid is not resolved (0.821 vs 0.815).
+* proteinG and homeodomain: not resolved, |z| < 1.5 through the folded and transition range; T_mid
+  0.861 vs 0.868 and 0.931 vs 0.929, inside the seed spread.
+* Unfolded-T z of 2-5 sit on seed sd of 1e-4 in Q and 0.01-0.03 A in Rg; the differences are that
+  small, and with 2-dof sigmas across 224 cells such z values are expected by chance.
+* Speed: the fix costs 0-4% (proteinG 17.6 vs 18.6, WWdomain 29.3 vs 29.8 time units/s).
+
+ff_2.1, native-start
 14-replica REMD with the Peng benchmark protocol (Table S2 ladder and duration, dt 0.009, frame 100),
 proteinG / homeodomain / WWdomain / NTL9 x {bug, fix} x seeds {1, 2}. Trajectories of the two
 binaries decorrelate within a few hundred time units, so the test is statistical: bug-minus-fix
