@@ -1,12 +1,13 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-09-28 17:45: ff3.0 retrain RUNNING on midway2 (`training/ff30_basin`, §1), with basin
+**2026-09-29 05:05: ff3.0 retrain RUNNING on midway2 (`training/ff30_basin`, §1), with basin
 offsets on 60 Ramachandran maps only (GLY|X, GLY|GLY, X|right|PRO; 158 offsets; the other 780 maps
-NDRD), resumed from step 19 at 16:10 after the third rewind of 09-28; steps 19-22 done, step 23
-running. The full-map glycine chain
+NDRD), resumed from step 19 at 16:10 on 09-28 after the third rewind; steps 19-54 done, round 2
+applied, step 55 running. The full-map glycine chain
 `ff30` was cancelled at step 223. At convergence the gate installs the rotamer-BP fix (§0c),
-releases ff_3.0 and submits the Peng benchmark and the glpG chains unattended. BP validation: 8 of
-16 arms complete. `/beagle3` was badly degraded for small-file writes on 09-28 (§1).**
+releases ff_3.0 and submits the Peng benchmark and the glpG chains unattended. BP validation: all
+16 arms complete (last 03:50 on 09-29), analysis in §0c. `/beagle3` was badly degraded for
+small-file writes on 09-28 (§1).**
 
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
@@ -275,15 +276,14 @@ be run by hand while `ff30_basin` trains**, since it swaps `$P/obj` under the ru
 
 ## 1. Current jobs
 
-Snapshot **2026-09-28 17:45 CDT, verified live against `squeue` on midway2** (midway3 checked
-17:46, nothing of ours queued or running there). Finished and cancelled rows are deleted; only
-lessons worth reusing are kept, below the table.
+Snapshot **2026-09-29 05:05 CDT, verified live against `squeue` on midway2** (midway3 not
+checked; its master was down, and nothing of ours was there at the 09-28 18:21 check). Finished
+and cancelled rows are deleted; only lessons worth reusing are kept, below the table.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49127867** | **ff3.0 retrain, basin offsets on 60 maps (158 offsets)**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed from step 19 after the reduction to the trained set (third rewind, below) | R since 16:10, midway2-[0247-0258], broadwl; steps 19-22 done in 1253-1263 s (24/24 workers each, no failures, DSE 24/24, median RMSD 0.91-1.00 / 2.43-2.99 A), step 23 running since ~17:34; live step-19 worker maps equal the new library exactly, residues reading no trained map exactly NDRD | 54 steps at ~1258 s ~19 h, inside the wall; step 76 ~2026-09-29 12:00, then `after_training.sbatch` gates it |
+| **49127867** | **ff3.0 retrain, basin offsets on 60 maps (158 offsets)**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed from step 19 after the reduction to the trained set (third rewind, below) | R since 09-28 16:10, midway2-[0247-0258], broadwl; steps 19-54 done (24/24 workers each, no failures, DSE 24/24, median RMSD 0.91-1.04 / 2.43-3.84 A), round 2 applied after step 37, step 55 running since ~05:00; epoch-2 steps 1218-1603 s, see the slow-step note below | 21 steps left at ~1300 s ~7.6 h, inside the wall (09-30 04:10); round 3 after step 56 (~05:45), step 76 ~2026-09-29 12:40, then `after_training.sbatch` gates it |
 | 49127868 | its insurance successor | PD, `afterany:49127867` | resumes only if 49127867 dies |
-| **49125873, 49125874, 49125875, 49125877, 49125878, 49125879, 49125880, 49126021** (8 running) | **BP stopping-test validation**, 16 arms `bp_<prot>_<bug\|fix>_s<1\|2>` (§0c); 8 of 16 `COMPLETE` (NTL9 and WWdomain, all 4 each, NTL9 at ~28 time units/s); still 8 at 17:45, all 8 remaining arms running and healthy (low T folded, Rg ~10 A and ~50 hbonds; high T unfolded). This link at 17:45: proteinG 0.96-1.21 M of its 1.38-1.55 M, homeodomain 0.97-0.99 M of its 1.50-1.52 M | R, 1 node each, self-resubmitting every ~29 h under the same names | measured 17:45 on this link's own rate (proteinG 17.7-19.0, homeodomain 15.2-15.6 time units/s), proteinG finishes 2026-09-28 20:35 to 09-29 00:30 and homeodomain 09-29 03:00-03:55, all inside this link (homeodomain needs 26.8-27.7 h of the ~29.2 h per link); then run `analyse_bp.py` and report to Tobin. They write to `/beagle3`; see the degradation note below |
 
 ### ff30_basin: ff3.0 from ff2.1 with per-pair basin offsets (started 2026-09-28)
 
@@ -303,7 +303,10 @@ simulations. `verify_rama_basin.py` PASSES on the run (2026-09-28 16:05).
   free-native mismatch over those maps (the fraction of residue time in a different basin) for
   training and held-out proteins, largest step and offset, mean alpha_L - alpha_R offset over the
   GLY|X maps. Round 1: 7,528 / 882 sites, mismatch 0.0403 training / 0.0814 held out, largest step
-  0.44, GLY|X mean(dL-dR) +0.060. Round 2 comes after step 37 (~2026-09-28 23:00). **Read the
+  0.44, GLY|X mean(dL-dR) +0.060. Round 2 (epoch-1 simulations at the round-1 offsets): mismatch
+  0.0408 / 0.0861, largest step 0.40, max |offset| 0.749994 (ASP|right|PRO alpha_R, 0.345 + 0.405;
+  the update has no bound, the round figure is a coincidence), GLY|X mean(dL-dR) +0.132; the largest
+  offsets are all X|right|PRO alpha_R, raised because free over-populates it. **Read the
   held-out mismatch against its sample-size floor**, not as falling or stalling: with only 46
   proteins it sits near its floor whatever the offsets do (findings 1.12).
 * **Cluster flags live in `ff30_basin/slurm.args`** (now the midway2 broadwl line with the node
@@ -356,12 +359,16 @@ simulations. `verify_rama_basin.py` PASSES on the run (2026-09-28 16:05).
   The trainer now relaunches a worker whose `srun` never started (`<code>.srun` says `Task launch`),
   up to twice, logging `<code> never started (srun launch failed), relaunching`; a worker that ran
   and failed still fails the step.
+* **Slow steps outside the engine (2026-09-29 00:30-04:40).** Epoch-2 steps 6, 10, 12, 13 and 15
+  took 1347-1603 s against 1233-1273 s for the same minibatches in epoch 1, each time from a
+  different slowest worker, on different nodes. The engine time did not change (2m5h: 1136 s in
+  epoch 1, 1142 s in epoch 2, 153 us/system/step), so the extra 300-450 s is in worker setup and
+  writeout, most likely `/project` I/O. Nothing to fix; only the ETA moves.
 
 **`/beagle3` is badly degraded for small-file writes (measured 2026-09-28 ~01:10).** 200 one-line
 files: `/beagle3` 51 s from midway3 and 503 s from midway2, against 0.06-0.27 s on `/project` and
 home. `pip install torch==2.6.0` into the shared `/beagle3` venv took from 00:24 to ~02:15 for that
-reason; it finished, and midway3 can now run the trainer. The BP arms write their runs to
-`/beagle3` and may be slowed.
+reason; it finished, and midway3 can now run the trainer.
 
 **`env.sh` must not tell the clusters apart by `/software/modules/init/bash`: it exists on midway3
 too.** The first version did, so on midway3 it activated the tree's venv, whose interpreter lives in
