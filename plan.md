@@ -135,36 +135,34 @@ extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_2026
       tree's engine; partition and node exclusions per run in `slurm.args`; a converged gate stops
       for review instead of releasing
 
-### Phase 4 - train ff3.0 from ff2.1 with basin offsets (RUNNING since 2026-09-28 01:33, midway2)
-- [x] Initialise from ff2.1 with all offsets zero (`training/ff30_basin`); first target 76 steps,
-      then one epoch at a time up to 13 epochs. Step 0 done: 24/24 workers, 4,688 map-sites, free
-      and native basin populations within ~0.02 of each other at ff2.1
-- [x] First offset update at the end of epoch 0 (step 19). Its noise-driven steps were found at the
-      status check; the chain was stopped during step 20, steps 19-20 set aside
-      (`ff30_basin/rewound_20260928_0851/`), round 1 recomputed from the same epoch-0 data with the
-      MAP step (free-native mismatch 0.025 training, 0.060 held out), and training resumed from
-      step 19 at 08:56
-- [x] Release path dry-run on the round-1 checkpoint: extraction, glpG round-trip gate (3.6e-15),
-      live-seed patch, and `sbatch --test-only` for a Peng arm, a glpG chain, the gate and a
-      training link. At convergence the gate installs the rotamer-BP fix, releases ff_3.0 and
-      submits the Peng benchmark and the glpG chains unattended
-- [x] GLY|GLY made symmetric in the map the engine gets (findings 1.11): sheet entry symmetrized,
-      probability mean for coil and sheet, `extract_ff.py` and `verify_rama_basin.py` (new step 4,
-      the per-residue map) check both; verifier PASSES on the run. Chain stopped during step 29 on
-      2026-09-28 12:25, steps 19-29 (29 unfinished) set aside (`ff30_basin/rewound_20260928_1225/`), round-1
-      library rewritten from the same offsets (identical outside GLY|GLY), resumed from step 19.
-      Epoch 0 and round 1's offsets came from the old GLY|GLY maps; round 2 onward uses the new ones
-- [x] Trained maps reduced to the 158-offset set (2026-09-28 16:08): `rama_basin.py`, `ConDiv.py`,
-      `verify_rama_basin.py`, README; local tests; chain stopped during step 29, steps 19-29 set
-      aside, round 1 recomputed from the epoch-0 simulations with the same held-out proteins,
-      verifier PASS on the run, live worker maps checked (untrained residues exactly NDRD), resumed
-      from step 19 (remote_jobs.md)
-- [ ] Held-out agreement per round; stop and review if it stalls while training agreement improves
-- [ ] Release `parameters/ff_3.0` and copy it into the local repo
+### Phase 4 - train ff3.0 from ff2.1 with basin offsets (DONE 2026-09-30, midway2)
+Trained from ff2.1 with all offsets zero (`training/ff30_basin`), three rewinds to step 19 on
+2026-09-28 (MAP step, GLY|GLY sheet symmetry, the 158-offset set; remote_jobs.md). The gate declared
+convergence at step 114 (end of epoch 5, six offset rounds) and released ff_3.0 to both cluster
+trees on 2026-09-30 02:25, after installing the rotamer-BP fix. Training mismatch over the trained
+maps 0.040 -> 0.034; held-out 0.081-0.086 -> 0.083, noise about its floor (Known Errors). The rama
+group's pass is prior-limited drift, not closure, for the X|right|PRO offsets (findings 1.14).
+- [ ] Copy `parameters/ff_3.0` into the local repo
 
-### Phase 5 - validation (NOT STARTED)
+### Phase 5 - validation (RUNNING since 2026-09-30 02:25, midway2)
 - [ ] Peng benchmark, 16 proteins x native/de novo, scored on the last third, paired against ff2.1
 - [ ] glpG, four variants: helix stability over time, TM4 above all
+
+### Phase 6 - pre-proline (DECISION PENDING, findings 1.14)
+- [ ] Decide on the X|right|PRO offsets: they have no leverage through the mixture and their target
+      signal is composition; proposed: drop the 40 from the trained set at the next revision
+- [ ] Before any rule change: reweight existing ff_2.1 trajectories to the right-only pre-proline
+      rule and measure helical and extended pre-proline alpha_R (no new simulation)
+
+### Phase 7 - glycine handedness probe (RUNNING, user request 2026-09-30; findings 1.15)
+Which way do the data pull glycine when alpha_R and alpha_L start at equal depth? One epoch
+branched from the ff_3.0 checkpoint (step 114) into `training/ff30_glyprobe`, every GLY|X map's
+alpha_R and alpha_L offsets set so the two basins hold equal probability, everything else as
+released. The answer is the data term of the offset update (free minus native basin counts over
+the epoch), read apart from the prior, which pulls every offset back toward NDRD.
+- [x] Branch checkpoint, verify (only GLY|X coil maps differ from round 6; each has aR = aL), submit
+      one epoch with no gate (job 49133133, 2026-09-30 13:28; analysis validated on the ff_3.0 run)
+- [ ] Read the data pull per map and in aggregate, extended and helical glycines apart; record
 
 ## Known Errors / Blockers
 
@@ -172,9 +170,15 @@ extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_2026
   (0.0597) is its own sample-size floor (random 46-protein training subsets: 0.0585 +- 0.0021), so it
   cannot fall with training. It must be compared against that floor, or replaced by a split-sample
   statistic.
-* **Pre-proline is fixed only in part.** The left/right mixture adds the left map's alpha_R back at
-  about half weight (findings 1.13); the trained X|right|PRO offsets can remove only the right map's
-  share. A full fix needs a combining rule that keeps GLY|GLY symmetric; none is adopted yet.
+* **Pre-proline is not fixed by the offsets, and ConDiv cannot measure it (findings 1.14).** The
+  mixture caps the right map's effect (pre-PRO alpha_R of the rama term 0.174 at best to 0.144), and
+  six rounds left the free-native gap at +0.023. That gap is the class's composition (89% extended
+  residues, which visit alpha_R in every class); within matched native conformations pre-proline
+  residues already visit alpha_R less than others. The physical defect, three times NDRD's own
+  pre-proline alpha_R through the mixture, lives in loops and unfolded chains, which the
+  native-restrained target does not sample. The candidate fix is a combining rule, right-map-only
+  for residues followed by PRO (GLY|GLY stays exact), justified by physics and NDRD data, not by
+  the training target; its risk is the 7% of pre-proline residues that are helical.
 * **Beta for the PI's sheet modelling.** No residue type has a significant beta miss at ff2.1, and
   per-pair beta has no signal in these data; per-type beta is ff2.1's sheet mixing energy, trained.
 * **Left and right offsets of one central residue are nearly degenerate.** Every interior residue
@@ -184,4 +188,4 @@ extract it with the pre-basin `extract_ff.py` in `training/backup_pre_basin_2026
 * **The local Mac `obj/upside` traps (SIGTRAP, exit 133) at exit whenever Monte Carlo pivot moves
   are on**, even for one system. The midway2 binary runs them cleanly, so trainer tests run there.
 * **Do not use `broadwl-lc`.** Its nodes are `noib` and cannot see `/project`.
-* **`/project` has ~445 G free.** The glpG REMD trees hold ~1.26 T; `NP-1AO6` ~0.5 T is the reclaim.
+* **`/project` has ~965 G free (2026-09-30).** The glpG REMD trees hold ~1.26 T; `NP-1AO6` ~0.5 T is the reclaim.

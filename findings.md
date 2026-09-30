@@ -1854,16 +1854,19 @@ Measured on the live checkpoint and the 456 epoch-0 per-protein results (all at 
 proteins, bootstrap over proteins; `checks/rama_by_type.py`). Per central type the misses are small,
 at most 1.6 percentage points (at most 0.09 kT): most types lose 1-1.6 points of alpha_R to pPII
 (z 3-4.6), a pattern common to all of them; GLY has alpha_L +2.1 (z 4.8). No type has a significant
-beta miss (largest z 2.3). By neighbour, no left neighbour has any |z| > 3; on the right, **PRO is
-the largest miss of all: alpha_R +3.2 points (z 9.7)**, then GLY (pPII +2.3, z 5.9) and VAL/ILE
-(pPII -1.1, z -4.5).
+beta miss (largest z 2.3). By neighbour, no left neighbour has any |z| > 3; on the right, PRO has
+the largest aggregate miss, alpha_R +3.2 points (z 9.7), then GLY (pPII +2.3, z 5.9) and VAL/ILE
+(pPII -1.1, z -4.5). **The pre-PRO figure is mostly composition, not a pre-proline defect (1.14):**
+89% of pre-PRO residues are extended in the native state, against 47% of other residues, and every
+class's extended residues visit alpha_R in the free ensemble.
 
-**The pre-proline miss is made by the left/right MIXTURE** (`checks/prepro_mixture.py`). For 1,543
-residues followed by PRO (ordinary left neighbour), alpha_R is 0.063 in the right map, 0.337 in the
-left map, **0.172 in Upside's mixture**, 0.052 under the product rule, **0.083 native**, 0.106 in the
-free simulation. The mixture adds the left map's alpha_R back at about half weight: the library's
-mixing weights are nearly equal (0.83 typical, 0.92 for X|right|PRO). So a basin offset on the
-pre-proline map fixes it only in part. Ting et al. 2010 combine the two neighbours by the product
+**The left/right MIXTURE gives pre-proline residues three times the alpha_R of NDRD's own
+pre-proline map** (`checks/prepro_mixture.py`). For 1,543 residues followed by PRO (ordinary left
+neighbour), alpha_R is 0.063 in the right map, 0.337 in the left map, **0.172 in Upside's mixture**,
+0.052 under the product rule, 0.083 native, 0.106 in the free simulation. The mixture adds the left
+map's alpha_R back at about half weight: the library's mixing weights are nearly equal (0.83
+typical, 0.92 for X|right|PRO). So a basin offset on the pre-proline map can reach only the right
+map's share (1.14 measures how little). Ting et al. 2010 combine the two neighbours by the product
 rule (left and right identities independent given phi,psi, normaliser S = 0.5-1.5 for proline);
 `upside_config` has it as `--rama-library-combining-rule product`. Against the mixture it moves
 pre-PRO alpha_R by -12 points and leaves other residues nearly unchanged (median largest basin
@@ -1886,7 +1889,8 @@ made it per amino acid (Peng 2022 SI eq. S2).
 **A reduced set that keeps only what is resolved** (`checks/reduced_set.py`, split-half): GLY|X
 (aR, aL, beta), GLY|GLY (helix, beta; tied), X|right|PRO (aR, beta): 158 offsets on 60 maps. GLY|X
 alpha_L per pair reliability 0.72 (class mean +0.11 +- 0.02 nats); X|right|PRO alpha_R per pair 0.05
-but class mean +0.30 +- 0.04 nats, i.e. one steric effect common to every residue before a proline.
+but class mean +0.30 +- 0.04 nats. That class mean is reproducible, but 1.14 shows it is the
+extended-residue composition of pre-proline sites, not a steric effect the offsets can act on.
 **Adopted 2026-09-28** (user; plan.md), without the optional right-GLY/VAL/ILE classes (+120).
 
 **References for 1.13.** [FT] full text read, [Abs] abstract only, [Ag] read in full by a sub-agent
@@ -1922,6 +1926,146 @@ the author, journal, volume and first page reported by the survey are given.
 
 Not verified by the survey: Swindells, MacArthur & Thornton 1995 numbers, the RSFF2 groupings, and
 a per-residue count of how much turns inflate alpha_L for Gly, Asn and Asp.
+
+### 1.14 The X|right|PRO offsets have no leverage and no pre-proline signal to fit (2026-09-30)
+
+Measured on the finished `ff30_basin` run (six rounds; round 6 is the released ff_3.0) with
+`/project/trsosnic/yinhan/checks/prepro_leverage.py`, `prepro_control.py`, `prepro_residual.py`,
+`prepro_rules.py` and `prepro_left.py` (logs `*_20260930.log` beside them). Interior residues followed
+by PRO/CPR, centre not GLY/PRO, 1,573 training proteins' sites.
+
+**Six rounds moved the offsets steadily and the simulations not at all.**
+
+| round | mean aR offset [min, max] | rama map aR (mixture) | free aR | native aR | free - native | free aR at full leverage |
+|---|---|---|---|---|---|---|
+| 0 | 0 | 0.174 | 0.102 | 0.079 | +0.023 | 0.102 |
+| 1 | +0.13 [-0.08, +0.41] | 0.171 | 0.108 | 0.080 | +0.028 | 0.096 |
+| 2 | +0.26 | 0.168 | 0.100 | 0.079 | +0.022 | 0.091 |
+| 3 | +0.36 | 0.166 | 0.098 | 0.078 | +0.020 | 0.087 |
+| 4 | +0.44 | 0.165 | 0.099 | 0.080 | +0.019 | 0.085 |
+| 5 | +0.50 [-0.11, +1.63] | 0.164 | 0.101 | 0.077 | +0.023 | 0.083 |
+| 6 (released) | +0.58 [-0.12, +1.89] | 0.164 | - | - | - | - |
+
+* **The mixture caps what any offset on the right map can do.** With an infinite alpha_R offset on
+  every X|right|PRO map the rama term's pre-PRO alpha_R only falls to 0.144-0.146, since the left
+  map's share is untouched; round 5 had used a third of that. Right-map-only would give 0.059, the
+  product rule 0.052 (round-0 maps).
+* **Had each offset acted as an additive energy** on its residues (the Newton step's assumption),
+  the round-5 offsets would have brought free alpha_R to 0.083, the native value. The measured free
+  alpha_R did not move (round-to-round noise ~0.003). The step keeps its size because the gap does
+  not close. The largest offsets are all X|right|PRO alpha_R (ASP +1.89, PHE +1.16, CYS +1.10,
+  ASN +1.00), plus GLY|right|PRO alpha_L +1.24.
+* **They stop only where the prior balances the unclosed gap**, c* = N dp sigma^2 / T0 per map
+  (T0 = 0.80): about 5 nats for ASP (144 sites, gap 0.027) and ALA (119, 0.036), another 10-20
+  rounds of drift. The convergence gate passed the rama group at step 114 (p 0.0011, 0.0006, 0.0158
+  at steps 76, 95, 114; threshold 0.005) because the growing prior pull cancels more of the fixed
+  data pull each round, not because the gap closed. So the gate's "converged" means "prior-limited"
+  for this group.
+
+**The gap is mostly composition, not a pre-proline map error** (epoch 0, training; free / native
+alpha_R, split by the residue's own native alpha_R):
+
+| class | extended in native (aR < 0.05) | helical in native (aR > 0.5) |
+|---|---|---|
+| pre-PRO | n 1,401: 0.041 / 0.002 | n 116: 0.800 / 0.976 |
+| other X | n 16,778: 0.058 / 0.001 | n 19,008: 0.915 / 0.990 |
+| post-PRO X | n 622: 0.101 / 0.001 | n 818: 0.863 / 0.986 |
+| GLY | n 2,200: 0.037 / 0.001 | n 516: 0.804 / 0.985 |
+| PRO/CPR | n 1,020: 0.059 / 0.001 | n 701: 0.859 / 0.991 |
+
+Every class's extended residues visit alpha_R in the free ensemble (the restrained replica cannot
+leave its basin), and every class's helices fray. Pre-proline sites are 89% extended (other X 47%),
+so their aggregate is +0.036 from extended residues, -0.013 from helical ones: +0.023. Behaving like
+other X within each native class they would show +0.046. **So against ordinary residues in the same
+native conformation, pre-proline residues already visit alpha_R less (0.041 against 0.058).** The
+ConDiv target cannot see the pre-proline problem the literature describes: that is a propensity of
+loops and unfolded chains, and a native-restrained extended residue sits at alpha_R 0.002 whatever
+its class. What the offsets were fitting is the class's composition.
+
+By contrast, **the glycine signal is real and sits where the TM4 failure sits**: extended glycines
+show no net alpha_L gap (0.499 / 0.499; two opposite gaps, 1.15), helical glycines have alpha_L 0.110
+free against 0.005 native.
+But a per-map offset moves both groups alike, and the extended glycines outnumber the helical ones
+four to one: by epoch 5 the extended ones are at 0.487 / 0.497 (now below native) and the helical
+ones at 0.102 / 0.005. More rounds of the same design would trade the two further; the helical
+glycine excess depends on where the glycine sits, which a per-type (phi,psi) map cannot express.
+**The fixed point favours alpha_L whatever the start**: native-restrained glycines over all sites sit
+at aR 0.19 / aL 0.40, so one map per (glycine, neighbour) that reproduces the average glycine must
+favour alpha_L. Linear extrapolation of rounds 1-6 (dL - dR +0.26 moved the aggregate alpha_L gap
++0.021 -> +0.015): closing it takes ~0.65 more in dL - dR, ~14 epochs at the current step, leaving
+the engine map near ln(aR/aL) -0.3 at T = 1, helical glycines near alpha_L 0.08 (native 0.005) and
+extended ones near 0.46 (native 0.50). A rough estimate, not a measurement.
+
+**ff_3.0's glycine term still favours alpha_L everywhere** (`checks/gly_handedness.py`, log
+`gly_handedness_20260930.log`; basin populations of the map alone, and the well depth
+E_min(aR) - E_min(aL)). Engine map of X-G-Y (coil + sheet mixed, plus the reference correction), all
+361 non-glycine flanks: ln(aR/aL) median -0.92 at T = 1 (-1.18 in ff_2.1), -1.23 at T = 0.8, alpha_R
+favoured in none; the alpha_L well is deeper by a median 1.17 (1.46 in ff_2.1). Of the 38 single
+GLY|X maps, one favours alpha_R. In the glpG seed every glycine favours alpha_L, the 12 natively
+helical ones included; TM4's GLY136 (T-G-V) most of all, ln(aR/aL) -1.59 at T = 1 and -2.43 at
+T = 0.7 (the seed before this release: -0.73 / -1.25), and GLY149 (R-G-E) -1.21 / -1.86. In the first
+~10 h (`gly_tm4_flip_20260930.log`, last three groups) TM4's helical glycines leave the helix for
+phi > 0 in some replicas: GLY143 36% and GLY149 17% of frames in 79ALA_S115T at T 0.70, GLY136 20%
+in 79HIS_S115T and GLY143 22% in 79ALA at T 0.80; none at T 0.70 in the other three variants. GLY143
+never flipped in the earlier campaign (3.10c), though its ff_3.0 map (-0.62) leans no further to
+alpha_L than the pre-release seed's (-0.73), so the other ff_3.0 changes share the cause.
+Glycines before a proline (88 extended) have alpha_L 0.057 / 0.012 at epoch 0, 0.030 / 0.005 at
+epoch 5.
+
+**Left-neighbour dependence of pre-proline alpha_R is not detectable** (`prepro_left.py`, 19
+left-neighbour groups of >= 30): the native group sd 0.036 is near the 0.027 expected from sampling;
+right-only fits it best (rms 0.036, product 0.037, mixture 0.046). For pPII and beta the product rule
+follows the native groups better (corr 0.59 / 0.67) than right-only (0.41 / 0.59). Right-only changes
+no residue outside the pre-proline class and keeps GLY|GLY exact; the product rule changes every
+residue (median largest-basin change 3 points) and gives the middle glycine of G-G-G ln(aR/aL) +1.06.
+
+### 1.15 Which way the data pull glycine's handedness (probe from equal depth, 2026-09-30)
+
+User question: if glycine's alpha_R and alpha_L start at equal depth, do the data pull it further
+toward alpha_R or back toward alpha_L? It decides whether training can make glycine right-handed.
+
+**Measure** (`checks/glyprobe_analysis.py <run_output> <epoch>`): the DATA term of the offset update
+on the 38 GLY|X maps over one epoch's training proteins, apart from the prior (which pulls every
+offset back toward NDRD and would bias the answer toward alpha_L from any start away from zero):
+(free_aL - native_aL) - (free_aR - native_aR) per residue read, positive = toward alpha_R, with a
+bootstrap over proteins; glycines split by their own native basin.
+
+**On the ff_3.0 run itself:** epoch 1 +0.040 [+0.028, +0.052], toward alpha_R in 32 of 38 maps; epoch 5
+(round-5 offsets, dL - dR +0.26) +0.023 [+0.012, +0.034], 31 of 38. So at the released state the data
+still pull toward alpha_R (the drift of 1.14). By the residue's native basin, epoch 5, free / native:
+
+| glycines (non-GLY flanks) | n | alpha_R | alpha_L | pulls toward |
+|---|---|---|---|---|
+| helical in native (aR > 0.5) | 488 | 0.813 / 0.984 | 0.101 / 0.005 | alpha_R |
+| alpha_L in native (aL > 0.5) | 1,003 | 0.030 / 0.002 | 0.889 / 0.990 | alpha_L |
+| the rest | 1,082 | 0.037 / 0.008 | 0.100 / 0.010 | alpha_R (aL), alpha_L (aR) |
+
+**One map serves two native populations that pull in opposite directions**: helical glycines want
+less alpha_L, loop glycines that are natively left-handed want more. The net follows their balance,
+which is the fixed-point argument of 1.14 made visible.
+
+**Probe** (plan.md Phase 7, job 49133133, `training/ff30_glyprobe`, README there): one epoch branched
+from the ff_3.0 checkpoint (step 114) with every GLY|X map's alpha_R and alpha_L offsets moved by
+-d/2 and +d/2 until the two basins hold equal probability (dL - dR mean +0.31 -> +1.21; aR + aL weight
+per map 0.508 -> 0.478); everything else as released; no gate, no release. Engine X-G-Y map at the
+start: ln(aR/aL) +0.02 at T = 1, -0.05 at T = 0.8 (from -0.92 / -1.23). It runs on the BP-fixed
+binary, which the ff_3.0 training did not (|dE| <= 0.03 E_up, 0c). **Prediction:** the natively
+left-handed loop glycines lose alpha_L in the free ensemble, so the pull turns toward alpha_L.
+**Result:** running, due ~21:00 2026-09-30.
+
+**The one context-aware term Upside has is FF2's H-bond energy** (`src/hbond.cpp`, `hbond_energy`).
+Each H-bond a residue makes, as donor or acceptor, is scored by that residue's own (phi, psi):
+E_alpha where phi is outside (0, 165) deg and psi inside (-120, 60), E_beta for the same phi with psi
+outside, E_other where phi is in (0, 165), i.e. left-handed. So it knows both "H-bonded" and
+"which basin", but the three energies are shared by every residue type. ff_2.1: E_alpha -1.961,
+E_beta -1.946, E_other -1.769 (alpha_R favoured over phi > 0 by 0.192 per H-bond); **ff_3.0: -1.878,
+-1.872, -1.798, a margin of only 0.080**. Training narrowed the helix-over-left-handed margin for
+every H-bonded residue while the GLY|X offsets moved glycine's map the other way. Unproven, but a
+candidate for why GLY143 flips under ff_3.0 although its map is no more left-handed than before.
+A glycine-specific set of these energies is the smallest helix-aware glycine term: the engine
+already computes the per-residue helix score, and the trainer already trains these energies with
+their analytic derivative. Its limit: cap and turn glycines are also H-bonded and left-handed, so
+how the H-bonded native glycines split between alpha_R and phi > 0 must be measured first.
 
 ---
 

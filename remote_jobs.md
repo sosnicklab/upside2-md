@@ -1,13 +1,12 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-09-29 05:05: ff3.0 retrain RUNNING on midway2 (`training/ff30_basin`, §1), with basin
-offsets on 60 Ramachandran maps only (GLY|X, GLY|GLY, X|right|PRO; 158 offsets; the other 780 maps
-NDRD), resumed from step 19 at 16:10 on 09-28 after the third rewind; steps 19-54 done, round 2
-applied, step 55 running. The full-map glycine chain
-`ff30` was cancelled at step 223. At convergence the gate installs the rotamer-BP fix (§0c),
-releases ff_3.0 and submits the Peng benchmark and the glpG chains unattended. BP validation: all
-16 arms complete (last 03:50 on 09-29), analysis in §0c. `/beagle3` was badly degraded for
-small-file writes on 09-28 (§1).**
+**2026-09-30 14:00: ff_3.0 RELEASED and under validation on midway2 (§1).** `ff30_basin` converged
+at the step-114 gate (02:25), which installed the rotamer-BP fix in both trees (§0c), released
+`parameters/ff_3.0` to both, and submitted the 32 Peng arms and the 4 glpG REMD chains, all running
+and healthy at the first check (§1, §5). Three glpG chains had their `block_count` advanced by Slurm
+requeues; reset, and `run_remd.py` no longer counts a requeue as a block (§1). The X|right|PRO rama
+offsets in the release drifted without effect (findings 1.14); a decision on them is open (plan.md
+Phase 6). BP validation analysed (§0c), not yet reported to Tobin.
 
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
@@ -223,8 +222,8 @@ trained with it, and the running ff3.0 training uses it.
 |---|---|
 | `master` (GitHub) | fixed in `288d1fec`, pushed by the user 2026-09-26 |
 | `martini-dev` | fixed; master merged in by PR #48 (`11044069`) 2026-09-26 |
-| `/project/trsosnic/yinhan/upside2-md-mdw2` (midway2) | **still old binary**; installs at the ff3.0 gate, below |
-| `/beagle3/trsosnic/yinhan/upside2-md` (midway2 + midway3) | **still old binary**; installs at the ff3.0 gate, below |
+| `/project/trsosnic/yinhan/upside2-md-mdw2` (midway2) | fixed; installed by the ff3.0 gate 2026-09-30 02:24:59 |
+| `/beagle3/trsosnic/yinhan/upside2-md` (midway2 + midway3) | fixed; installed by the ff3.0 gate 2026-09-30 02:24:59 |
 
 **Static-frame result (local, 2026-09-26).** 8 training proteins (50-146 res), ff2.1, 91 frames each
 (native + T 0.80/0.95/1.10), old vs fixed library vs a tol=1e-6 reference. The early stop fires in
@@ -238,13 +237,19 @@ frames/replica after equilibration. Result:
 * WWdomain is the only protein resolved against the seed spread: at T 0.764-0.879 the bug arms are
   less native, Q lower by 0.02-0.04 (z -1.8 to -12), RMSD higher by 0.1-0.3 A, E higher by 1-3; T_mid
   0.859 bug vs 0.861 fix (~0.7 K).
+  Per seed (checked 2026-09-29), both bug seeds lie below both fix seeds in Q at every T from 0.700
+  to 0.879; at 0.852 bug 0.511 / 0.505 against fix 0.547 / 0.550. At 0.700 the gap is one bug seed
+  (0.842 against 0.89).
 * NTL9 goes the same way at low T (Q 0.25 bug vs 0.30 fix, z -2 to -4; RMSD +1.0-1.3 A, z 1.1-1.8),
-  but its folded population is low under ff_2.1 here and T_mid is not resolved (0.821 vs 0.815).
+  but per seed that rests on one arm: fix s2 sits at RMSD 6.5-6.9 A while the other three sit at
+  8.0-9.0 A. Its folded population is low under ff_2.1 here and T_mid is not resolved (0.821 vs
+  0.815). Not resolved.
 * proteinG and homeodomain: not resolved, |z| < 1.5 through the folded and transition range; T_mid
   0.861 vs 0.868 and 0.931 vs 0.929, inside the seed spread.
 * Unfolded-T z of 2-5 sit on seed sd of 1e-4 in Q and 0.01-0.03 A in Rg; the differences are that
   small, and with 2-dof sigmas across 224 cells such z values are expected by chance.
-* Speed: the fix costs 0-4% (proteinG 17.6 vs 18.6, WWdomain 29.3 vs 29.8 time units/s).
+* Speed: the fix costs 0-5% (proteinG 17.6 vs 18.6, WWdomain 29.3 vs 29.8, NTL9 28.0 vs 28.0
+  time units/s); node-to-node variation is not controlled.
 
 ff_2.1, native-start
 14-replica REMD with the Peng benchmark protocol (Table S2 ladder and duration, dt 0.009, frame 100),
@@ -264,120 +269,100 @@ frames (C-N 1.33-1.34 +- 0.13 A as in the ff_3.0 benchmark, KE/1.5kT 0.99-1.00).
   resolved"; only |z| well above 2 across the ladder is an effect
 * local static-frame harness (gen.py, eval.py, cmp.py) was in the session scratchpad, not kept
 
-**Deployment: armed in the ff3.0 gate, NOT yet fired (re-armed 2026-09-28 09:00).** The cluster copy
-of `upside2-md-mdw2/training/gate_or_continue.sh` carries ONE TEMPORARY line in its converged branch,
-before `validate_ff.sh`: `bash /project/trsosnic/yinhan/bpfix_stage/install_bpfix.sh`, so
-`ff30_basin` trains on the old binary and all its validation runs on the fixed one.
-`bpfix_stage/gate_or_continue.sh.orig` is the repo's current gate (md5 0a653ade), which the script
-restores afterwards; the 09-26 `.orig` is in `$P/training/backup_pre_basin_20260928/`. **It must not
-be run by hand while `ff30_basin` trains**, since it swaps `$P/obj` under the run.
-* staged builds `/project/trsosnic/yinhan/bpfix_stage/mdw2/obj` and
-  `/beagle3/trsosnic/yinhan/bpfix_stage/beagle3/obj`: each tree's own source plus the one line, on the
-  tree's filesystem so install is a rename; the same recipe unpatched (`obj_ref`) reproduced each
-  tree's binary bitwise
-* the script checks both trees first (source against `src_manifest.md5`, staged binaries against
-  `obj_manifest.md5`) and installs nothing on any mismatch; keeps old binaries as
-  `obj/*.bak_pre_bpfix_<stamp>`; writes `<tree>/BPFIX_INSTALLED`; always restores the gate script
-  from `bpfix_stage/gate_or_continue.sh.orig`. Sandbox-tested: install, repeat no-op,
-  refuse-on-change
-* **do not edit `src/` in either tree until it has run**, or it will refuse
-* afterwards: `cat <tree>/BPFIX_INSTALLED` and the `[bpfix]` lines of its output; then update the
-  status table above
-* the BP test is unaffected: its arms use `obj_bug`/`obj_fix`, and the deployed library its Python
-  imports is replaced by rename, so a loaded copy keeps its inode
+**Deployment: fired by the ff3.0 gate 2026-09-30 02:24:59** (`ff30_basin/ff30b-gate_49131949.out`,
+`[bpfix]` lines). `ff30_basin` trained on the old binary; its release validation (Peng arms, glpG
+chains) runs on the fixed one. Both trees carry `BPFIX_INSTALLED` and the old binaries as
+`obj/*.bak_pre_bpfix_20260930-022459`; `src/rotamer.cpp` has the `fabsf`. The gate script was
+restored to the repo's version (md5 0a653ade). The BP test arms were unaffected (`obj_bug`/`obj_fix`).
 
 ---
 
 ## 1. Current jobs
 
-Snapshot **2026-09-29 05:05 CDT, verified live against `squeue` on midway2** (midway3 not
-checked; its master was down, and nothing of ours was there at the 09-28 18:21 check). Finished
-and cancelled rows are deleted; only lessons worth reusing are kept, below the table.
+Snapshot **2026-09-30 13:30 CDT, verified live against `squeue`/`sacct` on midway2** (midway3 not
+checked; nothing of ours was there at the 09-28 check). Finished and cancelled rows are deleted;
+only lessons worth reusing are kept, below the table. All jobs were submitted by the ff3.0 gate at
+02:25 and run the released `parameters/ff_3.0` on the BP-fixed binary.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49127867** | **ff3.0 retrain, basin offsets on 60 maps (158 offsets)**, `training/ff30_basin`, steps 19 -> 76 (epochs 1-3), resumed from step 19 after the reduction to the trained set (third rewind, below) | R since 09-28 16:10, midway2-[0247-0258], broadwl; steps 19-54 done (24/24 workers each, no failures, DSE 24/24, median RMSD 0.91-1.04 / 2.43-3.84 A), round 2 applied after step 37, step 55 running since ~05:00; epoch-2 steps 1218-1603 s, see the slow-step note below | 21 steps left at ~1300 s ~7.6 h, inside the wall (09-30 04:10); round 3 after step 56 (~05:45), step 76 ~2026-09-29 12:40, then `after_training.sbatch` gates it |
-| 49127868 | its insurance successor | PD, `afterany:49127867` | resumes only if 49127867 dies |
+| **49131950-49131981** | **Peng benchmark, ff_3.0**, 16 proteins x {native, denovo}, job names `b_ff_3.0_<prot>_<mode>` | all 32 R since 02:25 (BBL pair since 03:09, requeued once; progress is counted from frames, so a requeue is harmless), broadwl. Checked 13:30 on snapshot copies of the coldest and hottest replica of every arm (`checks/bench_snap_20260930.log`): no non-finite value, C-N 1.32-1.34 +- 0.11-0.15 A, never more than 1 above 2.0 A, de novo arms collapsing at the cold rung | full run ~7 days; score on the last third against ff2.1 |
+| **49131982** | glpG REMD `glpG-RKRK-79HIS`, 28 replicas T 0.70-0.90 | R since 02:25, midway2-0258, block 1/5; KE/1.5kT 1.00-1.03, protein Rg 19-21 A, no rollback, TM1/TM4 0.91-0.99 / 0.97-0.98 at T 0.70 (§5) | TM check (§5) after block 1 ends ~10-01 14:25 |
+| **49131983** | glpG `79HIS_S115T` | R since 10:57 on midway2-0037, after NODE_FAILs at 05:25 and 10:50; `block_count` reset 3 -> 1; TM4 at T 0.80 0.95 -> 0.84 | watch TM4; block ends ~10-01 23:00 |
+| **49131984** | glpG `79ALA` | R since 10:57 on midway2-0060, after NODE_FAILs at 04:30, 05:25 and 10:50; `block_count` reset 4 -> 1 | TM check after block 1 |
+| **49131985** | glpG `79ALA_S115T` | R since 10:57 on midway2-0103, after NODE_FAILs at 05:25 and 10:50; `block_count` reset 3 -> 1; TM4 at T 0.70 0.82-0.86 in its last three groups | watch TM4 |
+| **49133133** | **glycine handedness probe** (plan.md Phase 7, findings 1.15): one epoch, steps 114 -> 133, from the ff_3.0 checkpoint with every GLY\|X map's alpha_R = alpha_L; `training/ff30_glyprobe` | R since 13:28, 15 midway2 nodes, `--mem-per-cpu=700M` (measured worker peak 5.1 GB) | done ~21:00 09-30; then `python3 /project/trsosnic/yinhan/checks/glyprobe_analysis.py $P/training/ff30_glyprobe/run_output 6` (after `source $P/training/env.sh`) |
+| 49133135 | its insurance successor | PD, `afterany:49133133` | resumes only if 49133133 dies |
 
-### ff30_basin: ff3.0 from ff2.1 with per-pair basin offsets (started 2026-09-28)
+**The probe directory has no `after_training.sbatch` on purpose**: the chain ends after the epoch
+with no gate, so it can never release or resubmit anything. Do not add one. Its reference, the same
+analysis on the ff_3.0 run, is `checks/glyprobe_reference_20260930.log`. Two aborted starts on
+09-30 13:27-13:28 (49133130 with the trainer's 2000M default, and its successor 49133132) were
+cancelled when the resubmission with 700M was made; their successors were cancelled too, and
+`.chain_starts` was trimmed back to one entry so the stop rule cannot fire on them.
 
-**What it is** (plan.md, findings 1.8-1.13): ff2.1's own FF2 workflow, plus 158 trained basin
-offsets on 60 Ramachandran coil maps: GLY|X (alpha_R, alpha_L, beta), GLY|GLY (helix and beta, tied
-to their mirrors) and X|right|PRO (alpha_R, beta); the other 780 maps are NDRD unchanged. Each map is
-its own parameter set, updated once per epoch by a damped Newton step matching free to
-native-restrained basin populations, no DSE term on them. 46 proteins are held out of that update.
-Epoch 0 ran at ff2.1 with every offset zero; round 1 was recomputed for the 60-map set from those
-simulations. `verify_rama_basin.py` PASSES on the run (2026-09-28 16:05).
+Logs and data: Peng `/beagle3/trsosnic/yinhan/ff3_benchmark/logs/<prot>_<mode>_ff_3.0_<jobid>.out`,
+`runs/<prot>_<mode>_ff_3.0/`; glpG `/project/trsosnic/yinhan/popepopg_REMD_mdw2/logs/remd.<V>.<jobid>.out`,
+`popepopg_REMD_mdw2/<V>/`. The superseded ff_3.0 benchmark is in `runs_superseded/ff_3.0_20260930-022510`,
+the pre-release glpG seeds are `seeds/*.bak_pre_ff_3.0_20260930-022510`.
 
-* **Where:** `$P=/project/trsosnic/yinhan/upside2-md-mdw2`, run dir `$P/training/ff30_basin`
-  (`init_param` = ff_2.1 md5-verified; `upside_input` hardlinked from `ff30`, its `rama.dat` =
-  `parameters/common/rama.dat`). Log `ff30_basin/condiv-train_<jobid>.out`; per-worker errors only in
-  `run_output/epoch_*/<code>.output_worker`; checkpoints `run_output/epoch_EE_minibatch_MM`.
-* **What to watch:** `run_output/rama_rounds.txt`, one line per epoch: sites of the trained maps,
-  free-native mismatch over those maps (the fraction of residue time in a different basin) for
-  training and held-out proteins, largest step and offset, mean alpha_L - alpha_R offset over the
-  GLY|X maps. Round 1: 7,528 / 882 sites, mismatch 0.0403 training / 0.0814 held out, largest step
-  0.44, GLY|X mean(dL-dR) +0.060. Round 2 (epoch-1 simulations at the round-1 offsets): mismatch
-  0.0408 / 0.0861, largest step 0.40, max |offset| 0.749994 (ASP|right|PRO alpha_R, 0.345 + 0.405;
-  the update has no bound, the round figure is a coincidence), GLY|X mean(dL-dR) +0.132; the largest
-  offsets are all X|right|PRO alpha_R, raised because free over-populates it. **Read the
-  held-out mismatch against its sample-size floor**, not as falling or stalling: with only 46
-  proteins it sits near its floor whatever the offsets do (findings 1.12).
-* **Cluster flags live in `ff30_basin/slurm.args`** (now the midway2 broadwl line with the node
-  exclusions) and every submission reads them; to move the run to midway3, write
-  `--partition=caslake` there. `env.sh` picks the Python by cluster: midway2 the tree's `.venv`,
-  midway3 the `/beagle3` shared env.
-* **At step 76** `after_training.sbatch` runs `gate_or_continue.sh ff30_basin ff_3.0 13`: not
-  converged -> one more epoch through `slurm.args`, up to 13 epochs (step 247), then it stops for
-  review; **converged -> the armed line installs the rotamer-BP fix, then `validate_ff.sh` releases
-  ff_3.0 to both trees and submits the 32 Peng arms and the 4 glpG REMD chains**, all unattended.
-  Dry-run 2026-09-28 on the round-1 checkpoint: extraction (six files, GLY|GLY asymmetry 0), glpG
-  round-trip gate 3.6e-15 on the pristine ff_2.1 seed, a live seed patched into scratch, and
-  `sbatch --test-only` accepting a Peng arm, a glpG chain, the gate and a training link. The four
-  variant directories it deletes hold only the one-block ff3.1 test replicas (28 each, 5.7-5.9 G).
-* **Recovery without a login:** every link queues its insurance successor (`afterany`) before it
-  trains, so a node failure, a wall kill or a failed step is resumed by the successor from the newest
-  checkpoint, whose half-written step directory `main_loop` deletes first; `--no-requeue` stops Slurm
-  replaying a link with stale arguments; a worker `srun` never started is relaunched; three links in
-  a row starting from the same step stop the chain rather than loop. The one gap: the gate job itself
-  has no successor, so if it dies the chain waits for a login (`sbatch $(cat slurm.args)
-  after_training.sbatch` from the run dir).
-* **Deployed in `$P/training/`, md5-verified against the repo 2026-09-28 17:50:** `ConDiv.py`
-  83e309da and `rama_basin.py` 0dc41a35 (both also in `run_output/`), `verify_rama_basin.py`
-  1657ef0e, `extract_ff.py` 9f9d3d3b, `convergence_gate.py` 60a3cfbc, `train_chain.sbatch` f8ebc95c,
-  `env.sh` 1a202218, `README.md` 94f507a4. `gate_or_continue.sh` differs from the repo (0a653ade) only
-  by the armed BP-fix line (§0c). The pre-basin files, the removed `rama_gly_gradient.py` /
-  `verify_gly_gradient.py` and the stale `$P/py/rama_gly_gradient.py` are in
-  `$P/training/backup_pre_basin_20260928/`.
-* **Rewound three times on 2026-09-28**, each time recomputing round 1 from the same epoch-0
-  simulations and resuming from step 19. Each rewound directory is outside `run_output/`, so the chain
-  cannot resume from it, and holds that attempt's steps, old code, library, round log,
-  `.chain_starts` and a `README.txt`; its unfinished step's replicas (no checkpoint) were deleted.
-  * 08:51, `rewound_20260928_0851/`: the log-ratio step with Dirichlet pseudo-counts moved offsets by
-    up to 1.76 nats in basins with no residues in either ensemble; replaced by the MAP step (largest
-    0.44).
-  * 12:25, `rewound_20260928_1225/` (replaced files in `backup_pre_ggsheet_20260928/`): the GLY|GLY
-    map was not mirror-symmetric, through the raw NDRD sheet GLY|GLY entry (findings 1.11);
-    `rama_basin.py` now symmetrises it by the probability mean for coil and sheet (asymmetry
-    66.5 -> 0).
-  * 16:08, `rewound_20260928_1608/` (replaced files in `backup_pre_reduced_20260928/`, plus the
-    all-map step-18 checkpoint `checkpoint_epoch00_mb18_all_maps.pkl`): training all 840 maps was
-    noise-limited on 456 proteins, so only the 60 maps above are trained (findings 1.12-1.13).
-    Recomputed by `/project/trsosnic/yinhan/checks/recompute_round1.py`; trained offsets equal the
-    previous ones to 2e-16 and every non-rama part of the checkpoint is identical. The round log's
-    mismatch is over the trained maps only, not comparable with the earlier all-map figure.
+**A Slurm requeue used to count as a glpG block (fixed 2026-09-30 13:20).** `remd.sbatch` has no
+`--no-requeue`, so after a NODE_FAIL Slurm restarts the job under the same id, and `run_remd.py`
+incremented `block_count` at every start. Three chains lost 2-3 of their 5 blocks that way. Now
+`run_remd.py` keeps the job id of the block in `<V>/block_jobid` and increments only for a new id
+(sandbox-tested: fresh, requeued and successor jobs); the three counters were reset to 1 and each
+variant's `block_jobid` set to its running job, so every chain gets the current block plus four.
+Backups `run_remd.py.bak_pre_requeue_20260930`, `submit_remd.sh.bak_pre_requeue_20260930`,
+`<V>/block_count.bak_pre_requeue_20260930`. The aborted attempts' output is kept as short
+`output_previous_N` groups (100-287 frames), all finite (`checks/glpg_fragments_20260930.log`).
+`submit_remd.sh` now carries the training chain's node exclusions
+(`midway2-0003,[0010-0011],0037,[0342-0345]`) from the next block; the failures were simultaneous on
+several nodes, so they look like cluster events, but 0010 and 0037 hosted two of them.
+
+### ff30_basin: finished, released ff_3.0 (2026-09-28 to 09-30)
+
+**What it was** (plan.md, findings 1.8-1.14): ff2.1's own FF2 workflow, plus 158 trained basin
+offsets on 60 Ramachandran coil maps (GLY|X alpha_R, alpha_L, beta; GLY|GLY helix and beta, tied to
+their mirrors; X|right|PRO alpha_R, beta), updated once per epoch by a damped MAP Newton step; the
+other 780 maps NDRD; 46 proteins held out of the offset update. Steps 0-113 (epochs 0-5), links
+49125955 -> 49131476, no failed step after the third rewind.
+
+* **Where:** `$P=/project/trsosnic/yinhan/upside2-md-mdw2`, run dir `$P/training/ff30_basin`; logs
+  `condiv-train_<jobid>.out`, gates `ff30b-gate_<jobid>.out` and `gate_step{76,95,114}.txt`;
+  checkpoints `run_output/epoch_EE_minibatch_MM`, round libraries `run_output/rama_round_0{0..6}.dat`,
+  per-protein `*.divergence.pkl` kept in every step directory; the release files in
+  `release_20260930-022510/`.
+* **Gates:** step 76 and 95 not converged (rama p 0.0011, 0.0006), step 114 converged (every group
+  p > 0.005, rama 0.0158). The rama pass is prior-limited drift of the X|right|PRO offsets, not
+  closure (findings 1.14).
+* **`run_output/rama_rounds.txt`** (mismatch over the trained maps, training / held out; largest
+  step; largest offset; GLY|X mean alpha_L - alpha_R offset): round 1 0.0403 / 0.0814, 0.44, 0.44,
+  +0.060; 2 0.0408 / 0.0861, 0.40, 0.75, +0.132; 3 0.0365 / 0.0777, 0.34, 1.09, +0.177; 4 0.0348 /
+  0.0712, 0.27, 1.36, +0.221; 5 0.0364 / 0.0826, 0.27, 1.63, +0.260; 6 0.0338 / 0.0827, 0.26, 1.89,
+  +0.306. The held-out figure sits at its sample-size floor (findings 1.12).
+* **Release (gate log):** hb [-1.878 -1.872 -1.798], dhb -0.617, bb scale -0.351, sheet mean 0.247;
+  glpG round-trip gate 3.6e-15 on a pristine ff_2.1 seed; the live seeds changed by rama_pot 3.42,
+  hbond 0.19, pair 17.3 (max).
+* **Pre-proline analysis on this run:** `/project/trsosnic/yinhan/checks/prepro_*.py`, logs
+  `prepro_{leverage,control,left}_20260930.log` (findings 1.14).
+* **Rewound three times on 2026-09-28**, each time recomputing round 1 from the epoch-0
+  simulations: `rewound_20260928_0851/` (Dirichlet log-ratio step moved empty basins by up to 1.76
+  nats; replaced by the MAP step), `rewound_20260928_1225/` (GLY|GLY sheet entry not mirror-symmetric,
+  findings 1.11), `rewound_20260928_1608/` (all 840 maps noise-limited; reduced to the 60, findings
+  1.12-1.13; all-map step-18 checkpoint `checkpoint_epoch00_mb18_all_maps.pkl`). Pre-change files in
+  `$P/training/backup_pre_{basin,ggsheet,reduced}_20260928/`.
+* **Cluster flags live in `<run>/slurm.args`** (the midway2 broadwl line with node exclusions);
+  `env.sh` picks midway2's tree venv or the `/beagle3` venv on midway3.
+* **Recovery design that worked unattended:** every link queues its `afterany` successor before it
+  trains; `--no-requeue`; the successor resumes from the newest checkpoint after deleting the
+  half-written step; a worker whose `srun` never started is relaunched (twice at most); three links
+  from the same step stop the chain. The gate job itself has no successor.
 * **`sbatch --test-only`'s start estimate is no guide to the real wait**: it predicted 13:36 on both
   clusters, then the midway3 submission sat PENDING (Resources) while midway2 started at once.
 * **`srun: Job credential expired` at launch is a race, not a node fault**: the first link lost 4 of
   24 workers 2-3 min after the 24 steps were issued together, on nodes whose other steps ran fine.
-  The trainer now relaunches a worker whose `srun` never started (`<code>.srun` says `Task launch`),
-  up to twice, logging `<code> never started (srun launch failed), relaunching`; a worker that ran
-  and failed still fails the step.
-* **Slow steps outside the engine (2026-09-29 00:30-04:40).** Epoch-2 steps 6, 10, 12, 13 and 15
-  took 1347-1603 s against 1233-1273 s for the same minibatches in epoch 1, each time from a
-  different slowest worker, on different nodes. The engine time did not change (2m5h: 1136 s in
-  epoch 1, 1142 s in epoch 2, 153 us/system/step), so the extra 300-450 s is in worker setup and
-  writeout, most likely `/project` I/O. Nothing to fix; only the ETA moves.
+* **Steps slower than the engine accounts for** (2026-09-29): 300-450 s extra per step, from a
+  different slowest worker each time, engine time unchanged; most likely `/project` I/O.
 
 **`/beagle3` is badly degraded for small-file writes (measured 2026-09-28 ~01:10).** 200 one-line
 files: `/beagle3` 51 s from midway3 and 503 s from midway2, against 0.06-0.27 s on `/project` and
@@ -451,7 +436,7 @@ mmlsquota                   -> "File system project is not known", the GPFS clie
 
 | fileset | 2026-09-09 | 2026-09-23 | 2026-09-28 | note |
 |---|---|---|---|---|
-| `/project/trsosnic` | 1514 G free | 445 G free | **953 G free** at 12:45 (inodes 21%) | `training/` is ~108 G, of which `ff30` 54 G; a finished `ff30_basin` step keeps 35 MB, a running one holds ~40 G of replicas until its workers finish, and a step killed mid-run leaves them behind |
+| `/project/trsosnic` | 1514 G free | 445 G free | 953 G free; **965 G free 09-30 12:00** | `training/` is ~108 G, of which `ff30` 54 G; the four glpG variant directories were emptied at the release and are refilling (~150 G each at the end of the last campaign) |
 | `/beagle3/trsosnic` | - | 1.4 T free (4.2 T of 5.5 T) | 1.4 T free | badly degraded for small-file writes on 09-28, see §1 |
 | `/project2/trsosnic` (group) | - | 1.45 T of a 1.49 T soft quota, **97%** | - | nothing in these campaigns writes there |
 | midway3 home | - | 28.6 of 30 G | 21 G | |
@@ -490,7 +475,10 @@ as running; they are in git history). What must not be forgotten:
     `evidence_diffusion_bug/`).
   * `popepopg_REMD_mdw2/run_remd.py` and `NP-1AO6/run_np_prod.py` exist only there, with no git history.
   * `popepopg_REMD_mdw2/BASELINE_TM_pre_ff3.txt`, the pre-ff3 TM baseline.
-  * HDX: keep `hdx/` (pre-fix) and `hdx_postfix/`; ff3 results are in `popepopg_REMD_mdw2/<V>/hdx_10k/`.
+  * HDX: keep `popepopg_REMD/<V>/hdx/` (pre-fix). `hdx_postfix/` and the earlier ff3 results at
+    `popepopg_REMD_mdw2/<V>/hdx_10k/`, both recorded here before, are on neither `/project` nor
+    `/beagle3` (searched to depth 5, 2026-09-30); `hdx_results/` holds only the DDM-campaign figures
+    and MBAR files.
 * **Deletion decisions waiting on the user:**
   * `NP-1AO6/` data, including `prod_ff3/` (~500 GB).
   * midway3 DDM data `glpG_DDM_micelle_REMD/`, `glpG_DDM_REMD/`.
@@ -528,122 +516,41 @@ healthy 6 h glpG block. **Never transfer settings, thresholds, or analysis betwe
 
 ## 5. How to check TM helix health (TM1 and TM4)
 
-This check is run frequently after any seed change or after the first trajectory chunk completes.
-TM1 (GLY49 at C-cap) and TM4 (GLY133 at N-cap) are the two helices most sensitive to the GLY
-Ramachandran bias bug and must be verified independently from the global health check.
-
-### Step 1 — verify seeds before submitting (run once per seed generation)
+Run this after the first block of any new seed generation or force field, and at every block after.
+TM1's C-cap (GLY49) and TM4 (N-cap loop 131-133) are where the old glycine bias failed.
 
 ```bash
-cd /project/trsosnic/yinhan/popepopg_REMD_mdw2
-module load python/3.11.9
+cd /project/trsosnic/yinhan/checks
+source /software/modules/init/bash; module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1
 export HDF5_USE_FILE_LOCKING=FALSE
-python3 check_seeds_current.py
+python3 glpg_tm_windows.py      # TM1 30-48 / TM4 134-151 per rotated group, T 0.70 and 0.80, seed first
+python3 glpg_ff30_health.py     # also GLY49/GLY133 phi and stretched C-N by residue and replica
 ```
 
-Expected output for a healthy seed (all 6 helical GLY, sym_err=0):
-```
-glpG-RKRK-79HIS:
-  GLY49:  phi=-94.1  aR=0.965 aL=0.965 sym_err=0.000000  OK
-  GLY104: phi=-88.6  aR=1.012 aL=1.012 sym_err=0.000000  OK
-  GLY128: phi=-80.0  aR=1.581 aL=1.581 sym_err=0.000000  OK
-  GLY133: phi=-141.6 aR=1.121 aL=1.121 sym_err=0.000000  OK
-  GLY156: phi=-69.6  aR=1.300 aL=1.300 sym_err=0.000000  OK
-  GLY180: phi=-68.5  aR=1.194 aL=1.194 sym_err=0.000000  OK
-All seeds OK.
-```
+Both read only rotated `output_previous_*` groups (never the live `/output`) and skip
+`output_previous_0`, the seed's own block. Pass: TM1 and TM4 mean helix fraction > 0.8 at T 0.70
+(phi in [-130,-20], psi in [-90,15]), with no downward trend across blocks.
 
-A broken seed shows `sym_err ~ 3–6` and `aL < aR`. **Do not submit if any seed shows BROKEN.**
+**Three rules that earlier versions of this section got wrong** (findings.md, memory
+`glpg-vtf-reading-traps`):
+* **Dihedral sign.** Use the negated-atan2 form of `check_tm4_ss.py` (as in the two scripts above),
+  validated against BioPython. The helper formerly printed here and `check_seeds_current.py` return
+  -phi_std: a healthy helix reads as unfolded.
+* **Windows.** The crystal seed has 131-133 and 152 non-helical, so 131-152 caps TM4 at 0.818; TM1's
+  29-49 caps at 0.952. Use 134-151 and 30-48.
+* **No glycine-phi criterion.** GLY49 and GLY133 are helix caps at phi_std +94 and +142 in the crystal
+  seed; positive phi there is native. `check_seeds_current.py` (map mirror symmetry of those two
+  glycines) is invalid twice over: sign-flipped, and ff_3.0's GLY|X maps are asymmetric by design,
+  so it reports every ff_3.0 seed BROKEN. Do not gate a submission on it.
 
-### Step 2 — check helix health from a VTF trajectory (after first chunk)
+**ff_3.0, first ~10 h (2026-09-30, `checks/glpg_tm_windows_20260930.log`):** seed TM1 = TM4 = 1.00; at
+T 0.70 TM1 0.90-1.00 in all four variants, TM4 0.97-1.00 in three; soft spots are 79ALA_S115T TM4
+0.82-0.86 over its last three groups at T 0.70 (residue 148 at 0.55) and 79HIS_S115T TM4 0.95 -> 0.84
+at T 0.80 (residue 136 at 0.29). TM4's helical glycines already leave the helix for phi > 0 in
+some replicas (GLY143 36% of frames in 79ALA_S115T at T 0.70; `checks/gly_tm4_flip.py`): ff_3.0's
+glycine term favours alpha_L at every glycine, most at GLY136 (findings 1.14). Too early to judge;
+run `gly_tm4_flip.py` with the TM check after block 1.
 
-Extract a VTF for the T=0.70 replica (slot 0) and analyse phi/psi:
-
-```python
-import numpy as np, re
-
-def parse_vtf(vtf_path):
-    """Return atoms list and positions array from a VTF trajectory."""
-    atoms = []
-    with open(vtf_path) as f:
-        for line in f:
-            m = re.match(r"atom\s+(\d+)\s+name\s+(\S+)\s+resid\s+(\d+).*chain\s+(\S+)", line)
-            if m:
-                atoms.append({"aid": int(m.group(1)), "name": m.group(2),
-                               "resid": int(m.group(3)), "chain": m.group(4)})
-            elif line.startswith("timestep"):
-                break
-    n_atoms = max(a["aid"] for a in atoms) + 1
-    frames = []
-    pos = np.zeros((n_atoms, 3)); count = 0; in_frame = False
-    with open(vtf_path) as f:
-        for line in f:
-            if line.startswith("timestep"):
-                if in_frame: frames.append(pos.copy())
-                pos[:] = 0; count = 0; in_frame = True; continue
-            if in_frame:
-                if line.startswith(("pbc","bond","atom","#")) or not line.strip(): continue
-                parts = line.split()
-                if len(parts) >= 3:
-                    try: pos[count] = [float(x) for x in parts[:3]]; count += 1
-                    except ValueError: pass
-    if in_frame and count > 0: frames.append(pos.copy())
-    return atoms, np.array(frames)
-
-def dihedral(a, b, c, d):
-    b1=b-a; b2=c-b; b3=d-c
-    n1=np.cross(b1,b2); n2=np.cross(b2,b3)
-    l1=np.linalg.norm(n1); l2=np.linalg.norm(n2)
-    if l1<1e-10 or l2<1e-10: return np.nan
-    n1/=l1; n2/=l2
-    m1=np.cross(b2/np.linalg.norm(b2),n1)
-    return np.degrees(np.arctan2(np.dot(m1,n2),np.dot(n1,n2)))
-
-def helix_fraction(atoms, frames, chain="A", res_range=(131, 152)):
-    """Fraction of frames where res_range is helical (phi in [-130,-20] AND psi in [-90,15])."""
-    n_by_r  = {a["resid"]: a["aid"] for a in atoms if a["chain"]==chain and a["name"]=="N"}
-    ca_by_r = {a["resid"]: a["aid"] for a in atoms if a["chain"]==chain and a["name"]=="CA"}
-    c_by_r  = {a["resid"]: a["aid"] for a in atoms if a["chain"]==chain and a["name"]=="C"}
-    res_list = [r for r in range(res_range[0], res_range[1]+1)
-                if r in n_by_r and r in ca_by_r and r in c_by_r]
-    hel_frac = {}
-    for r in res_list:
-        phis = []; psis = []
-        for pos in frames:
-            if r-1 not in c_by_r: phis.append(np.nan); psis.append(np.nan); continue
-            phi = dihedral(pos[c_by_r[r-1]], pos[n_by_r[r]], pos[ca_by_r[r]], pos[c_by_r[r]])
-            psi = dihedral(pos[n_by_r[r]], pos[ca_by_r[r]], pos[c_by_r[r]],
-                           pos[n_by_r[r+1]] if r+1 in n_by_r else pos[c_by_r[r]]) if r+1 in n_by_r else np.nan
-            phis.append(phi); psis.append(psi)
-        phis = np.array(phis); psis = np.array(psis)
-        hel_frac[r] = float(np.mean(
-            (-130<=phis) & (phis<=-20) & (-90<=psis) & (psis<=15)))
-    return hel_frac
-
-# Usage:
-atoms, frames = parse_vtf("/path/to/glpG_79HIS_T0.70_slot0.vtf")
-# TM4 health (residues 131-152, GLY133 at N-cap)
-tm4 = helix_fraction(atoms, frames, res_range=(131, 152))
-print("TM4 helix fraction per residue:", {r: f"{v:.2f}" for r, v in tm4.items()})
-print("TM4 mean:", np.mean(list(tm4.values())))
-# TM1 health (residues 29-49, GLY49 at C-cap)
-tm1 = helix_fraction(atoms, frames, res_range=(29, 49))
-print("TM1 mean:", np.mean(list(tm1.values())))
-# GLY133 phi distribution
-# expect: mostly in [-130, -20] for a stable TM4 N-cap
-```
-
-**Pass criteria (TM helix healthy):**
-- TM4 mean helix fraction > 0.8 across residues 131–152
-- TM1 mean helix fraction > 0.8 across residues 29–49
-- GLY49 phi stays in [-130°, -20°] for >80% of frames
-- GLY133 phi stays in [-150°, -20°] for >80% of frames
-
-**Fail signal (biased maps still active):**
-- TM helix fraction near 0 — the helix collapsed
-- GLY49 or GLY133 phi drifting to +60° (alphaL) — the map is pushing it left-handed
-
----
 
 ## 5b. How to check health CORRECTLY (general bond/energy check)
 
@@ -651,7 +558,13 @@ print("TM1 mean:", np.mean(list(tm1.values())))
 **±4.65e12 Å** — numerically finite, physically destroyed. And in a forced NP tear the protein reached
 **431 broken bonds with the potential still finite at +3e5**, so no energy-based test fires at all.
 
-Use the broken-bond **count** (healthy 0–2; torn 279–431 — a two-order-of-magnitude gap):
+Use the broken-bond **count** (torn 279–431). The "healthy 0–2" figure holds for the cold rungs
+only. Measured on glpG 2026-09-30 (`checks/glpg_cn_control_20260930.log`, every 5th frame): at
+T 0.70 no frame has 3 or more C-N above 2.0 A, at T 0.80 ~0.1% do, and at T 0.88-0.90 1.5-2.7% under
+ff_3.0 (`inner_steps` 4, max 10 in one frame) against 1.8-5.1% in the pre-ff3 campaign (`inner_steps`
+1, max 13). So local transient tearing at the hot rungs predates ff_3.0; it is a known open
+integrator question for the hybrid, not a force-field regression; it does not accumulate (sampled
+frames return to 0, and the current logs have no ROLLBACK). The Peng arms (pure Upside) never exceed 1 in any frame.
 
 ```python
 import h5py, numpy as np

@@ -91,3 +91,23 @@ below and its detail is in `findings.md` 9i-9s and git history.
   (GLY|X, GLY|GLY, X|right|PRO; the rest NDRD): code and verifier rewritten, local tests, verifier
   PASS on the run, round 1 recomputed from epoch 0, resumed from step 19 (49127867). Literature
   recorded with read status in findings 1.13.
+
+## 2026-09-30: ff_3.0 released; pre-proline offsets diagnosed
+
+* Status: `ff30_basin` converged at the step-114 gate (02:25), BP fix installed in both trees, ff_3.0
+  released, 32 Peng arms and 4 glpG chains running. Three glpG chains had `block_count` advanced by
+  Slurm requeues after NODE_FAILs; reset proposed, not done (remote_jobs.md §1).
+* Pre-proline (findings 1.14): the mixture caps the X|right|PRO offsets (map aR 0.174 -> 0.144 at
+  best); six rounds left the free-native gap at +0.023 while the offsets grew ~0.08 per round on
+  average (max 1.89); the gap is composition (89% extended sites), not a pre-proline defect.
+  Scripts `checks/prepro_leverage.py`, `prepro_control.py` (new), `prepro_residual.py`,
+  `prepro_rules.py`, `prepro_left.py` rerun; logs `*_20260930.log`.
+* Files: `findings.md` (1.13 corrected, 1.14 new), `plan.md` (Phase 4 done, Phase 5 running, Phase 6
+  pending), `remote_jobs.md` (status, job table, ff30_basin record, BP-fix deployment).
+* Validation fixes (13:20): glpG `run_remd.py` counts a block per job id (a Slurm requeue no longer
+  advances `block_count`), three counters reset 3/4/3 -> 1, `submit_remd.sh` given the training node
+  exclusions; backups `*.bak_pre_requeue_20260930`. Checks, all logged in `checks/*_20260930.log`:
+  aborted-attempt fragments finite; TM1/TM4 on the valid windows 0.90-1.00 at T 0.70 except
+  79ALA_S115T TM4 0.82-0.86; stretched C-N at T 0.88-0.90 predates ff_3.0 (pre-ff3 campaign 1.8-5.1%
+  of frames, ff_3.0 1.5-2.7%); all 32 Peng arms clean. Handbook §5 rewritten (sign, windows, glycine
+  criterion; `check_seeds_current.py` invalid for ff_3.0). `hdx_postfix/` and `hdx_10k/` not on disk.
