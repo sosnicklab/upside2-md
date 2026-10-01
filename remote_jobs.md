@@ -1,12 +1,13 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-10-01 09:30: NOTHING OF OURS IS RUNNING. The ff3.0 retrain (plan.md Phase 8) waits for a
-renewed compute allocation.** `pi-trsosnic` has had no SU allocation on midway2 or midway3 since
-the 10-01 rollover: midway2 broadwl max cpu = 0, midway3 caslake "No sufficient SU allocations". The
-run was started on midway3's `amd` partition and **cancelled by the user after 14 min (~76
-core-hours): no CPU job may run on the group's GPU allocation.** Do not use `amd`, `beagle3` or any
-partition other than broadwl/caslake without the user's say-so. A Slack request to Tobin for the
-allocation has been drafted. BP validation analysed (§0c), not yet reported to Tobin.
+**2026-10-01 10:00: the ff3.0 retrain (plan.md Phase 8) is TRAINING LOCALLY on the Mac Studio
+(M1 Ultra) until midway2 has an allocation again; nothing of ours runs on a cluster.**
+`pi-trsosnic` has had no SU allocation on midway2 or midway3 since the 10-01 rollover: midway2
+broadwl max cpu = 0, midway3 caslake "No sufficient SU allocations". A midway3 `amd` start was
+cancelled by the user: no CPU job may run on the group's GPU allocation, so use no partition but
+broadwl/caslake without the user's say-so. An hourly check (session cron job, at :07) moves the
+training to midway2 as soon as the allocation returns (§1). A Slack request to Tobin was drafted.
+BP validation analysed (§0c), not yet reported to Tobin.
 
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
@@ -279,16 +280,37 @@ restored to the repo's version (md5 0a653ade). The BP test arms were unaffected 
 
 ## 1. Current jobs
 
-Snapshot **2026-10-01 09:30 CDT, `squeue` on midway2 and midway3: empty.** Finished and cancelled
+Snapshot **2026-10-01 10:00 CDT. `squeue` on midway2 and midway3: empty.** Finished and cancelled
 rows are deleted; only lessons worth reusing are kept below.
 
-| JobID | what | where / state | next action |
+| where | what | state | next action |
 |---|---|---|---|
-| - (not submitted) | **ff3.0 retrain, AWH glycine library fixed** (plan.md Phase 8), `$P/training/ff30_gly` | initialised; waits for a renewed allocation | once midway2 has one: `cd $P/training/ff30_gly && source env.sh && sbatch $(cat slurm.args) ../train_chain.sbatch . 76` |
+| **local Mac**, `training/ff30_gly_local` | **ff3.0 retrain, AWH glycine library fixed** (plan.md Phase 8), ff2.1 workflow from ff2.1, 76 steps | driver PID in `driver.pid`, started 09:16 under `caffeinate -i` with `CONDIV_LOCAL_WORKERS=2`; log `train_local.log`; ~1.2-2.3 h per step (one worker 345 s for 113 residues, ~10 cores) | transfer to midway2 when the allocation returns (below); until then let it run |
+| midway2, `$P/training/ff30_gly` | the cluster copy of the same run | initialised, not submitted (no allocation) | receives the local run_output at transfer |
 
-`$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`. The midway3 `amd` attempt was job 59834233 and
-its successor 59834249: cancelled, no checkpoint written. `slurm.args` is restored to the midway2
-flags and `.chain_starts` cleared, so the next link starts cleanly from `initial_checkpoint.pkl`.
+`$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`.
+
+**Watch and transfer.** Session cron job `957106cb` (at :07 and :37) checks the midway2 allocation,
+transfers the run when it returns, runs `training/check_step.py` on every new step, and re-arms a
+live monitor of the log. It is session-only: it dies with the Claude session and expires on
+10-08. A cold session must re-create it, or do the transfer by hand.
+
+**Transfer to midway2:**
+1. Stop the local run: `pkill -f "ConDiv.py restart"; pkill -f "ConDiv.py worker"`. A step in
+   progress is discarded; the newest complete checkpoint carries on.
+2. On midway2: `cd $P/training/ff30_gly && mv run_output run_output.initialised_20261001`, then copy
+   the local `run_output/` there (tar over the mdw2 socket).
+3. On midway2, in the run dir, after `source env.sh`, for every `run_output/initial_checkpoint.pkl`
+   and `run_output/epoch_*/checkpoint.pkl`:
+   `python3 ../move_run.py <ckpt> /Users/yinhan/Documents/upside2-md/training/ff30_gly_local $PWD <ckpt>.moved && mv <ckpt>.moved <ckpt>`.
+   `move_run.py` rewrites the checkpoint's absolute paths and refuses if any path is left outside
+   the new run dir or does not exist there.
+4. `sbatch $(cat slurm.args) ../train_chain.sbatch . 76`. The chain resumes from the newest
+   checkpoint. Check that the first step completes without WORKER_FAIL.
+
+Both run dirs hold identical `init_param/` (ff2.1, md5-checked) and `upside_input/`, including
+`rama.dat` = `parameters/common/rama31.dat` (md5 `fc479d45...`). Only the local initialisation's
+minibatch order travels with the transfer.
 
 **ff30_gly, what must not be forgotten:**
 * `upside_input/` is a hardlink copy of ff30_basin's, except `rama.dat`, which is a fresh copy

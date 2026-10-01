@@ -205,6 +205,13 @@ Glycine only. Pre-proline is separate and parked (Phase 6).
     job written.
   - Not submitted: midway2 refused the chain (`AssocMaxCpuPerJobLimit`). A start on midway3 `amd` was
     cancelled by the user (no CPU jobs on the GPU allocation).
+  - **Running locally since 2026-10-01 09:16**: `training/ff30_gly_local` on the Mac Studio, two
+    workers at a time (`CONDIV_LOCAL_WORKERS=2`), ~1.2-2.3 h per step.
+  - An hourly session cron job moves it to midway2 once the allocation returns (`move_run.py`;
+    procedure in remote_jobs.md §1).
+  - Every finished step is checked with `training/check_step.py`: kinetic-energy ratio, RMSD,
+    unfolded-state target, finiteness, parameter drift, glycine readout. Baseline from ff_3.0's
+    epoch 5: helical glycines alpha_L 0.102 free / 0.005 restrained, H-bond margin 0.080.
 - [ ] **Validation.**
   - Free ensembles by native basin: helical glycines' alpha_L clearly below ff_3.0's 0.101, and
     their helical loss not below Ser/Asn's (~0.08), so propensity is not flattened. Natively
@@ -232,7 +239,5 @@ Glycine only. Pre-proline is separate and parked (Phase 6).
   reads one left and one right map, so raising all left maps of a residue type and lowering its
   right maps changes little. The per-map prior fixes the split; watch that pair of directions in
   the gate.
-* **The local Mac `obj/upside` traps (SIGTRAP, exit 133) at exit whenever Monte Carlo pivot moves
-  are on**, even for one system. The midway2 binary runs them cleanly, so trainer tests run there.
 * **Do not use `broadwl-lc`.** Its nodes are `noib` and cannot see `/project`.
 * **`/project` has ~965 G free (2026-09-30).** The glpG REMD trees hold ~1.26 T; `NP-1AO6` ~0.5 T is the reclaim.

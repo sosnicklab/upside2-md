@@ -11,6 +11,7 @@ re-includes just these files, so a run directory created here stays untracked.
 |---|---|
 | `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (`/project2/trsosnic/okleinmann/condiv/condiv2.py`); its docstring lists every difference and why |
 | `rama_basin.py` | the Ramachandran basins and per-residue basin populations, recorded every step as a diagnostic (not a parameter) |
+| `move_run.py` | rewrites a checkpoint's absolute paths so a run continues in another run directory, e.g. from a local Mac to midway2; refuses if any path is left behind or missing |
 | `build_gly_library.py` | builds the library ff3.0 trains with: the central-glycine row replaced by the AWH-measured free energy of capped glycine dipeptides, every other row unchanged; checks itself through `upside_config` |
 | `check_converged.py` | has a run updated every file, is every group at a fixed point, has it plateaued? |
 | `train_chain.sbatch` | self-chaining Slurm job; submits `<run>/after_training.sbatch` when the target is reached |
@@ -99,9 +100,11 @@ it, so they must place glycine where a fold needs it.
 ## Traps
 
 * **`--ntasks` must equal the minibatch size (24) and `--cpus-per-task` the 14 systems.**
-* **The local Mac binary traps (SIGTRAP) at exit whenever Monte Carlo pivot moves are on**, after
-  every frame completes, so every worker reports `RUN_FAIL` locally. Test workers on midway2, whose
-  binary runs them cleanly.
+* **Running without Slurm** (a local machine), the driver starts at most `CONDIV_LOCAL_WORKERS`
+  workers at a time (default 1). One worker keeps ~10 cores busy, so an M1 Ultra runs two:
+  `CONDIV_LOCAL_WORKERS=2 nohup caffeinate -i python run_output/ConDiv.py restart <checkpoint> <n_steps> > train_local.log 2>&1 &`.
+  The Mac binary no longer traps at exit with Monte Carlo moves on (findings 3.9): a full worker
+  ran there cleanly on 2026-10-01 (1ga3, 345 s).
 * **Opening a `.up` with PyTables before constructing `ue.Upside` makes the engine fail to
   initialise.** Construct the engine first, then read arrays.
 * **A worker that `srun` never starts is relaunched; one that ran and failed fails the step.** 24

@@ -96,6 +96,9 @@ dse_weight      = 0.3                                    # SI: lambda
 sarw_scale      = 0.0                                    # SARW: H-bond, burial, rotamer off
 nse_mix         = (0.60, 0.30, 0.10)                     # the port's mix of the 3 coldest replicas
 alpha_scale     = 0.5                                    # the port's global learning-rate factor
+# Workers run at once on a machine without Slurm. One worker keeps ~10 cores busy (measured on an
+# M1 Ultra, 1ga3: 345 s wall, 3411 s CPU), so a 20-core machine runs two.
+local_workers   = int(os.environ.get('CONDIV_LOCAL_WORKERS', '1'))
 
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
             'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL']
@@ -292,12 +295,18 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
         path = '%s/%s.srun' % (direc, nm)
         return has_slurm and os.path.exists(path) and 'Task launch' in open(path).read()
 
+    # Under Slurm every worker of the minibatch starts at once, srun placing each on its own cores.
+    # Without it the workers share one machine, so at most `local_workers` run at a time.
     # A worker whose srun never started it ('Task launch ... failed', e.g. an expired job
     # credential when 24 steps start at once) has not run, so it is launched again as soon as that
     # is seen, up to twice; a worker that ran and failed is never relaunched.
-    jobs = collections.OrderedDict((nm, launch(nm)) for nm, _ in minibatch[::-1])
-    tries, rc = dict((nm, 1) for nm in jobs), dict()
-    while len(rc) < len(jobs):
+    queue = [nm for nm, _ in minibatch[::-1]]
+    limit = len(queue) if has_slurm else local_workers
+    jobs, tries, rc = collections.OrderedDict(), dict(), dict()
+    while len(rc) < len(minibatch):
+        while queue and len(jobs) - len(rc) < limit:
+            nm = queue.pop(0)
+            jobs[nm], tries[nm] = launch(nm), 1
         for nm, j in list(jobs.items()):
             if nm in rc or j.poll() is None:
                 continue

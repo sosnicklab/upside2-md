@@ -184,3 +184,9 @@ below and its detail is in `findings.md` 9i-9s and git history.
   allocation (lesson findings 10.0e, memory note). The run directory has been restored to the
   midway2 flags and waits for the allocation. A Slack request to Tobin was drafted, with usage
   (Jul-Sep about 450k core-hours, September about 280k).
+* Local run: a full worker ran cleanly on the Mac (1ga3, 345 s, 1.6 GB; the old MC SIGTRAP is gone).
+  Added `CONDIV_LOCAL_WORKERS` to ConDiv's launcher (no Slurm: at most N at once) and two scripts:
+  `training/move_run.py` (checkpoint path remap for the transfer, tested both ways) and
+  `training/check_step.py` (per-step physical health; on ff_3.0's epoch 5 it reproduces findings
+  1.15). Deployed to midway2. `training/ff30_gly_local` started 09:16 with two workers under
+  caffeinate. Session cron `4b09fd3d` checks the allocation and transfers the run when it returns.
