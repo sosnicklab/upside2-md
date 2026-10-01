@@ -1,83 +1,24 @@
-"""Per-pair basin offsets on the Ramachandran library, trained by matching basin populations.
+"""Ramachandran basins, and per-residue basin populations of an ensemble.
 
-THE PARAMETER. A trained directional map of the library's coil group, k = (central residue,
-direction, neighbour), keeps its NDRD values as a fixed base and gets a few smooth basin offsets:
+A diagnostic, not a parameter: every training step records, per residue, the basin populations of
+the native-restrained replica and of the free ensemble (`rama_native`, `rama_free` in each
+`<code>.divergence.pkl`). Split by each residue's own native basin, they show where the free
+simulation leaves the native conformation, for instance helical glycines visiting alpha_L
+(findings 1.11-1.16).
 
-    E_k(phi,psi) = E_k,base(phi,psi) + sum_b c_k,b * w_b(phi,psi)
-
-Each map is renormalised afterwards, as the NDRD maps are (sum exp(-E) = 1), so an offset is a
-weight factor on its basin's probability: the shape inside every basin is the base's, and only the
-depth of each basin, its frequency, is trained. The basins partition the torus: alpha_R, alpha_L,
-beta, pPII and `other` (phi > 0 outside alpha_L), and for a central glycine, which populates
-`other`, that region split into its two mirror halves beta' and pPII'. In a trained map the
-untrained basins together are the reference, whose weight follows from the normalisation, so no
-region is left uncontrolled.
-
-WHICH MAPS. Only those where the literature and ff2.1's own error both point to a local defect
-(findings 1.13); every other map is written unchanged. 158 offsets on 60 maps:
-  * GLY|X (38 maps): alpha_R, alpha_L, beta. Glycine has no C-beta, and its PDB map records where
-    folds place it rather than its own preference; ff2.1's free simulations over-populate alpha_L.
-  * GLY|GLY (2 maps): helix and beta, each tied to its mirror (below).
-  * X|right|PRO (20 maps, every central type but glycine, cis-proline included): alpha_R, beta.
-    The ring's C-delta of proline i+1 clashes with N and C-beta of residue i in alpha_R, by far the
-    largest neighbour effect, and ff2.1's worst miss. upside_config mixes a residue's left and
-    right maps at about equal weight, so this map reaches its residues at about half strength.
-Neighbour effects elsewhere are small, and 456 proteins cannot resolve per-pair corrections of
-their size (findings 1.12).
-
-EACH PAIR IS ITS OWN PARAMETER SET. Offsets are indexed by (central, direction, neighbour) and are
-never tied, pooled or shared between maps: the offsets of GLY|ALA act on no map but GLY|ALA. They
-are added to the coil entry of their own pair only, never to the sheet group, because a central
-cis-proline reads PRO's sheet entry and an offset there would act on both. The one constraint lives
-inside single maps: GLY|GLY has an achiral pair, so its base is symmetrised and each of its offsets
-is held equal to its mirror basin's. Its sheet entry is symmetrised too, since upside_config mixes
-every residue's coil map with its sheet map, and NDRD's GLY|GLY sheet map holds 94% of its weight at
-phi < 0. Symmetrising averages a map's probabilities with its mirror's, i.e. pools every site with
-its mirror image.
-
-HOW THEY ARE UPDATED. Once per training round (one epoch), per map and basin, the basin population
-of the native-restrained replica is compared with that of the free replicas over every residue that
-reads the map. Each offset takes a damped Newton step on the maximum a posteriori objective: the
-native basin counts under the model's basin populations, with a Gaussian prior of width `SIGMA`
-on the offset, centred on zero, i.e. on the map's own NDRD values:
-
-    c += eta * [T0 N (p_free - p_native) - T0^2 c / sigma^2] / [N p (1 - p) + T0^2 / sigma^2]
-
-with N the residues reading the map and p the mean of the two populations. A basin the free
-simulation over-populates is raised, one it under-populates is lowered. Where a basin holds many
-residues this is the log-ratio step T0 ln(p_free / p_native); where it holds almost none, the
-prior bounds the step and an offset with no evidence decays back to zero. A plain log-ratio of
-two near-zero populations is counting noise and gave steps of 1.8 nats in forbidden basins in the
-first round of the first run. Nothing is borrowed from another map. There is no unfolded-state
-(DSE) term on the offsets: in ConDiv the SARW replica keeps the rama term, so that comparison would
-be against the map itself, not against data.
+THE BASINS partition the torus: alpha_R (phi < 0, -100 < psi < 50), beta (phi < -100, psi outside
+that band), pPII (-100 < phi < 0, psi outside it), alpha_L (the mirror of alpha_R), and phi > 0
+outside alpha_L split into beta' and pPII', the mirrors of beta and pPII; `other` is their union.
+Edges are logistic with a 3 deg scale (13 deg from 10% to 90%), continuous across phi = +-180, and
+every basin mirrors exactly onto its partner under (phi, psi) -> (-phi, -psi).
 """
 
-import os
-
 import numpy as np
-import tables as tb
 
 BASINS = ('alpha_R', 'alpha_L', 'beta', 'pPII', "beta'", "pPII'", 'other')
 N_BASIN = len(BASINS)
-# the basin each basin maps onto under (phi,psi) -> (-phi,-psi)
-MIRROR = (1, 0, 4, 5, 2, 3, 6)
-# each map's full partition of the torus: six basins for a central glycine, five otherwise
-PARTITION_GLY = (0, 1, 2, 3, 4, 5)
-PARTITION = (0, 1, 2, 3, 6)
-# Logistic edge scale. At 3 deg the 10-90% transition is 13 deg, two to three grid cells, the
-# sharpest the engine's spline represents cleanly; an offset is then realised at a median 98% of
-# its value where a basin's probability lies, and 8% of a map's probability sits in transitions.
-# The 10 deg scale of secstr_bias gives 44 deg edges, which leave no flat interior in an 80 deg
-# basin and tilt its shape instead of scaling it.
 EDGE = np.deg2rad(3.)
-SIGMA = 1.                  # prior width on every offset, nats
-ETA = 0.5
 
-
-# ---------------------------------------------------------------------------
-# Basins
-# ---------------------------------------------------------------------------
 
 def _wrap(x):
     """Angle difference into [-pi, pi)."""
@@ -117,183 +58,6 @@ def basin_weights(phi, psi):
     ], axis=-1)
 
 
-def grid_basins(n_grid):
-    """Basin weights on the library grid: node i sits at -180 + i * 360/n_grid degrees."""
-    t = -np.pi + 2. * np.pi * np.arange(n_grid) / n_grid
-    phi, psi = np.meshgrid(t, t, indexing='ij')
-    return basin_weights(phi, psi)                         # (n_grid, n_grid, N_BASIN)
-
-
-def mirror(m):
-    """(phi,psi) -> (-phi,-psi) on the grid: a reversal WITH a roll, because node i maps to (-i) % n."""
-    return np.roll(np.roll(m[..., ::-1, ::-1], 1, -2), 1, -1)
-
-
-def symmetrise(m):
-    """The mirror-symmetric map whose probabilities are the mean of m's and its mirror's.
-
-    Averaging the energies instead would take the geometric mean of the probabilities, which
-    empties any basin whose mirror is empty (the sheet map's pPII). Exact: every point and its
-    mirror are given the same pair of numbers, and logaddexp is symmetric in them.
-    """
-    return np.log(2.) - np.logaddexp(-m, -mirror(m))
-
-
-# ---------------------------------------------------------------------------
-# The parameter set: one offset vector per directional map
-# ---------------------------------------------------------------------------
-
-def _decode(attr):
-    return [x.decode() if isinstance(x, bytes) else x for x in attr]
-
-
-_base_cache = {}
-
-
-def base_maps(state):
-    """The fixed base of every key: the source library's map, GLY|GLY symmetrised.
-
-    Rebuilt from the source library rather than kept in the state, which goes into every
-    checkpoint; cached per library.
-    """
-    src = state['source']
-    if src not in _base_cache:
-        with tb.open_file(src) as t:
-            pot = t.root.coil.dimer_pot[:].astype(float)
-        base = np.stack([pot[c, d, n] for c, d, n in state['keys']])
-        g = state['is_gg']
-        base[g] = symmetrise(base[g])
-        _base_cache[src] = base
-    return _base_cache[src]
-
-
-def init_state(library):
-    """Offsets at zero on the library's own maps, GLY|GLY symmetrised.
-
-    Keys are every (central, direction, neighbour) that `read_rama_maps_and_weights` can read in
-    mixture mode: every central residue type of the coil group (cis-proline included), both
-    directions, and the 20 standard neighbours (a cis-proline neighbour is read as PRO, and ALL is
-    used only by the product rule). All of them accumulate statistics; only the maps with active
-    basins are trained.
-    """
-    with tb.open_file(library) as t:
-        coil = t.root.coil
-        restype = _decode(coil._v_attrs.restype)
-        dirs = _decode(coil._v_attrs.dir)
-        pot = coil.dimer_pot[:]
-    neighbours = [n for n, r in enumerate(restype) if r not in ('ALL', 'CPR')]
-    keys = np.array([(c, d, n) for c in range(pot.shape[0]) for d in range(len(dirs))
-                     for n in neighbours if np.isfinite(pot[c, d, n]).all()], dtype=int)
-    gly, pro, right = restype.index('GLY'), restype.index('PRO'), dirs.index('right')
-    is_gg = (keys[:, 0] == gly) & (keys[:, 2] == gly)
-    gly_x = (keys[:, 0] == gly) & ~is_gg
-    pre_pro = (keys[:, 0] != gly) & (keys[:, 1] == right) & (keys[:, 2] == pro)
-    state = dict(source=os.path.abspath(library), keys=keys, restype=restype, dirs=dirs,
-                 is_gg=is_gg)
-    base_maps(state)
-
-    active = np.zeros((len(keys), N_BASIN), dtype=bool)
-    active[np.ix_(gly_x, [0, 1, 2])] = True
-    active[np.ix_(is_gg, [0, 1, 2, 4])] = True
-    active[np.ix_(pre_pro, [0, 2])] = True
-    state.update(active=active, offset=np.zeros((len(keys), N_BASIN)), round=0, history=[])
-    return state
-
-
-def independent(state):
-    """Offsets that are free parameters: the active ones, counting each GLY|GLY mirror pair once."""
-    sel = state['active'].copy()
-    sel[np.ix_(state['is_gg'], [1, 4, 5])] = False
-    return sel
-
-
-def n_param(state):
-    return int(independent(state).sum())
-
-
-def _normalise(m):
-    """The library's convention: sum(exp(-E)) == 1 per map."""
-    lo = m.min(axis=(-2, -1), keepdims=True)
-    return m + np.log(np.exp(-(m - lo)).sum(axis=(-2, -1), keepdims=True)) - lo
-
-
-def maps(state):
-    """Every key's current map, shape (n_key, n_grid, n_grid), normalised like the NDRD maps.
-
-    Renormalising makes each offset a weight factor on its basin: probability moves between the
-    basins of one map, never between a map and its partner in upside_config's left/right mixture,
-    which mixes the maps without renormalising them first. GLY|GLY is symmetric by construction
-    (symmetric base, tied offsets on mirror basins); the projection only removes summation-order
-    rounding, so the written maps are exactly mirror-symmetric.
-    """
-    base = base_maps(state)
-    m = base + np.einsum('kb,ijb->kij', state['offset'], grid_basins(base.shape[-1]))
-    g = state['is_gg']
-    m[g] = 0.5 * (m[g] + mirror(m[g]))
-    return _normalise(m)
-
-
-def write_library(state, source, out):
-    """Copy `source`, replace each trained map's coil entry with its current, normalised map and
-    symmetrise the GLY|GLY sheet entries.
-
-    Nothing else changes: the untrained maps, the rest of the sheet group, the ALL and cis-proline
-    neighbour columns and both weight arrays come through as they were. Only a central glycine next
-    to a glycine reads the GLY|GLY sheet entry (a cis-proline reads PRO's), so symmetrising it acts
-    on no other residue.
-    """
-    import shutil
-    shutil.copy(source, out)
-    m = maps(state)
-    with tb.open_file(out, 'a') as t:
-        pot = t.root.coil.dimer_pot[:]
-        for k in np.where(state['active'].any(axis=1))[0]:
-            c, d, n = state['keys'][k]
-            pot[c, d, n] = m[k]
-        t.root.coil.dimer_pot[:] = pot
-        sheet = t.root.sheet.dimer_pot[:]
-        g = _decode(t.root.sheet._v_attrs.restype).index('GLY')
-        sheet[g, :, g] = _normalise(symmetrise(sheet[g, :, g].astype(float)))
-        t.root.sheet.dimer_pot[:] = sheet
-    return out
-
-
-def gly_gly_asymmetry(library):
-    """Largest |E - mirror(E)| over the GLY|GLY coil and sheet entries of a library file."""
-    with tb.open_file(library) as t:
-        asym = []
-        for grp in (t.root.coil, t.root.sheet):
-            g = _decode(grp._v_attrs.restype).index('GLY')
-            m = grp.dimer_pot[:][g, :, g].astype(float)
-            asym.append(np.abs(m - mirror(m)).max())
-    return max(asym)
-
-
-def residue_keys(state, seq):
-    """For each residue, the key index of every coil map it reads, as `read_rama_maps_and_weights`.
-
-    A terminal residue reads one direction, an interior one both. A cis-proline is CPR only as the
-    central residue; as a neighbour it is read as PRO.
-    """
-    ridx = {r: i for i, r in enumerate(state['restype'])}
-    didx = {d: i for i, d in enumerate(state['dirs'])}
-    kidx = {tuple(k): i for i, k in enumerate(state['keys'])}
-
-    def key(c, d, n):
-        return kidx[(ridx[c], didx[d], ridx['PRO' if n == 'CPR' else n])]
-
-    seq = list(seq)
-    out = [[key(seq[0], 'right', seq[1])]]
-    for i in range(1, len(seq) - 1):
-        out.append([key(seq[i], 'left', seq[i - 1]), key(seq[i], 'right', seq[i + 1])])
-    out.append([key(seq[-1], 'left', seq[-2])])
-    return out
-
-
-# ---------------------------------------------------------------------------
-# Statistics and the update
-# ---------------------------------------------------------------------------
-
 def residue_populations(rama_coord, weights=None):
     """Per-residue basin populations of one ensemble.
 
@@ -305,76 +69,3 @@ def residue_populations(rama_coord, weights=None):
     if weights is None:
         return w.mean(axis=0)
     return np.tensordot(np.asarray(weights, dtype=float), w, axes=1)
-
-
-def empty_accumulator(state):
-    n = len(state['keys'])
-    return dict(n=np.zeros(n), free=np.zeros((n, N_BASIN)), native=np.zeros((n, N_BASIN)))
-
-
-def accumulate(acc, state, seq, free, native):
-    """Add one protein's per-residue populations to every map its residues read."""
-    for i, ks in enumerate(residue_keys(state, seq)):
-        for k in ks:
-            acc['n'][k] += 1.
-            acc['free'][k] += free[i]
-            acc['native'][k] += native[i]
-
-
-def _tie(state, x):
-    """Within each GLY|GLY map, give a basin and its mirror the sum over both, i.e. the union."""
-    x = np.array(x, dtype=float)
-    g = state['is_gg']
-    x[g] = x[g] + x[g][:, MIRROR]
-    return x
-
-
-def step_gradient(state, acc):
-    """One step's share of the objective's gradient, in residue counts, for the convergence gate.
-
-    The data part, free minus native counts, plus this step's share of the prior's pull, so that
-    at the fixed point the steps of an epoch are noise about zero.
-    """
-    pull = state['T0'] * state['offset'] / SIGMA ** 2 / state['steps_per_round']
-    return (_tie(state, acc['free'] - acc['native']) - pull)[independent(state)]
-
-
-def update(state, acc):
-    """One round's damped Newton step on every offset. Returns the step taken, (n_key, N_BASIN)."""
-    T0 = state['T0']
-    n = acc['n'][:, None]
-    free, native = _tie(state, acc['free']), _tie(state, acc['native'])
-    p = 0.5 * (free + native) / np.maximum(n, 1.)
-    grad = T0 * (free - native) - T0 ** 2 * state['offset'] / SIGMA ** 2
-    hess = n * p * (1. - p) + T0 ** 2 / SIGMA ** 2
-    step = np.where(state['active'], ETA * grad / hess, 0.)
-    state['offset'] = state['offset'] + step
-    state['round'] += 1
-    return step
-
-
-def summary(state, acc_train, acc_held):
-    """A round's mismatch at the offsets it ran with, over the trained maps: the fraction of residue
-    time in a different basin of the map's partition between the free and native ensembles (total
-    variation), averaged over the residues that read them."""
-    trained = state['active'].any(axis=1)
-    part = np.zeros_like(state['active'])
-    gly = state['keys'][:, 0] == state['restype'].index('GLY')
-    part[np.ix_(gly, PARTITION_GLY)] = True
-    part[np.ix_(~gly, PARTITION)] = True
-
-    def mismatch(acc):
-        d = 0.5 * np.abs(np.where(part, acc['free'] - acc['native'], 0.)).sum(axis=1)
-        return float(d[trained].sum() / max(acc['n'][trained].sum(), 1.))
-    return dict(sites_train=float(acc_train['n'][trained].sum()),
-                sites_held=float(acc_held['n'][trained].sum()),
-                mismatch_train=mismatch(acc_train), mismatch_held=mismatch(acc_held))
-
-
-def offset_summary(state):
-    """Largest offset, and the mean alpha_L minus alpha_R offset over the GLY|X maps (central
-    glycine, neighbour not glycine)."""
-    gly = state['restype'].index('GLY')
-    xg = (state['keys'][:, 0] == gly) & ~state['is_gg']
-    return dict(max_offset=float(np.abs(state['offset']).max()),
-                gly_dL_minus_dR=float((state['offset'][xg, 1] - state['offset'][xg, 0]).mean()))

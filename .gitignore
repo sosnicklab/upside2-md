@@ -39,9 +39,4 @@ training/*
 !training/*.sbatch
 !training/pdb_list
 
-# Kept out of the repo (2026-09-19): the AWH map builder, an analysis tool. The trainer's helpers
-# in training/ (rama_basin, and verify_rama_basin, the gate that must pass before the rama offsets
-# are trained) are tracked.
-py/build_rama_from_awh.py
-
 *.bak_*

@@ -22,13 +22,13 @@ modernised and restored to the published protocol. Differences from that file, e
     now an exact max-subtracted one. The port's guard that silently dropped the DSE term when a
     replica's final energy exceeded 1000 is removed: a blown-up replica must fail, not vanish.
     For the same reason a failed worker fails the step; the port summed whatever returned.
-  * added: basin offsets on the Ramachandran maps where a local defect is established, the
-    glycine-centred and pre-proline maps (rama_basin.py), 158 on 60 maps; every other map stays at
-    NDRD. Each (central, direction, neighbour) map is its own parameter set, GLY|GLY is held
-    mirror-symmetric, and the offsets move once per epoch by a damped Newton step matching free to
-    native-restrained basin populations over the residues that read the map, with a Gaussian prior
-    on each offset and without a DSE term. A tenth of the proteins is held out of that update as a
-    check.
+  * the Ramachandran library is a fixed input, `upside_input/rama.dat`, never trained. For ff3.0
+    its central-glycine row is the AWH-measured free energy of capped glycine dipeptides
+    (build_gly_library.py): the PDB row is part local energy and part evolutionary placement, and
+    a map trained against native structures relearns the placement (findings 1.15).
+  * recorded, not trained: per-residue basin populations of the native-restrained replica and of
+    the free ensemble (rama_basin.py), the diagnostic that shows where the free simulation leaves
+    the native conformation.
 
 One training step, per protein (main_worker):
   - 14 systems in one replica-exchange run: a native-restrained replica, 12 free replicas and one
@@ -40,8 +40,8 @@ One training step, per protein (main_worker):
     replicas bracketing the Rg midpoint (the Tm estimate) whose Rg exceeds
     0.67*Rg(coldest) + 0.33*Rg(hottest).
   - contrast = NSE + lambda * DSE, summed over the minibatch, fed to Adam.
-  - rama offsets: per-residue basin populations of the native-restrained replica and of the free
-    ensemble (the NSE mix), accumulated per map over the epoch and applied at its end.
+  - per-residue basin populations of the native-restrained replica and of the free ensemble (the
+    NSE mix), written to the step's divergence file.
 """
 
 import sys
@@ -58,7 +58,6 @@ is_worker = __name__ == '__main__' and len(sys.argv) > 1 and sys.argv[1] == 'wor
 
 import collections
 import pickle as cp
-import re
 import shutil
 import socket
 import subprocess as sp
@@ -72,7 +71,6 @@ import torch
 
 import run_upside as ru
 import upside_engine as ue
-import upside_config as uc
 import rama_basin as rb
 
 if not is_worker:
@@ -98,8 +96,6 @@ dse_weight      = 0.3                                    # SI: lambda
 sarw_scale      = 0.0                                    # SARW: H-bond, burial, rotamer off
 nse_mix         = (0.60, 0.30, 0.10)                     # the port's mix of the 3 coldest replicas
 alpha_scale     = 0.5                                    # the port's global learning-rate factor
-heldout_fraction = 0.1                                   # proteins kept out of the rama offset update
-heldout_seed    = 20260928
 
 resnames = ['ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
             'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL']
@@ -149,14 +145,11 @@ def hb_join(hb, dhb):
 
 if not is_worker:
 
-    def print_param(param, rama):
+    def print_param(param):
         print('hb    %s   dhb %.4f' % (np.array2string(param.hb[:3], precision=4), param.dhb[0]))
         print('sheet mean %.4f' % np.mean(param.sheet))
         print('bb env scale %.4f  center %.4f  sharpness %.4f  hbond_weight %.4f'
               % (param.bbenve, param.bbenvc, param.bbenvs, param.bbenvw))
-        print('rama  round %i, %i offsets, max |offset| %.4f, library %s'
-              % (rama['round'], rb.n_param(rama), np.abs(rama['offset']).max(),
-                 os.path.basename(rama['library'])))
         print('env   scale center sharpness weight')
         env = dict(zip(resnames, np.vstack([param.enve, param.envc, param.envs,
                                             param.envw[:20]]).T))
@@ -232,8 +225,9 @@ if not is_worker:
             hb=hb, dhb=dhb, sheet=np.loadtxt(files['sheet']))
         return param, files
 
-    def expand_param(params, orig, new, rama):
-        """Write params to the files a worker (or a deployment) reads."""
+    def expand_param(params, orig, new):
+        """Write the trained parameters to the files a worker (or a deployment) reads. The rama
+        library is not trained and is never rewritten."""
         rotp, covp, hydp, hydplp, rotposp, _ = rp.unpack_params(params.rot)
         shutil.copyfile(orig['rot'], new['rot'])
         with tb.open_file(new['rot'], 'a') as t:
@@ -258,48 +252,25 @@ if not is_worker:
 
         np.savetxt(new['sheet'], params.sheet)
 
-        # The library is 35 MB, so it is written only where asked: once per round for the workers
-        # and by extract_ff, never for the per-step record, since the offsets are in every
-        # checkpoint.
-        if 'rama' in new:
-            rb.write_library(rama, orig['rama'], new['rama'])
-
     def backprop_deriv(param, deriv, reg_scale):
         return deriv._replace(
             rot=d_obj(param.rot, deriv.rot, deriv.cov, deriv.hyd, reg_scale),
             cov=0., hyd=0.)
-
-    def finish_round(state):
-        """End of an epoch: move every rama offset once, log the round, write the next library."""
-        rama = state['rama']
-        before = rb.summary(rama, rama['acc_train'], rama['acc_held'])
-        step = rb.update(rama, rama['acc_train'])
-        rama['history'].append(dict(before, **rb.offset_summary(rama), round=rama['round'],
-                                    max_step=float(np.abs(step).max())))
-        rama['library'] = os.path.join(state['base_dir'], 'rama_round_%02i.dat' % rama['round'])
-        rb.write_library(rama, state['init_param_files']['rama'], rama['library'])
-        rama['acc_train'], rama['acc_held'] = rb.empty_accumulator(rama), rb.empty_accumulator(rama)
-        with open(os.path.join(state['base_dir'], 'rama_rounds.txt'), 'a') as f:
-            h = rama['history'][-1]
-            f.write('round %2i  sites %6.0f / %5.0f held out  free-native mismatch %.4f / %.4f '
-                    'held out  max step %.4f  max |offset| %.4f  GLY|X mean(dL-dR) %+.4f\n'
-                    % (h['round'], h['sites_train'], h['sites_held'], h['mismatch_train'],
-                       h['mismatch_held'], h['max_step'], h['max_offset'], h['gly_dL_minus_dR']))
 
 
 # ---------------------------------------------------------------------------
 # Minibatch
 # ---------------------------------------------------------------------------
 
-def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_scale, rama):
+def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_scale):
     os.makedirs(direc, exist_ok=True)
     print(direc)
 
-    # the workers read this round's library; every other file is written for this step
+    # the workers read the fixed library; every other file is written for this step
     d_obj_files = dict((k, os.path.join(direc, 'nesterov_temp__' + os.path.basename(v)))
                        for k, v in init_files.items() if k != 'rama')
-    d_obj_files['rama'] = rama['library']
-    expand_param(param + solver.update_for_d_obj(), init_files, d_obj_files, rama)
+    d_obj_files['rama'] = init_files['rama']
+    expand_param(param + solver.update_for_d_obj(), init_files, d_obj_files)
 
     has_slurm = shutil.which('srun') is not None
     files_arg = b64encode(cp.dumps(dict(files=d_obj_files))).decode('ascii')
@@ -340,7 +311,6 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
         time.sleep(5.)
 
     rmsd, change, no_dse, failed = dict(), [], [], []
-    step_train, step_held = rb.empty_accumulator(rama), rb.empty_accumulator(rama)
     for nm in jobs:
         if rc[nm] != 0:
             print(nm, 'WORKER_FAIL')
@@ -352,21 +322,10 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
         change.append(div['contrast'])
         if not div['has_dse']:
             no_dse.append(nm)
-        rb.accumulate(step_held if nm in rama['heldout'] else step_train, rama,
-                      uc.read_fasta(open(targets[nm].fasta)), div['rama_free'], div['rama_native'])
     # A step from part of the minibatch is a different objective, so it is never taken: the step
     # fails and the chain's successor repeats it from the last checkpoint.
     if failed:
         raise RuntimeError('%i of %i workers failed: %s' % (len(failed), len(jobs), ' '.join(failed)))
-
-    # The rama offsets move once per round; each step adds to the round's accumulators and keeps
-    # its own moment-matching gradient for the convergence gate.
-    for acc, add in ((rama['acc_train'], step_train), (rama['acc_held'], step_held)):
-        for f_ in acc:
-            acc[f_] += add[f_]
-    np.savez(os.path.join(direc, 'rama_step.npz'), grad=rb.step_gradient(rama, step_train),
-             **{'train_' + k: v for k, v in step_train.items()},
-             **{'held_' + k: v for k, v in step_held.items()})
 
     d_param = backprop_deriv(
         param, Update(*[None if x[0] is None else np.sum(x, axis=0) for x in zip(*change)]),
@@ -381,10 +340,10 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
     new_files = dict((k, os.path.join(direc, os.path.basename(v)))
                      for k, v in init_files.items() if k != 'rama')
     new_param = param + solver.update_step(d_param)
-    expand_param(new_param, init_files, new_files, rama)
+    expand_param(new_param, init_files, new_files)
     solver.log_state(direc)
     print()
-    print_param(new_param, rama)
+    print_param(new_param)
     return new_param
 
 
@@ -422,7 +381,7 @@ def compute_divergence(args):
     """Per-frame dV/da for every trained parameter, under the free (unrestrained) Hamiltonian.
 
     Returns an Update of per-frame arrays and every residue's (phi,psi) per frame, from which the
-    rama offsets' basin populations are formed after frame weighting.
+    per-residue basin populations are formed after frame weighting.
     """
     config_base, traj, sheet_fd, start = args
     pos = read_output(traj, start)
@@ -569,7 +528,7 @@ def main_worker():
         sarw = mean(div[6])
         contrast = [c_ + dse_weight * (s - u) for c_, s, u in zip(contrast, sarw, unf)]
 
-    # Rama offsets: the NSE's own two ensembles, as per-residue basin populations. No DSE term.
+    # The NSE's own two ensembles as per-residue basin populations, recorded for diagnosis.
     divergence = dict(
         contrast=Update(*contrast),
         rama_native=rb.residue_populations(coords[0]),
@@ -602,14 +561,13 @@ def main_loop(state_bytes, max_iter):
         state['param'] = run_minibatch(state['worker_path'], state['param'],
                                        state['init_param_files'], state['mb_direc'],
                                        state['minibatches'][state['i_mb']], state['solver'],
-                                       float(state['n_prot']), state['rama'])
+                                       float(state['n_prot']))
         print('\n%.0f seconds elapsed this minibatch' % (time.time() - tstart))
         sys.stdout.flush()
         state['i_mb'] += 1
         if state['i_mb'] >= len(state['minibatches']):
             state['i_mb'] = 0
             state['epoch'] += 1
-            finish_round(state)
         state_bytes = cp.dumps(state, -1)
         with open(os.path.join(state['mb_direc'], 'checkpoint.pkl'), 'wb') as f:
             f.write(state_bytes)
@@ -649,19 +607,11 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
 
     state['param'], state['init_param_files'] = get_init_param(
         init_dir, os.path.join(protein_dir, 'rama.dat'))
-
-    rama = rb.init_state(state['init_param_files']['rama'])
-    codes = sorted(nm for mb in state['minibatches'] for nm, _ in mb)
-    rng = np.random.RandomState(heldout_seed)
-    rama['heldout'] = set(rng.choice(codes, int(round(heldout_fraction * len(codes))), replace=False))
-    rama['acc_train'], rama['acc_held'] = rb.empty_accumulator(rama), rb.empty_accumulator(rama)
-    rama['T0'], rama['steps_per_round'] = float(T_free[0]), n_mb
-    rama['library'] = os.path.join(base_dir, 'rama_round_00.dat')
-    rb.write_library(rama, state['init_param_files']['rama'], rama['library'])
-    state['rama'] = rama
-    print('rama offsets: %i of %i maps trained, %i offsets, %i proteins held out of their update'
-          % (rama['active'].any(axis=1).sum(), len(rama['keys']), rb.n_param(rama),
-             len(rama['heldout'])))
+    with tb.open_file(state['init_param_files']['rama']) as t:
+        origin = t.root._v_attrs.glycine_row if 'glycine_row' in t.root._v_attrs else b'as source'
+    print('rama library (fixed): %s\n  glycine row: %s'
+          % (state['init_param_files']['rama'],
+             origin.decode() if isinstance(origin, bytes) else origin))
 
     # The port's learning rates, times its global factor. bbenvc/bbenvs/bbenvw are 0 because the
     # engine returns no derivative for them, as in ff2.1's training.
@@ -672,7 +622,7 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
     state['solver'] = rp.AdamSolver(len(FIELDS), alpha=state['initial_alpha'])
     state['epoch'], state['i_mb'] = 0, 0
     print('\nOptimizing with solver', state['solver'], '\n')
-    print_param(state['param'], state['rama'])
+    print_param(state['param'])
     return state
 
 

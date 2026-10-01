@@ -1,12 +1,12 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-09-30 14:00: ff_3.0 RELEASED and under validation on midway2 (§1).** `ff30_basin` converged
-at the step-114 gate (02:25), which installed the rotamer-BP fix in both trees (§0c), released
-`parameters/ff_3.0` to both, and submitted the 32 Peng arms and the 4 glpG REMD chains, all running
-and healthy at the first check (§1, §5). Three glpG chains had their `block_count` advanced by Slurm
-requeues; reset, and `run_remd.py` no longer counts a requeue as a block (§1). The X|right|PRO rama
-offsets in the release drifted without effect (findings 1.14); a decision on them is open (plan.md
-Phase 6). BP validation analysed (§0c), not yet reported to Tobin.
+**2026-10-01 09:30: NOTHING OF OURS IS RUNNING. The ff3.0 retrain (plan.md Phase 8) waits for a
+renewed compute allocation.** `pi-trsosnic` has had no SU allocation on midway2 or midway3 since
+the 10-01 rollover: midway2 broadwl max cpu = 0, midway3 caslake "No sufficient SU allocations". The
+run was started on midway3's `amd` partition and **cancelled by the user after 14 min (~76
+core-hours): no CPU job may run on the group's GPU allocation.** Do not use `amd`, `beagle3` or any
+partition other than broadwl/caslake without the user's say-so. A Slack request to Tobin for the
+allocation has been drafted. BP validation analysed (§0c), not yet reported to Tobin.
 
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
@@ -279,20 +279,42 @@ restored to the repo's version (md5 0a653ade). The BP test arms were unaffected 
 
 ## 1. Current jobs
 
-Snapshot **2026-09-30 19:00 CDT, verified live against `squeue`/`sacct` on midway2** (midway3 not
-checked; nothing of ours was there at the 09-28 check). Finished and cancelled rows are deleted;
-only lessons worth reusing are kept, below the table. All jobs were submitted by the ff3.0 gate at
-02:25 and run the released `parameters/ff_3.0` on the BP-fixed binary.
+Snapshot **2026-10-01 09:30 CDT, `squeue` on midway2 and midway3: empty.** Finished and cancelled
+rows are deleted; only lessons worth reusing are kept below.
 
 | JobID | what | where / state | next action |
 |---|---|---|---|
-| **49131950-49131981** | **Peng benchmark, ff_3.0**, 16 proteins x {native, denovo}, job names `b_ff_3.0_<prot>_<mode>` | all 32 R since 02:25 (BBL pair since 03:09, requeued once; progress is counted from frames, so a requeue is harmless), broadwl. Checked 13:30 on snapshot copies of the coldest and hottest replica of every arm (`checks/bench_snap_20260930.log`): no non-finite value, C-N 1.32-1.34 +- 0.11-0.15 A, never more than 1 above 2.0 A, de novo arms collapsing at the cold rung | full run ~7 days; score on the last third against ff2.1 |
-| **49131982** | glpG REMD `glpG-RKRK-79HIS`, 28 replicas T 0.70-0.90 | R since 02:25, midway2-0258, block 1/5; KE/1.5kT 1.00-1.03, protein Rg 19-21 A, no rollback, TM1/TM4 0.91-0.99 / 0.97-0.98 at T 0.70 (§5) | TM check (§5) after block 1 ends ~10-01 14:25 |
-| **49131983** | glpG `79HIS_S115T` | R since 10:57 on midway2-0037, after NODE_FAILs at 05:25 and 10:50; `block_count` reset 3 -> 1; TM4 at T 0.80 0.95 -> 0.84 | watch TM4; block ends ~10-01 23:00 |
-| **49131984** | glpG `79ALA` | R since 10:57 on midway2-0060, after NODE_FAILs at 04:30, 05:25 and 10:50; `block_count` reset 4 -> 1 | TM check after block 1 |
-| **49131985** | glpG `79ALA_S115T` | R since 16:12 on midway2-0089, its fifth start: NODE_FAILs at 05:25, 10:50 and 16:10 (0103, now NOT_RESPONDING); `block_count` reset 3 -> 1 and not advanced by the requeue | watch TM4 |
-| **49133133** | **glycine handedness probe** (plan.md Phase 7, findings 1.15): one epoch, steps 114 -> 133, from the ff_3.0 checkpoint with every GLY\|X map's alpha_R = alpha_L; `training/ff30_glyprobe` | R since 13:28, 15 midway2 nodes, `--mem-per-cpu=700M` (measured worker peak 5.1 GB) | done ~21:00 09-30; then `python3 /project/trsosnic/yinhan/checks/glyprobe_analysis.py $P/training/ff30_glyprobe/run_output 6` (after `source $P/training/env.sh`) |
-| 49133135 | its insurance successor | PD, `afterany:49133133` | resumes only if 49133133 dies |
+| - (not submitted) | **ff3.0 retrain, AWH glycine library fixed** (plan.md Phase 8), `$P/training/ff30_gly` | initialised; waits for a renewed allocation | once midway2 has one: `cd $P/training/ff30_gly && source env.sh && sbatch $(cat slurm.args) ../train_chain.sbatch . 76` |
+
+`$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`. The midway3 `amd` attempt was job 59834233 and
+its successor 59834249: cancelled, no checkpoint written. `slurm.args` is restored to the midway2
+flags and `.chain_starts` cleared, so the next link starts cleanly from `initial_checkpoint.pkl`.
+
+**ff30_gly, what must not be forgotten:**
+* `upside_input/` is a hardlink copy of ff30_basin's, except `rama.dat`, which is a fresh copy
+  of `parameters/common/rama31.dat` (md5 `fc479d45...`, built by `training/build_gly_library.py`,
+  log `checks/build_gly_library_20261001.log`). Never edit a hardlinked file in place.
+* `after_training.sbatch` gates with max 13 epochs. On convergence it releases `ff_3.0`, backing
+  up the failed basin-offset release, and then tries to submit the Peng arms and glpG to broadwl.
+  **From midway3 those submissions fail**, and `validate_ff.sh` stops at "not every benchmark arm
+  was submitted": the release happens, validation does not. Submit validation by hand once midway2
+  has an allocation, or adapt `validate_ff.sh` to midway3.
+* The trainer code in the midway2 tree has had the offset training removed. The superseded files,
+  including `verify_rama_basin.py` and `build_rama_from_awh.py`, are in
+  `$P/backup/training_pre_glyfix_20261001`. Old run directories keep their own ConDiv copies,
+  so the analyses of ff30_basin and ff30_glyprobe still work.
+* The ff_3.0 glpG chains were moved aside to
+  `popepopg_REMD_mdw2/<V>.ff_3.0_cancelled_20260930` (STOP files inside), so a release cannot
+  delete them. `validate_ff.sh` would `rm -rf popepopg_REMD_mdw2/<V>`, and `run_remd.py`
+  recreates the directory.
+
+**ff_3.0 validation cancelled by the user at 20:34 on 09-30**, after ~18 h, because ff_3.0 failed
+(findings 1.14-1.15): Peng arms 49131950-49131981, glpG chains 49131982-49131985. Checked afterwards
+that no benchmark wrapper resubmitted. **Each glpG variant directory has a `STOP` file**
+(`popepopg_REMD_mdw2/glpG-RKRK-*/STOP`), so `run_remd.py` will end any chain at once: remove it, and
+reset `block_count`, before validating a new force field there. The partial ff_3.0 data stay in
+`ff3_benchmark/runs/<prot>_<mode>_ff_3.0/` and `popepopg_REMD_mdw2/<V>/` for comparison. What they
+showed by 19:00 is kept here:
 
 **TM4 under ff_3.0 at 19:00 (`checks/glpg_tm_windows_20260930_1900.log`,
 `gly_tm4_series_20260930_1900.log`; 9-13 completed chunks of ~95 time units per variant).**
@@ -310,12 +332,10 @@ only lessons worth reusing are kept, below the table. All jobs were submitted by
 * **Baseline:** in the pre-ff3 campaign GLY143 never flipped, and T 0.70 gave TM4b 0.991 and TM1 1.000
   (findings 3.10c, slightly different windows).
 
-**The probe directory has no `after_training.sbatch` on purpose**: the chain ends after the epoch
-with no gate, so it can never release or resubmit anything. Do not add one. Its reference, the same
-analysis on the ff_3.0 run, is `checks/glyprobe_reference_20260930.log`. Two aborted starts on
-09-30 13:27-13:28 (49133130 with the trainer's 2000M default, and its successor 49133132) were
-cancelled when the resubmission with 700M was made; their successors were cancelled too, and
-`.chain_starts` was trimmed back to one entry so the stop rule cannot fire on them.
+**The glycine probe (49133133, `training/ff30_glyprobe`) and its insurance successor 49133135 were
+cancelled by the user at 20:30 on 09-30, at 15 of 19 steps**, once the direction was settled (findings
+1.15, `checks/glyprobe_final_partial_20260930.log`). The directory has no `after_training.sbatch`, so
+nothing can resume or release from it; keep it for the record.
 
 Logs and data: Peng `/beagle3/trsosnic/yinhan/ff3_benchmark/logs/<prot>_<mode>_ff_3.0_<jobid>.out`,
 `runs/<prot>_<mode>_ff_3.0/`; glpG `/project/trsosnic/yinhan/popepopg_REMD_mdw2/logs/remd.<V>.<jobid>.out`,

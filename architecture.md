@@ -4,9 +4,10 @@
 would justify building it has not fired, and may not. Section 6 is the decision gate; read it
 before writing any code.
 
-Written 2026-09-20 from the glycine investigation, updated 2026-09-24. Background and evidence
-live in `GLY_sym.md` (the physics) and `findings.md` 9i, 9m-9v (the measurements). The ff3.0 being
-trained now (plan.md) is the uniform-map baseline this proposal has to beat.
+Written 2026-09-20 from the glycine investigation, updated 2026-10-01. Background and evidence
+live in `GLY_sym.md` (the physics) and `findings.md` 9i, 9m-9v, 1.15-1.16 (the measurements). The
+ff3.0 of plan.md Phase 8, with glycine's map fixed to the AWH measurement, is the uniform-map
+baseline this proposal has to beat.
 
 ---
 
@@ -70,10 +71,8 @@ Make the **antisymmetric part** of the glycine map depend on the conformations o
 E_rama(i) = S(phi_i, psi_i) + w(neighbours of i) * A(phi_i, psi_i)
 ```
 
-* `S` symmetric and `A` antisymmetric under `(phi,psi) -> (-phi,-psi)`: the two parts of each
-  `X|GLY` map, which the trainer holds as its NDRD base plus basin offsets
-  (`training/rama_basin.py`); `S` and `A` are that map's mirror-symmetric and antisymmetric
-  projections.
+* `S` symmetric and `A` antisymmetric under `(phi,psi) -> (-phi,-psi)`: the mirror-symmetric
+  and antisymmetric projections of the measured `X|GLY` map (`parameters/common/rama31.dat`).
 * `w` is a smooth scalar in roughly `[0,1]`, near **0** when both neighbours sit in alpha_R
   (helical context) and near **1** otherwise.
 
@@ -124,11 +123,10 @@ defined for that case rather than reading past the array.
 residues instead of a single pre-mixed map. Everything else keeps one layer with `A = 0`, so
 non-glycine behaviour is bit-identical.
 
-**Training, `training/rama_basin.py`.** The offsets are moved by basin-population matching, not by
-an energy gradient, so `w`'s own parameters would need their own update, and the reach gate
-(`training/verify_rama_basin.py`) would have to cover the neighbour term, run on proteins that
-exercise helical, turn and terminal glycines. **An indexing slip fails silently; the gate is the
-only thing that catches it.**
+**Training.** The glycine map itself stays fixed; only `w`'s parameters would be trained, through
+an analytic derivative in ConDiv. A gate would have to show that `w` reaches exactly the glycines
+whose neighbours it reads, on proteins that exercise helical, turn and terminal glycines. **An
+indexing slip fails silently; the gate is the only thing that catches it.**
 
 **Constraints that still bind.** Master-branch parity for every existing configuration, no guards,
 spline tables remain exact representations of their potential, and `GLY|GLY` must stay
@@ -145,8 +143,8 @@ cruft.
 
 Order of operations:
 
-1. Finish training ff3.0 from ff2.1 with ff2.1's own workflow and per-neighbour glycine maps
-   (plan.md, Phase 2); `validate_ff.sh` releases it and starts the benchmark automatically.
+1. Train ff3.0 from ff2.1 with ff2.1's own workflow and the measured glycine map held fixed
+   (plan.md, Phase 8); `validate_ff.sh` releases it and starts the benchmark automatically.
 2. Score the 32-arm benchmark on the **last third** of each arm.
 3. **Trigger: de novo arms regress again while native arms hold.** That is evidence the fold terms
    cannot nucleate turns on their own, which is exactly what this change addresses. If a corrected

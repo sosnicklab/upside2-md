@@ -111,3 +111,76 @@ below and its detail is in `findings.md` 9i-9s and git history.
   79ALA_S115T TM4 0.82-0.86; stretched C-N at T 0.88-0.90 predates ff_3.0 (pre-ff3 campaign 1.8-5.1%
   of frames, ff_3.0 1.5-2.7%); all 32 Peng arms clean. Handbook §5 rewritten (sign, windows, glycine
   criterion; `check_seeds_current.py` invalid for ff_3.0). `hdx_postfix/` and `hdx_10k/` not on disk.
+
+## 2026-09-30 evening: glycine probe settled, ff_3.0 validation cancelled, replacement proposed
+
+* Glycine probe (Phase 7) stopped by the user at 15 of 19 steps: from equal depth the data pull back
+  toward alpha_L, -0.035 [-0.048, -0.022], 35 of 38 maps (findings 1.15). Then, also at the user's
+  request, all ff_3.0 validation was cancelled (32 Peng arms, 4 glpG chains; glpG `STOP` files placed,
+  no resubmission). Nothing of ours is running on midway2.
+* Measurements for the replacement design (findings 1.16; scripts and logs in
+  `/project/trsosnic/yinhan/checks/`, `gly_native_hbond.py`, `prepro_rightonly_natives.py`):
+  * native glycines are H-bonded in both basins (alpha_R 0.83, alpha_L 0.74), in different
+    `hbond_energy` branches;
+  * the AWH Ac-Gly-Pro-NHMe surface has alpha_R 0.006, which `rama31.dat`'s pooled surface erases;
+  * `rama_map_pot_ref` reshapes a glycine map (helical 0.105 -> 0.145);
+  * right-only for pre-proline residues can be written into the library's weights (local test
+    exact to 1e-5, other residues bitwise unchanged), at +0.84 E_up median for the 6.7% of
+    pre-proline residues that are natively helical.
+* Literature survey (sub-agent) recorded in findings 1.16.
+* Files: `findings.md` (1.15 result, 1.16 new), `plan.md` (Phases 5 and 7 closed), `remote_jobs.md`
+  (status, empty job table, STOP files).
+
+## 2026-10-01: coverage of the glycine H-bond term, measured
+
+* User concern: a glycine H-bond term reaches only H-bonded glycines. Joined each native glycine's
+  H-bond state with its free/restrained basin populations, against non-glycine controls
+  (`checks/gly_mismatch_by_hbond.py`, log `gly_mismatch_by_hbond_20261001.log`): of the
+  glycine-specific helical loss, 62-66% is in glycines with their own H-bond, 25-32% in glycines
+  spanned by a short-range bond, 2-9% in neither; natively left-handed glycines show no
+  glycine-specific deficit. Every helical glycine in glpG's seed, TM4's included, has its own bond.
+  Glycine already has a trained side-chain bead (`GLY_0`). Recorded in findings 1.16.
+* Per-type check for a trained selection correction (`checks/type_mismatch_by_context.py`, log
+  `type_mismatch_by_context_20261001.log`): per-type misses in the same native basin and H-bond state
+  follow helix and beta propensity (GLY, SER, ASN fray most in helices; GLU, ALA, LEU least; VAL, ILE
+  hold strands), so a trained per-type correction would flatten real propensity (findings 1.16).
+* Residue counts per basin as a selection correction (`checks/aa_basin_counts.py`, log
+  `aa_basin_counts_20261001.log`): glycine fills 54% of alpha_L sites, but the glycine handedness the
+  counts imply depends on the reference residue (-2.61 to -1.16) and on burial (-1.95 exposed to
+  -0.17 buried), so counts cannot correct the map (findings 1.16).
+* User corrections: glycine and pre-proline are separate, and pre-proline is not an established
+  problem. Phase 6 parked, lesson findings 10.0d, two memory notes. Experimental data checked
+  (findings 1.16): the GGG populations and J-couplings exist (Andrews 2020 SI). Our AWH Gly-Gly
+  surface vs experiment: pPII 0.32 vs 0.46, alpha 0.09 vs 0.06; in the matched system ff14SB is
+  within 0.06, so no change. No handedness data exists. The Pace & Scholtz scale is only an
+  11-system average, so the helix benchmark is dropped. Revised glycine plan written as Phase 8
+  (proposed).
+* Proline question (`checks/pro_mismatch_by_context.py`, log `pro_mismatch_by_context_20261001.log`):
+  central prolines hold their basins better than any residue; residues before a proline, against the
+  same type elsewhere, lose +0.024 (extended) and +0.059 (helical, which right-only would worsen). No
+  proline fix proposed; Phase 6 stays parked (findings 1.16).
+
+## 2026-10-01: Phase 8 implemented up to training; training blocked by the midway2 allocation
+
+* Library: `training/build_gly_library.py` (new, tracked). `parameters/common/rama31.dat`
+  rebuilt from the AWH surfaces (old build in `backup/`). Glycine row:
+  * GLY|GLY: LG+RG symmetrised;
+  * GLY|right|PRO: RP;
+  * other GLY|X: 37 pooled;
+  * coil = sheet; reference correction subtracted.
+
+  The builder's checks pass: non-glycine identical, glycine = measured to 1e-6, G-G-G symmetric.
+  End-to-end `.up` check passes. The midway2 build is byte-identical.
+* Trainer: offset training removed from `ConDiv.py`, `extract_ff.py` and `convergence_gate.py`;
+  `rama_basin.py` reduced to basin populations; `verify_rama_basin.py` deleted. README, up.md,
+  architecture.md, GLY_sym.md and the .gitignore note updated. Deployed to midway2 (md5 verified,
+  backups in `$P/backup/training_pre_glyfix_20261001`).
+* Run `training/ff30_gly` set up and initialised from ff2.1 with the new library. The ff_3.0 glpG
+  chains were moved aside so a release cannot delete them.
+* Blocked: `pi-trsosnic` has no midway2 allocation since 10-01, so sbatch fails with
+  `AssocMaxCpuPerJobLimit`. A midway3 connection attempt timed out on Duo.
+* Training was started on midway3 `amd` (59834233) after both clusters refused for lack of
+  allocation. The user cancelled it after 14 min (~76 core-hours): no CPU jobs on the GPU
+  allocation (lesson findings 10.0e, memory note). The run directory has been restored to the
+  midway2 flags and waits for the allocation. A Slack request to Tobin was drafted, with usage
+  (Jul-Sep about 450k core-hours, September about 280k).

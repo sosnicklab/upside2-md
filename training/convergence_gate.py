@@ -11,11 +11,9 @@ gradient is the full-training-set gradient. Nothing shorter is judged; short win
 misread as plateaus before.
 
 TEST. For each Adam group, the raw per-step gradient g_t is recovered from the Adam state
-(grad1_t = b1*grad1_{t-1} + (1-b1)*g_t). The rama offsets are not in Adam: they are fixed for the
-whole epoch and each step saves its own moment-matching gradient, the sum over its training
-residues of free minus native basin population per map (`rama_step.npz`). At a fixed point each
-step's gradient is noise symmetric about zero, so the statistic ||sum_t g_t|| should be
-unremarkable among all 2^n sign flips of the steps. The permutation p-value is exact:
+(grad1_t = b1*grad1_{t-1} + (1-b1)*g_t). At a fixed point each step's gradient is noise
+symmetric about zero, so the statistic ||sum_t g_t|| should be unremarkable among all 2^n sign
+flips of the steps. The permutation p-value is exact:
 ||sum_t s_t g_t||^2 = s^T K s with K the n x n Gram matrix of the steps, so all 2^(n-1) patterns
 (s and -s are the same) are enumerated without ever forming a sum over the parameters.
 
@@ -69,9 +67,6 @@ for d in window:
     for k, f in enumerate(trained):
         G[f].append(np.atleast_1d((g1[k] - B1 * prev[k]) / (1. - B1)).ravel())
     prev = g1
-if 'rama' in state:
-    trained.append('rama')
-    G['rama'] = [np.load(os.path.join(d, 'rama_step.npz'))['grad'] for d in window]
 
 signs = np.array([(1,) + s for s in itertools.product((1, -1), repeat=n - 1)], dtype=float)
 cut = ALPHA / len(trained)

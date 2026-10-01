@@ -440,17 +440,18 @@ no difference, because NaN comparisons are False.
 | file | what it is |
 |---|---|
 | `parameters/common/rama.dat` | ff2.1, as published. Shared, because ff2.1 never trained it |
-| `parameters/ff_3.0/rama.dat` | ff3.0's **trained** library, once released (not in the tree until training finishes): ff2.1's with trained basin offsets (alpha_R, alpha_L, beta, pPII, and for a central glycine beta' and pPII') added to every coil map, each map its own parameter set, and the two `GLY\|GLY` maps exactly mirror-symmetric (`training/rama_basin.py`) |
-| `parameters/common/rama31.dat` | the **AWH-measured reference map**, coil GLY row replaced outright by a dipeptide surface and holding no library data: one map for `X\|GLY` carrying the measured handedness, one for `GLY\|GLY` which is its exactly symmetric part. Built 2026-09-24 by `py/build_rama_from_awh.py` from replica 1, all 40 contexts at 400 ns, both Gly-Gly blanks (`LG`, `RG`) excluded from the handedness: `X\|GLY` dG(aR->aL) = -0.154. A comparison target, not a force field |
+| `parameters/common/rama31.dat` | ff3.0's library, also shipped as `parameters/ff_3.0/rama.dat` once released: ff2.1's with the **central-glycine row, coil and sheet, replaced by AWH free energies** of capped glycine dipeptides (ff99SB-ILDN, 300 K, replica 1, 40 contexts at 400 ns). `GLY\|GLY` = the two Gly-Gly surfaces pooled and symmetrised; `GLY\|right\|PRO` = the Gly-Pro surface alone; every other `GLY\|X` = the other 37 surfaces pooled (probability means). Each entry is stored with `rama_map_pot_ref` subtracted, so the engine's total for a glycine is the measured surface: X-G-Y ln(aR/aL) = -0.120 at T = 1, G-G-G exactly 0. Built 2026-10-01 by `training/build_gly_library.py`, which checks itself through `upside_config`; the previous build is in `backup/` |
 
-`rama31.dat` differs from `common/rama.dat` only in the central-GLY coil row, `ff_3.0/rama.dat` in
-the coil group; the sheet group is untouched in both.
+`rama31.dat` differs from `common/rama.dat` only in the central-GLY row of the coil and sheet
+groups. **Its GLY entries assume the reference correction**: every config path applies
+`--reference-state-rama` (ConDiv, the benchmark, the MARTINI hybrid, the examples), and a config
+built without it would give glycine the measured surface minus that correction. The same GLY entry
+in coil and sheet makes the coil/sheet mixture leave glycine unchanged; the left/right mixture is
+unchanged, so a glycine between a glycine and another residue reads a mixture of two entries.
 
-**A trained library belongs in its force field's directory, not in `common/`.** Once the map is a
-trained parameter it is as specific to one force field as `sidechain.h5`, and pairing ff3.0's
-other files with `common/rama.dat` silently gives ff2.1's glycine map. Regenerate a library from
-trained parameters with `training/extract_ff.py` (through `rama_basin.write_library`), and rebuild
-the measured one from AWH output with `py/build_rama_from_awh.py`.
+**A force field's library belongs in its own directory.** A release copies the run's fixed
+library into `parameters/<ff>/rama.dat` (`training/extract_ff.py`), so pairing ff3.0's other files
+with `common/rama.dat` cannot silently give ff2.1's glycine map.
 
 ### 2.8a How a library map becomes the `rama_pot` the engine reads
 

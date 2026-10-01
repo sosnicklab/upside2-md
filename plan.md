@@ -144,43 +144,88 @@ maps 0.040 -> 0.034; held-out 0.081-0.086 -> 0.083, noise about its floor (Known
 group's pass is prior-limited drift, not closure, for the X|right|PRO offsets (findings 1.14).
 - [ ] Copy `parameters/ff_3.0` into the local repo
 
-### Phase 5 - validation (RUNNING since 2026-09-30 02:25, midway2)
-- [ ] Peng benchmark, 16 proteins x native/de novo, scored on the last third, paired against ff2.1
-- [ ] glpG, four variants: helix stability over time, TM4 above all
+### Phase 5 - validation of ff_3.0 (CANCELLED 2026-09-30 20:34 by the user)
+ff_3.0 failed: its glycine maps favour alpha_L everywhere, TM4's helical glycines flipped to phi > 0
+in glpG, and training a context-free glycine map cannot fix it (Phase 7). The 32 Peng arms and 4 glpG
+chains were cancelled after ~18 h; partial data kept (remote_jobs.md §1). A replacement is proposed
+in findings 1.16, decision pending.
 
-### Phase 6 - pre-proline (DECISION PENDING, findings 1.14)
-- [ ] Decide on the X|right|PRO offsets: they have no leverage through the mixture and their target
-      signal is composition; proposed: drop the 40 from the trained set at the next revision
-- [ ] Before any rule change: reweight existing ff_2.1 trajectories to the right-only pre-proline
-      rule and measure helical and extended pre-proline alpha_R (no new simulation)
+### Phase 6 - pre-proline (PARKED 2026-10-01, user)
+Not an established problem. It came from AI analysis (findings 1.13-1.14), not from a simulation
+failure: the class gap ConDiv saw was composition, and the mixture rule's extra pre-proline alpha_R
+has not been shown to change any observable. Kept separate from the glycine work; no action unless
+evidence appears. Retraining from ff2.1 with no offsets returns pre-proline residues to ff2.1.
+Checked 2026-10-01 against type-matched controls (findings 1.16):
+- Central prolines hold their basins better than any residue.
+- Residues before a proline show only small excess losses: +0.024 extended, +0.059 helical.
+- The helical excess would get worse under the right-only rule.
+- No physics map for proline.
 
-### Phase 7 - glycine handedness probe (RUNNING, user request 2026-09-30; findings 1.15)
-Which way do the data pull glycine when alpha_R and alpha_L start at equal depth? One epoch
-branched from the ff_3.0 checkpoint (step 114) into `training/ff30_glyprobe`, every GLY|X map's
-alpha_R and alpha_L offsets set so the two basins hold equal probability, everything else as
-released. The answer is the data term of the offset update (free minus native basin counts over
-the epoch), read apart from the prior, which pulls every offset back toward NDRD.
-- [x] Branch checkpoint, verify (only GLY|X coil maps differ from round 6; each has aR = aL), submit
-      one epoch with no gate (job 49133133, 2026-09-30 13:28; analysis validated on the ff_3.0 run)
-- [ ] Read the data pull per map and in aggregate, extended and helical glycines apart; record.
-      Partial (12 of 19 steps): toward alpha_L, -0.031 [-0.046, -0.016], 32 of 38 maps (findings
-      1.15); confirm on the full epoch
+### Phase 7 - glycine handedness probe (DONE 2026-09-30; findings 1.15)
+One epoch from the ff_3.0 checkpoint with every GLY|X map's alpha_R and alpha_L at equal depth.
+Stopped by the user at 15 of 19 steps once the direction was settled: the data pull glycine back
+toward alpha_L, -0.035 [-0.048, -0.022] per residue read, 35 of 38 maps. Training a context-free
+glycine map relearns the natives' placement and cannot make glycine right-handed.
+
+### Phase 8 - glycine map from physics (APPROVED 2026-10-01; training BLOCKED, see Known Errors)
+The problem, in the user's words: Upside applies the PDB Ramachandran map as pure energy, when it
+is part local energy and part selection bias. Glycine is where selection reverses the handedness.
+
+Data from folded proteins cannot separate the two (findings 1.15-1.16). So Upside gets only the
+energy part, from a source where no fold selects anything: the AWH capped-peptide surfaces.
+Glycine's placement in folds must then come from the non-local terms.
+
+Glycine only. Pre-proline is separate and parked (Phase 6).
+
+- [x] **Library.** `parameters/common/rama31.dat`, built by `training/build_gly_library.py`
+  (old build in `backup/`; midway2 build byte-identical). Glycine row from the AWH surfaces:
+  - each GLY|X entry: the pooled surface;
+  - GLY|GLY: the symmetric part only;
+  - GLY|right|PRO: its own measured surface, since it differs ~20-fold from the pool;
+  - store each entry with `rama_map_pot_ref` subtracted, so the engine applies the measured
+    surface exactly;
+  - put the same entry in the coil and sheet groups;
+  - every other entry stays bitwise as in `rama.dat`.
+- [x] **Map checks.** All pass, run by the builder through `upside_config` and confirmed end to
+  end in a `.up` file:
+  - the engine's glycine map equals the measured surface to 1e-6;
+  - the middle glycine of G-G-G is symmetric to 2e-6;
+  - every non-glycine residue is identical to ff2.1.
+- [x] **Trainer.** The offset training was removed from `ConDiv.py`, `extract_ff.py` and
+  `convergence_gate.py`, and `verify_rama_basin.py` was deleted. `rama_basin.py` now only records
+  per-residue basin populations. The library is a fixed input. Deployed to midway2 with backups
+  (`backup/training_pre_glyfix_20261001`).
+- [x] **Experimental check of the symmetric part (findings 1.16).**
+  - Result: in the matched system the force field is within 0.06 of the GGG experiment in pPII and
+    0.01 in alpha, so no change is needed.
+  - No experiment resolves handedness. It rests on two force fields agreeing to 0.045 nats.
+- [ ] **Training.** Retrain from ff2.1 with ff2.1's workflow: glycine map fixed, no map offsets,
+  no new parameters.
+  - Run dir `training/ff30_gly` on midway2: initialised (starts at ff2.1's values), with its gate
+    job written.
+  - Not submitted: midway2 refused the chain (`AssocMaxCpuPerJobLimit`). A start on midway3 `amd` was
+    cancelled by the user (no CPU jobs on the GPU allocation).
+- [ ] **Validation.**
+  - Free ensembles by native basin: helical glycines' alpha_L clearly below ff_3.0's 0.101, and
+    their helical loss not below Ser/Asn's (~0.08), so propensity is not flattened. Natively
+    left-handed glycines lose no more alpha_L than the Asn/Asp that sit there (~0.17).
+  - glpG TM4 glycine flips against ff_3.0.
+  - Peng benchmark paired against ff2.1, de novo arms included.
+- Dropped: a host-guest helix benchmark and any correction calibrated to experiment. The Pace &
+  Scholtz scale is an 11-system average, and the per-host data are not available to us.
+- If validation fails, decide a context term then, with the evidence. Do not add one in advance.
 
 ## Known Errors / Blockers
 
+* **`pi-trsosnic` has no compute allocation on midway2 or midway3 since 2026-10-01** (new
+  allocation year): midway2 broadwl max cpu = 0, midway3 caslake "No sufficient SU allocations".
+  Phase 8 training waits for the PI to renew it (Slack request drafted). Do not move it to `amd`,
+  `beagle3` or another partition: CPU jobs must not run on the group's GPU allocation (user,
+  10-01).
 * **The held-out check in Phase 4 is ill-posed as written (findings 1.12).** The held-out mismatch
   (0.0597) is its own sample-size floor (random 46-protein training subsets: 0.0585 +- 0.0021), so it
   cannot fall with training. It must be compared against that floor, or replaced by a split-sample
   statistic.
-* **Pre-proline is not fixed by the offsets, and ConDiv cannot measure it (findings 1.14).** The
-  mixture caps the right map's effect (pre-PRO alpha_R of the rama term 0.174 at best to 0.144), and
-  six rounds left the free-native gap at +0.023. That gap is the class's composition (89% extended
-  residues, which visit alpha_R in every class); within matched native conformations pre-proline
-  residues already visit alpha_R less than others. The physical defect, three times NDRD's own
-  pre-proline alpha_R through the mixture, lives in loops and unfolded chains, which the
-  native-restrained target does not sample. The candidate fix is a combining rule, right-map-only
-  for residues followed by PRO (GLY|GLY stays exact), justified by physics and NDRD data, not by
-  the training target; its risk is the 7% of pre-proline residues that are helical.
 * **Beta for the PI's sheet modelling.** No residue type has a significant beta miss at ff2.1, and
   per-pair beta has no signal in these data; per-type beta is ff2.1's sheet mixing energy, trained.
 * **Left and right offsets of one central residue are nearly degenerate.** Every interior residue
