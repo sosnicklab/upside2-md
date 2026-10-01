@@ -279,7 +279,7 @@ restored to the repo's version (md5 0a653ade). The BP test arms were unaffected 
 
 ## 1. Current jobs
 
-Snapshot **2026-09-30 13:30 CDT, verified live against `squeue`/`sacct` on midway2** (midway3 not
+Snapshot **2026-09-30 19:00 CDT, verified live against `squeue`/`sacct` on midway2** (midway3 not
 checked; nothing of ours was there at the 09-28 check). Finished and cancelled rows are deleted;
 only lessons worth reusing are kept, below the table. All jobs were submitted by the ff3.0 gate at
 02:25 and run the released `parameters/ff_3.0` on the BP-fixed binary.
@@ -290,9 +290,25 @@ only lessons worth reusing are kept, below the table. All jobs were submitted by
 | **49131982** | glpG REMD `glpG-RKRK-79HIS`, 28 replicas T 0.70-0.90 | R since 02:25, midway2-0258, block 1/5; KE/1.5kT 1.00-1.03, protein Rg 19-21 A, no rollback, TM1/TM4 0.91-0.99 / 0.97-0.98 at T 0.70 (§5) | TM check (§5) after block 1 ends ~10-01 14:25 |
 | **49131983** | glpG `79HIS_S115T` | R since 10:57 on midway2-0037, after NODE_FAILs at 05:25 and 10:50; `block_count` reset 3 -> 1; TM4 at T 0.80 0.95 -> 0.84 | watch TM4; block ends ~10-01 23:00 |
 | **49131984** | glpG `79ALA` | R since 10:57 on midway2-0060, after NODE_FAILs at 04:30, 05:25 and 10:50; `block_count` reset 4 -> 1 | TM check after block 1 |
-| **49131985** | glpG `79ALA_S115T` | R since 10:57 on midway2-0103, after NODE_FAILs at 05:25 and 10:50; `block_count` reset 3 -> 1; TM4 at T 0.70 0.82-0.86 in its last three groups | watch TM4 |
+| **49131985** | glpG `79ALA_S115T` | R since 16:12 on midway2-0089, its fifth start: NODE_FAILs at 05:25, 10:50 and 16:10 (0103, now NOT_RESPONDING); `block_count` reset 3 -> 1 and not advanced by the requeue | watch TM4 |
 | **49133133** | **glycine handedness probe** (plan.md Phase 7, findings 1.15): one epoch, steps 114 -> 133, from the ff_3.0 checkpoint with every GLY\|X map's alpha_R = alpha_L; `training/ff30_glyprobe` | R since 13:28, 15 midway2 nodes, `--mem-per-cpu=700M` (measured worker peak 5.1 GB) | done ~21:00 09-30; then `python3 /project/trsosnic/yinhan/checks/glyprobe_analysis.py $P/training/ff30_glyprobe/run_output 6` (after `source $P/training/env.sh`) |
 | 49133135 | its insurance successor | PD, `afterany:49133133` | resumes only if 49133133 dies |
+
+**TM4 under ff_3.0 at 19:00 (`checks/glpg_tm_windows_20260930_1900.log`,
+`gly_tm4_series_20260930_1900.log`; 9-13 completed chunks of ~95 time units per variant).**
+* **Handbook pass (T 0.70, TM4 134-151 > 0.8):** still met in all four, latest 0.93-1.00; 79ALA_S115T
+  dipped to 0.82-0.86 over groups 5-9 and recovered to 0.93.
+* **T 0.80, TM4 falling with time:** 79ALA 0.98 -> 0.59-0.82 over its last five groups (fails),
+  79HIS 0.97 -> 0.82-0.86, 79ALA_S115T latest 0.84 (residue 141 at 0.45), 79HIS_S115T 0.84-0.96.
+* **The mechanism is TM4's helical glycines at phi > 0.**
+  * At T 0.80 all four variants flip: GLY136/143/149 up to 0.23-0.64 of frames in recent groups.
+  * At T 0.70 79ALA_S115T flips GLY143, then GLY149 (0.26-0.74), and 79HIS has just started
+    (GLY136 and GLY143 0.07 in its latest group).
+  * The other two variants are clean at T 0.70.
+* **TM1 (30-48, no glycine) also declines at T 0.70:** 79HIS 0.99 -> 0.89-0.90, 79HIS_S115T 1.00 ->
+  0.91-0.93.
+* **Baseline:** in the pre-ff3 campaign GLY143 never flipped, and T 0.70 gave TM4b 0.991 and TM1 1.000
+  (findings 3.10c, slightly different windows).
 
 **The probe directory has no `after_training.sbatch` on purpose**: the chain ends after the epoch
 with no gate, so it can never release or resubmit anything. Do not add one. Its reference, the same

@@ -2012,6 +2012,10 @@ alpha_L than the pre-release seed's (-0.73), so the other ff_3.0 changes share t
 Glycines before a proline (88 extended) have alpha_L 0.057 / 0.012 at epoch 0, 0.030 / 0.005 at
 epoch 5.
 
+Reproduced independently (`checks/split_by_native.py`, own basin thresholds): pre-PRO 87% extended;
+extended 0.041 / 0.002 against other X 0.058 / 0.001; helical 0.800 / 0.976 against 0.913 / 0.990;
+the aggregate gap with other-X behaviour per native class +0.051 against the actual +0.023.
+
 **Left-neighbour dependence of pre-proline alpha_R is not detectable** (`prepro_left.py`, 19
 left-neighbour groups of >= 30): the native group sd 0.036 is near the 0.027 expected from sampling;
 right-only fits it best (rms 0.036, product 0.037, mixture 0.046). For pPII and beta the product rule
@@ -2051,7 +2055,25 @@ per map 0.508 -> 0.478); everything else as released; no gate, no release. Engin
 start: ln(aR/aL) +0.02 at T = 1, -0.05 at T = 0.8 (from -0.92 / -1.23). It runs on the BP-fixed
 binary, which the ff_3.0 training did not (|dE| <= 0.03 E_up, 0c). **Prediction:** the natively
 left-handed loop glycines lose alpha_L in the free ensemble, so the pull turns toward alpha_L.
-**Result:** running, due ~21:00 2026-09-30.
+**Result, partial (12 of 19 steps, 262 training proteins, `checks/glyprobe_partial.py`, log
+`glyprobe_partial_20260930_1905.log`): toward alpha_L.**
+* The pooled data pull is -0.031 per residue read, bootstrap 95% [-0.046, -0.016]. 32 of 38 maps
+  pull toward alpha_L, and the data-only step on dL - dR averages -0.057.
+* Free / native at equal depth, against ff_3.0's epoch 5:
+  * helical glycines: alpha_L 0.081 / 0.004 (was 0.101);
+  * natively left-handed glycines: alpha_L 0.848 / 0.990 (was 0.889), alpha_R 0.056 / 0.003 (was
+    0.030);
+  * the rest: alpha_L 0.068 / 0.007 (was 0.100).
+* The neutral map helps the helical glycines a little and costs the left-handed ones more, as
+  predicted.
+* With ff_3.0's +0.023 at dL - dR +0.26, a linear interpolation puts the fixed point near
+  dL - dR +0.66. That is still an alpha_L-favouring map, about ln(aR/aL) -0.5 at T = 1, close to
+  the all-residue native -0.58 (1.9); this is an estimate, not a measurement.
+* So training a context-free glycine map relearns the training natives' placement, and it cannot
+  make glycine right-handed. Even at equal depth, helical glycines keep 0.081 alpha_L against 0.004
+  native, which the map does not supply.
+
+The full epoch is due ~23:00.
 
 **The one context-aware term Upside has is FF2's H-bond energy** (`src/hbond.cpp`, `hbond_energy`).
 Each H-bond a residue makes, as donor or acceptor, is scored by that residue's own (phi, psi):
@@ -2062,6 +2084,24 @@ E_beta -1.946, E_other -1.769 (alpha_R favoured over phi > 0 by 0.192 per H-bond
 -1.872, -1.798, a margin of only 0.080**. Training narrowed the helix-over-left-handed margin for
 every H-bonded residue while the GLY|X offsets moved glycine's map the other way. Unproven, but a
 candidate for why GLY143 flips under ff_3.0 although its map is no more left-handed than before.
+**The margin shrinks without any glycine training** (`checks/hb_trajectory.py`, checkpoints of three
+runs from ff2.1):
+
+| run | what it trains on the rama | margin E_other - E_alpha along the run | E_alpha at the end |
+|---|---|---|---|
+| `ff21-fixedpoint` | nothing | 0.192 -> 0.127-0.142 by steps 13-25 | -1.907 (step 25) |
+| `ff30_basin` (ff_3.0) | 158 basin offsets | 0.192 -> 0.151 at step 19 (offsets still 0), then 0.07-0.14 | -1.878 (step 114) |
+| `ff30` (cancelled) | full glycine row | 0.192 -> 0.06-0.12 over steps 97-222 | -1.831 (step 222) |
+
+It drifts smoothly (Adam momentum), not as step noise: over ff_3.0's last epoch it ran 0.117 ->
+0.063 -> 0.080, and the release is that last iterate. E_alpha weakens in every run. So most of the
+change is the trainer's own drift of the H-bond term from ff2.1, which the offsets may add to but do
+not cause. Helical glycines' free alpha_L barely moved over training (0.107 at epoch 0, 0.101 at
+epoch 5; native 0.004-0.005) while GLY|X dL - dR rose by +0.26; whether the H-bond drift offset the
+maps' gain there is not separated. The glpG validation points the same way: by 19:00 on 09-30
+TM1 (30-48, no glycine) had fallen at T 0.70 from 0.99 to 0.89-0.90 in 79HIS and from 1.00 to
+0.91-0.93 in 79HIS_S115T, against 1.000 in the pre-ff3 campaign (3.10c). A glycine-free helix
+weakening is what a weaker E_alpha predicts and the glycine maps cannot cause.
 A glycine-specific set of these energies is the smallest helix-aware glycine term: the engine
 already computes the per-residue helix score, and the trainer already trains these energies with
 their analytic derivative. Its limit: cap and turn glycines are also H-bonded and left-handed, so
@@ -5683,7 +5723,12 @@ about this failure mode.
 over all frames under 6 A I concluded that lambda's most native-like states have helix H2 broken
 with five of six glycines left-handed. Resolved by shell, the 0-5 A states have H2 intact at 89%
 right-handed and it is the 5-6 A shell, four times larger, that is broken. The pooled statistic was
-reporting the larger shell. **Resolve by bin before reading a conditional average.**
+reporting the larger shell. **Resolve by bin before reading a conditional average.** The same
+error recurred on 2026-09-30: I read the pre-proline class's +0.023 free-native alpha_R gap as a
+pre-proline defect and planned to train it away under a new combining rule, with the next epoch's
+mismatch as the test. Resolved by each residue's native basin, the class is 87% extended and its
+residues over-visit alpha_R less than ordinary residues in the same basin (1.14). In ConDiv a class
+gap measures the class's native composition until it is shown otherwise.
 
 **Never import a module whose top level does work.** `score_arms_dist.py` runs the whole scoring
 loop at import and calls `json.dump(..., "score_arms.json")` after each arm. Importing it for two

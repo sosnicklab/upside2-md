@@ -162,7 +162,9 @@ released. The answer is the data term of the offset update (free minus native ba
 the epoch), read apart from the prior, which pulls every offset back toward NDRD.
 - [x] Branch checkpoint, verify (only GLY|X coil maps differ from round 6; each has aR = aL), submit
       one epoch with no gate (job 49133133, 2026-09-30 13:28; analysis validated on the ff_3.0 run)
-- [ ] Read the data pull per map and in aggregate, extended and helical glycines apart; record
+- [ ] Read the data pull per map and in aggregate, extended and helical glycines apart; record.
+      Partial (12 of 19 steps): toward alpha_L, -0.031 [-0.046, -0.016], 32 of 38 maps (findings
+      1.15); confirm on the full epoch
 
 ## Known Errors / Blockers
 
