@@ -201,12 +201,16 @@ below and its detail is in `findings.md` 9i-9s and git history.
   checks; check every 30 min.
 * 11:15: midway2 accepts the chain (est. start 10-02 22:16). Rather than idle the Mac ~35 h,
   `training/ff30_gly_local/sync_to_midway2.sh` copies each new local step into the waiting cluster
-  run (staged, converted by `move_run.py`, which now checks staged copies, renamed in atomically)
-  and stops the Mac when the chain runs. First sync installed step 0; chain 49135913 submitted
-  (broadwl, PD). `check_step.py` on midway2 reads the synced step identically. Cron `3869da4e`.
-* 11:15: midway2 accepts the chain (est. start 10-02 22:16). Rather than idle the Mac ~35 h,
-  `training/ff30_gly_local/sync_to_midway2.sh` copies each new local step into the waiting cluster
   run and stops the Mac when the chain runs. Each step is staged, converted by `move_run.py` (which
   now checks staged copies) and renamed in atomically. First sync installed step 0; chain 49135913
   submitted (broadwl, PD). `check_step.py` on midway2 reads the synced step identically. Cron
   `3869da4e`.
+* 12:16:47: chain 49135913 started on midway2 and resumed at step 1 from the synced step 0; all 24
+  workers running at 12:21. The Mac Studio hand-over is unconfirmed: cron `3869da4e` is gone and the
+  Mac Studio is unreachable off the home LAN (remote_jobs.md §1).
+* Repo cleanup for redistribution (plan.md Phase 9). Moved to
+  `scratchpad/redistribution_cleanup_20261001/`: `py/{martini_upgrade_hybrid_args,
+  martini_protection_state,martini_inject_coverage,martini_remd_concat,tm_score}.py`,
+  `training/{validate_ff.sh,patch_glpg.py,move_run.py}`; pycache deleted. Edited `training/env.sh`
+  (no midway3 branch), `gate_or_continue.sh` (stops at convergence), `training/README.md`,
+  `train_chain.sbatch`, `architecture.md`, `up.md`. Compile, env and gate-branch checks pass.

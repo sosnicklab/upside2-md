@@ -1,13 +1,13 @@
 #!/bin/bash
-# Decide what a training run does once it reaches its target: validate, or train one more epoch.
+# Decide what a training run does once it reaches its target: stop for release, or train one more
+# epoch.
 #
 #   bash gate_or_continue.sh <run_dir> <ff_name> <max_epochs>
 #
 # Run by <run_dir>/after_training.sbatch, which train_chain.sbatch submits when the run reaches its
 # target. convergence_gate.py judges the last full epoch:
-#   exit 0 (every group at a fixed point)  -> validate_ff.sh releases <ff_name> and submits the Peng
-#                                             benchmark and the glpG chains (on midway2's broadwl,
-#                                             so the run must be on midway2)
+#   exit 0 (every group at a fixed point)  -> stop, and print the extract_ff.py command that writes
+#                                             the newest checkpoint to parameters/<ff_name>
 #   exit 3 (a group still pulled)          -> train_chain.sbatch again, target one epoch further,
 #                                             unless <max_epochs> is reached: then stop for review
 #   anything else (the gate itself failed) -> stop; nothing is released and training does not go on
@@ -36,8 +36,8 @@ cat "$REPORT"
 
 case $RC in
     0)
-        echo "step $STEP: converged, releasing $FF"
-        bash "$TRAIN_DIR/validate_ff.sh" "$RUN_DIR" "$FF"
+        echo "step $STEP: converged; release it with"
+        echo "    python3 $TRAIN_DIR/extract_ff.py $RUN_DIR/$CKPT $UPSIDE_HOME/parameters/$FF"
         ;;
     3)
         if [ "$STEP" -ge $(( MAX_EPOCHS * MB_PER_EPOCH )) ]; then

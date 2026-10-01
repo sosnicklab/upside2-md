@@ -571,7 +571,7 @@ trained with a port of FF1's trainer rather than ff2.1's: spline burial, no back
 term, no unfolded-state objective (findings 9t-9v). The first also forced every glycine map
 mirror-symmetric; the second trained a single shared glycine map. Both are in `backup/`
 (gitignored) and in git history. ff3.0 is being retrained from ff2.1 with ff2.1's own FF2
-dual-target workflow (`training/ConDiv.py`, plan.md); `training/validate_ff.sh` writes it here when
+dual-target workflow (`training/ConDiv.py`, plan.md); `training/extract_ff.py` writes it here when
 that run finishes. Build configs from all six files with the default
 `--environment-potential-type=1`, and take `membrane.h5` and `martini.h5` from `ff_2.1`.
 

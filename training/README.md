@@ -11,16 +11,13 @@ re-includes just these files, so a run directory created here stays untracked.
 |---|---|
 | `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (`/project2/trsosnic/okleinmann/condiv/condiv2.py`); its docstring lists every difference and why |
 | `rama_basin.py` | the Ramachandran basins and per-residue basin populations, recorded every step as a diagnostic (not a parameter) |
-| `move_run.py` | makes a copied `run_output` native to the run directory and machine that continue it: rewrites every pickle's absolute paths, and converts NumPy 2 pickles (`numpy._core`) to NumPy 1; refuses, writing nothing, if a path is left behind or missing |
 | `build_gly_library.py` | builds the library ff3.0 trains with: the central-glycine row replaced by the AWH-measured free energy of capped glycine dipeptides, every other row unchanged; checks itself through `upside_config` |
 | `check_converged.py` | has a run updated every file, is every group at a fixed point, has it plateaued? |
 | `train_chain.sbatch` | self-chaining Slurm job; submits `<run>/after_training.sbatch` when the target is reached |
 | `extract_ff.py` | a checkpoint -> the six parameter files, through the run's own `expand_param` |
-| `patch_glpg.py` | patch a force field into a glpG hybrid seed without rebuilding it |
-| `validate_ff.sh` | release a trained force field and submit the Peng benchmark and glpG validation |
 | `convergence_gate.py` | exact sign-flip test of every trained group over the last epoch: exit 0 converged, 3 not |
 | `gate_or_continue.sh` | run by a run's `after_training.sbatch`: gate, then stop for review, or train one more epoch |
-| `env.sh` | per-cluster Python with identical package versions (midway2: this tree's `.venv`; midway3: the shared /beagle3 venv; locally the repo `.venv`), always this tree's `py/` and `obj/`; finds `PROJECT_ROOT` from its own location |
+| `env.sh` | the Python (midway2: this tree's `.venv` with its modules; locally the repo `.venv`), always this tree's `py/` and `obj/`; finds `PROJECT_ROOT` from its own location |
 | `pdb_list` | the 456-protein training-set manifest (a list, not data) |
 
 ## What a run directory needs
@@ -34,7 +31,6 @@ upside_input/   per protein: <code>.fasta, <code>.initial.pkl, <code>.chi
 pdb_list        copy from here
 env.sh          copy of this directory's env.sh, adjusted if the tree differs
 slurm.args      the cluster's sbatch flags, given on the command line of every submission:
-                midway3  --partition=caslake
                 midway2  --partition=broadwl --exclude=<the nodes listed in train_chain.sbatch>
 ```
 
@@ -54,10 +50,10 @@ python3 ../check_converged.py .
 
 **What happens at the target.** `train_chain.sbatch` submits `<run>/after_training.sbatch`, which
 calls `gate_or_continue.sh <run> <ff_name> <max_epochs>`: `convergence_gate.py` judges the last
-full epoch. A converged run is released and validated by `validate_ff.sh` (the Peng benchmark and
-the glpG chains, submitted to midway2's broadwl, so the run must be on midway2); an unconverged one
-is trained one more epoch and judged again, up to `<max_epochs>`, after which it stops for review.
-A failure of the gate itself stops everything.
+full epoch. A converged run stops and prints the `extract_ff.py` command that writes its newest
+checkpoint to `parameters/<ff_name>`; an unconverged one is trained one more epoch and judged
+again, up to `<max_epochs>`, after which it stops for review. A failure of the gate itself stops
+everything.
 
 `initialize` copies `ConDiv.py` and `rama_basin.py` into `run_output/`, and every later step, the
 driver included, runs that copy: a run is never continued by later code.

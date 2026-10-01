@@ -1,12 +1,11 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-10-01 11:20: the ff3.0 retrain (plan.md Phase 8) is QUEUED ON MIDWAY2 BROADWL (chain
-49135913, estimated start 10-02 22:16) and TRAINS LOCALLY on the Mac Studio until that job starts.**
-The 1.2M SU allocation reached the midway2 scheduler at ~11:15 on 10-01. Every half hour,
-`sync_to_midway2.sh` copies each new local step into the waiting cluster run, staged, converted
-and moved in atomically. When the chain is RUNNING, the script stops the Mac and writes
-`HANDED_OVER`. Do not use midway3 or any partition but broadwl for this (user). BP validation
-analysed (§0c), not yet reported to Tobin.
+**2026-10-01 12:16:47: the ff3.0 retrain (plan.md Phase 8) is RUNNING ON MIDWAY2 BROADWL (chain
+link 49135913, successor 49136311 queued afterany).** It resumed at step 1 from the step 0 that the
+Mac Studio trained and `sync_to_midway2.sh` installed. The Mac Studio run must now stop (§1): no
+session on the MacBook is watching it, and the Mac Studio is not reachable off the home LAN. Do not use
+midway3 or any partition but broadwl for this (user). BP validation analysed (§0c), not yet
+reported to Tobin.
 
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
@@ -279,21 +278,21 @@ restored to the repo's version (md5 0a653ade). The BP test arms were unaffected 
 
 ## 1. Current jobs
 
-Snapshot **2026-10-01 11:20 CDT, verified live against `squeue` on midway2.** Finished and cancelled
+Snapshot **2026-10-01 12:33 CDT, verified live against `squeue` on midway2.** Finished and cancelled
 rows are deleted; only lessons worth reusing are kept below.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49135913** | **ff3.0 retrain, AWH glycine library fixed** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_gly` | PD (Resources), est. start 10-02 22:16, 12 nodes; resumes from the newest step in its `run_output` when it starts | at start: confirm which step it resumed from; first cluster step without WORKER_FAIL; `check_step.py` |
-| local Mac, `training/ff30_gly_local` | the same run, until the cluster job starts | driver PID in `driver.pid`, running since 09:16 under `caffeinate -i` with `CONDIV_LOCAL_WORKERS=2`; log `train_local.log`; ~94 min per step | `sync_to_midway2.sh` every half hour; stopped by it when 49135913 runs |
+| **49135913** | **ff3.0 retrain, AWH glycine library fixed** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_gly`, log `condiv-train_49135913.out` | R since 12:16:47 on 18 nodes (24 tasks x 14 CPUs); `step 1 of 76, resuming from run_output/epoch_00_minibatch_00`; this link runs 75 steps; all 24 workers launched with no `srun` errors; by 12:33, 14 had written their `divergence.pkl` with no traceback | after ~25 min: `check_step.py` on `epoch_00_minibatch_01`, and no WORKER_FAIL in the link log |
+| 49136311 | its insurance successor (`afterany:49135913`) | PD (Dependency) | none; resumes from the newest checkpoint if the link dies |
+| Mac Studio, `training/ff30_gly_local` | the same run, trained locally until the cluster started | **not confirmed stopped**: the sync that stops it ran from session cron `3869da4e`, and no Claude session runs on the MacBook now; the Mac Studio (`mac-studio-lan`, 10.0.0.61) timed out from the MacBook at 12:17 | on the Mac Studio: `bash training/ff30_gly_local/sync_to_midway2.sh` (sees the chain RUNNING, stops the driver and workers, writes `HANDED_OVER`); its step 1 and later are discarded |
 
 `$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`. The cluster run_output now holds the local run
 (marker `run_output/FROM_LOCAL`). The cluster's own initialised run_output is kept as
 `run_output.superseded_20261001-111755`.
 
-**Watch and hand-over.** Session cron job `3869da4e` runs at :07 and :37. It runs the sync,
-`check_step.py` on every new step, and re-arms a live monitor. It is session-only: it dies with the
-Claude session and expires on 10-08, so a cold session must re-create it.
+**Hand-over.** Session cron `3869da4e` (sync at :07 and :37) is not alive on the MacBook (no Claude
+session there at 12:20); unless its session ran on the Mac Studio, the hand-over has not run.
 
 **`bash training/ff30_gly_local/sync_to_midway2.sh`** (on the Mac) is idempotent:
 * chain RUNNING: it stops the local driver and workers and writes `HANDED_OVER`;
@@ -548,6 +547,13 @@ as running; they are in git history). What must not be forgotten:
   * The HDX resubmit block uses `HDX_WORK=.../hdx` without `HDX_N=28` and would overwrite the pre-fix
     baseline: fix it before any HDX rerun.
 * **NDRD library files must never be copied to the cluster** (licence).
+* **Do not overwrite the cluster's `py/` or `training/` from the local repo during these campaigns.**
+  On 2026-10-01 the local repo moved its campaign files to
+  `scratchpad/redistribution_cleanup_20261001/` (plan.md Phase 9), and its `gate_or_continue.sh`
+  now stops at convergence instead of calling `validate_ff.sh`. The midway2 tree still runs on the
+  originals: ff30_gly's release uses `$P/training/{validate_ff.sh,patch_glpg.py}`, the glpG HDX
+  jobs (`popepopg_REMD/hdx_*.sbatch`) call `$R/py/martini_remd_concat.py`, and
+  `NP-1AO6/build_np_ff3.py` imports `martini_inject_coverage`.
 
 ## 2. THE TWO CAMPAIGNS ARE DIFFERENT SIMULATIONS
 

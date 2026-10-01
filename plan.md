@@ -207,8 +207,8 @@ Glycine only. Pre-proline is separate and parked (Phase 6).
     cancelled by the user (no CPU jobs on the GPU allocation).
   - **Running locally since 2026-10-01 09:16**: `training/ff30_gly_local` on the Mac Studio, two
     workers at a time (`CONDIV_LOCAL_WORKERS=2`), 94 min per step.
-  - **Queued on midway2 since 11:18** (chain 49135913, est. start 10-02 22:16). Local steps are
-    synced into it every half hour, and the Mac stops when it starts (`sync_to_midway2.sh`).
+  - **Running on midway2 since 12:16:47** (chain 49135913), resumed at step 1 from the local step 0.
+    The Mac Studio run must be stopped by `sync_to_midway2.sh` there (remote_jobs.md §1).
   - Hand-over procedure and the half-hourly watch: remote_jobs.md §1.
   - Every finished step is checked with `training/check_step.py`: kinetic-energy ratio, RMSD,
     unfolded-state target, finiteness, parameter drift, glycine readout. Baseline from ff_3.0's
@@ -222,6 +222,24 @@ Glycine only. Pre-proline is separate and parked (Phase 6).
 - Dropped: a host-guest helix benchmark and any correction calibrated to experiment. The Pace &
   Scholtz scale is an 11-system average, and the per-host data are not available to us.
 - If validation fails, decide a context term then, with the evidence. Do not add one in advance.
+
+### Phase 9 - repo cleanup for redistribution (DONE 2026-10-01, user)
+
+`py/` and `training/` keep only what another Upside user could run. Personal, cluster-path and
+campaign-specific files moved to `scratchpad/redistribution_cleanup_20261001/` (gitignored); the
+cluster trees keep their own copies, so running jobs are unaffected (remote_jobs.md §1b).
+- [x] Deleted `py/__pycache__`, `training/__pycache__`.
+- [x] Moved from `py/`: `martini_upgrade_hybrid_args.py` (one-shot migration),
+  `martini_protection_state.py` (superseded HDX criterion), `martini_inject_coverage.py` (NP-only
+  retrofit), `martini_remd_concat.py` (glue for the cluster-only `run_remd.py`), `tm_score.py`
+  (unused).
+- [x] Moved from `training/`: `validate_ff.sh`, `patch_glpg.py`, `move_run.py`.
+- [x] `training/env.sh`: midway3 `/beagle3` branch removed. `gate_or_continue.sh`: at convergence
+  it stops and prints the `extract_ff.py` command for `parameters/<ff_name>`.
+- [x] `training/README.md`, `train_chain.sbatch` comments, `architecture.md`, `up.md` updated.
+  Verified: every kept file compiles or parses, `env.sh` resolves the repo `.venv`, all four gate
+  branches (converged, retrain, max epochs, gate failure) checked in a sandbox, and no tracked
+  file names a moved one.
 
 ## Known Errors / Blockers
 

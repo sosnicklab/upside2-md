@@ -12,12 +12,10 @@
 #
 #   sbatch $(cat <run_dir>/slurm.args) train_chain.sbatch <run_dir> <target_steps>
 #
-# <run_dir>/slurm.args holds the cluster's flags: the partition, and on midway2 the excluded
-# nodes. They are given on the command line of every submission, first link, successor and gate
-# alike, because RCC's submit filter can remap #SBATCH partition directives, and because a
-# midway2 node list is invalid on midway3. For midway2:
+# <run_dir>/slurm.args holds the cluster's flags: the partition and the excluded nodes. They are
+# given on the command line of every submission, first link, successor and gate alike, because
+# RCC's submit filter can remap #SBATCH partition directives. For midway2:
 #   --partition=broadwl --exclude=midway2-0003,midway2-[0010-0011],midway2-0037,midway2-[0342-0345]
-# and for midway3:  --partition=caslake
 #
 # --ntasks must equal the minibatch size (24) and --cpus-per-task the systems per protein (14:
 # restrained native, 12 free replicas, SARW); each task is one protein worker dispatched by srun.

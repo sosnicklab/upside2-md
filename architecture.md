@@ -144,7 +144,7 @@ cruft.
 Order of operations:
 
 1. Train ff3.0 from ff2.1 with ff2.1's own workflow and the measured glycine map held fixed
-   (plan.md, Phase 8); `validate_ff.sh` releases it and starts the benchmark automatically.
+   (plan.md, Phase 8); the convergence gate stops the run for release with `extract_ff.py`.
 2. Score the 32-arm benchmark on the **last third** of each arm.
 3. **Trigger: de novo arms regress again while native arms hold.** That is evidence the fold terms
    cannot nucleate turns on their own, which is exactly what this change addresses. If a corrected
