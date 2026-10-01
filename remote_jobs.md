@@ -290,23 +290,21 @@ rows are deleted; only lessons worth reusing are kept below.
 
 `$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`.
 
-**Watch and transfer.** Session cron job `957106cb` (at :07 and :37) checks the midway2 allocation,
+**Watch and transfer.** Session cron job `89c1555f` (at :07 and :37) checks the midway2 allocation,
 transfers the run when it returns, runs `training/check_step.py` on every new step, and re-arms a
 live monitor of the log. It is session-only: it dies with the Claude session and expires on
 10-08. A cold session must re-create it, or do the transfer by hand.
 
-**Transfer to midway2:**
-1. Stop the local run: `pkill -f "ConDiv.py restart"; pkill -f "ConDiv.py worker"`. A step in
-   progress is discarded; the newest complete checkpoint carries on.
-2. On midway2: `cd $P/training/ff30_gly && mv run_output run_output.initialised_20261001`, then copy
-   the local `run_output/` there (tar over the mdw2 socket).
-3. On midway2, in the run dir, after `source env.sh`, for every `run_output/initial_checkpoint.pkl`
-   and `run_output/epoch_*/checkpoint.pkl`:
-   `python3 ../move_run.py <ckpt> /Users/yinhan/Documents/upside2-md/training/ff30_gly_local $PWD <ckpt>.moved && mv <ckpt>.moved <ckpt>`.
-   `move_run.py` rewrites the checkpoint's absolute paths and refuses if any path is left outside
-   the new run dir or does not exist there.
-4. `sbatch $(cat slurm.args) ../train_chain.sbatch . 76`. The chain resumes from the newest
-   checkpoint. Check that the first step completes without WORKER_FAIL.
+**Transfer to midway2:** `bash training/ff30_gly_local/transfer_to_midway2.sh` on the Mac. It refuses
+unless midway2 accepts the job. It then:
+1. stops the local driver and workers (a step in progress is discarded);
+2. moves the cluster run's `run_output` aside and copies the local complete steps there;
+3. runs `training/move_run.py run_output <local run dir> <cluster run dir>` on midway2, which
+   rewrites every pickle's paths and converts NumPy 2 pickles to NumPy 1.23.5 (findings 10.0f);
+4. submits the chain on broadwl, which resumes from the newest checkpoint.
+
+Steps 2-3 passed a dry run on midway2 (10-01). Afterwards check that the first step completes
+without WORKER_FAIL.
 
 Both run dirs hold identical `init_param/` (ff2.1, md5-checked) and `upside_input/`, including
 `rama.dat` = `parameters/common/rama31.dat` (md5 `fc479d45...`). Only the local initialisation's

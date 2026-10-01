@@ -190,3 +190,12 @@ below and its detail is in `findings.md` 9i-9s and git history.
   `training/check_step.py` (per-step physical health; on ff_3.0's epoch 5 it reproduces findings
   1.15). Deployed to midway2. `training/ff30_gly_local` started 09:16 with two workers under
   caffeinate. Session cron `4b09fd3d` checks the allocation and transfers the run when it returns.
+* Transfer dry run found that checkpoints written locally (NumPy 2.4.4) do not load on midway2
+  (NumPy 1.23.5, `numpy._core`). `move_run.py` now converts the whole copied run_output: it maps
+  `numpy._core` to `numpy.core` and rewrites the paths. The dry run passed (28 pickles, 3,667
+  paths, `check_step.py` identical on the cluster). Transfer wrapped in
+  `training/ff30_gly_local/transfer_to_midway2.sh` (findings 10.0f). Local step 0 healthy: KE
+  1.006-1.034, RMSD 1.00/2.33 A, DSE 24/24, 94 min.
+* Allocation: 1.2M SU now visible in `accounts balance` for pi-trsosnic, but midway2 broadwl is
+  still capped at cpu = 0 (scheduler sync pending). The user wants midway2 only: no more midway3
+  checks; check every 30 min.

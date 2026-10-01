@@ -11,7 +11,7 @@ re-includes just these files, so a run directory created here stays untracked.
 |---|---|
 | `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (`/project2/trsosnic/okleinmann/condiv/condiv2.py`); its docstring lists every difference and why |
 | `rama_basin.py` | the Ramachandran basins and per-residue basin populations, recorded every step as a diagnostic (not a parameter) |
-| `move_run.py` | rewrites a checkpoint's absolute paths so a run continues in another run directory, e.g. from a local Mac to midway2; refuses if any path is left behind or missing |
+| `move_run.py` | makes a copied `run_output` native to the run directory and machine that continue it: rewrites every pickle's absolute paths, and converts NumPy 2 pickles (`numpy._core`) to NumPy 1; refuses, writing nothing, if a path is left behind or missing |
 | `build_gly_library.py` | builds the library ff3.0 trains with: the central-glycine row replaced by the AWH-measured free energy of capped glycine dipeptides, every other row unchanged; checks itself through `upside_config` |
 | `check_converged.py` | has a run updated every file, is every group at a fixed point, has it plateaued? |
 | `train_chain.sbatch` | self-chaining Slurm job; submits `<run>/after_training.sbatch` when the target is reached |

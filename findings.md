@@ -5932,6 +5932,29 @@ Related: **delete a partially written output directory before resuming.** `main_
 would be consumed as a fresh result for a worker that failed in the retry. The aborted
 `epoch_12_minibatch_35` happened to contain none, but only because it died early.
 
+### 10.0f A checkpoint written under NumPy 2 does not load under NumPy 1 (2026-10-01)
+
+Found by a dry run of moving the local ff30_gly_local run to midway2, before any real transfer.
+The Mac's `.venv` has NumPy 2.4.4 and the cluster venvs 1.23.5. NumPy 2 pickles arrays through
+`numpy._core.multiarray.scalar` and `numpy._core.numeric._frombuffer`. Under 1.23.5 every
+checkpoint, solver state, divergence and rmsd file written on the Mac fails to load: `No module
+named 'numpy._core'`. The same functions exist in 1.23.5 as `numpy.core.*`.
+* The transfer would have failed at the cluster's first step.
+* The convergence gate, which reads every solver state of the last epoch, would have failed even
+  if the transfer had worked.
+
+`env.sh` promises identical package versions only between midway2 and midway3; a local run breaks
+that promise.
+
+**Fix:** `move_run.py` now converts the whole copied `run_output` on the machine that continues
+the run.
+* It reads every pickle with `numpy._core` mapped to `numpy.core` when the local NumPy is 1.x.
+* It rewrites the absolute paths and writes each pickle back natively.
+
+Dry run in a scratch run dir on midway2: 28 pickles converted and 3,667 paths moved, and
+`check_step.py` there reproduced the local step's numbers exactly. NumPy 2 reads NumPy 1 pickles
+unchanged, so the reverse direction needs no mapping.
+
 ### 10.0e A partition that accepts a job is not a partition the job may use (2026-10-01)
 
 User correction. When the 10-01 allocation rollover left `pi-trsosnic` with no CPU allocation, I

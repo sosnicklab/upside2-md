@@ -1,20 +1,38 @@
-"""Point a ConDiv checkpoint at a run directory on another machine.
+"""Make a copied ConDiv run_output native to the run directory and machine that continue it.
 
-    python3 move_run.py <checkpoint.pkl> <old_run_dir> <new_run_dir> <out_checkpoint.pkl>
+    python3 move_run.py <run_output> <old_run_dir> <new_run_dir>
 
-A checkpoint records absolute paths: the run's base and initial-parameter directories, the
-trainer copy the workers execute, every initial parameter file including the rama library, and
-each protein's fasta, native and chi files. Training continued elsewhere (local Mac to midway2, or
-back) needs those paths under the new run directory, which must hold the same `init_param/`,
-`upside_input/` and the copied `run_output/`. Every string in the state that starts with the old
-run directory is rewritten; the script fails if any path still names the old one, or if a rewritten
-path does not exist where it is run, so run it on the machine that continues the training.
+Run it on the machine that continues the training, after copying run_output into the new run
+directory beside the same `init_param/` and `upside_input/`. Every pickle under run_output
+(checkpoints, solver states, divergence and rmsd files) is read and written back in place:
+
+  * PATHS. A checkpoint records absolute paths: the base and initial-parameter directories, the
+    trainer copy the workers execute, every initial parameter file including the rama library, and
+    each protein's fasta, native and chi files. Every string starting with the old run directory is
+    rewritten to the new one.
+  * NUMPY. Pickles written under NumPy 2 name `numpy._core`, which NumPy 1 (midway2's 1.23.5) lacks;
+    there the same functions live in `numpy.core`. They are read with that module name and written
+    back by the NumPy that runs this, so the cluster's gate and analyses can read every step,
+    including those trained elsewhere. NumPy 2 reads NumPy 1 pickles as they are.
+
+It fails, writing nothing, if any absolute path is left outside the new run directory or a
+rewritten path does not exist here.
 """
 
-import collections
 import os
-import pickle as cp
+import pickle
 import sys
+
+import numpy as np
+
+NUMPY_1 = int(np.__version__.split('.')[0]) < 2
+
+
+class Unpickler(pickle.Unpickler):
+    def find_class(self, module, name):
+        if NUMPY_1 and (module == 'numpy._core' or module.startswith('numpy._core.')):
+            module = 'numpy.core' + module[len('numpy._core'):]
+        return super().find_class(module, name)
 
 
 def rewrite(x, old, new):
@@ -44,17 +62,13 @@ def strings(x):
 
 
 def main():
-    if len(sys.argv) != 5:
+    if len(sys.argv) != 4:
         sys.exit(__doc__)
-    ckpt, old, new, out = sys.argv[1:]
-    old, new = old.rstrip('/'), os.path.abspath(new)
+    run_output, old, new = os.path.abspath(sys.argv[1]), sys.argv[2].rstrip('/'), os.path.abspath(sys.argv[3])
+    if os.path.dirname(run_output) != new:
+        sys.exit(f'{run_output} is not the run_output of {new}')
 
     # the producing trainer's classes, from the copy that travels with run_output
-    run_output = os.path.dirname(os.path.abspath(ckpt))
-    while not os.path.exists(os.path.join(run_output, 'ConDiv.py')):
-        if run_output == os.path.dirname(run_output):
-            sys.exit(f'no ConDiv.py above {ckpt}')
-        run_output = os.path.dirname(run_output)
     sys.path.insert(0, run_output)
     import ConDiv
     import __main__
@@ -62,21 +76,31 @@ def main():
         if n[0].isupper():
             setattr(__main__, n, getattr(ConDiv, n))
 
-    state = cp.load(open(ckpt, 'rb'))
-    moved = collections.OrderedDict((k, rewrite(v, old, new)) for k, v in state.items())
+    files = sorted(os.path.join(d, f) for d, _, fs in os.walk(run_output) for f in fs
+                   if f.endswith('.pkl'))
+    moved, n_paths = {}, 0
+    for f in files:
+        with open(f, 'rb') as fh:
+            obj = Unpickler(fh).load()
+        obj = rewrite(obj, old, new)
+        # every absolute path a ConDiv pickle holds lies under its run directory
+        stray = [s for s in strings(obj) if s.startswith('/') and not s.startswith(new + '/')]
+        if stray:
+            sys.exit(f'FAILED, nothing written: {f} holds {len(stray)} paths not under {new} '
+                     f'(is {old} the old run dir?), e.g. {stray[0]}')
+        paths = [s for s in strings(obj) if s.startswith(new + '/')]
+        missing = [p for p in paths if not os.path.exists(p)]
+        if missing:
+            sys.exit(f'FAILED, nothing written: {f} names {len(missing)} paths that do not exist '
+                     f'here, e.g. {missing[0]}')
+        moved[f], n_paths = obj, n_paths + len(paths)
 
-    # every absolute path a checkpoint holds lies under its run directory
-    stray = [s for s in strings(dict(moved)) if s.startswith('/') and not s.startswith(new + '/')]
-    if stray:
-        sys.exit(f'FAILED: {len(stray)} paths not under {new} (is {old} the old run dir?), '
-                 f'e.g. {stray[0]}')
-    paths = [s for s in strings(dict(moved)) if s.startswith(new + '/')]
-    missing = [p for p in paths if not os.path.exists(p)]
-    if missing:
-        sys.exit(f'FAILED: {len(missing)} rewritten paths do not exist here, e.g. {missing[0]}')
-    with open(out, 'wb') as f:
-        cp.dump(dict(moved), f, -1)
-    print(f'{ckpt}\n  {len(paths)} paths moved from {old} to {new}\n  written {out}')
+    for f, obj in moved.items():
+        with open(f + '.moved', 'wb') as fh:
+            pickle.dump(obj, fh, -1)
+        os.replace(f + '.moved', f)
+    print(f'{run_output}: {len(files)} pickles rewritten for numpy {np.__version__}, '
+          f'{n_paths} paths moved from {old} to {new}')
 
 
 if __name__ == '__main__':
