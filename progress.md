@@ -194,8 +194,19 @@ below and its detail is in `findings.md` 9i-9s and git history.
   (NumPy 1.23.5, `numpy._core`). `move_run.py` now converts the whole copied run_output: it maps
   `numpy._core` to `numpy.core` and rewrites the paths. The dry run passed (28 pickles, 3,667
   paths, `check_step.py` identical on the cluster). Transfer wrapped in
-  `training/ff30_gly_local/transfer_to_midway2.sh` (findings 10.0f). Local step 0 healthy: KE
+  `transfer_to_midway2.sh`, replaced the same morning by `sync_to_midway2.sh` (findings 10.0f). Local step 0 healthy: KE
   1.006-1.034, RMSD 1.00/2.33 A, DSE 24/24, 94 min.
 * Allocation: 1.2M SU now visible in `accounts balance` for pi-trsosnic, but midway2 broadwl is
   still capped at cpu = 0 (scheduler sync pending). The user wants midway2 only: no more midway3
   checks; check every 30 min.
+* 11:15: midway2 accepts the chain (est. start 10-02 22:16). Rather than idle the Mac ~35 h,
+  `training/ff30_gly_local/sync_to_midway2.sh` copies each new local step into the waiting cluster
+  run (staged, converted by `move_run.py`, which now checks staged copies, renamed in atomically)
+  and stops the Mac when the chain runs. First sync installed step 0; chain 49135913 submitted
+  (broadwl, PD). `check_step.py` on midway2 reads the synced step identically. Cron `3869da4e`.
+* 11:15: midway2 accepts the chain (est. start 10-02 22:16). Rather than idle the Mac ~35 h,
+  `training/ff30_gly_local/sync_to_midway2.sh` copies each new local step into the waiting cluster
+  run and stops the Mac when the chain runs. Each step is staged, converted by `move_run.py` (which
+  now checks staged copies) and renamed in atomically. First sync installed step 0; chain 49135913
+  submitted (broadwl, PD). `check_step.py` on midway2 reads the synced step identically. Cron
+  `3869da4e`.

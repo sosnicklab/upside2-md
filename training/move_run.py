@@ -2,8 +2,10 @@
 
     python3 move_run.py <run_output> <old_run_dir> <new_run_dir>
 
-Run it on the machine that continues the training, after copying run_output into the new run
-directory beside the same `init_param/` and `upside_input/`. Every pickle under run_output
+Run it on the machine that continues the training. <run_output> is either <new_run_dir>/run_output
+itself or a staging copy whose contents are moved into <new_run_dir>/run_output afterwards; a path
+under <new_run_dir>/run_output is checked in the copy being converted, every other path where it
+is (the new run dir's `init_param/` and `upside_input/`). Every pickle under <run_output>
 (checkpoints, solver states, divergence and rmsd files) is read and written back in place:
 
   * PATHS. A checkpoint records absolute paths: the base and initial-parameter directories, the
@@ -65,8 +67,11 @@ def main():
     if len(sys.argv) != 4:
         sys.exit(__doc__)
     run_output, old, new = os.path.abspath(sys.argv[1]), sys.argv[2].rstrip('/'), os.path.abspath(sys.argv[3])
-    if os.path.dirname(run_output) != new:
-        sys.exit(f'{run_output} is not the run_output of {new}')
+    target = os.path.join(new, 'run_output') + '/'
+
+    def exists(p):
+        """A path under the new run_output is looked for in the copy being converted."""
+        return os.path.exists(os.path.join(run_output, p[len(target):]) if p.startswith(target) else p)
 
     # the producing trainer's classes, from the copy that travels with run_output
     sys.path.insert(0, run_output)
@@ -89,7 +94,7 @@ def main():
             sys.exit(f'FAILED, nothing written: {f} holds {len(stray)} paths not under {new} '
                      f'(is {old} the old run dir?), e.g. {stray[0]}')
         paths = [s for s in strings(obj) if s.startswith(new + '/')]
-        missing = [p for p in paths if not os.path.exists(p)]
+        missing = [p for p in paths if not exists(p)]
         if missing:
             sys.exit(f'FAILED, nothing written: {f} names {len(missing)} paths that do not exist '
                      f'here, e.g. {missing[0]}')

@@ -167,7 +167,7 @@ Stopped by the user at 15 of 19 steps once the direction was settled: the data p
 toward alpha_L, -0.035 [-0.048, -0.022] per residue read, 35 of 38 maps. Training a context-free
 glycine map relearns the natives' placement and cannot make glycine right-handed.
 
-### Phase 8 - glycine map from physics (APPROVED 2026-10-01; training BLOCKED, see Known Errors)
+### Phase 8 - glycine map from physics (APPROVED 2026-10-01; TRAINING, local then midway2)
 The problem, in the user's words: Upside applies the PDB Ramachandran map as pure energy, when it
 is part local energy and part selection bias. Glycine is where selection reverses the handedness.
 
@@ -206,9 +206,10 @@ Glycine only. Pre-proline is separate and parked (Phase 6).
   - Not submitted: midway2 refused the chain (`AssocMaxCpuPerJobLimit`). A start on midway3 `amd` was
     cancelled by the user (no CPU jobs on the GPU allocation).
   - **Running locally since 2026-10-01 09:16**: `training/ff30_gly_local` on the Mac Studio, two
-    workers at a time (`CONDIV_LOCAL_WORKERS=2`), ~1.2-2.3 h per step.
-  - An hourly session cron job moves it to midway2 once the allocation returns (`move_run.py`;
-    procedure in remote_jobs.md §1).
+    workers at a time (`CONDIV_LOCAL_WORKERS=2`), 94 min per step.
+  - **Queued on midway2 since 11:18** (chain 49135913, est. start 10-02 22:16). Local steps are
+    synced into it every half hour, and the Mac stops when it starts (`sync_to_midway2.sh`).
+  - Hand-over procedure and the half-hourly watch: remote_jobs.md §1.
   - Every finished step is checked with `training/check_step.py`: kinetic-energy ratio, RMSD,
     unfolded-state target, finiteness, parameter drift, glycine readout. Baseline from ff_3.0's
     epoch 5: helical glycines alpha_L 0.102 free / 0.005 restrained, H-bond margin 0.080.
@@ -224,11 +225,9 @@ Glycine only. Pre-proline is separate and parked (Phase 6).
 
 ## Known Errors / Blockers
 
-* **`pi-trsosnic` has no compute allocation on midway2 or midway3 since 2026-10-01** (new
-  allocation year): midway2 broadwl max cpu = 0, midway3 caslake "No sufficient SU allocations".
-  Phase 8 training waits for the PI to renew it (Slack request drafted). Do not move it to `amd`,
-  `beagle3` or another partition: CPU jobs must not run on the group's GPU allocation (user,
-  10-01).
+* **Run only on midway2 broadwl** (user, 10-01). The 1.2M SU allocation reached the midway2
+  scheduler at ~11:15 on 10-01. No `amd`, `beagle3` or GPU partitions: CPU jobs must not run on the
+  group's GPU allocation. No midway3.
 * **The held-out check in Phase 4 is ill-posed as written (findings 1.12).** The held-out mismatch
   (0.0597) is its own sample-size floor (random 46-protein training subsets: 0.0585 +- 0.0021), so it
   cannot fall with training. It must be compared against that floor, or replaced by a split-sample

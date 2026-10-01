@@ -1,13 +1,12 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-10-01 10:00: the ff3.0 retrain (plan.md Phase 8) is TRAINING LOCALLY on the Mac Studio
-(M1 Ultra) until midway2 has an allocation again; nothing of ours runs on a cluster.**
-`pi-trsosnic` has had no SU allocation on midway2 or midway3 since the 10-01 rollover: midway2
-broadwl max cpu = 0, midway3 caslake "No sufficient SU allocations". A midway3 `amd` start was
-cancelled by the user: no CPU job may run on the group's GPU allocation, so use no partition but
-broadwl/caslake without the user's say-so. An hourly check (session cron job, at :07) moves the
-training to midway2 as soon as the allocation returns (§1). A Slack request to Tobin was drafted.
-BP validation analysed (§0c), not yet reported to Tobin.
+**2026-10-01 11:20: the ff3.0 retrain (plan.md Phase 8) is QUEUED ON MIDWAY2 BROADWL (chain
+49135913, estimated start 10-02 22:16) and TRAINS LOCALLY on the Mac Studio until that job starts.**
+The 1.2M SU allocation reached the midway2 scheduler at ~11:15 on 10-01. Every half hour,
+`sync_to_midway2.sh` copies each new local step into the waiting cluster run, staged, converted
+and moved in atomically. When the chain is RUNNING, the script stops the Mac and writes
+`HANDED_OVER`. Do not use midway3 or any partition but broadwl for this (user). BP validation
+analysed (§0c), not yet reported to Tobin.
 
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
 and react to a failure is here. Job state below is live; superseded jobs are not listed, only
@@ -280,35 +279,32 @@ restored to the repo's version (md5 0a653ade). The BP test arms were unaffected 
 
 ## 1. Current jobs
 
-Snapshot **2026-10-01 10:00 CDT. `squeue` on midway2 and midway3: empty.** Finished and cancelled
+Snapshot **2026-10-01 11:20 CDT, verified live against `squeue` on midway2.** Finished and cancelled
 rows are deleted; only lessons worth reusing are kept below.
 
-| where | what | state | next action |
+| JobID / where | what | state | next action |
 |---|---|---|---|
-| **local Mac**, `training/ff30_gly_local` | **ff3.0 retrain, AWH glycine library fixed** (plan.md Phase 8), ff2.1 workflow from ff2.1, 76 steps | driver PID in `driver.pid`, started 09:16 under `caffeinate -i` with `CONDIV_LOCAL_WORKERS=2`; log `train_local.log`; ~1.2-2.3 h per step (one worker 345 s for 113 residues, ~10 cores) | transfer to midway2 when the allocation returns (below); until then let it run |
-| midway2, `$P/training/ff30_gly` | the cluster copy of the same run | initialised, not submitted (no allocation) | receives the local run_output at transfer |
+| **49135913** | **ff3.0 retrain, AWH glycine library fixed** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_gly` | PD (Resources), est. start 10-02 22:16, 12 nodes; resumes from the newest step in its `run_output` when it starts | at start: confirm which step it resumed from; first cluster step without WORKER_FAIL; `check_step.py` |
+| local Mac, `training/ff30_gly_local` | the same run, until the cluster job starts | driver PID in `driver.pid`, running since 09:16 under `caffeinate -i` with `CONDIV_LOCAL_WORKERS=2`; log `train_local.log`; ~94 min per step | `sync_to_midway2.sh` every half hour; stopped by it when 49135913 runs |
 
-`$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`.
+`$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`. The cluster run_output now holds the local run
+(marker `run_output/FROM_LOCAL`). The cluster's own initialised run_output is kept as
+`run_output.superseded_20261001-111755`.
 
-**Watch and transfer.** Session cron job `89c1555f` (at :07 and :37) checks the midway2 allocation,
-transfers the run when it returns, runs `training/check_step.py` on every new step, and re-arms a
-live monitor of the log. It is session-only: it dies with the Claude session and expires on
-10-08. A cold session must re-create it, or do the transfer by hand.
+**Watch and hand-over.** Session cron job `3869da4e` runs at :07 and :37. It runs the sync,
+`check_step.py` on every new step, and re-arms a live monitor. It is session-only: it dies with the
+Claude session and expires on 10-08, so a cold session must re-create it.
 
-**Transfer to midway2:** `bash training/ff30_gly_local/transfer_to_midway2.sh` on the Mac. It refuses
-unless midway2 accepts the job. It then:
-1. stops the local driver and workers (a step in progress is discarded);
-2. moves the cluster run's `run_output` aside and copies the local complete steps there;
-3. runs `training/move_run.py run_output <local run dir> <cluster run dir>` on midway2, which
-   rewrites every pickle's paths and converts NumPy 2 pickles to NumPy 1.23.5 (findings 10.0f);
-4. submits the chain on broadwl, which resumes from the newest checkpoint.
+**`bash training/ff30_gly_local/sync_to_midway2.sh`** (on the Mac) is idempotent:
+* chain RUNNING: it stops the local driver and workers and writes `HANDED_OVER`;
+* otherwise it stages each new complete local step in `$P/training/ff30_gly/sync_stage`, runs
+  `training/move_run.py` there (paths, NumPy 2 -> 1.23.5; findings 10.0f), and renames the step
+  into `run_output`, so a starting job never reads a half-copied or unconverted checkpoint;
+* no chain job and midway2 accepts one: it submits the chain.
 
-Steps 2-3 passed a dry run on midway2 (10-01). Afterwards check that the first step completes
-without WORKER_FAIL.
-
-Both run dirs hold identical `init_param/` (ff2.1, md5-checked) and `upside_input/`, including
-`rama.dat` = `parameters/common/rama31.dat` (md5 `fc479d45...`). Only the local initialisation's
-minibatch order travels with the transfer.
+A local step that finishes after the cluster has started is discarded. Both run dirs hold
+identical `init_param/` (ff2.1, md5-checked) and `upside_input/`, including `rama.dat` =
+`parameters/common/rama31.dat` (md5 `fc479d45...`).
 
 **ff30_gly, what must not be forgotten:**
 * `upside_input/` is a hardlink copy of ff30_basin's, except `rama.dat`, which is a fresh copy
