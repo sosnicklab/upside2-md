@@ -5,8 +5,8 @@ revised 10-02), chain link 49141995 on midway2 broadwl since 13:25:41, from ff2.
 H-bond offsets and a 10x smaller side-chain step; steps 0 and 1 done and healthy. ff30_gly (the AWH
 library alone) was stopped at 11:51 in epoch 3. Run only on midway2 broadwl (user). midway3's login
 node may be used to move or read files on the shared `/project` and `/beagle3` (user, 2026-10-02).
-The BP validation is analysed (§0c) and not yet reported to Tobin; its summary figure is being
-made (job 49143602 dumps the per-seed REMD arrays, §0c "Figure").
+The BP validation is analysed (§0c) and not yet reported to Tobin; its figure is done,
+`~/Downloads/bp_validation.{png,pdf}` and `bp_validation/static/` (§0c "Figure").
 
 Written so a fresh session can pick up cold: how to connect, check health correctly and react to a
 failure. Job state in §1 is live; finished jobs are kept only where their files are still used (§1)
@@ -24,6 +24,13 @@ copies of the panel tools. The authoritative panel tools are on the cluster, in
 `slurm.args`), and the deploy and test scripts of 10-02 are in
 `/project/trsosnic/yinhan/checks/hbg_deploy_20261002`. Claude's memory is per computer; the rules
 that matter here are in this file and `findings.md` §10.
+
+**The rotamer-BP validation figure (for Tobin, not yet sent) lives on the cluster.** The finished
+figure, its data and the script that draws it are in `/beagle3/trsosnic/yinhan/bp_validation/static/`
+(visible from midway2 and midway3): `bp_validation.png` and `.pdf` (md5 `0a157e39...` and
+`79bcd775...`, identical to the `~/Downloads` copies on the computer that made them), `plot_bp.py`,
+`remd/obs_*.npz` and `sys/`. To work on it here: `scp -r` that directory over and run
+`python plot_bp.py` in it. The figure's panels, numbers and provenance are in §0c "Figure".
 
 **The cluster's `training/` is not the repo's layout, and must stay so until ff30_glyhb is done.**
 The repo was cut to five files on 10-02 (`extract` and `gate` became ConDiv commands,
@@ -315,22 +322,23 @@ healthy at the first 100 frames (C-N 1.33-1.34 +- 0.13 A, KE/1.5kT 0.99-1.00).
   seed spread, melting midpoints and speed. Two seeds give only a rough sigma: |z| ~ 1 is "not
   resolved"; only |z| well above 2 across the ladder is an effect.
 
-**Figure for Tobin (in progress 2026-10-02).** `plot_bp.py` makes one 11-panel figure: a-c static
-frames (ECDF of |E - E_ref|, ECDF of relative force error, histogram of iterations cut short), d-g
-Q(T) per seed for the four REMD proteins, h-k Q_bug - Q_fix with the seed sigma. Red = bug, blue =
-fix in every panel. SciencePlots by path (global CLAUDE.md plotting standard).
-* REMD arrays: job **49143602** (`dump.sbatch`, broadwl, 4 cores, 40 min) reruns
-  `analyse_bp.py` per protein. `analyse_bp.py` now also writes `obs_<protein>.npz` (per-arm, per-T
-  Q, RMSD, Rg, E; original kept as `analyse_bp.py.bak_pre_npz`). Log `logs/dump_<jobid>.out`, text
-  `analysis_rerun.txt`, which must reproduce `analysis_20260929.txt` (a reproducibility check).
-* Static-frame harness and results: `bp_validation/static/` (`gen.py` frames, `eval.py` one solve per
-  library and tolerance, `plot_bp.py`, `sys/<code>/{frames,init}.npy`, `base.up`, `res_{bug,fix,ref}.npz`).
-  `eval.py` needs Mac builds of the bug and fix libraries with a `read last_iter` readout added
-  to `rotamer.cpp` (iteration count); these and the working copy are in the gitignored
-  `scratchpad/bp_validation/` of the Mac that made them, not in git.
-* To finish from any computer: when 49143602 is done, copy `bp_validation/obs_*.npz` into
-  `static/remd/`, copy `static/` locally, and run `python plot_bp.py` there (it writes
-  `bp_validation.png` and `.pdf`; it loads SciencePlots from the path in the global CLAUDE.md).
+**Figure for Tobin (done 2026-10-02 15:48).** `~/Downloads/bp_validation.{png,pdf}` on the Mac
+that made it, and `bp_validation/static/bp_validation.{png,pdf}`. `plot_bp.py`, 11 panels: a-c
+static frames (ECDF of |E - E_ref|, ECDF of relative force error, histogram of iterations cut short),
+d-g Q(T) per seed for the four REMD proteins, h-k Q_bug - Q_fix with the seed sigma. Red = bug, blue
+= fix throughout; SciencePlots by path (global CLAUDE.md). T_mid in d-g is from the two-seed mean
+Q(T), so it differs by up to 0.001 from the per-seed values above.
+* REMD arrays: `analyse_bp.py` now also writes `obs_<protein>.npz` (per arm and T: Q, RMSD, Rg, E;
+  original kept as `analyse_bp.py.bak_pre_npz`). Rerun 10-02 on the midway2 login node (user's call:
+  compute-node job 49143602 had a 20:11 start estimate and was cancelled; 4 niced processes under
+  `ulimit -v 4 GB`, 2.5 min); `analysis_rerun.txt` is identical to `analysis_20260929.txt`.
+  `dump.sbatch` is the compute-node version of the same run.
+* Everything to replot is in `bp_validation/static/`: `plot_bp.py`, `remd/obs_*.npz`, and the
+  static-frame harness and results (`gen.py` frames, `eval.py` one solve per library and tolerance,
+  `sys/<code>/{frames,init}.npy`, `base.up`, `res_{bug,fix,ref}.npz`). Replot from any computer by
+  copying `static/` and running `python plot_bp.py`. Rerunning `eval.py` also needs Mac builds of
+  the bug and fix libraries with a `read last_iter` readout added to `rotamer.cpp`; those are only in
+  the gitignored `scratchpad/bp_validation/` of the Mac that made them.
 
 ---
 
@@ -341,11 +349,10 @@ rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | R since 13:25:41 on 19 nodes; step 0 done 14:02 in 2196 s (worker median 1229 s), healthy (`check_step.py`: 24 of 24 finite, KE/1.5kT 1.006-1.041, restrained RMSD median 1.03 A, unfolded target 24 of 24); step 1 done 14:46 in 2586 s, healthy (24 of 24 finite, KE/1.5kT 1.008-1.046); hbg after step 1 [+0.019 +0.019 -0.019], glycine margin E_other - E_alpha +0.139 (start +0.192), shared margin +0.177; link log clean; at ~35 min a step, the 36 h wall holds ~60 of the 76 steps and the successor finishes them | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
+| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | R since 13:25:41 on 19 nodes; step 0 done 14:02 in 2196 s (worker median 1229 s), healthy (`check_step.py`: 24 of 24 finite, KE/1.5kT 1.006-1.041, restrained RMSD median 1.03 A, unfolded target 24 of 24); step 1 done 14:46 in 2586 s, healthy (24 of 24 finite, KE/1.5kT 1.008-1.046); step 2 done 15:27 in 2427 s, healthy (24 of 24 finite, KE/1.5kT 1.006-1.043); hbg after step 2 [+0.027 +0.027 -0.028], glycine margin E_other - E_alpha +0.104 (start +0.192; +0.139 after step 1), shared margin +0.159 (+0.177); link log clean; at ~35 min a step, the 36 h wall holds ~60 of the 76 steps and the successor finishes them | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
 | 49142816 | its insurance successor (`afterany:49141995`) | PD (Dependency) | none; resumes from the newest checkpoint if the link dies |
 | 49139947, 49139944 | Peng benchmark lambda under **ff_2.1**, native and de novo arms, chunk 2 (Table S2 ladder 0.780-0.980, self-resubmitting 12 h jobs); `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_{native,denovo}_ff_2.1/`, logs `logs/lambda_<kind>_ff_2.1_<jobid>.out` | R | after each chunk: `checks/lambda_ff21/lambda_check.py` and `lambda_packing.py` |
 | 49139945, 49140670 | the same arms for **lambda G46A/G48A** (helix 3's glycines to Ala), chunk 2; `runs/lambda_G46A_G48A_{native,denovo}_ff_2.1/` | R | compare with wild type at matched time |
-| 49143602 | **bp_dump**: per-seed REMD arrays for the BP-validation figure (§0c "Figure"); `/beagle3/trsosnic/yinhan/bp_validation/dump.sbatch`, reruns `analyse_bp.py` on the 16 finished arms, writes `obs_<protein>.npz` and `analysis_rerun.txt`; log `logs/dump_<jobid>.out` | PD (Priority) since 15:03 | check `analysis_rerun.txt` matches `analysis_20260929.txt`, then copy `obs_*.npz` to `static/remd/` and run `plot_bp.py` |
 
 **Panel e02 finished 13:05** (49140630). `select` with ff21_released ff21_awh e00 e01 e02 (37
 domains common to all; 7 dropped for too few folded frames in some candidate): e02 folded 0.501,

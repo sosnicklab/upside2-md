@@ -134,3 +134,12 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   hbg [+0.019 +0.019 -0.019] after step 1. `remote_jobs.md` gained "Resume here, from any computer":
   what is and is not in git, how to connect, the watch by hand, the timeline to release, how to read
   the h tables, and the cluster/repo `training/` layout warning.
+
+## 2026-10-02: rotamer-BP validation figure (for Tobin)
+
+* All 16 REMD arms confirmed complete. Static-frame harness rebuilt from the 09-26 transcript (its
+  scratchpad was gone) and rerun on fresh frames: early stop in 46% of 728 frames, |dE| median
+  7.5e-4 E_up, max 0.157 (one real early stop in 1afh, 0.2 kT), force error median 8e-5 of RMS force.
+  REMD arrays rerun on the midway2 login node (user's call; the compute-node job would have started
+  ~20:11), output identical to `analysis_20260929.txt`. 11-panel figure in
+  `~/Downloads/bp_validation.{png,pdf}`; data and scripts in `bp_validation/static/` (remote_jobs.md §0c).
