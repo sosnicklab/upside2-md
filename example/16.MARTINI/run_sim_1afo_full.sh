@@ -18,7 +18,6 @@ fi
 if command -v module >/dev/null 2>&1; then
     module load python/3.11.9 || true
     module load cmake || true
-    module load openmpi || true
     module load "${UPSIDE_HDF5_MODULE:-hdf5/1.14.3}" || true
 fi
 

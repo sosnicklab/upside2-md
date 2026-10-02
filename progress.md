@@ -123,3 +123,9 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   (`/project/trsosnic/yinhan/checks/merge_test_20261002`) gave byte-identical `extract` output and an
   identical gate table and verdict; basin functions bitwise equal; a local 1rkl projection keeps the
   source potential exactly.
+* MPI check (user question): Upside needs no MPI and cannot use it (findings 10.13).
+  `example/01.GettingStarted/0.run_mpi.py` was broken by design (two `mpirun` ranks collide on the
+  same files, 0 frames, exit 0) and `run_1UBQ_local.sh` was `0.run.sh` with another `pdb_id`; both,
+  and their 1UBQ PDB copy (master keeps one in `example/07.MoreRestraints/pdb/`), moved to scratchpad,
+  so `example/01.GettingStarted` matches master. `module load openmpi` dropped from
+  `example/16.MARTINI/run_sim_1afo_full.sh`.

@@ -3540,6 +3540,14 @@ with a tolerance, and when only a reduction differs, look at code placement befo
 * Check the units and axis directions of any workflow figure before showing it. Three shipped-analysis
   presentation defects turned up while building one poster: the `_DG_Hbond.png` scale (section 3.7), the
   ESS-censoring confusion, and `_Tm_curve.png`'s inverted hydrogen-bond axis.
+* **Upside has no MPI; parallel systems run as OpenMP threads in one process (2026-10-02).** Neither
+  master nor this branch links MPI or calls it (`src/` and the CMake files have none; the binary
+  needs only libstdc++, HDF5, zlib and libgomp). `mpirun -np 2 upside ... a.up b.up` starts two
+  independent copies of the whole job: run on chignolin, both opened both files, HDF5 reported lock
+  errors, both outputs ended with 0 frames, and the script still exited 0 printing success. The same
+  command without `mpirun`, `OMP_NUM_THREADS=2`, wrote 20 frames to each. On RCC the binary loads
+  `libmpi.so.12` only because `hdf5/1.14.3+oneapi-2023.1` is a Parallel HDF5 build linked against
+  Intel MPI; no `openmpi` module is needed.
 * **Size trajectory output by its accumulation rate, not the seed.** A 2.4 TB balloon (2026-08-02)
   came from ~3000 frames per chunk with momentum over ~43 chunks and no purge of `output_previous_*`.
   Use `frame_interval` near 100 (~2000 frames), no `--record-momentum`, and one `--duration`.
