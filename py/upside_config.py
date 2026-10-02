@@ -1056,8 +1056,14 @@ def write_short_hbond(fasta, hbond_energy):
     grp._v_attrs.arguments = np.array([b'protein_hbond', b'rama_coord'])
     grp._v_attrs.integrator_level = 1
 
+    # A file with 12 + 3n parameters also names, in class_restype, the n residue types whose own
+    # offsets on the three basin energies follow the 12 shared values.
     with tb.open_file(hbond_energy) as data:
         params = data.root.parameter[:]
+        class_restype = ([x.decode() for x in data.root.class_restype[:]]
+                         if 'class_restype' in data.root else [])
+    if len(params) != 12 + 3*len(class_restype):
+        raise ValueError('%s: %d parameters for %d residue classes' % (hbond_energy, len(params), len(class_restype)))
 
     for hbe in params[:3]:
         if hbe > 0.:
@@ -1073,6 +1079,9 @@ def write_short_hbond(fasta, hbond_energy):
     create_array(grp, 'donor_resid',    d_residues)
     create_array(grp, 'acceptor_resid', a_residues)
     create_array(grp, 'rama_resid',     obj=np.arange(n_res))
+    if class_restype:
+        create_array(grp, 'residue_class', obj=np.array([1 + class_restype.index(r) if r in class_restype else 0
+                                                         for r in fasta], dtype='i4'))
 
 def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic_1body, fix_rotamer, excluded_residues):
     def compute_chi1_state(angles):
@@ -2033,6 +2042,7 @@ def apply_param_scale(hb_scale=1., env_scale=1., rot_scale=1., memb_scale=1.):
         # WARNING: First three are supposed to be helix_hbond_energy, sheet_hbond_energy, turn_hbond_energy, 
         # but there seems to be an extra fourth energy in the actual param data not included in the (outdated?) layout  
         pot_group.hbond_energy.parameters[:4] *= hb_scale
+        pot_group.hbond_energy.parameters[12:] *= hb_scale   # per-class offsets, if any
         # ToDo: what about the hbond_coverage groups -> how are they coupled
         # to the energy? For env it's clear, but not so for hb (not sure if this still applies to Upside2)
 

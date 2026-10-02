@@ -8,7 +8,7 @@ writes each step and there is no second implementation to drift. Produces, in ou
     sidechain.h5    rot (pair, coverage, hydrophobe interactions and placements)
     environment.h5  sigmoid burial scale, center, sharpness and the 400 weights
     bb_env.dat      backbone desolvation term
-    hbond.h5        the twelve H-bond parameters
+    hbond.h5        the twelve H-bond parameters, then any residue-class offsets
     sheet           the 20 sheet mixing energies
     rama.dat        the run's fixed Ramachandran library, copied unchanged
 """
@@ -55,10 +55,13 @@ def main():
         sys.exit(f'FAILED: {new["rama"]} is not a copy of {init["rama"]}')
     with tb.open_file(new['rama']) as t:
         origin = t.root._v_attrs.glycine_row if 'glycine_row' in t.root._v_attrs else b'as source'
+    with tb.open_file(new['hb']) as t:
+        hb = t.root.parameter[:]
 
     print(f'checkpoint {ckpt}')
     print(f'  step {state["solver"].step_num}, next epoch {state["epoch"]} minibatch {state["i_mb"]}')
-    print(f'  hb {np.array2string(param.hb[:3], precision=4)}  dhb {param.dhb[0]:.4f}'
+    print(f'  hb {np.array2string(hb[:3], precision=4)}  dhb {hb[3]:.4f}'
+          f'  class offsets {np.array2string(hb[12:], precision=4)}'
           f'  bb scale {param.bbenve:.4f}  sheet mean {np.mean(param.sheet):.4f}')
     print(f'  rama library {init["rama"]}\n    glycine row: '
           f'{origin.decode() if isinstance(origin, bytes) else origin}')

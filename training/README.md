@@ -25,7 +25,8 @@ re-includes just these files, so a run directory created here stays untracked.
 `training/<name>/` with:
 
 ```
-init_param/     environment.h5, bb_env.dat, sidechain.h5, hbond.h5, sheet   (parameters/ff_2.1)
+init_param/     environment.h5, bb_env.dat, sidechain.h5, hbond.h5, sheet   (parameters/ff_2.1;
+                for ff3.0 hbond.h5 carries glycine's three offsets, see What it trains)
 upside_input/   per protein: <code>.fasta, <code>.initial.pkl, <code>.chi
                 plus rama.dat (the fixed library the run reads) and rama_reference.pkl
 pdb_list        copy from here
@@ -50,10 +51,11 @@ python3 ../check_converged.py .
 
 **What happens at the target.** `train_chain.sbatch` submits `<run>/after_training.sbatch`, which
 calls `gate_or_continue.sh <run> <ff_name> <max_epochs>`: `convergence_gate.py` judges the last
-full epoch. A converged run stops and prints the `extract_ff.py` command that writes its newest
-checkpoint to `parameters/<ff_name>`; an unconverged one is trained one more epoch and judged
-again, up to `<max_epochs>`, after which it stops for review. A failure of the gate itself stops
-everything.
+full epoch. A converged run stops with nothing released and lists its epoch-end checkpoints; the one
+to release is chosen by simulating them, because the fixed-point test does not say which iterate
+simulates best (the last one is only where Adam stopped), and `extract_ff.py` writes it to
+`parameters/<ff_name>`. An unconverged run is trained one more epoch and judged again, up to
+`<max_epochs>`, after which it stops for review. A failure of the gate itself stops everything.
 
 `initialize` copies `ConDiv.py` and `rama_basin.py` into `run_output/`, and every later step, the
 driver included, runs that copy: a run is never continued by later code.
@@ -76,10 +78,22 @@ the second half:
 
 ## What it trains
 
-Exactly ff2.1's set: `rot` (pair, coverage and hydrophobe interactions), the sigmoid burial
-`scale`, `center`, `sharpness` for 20 types and the 400 weights, the backbone term's `scale`, the
-three secondary-structure H-bond energies and the second-H-bond term, and the 20 sheet mixing
-energies (by central differences per residue type present).
+ff2.1's set: `rot` (pair, coverage and hydrophobe interactions), the sigmoid burial `scale`,
+`center`, `sharpness` for 20 types and the 400 weights, the backbone term's `scale`, the three
+secondary-structure H-bond energies and the second-H-bond term, and the 20 sheet mixing energies
+(by central differences per residue type present).
+
+ff3.0 adds one group and damps one (findings 1.17):
+
+* **`hbg`, glycine's own offsets on the three H-bond basin energies**, `hbond.h5` entries 12-14.
+  The file names the class in `class_restype` (`[b'GLY']`), and `upside_config` then writes a
+  per-residue `residue_class`; a 12-entry file has neither and is unchanged. The offsets start at
+  zero (an init file is ff2.1's twelve values, then `0, 0, 0`), train at `hb`'s rate, and are zeroed
+  with the shared energies in the SARW replica. Without them, the shared energies can keep loop
+  glycines left-handed only at the cost of every helical glycine's helix.
+* **`rot` at 0.025, 10x the port's smaller.** At the port's rate Adam's normalised step
+  random-walks the 31,420 pair coefficients, of which ~6% carry any signal, and the walk weakens
+  helices and folds; putting the epoch-0 table back restored them.
 
 **Not trained, as in ff2.1's own training**, because the engine returns no derivative: the
 backbone term's `center`, `sharpness` and `hbond_weight` (commented out in

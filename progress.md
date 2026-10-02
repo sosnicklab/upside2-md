@@ -214,3 +214,37 @@ below and its detail is in `findings.md` 9i-9s and git history.
   `training/{validate_ff.sh,patch_glpg.py,move_run.py}`; pycache deleted. Edited `training/env.sh`
   (no midway3 branch), `gate_or_continue.sh` (stops at convergence), `training/README.md`,
   `train_chain.sbatch`, `architecture.md`, `up.md`. Compile, env and gate-branch checks pass.
+* Bottom-up glycine fallback proposed (plan.md "Phase 8 fallback"; findings 1.17): glycine-only
+  H-bond basin offsets fitted to all-atom in-protein dG, everything else ConDiv. Literature survey
+  and Charron et al. 2025 read: their 50 CATH domains are ff99SB-ILDN/TIP3P/300 K, the map's own
+  force field; their glycine phi prior is left-handed (P(phi > 0) 0.603).
+* Release by checkpoint selection (user): the midway2 gate stops at convergence with nothing
+  released; `validate_ff.sh` takes the chosen checkpoint. Deployed with backups, sandbox-tested
+  on midway2; the running chain is untouched. Selection panel (44 CATH domains) proposed.
+* Selection panel built and running (rule decided, user delegated; plan.md Phase 8):
+  `ff3_selection/panel.py` (prepare, run, aa, select) and `panel.sbatch`, deployed to
+  `/project/trsosnic/yinhan/ff3_selection`. 44 domains prepared (2,823 residues, 198 glycines, 3
+  cis-Pro written `*P`). Tested: local analysis (phi/psi equal the engine's `rama_coord`) and a
+  300-unit end-to-end run on midway2 (21 s). Controls submitted (49136636, 49136637); epoch-end
+  candidates submitted by `submit_new.sh` from session cron `39a1fa34`; the local pipeline
+  extracts the CATH h5 as soon as the download passes it, with a CRC-32 check.
+
+## 2026-10-02: glycine H-bond offsets and damped side-chain step (Phase 8 revised, approved)
+
+* Engine: `HBondEnergy` takes 12 + 3 per residue class parameters with a per-residue
+  `residue_class`. A 12-entry config is bitwise equal to the old build (energy, forces, hbond,
+  rotamer and coverage derivatives); zero offsets bitwise equal to 12 entries; offset derivatives
+  and forces match finite differences (1ubq, local). The first layout changed a shared sum's last
+  bit under -ffast-math (findings 10.0a1). Files: `src/hbond.cpp`.
+* Config writer and tools: `py/upside_config.py` (class_restype, residue_class, hb_scale on the
+  offsets); `training/ConDiv.py` (field `hbg`, SARW zeroes it, rot lr 0.025); `extract_ff.py`,
+  `check_step.py`, `training/README.md`, `up.md`; `patch_glpg.py` carries the offsets into a seed.
+* One real ConDiv step, local, 1ga3 (8 glycines), 15-entry init: hbg gradient [-0.91 -0.52 +0.81],
+  first Adam step +-0.01, rot step rms 0.0103 at lr 0.0125, hbond.h5 written back with `GLY`.
+* Deployed to midway2 by two detached, gated scripts (`checks/hbg_deploy_20261002`), since the
+  master socket dropped every 3-13 min today: files with backups, build in `obj_hbg`, parity on 1ga3
+  (engine and a 200-unit run bitwise against the installed build; zero offsets bitwise 12 entries),
+  install by rename, `ff30_glyhb` initialised (19 x 24, hbg 0, lr rot 0.0125, hbg 0.01), ff30_gly
+  cancelled 11:51, chain 49141995 submitted. A staging slip left `upside_config.py` non-executable
+  for ~2 min (findings 10.0a0); nothing ran in the window. Selection watch moved to ff30_glyhb
+  (cron `6733412b`, tags h00...).

@@ -112,6 +112,9 @@ p0, p = init['param'], state['param']
 print(f'\nhb E_alpha E_beta E_other {np.array2string(p.hb[:3], precision=4)} (start '
       f'{np.array2string(p0.hb[:3], precision=4)}); margin E_other - E_alpha '
       f'{p.hb[2] - p.hb[0]:+.4f} (start {p0.hb[2] - p0.hb[0]:+.4f})')
+if 'hbg' in p._fields:
+    print(f'glycine offsets on E_alpha E_beta E_other {np.array2string(p.hbg, precision=4)}; glycine '
+          f'margin E_other - E_alpha {p.hb[2] + p.hbg[2] - p.hb[0] - p.hbg[0]:+.4f}')
 print(f'dhb {p.dhb[0]:.4f} (start {p0.dhb[0]:.4f}); sheet mean {np.mean(p.sheet):.4f} (start '
       f'{np.mean(p0.sheet):.4f}); bb env scale {p.bbenve:.4f} (start {p0.bbenve:.4f})')
 print(f'env scale change max {np.abs(p.enve - p0.enve).max():.4f}; rot change rms '

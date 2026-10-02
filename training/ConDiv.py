@@ -26,6 +26,12 @@ modernised and restored to the published protocol. Differences from that file, e
     its central-glycine row is the AWH-measured free energy of capped glycine dipeptides
     (build_gly_library.py): the PDB row is part local energy and part evolutionary placement, and
     a map trained against native structures relearns the placement (findings 1.15).
+  * two changes for ff3.0 (findings 1.17). Glycine has its own offsets on the three H-bond basin
+    energies (hbond.h5 entries 12-14, field `hbg`), trained from zero with everything else: with
+    the shared energies alone, keeping loop glycines left-handed costs every helical glycine its
+    helix. The side-chain (`rot`) learning rate is 10x the port's smaller: at the port's rate
+    Adam's normalised step random-walks the 31,420 pair coefficients, of which ~6% carry signal,
+    and the walk weakens helices and folds.
   * recorded, not trained: per-residue basin populations of the native-restrained replica and of
     the free ensemble (rama_basin.py), the diagnostic that shows where the free simulation leaves
     the native conformation.
@@ -106,7 +112,7 @@ hydrophobicity_order = ['ASP', 'GLU', 'LYS', 'HIS', 'ARG', 'GLY', 'ASN', 'GLN', 
                         'THR', 'PRO', 'CYS', 'VAL', 'MET', 'TYR', 'ILE', 'LEU', 'PHE', 'TRP']
 
 Target = collections.namedtuple('Target', 'fasta native native_path init_path n_res chi')
-FIELDS = 'enve envc envs envw bbenve bbenvc bbenvs bbenvw cov rot hyd hb dhb sheet'.split()
+FIELDS = 'enve envc envs envw bbenve bbenvc bbenvs bbenvw cov rot hyd hb dhb hbg sheet'.split()
 UpdateBase = collections.namedtuple('UpdateBase', FIELDS)
 
 
@@ -131,14 +137,15 @@ class Update(UpdateBase):
 
 
 def hb_split(parameter):
-    """hbond.h5 `parameter` (12) -> (hb: entries 0-2 and 4-11, dhb: entry 3), as the port."""
+    """hbond.h5 `parameter` -> (hb: entries 0-2 and 4-11, dhb: entry 3, as the port; hbg: the
+    residue-class offsets, entries 12 on)."""
     parameter = np.asarray(parameter)
-    return parameter[[0, 1, 2] + list(range(4, 12))], parameter[3:4]
+    return parameter[[0, 1, 2] + list(range(4, 12))], parameter[3:4], parameter[12:]
 
 
-def hb_join(hb, dhb):
-    out = np.zeros(12)
-    out[:3], out[3], out[4:] = hb[:3], dhb[0], hb[3:]
+def hb_join(hb, dhb, hbg):
+    out = np.zeros(12 + len(hbg))
+    out[:3], out[3], out[4:12], out[12:] = hb[:3], dhb[0], hb[3:], hbg
     return out
 
 
@@ -149,7 +156,8 @@ def hb_join(hb, dhb):
 if not is_worker:
 
     def print_param(param):
-        print('hb    %s   dhb %.4f' % (np.array2string(param.hb[:3], precision=4), param.dhb[0]))
+        print('hb    %s   dhb %.4f   hbg %s' % (np.array2string(param.hb[:3], precision=4),
+                                              param.dhb[0], np.array2string(param.hbg, precision=4)))
         print('sheet mean %.4f' % np.mean(param.sheet))
         print('bb env scale %.4f  center %.4f  sharpness %.4f  hbond_weight %.4f'
               % (param.bbenve, param.bbenvc, param.bbenvs, param.bbenvw))
@@ -219,13 +227,13 @@ if not is_worker:
                                       t.root.weights[:])
         bbe, bbc, bbs, bbw = np.loadtxt(files['bbenv'])
         with tb.open_file(files['hb']) as t:
-            hb, dhb = hb_split(t.root.parameter[:])
+            hb, dhb, hbg = hb_split(t.root.parameter[:])
 
         param = Update(*([None] * len(FIELDS)))._replace(
             enve=enve, envc=envc, envs=envs, envw=envw,
             bbenve=bbe, bbenvc=bbc, bbenvs=bbs, bbenvw=bbw,
             rot=rp.pack_param(rotp, covp, hydp, hydplp, rotposp, np.zeros((rotposp.shape[0], 1))),
-            hb=hb, dhb=dhb, sheet=np.loadtxt(files['sheet']))
+            hb=hb, dhb=dhb, hbg=hbg, sheet=np.loadtxt(files['sheet']))
         return param, files
 
     def expand_param(params, orig, new):
@@ -251,7 +259,7 @@ if not is_worker:
 
         shutil.copyfile(orig['hb'], new['hb'])
         with tb.open_file(new['hb'], 'a') as t:
-            t.root.parameter[:] = hb_join(params.hb, params.dhb)
+            t.root.parameter[:] = hb_join(params.hb, params.dhb, params.hbg)
 
         np.savetxt(new['sheet'], params.sheet)
 
@@ -361,11 +369,13 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
 # ---------------------------------------------------------------------------
 
 def zero_for_sarw(config, scale):
-    """The port's apply_param_scale(hb, env, rot): H-bond energies, side-chain burial and rotamer
-    pair energies scaled by `scale`, leaving backbone geometry, rama and the backbone term."""
+    """The port's apply_param_scale(hb, env, rot): H-bond energies (with any residue-class
+    offsets), side-chain burial and rotamer pair energies scaled by `scale`, leaving backbone
+    geometry, rama and the backbone term."""
     with tb.open_file(config, 'a') as t:
         p = t.root.input.potential
         p.hbond_energy.parameters[:4] *= scale
+        p.hbond_energy.parameters[12:] *= scale
         p.sigmoid_coupling_environment.scale[:] *= scale
         p.hbond_coverage.interaction_param[:] *= scale
         p.hbond_coverage_hydrophobe.interaction_param[:] *= scale
@@ -427,9 +437,10 @@ def compute_divergence(args):
         bb = engine.get_param_deriv((4,), 'bb_sigmoid_coupling_environment').ravel()
         for k, f in enumerate((c.bbenve, c.bbenvc, c.bbenvs, c.bbenvw)):
             f.append(bb[k])
-        hb, dhb = hb_split(engine.get_param_deriv(hb_n, 'hbond_energy').ravel())
+        hb, dhb, hbg = hb_split(engine.get_param_deriv(hb_n, 'hbond_energy').ravel())
         c.hb.append(hb)
         c.dhb.append(dhb)
+        c.hbg.append(hbg)
         c.sheet.append(np.zeros(len(sheet_restype)))
         rama_coord.append(engine.get_output('rama_coord'))
 
@@ -622,12 +633,13 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
           % (state['init_param_files']['rama'],
              origin.decode() if isinstance(origin, bytes) else origin))
 
-    # The port's learning rates, times its global factor. bbenvc/bbenvs/bbenvw are 0 because the
-    # engine returns no derivative for them, as in ff2.1's training.
+    # The port's learning rates, times its global factor, except rot, 10x smaller (see the top);
+    # the glycine offsets take hb's. bbenvc/bbenvs/bbenvw are 0 because the engine returns no
+    # derivative for them, as in ff2.1's training.
     state['initial_alpha'] = Update(
         enve=0.10, envc=0.05, envs=0.02, envw=0.10,
         bbenve=0.05, bbenvc=0.00, bbenvs=0.00, bbenvw=0.00,
-        cov=0., rot=0.25, hyd=0., hb=0.02, dhb=0.01, sheet=0.03) * alpha_scale
+        cov=0., rot=0.025, hyd=0., hb=0.02, dhb=0.01, hbg=0.02, sheet=0.03) * alpha_scale
     state['solver'] = rp.AdamSolver(len(FIELDS), alpha=state['initial_alpha'])
     state['epoch'], state['i_mb'] = 0, 0
     print('\nOptimizing with solver', state['solver'], '\n')

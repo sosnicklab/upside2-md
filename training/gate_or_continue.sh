@@ -6,8 +6,10 @@
 #
 # Run by <run_dir>/after_training.sbatch, which train_chain.sbatch submits when the run reaches its
 # target. convergence_gate.py judges the last full epoch:
-#   exit 0 (every group at a fixed point)  -> stop, and print the extract_ff.py command that writes
-#                                             the newest checkpoint to parameters/<ff_name>
+#   exit 0 (every group at a fixed point)  -> stop, nothing released: the checkpoint to release is
+#                                             chosen by simulating the epoch-end checkpoints, since
+#                                             the fixed-point test does not say which one simulates
+#                                             best; extract_ff.py then writes it to parameters/<ff_name>
 #   exit 3 (a group still pulled)          -> train_chain.sbatch again, target one epoch further,
 #                                             unless <max_epochs> is reached: then stop for review
 #   anything else (the gate itself failed) -> stop; nothing is released and training does not go on
@@ -36,8 +38,10 @@ cat "$REPORT"
 
 case $RC in
     0)
-        echo "step $STEP: converged; release it with"
-        echo "    python3 $TRAIN_DIR/extract_ff.py $RUN_DIR/$CKPT $UPSIDE_HOME/parameters/$FF"
+        echo "step $STEP: converged, nothing released; choose among the epoch-end checkpoints by simulation:"
+        find run_output -path "*/epoch_*_minibatch_$(printf %02d $(( MB_PER_EPOCH - 1 )))/checkpoint.pkl" | sort
+        echo "then write the chosen one with"
+        echo "    python3 $TRAIN_DIR/extract_ff.py $RUN_DIR/<checkpoint> $UPSIDE_HOME/parameters/$FF"
         ;;
     3)
         if [ "$STEP" -ge $(( MAX_EPOCHS * MB_PER_EPOCH )) ]; then

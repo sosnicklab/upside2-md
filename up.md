@@ -141,7 +141,7 @@ pos
 |---|---|---|
 | `infer_H_O` | sub-groups `donors` and `acceptors` with `residue`, `bond_length`, `id` | Backbone H and O position inference |
 | `protein_hbond` | `id1`, `id2`, `type1`, `type2` | Donor-acceptor index pairs |
-| `hbond_energy` | `@integrator_level=1` | Reads `hbond.h5` 12-knot spline |
+| `hbond_energy` | `parameters`, `donor_resid`, `acceptor_resid`, `rama_resid`, optional `residue_class (n_res,)` int32, `@integrator_level=1` | From `hbond.h5` (2.2): 12 values, or 12 + 3 per residue class with `residue_class` |
 | `hbond_coverage` | `index_pos`, `index_weight` | HN-atom coverage accumulator |
 | `hbond_coverage_hydrophobe` | `index_pos`, `index_weight` | OC-atom hydrophobe coverage |
 | `environment_coverage_sc` | `@num_aa_types=20` | SC environment coverage |
@@ -289,6 +289,15 @@ hydrogen bond at phi > 0 is worth **+0.192 E_up less** than the same bond at phi
 a glycine penalty, since glycine is the residue that populates it. And the total potential is
 **exactly linear in `parameters[:4]`** (verified to 7e-7 against the engine), which is what makes
 `--hb-scale` and the trainer's `dE/ds = E/s` correct.
+
+**Residue-class offsets (ff3.0).** A file may carry `parameter (12 + 3n,)` and a root dataset
+`class_restype (n,)` S3 naming n residue types; entries `12+3(c-1) .. 12+3(c-1)+2` are offsets
+added to `E_alpha`, `E_beta`, `E_other` for residues of class c. `upside_config` then writes the
+node's `residue_class (n_res,)` int32: 1 + the residue's index in `class_restype`, or 0 for the
+shared energies alone. ff3.0 uses one class, `GLY`. A 12-entry file has no `class_restype`, the
+node no `residue_class`, and the engine's value, forces and parameter derivative are bitwise
+those of master. The energy stays linear in the offsets, and `--hb-scale` scales them with
+`parameters[:4]`.
 
 ### 2.3 `environment.h5`
 
@@ -560,10 +569,12 @@ Force-field files (read-only, never modified at runtime):
   parameters/ff_3.0/            (NOT PRESENT until the current training releases it)
     sidechain.h5   -> trained rotamer tables
     environment.h5 -> trained sigmoid burial scale/center/sharpness and weights (type 1)
-    hbond.h5       -> trained H-bond energies and second-H-bond term; entries 4-11 as ff_2.1
+    hbond.h5       -> trained H-bond energies, second-H-bond term and glycine offsets (12-14,
+                      class_restype GLY); entries 4-11 as ff_2.1
     sheet          -> trained per-type sheet mixing energies
     bb_env.dat     -> trained backbone-term scale; center/sharpness/hbond weight as ff_2.1
-    rama.dat       -> trained Ramachandran library (see 2.8); use this, not common/rama.dat
+    rama.dat       -> the fixed library it was trained with, common/rama31.dat (AWH glycine
+                      row, see 2.8); use this, not common/rama.dat
 ```
 
 **`parameters/ff_3.0` is absent from the tree on purpose (2026-09-24).** Both earlier versions were

@@ -1,10 +1,10 @@
 # Remote jobs on midway2/midway3 — status and handbook
 
-**2026-10-01 12:16:47: the ff3.0 retrain (plan.md Phase 8) is RUNNING ON MIDWAY2 BROADWL (chain
-link 49135913, successor 49136311 queued afterany).** It resumed at step 1 from the step 0 that the
-Mac Studio trained and `sync_to_midway2.sh` installed. The Mac Studio run must now stop (§1): no
-session on the MacBook is watching it, and the Mac Studio is not reachable off the home LAN. Do not use
-midway3 or any partition but broadwl for this (user). BP validation analysed (§0c), not yet
+**2026-10-02 11:52: the ff3.0 retrain is now ff30_glyhb (plan.md "Phase 8 revised"), chain link
+49141995 queued on MIDWAY2 BROADWL**, from ff2.1 with glycine's own H-bond offsets and a 10x smaller
+side-chain step. ff30_gly (the AWH library alone) was stopped at 11:51 in epoch 3. Do not use
+midway3 or any partition but broadwl for this (user); midway3's login node may be used to move or
+read files on the shared `/project` and `/beagle3` (user, 2026-10-02). BP validation analysed (§0c), not yet
 reported to Tobin.
 
 Written so a fresh session can pick up cold. Everything needed to connect, check health correctly,
@@ -233,7 +233,7 @@ is higher, mean 0.0009 E_up). Conclusion given to the user: ff2.1 and ff3.0 do n
 **Simulation validation for Tobin: all 16 arms COMPLETE 2026-09-29 03:50, analysed; not yet
 reported to Tobin (the user's call).** Output `bp_validation/analysis_20260929.txt`, 25-32k
 frames/replica after equilibration. Result:
-* WWdomain is the only protein resolved against the seed spread: at T 0.764-0.879 the bug arms are
+* WWdomain is the only protein with a consistent difference: at T 0.764-0.879 the bug arms are
   less native, Q lower by 0.02-0.04 (z -1.8 to -12), RMSD higher by 0.1-0.3 A, E higher by 1-3; T_mid
   0.859 bug vs 0.861 fix (~0.7 K).
   Per seed (checked 2026-09-29), both bug seeds lie below both fix seeds in Q at every T from 0.700
@@ -247,6 +247,11 @@ frames/replica after equilibration. Result:
   0.861 vs 0.868 and 0.931 vs 0.929, inside the seed spread.
 * Unfolded-T z of 2-5 sit on seed sd of 1e-4 in Q and 0.01-0.03 A in Rg; the differences are that
   small, and with 2-dof sigmas across 224 cells such z values are expected by chance.
+* With no effect, z is Student-t with 2 dof, and the 224 cells match that null (checked 2026-10-01:
+  |z| > 2 in 41 against 41.1 expected, |z| > 9.92 in 2 against 2.2). No single z, WWdomain's -12
+  included, is evidence by itself. WWdomain rests on the sign holding through its transition and on
+  the per-seed separation: suggestive, not established at two seeds. Its implied ddG (~0.15 E_up,
+  van 't Hoff from dT_mid 0.002) is ~5x the largest static-frame |dE| (0.029); not explained.
 * Speed: the fix costs 0-5% (proteinG 17.6 vs 18.6, WWdomain 29.3 vs 29.8, NTL9 28.0 vs 28.0
   time units/s); node-to-node variation is not controlled.
 
@@ -278,21 +283,55 @@ restored to the repo's version (md5 0a653ade). The BP test arms were unaffected 
 
 ## 1. Current jobs
 
-Snapshot **2026-10-01 12:33 CDT, verified live against `squeue` on midway2.** Finished and cancelled
+Snapshot **2026-10-02 12:00 CDT, verified live against `squeue` on midway2.** Finished and cancelled
 rows are deleted; only lessons worth reusing are kept below.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49135913** | **ff3.0 retrain, AWH glycine library fixed** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_gly`, log `condiv-train_49135913.out` | R since 12:16:47 on 18 nodes (24 tasks x 14 CPUs); `step 1 of 76, resuming from run_output/epoch_00_minibatch_00`; this link runs 75 steps; all 24 workers launched with no `srun` errors; by 12:33, 14 had written their `divergence.pkl` with no traceback | after ~25 min: `check_step.py` on `epoch_00_minibatch_01`, and no WORKER_FAIL in the link log |
-| 49136311 | its insurance successor (`afterany:49135913`) | PD (Dependency) | none; resumes from the newest checkpoint if the link dies |
-| Mac Studio, `training/ff30_gly_local` | the same run, trained locally until the cluster started | **not confirmed stopped**: the sync that stops it ran from session cron `3869da4e`, and no Claude session runs on the MacBook now; the Mac Studio (`mac-studio-lan`, 10.0.0.61) timed out from the MacBook at 12:17 | on the Mac Studio: `bash training/ff30_gly_local/sync_to_midway2.sh` (sees the chain RUNNING, stops the driver and workers, writes `HANDED_OVER`); its step 1 and later are discarded |
+| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md "Phase 8 revised"), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | PD (Priority) since 11:52, 12 nodes requested; its successor is queued when it starts | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
+| 49140630 | selection panel `e02` (ff30_gly epoch-2 end checkpoint; ff30_gly itself is stopped) | PD (Priority) | `select` with ff21_awh, e00, e01, e02, as the comparison for the h tags |
+| 49139877 (array 0-23) | DSE threshold test: the 24 step-0 proteins, ff2.1 + NDRD map, DSE under the port's threshold (Fig. S3) and the SI text's (2/3 Rg_native + 1/3 Rg_SARW) from one simulation; `gradsplit_20261001/ndrd_txt/`, `split_txt.sbatch`, `tasks_txt.txt` | tasks 0-3 done, 4-6 R at 11:45, 7-23 PD; no task hit the 11:44-11:46 mode window (no PermissionError in its logs) | if the text threshold puts ff2.1 at the fixed point (E_alpha, E_beta, bb_env contrasts ~0), it is the fidelity fix for the DSE drift |
+| 49138763_[88-95], 49139665_[25-47] | the rest of the gradient split (`gradsplit_20261001`, `split_worker.py`; AWH and NDRD maps, ff30_gly steps 0-1); 25 AWH + 40 NDRD already analysed (findings 1.17) | **held (JobHeldUser) since 10-01 07:25** so 49139877 runs first | `scontrol release 49138763 49139665` once 49139877 has run, or cancel: the split's conclusion already stands |
+| 49139947, 49139944 | Peng benchmark lambda under **ff_2.1**, native and de novo arms, chunk 2 (Table S2 ladder 0.780-0.980, self-resubmitting 12 h jobs); `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_{native,denovo}_ff_2.1/`, logs `logs/lambda_<kind>_ff_2.1_<jobid>.out` | R | after each chunk: `checks/lambda_ff21/lambda_check.py` and `lambda_packing.py` |
+| 49139945, 49140670 | the same arms for **lambda G46A/G48A** (helix 3's glycines to Ala), chunk 2; `runs/lambda_G46A_G48A_{native,denovo}_ff_2.1/` | R | compare with wild type at matched time |
+
+**ff30_gly was stopped 11:51:19** (49135913 and its successor 49136311 cancelled, approved plan) in
+epoch 3 minibatch 8; its newest checkpoint is `epoch_03_minibatch_07`, so it can be resumed if ever
+needed. Its panels e00, e01 (and e02 when it runs) stay as the comparison.
+
+**The midway2 tree carries the glycine offsets since 2026-10-02 11:46** (deploy dir
+`/project/trsosnic/yinhan/checks/hbg_deploy_20261002`, logs `deploy.log`, `finish.log`,
+`parity.log`): `src/hbond.cpp`, `py/upside_config.py`, `training/{ConDiv,extract_ff,check_step,
+patch_glpg}.py`, `training/README.md`, each with a `.bak_pre_hbg_20261002`; `obj/{upside,
+libupside.so}` replaced by rename from `obj_hbg/` (backups `.bak_pre_hbg_20261002`). On 1ga3 the new
+build is bitwise the old one with ff2.1's 12-entry file (engine and a 200-unit run), and zero
+offsets are bitwise 12 entries. `py/upside_config.py` there had been stale (it still wrote the
+`_ALL` sheet arrays removed 09-24); it is now the repo's. The `/beagle3` shared deployment is NOT
+updated yet: the benchmark arms run from it, and it must be synced from `$P` before ff3.0's
+benchmark or glpG runs.
+
+**Selection watch** is session cron `6733412b` (:17 and :47, replaces `39a1fa34`), watching
+ff30_glyhb with tags h00, h01, ...; `submit_new.sh` backup `.bak_pre_glyhb_20261002`.
 
 `$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`. The cluster run_output now holds the local run
 (marker `run_output/FROM_LOCAL`). The cluster's own initialised run_output is kept as
 `run_output.superseded_20261001-111755`.
 
-**Hand-over.** Session cron `3869da4e` (sync at :07 and :37) is not alive on the MacBook (no Claude
-session there at 12:20); unless its session ran on the Mac Studio, the hand-over has not run.
+**Selection panel data** (`/project/trsosnic/yinhan/ff3_selection`): controls complete, `runs/ff21_released/`
+(49136636) and `runs/ff21_awh/` (49136637 NODE_FAIL on midway2-0085, finished as 49136943, 17:47);
+all-atom `aa/` (44 domains); `runs/e00/` (49137240, COMPLETED 19:37); diagnostics `runs/e00_hb21/`, `runs/fp_e00/` (the ff21-fixedpoint epoch-0 control) and the single-group resets `runs/e00_{bb21,env21,rot21,sheet21}/` (all COMPLETED 10-02 by 10:55), findings 1.17. Candidates `e01`, ... are submitted by the watch.
+
+**midway2-0085 failed twice on 2026-10-01** (NODE_FAIL of panel jobs 49136637 at 16:31 and
+49137818 at 22:13), the record that excluded midway2-0037. Panel jobs use `ff3_selection/slurm.args`
+and ff30_glyhb's `slurm.args` carries it too; ff30_gly's never did.
+
+The selection watch (cron `6733412b`, above) submits the panel for each finished epoch-end
+checkpoint (marker `runs/<tag>.submitted`), checks the link log, and runs `panel.py select` when
+data are complete. Session-only, expires 10-09; never runs a Duo script. The release decision goes
+to the user, by the rule in `panel.py`.
+
+**Hand-over.** Done: the Mac Studio's local run was stopped by the user (confirmed 2026-10-02 00:25);
+its steps after the cluster start (12:16:47) are discarded.
 
 **`bash training/ff30_gly_local/sync_to_midway2.sh`** (on the Mac) is idempotent:
 * chain RUNNING: it stops the local driver and workers and writes `HANDED_OVER`;
@@ -309,8 +348,15 @@ identical `init_param/` (ff2.1, md5-checked) and `upside_input/`, including `ram
 * `upside_input/` is a hardlink copy of ff30_basin's, except `rama.dat`, which is a fresh copy
   of `parameters/common/rama31.dat` (md5 `fc479d45...`, built by `training/build_gly_library.py`,
   log `checks/build_gly_library_20261001.log`). Never edit a hardlinked file in place.
-* `after_training.sbatch` gates with max 13 epochs. On convergence it releases `ff_3.0`, backing
-  up the failed basin-offset release, and then tries to submit the Peng arms and glpG to broadwl.
+* **The gate no longer releases (changed 2026-10-01 ~13:45, user).** `after_training.sbatch` gates
+  with max 13 epochs. Converged: it stops with nothing released and lists the epoch-end
+  checkpoints; the one to release is chosen by the selection panel (plan.md Phase 8), then
+  `bash ../validate_ff.sh . ff_3.0 run_output/epoch_EE_minibatch_18/checkpoint.pkl` from the run
+  dir releases it, backing up the failed basin-offset release, and submits the Peng arms and glpG
+  to broadwl. Not converged: trains one more epoch, as before. Backups
+  `$P/training/{gate_or_continue.sh,validate_ff.sh}.bak_pre_selection_20261001` and
+  `ff30_gly/after_training.sbatch.bak_pre_selection_20261001`; tested on midway2 in a sandbox
+  (converged, not converged, and a missing checkpoint, which stops before any release).
   **From midway3 those submissions fail**, and `validate_ff.sh` stops at "not every benchmark arm
   was submitted": the release happens, validation does not. Submit validation by hand once midway2
   has an allocation, or adapt `validate_ff.sh` to midway3.
@@ -547,7 +593,8 @@ as running; they are in git history). What must not be forgotten:
   * The HDX resubmit block uses `HDX_WORK=.../hdx` without `HDX_N=28` and would overwrite the pre-fix
     baseline: fix it before any HDX rerun.
 * **NDRD library files must never be copied to the cluster** (licence).
-* **Do not overwrite the cluster's `py/` or `training/` from the local repo during these campaigns.**
+* **Do not overwrite the cluster's `py/` or `training/` from the local repo during these campaigns**
+  (except `gate_or_continue.sh`, which was deliberately aligned with the repo on 2026-10-01).
   On 2026-10-01 the local repo moved its campaign files to
   `scratchpad/redistribution_cleanup_20261001/` (plan.md Phase 9), and its `gate_or_continue.sh`
   now stops at convergence instead of calling `validate_ff.sh`. The midway2 tree still runs on the
@@ -703,6 +750,13 @@ for fn in sorted(run_dir.glob("*.run.*.up")):
 ---
 
 ## 8. Known lessons (environment)
+
+* **Size wall-time requests to the work; long requests do not backfill on broadwl** (2026-10-01).
+  Two 1-node panel jobs asking 24 h were estimated to start 1.5-2 days out; cut to 4 h with
+  `scontrol update JobId=<id> TimeLimit=04:00:00`, they started within the hour. 36 h benchmark arms
+  were estimated 2.5 days out, so the benchmark now runs 12 h jobs with ~10.5 h chunks
+  (`bench.sbatch`, `bench_run.py` `CHUNK_SEC`; backups `*.bak_pre_12h_20261001`). A queued job keeps
+  the batch script it was submitted with, so a changed resubmit line needs a fresh submission.
 
 - **NP dt hard limit: 0.001.** dt=0.005 caused backbone blow-ups during unfolding (large-amplitude spring instability at t>250, proven by A/B). Never raise above 0.001.
 - **Do not transfer thresholds between NP and glpG.** A CN_MAX borrowed from NP false-positived on a healthy glpG chunk (2.52 Å vs healthy max 2.659 Å) and cost a 6 h block. The two jobs have different physics.

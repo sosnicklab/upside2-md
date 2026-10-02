@@ -213,6 +213,29 @@ Glycine only. Pre-proline is separate and parked (Phase 6).
   - Every finished step is checked with `training/check_step.py`: kinetic-energy ratio, RMSD,
     unfolded-state target, finiteness, parameter drift, glycine readout. Baseline from ff_3.0's
     epoch 5: helical glycines alpha_L 0.102 free / 0.005 restrained, H-bond margin 0.080.
+- [x] **Release by checkpoint selection, not the last iterate (user, 2026-10-01; findings 1.17).**
+  The midway2 gate now stops at convergence with nothing released (`gate_or_continue.sh`, as in
+  the repo), and `validate_ff.sh <run> ff_3.0 <checkpoint>` releases the chosen one. Training is
+  unchanged; not-converged still trains one more epoch.
+- [ ] **Selection panel (rule decided 2026-10-01, user delegated; running).** The 44 L-only CATH
+  domains of Charron et al. (2,823 residues, 198 glycines), all-atom ff99SB-ILDN at 300 K, against
+  Upside native-start runs of each epoch-end checkpoint and of ff2.1 as control, all at T0 = 0.8.
+  - Per residue, basin populations (`rama_basin.py` basins), counted on both sides only in frames
+    whose residues i-4..i+4 are native-like.
+  - Reported by class with a bootstrap over domains: natively helical and beta non-glycine
+    residues; helical glycines (alpha_L); natively left-handed glycines (alpha_L). A beta residue is
+    scored on the extended region (beta + pPII), since the -100 deg line cuts native strands and
+    ff2.1's beta-basin "miss" is a phi shift (findings 1.17).
+  - Selection panel and final validation stay disjoint: the panel chooses, Peng and glpG judge.
+  - **Rule.** The newest epoch-end checkpoint is the default. An earlier one replaces it only if
+    it dominates: no class worse and at least one of helix, helical glycine or left-handed glycine
+    better, on |error| by a paired bootstrap over domains (95% interval excluding zero); if several
+    dominate, the latest. Why: the training objective is the design, and a 198-glycine panel picking
+    the top scorer would mostly pick noise; the panel overrides only on clear evidence. The release
+    is held for the user if the choice is worse than released ff2.1 in helix or helical-glycine
+    retention, the ff_3.0 failure.
+  - Code `/project/trsosnic/yinhan/ff3_selection/panel.py` (copy in `scratchpad/ff3_selection`),
+    jobs and watch in remote_jobs.md §1.
 - [ ] **Validation.**
   - Free ensembles by native basin: helical glycines' alpha_L clearly below ff_3.0's 0.101, and
     their helical loss not below Ser/Asn's (~0.08), so propensity is not flattened. Natively
@@ -222,6 +245,87 @@ Glycine only. Pre-proline is separate and parked (Phase 6).
 - Dropped: a host-guest helix benchmark and any correction calibrated to experiment. The Pace &
   Scholtz scale is an 11-system average, and the per-host data are not available to us.
 - If validation fails, decide a context term then, with the evidence. Do not add one in advance.
+
+### Phase 8 revised - glycine H-bond term and a damped side-chain step (APPROVED 2026-10-02, user)
+Why (findings 1.17): with the physics map, the trainer keeps loop glycines left-handed by bending
+the shared H-bond, sheet and side-chain terms, and helical glycines pay (lambda helix 3, glpG TM4).
+Separately, every retrain from ff2.1 weakens helices and folds because the side-chain pair table
+(31,420 coefficients, ~6% with any signal) random-walks under Adam's normalised step; putting it
+back restores the panel. **Revised decisions:**
+- **Glycine gets its own offsets on the three H-bond basin energies**, trained by ConDiv with
+  everything else, starting at zero. `hbond_energy` takes an optional 15-entry `parameters` (12 +
+  glycine's dE_alpha, dE_beta, dE_other) with a per-residue `residue_class`; a 12-entry config is
+  unchanged bitwise. The SARW replica zeroes the offsets with the shared energies.
+- **The side-chain (`rot`) learning rate is 10x smaller**, so per-step noise averages out while a
+  consistent pull still accumulates; every file stays trained.
+- Unchanged: the AWH glycine library, Peng's objective (lambda 0.3, threshold as coded), the
+  protein set, the protocol.
+- New run from ff2.1 (`training/ff30_glyhb`); ff30_gly is stopped when it is ready to start.
+- Validation: the panel at every epoch end (helical and left-handed glycines toward all-atom, helix
+  and folded fraction no worse than ff2.1), then lambda (WT toward G46A/G48A), Peng, glpG; the glpG
+  seed patch must carry the new term.
+- [x] Engine: optional glycine offsets in `HBondEnergy` (value, angle forces, parameter derivative).
+  The class accumulation sits after the shared loops: placed beside them, -ffast-math reordered the
+  shared sums and changed their last bit.
+- [x] Config writer: a 15-entry `hbond.h5` writes the offsets and `residue_class`; `patch_glpg.py`
+  carries them into a hybrid seed.
+- [x] Trainer: field `hbg`, `zero_for_sarw`, rot learning rate / 10; `extract_ff.py`,
+  `check_step.py`, README, up.md.
+- [x] Tests: 12-entry config bitwise equal to the old build (energy, forces, all derivatives);
+  zero offsets bitwise equal to 12 entries; offset derivatives and forces match finite differences.
+- [x] Test: one real trainer step (1ga3, local): hbg gets a gradient and moves, rot steps 10x smaller.
+- [x] Deployed to midway2 (bitwise parity on 1ga3, engine and binary), ff30_gly stopped, ff30_glyhb
+  initialised from ff2.1 and submitted (2026-10-02 11:52).
+- [ ] Panels h00, h01, ... at each epoch end; then lambda, Peng, glpG (sync `/beagle3` from `$P`
+  first, and the glpG seed through `patch_glpg.py`). Lambda's helix 2 / helix 4 misorientation has
+  no single side-chain cause under ff2.1 (findings, lambda update 2026-10-02), so it is not trained
+  against; re-test it under ff3.0: crossing angle, the Q33-F51 dock, helix 1-helix 2 contacts.
+
+### Phase 8 fallback - glycine context from all-atom physics (PROPOSED 2026-10-01, not approved)
+Used only if Phase 8 validation fails. The user's constraints: bottom-up only for glycine, every
+other residue and term as current Upside, training allowed, design change kept to the minimum.
+
+Why a context term: with ff2.1 unchanged and the AWH map (ff30_gly step 0, findings 1.17), helical
+glycines still sit in alpha_L 0.076 of the time and natively left-handed ones fall to 0.744. The
+local map is physics now; what is missing is a glycine term that knows its context, which no
+context-free map can supply (1.15). The smallest such term is a glycine-only offset on FF2's three
+H-bond basin energies (1.15-1.16): Upside already scores each residue's H-bonds by its own basin.
+
+- [ ] **Measure the target in all-atom (bottom-up).** In-context glycine free energies
+  dG(alpha_L - alpha_R), from AWH on the glycine's (phi, psi) inside native proteins, in the map's
+  own force field and temperature (ff99SB-ILDN, 300 K). Glycines: internal helical, helix C-cap,
+  natively left-handed loop, beta; ~10 training proteins, ~30 glycines.
+  - Our own all-atom data are peptides only (`gly_peptides/`: capped dipeptides, GGGGG, SAGAS), so
+    they cannot give context. They are the no-fold baseline: the engine applies them exactly, so
+    in-protein dG minus dipeptide dG is the part Upside's context terms must supply. Their AWH
+    setup is reused for the biased runs.
+  - **Unbiased part from public data in the same force field (findings 1.17):** Charron et al.'s
+    50 CATH domains, amber99sb-ildn + TIP3P, 300 K, 4 x 0.5 us from native. Gives loop, turn and
+    beta glycines directly, and a flip count for helical ones. Exclude the six D-amino-acid domains
+    and the decoy frames.
+  - New AWH runs only for helical glycines whose flips are too rare in those 2 us.
+- [ ] **Compare with Upside first.** Upside's same dG for the same glycines, from free simulation
+  at the trainer's T0. If Upside matches within error in every class, there is nothing to fix here.
+  - Count only Upside frames whose surroundings are native-like, as the all-atom runs are. If not,
+    Upside's extra fraying gets absorbed into the glycine offsets.
+  - Fit the protein data only into the context-indexed offsets, never into glycine's map. Folded
+    proteins carry placement physically: Charron's glycine phi prior, inverted from data that
+    include the 50 native domains, has P(phi > 0) 0.603 against 0.500 for our dipeptides
+    (findings 1.17).
+- [ ] **Add the term only if the gap is there and follows the own-H-bond class.**
+  - Engine: an optional per-residue class and per-class offsets on E_alpha, E_beta, E_other in
+    `hbond_energy`. They go in their own dataset, outside `parameters`, so ConDiv's 12-entry layout
+    and every existing config are unchanged. The config writer writes them only if `hbond.h5`
+    carries them.
+  - Values: fitted to the all-atom dG, not trained by ConDiv. The gradient is exact:
+    d dG_j / d theta = <dV/dtheta>_alpha_L,j - <dV/dtheta>_alpha_R,j from one Upside run. Then
+    one ConDiv epoch around them with everything else, and refit; stop when they no longer move.
+- [ ] **Validate** as Phase 8, plus the all-atom dG of held-out glycines.
+
+Not in this plan, on purpose: refitting any non-glycine term to all-atom data, force matching
+(ff2.1 was never fitted to all-atom forces, so glycine would absorb their mismatch), and training
+the offsets against the native-restrained replica (its ~0.99-in-basin target would flatten
+glycine's helix-breaking propensity, 1.16).
 
 ### Phase 9 - repo cleanup for redistribution (DONE 2026-10-01, user)
 
