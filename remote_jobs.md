@@ -1,14 +1,101 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-02 13:10).** The ff3.0 retrain is ff30_glyhb (plan.md Phase 8),
-a chain on midway2 broadwl from ff2.1 with glycine's own H-bond offsets and a 10x smaller side-chain
-step; ff30_gly (the AWH library alone) was stopped at 11:51 in epoch 3. Run only on midway2 broadwl
-(user). midway3's login node may be used to move or read files on the shared `/project` and
-`/beagle3` (user, 2026-10-02). The BP validation is analysed (§0c) and not yet reported to Tobin.
+**Current state (2026-10-02 15:00).** The ff3.0 retrain is **ff30_glyhb** (plan.md Phase 8,
+revised 10-02), chain link 49141995 on midway2 broadwl since 13:25:41, from ff2.1 with glycine's own
+H-bond offsets and a 10x smaller side-chain step; steps 0 and 1 done and healthy. ff30_gly (the AWH
+library alone) was stopped at 11:51 in epoch 3. Run only on midway2 broadwl (user). midway3's login
+node may be used to move or read files on the shared `/project` and `/beagle3` (user, 2026-10-02).
+The BP validation is analysed (§0c) and not yet reported to Tobin.
 
 Written so a fresh session can pick up cold: how to connect, check health correctly and react to a
 failure. Job state in §1 is live; finished jobs are kept only where their files are still used (§1)
 or as one-line lessons (§8). rockfish is gone as a host, so glpG is midway2-only.
+
+---
+
+## Resume here, from any computer (2026-10-02)
+
+**What travels with git and what does not.** `plan.md`, this file, `findings.md`, `progress.md`,
+`training/`, `src/`, `py/` and `up.md` are tracked; commit them here and pull them there. Not in git
+(`.gitignore` has `*scratchpad*`): `scratchpad/mdw2_master.exp`, `mdw3_master.exp` and the local
+copies of the panel tools. The authoritative panel tools are on the cluster, in
+`/project/trsosnic/yinhan/ff3_selection` (`panel.py`, `panel.sbatch`, `submit_new.sh`,
+`slurm.args`), and the deploy and test scripts of 10-02 are in
+`/project/trsosnic/yinhan/checks/hbg_deploy_20261002`. Claude's memory is per computer; the rules
+that matter here are in this file and `findings.md` §10.
+
+**The cluster's `training/` is not the repo's layout, and must stay so until ff30_glyhb is done.**
+The repo was cut to five files on 10-02 (`extract` and `gate` became ConDiv commands,
+`gate_or_continue.sh` folded into `train_chain.sbatch`, `check_step.py` moved to
+`scratchpad/redistribution_cleanup_20261002/training_pre_merge/`). `$P/training` on midway2 keeps the
+old layout, deployed 10-02 11:46 with the glycine term: `ConDiv.py` (the copy ff30_glyhb's
+`run_output/ConDiv.py` was made from), `check_step.py`, `extract_ff.py`, `convergence_gate.py`,
+`gate_or_continue.sh`, `validate_ff.sh`, `patch_glpg.py`. ff30_glyhb's `after_training.sbatch` calls
+`$P/training/gate_or_continue.sh`, and the watch calls `$P/training/check_step.py`, so **do not sync
+the repo's `training/` over `$P/training`** before ff30_glyhb is released; a synced tree would end
+the run at its gate with a missing script.
+
+**Connect.** The simplest way from a new computer is to open the master yourself, password and Duo:
+```bash
+ssh -M -S ~/.ssh/cm-mdw2.sock -o ControlPersist=8h -o ServerAliveInterval=30 yinhanw@midway2.rcc.uchicago.edu
+```
+and leave it open (or exit; ControlPersist keeps the socket). Every later command reuses it:
+`ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu '<cmd>'`. To let Claude
+open it unattended, copy `scratchpad/mdw2_master.exp` over (§0 shows what it does) and put the
+password line `set password "..."` in `~/.bin/ssh_mdw3` there. **Never run anything heavy on a login
+node** (findings 10.6): a 60 GB analysis on 10-02 got every session on midway2-login1 killed five
+times in 40 min. If the socket keeps dropping, run `ps -u yinhanw --sort=-rss` there first.
+
+**One watch at a time.** This computer's watch is session cron `6733412b` (:17 and :47); it dies
+with that Claude session. If the other computer takes over, stop this one (or end the session), and
+start the same watch there with the prompt below, every 30 min. `submit_new.sh` is idempotent, so
+two watches would not double-submit, but they would both report.
+
+**The watch, by hand or as the cron prompt:**
+1. `ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu`; if down,
+   reconnect (above). Never loop on connection attempts, and never run the expect script from an
+   unattended watch.
+2. On midway2: `bash /project/trsosnic/yinhan/ff3_selection/submit_new.sh` (submits the panel `hEE`
+   for each finished epoch-end checkpoint of ff30_glyhb, lists jobs and finished panel runs).
+3. Link log: newest `/project/trsosnic/yinhan/upside2-md-mdw2/training/ff30_glyhb/condiv-train_*.out`,
+   for `WORKER_FAIL`, `Traceback`, `STOPPED`, `never started`.
+4. Each new finished step: `cd /project/trsosnic/yinhan/upside2-md-mdw2/training && source
+   ff30_glyhb/env.sh && python3 check_step.py ff30_glyhb` (all finite, KE/1.5kT ~1.0-1.05, restrained
+   RMSD ~1 A, unfolded target 24 of 24; the glycine offsets and margins; the glycine readout).
+5. When `ff3_selection/runs/<tag>/` holds 176 npz: `cd /project/trsosnic/yinhan/ff3_selection &&
+   source /project/trsosnic/yinhan/upside2-md-mdw2/training/ff30_glyhb/env.sh && python3 panel.py
+   select aa domains runs ff21_released ff21_awh e00 e01 e02 h00 [h01 ...]`. It prints the table,
+   the chosen checkpoint and whether the release is held. Nothing is released by the watch: the
+   decision goes to the user.
+6. Update §1 below.
+
+**What happens next, and when** (steps take 37-43 min, so an epoch of 19 steps takes ~12.5 h):
+
+| when (CDT, estimates) | event | what to do |
+|---|---|---|
+| every ~40 min | a training step | watch items 3-4 |
+| 10-02 ~19:00-20:00 | lambda ff2.1 chunk 2 ends (4 arms, self-resubmitting; ~450k of 2.53M time units per chunk) | `cd /project/trsosnic/yinhan/checks/lambda_ff21 && python3 lambda_check.py <arm> ...` and `lambda_packing.py <arm> ...`, arms `lambda_{native,denovo}_ff_2.1`, `lambda_G46A_G48A_{native,denovo}_ff_2.1`; on a compute node or with `ulimit -v` |
+| 10-03 ~01:00-02:30 | epoch 0 ends (`epoch_00_minibatch_18`) | the watch submits panel `h00` (1 node, 1-3 h) |
+| 10-03 morning | `h00` table | **first verdict on the glycine term**, see below |
+| 10-03 ~14:00-15:00 | epoch 1 ends, panel `h01` | as for h00 |
+| 10-04 ~01:30 | link 49141995 hits its 36 h wall at ~step 54; successor 49142816 continues | check it started and resumed from the newest checkpoint |
+| 10-04 ~04:00 and ~16:00 or later | epochs 2 and 3 end (h02, h03); at step 76 `after_training.sbatch` (`ff30h-gate`) runs the convergence gate | converged: it stops and lists checkpoints, choose by panel; not converged: one more epoch, up to 13 |
+| 10-04 to 10-05 | lambda ff2.1 arms finish | final lambda readout (findings 11d) |
+
+**Reading the h tables.** Compare each hEE against ff21_released and ff21_awh in the same table (37
+domains common to e00-e02 at 13:10; the set can change as tags are added). The aim: helical glycines
+(gly_helix) at least as close to all-atom as ff2.1 (-0.114 at 13:10) while left-handed glycines
+(gly_left) stay near ff2.1's (+0.032), and helix and folded no worse than ff2.1 (-0.016, 0.615).
+ff30_gly reached gly_helix -0.112, gly_left -0.042, helix -0.025, folded 0.501 at e02, and was
+held for helix. **Trend to watch on every step:** check_step's glycine margin
+`E_other - E_alpha` for glycines (start +0.192, +0.139 after step 1). A margin that keeps falling
+means glycines are pushed toward alpha_L, the direction that cost helical glycines before.
+
+**After ff3.0 is chosen** (plan.md Phase 8): release from midway2 with
+`bash ../validate_ff.sh . ff_3.0 run_output/epoch_EE_minibatch_18/checkpoint.pkl` in the run dir;
+sync `/beagle3/trsosnic/yinhan/upside2-md` from `$P` first (it lacks the glycine term); remove the
+`STOP` files in `popepopg_REMD_mdw2/glpG-RKRK-*/` and reset `block_count` before glpG; the glpG seed
+takes the new term through `patch_glpg.py`; re-simulate lambda for its packing (findings 11d).
 
 ---
 
@@ -223,12 +310,12 @@ healthy at the first 100 frames (C-N 1.33-1.34 +- 0.13 A, KE/1.5kT 0.99-1.00).
 
 ## 1. Current jobs
 
-Snapshot **2026-10-02 14:23 CDT, verified live against `squeue` on midway2.** Finished and cancelled
+Snapshot **2026-10-02 14:53 CDT, verified live against `squeue` on midway2.** Finished and cancelled
 rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | R since 13:25:41 on 19 nodes; step 0 done 14:02 in 2196 s (worker median 1229 s), healthy (`check_step.py`: 24 of 24 finite, KE/1.5kT 1.006-1.041, restrained RMSD median 1.03 A, unfolded target 24 of 24); hbg after step 0 [+0.01 +0.01 -0.01]; link log clean; at ~35 min a step, the 36 h wall holds ~60 of the 76 steps and the successor finishes them | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
+| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | R since 13:25:41 on 19 nodes; step 0 done 14:02 in 2196 s (worker median 1229 s), healthy (`check_step.py`: 24 of 24 finite, KE/1.5kT 1.006-1.041, restrained RMSD median 1.03 A, unfolded target 24 of 24); step 1 done 14:46 in 2586 s, healthy (24 of 24 finite, KE/1.5kT 1.008-1.046); hbg after step 1 [+0.019 +0.019 -0.019], glycine margin E_other - E_alpha +0.139 (start +0.192), shared margin +0.177; link log clean; at ~35 min a step, the 36 h wall holds ~60 of the 76 steps and the successor finishes them | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
 | 49142816 | its insurance successor (`afterany:49141995`) | PD (Dependency) | none; resumes from the newest checkpoint if the link dies |
 | 49139947, 49139944 | Peng benchmark lambda under **ff_2.1**, native and de novo arms, chunk 2 (Table S2 ladder 0.780-0.980, self-resubmitting 12 h jobs); `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_{native,denovo}_ff_2.1/`, logs `logs/lambda_<kind>_ff_2.1_<jobid>.out` | R | after each chunk: `checks/lambda_ff21/lambda_check.py` and `lambda_packing.py` |
 | 49139945, 49140670 | the same arms for **lambda G46A/G48A** (helix 3's glycines to Ala), chunk 2; `runs/lambda_G46A_G48A_{native,denovo}_ff_2.1/` | R | compare with wild type at matched time |

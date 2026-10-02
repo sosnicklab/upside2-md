@@ -225,6 +225,10 @@ byte-identical to `extract_ff.py`, and `gate` gives the same p-values and verdic
 
 ## Known Errors / Blockers
 
+* **The midway2 tree's `training/` keeps the pre-merge layout until ff30_glyhb is released.**
+  ff30_glyhb's gate calls `$P/training/gate_or_continue.sh` and its monitor is
+  `$P/training/check_step.py`, both gone from the repo since the 10-02 merge (Phase 9). Do not
+  sync the repo's `training/` to the cluster before then (remote_jobs.md, "Resume here").
 * **Run only on midway2 broadwl** (user, 10-01). No `amd`, `beagle3` or GPU partitions: CPU jobs
   must not run on the group's GPU allocation. No midway3 jobs; its login node may be used to move or
   read files on `/project` and `/beagle3` (user, 10-02).

@@ -129,3 +129,8 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   and their 1UBQ PDB copy (master keeps one in `example/07.MoreRestraints/pdb/`), moved to scratchpad,
   so `example/01.GettingStarted` matches master. `module load openmpi` dropped from
   `example/16.MARTINI/run_sim_1afo_full.sh`.
+* 12:50-15:00: threshold test closed (both SI statements give the same DSE; findings 1.17), held
+  split tasks cancelled; e02 panel held for helix; ff30_glyhb started 13:25:41, steps 0-1 healthy,
+  hbg [+0.019 +0.019 -0.019] after step 1. `remote_jobs.md` gained "Resume here, from any computer":
+  what is and is not in git, how to connect, the watch by hand, the timeline to release, how to read
+  the h tables, and the cluster/repo `training/` layout warning.
