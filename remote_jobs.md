@@ -283,17 +283,24 @@ restored to the repo's version (md5 0a653ade). The BP test arms were unaffected 
 
 ## 1. Current jobs
 
-Snapshot **2026-10-02 12:00 CDT, verified live against `squeue` on midway2.** Finished and cancelled
+Snapshot **2026-10-02 13:10 CDT, verified live against `squeue` on midway2.** Finished and cancelled
 rows are deleted; only lessons worth reusing are kept below.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md "Phase 8 revised"), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | PD (Priority) since 11:52, 12 nodes requested; its successor is queued when it starts | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
-| 49140630 | selection panel `e02` (ff30_gly epoch-2 end checkpoint; ff30_gly itself is stopped) | PD (Priority) | `select` with ff21_awh, e00, e01, e02, as the comparison for the h tags |
-| 49139877 (array 0-23) | DSE threshold test: the 24 step-0 proteins, ff2.1 + NDRD map, DSE under the port's threshold (Fig. S3) and the SI text's (2/3 Rg_native + 1/3 Rg_SARW) from one simulation; `gradsplit_20261001/ndrd_txt/`, `split_txt.sbatch`, `tasks_txt.txt` | tasks 0-3 done, 4-6 R at 11:45, 7-23 PD; no task hit the 11:44-11:46 mode window (no PermissionError in its logs) | if the text threshold puts ff2.1 at the fixed point (E_alpha, E_beta, bb_env contrasts ~0), it is the fidelity fix for the DSE drift |
-| 49138763_[88-95], 49139665_[25-47] | the rest of the gradient split (`gradsplit_20261001`, `split_worker.py`; AWH and NDRD maps, ff30_gly steps 0-1); 25 AWH + 40 NDRD already analysed (findings 1.17) | **held (JobHeldUser) since 10-01 07:25** so 49139877 runs first | `scontrol release 49138763 49139665` once 49139877 has run, or cancel: the split's conclusion already stands |
+| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md "Phase 8 revised"), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | PD (Priority) at 13:09, Slurm estimate 13:21 (it was briefly next in line, Resources, at 12:23-12:53); its successor is queued when it starts | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
 | 49139947, 49139944 | Peng benchmark lambda under **ff_2.1**, native and de novo arms, chunk 2 (Table S2 ladder 0.780-0.980, self-resubmitting 12 h jobs); `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_{native,denovo}_ff_2.1/`, logs `logs/lambda_<kind>_ff_2.1_<jobid>.out` | R | after each chunk: `checks/lambda_ff21/lambda_check.py` and `lambda_packing.py` |
 | 49139945, 49140670 | the same arms for **lambda G46A/G48A** (helix 3's glycines to Ala), chunk 2; `runs/lambda_G46A_G48A_{native,denovo}_ff_2.1/` | R | compare with wild type at matched time |
+
+**Panel e02 finished 13:05** (49140630). `select` with ff21_released ff21_awh e00 e01 e02 (37
+domains common to all; 7 dropped for too few folded frames in some candidate): e02 folded 0.501,
+helix -0.025, beta -0.017, gly_helix -0.112, gly_left -0.042 against ff2.1's 0.615, -0.016, -0.017,
+-0.114, +0.032; "RELEASE HELD: worse than ff2.1 in helix". ff30_gly is stopped; these are the
+comparison for the h tags.
+
+**Gradient split closed 12:52**: the threshold test 49139877 finished (24 of 24, findings 1.17:
+both threshold statements give the same DSE); the held remainder (49138763_[88-95], 49139665_[25-47])
+was cancelled, the split's conclusion already standing.
 
 **ff30_gly was stopped 11:51:19** (49135913 and its successor 49136311 cancelled, approved plan) in
 epoch 3 minibatch 8; its newest checkpoint is `epoch_03_minibatch_07`, so it can be resumed if ever

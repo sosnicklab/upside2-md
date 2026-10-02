@@ -2573,10 +2573,14 @@ re-checked here).**
   step moves every coefficient by ~lr whatever the gradient's sign consistency, so a table at its
   fixed point (as rot was at ff2.1, 9k) diffuses away: rms 0.44 in 19 steps. By contrast hb follows
   its mean gradient (cosine +1.00) and the burial scale mostly does (+0.83).
-* **Threshold test, first 3 of 24 proteins:** the SI text's threshold differs little from the
-  caption's (16.4 against 17.2 A, 19.8 against 22.3, 22.3 against 22.0; SARW Rg 30-40 A, crystal Rg
-  below the coldest replica's), and the DSE on E_alpha changes by a few percent, not the ~2.7x that
-  would put ff2.1 at the fixed point. Pending the other 21.
+* **The DSE threshold's two statements give the same DSE** (all 24 step-0 proteins, ff2.1 + NDRD,
+  one simulation, `gradsplit_20261001/threshold_report.py`): the text's Rg threshold is the Fig. S3
+  one times 1.02 (median; 0.97-1.12), the kept unfolded frames 458 against 469, and every DSE group
+  changes by about 2% (E_alpha -175.0 against -178.0, E_beta -131.2 against -134.0, bb_env scale
+  +454 against +465). ff2.1's balance stays at lambda 0.15, 0.10 and 0.13 for those three, against
+  the trainer's 0.3. So the threshold reading is not why the DSE pulls ff2.1 off its fixed point,
+  and "threshold as coded" stands. Since resetting E_alpha, E_beta or bb_env does not change the
+  panel (table above), this drift is not acted on in ff30_glyhb.
 * **Public folded-protein trajectories in the glycine map's own force field exist** (verified from
   Charron et al., Nat Chem 17, 1284 (2025), SI section 1.1, and the Zenodo READMEs,
   doi:10.5281/zenodo.15465782).
