@@ -142,4 +142,6 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   7.5e-4 E_up, max 0.157 (one real early stop in 1afh, 0.2 kT), force error median 8e-5 of RMS force.
   REMD arrays rerun on the midway2 login node (user's call; the compute-node job would have started
   ~20:11), output identical to `analysis_20260929.txt`. 11-panel figure in
-  `~/Downloads/bp_validation.{png,pdf}`; data and scripts in `bp_validation/static/` (remote_jobs.md §0c).
+  `~/Downloads/bp_validation.{png,pdf}`. Everything the Mac had (scripts, the source patch as
+  `make_src.py`, the build recipe as `build_libs.sh`, sources, libraries, SciencePlots styles,
+  results; 325 files) mirrored to `bp_validation/static/`, md5 manifest identical (remote_jobs.md §0c).

@@ -28,9 +28,10 @@ that matter here are in this file and `findings.md` §10.
 **The rotamer-BP validation figure (for Tobin, not yet sent) lives on the cluster.** The finished
 figure, its data and the script that draws it are in `/beagle3/trsosnic/yinhan/bp_validation/static/`
 (visible from midway2 and midway3): `bp_validation.png` and `.pdf` (md5 `0a157e39...` and
-`79bcd775...`, identical to the `~/Downloads` copies on the computer that made them), `plot_bp.py`,
-`remd/obs_*.npz` and `sys/`. To work on it here: `scp -r` that directory over and run
-`python plot_bp.py` in it. The figure's panels, numbers and provenance are in §0c "Figure".
+`79bcd775...`, identical to the `~/Downloads` copies on the computer that made them), `plot_bp.py`
+with its bundled `styles/`, the REMD arrays, and the full static-frame harness with its sources,
+libraries and results. Nothing of it exists only on one computer. To work on it here: `scp -r` that
+directory over and run `python plot_bp.py` in it. Contents and provenance are in §0c "Figure".
 
 **The cluster's `training/` is not the repo's layout, and must stay so until ff30_glyhb is done.**
 The repo was cut to five files on 10-02 (`extract` and `gate` became ConDiv commands,
@@ -326,19 +327,29 @@ healthy at the first 100 frames (C-N 1.33-1.34 +- 0.13 A, KE/1.5kT 0.99-1.00).
 that made it, and `bp_validation/static/bp_validation.{png,pdf}`. `plot_bp.py`, 11 panels: a-c
 static frames (ECDF of |E - E_ref|, ECDF of relative force error, histogram of iterations cut short),
 d-g Q(T) per seed for the four REMD proteins, h-k Q_bug - Q_fix with the seed sigma. Red = bug, blue
-= fix throughout; SciencePlots by path (global CLAUDE.md). T_mid in d-g is from the two-seed mean
+= fix throughout; SciencePlots 2.1.1 style files bundled in `styles/` (identical rcParams to the
+global CLAUDE.md path, so the PNG is bitwise the same). T_mid in d-g is from the two-seed mean
 Q(T), so it differs by up to 0.001 from the per-seed values above.
 * REMD arrays: `analyse_bp.py` now also writes `obs_<protein>.npz` (per arm and T: Q, RMSD, Rg, E;
   original kept as `analyse_bp.py.bak_pre_npz`). Rerun 10-02 on the midway2 login node (user's call:
   compute-node job 49143602 had a 20:11 start estimate and was cancelled; 4 niced processes under
   `ulimit -v 4 GB`, 2.5 min); `analysis_rerun.txt` is identical to `analysis_20260929.txt`.
   `dump.sbatch` is the compute-node version of the same run.
-* Everything to replot is in `bp_validation/static/`: `plot_bp.py`, `remd/obs_*.npz`, and the
-  static-frame harness and results (`gen.py` frames, `eval.py` one solve per library and tolerance,
-  `sys/<code>/{frames,init}.npy`, `base.up`, `res_{bug,fix,ref}.npz`). Replot from any computer by
-  copying `static/` and running `python plot_bp.py`. Rerunning `eval.py` also needs Mac builds of
-  the bug and fix libraries with a `read last_iter` readout added to `rotamer.cpp`; those are only in
-  the gitignored `scratchpad/bp_validation/` of the Mac that made them.
+* **`bp_validation/static/` holds everything the Mac had** (325 files, md5 manifest identical to
+  the Mac's `scratchpad/bp_validation/` on 10-02 16:10), so nothing of this work is on one computer:
+  * figure: `plot_bp.py`, `styles/`, `remd/obs_*.npz`, `bp_validation.{png,pdf}`
+  * static-frame harness, in run order: `make_src.py` (writes `src_bug/` and `src_fix/` from a
+    source tree: the `read last_iter` BP-iteration readout in both, and the fabsf removed in
+    src_bug), `build_libs.sh` (the Apple Silicon `install_M1.sh` recipe into `obj_bug/`,
+    `obj_fix/`), `gen.py <code>` (frames), `eval.py <bug|fix> <tol> <max_iter> <tag>` (run as
+    `bug 1e-3 1000 bug`, `fix 1e-3 1000 fix`, `fix 1e-6 20000 ref`)
+  * as used: `src_bug/`, `src_fix/` (complete source trees), `obj_{bug,fix}/libupside.dylib`
+    (arm64 macOS, loadable by `eval.py` on another Apple Silicon Mac without rebuilding)
+  * results: `sys/<code>/{frames,init}.npy`, `base.up`, `res_{bug,fix,ref}.npz`,
+    `T*.up.output`; logs `gen_<code>.log`, `{bug,fix,ref}.log`
+  * not copied, and not needed: the frame-run trajectories `sys/*/T*.up` (their frames are in
+    `frames.npy`), `eval_*.up` (rewritten by `eval.py`), the cmake build trees.
+  Replot from any computer by copying `static/` and running `python plot_bp.py` in it.
 
 ---
 
