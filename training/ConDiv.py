@@ -3,7 +3,7 @@
 
 This is ff2.1's own training workflow: Peng et al., JCTC 2022, SI "Parameterization by Contrastive
 Divergence". The code is O. Kleinmann's Python 3 port of Peng's trainer
-(/project2/trsosnic/okleinmann/condiv/condiv2.py, 2025-12-16, github nnamnielk/condiv4upside2),
+(condiv2.py, 2025-12-16, github nnamnielk/condiv4upside2),
 modernised and restored to the published protocol. Differences from that file, each for a reason:
 
   * modernised: the Theano regulariser is the same objective in torch; mdtraj is replaced by the

@@ -49,7 +49,7 @@ it is not.
 * **Spline Tables Must Be The Original Potential**: A spline table is a representation, never a variant. Evaluated in native force-field units it must equal the published functional form exactly, including how that form reaches its cutoff — for dry-MARTINI that means reaction-field electrostatics (`epsilon_r = 15`, `epsilon_rf = 0`) and a potential-shifted Lennard-Jones, both going to zero at 1.2 nm. Do not tabulate a bare truncation, a re-fit, or a smoothed approximation. Assert the equivalence against the analytic form after unit conversion rather than assuming it.
 * **NO GUARDS**: Never add a guard that hides, masks, bypasses, or works around a numerical problem. This is prohibited without exception, and includes: skipping a pair, term, or gradient because its value is non-finite; clamping, capping, or flooring a force, energy, or displacement to keep a run alive; catching a blow-up and continuing; and aborting on NaN in place of explaining it. A guard destroys the evidence needed to find the cause and silently corrupts the physics that survives it. When a run produces NaN, diverges, or blows up, that is the signal to find the real defect — instrument the code, localize the event, and fix the underlying force field, table, exclusion, or integration error. A validated precondition on a genuinely invalid domain (a box length must be positive; a required input must exist) is not a guard and is fine. If you believe an exception is warranted, stop and ask; do not add one.
 * **H5 Force Field Files**: Do not make version numbers for h5 force field files. Backup the old ones and overwrite them.
-* **No Hard-Coded Protein / System Identity**: Scripts under `py/` are shared infrastructure and must never name a specific protein, PDB id, or system as a default or fallback. A hard-coded id does not fail loudly — it silently attaches the wrong protein's metadata to another system's trajectory, or writes another system's outputs into a foreign run directory. Take the identity from an explicit argument or environment variable; derive every dependent path from it (`run_dir`, `runtime_pdb_id`, `protein_aa_pdb`, metadata PDB). If it is genuinely absent, either raise a clear error naming the missing option, or skip the optional feature that needed it — never substitute a guess. Sample-specific defaults belong in the per-example shell scripts under `example/`, not in `py/`. Fixed 2026-08-09: `martini_extract_vtf.infer_pdb_id` returned `"1rkl"` for any non-bilayer input (this mislabelled the 1AO6 nanoparticle VTFs), and `martini_prepare_system` defaulted `--pdb-id` to `1rkl` and `--run-dir` to `outputs/martini_test_1rkl_hybrid`.
+* **No Hard-Coded Protein / System Identity**: Scripts under `py/` are shared infrastructure and must never name a specific protein, PDB id, or system as a default or fallback. A hard-coded id does not fail loudly: it silently attaches the wrong protein's metadata to another system's trajectory, or writes another system's outputs into a foreign run directory. Take the identity from an explicit argument or environment variable; derive every dependent path from it (`run_dir`, `runtime_pdb_id`, `protein_aa_pdb`, metadata PDB). If it is genuinely absent, either raise a clear error naming the missing option, or skip the optional feature that needed it; never substitute a guess. Sample-specific defaults belong in the per-example shell scripts under `example/`, not in `py/`. The instances found and fixed are in `findings.md` 1.7.
 
 ### dryMARTINI Interface Refactoring Rules
 * **Master Repository Path**: Use `/Users/yinhan/Documents/upside2-md-master` as the master repository reference for all file diffs and code comparisons.
@@ -88,7 +88,10 @@ source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh
 ```
 
 That single file gives an identical binary, force fields and Python on midway2 and midway3.
-Do not build a second per-cluster tree; the whole point is that there is one.
+Do not build a second per-cluster tree; the whole point is that there is one. The ConDiv training
+tree, `/project/trsosnic/yinhan/upside2-md-mdw2` (`$P` in `remote_jobs.md`), is separate: it runs
+only on midway2, uses its own `training/env.sh`, and is never overwritten from the repo during a
+campaign (`remote_jobs.md` §1b).
 
 Why it works, each point measured rather than assumed:
 
@@ -110,94 +113,56 @@ Why it works, each point measured rather than assumed:
 **Filesystem headroom, and a trap.** Check the *fileset* or *group* quota, never `df` on a mount
 point, which reports the whole device (`/project` shows 6.3 PB). From midway2, `df` on the
 subdirectory (`df -h /project/trsosnic`) reports the fileset, and `rcchelp quota` reports only home,
-scratch and the `/project2` group. Measured 2026-09-24: `/project` ~445 G free, `/beagle3` ~1.4 T,
-`/project2` at 97% of its 1.49 T soft group quota, `/cds3` unusable from compute nodes.
+scratch and the `/project2` group. Current headroom is tracked in `remote_jobs.md` (disk section);
+`/project2` sits near its group quota and `/cds3` is unusable from compute nodes.
 
 ### Slurm Environment Setup
 
-For Slurm jobs on the cluster, do not rely on the Apple Silicon `source.sh` bootstrap as the primary environment setup.
+Cluster jobs do not use the Mac `source.sh` bootstrap. Each sources one environment file that loads
+the modules, activates its tree's venv and sets `UPSIDE_HOME`, `PATH` and `PYTHONPATH`:
 
-Use a self-contained Slurm setup from the repo root:
-
-```bash
-PROJECT_ROOT=/path/to/upside2-md
-
-if [ -f /etc/profile.d/modules.sh ]; then
-  source /etc/profile.d/modules.sh
-fi
-
-if command -v module >/dev/null 2>&1; then
-  module load python/3.11.9 || true
-  module load cmake || true
-  module load openmpi || true
-  module load hdf5/1.14.3 || true
-fi
-
-if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
-  source "$PROJECT_ROOT/.venv/bin/activate"
-fi
-
-export UPSIDE_HOME="$PROJECT_ROOT"
-export PATH="$PROJECT_ROOT/obj:$PATH"
-export PYTHONPATH="$PROJECT_ROOT/py${PYTHONPATH:+:$PYTHONPATH}"
-
-```
+* **Shared deployment** (benchmarks, glpG, anything that may run on either cluster):
+  `source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh`.
+* **ConDiv training** (`$P`, midway2 only): the run directory's own copy of `$P/training/env.sh`,
+  which `train_chain.sbatch` sources. The repo's `training/env.sh` is site-neutral (it only
+  activates the repo `.venv`); the cluster copies carry the midway2 module loads.
+* **HDX analysis** is the exception: it runs on midway3 from `.venv_el8_py311_bak` (pymbar,
+  matplotlib), set by hand rather than through that venv's stale `activate` (memory
+  `renamed-venv-activate-trap`).
 
 Rules:
 
 * For interactive local Mac work: `source .venv/bin/activate && source source.sh`.
-* For Slurm jobs: prefer module load + repo `.venv` activation + explicit `UPSIDE_HOME/PATH/PYTHONPATH`.
-* If a Slurm wrapper sets up the environment itself, it should set `UPSIDE_SKIP_SOURCE_SH=1` before invoking lower-level workflow scripts so they do not re-enter the local-only bootstrap path.
-* A proper Slurm job for this project should complete these steps in order:
+* Do not add module loads on top of these files. Both cluster venvs are built from python 3.9.18
+  (`env_shared.sh` from `pyrt/`, the training venv from midway2's `python/3.9.18` module), and each
+  file's module loads and library paths are what let `libupside.so` and `libpython3.9.so.1.0` load.
+* A wrapper that sets up the environment itself sets `UPSIDE_SKIP_SOURCE_SH=1` before invoking
+  lower-level workflow scripts, so they do not re-enter the local-only bootstrap.
+* Never pipe `source <env file>`: the pipe runs it in a subshell and the environment is lost.
+* Submit through midway2 (Default Cluster below), and verify a new environment on a compute node
+  (`command -v python3`, `python3 -V`, the imports the job needs) before submitting a fleet.
 
-1. Resolve `PROJECT_ROOT` explicitly.
-2. Source `/etc/profile.d/modules.sh` when available.
-3. Load the required modules: Python, CMake, OpenMPI, and HDF5.
-4. Activate `PROJECT_ROOT/.venv` if it exists.
-5. Export `UPSIDE_HOME="$PROJECT_ROOT"`.
-6. Prepend `PROJECT_ROOT/obj` to `PATH`.
-7. Prepend `PROJECT_ROOT/py` to `PYTHONPATH`.
-8. Set `UPSIDE_SKIP_SOURCE_SH=1` if the wrapper is handing off to lower-level workflow scripts that would otherwise source the local Mac bootstrap.
-
-Example Slurm wrapper skeleton:
+Example wrapper skeleton:
 
 ```bash
 #!/bin/bash
+#SBATCH --account=pi-trsosnic
+#SBATCH --partition=broadwl
 #SBATCH --time=36:00:00
 set -euo pipefail
 
-PROJECT_ROOT=/path/to/upside2-md
-
-if [ -f /etc/profile.d/modules.sh ]; then
-  source /etc/profile.d/modules.sh
-fi
-
-if command -v module >/dev/null 2>&1; then
-  module load python/3.11.9 || true
-  module load cmake || true
-  module load openmpi || true
-  module load hdf5/1.14.3 || true
-fi
-
-if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
-  source "$PROJECT_ROOT/.venv/bin/activate"
-fi
-
-export UPSIDE_HOME="$PROJECT_ROOT"
-export PATH="$PROJECT_ROOT/obj:$PATH"
-export PYTHONPATH="$PROJECT_ROOT/py${PYTHONPATH:+:$PYTHONPATH}"
+source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh
 export UPSIDE_SKIP_SOURCE_SH=1
 
-bash "$PROJECT_ROOT/example/16.MARTINI/run_sim_1rkl_outlipid.sh"
-
+bash "$UPSIDE_HOME/example/16.MARTINI/<workflow>.sh"
 ```
 
 ### Remote Job Records
 
 **All remote job recording goes into `remote_jobs.md`, and nowhere else.** It is the single source of
-truth for what is running on midway3: job ids, what each job is, its submit script, its log path, its
-data directory, and the next action each one is waiting on. Do not record jobs in `plan.md`,
-`progress.md` or `findings.md` — those track technical direction, execution history and knowledge
+truth for what is running on midway2 and midway3: job ids, what each job is, its submit script, its
+log path, its data directory, and the next action each one is waiting on. Do not record jobs in `plan.md`,
+`progress.md` or `findings.md`: those track technical direction, execution history and knowledge
 respectively, and a job table duplicated across them goes stale silently and then misleads.
 
 Maintenance rules:
@@ -218,30 +183,28 @@ Maintenance rules:
 
 ```
 
-### Compiling Upside on midway3 (login node)
+### Compiling Upside on the cluster (midway2 login node only)
 
-To (re)compile the C++ core on the RCC midway3 login node, from the repo root:
+**Always compile on midway2.** `-march=native` (`src/CMakeLists_Other.txt:8`) on midway3's Cascade
+Lake emits AVX-512 and that binary dies with SIGILL on broadwl; a midway2 (Broadwell) build runs on
+both clusters. Build into a fresh directory and install by rename, never with `install.sh` in a live
+tree: `install.sh` empties `obj/` first, under jobs that have the binary loaded.
 
 ```bash
-# 1. Load build modules (names verified on midway3)
-module load cmake
-module load openmpi
-module load hdf5/1.14.3
-
-# 2. Provide EIGEN_HOME (and PATH/PYTHONPATH) by sourcing the repo's source_sh
-source source_sh
-
-# 3. Build: install.sh copies source_sh -> source.sh, then runs cmake + make
-./install.sh
+source /software/modules/init/bash
+module load gcc/10.1.0 hdf5/1.14.3+oneapi-2023.1
+TREE=/project/trsosnic/yinhan/upside2-md-mdw2      # or /beagle3/trsosnic/yinhan/upside2-md
+mkdir -p $TREE/obj_<tag> && cd $TREE/obj_<tag>
+/software/cmake-3.19-el7-x86_64/bin/cmake ../src -DEIGEN3_INCLUDE_DIR=/software/eigen-3.3-el7-x86_64/include/eigen3
+make -j8
 ```
 
-Notes:
-* `install.sh` runs `cmake ../src/ -DEIGEN3_INCLUDE_DIR=$EIGEN_HOME && make` in `obj/`, so
-  `EIGEN_HOME` (set by `source_sh`, e.g. `/software/eigen-3.4-el8-x86_64/include/eigen3`) must
-  resolve to a valid Eigen 3.4 include directory before building.
-* The build is Python-independent; only C++ recompilation requires these steps. `UPSIDE_HOME`
-  in `source_sh` is unrelated to compilation (cmake uses the repo's own `src/`).
-* This compiles on the login node (no Slurm job needed); it is CPU-only and takes a few minutes.
+Then back up `obj/upside` and `obj/libupside.so` as `.bak_<tag>`, copy the new files in with `cp -p`
+and `mv` (a deploy must carry file modes; `findings.md` 10.11), and check bitwise parity against the
+installed build before any job uses it. The 2026-10-02 deploy is the worked example
+(`/project/trsosnic/yinhan/checks/hbg_deploy_20261002/deploy_hbg.sh`, `finish_hbg.sh`). The build is
+CPU-only and takes a few minutes on the login node; analysis heavier than a quick read goes to a
+compute node.
 
 ### Upside Unit Conversions
 
@@ -268,26 +231,30 @@ Training artifacts under `SC-training/` stay in native dry-MARTINI units.
 
 **Unless the user explicitly specifies otherwise, all remote jobs go to midway2 (broadwl partition), not midway3.**
 
-Midway3 (caslake) has very long Priority queue times and should only be used when midway2 is unavailable or when a job requires midway3-specific resources. Submitting from the midway3 login node will route jobs to caslake even if the script requests broadwl — always submit training and simulation jobs through the **midway2 SSH socket** (`~/.ssh/cm-mdw2.sock`).
+Midway3 (caslake) has very long Priority queue times and should only be used when midway2 is unavailable or when a job requires midway3-specific resources. Submitting from the midway3 login node routes jobs to caslake even if the script requests broadwl, so always submit training and simulation jobs through the **midway2 SSH socket** (`~/.ssh/cm-mdw2.sock`). Never send CPU work to a GPU partition (`amd`, `beagle3`) because it accepts the job: that bills the group's GPU allocation. midway3's login node may be used to move or read files on the shared `/project` and `/beagle3`.
 
 ```bash
 # Submit to midway2:
-ssh -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu 'cd <project_dir> && sbatch <script>'
+ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu 'cd <project_dir> && sbatch <script>'
 ```
 
-### midway3 SSH — Self-Connection
+### Cluster SSH: Self-Connection
 
-**Do not ask the user to connect SSH.** Establish the ControlMaster socket yourself:
+**Do not ask the user to connect SSH.** Open the ControlMaster socket yourself; the user only approves the Duo push on their phone.
+
+| cluster | open the socket | socket |
+| --- | --- | --- |
+| midway2 (all job submission) | `expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw2_master.exp` | `~/.ssh/cm-mdw2.sock` |
+| midway3 (file moves and reads) | `expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw3_master.exp` | `~/.ssh/cm-mdw3.sock` |
+
+Both scripts read the password from `~/.bin/ssh_mdw3`, select Duo option 1 (push), and keep the socket with `ControlPersist=8h`. If midway2 refuses this IP, `scratchpad/mdw2_via_mdw3.exp` opens the midway2 socket through a live midway3 socket (`remote_jobs.md` §0).
+
+Check the socket before every call and always pass `-o BatchMode=yes`:
 
 ```bash
-expect /Users/yinhan/Documents/upside2-md/scratchpad/mdw3_master.exp
+if ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu >/dev/null 2>&1; then
+    ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu '<command>'
+fi
 ```
 
-This script reads the password from `~/.bin/ssh_mdw3`, sends it, selects Duo option 1 (push), and opens `~/.ssh/cm-mdw3.sock` with `ControlPersist=8h`. After it exits, reuse with:
-
-```bash
-ssh -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu '<command>'
-```
-
-Check socket liveness before running: `ssh -S ~/.ssh/cm-mdw3.sock -O check yinhanw@midway3.rcc.uchicago.edu`. If the socket is missing or dead, re-run the expect script. The user still approves the Duo push on their phone — but you initiate it; you never ask them to run the script themselves.
-
+On a dead master a plain `ssh -S` falls back to password attempts, and a few of those get this IP throttled. If the check fails, run the expect script once; every launch sends a Duo push, so never retry it in a loop, and after a throttle wait at least 30 minutes. The full connection handbook is `remote_jobs.md` §0.

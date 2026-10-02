@@ -9,7 +9,7 @@ re-includes just these files, so a run directory created here stays untracked.
 
 | file | what it is |
 |---|---|
-| `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (`/project2/trsosnic/okleinmann/condiv/condiv2.py`); its docstring lists every difference and why |
+| `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (github `nnamnielk/condiv4upside2`); its docstring lists every difference and why |
 | `rama_basin.py` | the Ramachandran basins and per-residue basin populations, recorded every step as a diagnostic (not a parameter) |
 | `build_gly_library.py` | builds the library ff3.0 trains with: the central-glycine row replaced by the AWH-measured free energy of capped glycine dipeptides, every other row unchanged; checks itself through `upside_config` |
 | `check_converged.py` | has a run updated every file, is every group at a fixed point, has it plateaued? |
@@ -17,7 +17,7 @@ re-includes just these files, so a run directory created here stays untracked.
 | `extract_ff.py` | a checkpoint -> the six parameter files, through the run's own `expand_param` |
 | `convergence_gate.py` | exact sign-flip test of every trained group over the last epoch: exit 0 converged, 3 not |
 | `gate_or_continue.sh` | run by a run's `after_training.sbatch`: gate, then stop for review, or train one more epoch |
-| `env.sh` | the Python (midway2: this tree's `.venv` with its modules; locally the repo `.venv`), always this tree's `py/` and `obj/`; finds `PROJECT_ROOT` from its own location |
+| `env.sh` | this tree's `.venv`, `py/` and `obj/` (load any site modules first); finds `PROJECT_ROOT` from its own location |
 | `pdb_list` | the 456-protein training-set manifest (a list, not data) |
 
 ## What a run directory needs
@@ -32,7 +32,7 @@ upside_input/   per protein: <code>.fasta, <code>.initial.pkl, <code>.chi
 pdb_list        copy from here
 env.sh          copy of this directory's env.sh, adjusted if the tree differs
 slurm.args      the cluster's sbatch flags, given on the command line of every submission:
-                midway2  --partition=broadwl --exclude=<the nodes listed in train_chain.sbatch>
+                --account=<account> --partition=<partition> --exclude=<nodes>
 ```
 
 `upside_input/` is ~265 MB and is **not** in the repo. Hardlink it from an existing run
@@ -126,8 +126,6 @@ it, so they must place glycine where a fold needs it.
   reason is in `run_output/epoch_*/<code>.output_worker`, never in the Slurm log.
 * **Do not judge convergence by parameter movement.** Adam's steps are scale-invariant. Read the
   raw gradients, which `check_converged.py` recovers from the Adam accumulators.
-* **Do not use `broadwl-lc`.** Its nodes are `noib` and cannot see `/project`; jobs die instantly
-  with `ExitCode 0:53` and no log.
 
 ## Reading `check_converged.py`
 

@@ -16,7 +16,7 @@ THE ROW, one map per neighbour class, each from its own measurement:
   * GLY|right|PRO: the Ac-Gly-Pro-NHMe surface (RP) alone. The proline ring empties both helical
     basins (alpha_R 0.006, alpha_L 0.004), twenty-fold below every other context.
   * every other GLY|X, both directions: the remaining 37 surfaces pooled. Per-neighbour structure
-    does not reproduce between replicas (findings, 2026-09-18 verdict); the pool carries the
+    does not reproduce between replicas (findings 6.7); the pool carries the
     measured left-handed bias of an L-neighbour.
 Pooling and symmetrising average probabilities, never energies: averaging energies is a geometric
 mean of probabilities, which shrinks any basin that varies between the surfaces.

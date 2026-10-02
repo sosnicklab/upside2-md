@@ -1,6 +1,5 @@
 #!/bin/bash
 #SBATCH --job-name=condiv-train
-#SBATCH --account=pi-trsosnic
 #SBATCH --ntasks=24
 #SBATCH --cpus-per-task=14
 #SBATCH --mem-per-cpu=2000M
@@ -12,10 +11,10 @@
 #
 #   sbatch $(cat <run_dir>/slurm.args) train_chain.sbatch <run_dir> <target_steps>
 #
-# <run_dir>/slurm.args holds the cluster's flags: the partition and the excluded nodes. They are
-# given on the command line of every submission, first link, successor and gate alike, because
-# RCC's submit filter can remap #SBATCH partition directives. For midway2:
-#   --partition=broadwl --exclude=midway2-0003,midway2-[0010-0011],midway2-0037,midway2-[0342-0345]
+# <run_dir>/slurm.args holds the cluster's flags: account, partition and any excluded nodes, e.g.
+#   --account=<account> --partition=<partition> --exclude=<nodes>
+# They are given on the command line of every submission, first link, successor and gate alike,
+# because a site's submit filter can remap #SBATCH partition directives.
 #
 # --ntasks must equal the minibatch size (24) and --cpus-per-task the systems per protein (14:
 # restrained native, 12 free replicas, SARW); each task is one protein worker dispatched by srun.
@@ -28,12 +27,6 @@
 #
 # The driver is the run directory's own copy of ConDiv.py, written at initialisation, so a run
 # is never continued by later code.
-#
-# The midway2 exclusions carry midway2-[0010-0011], an adjacent pair that produced three
-# NODE_FAILs in one campaign while other nodes ran clean for 14 h, and midway2-0037, which failed
-# two links of the ff30 run within three hours (2026-09-26 05:30 and 08:15) while every other node
-# ran clean. Each is excluded for its own record of failures, not for being near another; a
-# NODE_FAIL on any other node is new evidence and should be recorded as such, not just added.
 
 set -eo pipefail
 RUN_DIR="$(cd "${1:?usage: sbatch train_chain.sbatch <run_dir> <target_steps>}" && pwd)"

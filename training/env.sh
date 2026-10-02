@@ -3,24 +3,13 @@
 # PROJECT_ROOT is the nearest directory above this file that holds py/upside_config.py, so the same
 # file works as training/env.sh and as a run directory's copy, unedited. The code and the binary
 # always come from this tree: py/ is first on PYTHONPATH, and upside_engine loads the libupside.so
-# beside it. Only the Python differs by machine:
-#
-#   midway2  this tree's .venv, built from midway2's python/3.9.18 module. gcc/10.1.0 is required
-#            (the system libstdc++ lacks GLIBCXX_3.4.20 and libupside.so will not load without
-#            it), and the python module must be loaded BEFORE the venv is activated, or the
-#            interpreter cannot find libpython3.9.so.1.0.
-#   locally  the repo's .venv.
+# beside it. The Python is the tree's .venv. On a cluster, load the modules libupside.so and the
+# venv's interpreter need (compiler runtime, HDF5, Python) before sourcing this, or add them to the
+# run directory's copy.
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && until [ -f py/upside_config.py ] || [ "$PWD" = / ]; do cd ..; done; pwd)"
 
-# midway2 is told by whether this tree's venv interpreter exists here, which is exactly what
-# matters: /software/modules/init/bash exists on midway3 too, so it does not identify midway2.
-if [ -f /software/modules/init/bash ] && [ -x "$(readlink -f "$PROJECT_ROOT/.venv/bin/python3")" ]; then
-    source /software/modules/init/bash
-    module load gcc/10.1.0
-    module load python/3.9.18 hdf5/1.14.3+oneapi-2023.1
-    source "$PROJECT_ROOT/.venv/bin/activate"
-elif [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
+if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
     source "$PROJECT_ROOT/.venv/bin/activate"
 fi
 
