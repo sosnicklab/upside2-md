@@ -5,7 +5,8 @@ revised 10-02), chain link 49141995 on midway2 broadwl since 13:25:41, from ff2.
 H-bond offsets and a 10x smaller side-chain step; steps 0 and 1 done and healthy. ff30_gly (the AWH
 library alone) was stopped at 11:51 in epoch 3. Run only on midway2 broadwl (user). midway3's login
 node may be used to move or read files on the shared `/project` and `/beagle3` (user, 2026-10-02).
-The BP validation is analysed (§0c) and not yet reported to Tobin.
+The BP validation is analysed (§0c) and not yet reported to Tobin; its summary figure is being
+made (job 49143602 dumps the per-seed REMD arrays, §0c "Figure").
 
 Written so a fresh session can pick up cold: how to connect, check health correctly and react to a
 failure. Job state in §1 is live; finished jobs are kept only where their files are still used (§1)
@@ -261,11 +262,18 @@ Both trees carry `BPFIX_INSTALLED` and keep the old binaries as
 `obj/*.bak_pre_bpfix_20260930-022459` (gate log `ff30_basin/ff30b-gate_49131949.out`, `[bpfix]`
 lines).
 
-**Static-frame result (local, 2026-09-26).** 8 training proteins (50-146 res), ff2.1, 91 frames each
-(native + T 0.80/0.95/1.10), old vs fixed library vs a tol=1e-6 reference. The early stop fires in
-~45% of frames but the error is small: |dE| <= 0.029 E_up, force error 7e-5 (median) / 3e-3 (max) of
-the RMS force, ConDiv rotamer-gradient error ~1e-4 relative; the energy bias is one-signed (converged
-is higher, mean 0.0009 E_up). Conclusion given to the user: ff2.1 and ff3.0 do not need retraining.
+**Static-frame result (local, run 2026-09-26, rerun on fresh frames 2026-10-02).** 8 ConDiv training
+proteins (2xf6, 3h36, 1afh, 2lpn, 3mwz, 1a62, 3dm8, 1w4s; 50-146 res), ff2.1, 91 frames each (native
++ 30 each from 2000-unit runs at T 0.80/0.95/1.10), buggy and fixed library at the production tol
+1e-3 against the fixed library at tol 1e-6 (max_iter 20000). The 10-02 rerun: the bug cuts the solve
+short in 338 of 728 frames (46%), by 2 iterations in 243, 4 in 75, 6 in 18, 8 and 12 in one each.
+Energy error |E - E_ref| median 7.5e-4 E_up (fixed 4.3e-4), 99th percentile 0.0095, max 0.157 (1afh
+frame 21: bug stops at 8 iterations, fix at 12, fix error 3e-4); the fixed solver's own max is 0.044
+(1afh frame 10, both stop at 10, the 1e-3 tolerance alone). The 09-26 frames had max 0.029; the 0.157
+frame is a real early stop that those frames did not sample, still 0.2 kT at T 0.80. RMS force error
+/ RMS force median 8.3e-5, max 2.9e-3 (fixed 4.6e-5, 5.3e-4); ConDiv contrastive rotamer-gradient
+error 1.4-2.5e-4 relative (fixed 6-8e-5). Energy bias one-signed: E_bug < E_ref in 95% of frames,
+mean -0.0007 E_up. Conclusion given to the user: ff2.1 and ff3.0 do not need retraining.
 
 **Simulation validation for Tobin: all 16 arms complete 2026-09-29 03:50, analysed; not yet
 reported to Tobin (the user's call).** Output `bp_validation/analysis_20260929.txt`, 25-32k
@@ -287,7 +295,8 @@ frames/replica after equilibration. Result:
   |z| > 2 in 41 against 41.1 expected, |z| > 9.92 in 2 against 2.2). No single z, WWdomain's -12
   included, is evidence by itself. WWdomain rests on the sign holding through its transition and on
   the per-seed separation: suggestive, not established at two seeds. Its implied ddG (~0.15 E_up,
-  van 't Hoff from dT_mid 0.002) is ~5x the largest static-frame |dE| (0.029); not explained.
+  van 't Hoff from dT_mid 0.002) is ~200x the median static-frame |dE| (7.5e-4) and matched only by
+  the single worst frame (0.157); not explained.
 * Speed: the fix costs 0-5% (proteinG 17.6 vs 18.6, WWdomain 29.3 vs 29.8, NTL9 28.0 vs 28.0
   time units/s); node-to-node variation is not controlled.
 
@@ -306,11 +315,28 @@ healthy at the first 100 frames (C-N 1.33-1.34 +- 0.13 A, KE/1.5kT 0.99-1.00).
   seed spread, melting midpoints and speed. Two seeds give only a rough sigma: |z| ~ 1 is "not
   resolved"; only |z| well above 2 across the ladder is an effect.
 
+**Figure for Tobin (in progress 2026-10-02).** `plot_bp.py` makes one 11-panel figure: a-c static
+frames (ECDF of |E - E_ref|, ECDF of relative force error, histogram of iterations cut short), d-g
+Q(T) per seed for the four REMD proteins, h-k Q_bug - Q_fix with the seed sigma. Red = bug, blue =
+fix in every panel. SciencePlots by path (global CLAUDE.md plotting standard).
+* REMD arrays: job **49143602** (`dump.sbatch`, broadwl, 4 cores, 40 min) reruns
+  `analyse_bp.py` per protein. `analyse_bp.py` now also writes `obs_<protein>.npz` (per-arm, per-T
+  Q, RMSD, Rg, E; original kept as `analyse_bp.py.bak_pre_npz`). Log `logs/dump_<jobid>.out`, text
+  `analysis_rerun.txt`, which must reproduce `analysis_20260929.txt` (a reproducibility check).
+* Static-frame harness and results: `bp_validation/static/` (`gen.py` frames, `eval.py` one solve per
+  library and tolerance, `plot_bp.py`, `sys/<code>/{frames,init}.npy`, `base.up`, `res_{bug,fix,ref}.npz`).
+  `eval.py` needs Mac builds of the bug and fix libraries with a `read last_iter` readout added
+  to `rotamer.cpp` (iteration count); these and the working copy are in the gitignored
+  `scratchpad/bp_validation/` of the Mac that made them, not in git.
+* To finish from any computer: when 49143602 is done, copy `bp_validation/obs_*.npz` into
+  `static/remd/`, copy `static/` locally, and run `python plot_bp.py` there (it writes
+  `bp_validation.png` and `.pdf`; it loads SciencePlots from the path in the global CLAUDE.md).
+
 ---
 
 ## 1. Current jobs
 
-Snapshot **2026-10-02 14:53 CDT, verified live against `squeue` on midway2.** Finished and cancelled
+Snapshot **2026-10-02 15:24 CDT, verified live against `squeue` on midway2.** Finished and cancelled
 rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
@@ -319,6 +345,7 @@ rows are deleted; their lessons are in §8.
 | 49142816 | its insurance successor (`afterany:49141995`) | PD (Dependency) | none; resumes from the newest checkpoint if the link dies |
 | 49139947, 49139944 | Peng benchmark lambda under **ff_2.1**, native and de novo arms, chunk 2 (Table S2 ladder 0.780-0.980, self-resubmitting 12 h jobs); `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_{native,denovo}_ff_2.1/`, logs `logs/lambda_<kind>_ff_2.1_<jobid>.out` | R | after each chunk: `checks/lambda_ff21/lambda_check.py` and `lambda_packing.py` |
 | 49139945, 49140670 | the same arms for **lambda G46A/G48A** (helix 3's glycines to Ala), chunk 2; `runs/lambda_G46A_G48A_{native,denovo}_ff_2.1/` | R | compare with wild type at matched time |
+| 49143602 | **bp_dump**: per-seed REMD arrays for the BP-validation figure (§0c "Figure"); `/beagle3/trsosnic/yinhan/bp_validation/dump.sbatch`, reruns `analyse_bp.py` on the 16 finished arms, writes `obs_<protein>.npz` and `analysis_rerun.txt`; log `logs/dump_<jobid>.out` | PD (Priority) since 15:03 | check `analysis_rerun.txt` matches `analysis_20260929.txt`, then copy `obs_*.npz` to `static/remd/` and run `plot_bp.py` |
 
 **Panel e02 finished 13:05** (49140630). `select` with ff21_released ff21_awh e00 e01 e02 (37
 domains common to all; 7 dropped for too few folded frames in some candidate): e02 folded 0.501,
