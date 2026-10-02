@@ -111,3 +111,15 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   recipe; the SSH section covers both clusters with the check-first rule; the hard-coded-identity
   rule lost its dated incident note (findings 1.7). `remote_jobs.md` §0's tunnel fallback now names
   the script that exists, `scratchpad/mdw2_via_mdw3.exp`.
+* Scripts cut to what the workflows need (user request; plan.md Phase 9): `training/` 12 -> 5 files
+  (`rama_basin.py`, `extract_ff.py`, `convergence_gate.py` into `ConDiv.py` as functions and the
+  `extract` / `gate` commands; `gate_or_continue.sh` into `train_chain.sbatch`; `check_converged.py`
+  deleted; `build_gly_library.py`, `check_step.py` to scratchpad); `py/martini_gen_params.py` into
+  `martini_build_tables.py`'s `__main__`; root `analyze_sc_pairs.py` to scratchpad.
+  `py/martini_hdx_project.py` now copies the coupled hybrid potential instead of re-scoring a
+  protein-only one (the root cause `write_hybrid_energy.py` patched by hand). `example/00.AnalysisScripts`
+  is left exactly at HEAD (user: those files follow master), with `combine_hdx_protection.py` and the
+  accessibility script unchanged. Tests: midway2 jobs 49143118 and 49143223
+  (`/project/trsosnic/yinhan/checks/merge_test_20261002`) gave byte-identical `extract` output and an
+  identical gate table and verdict; basin functions bitwise equal; a local 1rkl projection keeps the
+  source potential exactly.

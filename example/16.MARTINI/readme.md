@@ -48,7 +48,7 @@ Build the consolidated dry-MARTINI force-field file once (and whenever its input
 `parameters/ff_2.1/martini.h5`). `run.py` does this automatically if the file is missing:
 
 ```bash
-python ../../py/martini_gen_params.py --upside-home ../../
+python ../../py/martini_build_tables.py --upside-home ../../
 ```
 
 ---

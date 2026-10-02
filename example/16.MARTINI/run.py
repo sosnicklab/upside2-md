@@ -91,7 +91,7 @@ if not continue_sim and not seed_up.exists():
     param_file = upside_path / "parameters" / "ff_2.1" / "martini.h5"
     if not param_file.exists():
         print("Generating the dry-MARTINI force-field file...")
-        sp.check_call([str(python), str(upside_utils_dir / "martini_gen_params.py"),
+        sp.check_call([str(python), str(upside_utils_dir / "martini_build_tables.py"),
                        "--upside-home", str(upside_path)])
 
     print("Preparing the hybrid seed...")

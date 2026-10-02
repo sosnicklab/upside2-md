@@ -9,14 +9,8 @@ re-includes just these files, so a run directory created here stays untracked.
 
 | file | what it is |
 |---|---|
-| `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (github `nnamnielk/condiv4upside2`); its docstring lists every difference and why |
-| `rama_basin.py` | the Ramachandran basins and per-residue basin populations, recorded every step as a diagnostic (not a parameter) |
-| `build_gly_library.py` | builds the library ff3.0 trains with: the central-glycine row replaced by the AWH-measured free energy of capped glycine dipeptides, every other row unchanged; checks itself through `upside_config` |
-| `check_converged.py` | has a run updated every file, is every group at a fixed point, has it plateaued? |
-| `train_chain.sbatch` | self-chaining Slurm job; submits `<run>/after_training.sbatch` when the target is reached |
-| `extract_ff.py` | a checkpoint -> the six parameter files, through the run's own `expand_param` |
-| `convergence_gate.py` | exact sign-flip test of every trained group over the last epoch: exit 0 converged, 3 not |
-| `gate_or_continue.sh` | run by a run's `after_training.sbatch`: gate, then stop for review, or train one more epoch |
+| `ConDiv.py` | the FF2 dual-target trainer, adapted from O. Kleinmann's Python 3 port of Peng's code (github `nnamnielk/condiv4upside2`); its docstring lists every difference and why. Commands: `initialize`, `restart`, `gate` (convergence test), `extract` (a checkpoint's force-field files) |
+| `train_chain.sbatch` | self-chaining Slurm job; at the target it runs the gate and either stops or trains one more epoch |
 | `env.sh` | this tree's `.venv`, `py/` and `obj/` (load any site modules first); finds `PROJECT_ROOT` from its own location |
 | `pdb_list` | the 456-protein training-set manifest (a list, not data) |
 
@@ -38,27 +32,29 @@ slurm.args      the cluster's sbatch flags, given on the command line of every s
 `upside_input/` is ~265 MB and is **not** in the repo. Hardlink it from an existing run
 (`cp -al`) rather than copying, then replace `rama.dat` by a fresh copy (never edit a hardlinked
 file in place). For ff2.1's own library it is `parameters/common/rama.dat`; for ff3.0 it is
-`parameters/common/rama31.dat`, the output of `build_gly_library.py`.
+`parameters/common/rama31.dat`.
 
 ## Running
 
 ```bash
 cd training/myrun && source env.sh
 python3 ../ConDiv.py initialize init_param upside_input pdb_list run_output
-sbatch $(cat slurm.args) ../train_chain.sbatch . 76   # 4 epochs of 19 minibatches, self-chaining
-python3 ../check_converged.py .
+sbatch $(cat slurm.args) ../train_chain.sbatch . 76 13   # 4 epochs of 19 minibatches, at most 13
 ```
 
-**What happens at the target.** `train_chain.sbatch` submits `<run>/after_training.sbatch`, which
-calls `gate_or_continue.sh <run> <ff_name> <max_epochs>`: `convergence_gate.py` judges the last
-full epoch. A converged run stops with nothing released and lists its epoch-end checkpoints; the one
-to release is chosen by simulating them, because the fixed-point test does not say which iterate
-simulates best (the last one is only where Adam stopped), and `extract_ff.py` writes it to
-`parameters/<ff_name>`. An unconverged run is trained one more epoch and judged again, up to
-`<max_epochs>`, after which it stops for review. A failure of the gate itself stops everything.
+`initialize` copies `ConDiv.py` into `run_output/`, and every later command runs that copy
+(`python3 run_output/ConDiv.py gate .`, `... extract <checkpoint> <out_dir>`), so a run is never
+continued, judged or extracted by later code.
 
-`initialize` copies `ConDiv.py` and `rama_basin.py` into `run_output/`, and every later step, the
-driver included, runs that copy: a run is never continued by later code.
+**What happens at the target.** The link that reaches it runs `ConDiv.py gate` on the last full
+epoch (report in `gate_step<N>.txt`). The gate recovers each group's raw per-step gradients from the
+Adam state and asks whether their sum is unremarkable among all sign flips of the steps, an exact
+permutation test; every group must pass at a family-wise 5%. Converged: the chain stops and lists
+its epoch-end checkpoints. The one to release is chosen by simulating them, because the fixed-point
+test does not say which iterate simulates best (the last one is only where Adam stopped), and
+`ConDiv.py extract` writes it to `parameters/<ff_name>`. Not converged: the chain trains one more
+epoch and judges again, up to the third argument (`<max_epochs>`; default no extension), then stops
+for review. A failure of the gate itself stops the chain.
 
 ## One training step
 
@@ -98,10 +94,10 @@ ff3.0 adds one group and damps one (findings 1.17):
 **Not trained, as in ff2.1's own training**, because the engine returns no derivative: the
 backbone term's `center`, `sharpness` and `hbond_weight` (commented out in
 `BackboneSigmoidCoupling::get_param_deriv`, in master too) and `hbond.h5` entries 4-11, the rama
-boundaries and sharpnesses. Their learning rates are 0 so `check_converged.py` does not list them.
+boundaries and sharpnesses. Their learning rates are 0, so the gate does not test them.
 
 **The Ramachandran library is fixed, not trained.** ff3.0's differs from ff2.1's only in the
-central-glycine row, which `build_gly_library.py` takes from AWH on capped glycine dipeptides: the
+central-glycine row, taken from AWH on capped glycine dipeptides (GLY_sym.md §5): the
 PDB row is part local energy and part evolutionary placement (glycine is put where a fold needs a
 left-handed residue), Upside applies a map as pure energy, and a map trained against native
 structures relearns the placement (findings 1.15-1.16). The non-local terms above are trained around
@@ -124,13 +120,6 @@ it, so they must place glycine where a fold needs it.
 * **`run_output/ConDiv.py` must exist.** Only `initialize` makes it, so a hand-made `run_output/`
   leaves every worker dying with `can't open file '.../run_output/ConDiv.py'`. The per-worker
   reason is in `run_output/epoch_*/<code>.output_worker`, never in the Slurm log.
-* **Do not judge convergence by parameter movement.** Adam's steps are scale-invariant. Read the
-  raw gradients, which `check_converged.py` recovers from the Adam accumulators.
-
-## Reading `check_converged.py`
-
-The sound fixed-point statistic is `||mean g|| / mean|g|` against `1/sqrt(n)`. **The
-pairwise-cosine t-statistic is anti-conservative**, because it treats the `n(n-1)/2` pairs as
-independent when they share vectors, so do not let it carry a conclusion. A systematic drift shows
-as *positive* cosine; negative means oscillation about a minimum. Scalar gradients are
-heavy-tailed, and nothing should be judged on less than one epoch.
+* **Do not judge convergence by parameter movement, or on less than one epoch.** Adam's steps are
+  scale-invariant, so the gate reads raw gradients; scalar gradients are heavy-tailed, and windows
+  shorter than an epoch have been misread as plateaus.

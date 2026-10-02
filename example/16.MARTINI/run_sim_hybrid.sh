@@ -137,7 +137,7 @@ ensure_martini_parameter_files() {
     local martini_h5="${UPSIDE_HOME}/parameters/ff_2.1/martini.h5"
     if [ ! -f "${martini_h5}" ]; then
         echo "MARTINI force-field file missing. Generating..."
-        python3 "${PROJECT_ROOT}/py/martini_gen_params.py" --upside-home "${UPSIDE_HOME}"
+        python3 "${PROJECT_ROOT}/py/martini_build_tables.py" --upside-home "${UPSIDE_HOME}"
     fi
 }
 

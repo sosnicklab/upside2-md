@@ -23,9 +23,10 @@ modernised and restored to the published protocol. Differences from that file, e
     replica's final energy exceeded 1000 is removed: a blown-up replica must fail, not vanish.
     For the same reason a failed worker fails the step; the port summed whatever returned.
   * the Ramachandran library is a fixed input, `upside_input/rama.dat`, never trained. For ff3.0
-    its central-glycine row is the AWH-measured free energy of capped glycine dipeptides
-    (build_gly_library.py): the PDB row is part local energy and part evolutionary placement, and
-    a map trained against native structures relearns the placement (findings 1.15).
+    it is parameters/common/rama31.dat, whose central-glycine row is the AWH-measured free energy
+    of capped glycine dipeptides (GLY_sym.md): the PDB row is part local energy and part
+    evolutionary placement, and a map trained against native structures relearns the placement
+    (findings 1.15).
   * two changes for ff3.0 (findings 1.17). Glycine has its own offsets on the three H-bond basin
     energies (hbond.h5 entries 12-14, field `hbg`), trained from zero with everything else: with
     the shared energies alone, keeping loop glycines left-handed costs every helical glycine its
@@ -33,8 +34,8 @@ modernised and restored to the published protocol. Differences from that file, e
     Adam's normalised step random-walks the 31,420 pair coefficients, of which ~6% carry signal,
     and the walk weakens helices and folds.
   * recorded, not trained: per-residue basin populations of the native-restrained replica and of
-    the free ensemble (rama_basin.py), the diagnostic that shows where the free simulation leaves
-    the native conformation.
+    the free ensemble (basin_weights below), the diagnostic that shows where the free simulation
+    leaves the native conformation.
 
 One training step, per protein (main_worker):
   - 14 systems in one replica-exchange run: a native-restrained replica, 12 free replicas and one
@@ -48,21 +49,25 @@ One training step, per protein (main_worker):
   - contrast = NSE + lambda * DSE, summed over the minibatch, fed to Adam.
   - per-residue basin populations of the native-restrained replica and of the free ensemble (the
     NSE mix), written to the step's divergence file.
+
+Commands (`initialize` copies this file into the run's output directory, and every later command
+runs that copy, so a run is never continued, judged or extracted by later code):
+  ConDiv.py initialize <init_param_dir> <upside_input_dir> <pdb_list> <output_dir>
+  ConDiv.py restart <checkpoint.pkl> <n_steps>
+  ConDiv.py gate <run_dir>                      exit 0 converged, 3 not, anything else a failure
+  ConDiv.py extract <checkpoint.pkl> <out_dir>  the force-field files of one checkpoint
 """
 
 import sys
 import os
 
-# The script runs from its run directory's copy, next to the rama_basin.py it was initialised
-# with, which therefore takes precedence over the one in training/.
-_here = os.path.dirname(os.path.abspath(__file__))
-for _p in (os.path.join(os.environ['UPSIDE_HOME'], 'py'), _here):
-    if _p not in sys.path:
-        sys.path.insert(0, _p)
+sys.path.insert(0, os.path.join(os.environ['UPSIDE_HOME'], 'py'))
 
 is_worker = __name__ == '__main__' and len(sys.argv) > 1 and sys.argv[1] == 'worker'
 
 import collections
+import glob
+import itertools
 import pickle as cp
 import shutil
 import socket
@@ -77,7 +82,6 @@ import torch
 
 import run_upside as ru
 import upside_engine as ue
-import rama_basin as rb
 
 if not is_worker:
     import rotamer_parameter_estimation as rp
@@ -147,6 +151,55 @@ def hb_join(hb, dhb, hbg):
     out = np.zeros(12 + len(hbg))
     out[:3], out[3], out[4:12], out[12:] = hb[:3], dhb[0], hb[3:], hbg
     return out
+
+
+# ---------------------------------------------------------------------------
+# Ramachandran basins: a diagnostic, recorded per residue every step
+# ---------------------------------------------------------------------------
+# The basins partition the torus: alpha_R (phi < 0, -100 < psi < 50), beta (phi < -100, psi outside
+# that band), pPII (-100 < phi < 0, psi outside it), alpha_L (the mirror of alpha_R), and phi > 0
+# outside alpha_L split into beta' and pPII', the mirrors of beta and pPII; `other` is their union.
+# Edges are logistic with a 3 deg scale (13 deg from 10% to 90%), continuous across phi = +-180,
+# and every basin mirrors exactly onto its partner under (phi, psi) -> (-phi, -psi).
+
+BASINS = ('alpha_R', 'alpha_L', 'beta', 'pPII', "beta'", "pPII'", 'other')
+BASIN_EDGE = np.deg2rad(3.)
+
+
+def _arc(x, a, b):
+    """Smooth periodic indicator of the arc from a to b (radians, anticlockwise): a sigmoid of the
+    circular distance from the arc's midpoint, so an arc mirrors exactly onto the arc (-b, -a)."""
+    half = 0.5 * ((b - a) % (2. * np.pi))
+    dist = (np.asarray(x) - (a + half) + np.pi) % (2. * np.pi) - np.pi
+    return 1. / (1. + np.exp(-(half - np.abs(dist)) / BASIN_EDGE))
+
+
+def basin_weights(phi, psi):
+    """w_b(phi,psi) for every basin, shape (..., len(BASINS)). Angles in radians."""
+    d = np.deg2rad
+    phi, psi = np.asarray(phi, dtype=float), np.asarray(psi, dtype=float)
+    helix_R = _arc(psi, d(-100.), d(50.))       # alpha_R's psi band and its complement
+    helix_L = _arc(psi, d(-50.), d(100.))       # the mirror band
+    beta_m = _arc(phi, d(100.), np.pi) * (1. - helix_L)
+    ppii_m = _arc(phi, 0., d(100.)) * (1. - helix_L)
+    return np.stack([
+        _arc(phi, -np.pi, 0.) * helix_R,                  # alpha_R
+        _arc(phi, 0., np.pi) * helix_L,                   # alpha_L
+        _arc(phi, -np.pi, d(-100.)) * (1. - helix_R),     # beta
+        _arc(phi, d(-100.), 0.) * (1. - helix_R),         # pPII
+        beta_m,                                           # beta'
+        ppii_m,                                           # pPII'
+        beta_m + ppii_m,                                  # other
+    ], axis=-1)
+
+
+def residue_populations(rama_coord, weights=None):
+    """Per-residue basin populations, (n_res, len(BASINS)), of an ensemble of (n_frame, n_res, 2)
+    (phi, psi) in radians, with per-frame weights summing to one or None for a plain mean."""
+    w = basin_weights(rama_coord[..., 0], rama_coord[..., 1])
+    if weights is None:
+        return w.mean(axis=0)
+    return np.tensordot(np.asarray(weights, dtype=float), w, axes=1)
 
 
 # ---------------------------------------------------------------------------
@@ -551,8 +604,8 @@ def main_worker():
     # The NSE's own two ensembles as per-residue basin populations, recorded for diagnosis.
     divergence = dict(
         contrast=Update(*contrast),
-        rama_native=rb.residue_populations(coords[0]),
-        rama_free=rb.residue_populations(np.concatenate(coords[1:4]), w),
+        rama_native=residue_populations(coords[0]),
+        rama_free=residue_populations(np.concatenate(coords[1:4]), w),
         rmsd_restrain=rmsd[0].mean(), rmsd=rmsd[1].mean(),
         has_dse=bool(has_dse), mean_rg=mRg, walltime=time.time() - tstart)
 
@@ -601,7 +654,6 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
     # the checkpoint carries the exact code that produced it
     state['worker_path'] = os.path.join(base_dir, 'ConDiv.py')
     shutil.copy(__file__, state['worker_path'])
-    shutil.copy(os.path.join(_here, 'rama_basin.py'), base_dir)
 
     names = [x.split()[0] for x in open(protein_list)]
     assert names[0] == 'prot'
@@ -647,6 +699,83 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
     return state
 
 
+# ---------------------------------------------------------------------------
+# Convergence gate and extraction, run from the run's own copy
+# ---------------------------------------------------------------------------
+
+def main_gate(run_dir, alpha=0.05):
+    """Is every trained group at a fixed point over the last full epoch? Exit 0 if so, 3 if not
+    (including when there is less than one epoch to judge).
+
+    The last full epoch is the window because every protein has then contributed exactly once, so
+    the window-mean gradient is the full-training-set gradient. For each Adam group the raw
+    per-step gradient is recovered from the Adam state, g_t = (grad1_t - b1*grad1_{t-1}) / (1-b1).
+    At a fixed point each step's gradient is noise symmetric about zero, so ||sum_t g_t|| should be
+    unremarkable among all 2^n sign flips of the steps; with K the Gram matrix of the steps,
+    ||sum_t s_t g_t||^2 = s^T K s, so the permutation p-value is exact. Every group must have
+    p > alpha / (number of groups). Parameter movement is not used: Adam's steps are
+    scale-invariant.
+    """
+    out = os.path.join(os.path.abspath(run_dir), 'run_output')
+    steps = sorted(d for d in glob.glob(os.path.join(out, 'epoch_*_minibatch_*'))
+                   if os.path.exists(os.path.join(d, 'checkpoint.pkl')))
+    state = cp.load(open(os.path.join(steps[-1], 'checkpoint.pkl'), 'rb'))
+    n = len(state['minibatches'])
+    if len(steps) < n:
+        print('only %d steps, fewer than one epoch (%d); nothing to judge yet' % (len(steps), n))
+        return 3
+    b1 = state['solver'].beta1
+    trained = [f for i, f in enumerate(FIELDS) if np.any(np.asarray(state['initial_alpha'][i]) != 0)
+               and getattr(state['param'], f) is not None]
+
+    def grad1(d):
+        st = cp.load(open(os.path.join(d, 'solver_state.pkl'), 'rb'), encoding='latin1')
+        return [np.asarray(st['grad1'][FIELDS.index(f)], dtype=float) for f in trained]
+
+    prev = grad1(steps[-n - 1]) if len(steps) > n else [0. for _ in trained]
+    G = {f: [] for f in trained}
+    for d in steps[-n:]:
+        g1 = grad1(d)
+        for k, f in enumerate(trained):
+            G[f].append(np.atleast_1d((g1[k] - b1 * prev[k]) / (1. - b1)).ravel())
+        prev = g1
+
+    signs = np.array([(1,) + s for s in itertools.product((1, -1), repeat=n - 1)], dtype=float)
+    cut = alpha / len(trained)
+    print('%s: steps %d-%d (last epoch), %d groups, pass if every p > %.4f\n'
+          % (run_dir, len(steps) - n + 1, len(steps), len(trained), cut))
+    print('   %-7s %7s  %10s  %8s' % ('group', 'size', 'p', 'verdict'))
+    ok = True
+    for f in trained:
+        X = np.array(G[f])
+        K = X @ X.T
+        p = (np.einsum('pi,ij,pj->p', signs, K, signs) >= K.sum() * (1 - 1e-12)).mean()
+        ok &= p > cut
+        print('   %-7s %7d  %10.4f  %8s' % (f, X.shape[1], p, 'ok' if p > cut else 'PULLED'))
+    print('\n' + ('CONVERGED: every group is consistent with a fixed point.' if ok else
+                  'NOT CONVERGED: at least one group still has a systematic pull.'))
+    return 0 if ok else 3
+
+
+def main_extract(checkpoint, out):
+    """Write the force field of a checkpoint: sidechain.h5, environment.h5, bb_env.dat, hbond.h5
+    and sheet through expand_param, as every step writes them, plus the run's fixed rama.dat."""
+    os.makedirs(out, exist_ok=True)
+    state = cp.load(open(checkpoint, 'rb'))
+    param, init = state['param'], state['init_param_files']
+    new = dict(rot='sidechain.h5', env='environment.h5', bbenv='bb_env.dat', hb='hbond.h5',
+               sheet='sheet', rama='rama.dat')
+    new = dict((k, os.path.join(out, v)) for k, v in new.items())
+    expand_param(param, init, new)
+    shutil.copyfile(init['rama'], new['rama'])
+
+    print('checkpoint %s\n  step %d, next epoch %d minibatch %d'
+          % (checkpoint, state['solver'].step_num, state['epoch'], state['i_mb']))
+    print_param(param)
+    for k, v in sorted(new.items()):
+        print('  %-6s %-16s %8.2f MB' % (k, os.path.basename(v), os.path.getsize(v) / 1e6))
+
+
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == 'worker':
         main_worker()
@@ -657,8 +786,9 @@ if __name__ == '__main__':
         state = main_initialize(*sys.argv[2:])
         with open(os.path.join(state['base_dir'], 'initial_checkpoint.pkl'), 'wb') as f:
             cp.dump(state, f, -1)
+    elif len(sys.argv) == 3 and sys.argv[1] == 'gate':
+        raise SystemExit(main_gate(sys.argv[2]))
+    elif len(sys.argv) == 4 and sys.argv[1] == 'extract':
+        main_extract(os.path.abspath(sys.argv[2]), os.path.abspath(sys.argv[3]))
     else:
-        print('Usage:')
-        print('  ConDiv.py initialize <init_param_dir> <upside_input_dir> <pdb_list> <output_dir>')
-        print('  ConDiv.py restart <checkpoint.pkl> <n_steps>')
-        raise SystemExit(1)
+        raise SystemExit(__doc__[__doc__.index('Commands'):])

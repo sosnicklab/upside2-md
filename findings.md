@@ -220,7 +220,7 @@ distribution: a self-consistency condition, not an external target.
 
 ### 1.10 A basin offset must be a weight on its basin (design rules, 2026-09-28)
 
-The basin-offset training these rules governed was removed on 2026-10-01 (plan.md); `rama_basin.py`
+The basin-offset training these rules governed was removed on 2026-10-01 (plan.md); `ConDiv.py`
 now only records per-residue basin populations with the same basins. The rules hold for any additive
 correction on a Ramachandran map:
 * **The basins must partition the torus**, or probability drains into an uncontrolled region:
@@ -248,7 +248,7 @@ beta' 0.06), which gave the middle glycine of A-G-G-G-A ln(beta/beta') = +0.14 t
 ln(aR/aL) stayed 0.0000 (the sheet maps are empty in both helical basins). Symmetrise by averaging
 probabilities, which pools each site with its mirror image, not energies: the energy mean is a
 geometric mean of probabilities and would put the sheet map at beta 0.5 / pPII 0 per side instead
-of 0.43 / 0.07. `build_gly_library.py` writes one symmetric `GLY|GLY` entry to both coil and sheet.
+of 0.43 / 0.07. `build_gly_library.py` wrote one symmetric `GLY|GLY` entry to both coil and sheet.
 Grid convention, verified: the engine (`rama_map_pot.cpp:66`) and `upside_config` both put node i at
 -180 + 5i deg, which is what the rolled mirror of 6.1 assumes.
 
@@ -2516,7 +2516,7 @@ stage fix, so its protein was frozen (3.4). The valid ff2.1 reference is the 202
 
 The old rule "symmetrise every glycine map" was the retired ff3.0 (GLY_sym.md §4), and its code is
 gone from `upside_config.py`. ff3.0's library makes only `GLY|GLY` mirror-symmetric, and
-`build_gly_library.py` checks that through `upside_config` on every build. What survives:
+`build_gly_library.py` checked that through `upside_config` when it built the library. What survives:
 
 * **The mirror is `(phi,psi) -> (-phi,-psi)` with a roll.** On the 72-point grid starting at -180,
   index i maps to (-i) % 72: `np.roll(np.roll(m[..., ::-1, ::-1], 1, -2), 1, -1)`, or
@@ -3027,7 +3027,7 @@ What stays true:
 **Testing a fixed point (9k).** From ff_2.1 under the port, six minibatches gave gradients
 indistinguishable from noise in every group (sign-flip p 0.22-1.0): ff_2.1 was a stationary point of
 that trainer, not shown to be its attractor. Use the exact sign-flip test on `||mean g|| / mean|g|`
-(cheap at 2^n); `check_converged.py`'s pairwise-cosine t-statistic is anti-conservative because the
+(cheap at 2^n; it is `ConDiv.py gate`); the old pairwise-cosine t-statistic is anti-conservative because the
 pairs share vectors. A partial-n statistic misled more than once: the sheet gradient read t = +3.91
 at n 3 and -0.01 at n 6.
 
@@ -3448,7 +3448,12 @@ the run.
 
 Dry run in a scratch run dir on midway2: 28 pickles converted and 3,667 paths moved, and
 `check_step.py` there reproduced the local step's numbers exactly. NumPy 2 reads NumPy 1 pickles
-unchanged, so the reverse direction needs no mapping.
+unchanged, so the reverse direction needs no mapping. One side effect: `move_run.py` re-pickled the checkpoints from a
+module that had imported the trainer as `ConDiv`, so their classes are `ConDiv.Update`, not
+`__main__.Update`. They unpickle only where `import ConDiv` finds that run's own copy, which is true
+for `run_output/ConDiv.py gate|extract` (the script's directory comes first on `sys.path`) and false
+for a script elsewhere with `training/` on `PYTHONPATH`, which then loads the newer trainer and fails
+on the field count (seen 2026-10-02 in a test harness).
 
 ### 10.11 A deploy must carry file modes, and `cp` onto an existing file does not (2026-10-02)
 

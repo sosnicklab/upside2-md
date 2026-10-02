@@ -16,7 +16,5 @@ fi
 export HDF5_USE_FILE_LOCKING=FALSE
 export UPSIDE_HOME="$PROJECT_ROOT"
 export PATH="$PROJECT_ROOT/obj:$PATH"
-# $PROJECT_ROOT/training carries the trainer's own helpers (rama_basin); py/ is shared Upside
-# infrastructure and training-specific code does not belong there.
-export PYTHONPATH="$PROJECT_ROOT/py:$PROJECT_ROOT/training${PYTHONPATH:+:$PYTHONPATH}"
+export PYTHONPATH="$PROJECT_ROOT/py${PYTHONPATH:+:$PYTHONPATH}"
 export UPSIDE_SKIP_SOURCE_SH=1

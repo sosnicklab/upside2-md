@@ -403,8 +403,7 @@ Attrs document the derivation: `@schema='martini_sc_combined'`,
 Located in `parameters/dryMARTINI/`. Contains CGL-CGL pair PMFs and
 SC-CGL interaction tables built from dry-MARTINI DOPC simulations.
 The top-level structure mirrors what is written into `/input/potential/cg_lipid_*`
-nodes in a simulation `.up` file. Built by `py/martini_build_tables.py`
-and `py/martini_gen_params.py`.
+nodes in a simulation `.up` file. Built by `py/martini_build_tables.py`.
 
 ### 2.8 `rama.dat`
 
@@ -449,7 +448,7 @@ no difference, because NaN comparisons are False.
 | file | what it is |
 |---|---|
 | `parameters/common/rama.dat` | ff2.1, as published. Shared, because ff2.1 never trained it |
-| `parameters/common/rama31.dat` | ff3.0's library, also shipped as `parameters/ff_3.0/rama.dat` once released: ff2.1's with the **central-glycine row, coil and sheet, replaced by AWH free energies** of capped glycine dipeptides (ff99SB-ILDN, 300 K, replica 1, 40 contexts at 400 ns). `GLY\|GLY` = the two Gly-Gly surfaces pooled and symmetrised; `GLY\|right\|PRO` = the Gly-Pro surface alone; every other `GLY\|X` = the other 37 surfaces pooled (probability means). Each entry is stored with `rama_map_pot_ref` subtracted, so the engine's total for a glycine is the measured surface: X-G-Y ln(aR/aL) = -0.120 at T = 1, G-G-G exactly 0. Built 2026-10-01 by `training/build_gly_library.py`, which checks itself through `upside_config`; the previous build is in `backup/` |
+| `parameters/common/rama31.dat` | ff3.0's library, also shipped as `parameters/ff_3.0/rama.dat` once released: ff2.1's with the **central-glycine row, coil and sheet, replaced by AWH free energies** of capped glycine dipeptides (ff99SB-ILDN, 300 K, replica 1, 40 contexts at 400 ns). `GLY\|GLY` = the two Gly-Gly surfaces pooled and symmetrised; `GLY\|right\|PRO` = the Gly-Pro surface alone; every other `GLY\|X` = the other 37 surfaces pooled (probability means). Each entry is stored with `rama_map_pot_ref` subtracted, so the engine's total for a glycine is the measured surface: X-G-Y ln(aR/aL) = -0.120 at T = 1, G-G-G exactly 0. Built once, 2026-10-01, by `build_gly_library.py` (kept in scratchpad: its AWH input is cluster-only), which checked itself through `upside_config`; the previous build is in `backup/` |
 
 `rama31.dat` differs from `common/rama.dat` only in the central-GLY row of the coil and sheet
 groups. **Its GLY entries assume the reference correction**: every config path applies
@@ -459,7 +458,7 @@ in coil and sheet makes the coil/sheet mixture leave glycine unchanged; the left
 unchanged, so a glycine between a glycine and another residue reads a mixture of two entries.
 
 **A force field's library belongs in its own directory.** A release copies the run's fixed
-library into `parameters/<ff>/rama.dat` (`training/extract_ff.py`), so pairing ff3.0's other files
+library into `parameters/<ff>/rama.dat` (`ConDiv.py extract`), so pairing ff3.0's other files
 with `common/rama.dat` cannot silently give ff2.1's glycine map.
 
 ### 2.8a How a library map becomes the `rama_pot` the engine reads
@@ -582,7 +581,7 @@ trained with a port of FF1's trainer rather than ff2.1's: spline burial, no back
 term, no unfolded-state objective (findings 9t-9v). The first also forced every glycine map
 mirror-symmetric; the second trained a single shared glycine map. Both are in `backup/`
 (gitignored) and in git history. ff3.0 is being retrained from ff2.1 with ff2.1's own FF2
-dual-target workflow (`training/ConDiv.py`, plan.md); `training/extract_ff.py` writes it here when
+dual-target workflow (`training/ConDiv.py`, plan.md); `ConDiv.py extract` writes it here when
 that run finishes. Build configs from all six files with the default
 `--environment-potential-type=1`, and take `membrane.h5` and `martini.h5` from `ff_2.1`.
 

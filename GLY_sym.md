@@ -10,7 +10,7 @@
 * **Folded-protein data cannot separate energy from selection**, either through residue counts
   per basin or through per-type context corrections (findings 1.16).
 * **ff3.0 takes glycine's row from the measurement and does not train it.**
-  `parameters/common/rama31.dat` was built on 2026-10-01 by `training/build_gly_library.py` (§5).
+  `parameters/common/rama31.dat` was built on 2026-10-01 by `build_gly_library.py` (§5).
 * **With that map the trainer kept loop glycines left-handed by bending the shared H-bond, sheet
   and side-chain terms, and helical glycines paid.** So plan.md Phase 8 gives glycine its own
   offsets on the three H-bond basin energies, trained by ConDiv with everything else
@@ -190,7 +190,8 @@ one, with `Ac-Gly-Gly-NHMe` as the achiral control that must read 0. Replica 1 r
 
 The library's central-glycine row, coil and sheet, is discarded and rebuilt from the AWH surfaces,
 with no library data in it. `parameters/common/rama31.dat` is built by
-`training/build_gly_library.py` from replica 1 at 400 ns. Each neighbour class gets its own
+`build_gly_library.py` (a one-time builder, kept in scratchpad because its AWH input exists only on
+the cluster) from replica 1 at 400 ns. Each neighbour class gets its own
 measurement:
 
 | entry | content |

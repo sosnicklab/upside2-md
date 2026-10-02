@@ -9,7 +9,7 @@
 
 # Self-chaining FF2 dual-target ConDiv training.
 #
-#   sbatch $(cat <run_dir>/slurm.args) train_chain.sbatch <run_dir> <target_steps>
+#   sbatch $(cat <run_dir>/slurm.args) train_chain.sbatch <run_dir> <target_steps> [<max_epochs>]
 #
 # <run_dir>/slurm.args holds the cluster's flags: account, partition and any excluded nodes, e.g.
 #   --account=<account> --partition=<partition> --exclude=<nodes>
@@ -20,10 +20,14 @@
 # restrained native, 12 free replicas, SARW); each task is one protein worker dispatched by srun.
 #
 # The successor is queued BEFORE training starts, as insurance: a wall kill is SIGKILL and cannot
-# submit anything, so a link that dies would otherwise end the chain silently. The link that
-# reaches the target cancels that successor and submits <run_dir>/after_training.sbatch, if the
-# run has one. It is submitted from here rather than from a successor because a successor asks for
-# this job's 336 CPUs and waited three hours in the queue to run a single sbatch.
+# submit anything, so a link that dies would otherwise end the chain silently.
+#
+# The link that reaches the target cancels that successor and runs the convergence gate
+# (`ConDiv.py gate`, report in gate_step<N>.txt). Converged: the chain stops and lists the
+# epoch-end checkpoints; the one to release is chosen by simulating them, since the fixed-point
+# test does not say which iterate simulates best, and `ConDiv.py extract` writes it. Not converged:
+# the chain trains one more epoch, until <max_epochs> (default: no extension), then stops for
+# review. A failure of the gate itself stops the chain.
 #
 # The driver is the run directory's own copy of ConDiv.py, written at initialisation, so a run
 # is never continued by later code.
@@ -31,6 +35,7 @@
 set -eo pipefail
 RUN_DIR="$(cd "${1:?usage: sbatch train_chain.sbatch <run_dir> <target_steps>}" && pwd)"
 TARGET="${2:?usage: sbatch train_chain.sbatch <run_dir> <target_steps>}"
+MAX_EPOCHS="${3:-0}"
 TRAIN_DIR="$(cd "$RUN_DIR/.." && pwd)"     # run dirs live directly under training/
 SLURM_ARGS=$(cat "$RUN_DIR/slurm.args")
 
@@ -72,17 +77,38 @@ fi
 echo "this link runs $STEPS_PER_LINK steps"
 
 SUCCESSOR=$(sbatch --parsable $SLURM_ARGS --dependency=afterany:$SLURM_JOB_ID \
-                   "$TRAIN_DIR/train_chain.sbatch" "$RUN_DIR" "$TARGET") \
+                   "$TRAIN_DIR/train_chain.sbatch" "$RUN_DIR" "$TARGET" "$MAX_EPOCHS") \
     || echo "WARNING: successor was not queued, the chain stops after this link"
 
 source "$RUN_DIR/env.sh"
 python3 "$RUN_DIR/run_output/ConDiv.py" restart "$CKPT" "$STEPS_PER_LINK"
 
-if [ "$STEPS_PER_LINK" -eq "$REMAINING" ]; then
-    echo "target $TARGET reached"
-    [ -n "$SUCCESSOR" ] && scancel "$SUCCESSOR"
-    if [ -f "$RUN_DIR/after_training.sbatch" ]; then
-        sbatch $SLURM_ARGS "$RUN_DIR/after_training.sbatch" \
-            || echo "WARNING: after_training.sbatch was NOT submitted; submit it by hand"
-    fi
-fi
+[ "$STEPS_PER_LINK" -eq "$REMAINING" ] || exit 0
+echo "target $TARGET reached"
+[ -n "$SUCCESSOR" ] && scancel "$SUCCESSOR"
+
+set +e
+python3 "$RUN_DIR/run_output/ConDiv.py" gate "$RUN_DIR" > "gate_step$TARGET.txt" 2>&1
+RC=$?
+set -e
+cat "gate_step$TARGET.txt"
+case $RC in
+    0)
+        echo "converged; choose among the epoch-end checkpoints by simulation:"
+        find run_output -path "*/epoch_*_minibatch_$(( MB_PER_EPOCH - 1 ))/checkpoint.pkl" | sort
+        echo "then: python3 run_output/ConDiv.py extract <checkpoint> \$UPSIDE_HOME/parameters/<ff_name>"
+        ;;
+    3)
+        if [ "$TARGET" -ge $(( MAX_EPOCHS * MB_PER_EPOCH )) ]; then
+            echo "not converged at step $TARGET; stopped for review"
+        else
+            echo "not converged; training on to step $(( TARGET + MB_PER_EPOCH ))"
+            sbatch $SLURM_ARGS "$TRAIN_DIR/train_chain.sbatch" "$RUN_DIR" \
+                   "$(( TARGET + MB_PER_EPOCH ))" "$MAX_EPOCHS"
+        fi
+        ;;
+    *)
+        echo "the convergence gate itself failed (exit $RC); stopped" >&2
+        exit 1
+        ;;
+esac

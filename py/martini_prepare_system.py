@@ -2020,7 +2020,7 @@ def ensure_martini_parameter_libraries(args):
     if not args.martini_h5.exists():
         raise RuntimeError(
             f"MARTINI force-field file not found: {args.martini_h5}"
-            + "\nRun 'python py/martini_gen_params.py --upside-home "
+            + "\nRun 'python py/martini_build_tables.py --upside-home "
             + str(args.upside_home) + "' to generate it."
         )
     print(f"MARTINI force-field library found: {args.martini_h5}")

@@ -223,12 +223,12 @@ healthy at the first 100 frames (C-N 1.33-1.34 +- 0.13 A, KE/1.5kT 0.99-1.00).
 
 ## 1. Current jobs
 
-Snapshot **2026-10-02 13:53 CDT, verified live against `squeue` on midway2.** Finished and cancelled
+Snapshot **2026-10-02 14:23 CDT, verified live against `squeue` on midway2.** Finished and cancelled
 rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | R since 13:25:41 on 19 nodes; step 0 at 13:53: 24 of 24 workers launched, none failed, 19 of 24 divergences written; link log clean; this link runs all 76 steps | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
+| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | R since 13:25:41 on 19 nodes; step 0 done 14:02 in 2196 s (worker median 1229 s), healthy (`check_step.py`: 24 of 24 finite, KE/1.5kT 1.006-1.041, restrained RMSD median 1.03 A, unfolded target 24 of 24); hbg after step 0 [+0.01 +0.01 -0.01]; link log clean; at ~35 min a step, the 36 h wall holds ~60 of the 76 steps and the successor finishes them | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
 | 49142816 | its insurance successor (`afterany:49141995`) | PD (Dependency) | none; resumes from the newest checkpoint if the link dies |
 | 49139947, 49139944 | Peng benchmark lambda under **ff_2.1**, native and de novo arms, chunk 2 (Table S2 ladder 0.780-0.980, self-resubmitting 12 h jobs); `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_{native,denovo}_ff_2.1/`, logs `logs/lambda_<kind>_ff_2.1_<jobid>.out` | R | after each chunk: `checks/lambda_ff21/lambda_check.py` and `lambda_packing.py` |
 | 49139945, 49140670 | the same arms for **lambda G46A/G48A** (helix 3's glycines to Ala), chunk 2; `runs/lambda_G46A_G48A_{native,denovo}_ff_2.1/` | R | compare with wild type at matched time |
@@ -432,12 +432,14 @@ must not be forgotten:
   * The HDX resubmit block uses `HDX_WORK=.../hdx` without `HDX_N=28` and would overwrite the pre-fix
     baseline: fix it before any HDX rerun.
 * **NDRD library files must never be copied to the cluster** (licence).
-* **Do not overwrite the cluster's `py/` or `training/` from the local repo during these campaigns**
-  (except `gate_or_continue.sh`, which was deliberately aligned with the repo on 2026-10-01).
-  On 2026-10-01 the local repo moved its campaign files to
-  `scratchpad/redistribution_cleanup_20261001/` (plan.md Phase 9), and its `gate_or_continue.sh`
-  now stops at convergence instead of calling `validate_ff.sh`. The midway2 tree still runs on the
-  originals: ff30_gly's release uses `$P/training/{validate_ff.sh,patch_glpg.py}`, the glpG HDX
+* **Do not overwrite the cluster's `py/` or `training/` from the local repo during these campaigns.**
+  The repo's `training/` is now five files: `extract_ff.py`, `convergence_gate.py` and `rama_basin.py`
+  became `ConDiv.py extract` / `gate` and functions, and `train_chain.sbatch` runs the gate itself
+  instead of submitting `after_training.sbatch` -> `gate_or_continue.sh` (plan.md Phase 9). The
+  running ff30_glyhb chain needs the midway2 tree's old layout (`after_training.sbatch`,
+  `gate_or_continue.sh`, `extract_ff.py`, `check_step.py`, `rama_basin.py` beside its run copy), so
+  the new files go to the cluster only for a new run. The midway2 tree also still runs on the
+  campaign files the repo moved to `scratchpad/redistribution_cleanup_20261001/`: ff30_gly's release uses `$P/training/{validate_ff.sh,patch_glpg.py}`, the glpG HDX
   jobs (`popepopg_REMD/hdx_*.sbatch`) call `$R/py/martini_remd_concat.py`, and
   `NP-1AO6/build_np_ff3.py` imports `martini_inject_coverage`. On 2026-10-02 the repo's
   `training/env.sh` and `train_chain.sbatch` became site-neutral (no midway2 module loads, no

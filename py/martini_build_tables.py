@@ -1,6 +1,14 @@
 #!/usr/bin/env python
-"""Build dry-MARTINI spline tables from ITP-derived parameters."""
+"""Build dry-MARTINI spline tables from ITP-derived parameters.
 
+    python py/martini_build_tables.py [--upside-home <repo>] [--force]
+
+writes parameters/ff_2.1/martini.h5 (the /particles and /sc_table groups). The number of parallel
+table-build workers comes from UPSIDE_MARTINI_TABLE_WORKERS, then the Slurm CPU allocation, then the
+local CPU count.
+"""
+
+import argparse
 import math
 import os
 import importlib.util
@@ -1126,3 +1134,22 @@ def build_martini_h5(
 
     _write_h5_atomically(output_path, _writer)
     print(f"Built {output_path}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Build parameters/ff_2.1/martini.h5.")
+    parser.add_argument("--upside-home", type=Path, default=Path(__file__).resolve().parent.parent,
+                        help="repository root (default: the one holding this script)")
+    parser.add_argument("--force", action="store_true", help="rebuild an existing martini.h5")
+    args = parser.parse_args()
+    root = args.upside_home.expanduser().resolve()
+    output = root / "parameters" / "ff_2.1" / "martini.h5"
+    if output.exists() and not args.force:
+        print(f"{output} exists; pass --force to rebuild it")
+    else:
+        build_martini_h5(
+            output_path=output,
+            dry_ff_path=root / "example" / "16.MARTINI" / "dryMARTINI_itp" / "dry_martini_v2.1.itp",
+            martinize_path=root / "py" / "martinize.py",
+            sidechain_lib_path=root / "parameters" / "ff_2.1" / "sidechain.h5",
+        )

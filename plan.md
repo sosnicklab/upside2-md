@@ -6,7 +6,8 @@ Train ff3.0 from ff2.1 with exactly ff2.1's training workflow (Peng et al. 2022 
 only, plus the smallest changes that fix glycine:
 
 * the central-glycine Ramachandran row is fixed to the AWH free energy of capped glycine
-  dipeptides (`parameters/common/rama31.dat`, built by `training/build_gly_library.py`); every
+  dipeptides (`parameters/common/rama31.dat`, built once by `build_gly_library.py` from the
+  cluster-only AWH data; the builder is kept in scratchpad, not in the repo); every
   other map stays NDRD, bitwise;
 * glycine gets its own offsets on the three H-bond basin energies (`hbg`), trained by ConDiv from
   zero;
@@ -64,7 +65,8 @@ tenth of the rate, per-step noise averages out while a consistent pull still acc
 stays trained.
 
 **Release by checkpoint selection (user, 2026-10-01; findings 1.17).** The gate stops at convergence
-with nothing released (`gate_or_continue.sh`, as in the repo), and `validate_ff.sh <run> ff_3.0
+with nothing released (in the repo `train_chain.sbatch` runs `ConDiv.py gate` at the target), and
+`validate_ff.sh <run> ff_3.0
 <checkpoint>` releases the chosen one. Training is unchanged; not-converged still trains one more
 epoch. The selection panel and the final validation stay disjoint: the panel chooses, Peng and glpG
 judge.
@@ -113,7 +115,8 @@ pre-basin `extract_ff.py` in `training/backup_pre_basin_20260928/`.
 
 ### Phase 3 - basin offsets, implementation and tests (DONE 2026-09-28; offset code removed 2026-10-01)
 `training/rama_basin.py` (basins partitioning the torus, per-map renormalisation), its verifier and
-the ConDiv wiring. Since Phase 8, `rama_basin.py` only records per-residue basin populations.
+the ConDiv wiring. Since Phase 8 only the per-residue basin populations remain, now functions in
+`ConDiv.py`.
 
 ### Phase 4 - train ff_3.0 with basin offsets (DONE 2026-09-30, midway2)
 `training/ff30_basin` from ff2.1; the gate declared convergence at step 114 and released ff_3.0 to
@@ -138,7 +141,7 @@ Run `training/ff30_glyhb` on midway2, from ff2.1, submitted 2026-10-02 11:52; jo
 remote_jobs.md §1. It replaces `ff30_gly` (the AWH library alone), stopped 2026-10-02 11:51 in
 epoch 3; its panels e00-e02 are the comparison.
 
-- [x] **Library.** `parameters/common/rama31.dat`, built by `training/build_gly_library.py` (old
+- [x] **Library.** `parameters/common/rama31.dat`, built by `build_gly_library.py` (old
   build in `backup/`; midway2 build byte-identical). Checks run by the builder through
   `upside_config` and confirmed end to end in a `.up` file: the engine's glycine map equals the
   measured surface to 1e-6, the middle glycine of G-G-G is symmetric to 2e-6, every non-glycine
@@ -167,11 +170,11 @@ epoch 3; its panels e00-e02 are the comparison.
   one real trainer step (1ga3, local): hbg gets a gradient and moves, rot steps 10x smaller.
 - [x] **Deployed** to midway2 (bitwise parity on 1ga3, engine and binary); ff30_glyhb initialised
   from ff2.1 and submitted.
-- [ ] **Every finished step** checked with `training/check_step.py`: kinetic-energy ratio, RMSD,
+- [ ] **Every finished step** checked with the midway2 tree's `check_step.py`: kinetic-energy ratio, RMSD,
   unfolded-state target, finiteness, parameter drift, glycine readout. Baseline from ff_3.0's epoch
   5: helical glycines alpha_L 0.102 free / 0.005 restrained, H-bond margin 0.080.
 - [ ] **Selection panels h00, h01, ...** at each epoch end.
-  - Per residue, basin populations (`rama_basin.py` basins), counted on both sides only in frames
+  - Per residue, basin populations (the `ConDiv.py` basins), counted on both sides only in frames
     whose residues i-4..i+4 are native-like.
   - Reported by class with a bootstrap over domains: natively helical and beta non-glycine
     residues; helical glycines (alpha_L); natively left-handed glycines (alpha_L). A beta residue is
@@ -210,7 +213,15 @@ every kept file compiles or parses, `env.sh` resolves the repo `.venv`, and all 
 specifics went too: `training/env.sh` activates the repo `.venv` only (site modules are loaded
 before sourcing it), `train_chain.sbatch` carries no account (account, partition and exclusions go
 in `slurm.args`), and README and the ConDiv docstring cite the trainer's GitHub source instead of a
-cluster path; originals in `scratchpad/redistribution_cleanup_20261002/training/`.
+cluster path; originals in `scratchpad/redistribution_cleanup_20261002/training/`. Then the
+directory was cut from twelve files to five: `rama_basin.py`, `extract_ff.py` and
+`convergence_gate.py` became functions and the `extract` / `gate` commands of `ConDiv.py`;
+`gate_or_continue.sh` folded into `train_chain.sbatch`; `check_converged.py` (duplicated the gate) was
+deleted; `build_gly_library.py` (one-time) and `check_step.py` (campaign monitor) moved to
+`scratchpad/redistribution_cleanup_20261002/training_pre_merge/`. In `py/`, `martini_gen_params.py`
+became the `__main__` of `martini_build_tables.py`. Checked on midway2 data: `extract` writes files
+byte-identical to `extract_ff.py`, and `gate` gives the same p-values and verdict as
+`convergence_gate.py` on ff30_gly's three epochs; the basin functions are bitwise equal.
 
 ## Known Errors / Blockers
 
