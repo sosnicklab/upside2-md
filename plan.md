@@ -25,6 +25,13 @@ the non-local terms.
 
 ## Architecture and Key Decisions
 
+**Probe a balanced start before any training design (user, 2026-10-04).** Rounds 2 and 3 both
+drifted back to ff2.1's alpha_L preference only after days of epochs. Every new trainable term starts
+at an estimate of its balanced position (for glycine: alpha_L as deep as alpha_R) and is reported
+first with the data's push direction and size from one step (or the gradient split), and whether that
+push is placement or energy; a push back toward the known-bad side means the design changes before
+any epochs run.
+
 **Trainer (unchanged).** `training/ConDiv.py`, O. Kleinmann's Python 3 port of Peng's FF2 dual-target
 trainer, restored to the Peng et al. 2022 SI: per protein and step one native-restrained replica, 12
 free replicas at T = 0.8 to 1.1, one SARW replica; 8000 time units, second half analysed; contrast =
@@ -222,6 +229,135 @@ deleted; `build_gly_library.py` (one-time) and `check_step.py` (campaign monitor
 became the `__main__` of `martini_build_tables.py`. Checked on midway2 data: `extract` writes files
 byte-identical to `extract_ff.py`, and `gate` gives the same p-values and verdict as
 `convergence_gate.py` on ff30_gly's three epochs; the basin functions are bitwise equal.
+
+### Phase 10 - local test of ff3.0 at its current stage on glpG TM4 and lambda helix 3 (STARTED 2026-10-04, user request)
+The cause of the helical-glycine failures is settled (user; memory gly-map-energy-plus-selection):
+glycine's deeper alpha_L basin in the PDB map is placement, which Upside applies as energy. Round 1
+(symmetrised map) fixed TM4 but is physically wrong; round 2 (trained basin depth) was pushed back to
+alpha_L by the training data; round 3 is ff30_glyhb (physics map fixed, glycine H-bond offsets
+trained). By epoch 2 its offsets favour glycine's left-handed H-bond by 0.35 E_up, so the question is
+whether training is re-learning placement through the offsets, and what design gives Upside only the
+energy part for glycine while fixing both glpG TM4 (GLY136, 143, 149) and lambda helix 3 (G46, G48).
+ff30_glyhb keeps training on midway2 meanwhile (user). All runs on the Mac Studio (M1 Ultra, 16
+performance cores); midway2 is only read from.
+
+Force fields, one protocol, so differences are the force field's:
+* `ff21`: released ff2.1 (PDB glycine map), the known-bad control.
+* `ff21_awh`: ff2.1 with the physics glycine map, untrained: round 3's starting point.
+* `e02`: ff30_glyhb `epoch_02_minibatch_18`, the newest epoch end (also panel h02).
+* `e02_gly0`: e02 with the three glycine offsets zeroed, everything else trained.
+ff21_awh against e02 says whether two epochs of training broke what the physics map fixed; e02_gly0
+says whether the offsets carry it or the other trained changes (the shared H-bond drift, sheet,
+side chains) do.
+
+- [x] **A. Setup (done 10-04 20:10).** Rebuilt locally (old binaries kept as `obj/*.bak_sep10_20261004`); initial potentials match the cluster builds: lambda ff2.1 -196.48 and e02 -193.92 (midway2 tree), glpG 79HIS ff2.1 -24914.84 (`/beagle3`); patch gate on the pristine seed passed (2.6e-6). Inputs in `scratchpad/ff3_local_test/`. Back up `obj/` binaries, rebuild with `make` in `obj/` (the Sep 10 binary
+  predates the offsets and silently ignores them); check `residue_class` is in the binary, and that
+  1ga3 energies under ff2.1 and under e02 match the midway2 build. From midway2: extract e02 with
+  `$P/training/extract_ff.py`; copy it, ff30_glyhb's 15-entry init `hbond.h5`,
+  `$P/training/patch_glpg.py`, the pristine seed
+  `popepopg_REMD/seeds/glpG-RKRK-79HIS.up.bak_production_handoff`, `checks/gly_tm4_flip.py`,
+  `checks/glpg_tm_windows.py` and `ff3_benchmark/bench_run.py` to `scratchpad/ff3_local_test/`.
+- [ ] **B. glpG TM4 (the focus; 12 runs started 10-04 20:09, `scripts/run_glpg_md.sh`, analysis `scripts/tm4_local.py`).** Patch the seed per force field with `patch_glpg.py` (its gate
+  must reproduce ff2.1 within 1e-4); it changes only the protein's rama, H-bond and rotamer tables,
+  so the membrane and the SC-env and BB-env interactions stay as built, dt 0.009 and inner_steps 4
+  as the seed sets. Single-temperature MD of 79HIS at T 0.80 (where ff_3.0's flips were strongest),
+  3 seeds for each of the four force fields, ~4000 time units each, 12 runs at once (~6 h); then T
+  0.70 if needed.
+  Read: phi of GLY136, 143, 149 (phi > 0 is a flip), TM4 (134-151) and TM1 (30-48) helix fraction by
+  the cluster scripts' rules, as time series. Single-temperature runs are harsher than REMD rungs, so
+  force fields are compared with each other, not with REMD numbers.
+- [ ] **C. lambda helix 3.** Wild type from native, the Table S2 14-replica ladder, dt 0.009,
+  `bench_run.py`'s recipe, ~400k time units for e02 (and ff21_awh or e02_gly0 as B suggests),
+  against the ff2.1 cluster arm at matched time (helix 3 alpha_R 0.97 -> 0.60 by ~300k, 11d). After
+  B, for cores (~8-10 h per arm).
+- [ ] **D. Design.** Within the user's rule (Upside gets only the energy part for glycine; no
+  glycine-specific basin term fitted to natives, which relearns placement): attribute any failure;
+  then test whether glycine offsets fitted bottom-up to all-atom in-context dG (the plan's fallback)
+  can keep helical glycines helical without breaking left-handed ones, by reweighting the B and C
+  frames over the offsets (per-glycine H-bond counts by basin). Propose a design with that
+  evidence; no training change without user approval.
+  - Data for the bottom-up fit: Charron et al.'s `training_a_cg_model.zip` (Zenodo 15465782, 65.4 GB,
+    md5 619f1b18b04db5502e4cab5b75f977a5), downloading to `~/Downloads` since 10-04 19:41 (user).
+    Its frames are mapped to N, CA, CB, C, O, which is all Upside's backbone H-bond term needs (it
+    infers H and O from N, CA, C), so Upside's per-glycine H-bond counts by basin can be evaluated
+    on the all-atom ensemble itself. Use only the real frames (not the 0.5 A decoys) of the 44 all-L
+    domains (not the six D-residue ones, findings 1.17).
+
+### Phase 11 - round 4: a selection-free glycine map, fitted bottom-up and frozen (TRAINING since 2026-10-05: ff30_bio 49179449 and ff30_gdepth 49179457 on midway2, queued)
+The defect is the map (user, 2026-10-04; findings 10.13): Upside uses glycine's PDB coil statistic as
+energy, and its alpha_L excess is fold selection. A design through H-bond terms was rejected: a map
+defect is fixed on the map. Rounds 2 and 3 showed that any glycine parameter trained against natives
+takes the alpha_L preference back, so the map is fitted to selection-free data and stays frozen.
+
+Design, as built (findings 1.19; up.md 2.8):
+1. Target: glycine's in-chain distribution in BioEmu's plain-MD octapeptides (Zenodo 15641199;
+   amber ff99sb-ildn, 300 K; sequences simulated alone, so no fold selects a conformation),
+   glycines at residues 2-5. Charron's adaptive frames of the same peptides are biased (glycine by
+   0.16-0.28 toward alpha_L) and are not the target.
+2. Every central-glycine entry fitted by iterative Boltzmann inversion in Upside on the same
+   octapeptides with ff2.1's other terms, so Upside's own sterics, side chains and H-bonds in local
+   context count once: pooled GLY|X on X-G-Y, GLY|left|GLY on G-G-Y, GLY|right|GLY on X-G-G,
+   GLY|right|PRO on X-G-P (user: use the data where they exist). **Units: the library convention**
+   (up.md 2.8): a map reproduces its source at T_up = 1, so Upside runs at T_up = 1 against the
+   300 K target; a fit at T_up 0.8557 scales glycine 1.169x too small and was discarded.
+3. The transition region is not designed in Upside for any residue and contrastive divergence
+   cannot train it, so outside the data (< 10 all-atom frames per cell) each entry keeps NDRD's own
+   coil top with its barrier height above alpha_R (user). Glycine's coil and sheet entries are the
+   same map.
+4. Frozen in ConDiv (the library is a fixed input), ff2.1's 12-entry hbond.h5, no glycine-specific
+   trainable parameter anywhere; side-chain learning rate 10x smaller as in round 3.
+
+Done:
+- [x] Library: map 6 of the fit, now `parameters/common/rama31.dat` (the AWH version is in
+  `backup/rama31.dat.bak_pre_bioemu_20261005` and git history). Its own pass matches BioEmu's X-G-Y
+  glycine within 0.01 per basin (ln aR/aL -0.55 vs -0.535). Scripts, data, logs:
+  `/project/trsosnic/yinhan/checks/gly_bioemu_map/` (README).
+- [x] Push probe P1 (local, ff30_glyhb's exact worker, 72 proteins, no update): d -0.014 [-0.041,
+  +0.012], against -0.105 [-0.150, -0.057] from rama31's start; the training data come to rest at
+  about BioEmu's L-R difference. By the pre-agreed rule (CI including zero = do not train) this
+  was "do not train".
+- [x] glpG TM4 on the untrained start (ff2.1 terms + library): no glycine flips, TM4 0.95.
+- [x] Training started on the user's decision (2026-10-05): TM4 is stable on this start and no push
+  is left for other terms to absorb. ff30_bio initialized and submitted 07:44 (job 49179449, 76
+  steps, gate up to 13 epochs); the empty glycine-offset field was tested through one parameter
+  update and through extract_ff.py first. Panel of the untrained start (`bio_start`, job 49179451).
+
+**Run 2, ff30_gdepth (user, 2026-10-05): the claim is a force field trained on the original training
+set alone, with no outside data, that keeps glpG TM4 stable; BioEmu is only the external check.**
+* Library: ff2.1's own (NDRD), with glycine's alpha_R and alpha_L basin depths trainable: one pooled
+  offset pair on all 37 GLY|X maps (user's choice, the quantity the push probe measured); GLY|GLY,
+  GLY|right|PRO, every other map and the sheet group stay NDRD (user).
+* Start: the offsets at which the GLY|X maps hold BioEmu's alpha_R / alpha_L weight on average
+  (c_aR -0.0918, c_aL +0.4621; `gdepth_start_offsets.py`), the only place BioEmu enters.
+* Update: round 2's rule (damped Newton step per epoch matching free to native-restrained
+  populations over the GLY|X reads, Gaussian prior sigma 1 nat on NDRD, no DSE, 10% of proteins held
+  out); log `run_output/rama_rounds.txt`. Everything else as ff30_bio (ff2.1 init, 12-entry hbond,
+  rot lr 10x smaller). The convergence gate judges only the Adam groups; the depth's convergence is
+  read from the rounds log.
+* Trainer: round 3's ConDiv.py with the offset hooks of round 2 ported (`$P/training/ff30_gdepth/
+  trainer/`, copied into run_output at initialisation; also in `gly_bioemu_map/gdepth_trainer/`).
+  Tested before submission: round 0's library (untrained entries and sheet identical to NDRD; GLY|X
+  at the target weights), one end-of-round update from 24 real proteins, extraction.
+* Reading: per epoch the depth (dL - dR, start +0.554) and TM4 on the extracted checkpoint; at the
+  end, where dL - dR settles against BioEmu's start (external check), and the panel against
+  `gdepth_start` and ff30_bio.
+* Shared scripts changed for it (backups `.bak_pre_gdepth_20261005`): `extract_ff.py` writes a
+  depth-training checkpoint's trained library and finds the run's own trainer for the initial
+  checkpoint too; `check_step.py` skips the empty glycine-offset field and prints the depth.
+
+Next (remote_jobs.md has the watch):
+- [ ] Every step: check_step.py (all finite, KE/1.5kT, restrained RMSD, unfolded target); watch the
+  shared H-bond margin E_other - E_alpha (start +0.192) and the helical / left-handed glycine
+  populations. **Hold for the user if the shared margin falls below +0.10** (round 3's failure mode:
+  the alpha_L pull moving into shared terms).
+- [ ] Each epoch end: selection panel `bEE` (submit_new.sh), and locally the glpG TM4 test on the
+  extracted checkpoint (3 seeds, T 0.80, 4000 tu, `run_glpg.sh` after `patch_glpg.py`), read
+  against `bio_start`, ff21_released and ff21_awh. Nothing is released without the user.
+- [ ] After a release candidate: lambda helix 3 (Peng benchmark) and glpG REMD.
+- Known limitations: X-G-P's helical basins keep NDRD values (too few BioEmu frames); a poly-Gly run
+  gets the average of the G-G-Y and X-G-G entries, which carry their L-neighbour contexts (Upside's
+  maps see only nearest neighbours); ff99sb-ildn may overstate in-chain alpha_L (findings 1.19);
+  lambda's helix 2/helix 4 packing error stays a known limitation (11d).
 
 ## Known Errors / Blockers
 

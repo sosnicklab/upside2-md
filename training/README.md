@@ -32,7 +32,7 @@ slurm.args      the cluster's sbatch flags, given on the command line of every s
 `upside_input/` is ~265 MB and is **not** in the repo. Hardlink it from an existing run
 (`cp -al`) rather than copying, then replace `rama.dat` by a fresh copy (never edit a hardlinked
 file in place). For ff2.1's own library it is `parameters/common/rama.dat`; for ff3.0 it is
-`parameters/common/rama31.dat`.
+`parameters/common/rama31.dat` (the BioEmu-fitted glycine row, up.md 2.8).
 
 ## Running
 

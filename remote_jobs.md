@@ -1,10 +1,14 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-02 15:00).** The ff3.0 retrain is **ff30_glyhb** (plan.md Phase 8,
-revised 10-02), chain link 49141995 on midway2 broadwl since 13:25:41, from ff2.1 with glycine's own
-H-bond offsets and a 10x smaller side-chain step; steps 0 and 1 done and healthy. ff30_gly (the AWH
-library alone) was stopped at 11:51 in epoch 3. Run only on midway2 broadwl (user). midway3's login
-node may be used to move or read files on the shared `/project` and `/beagle3` (user, 2026-10-02).
+**Current state (2026-10-05 09:00).** Two round-4 trainings are queued on midway2 (plan.md Phase 11),
+both from ff2.1 with its 12-entry hbond.h5 and no glycine H-bond offsets: **ff30_bio** (49179449; the
+BioEmu-fitted glycine library frozen) and **ff30_gdepth** (49179457; ff2.1's own library with
+glycine's alpha_R / alpha_L depths trained from BioEmu's weights, so no outside data enter the
+training). Slurm's estimate for the first is 10-07 03:40. Their start panels are `bio_start`
+(49179451) and `gdepth_start` (49179456). Both trainings carry the job name `condiv-train`; tell
+them apart by job id or `scontrol show job <id> | grep WorkDir`. ff30_glyhb (round 3) was stopped 10-04 21:58 by the user's decision.
+The lambda ff2.1 benchmark is complete. Run only on midway2 broadwl (user). midway3's login node may
+be used to move or read files on the shared `/project` and `/beagle3` (user, 2026-10-02).
 The BP validation is analysed (§0c) and not yet reported to Tobin; its figure is done,
 `~/Downloads/bp_validation.{png,pdf}` and `bp_validation/static/` (§0c "Figure").
 
@@ -55,50 +59,40 @@ password line `set password "..."` in `~/.bin/ssh_mdw3` there. **Never run anyth
 node** (findings 10.6): a 60 GB analysis on 10-02 got every session on midway2-login1 killed five
 times in 40 min. If the socket keeps dropping, run `ps -u yinhanw --sort=-rss` there first.
 
-**One watch at a time.** This computer's watch is session cron `6733412b` (:17 and :47); it dies
-with that Claude session. If the other computer takes over, stop this one (or end the session), and
-start the same watch there with the prompt below, every 30 min. `submit_new.sh` is idempotent, so
-two watches would not double-submit, but they would both report.
+**One watch at a time.** A watch is a session cron (it dies with that Claude session). No watch runs
+for ff30_bio yet (10-05 08:00): start one on the computer you work from, with the prompt below every
+30-60 min (cheap while the job is pending), and stop any other.
 
-**The watch, by hand or as the cron prompt:**
+**Round-4 watch prompt** (copy as the cron prompt): "Remote job watch for ff30_bio and ff30_gdepth
+(midway2; remote_jobs.md §1 and the watch steps below, once per run: `<run>` = ff30_bio with panel
+tags bEE, and ff30_gdepth with panel tags dEE; `submit_new.sh` serves both). Obey CLAUDE.md
+(read-only git, no guards, no physics changes, nothing heavy on a login node). Check the socket with
+`-O check` and BatchMode; if down, do not run any expect script: notify and stop. Do the watch steps.
+Record per step the shared margin E_other - E_alpha (start +0.192), dhb, sheet mean, rot change, and
+helical / left-handed glycine alpha_L free/restrained, and for ff30_gdepth the glycine depth offsets
+(dL - dR, start +0.554) and its rounds log; **if the shared margin falls below +0.10, notify
+the user and hold** (no cancel without approval). At each epoch end, after the panel: extract the
+checkpoint (`$P/training/extract_ff.py <ckpt> <dir>`), and run the local glpG TM4 test (repo
+scratchpad or `/project/trsosnic/yinhan/checks/gly_bioemu_map/scripts`: `patch_glpg.py` on the live
+seed, `run_glpg.sh 10 <ff>`, `tm4_local.py`). Never cancel, resubmit or change anything without the
+user's approval. Notify only for failures, a panel table, the margin hold, or a failed handover."
+
+**The watch for a ConDiv run, by hand or as the cron prompt** (last used for ff30_glyhb; `<run>` is
+the run directory under `$P/training`):
 1. `ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu`; if down,
    reconnect (above). Never loop on connection attempts, and never run the expect script from an
    unattended watch.
-2. On midway2: `bash /project/trsosnic/yinhan/ff3_selection/submit_new.sh` (submits the panel `hEE`
-   for each finished epoch-end checkpoint of ff30_glyhb, lists jobs and finished panel runs).
-3. Link log: newest `/project/trsosnic/yinhan/upside2-md-mdw2/training/ff30_glyhb/condiv-train_*.out`,
-   for `WORKER_FAIL`, `Traceback`, `STOPPED`, `never started`.
-4. Each new finished step: `cd /project/trsosnic/yinhan/upside2-md-mdw2/training && source
-   ff30_glyhb/env.sh && python3 check_step.py ff30_glyhb` (all finite, KE/1.5kT ~1.0-1.05, restrained
-   RMSD ~1 A, unfolded target 24 of 24; the glycine offsets and margins; the glycine readout).
-5. When `ff3_selection/runs/<tag>/` holds 176 npz: `cd /project/trsosnic/yinhan/ff3_selection &&
-   source /project/trsosnic/yinhan/upside2-md-mdw2/training/ff30_glyhb/env.sh && python3 panel.py
-   select aa domains runs ff21_released ff21_awh e00 e01 e02 h00 [h01 ...]`. It prints the table,
-   the chosen checkpoint and whether the release is held. Nothing is released by the watch: the
-   decision goes to the user.
+2. On midway2: `squeue -u yinhanw`; for a run with panels, `bash
+   /project/trsosnic/yinhan/ff3_selection/submit_new.sh` (idempotent; edit its run name first).
+3. Link log: newest `$P/training/<run>/condiv-train_*.out`, for `WORKER_FAIL`, `Traceback`,
+   `STOPPED`, `never started`.
+4. Each new finished step: `cd $P/training && source <run>/env.sh && python3 check_step.py <run>`
+   (all finite, KE/1.5kT ~1.0-1.05, restrained RMSD ~1 A, unfolded target 24 of 24; parameter and
+   glycine readouts).
+5. When `ff3_selection/runs/<tag>/` holds 176 npz: `python3 panel.py select aa domains runs
+   ff21_released ff21_awh <tags>` in `/project/trsosnic/yinhan/ff3_selection` with the run's env.
+   Nothing is released by the watch: the decision goes to the user.
 6. Update §1 below.
-
-**What happens next, and when** (steps take 37-43 min, so an epoch of 19 steps takes ~12.5 h):
-
-| when (CDT, estimates) | event | what to do |
-|---|---|---|
-| every ~40 min | a training step | watch items 3-4 |
-| 10-02 ~19:00-20:00 | lambda ff2.1 chunk 2 ends (4 arms, self-resubmitting; ~450k of 2.53M time units per chunk) | `cd /project/trsosnic/yinhan/checks/lambda_ff21 && python3 lambda_check.py <arm> ...` and `lambda_packing.py <arm> ...`, arms `lambda_{native,denovo}_ff_2.1`, `lambda_G46A_G48A_{native,denovo}_ff_2.1`; on a compute node or with `ulimit -v` |
-| 10-03 ~01:00-02:30 | epoch 0 ends (`epoch_00_minibatch_18`) | the watch submits panel `h00` (1 node, 1-3 h) |
-| 10-03 morning | `h00` table | **first verdict on the glycine term**, see below |
-| 10-03 ~14:00-15:00 | epoch 1 ends, panel `h01` | as for h00 |
-| 10-04 ~01:30 | link 49141995 hits its 36 h wall at ~step 54; successor 49142816 continues | check it started and resumed from the newest checkpoint |
-| 10-04 ~04:00 and ~16:00 or later | epochs 2 and 3 end (h02, h03); at step 76 `after_training.sbatch` (`ff30h-gate`) runs the convergence gate | converged: it stops and lists checkpoints, choose by panel; not converged: one more epoch, up to 13 |
-| 10-04 to 10-05 | lambda ff2.1 arms finish | final lambda readout (findings 11d) |
-
-**Reading the h tables.** Compare each hEE against ff21_released and ff21_awh in the same table (37
-domains common to e00-e02 at 13:10; the set can change as tags are added). The aim: helical glycines
-(gly_helix) at least as close to all-atom as ff2.1 (-0.114 at 13:10) while left-handed glycines
-(gly_left) stay near ff2.1's (+0.032), and helix and folded no worse than ff2.1 (-0.016, 0.615).
-ff30_gly reached gly_helix -0.112, gly_left -0.042, helix -0.025, folded 0.501 at e02, and was
-held for helix. **Trend to watch on every step:** check_step's glycine margin
-`E_other - E_alpha` for glycines (start +0.192, +0.139 after step 1). A margin that keeps falling
-means glycines are pushed toward alpha_L, the direction that cost helical glycines before.
 
 **After ff3.0 is chosen** (plan.md Phase 8): release from midway2 with
 `bash ../validate_ff.sh . ff_3.0 run_output/epoch_EE_minibatch_18/checkpoint.pkl` in the run dir;
@@ -107,6 +101,18 @@ sync `/beagle3/trsosnic/yinhan/upside2-md` from `$P` first (it lacks the glycine
 takes the new term through `patch_glpg.py`; re-simulate lambda for its packing (findings 11d).
 
 ---
+
+**Round 4 (2026-10-04/05) from another computer.** The knowledge is in the repo (findings 1.19 and
+10.13-10.14, plan.md Phase 11, up.md 2.8, progress.md); commit and pull these with
+`parameters/common/rama31.dat` (now the BioEmu-fitted library). Everything else that was only on the
+Mac Studio is on midway2 in `/project/trsosnic/yinhan/checks/gly_bioemu_map/` (README there): the
+library, all 36 session scripts (fit, push probe, barrier and glpG tools), BioEmu's deposit and the
+processed phi/psi, the fit logs, the probe's divergence files and summaries, and the TM4 reference.
+The Mac-only extras: Charron et al.'s extracted h5 files (`~/Downloads/charron2025/`, 58 GB,
+re-downloadable from Zenodo 15465782) and the local run directories under the repo scratchpad.
+midway2 artifacts of the session: `/project/trsosnic/yinhan/checks/glyprobe_bio1/` (a staged, never
+submitted midway2 version of the probe; superseded) and `checks/ff30_bio_updatetest/` (the update
+and extraction tests).
 
 ## 0. Connect first (needs a Duo push on the user's phone)
 
@@ -355,21 +361,30 @@ Q(T), so it differs by up to 0.001 from the per-seed values above.
 
 ## 1. Current jobs
 
-Snapshot **2026-10-02 15:24 CDT, verified live against `squeue` on midway2.** Finished and cancelled
+Snapshot **2026-10-05 08:00 CDT, verified live against `squeue` on midway2.** Finished and cancelled
 rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49141995** | **ff30_glyhb: ff3.0 from ff2.1 with glycine's own H-bond basin offsets (`hbg`, hbond.h5 entries 12-14, from zero), side-chain lr 10x smaller, AWH glycine library** (plan.md Phase 8), chain link on broadwl, `$P/training/ff30_glyhb`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30h-gate`); log `condiv-train_<jobid>.out` | R since 13:25:41 on 19 nodes; step 0 done 14:02 in 2196 s (worker median 1229 s), healthy (`check_step.py`: 24 of 24 finite, KE/1.5kT 1.006-1.041, restrained RMSD median 1.03 A, unfolded target 24 of 24); step 1 done 14:46 in 2586 s, healthy (24 of 24 finite, KE/1.5kT 1.008-1.046); step 2 done 15:27 in 2427 s, healthy (24 of 24 finite, KE/1.5kT 1.006-1.043); hbg after step 2 [+0.027 +0.027 -0.028], glycine margin E_other - E_alpha +0.104 (start +0.192; +0.139 after step 1), shared margin +0.159 (+0.177); link log clean; at ~35 min a step, the 36 h wall holds ~60 of the 76 steps and the successor finishes them | `check_step.py ff30_glyhb` on every new step; panels h00, h01, ... by the watch |
-| 49142816 | its insurance successor (`afterany:49141995`) | PD (Dependency) | none; resumes from the newest checkpoint if the link dies |
-| 49139947, 49139944 | Peng benchmark lambda under **ff_2.1**, native and de novo arms, chunk 2 (Table S2 ladder 0.780-0.980, self-resubmitting 12 h jobs); `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_{native,denovo}_ff_2.1/`, logs `logs/lambda_<kind>_ff_2.1_<jobid>.out` | R | after each chunk: `checks/lambda_ff21/lambda_check.py` and `lambda_packing.py` |
-| 49139945, 49140670 | the same arms for **lambda G46A/G48A** (helix 3's glycines to Ala), chunk 2; `runs/lambda_G46A_G48A_{native,denovo}_ff_2.1/` | R | compare with wild type at matched time |
+| **49179449** | **ff30_bio**: ff3.0 round 4 from ff2.1, the BioEmu-fitted glycine library frozen (`upside_input/rama.dat`, md5 69051b78, = repo `parameters/common/rama31.dat`), ff2.1 12-entry hbond.h5 (`hbg` empty), side-chain lr 10x smaller; `$P/training/ff30_bio`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30bio-gate`); log `condiv-train_<jobid>.out`; 12 nodes / 336 CPUs, 36 h links, the first link queues its own `afterany` successor | PD (Priority), submitted 10-05 07:44, Slurm estimate 10-07 03:40 | when it starts: confirm the successor was queued and step 0 began from `initial_checkpoint.pkl`; then the watch below every step |
+| **49179457** | **ff30_gdepth**: ff3.0 round 4, run 2: ff2.1's library (NDRD) with glycine's alpha_R / alpha_L depths trained, one pooled offset pair on the 37 GLY\|X maps started at BioEmu's weights (c_aR -0.0918, c_aL +0.4621), updated per epoch (round 2's rule; log `run_output/rama_rounds.txt`, libraries `rama_round_EE.dat`); otherwise as ff30_bio; trainer `ff30_gdepth/trainer/` (round 3's ConDiv + round 2's offset hooks), copied into run_output; `$P/training/ff30_gdepth`, 76 steps, gate up to 13 epochs (`ff30gdep-gate`; the gate judges only the Adam groups) | PD (Priority), submitted 10-05 ~08:55 | as ff30_bio; plus the depth per step (check_step prints it) and per round |
+| 49179456 | panel `gdepth_start` (ff30_gdepth's untrained start: round 0's library, extracted from its initial checkpoint), `ff3_selection/runs/gdepth_start/` | PD (Priority) | when 176 npz: `panel.py select aa domains runs ff21_released ff21_awh bio_start gdepth_start`; the baseline for every `dEE` |
+| 49179451 | panel `bio_start` (the untrained start: ff2.1 terms + BioEmu library, extracted from ff30_bio's initial checkpoint), `ff3_selection/runs/bio_start/`, 4 h, `--no-requeue` | PD (Priority) | when 176 npz: `panel.py select aa domains runs ff21_released ff21_awh bio_start`; it is the baseline for every `bEE` |
 
-**Panel e02 finished 13:05** (49140630). `select` with ff21_released ff21_awh e00 e01 e02 (37
-domains common to all; 7 dropped for too few folded frames in some candidate): e02 folded 0.501,
-helix -0.025, beta -0.017, gly_helix -0.112, gly_left -0.042 against ff2.1's 0.615, -0.016, -0.017,
--0.114, +0.032; "RELEASE HELD: worse than ff2.1 in helix". ff30_gly is stopped; these are the
-comparison for the h tags.
+**The lambda ff_2.1 benchmark is complete** (all four arms at target: WT de novo 10-04 14:17, WT native
+16:17, G46A/G48A de novo 10:37, G46A/G48A native 10-05 01:24; `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_*_ff_2.1/`):
+WT native unfolds from ~1 M tu (10.2-10.3 A) and de novo never folds, helix 3 last-block aR 0.61 / 0.57;
+G46A/G48A keeps helix 3 (0.97 native, 0.80-0.88 de novo), native on a ~6.9 A plateau, de novo never
+folds (findings 11d). No cluster jobs run.
+
+**ff30_glyhb was stopped 10-04 21:58 by the user's decision** (link 49145374 at step 63, successor
+49161468 and panel h02 49174801 cancelled; the chain script submits its successor only at a link's
+start, so the successor was cancelled first). Newest checkpoint
+`$P/training/ff30_glyhb/run_output/epoch_03_minibatch_06`; at step 63 shared margin +0.031,
+glycine margin -0.309, hbg [+0.083 +0.204 -0.257]. Panels h00 / h01 (37 domains): folded 0.460 /
+0.469, helix -0.029 / -0.030, gly_helix -0.130 / -0.122, gly_left -0.075 / -0.054, against ff2.1's
+0.615, -0.016, -0.114, +0.032; "RELEASE HELD: worse than ff2.1 in helix" (findings 1.17). Locally
+its epoch-2 checkpoint flips glpG TM4's GLY143 (findings 1.19).
 
 The gradient split is closed (12:52): threshold test 49139877 finished 24 of 24, both threshold
 statements give the same DSE (findings 1.17); the held remainder (49138763_[88-95],
@@ -390,11 +405,14 @@ offsets are bitwise 12 entries. `py/upside_config.py` there had been stale (it s
 updated yet: the benchmark arms run from it, and it must be synced from `$P` before ff3.0's
 benchmark or glpG runs.
 
-**Selection watch** is session cron `6733412b` (:17 and :47, replaces `39a1fa34`), watching
-ff30_glyhb with tags h00, h01, ...; `submit_new.sh` backup `.bak_pre_glyhb_20261002`. It submits the
-panel for each finished epoch-end checkpoint (marker `runs/<tag>.submitted`), checks the link log,
-and runs `panel.py select` when data are complete. Session-only, expires 10-09; never runs a Duo
-script. The release decision goes to the user, by the rule in `panel.py`.
+**Watch**: none running (10-05 09:00); see "One watch at a time" above for the round-4 prompt.
+Shared-script changes for round 4 (backups `.bak_pre_gdepth_20261005` and `.bak_pre_bio_20261005`):
+`$P/training/extract_ff.py` (writes a depth-training checkpoint's trained library; finds the run's own
+trainer for an initial checkpoint; byte-identical output for the other runs, tested),
+`$P/training/check_step.py` (empty glycine-offset field skipped; glycine depth printed), and
+`ff3_selection/submit_new.sh` (ff30_bio as bEE, ff30_gdepth as dEE). The
+ff30_glyhb selection watch (`19174818`) was deleted with the run. `submit_new.sh` still names
+ff30_glyhb's tags; edit it before the next panel.
 
 `$P` = `/project/trsosnic/yinhan/upside2-md-mdw2`. ff30_gly's cluster run_output holds the local
 Mac run's synced steps (marker `run_output/FROM_LOCAL`); the cluster's own initialised run_output is
@@ -750,7 +768,31 @@ Slurm and filesystem:
   nodes); the trainer relaunches a worker that never started.
 * **Node exclusions are per record of failures.** midway2-[0010-0011] (three NODE_FAILs in one
   campaign) and midway2-0037 (two links in three hours on 2026-09-26) are excluded in `slurm.args`;
-  two later link failures named no node and excluded nothing.
+  two later link failures named no node and excluded nothing. On 2026-10-02 20:40:36-37 midway2-0003 and
+  0033-0035 failed in the same second (link 49141995, lambda 49144354), with ~20 broadwl nodes not
+  responding at 20:50: a group event rather than one node's record, so nothing was added. On 2026-10-03
+  04:50:36 link 49142816 died NODE_FAIL on midway2-0323 or 0366 (not reallocated, both back in service at
+  05:20); one failure each, nothing added. **Superseded 2026-10-03 13:20: the NODE_FAILs are one
+  fault on a fixed set of nodes.** At 10-02 20:40:37, 10-03 04:50:36 and 13:00:38 broadwl jobs of
+  several users died in the same second, and 32 of the 33 such jobs held at least one of the 9 of 212
+  broadwl nodes whose slurmd started at 2026-10-01 18:10:54: midway2-[0010-0011,0033-0035,0037,0060,0080,0085]
+  (the exception was midway2-0003, DOWN for its own reasons). No node rebooted or restarted slurmd at
+  the events; the workers' MaxRSS was 1.1-1.5 GB. Our exclusions already carry 0010-0011, 0037 and 0085
+  but not 0033-0035, 0060 and 0080, which each sat in a failed job at all three events. The first three
+  events were 8 h 10 min apart to 3 s, but the period is **disproved**: at 17:25:37-38 jobs on 0003 and
+  0010 died (ours and wdenault's), and on 0011 at 17:30:37, all three then shown `mixed*` (not
+  responding), and none came at the 21:10 the period predicted. The fixed-node part holds, the timing does not. At 17:48 our job on 0011 was writing
+  frames at 12.5 tu/s while Slurm showed 0011 `mixed*`: the nodes compute, and it is their link to the
+  controller that drops, so the controller declares NODE_FAIL and kills what runs there. **Excluded 10-03 14:25 (user-approved):** both
+  `ff30_glyhb/slurm.args` and `ff3_selection/slurm.args` now read `--partition=broadwl
+  --exclude=midway2-[0003,0010-0011,0033-0035,0037,0060,0080,0085,0342-0345]` (backups
+  `.bak_pre_nf_20261003`, format checked with `sbatch --test-only`), and the pending 49145374,
+  49145390 and 49145792 carry the same `ExcNodeList`. The lambda benchmark got the 9 nodes and 0003 at
+  10-03 17:45 (user-approved) as a `#SBATCH --exclude` line in `ff3_benchmark/bench.sbatch` (backup
+  `.bak_pre_nf_20261003`) rather than in `BENCH_RESUBMIT`: a running job builds its resubmit command
+  from Slurm's spooled copy of the script, so only a directive in the file reaches the next chunk.
+  Checked with `sbatch --test-only -w`: an excluded node is refused, an allowed one accepted. The four
+  running lambda jobs keep their nodes and requeue themselves on a NODE_FAIL (`Requeue=1`).
 * **`sbatch --test-only`'s start estimate is no guide to the real wait**: it predicted 13:36 on both
   clusters, then the midway3 submission sat PENDING (Resources) while midway2 started at once.
 * Training steps ran 300-450 s slower than the engine accounts for (2026-09-29), a different slowest

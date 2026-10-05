@@ -123,7 +123,7 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   (`/project/trsosnic/yinhan/checks/merge_test_20261002`) gave byte-identical `extract` output and an
   identical gate table and verdict; basin functions bitwise equal; a local 1rkl projection keeps the
   source potential exactly.
-* MPI check (user question): Upside needs no MPI and cannot use it (findings 10.13).
+* MPI check (user question): Upside needs no MPI and cannot use it (findings 10.14).
   `example/01.GettingStarted/0.run_mpi.py` was broken by design (two `mpirun` ranks collide on the
   same files, 0 frames, exit 0) and `run_1UBQ_local.sh` was `0.run.sh` with another `pdb_id`; both,
   and their 1UBQ PDB copy (master keeps one in `example/07.MoreRestraints/pdb/`), moved to scratchpad,
@@ -145,3 +145,77 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   `~/Downloads/bp_validation.{png,pdf}`. Everything the Mac had (scripts, the source patch as
   `make_src.py`, the build recipe as `build_libs.sh`, sources, libraries, SciencePlots styles,
   results; 325 files) mirrored to `bp_validation/static/`, md5 manifest identical (remote_jobs.md §0c).
+
+## 2026-10-04: ff3.0 round-3 check, local (plan.md Phase 10)
+
+* Panels h00 and h01 (ff30_glyhb epochs 0 and 1) both worse than the run's start in helix; release
+  held. Lambda ff2.1 arms finished (three at target, G46A/G48A native in its last chunk): wild-type
+  helix 3 settles near 60% helical from both starts, G46A/G48A holds it (findings 11d).
+* User: the TM4 cause (placement read as energy) is settled; continue training; test the current
+  stage locally on glpG TM4 and lambda; propose a design for both. New rule in plan.md Key Decisions:
+  probe every new trainable term from a balanced start before committing epochs.
+* Phase 10 A done: local engine rebuilt (`obj/*.bak_sep10_20261004` kept), parity with both cluster
+  builds by initial potential (lambda ff2.1 -196.48, lambda e02 -193.92, glpG ff2.1 -24914.84); e02
+  extracted on midway2; patch gate passed 2.6e-6; seeds patched for ff21_released, ff21_awh, e02,
+  e02_gly0 (`scratchpad/ff3_local_test/`).
+* Phase 10 B started 20:09: 12 glpG 79HIS runs, T 0.80, 4000 time units, 3 seeds per force field.
+  The first launch died silently (`source.sh` fails under `set -u`); relaunched with `set -eo pipefail`.
+* Charron et al.'s archive finished downloading 21:16 (md5 verified). The CATH and octapeptide h5
+  were extracted to `~/Downloads/charron2025/`.
+* User correction: the problem is the Rama map; an H-bond-term design (achiral glycine offsets, a
+  bottom-up E_gly fit) was rejected, and its runs and analysis were stopped (findings 10.13; memory
+  fix-the-rama-map). Phase 11 was rewritten around the map.
+* The octapeptides were run with adaptive sampling (about 100 segments of about 10 ns per peptide).
+  The L residues' alpha_L decays inside the segments; glycine's populations do not change. Interior
+  glycines give ln(aR/aL) = -0.70 +- 0.04, against -0.11 for rama31 and -1.1 to -1.7 for NDRD
+  (findings 1.19). Four literature surveys were added to the same section.
+* Phase 10 B interim (2,000 tu): ff21_awh holds TM4; e02 flips GLY143.
+* Started (`scratchpad/ff3_local_test/`):
+  * `ff21_oct`, rama31 with the octapeptide surface for GLY|X. Patched from the live seed; only the
+    23 glycine maps differ from ff21_awh. glpG TM4 runs, 3 seeds, from 21:22.
+  * The map-fitting step M1 on 376 octapeptides in Upside (`ibi_run.py`, `ibi_compare.py`), from
+    rama31, from 21:30.
+  * lambda REMD under ff21_awh, queued to start when Phase 10 B ends.
+
+## 2026-10-04/05 night: BioEmu glycine map and the push probe (plan.md Phase 11)
+
+* Literature (six sub-agent searches, five paywalled papers read in full from the user's
+  downloads): no experiment resolves glycine's alpha_R/alpha_L next to L residues; gas-phase QM of
+  Ac-Ala-Gly-Ala-NHMe (RHF/3-21G) finds no helical glycine minima at all; Childers 2016 (Levitt
+  force field) finds glycine between L-alanines indistinguishable from GGGGG (achiral). One agent put
+  the user's email into an Unpaywall query, once; reported.
+* Upside never designed the Rama transition region for any residue (Jumper thesis 4.3.1; NDRD tails
+  6-10 E_up for all types; contrastive divergence cannot train it); decision: leave the top as the
+  library has it (findings 1.19).
+* BioEmu plain MD (Zenodo 15641199) replaces Charron's adaptive frames as the target (glycine biased
+  by 0.16-0.28 there); all residue types compared with NDRD, only glycine's error flips helices in
+  the panel. training_a_cg_model.zip deleted (extracts kept, user).
+* Fit of every central-glycine entry in Upside: unit convention corrected to T_up = 1 (the first fit
+  at 0.8557 was 1.169x too small; it and the probe built on it were discarded); GLY|GLY and
+  GLY|right|PRO now fitted on their own BioEmu contexts (user); a sheet-entry bug found and fixed
+  after passes 1-3 (findings 1.19); corrected passes 4-6 running.
+* Push probe set up locally and verified against midway2 (inputs, ff2.1 files, engine energy on
+  1ga3 identical); reference at the rama31 start d -0.105 [-0.150, -0.057]; midway2 would start ~39 h
+  later. Gate (user): CI entirely below 0 -> train with the frozen map; TM4 checked per epoch.
+* midway2: ff30_glyhb chain and panel h02 cancelled 21:58 (user); lambda G46A/G48A native complete
+  01:24 (helix 3 aR 0.97, ~6.9 A plateau; findings 11d); no cluster jobs, watch cron deleted.
+* Fit converged after the sheet fix (map 6: X-G-Y within 0.01 per basin of BioEmu in Upside). Push
+  probe on map 6, 72 proteins: d -0.014 [-0.041, +0.012] (rama31 start -0.105); TM4 on the untrained
+  start: no glycine flips, TM4 0.95. By the pre-agreed rule "do not train"; the user decided to train
+  since TM4 holds (findings 1.19).
+* ff30_bio set up on midway2 (ff2.1 init, BioEmu library fresh in upside_input, round 3's trainer),
+  update path and extract_ff.py tested with the empty glycine-offset field, submitted 07:44 as
+  49179449 (estimate 10-07 03:40); panel bio_start 49179451; submit_new.sh repointed to ff30_bio
+  (tags bEE; backup .bak_pre_bio_20261005).
+* Library installed as `parameters/common/rama31.dat` (AWH version backed up); up.md 2.8, the GLY
+  note, training/README.md, ConDiv.py docstring, GLY_sym.md and architecture.md updated. Session
+  scripts, data, logs and probe files copied to `/project/trsosnic/yinhan/checks/gly_bioemu_map/`
+  for use from another computer (remote_jobs.md "Round 4 ... from another computer").
+* Run 2 (user): ff30_gdepth, glycine's alpha_R / alpha_L depths trainable on ff2.1's own library,
+  one pooled pair on the 37 GLY|X maps (user's choice), started at BioEmu's weights (c_aR -0.0918,
+  c_aL +0.4621), so no outside data enter the training. Trainer: round 3's ConDiv with round 2's
+  offset hooks ported; module rewritten for the pooled pair. Tested on midway2 (round-0 library,
+  one end-of-round update, extraction). Fixed on the way: extract_ff.py imported the wrong trainer
+  for initial checkpoints (findings 10.14); check_step.py would have crashed on an empty glycine-
+  offset field (both round-4 runs). Submitted 49179457 with start panel 49179456; submit_new.sh
+  serves both runs. Trainer files and gdepth_start_offsets.py in `checks/gly_bioemu_map/`.

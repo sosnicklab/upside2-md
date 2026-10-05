@@ -522,8 +522,19 @@ runs from ff2.1):
 | `ff21-fixedpoint` | nothing | 0.192 -> 0.127-0.142 by steps 13-25 | -1.907 (step 25) |
 | `ff30_basin` (ff_3.0) | 158 basin offsets | 0.192 -> 0.151 at step 19 (offsets still 0), then 0.07-0.14 | -1.878 (step 114) |
 | `ff30` (cancelled) | full glycine row | 0.192 -> 0.06-0.12 over steps 97-222 | -1.831 (step 222) |
+| `ff30_glyhb` (ff3.0 retrain) | glycine H-bond offsets, side-chain lr / 10 | 0.192 -> +0.046 at step 13, +0.011 at 18, **negative from step 21**, -0.036 at step 29 | -1.863 (step 29) |
 
-It drifts smoothly (Adam momentum), not as step noise: over ff_3.0's last epoch it ran 0.117 ->
+In ff30_glyhb the drift is the fastest of the four runs and goes past zero: by step 29 E_other
+(-1.899) is below both E_alpha (-1.863) and E_beta (-1.874), so a phi > 0 H-bond is the cheapest for
+every residue, while glycine's own margin reaches -0.315. **The populations have not followed**
+(`checks/hb_drift_20261003/nongly_basins.py`; minibatch k holds the same proteins in every epoch, so
+epochs pair step by step): natively helical non-GLY non-PRO residues keep free alpha_R 0.917 over
+epoch 0 and 0.918 over epoch 1's first 12 steps (alpha_L 0.0045 and 0.0042), all such residues free
+alpha_L 0.0225 and 0.0224, equal to the restrained 0.022; helical glycines alpha_L 0.064 and 0.054.
+A margin of a few hundredths of an E_up per H-bond is small against kT at T 0.8-1.0. Why this run
+drifts faster is unproven.
+
+The margin drifts smoothly (Adam momentum), not as step noise: over ff_3.0's last epoch it ran 0.117 ->
 0.063 -> 0.080, and the release is that last iterate. E_alpha weakens in every run. So most of the
 change is the trainer's own drift of the H-bond term from ff2.1, which the offsets may add to but do
 not cause. Helical glycines' free alpha_L barely moved over training (0.107 at epoch 0, 0.101 at
@@ -898,6 +909,36 @@ original training never had. ff3.0 gives glycine its own dE_alpha, dE_beta, dE_o
 zero (plan.md Phase 8): an optional 15-entry `parameters` with a per-residue `residue_class`, where a
 12-entry config stays bitwise unchanged (10.12).
 
+**The offsets' first two epochs do not deliver** (panels `h00` and `h01` = ff30_glyhb
+epoch_00/01_minibatch_18, run 2026-10-04 10:43-11:39; `select ... ff21_released ff21_awh e00 e01 e02
+h00 h01`, 37 domains; helix 1135, beta 522, helical glycine 26, left-handed glycine 63 residues):
+
+| tag | folded | helix | beta | gly_helix | gly_left |
+|---|---|---|---|---|---|
+| ff21_released | 0.615 | -0.016 +- 0.005 | -0.017 +- 0.005 | -0.114 +- 0.063 | +0.032 +- 0.021 |
+| ff21_awh (the run's start) | 0.585 | -0.017 +- 0.005 | -0.018 +- 0.004 | -0.087 +- 0.064 | -0.077 +- 0.032 |
+| e02 (ff30_gly) | 0.501 | -0.025 +- 0.006 | -0.017 +- 0.004 | -0.112 +- 0.065 | -0.042 +- 0.029 |
+| h00 | 0.460 | -0.029 +- 0.006 | -0.017 +- 0.004 | -0.130 +- 0.067 | -0.075 +- 0.032 |
+| h01 | 0.469 | -0.030 +- 0.007 | -0.017 +- 0.004 | -0.122 +- 0.069 | -0.054 +- 0.026 |
+
+* Both epochs are resolved worse than the run's start in helix (paired bootstrap on |error|) and
+  have the lowest folded fractions of any tag; epoch 1 does not recover epoch 0 (-0.030 against
+  -0.029). Neither glycine class moves beyond the noise, and the helical-glycine class has only 26
+  residues (SE ~0.065), so it cannot resolve a change of the size sought.
+* The rule's choice depends on which tag is newest: with h00 newest it chose ff21_awh (untrained,
+  "release may proceed"); with h01 newest it chose **e01** (ff30_gly, which dominates h01 in helix)
+  and printed **"RELEASE HELD for the user: worse than ff2.1 in helix"**. No ff30_glyhb checkpoint
+  is chosen either way.
+* The training-ensemble readout disagreed: natively helical non-glycine residues kept free alpha_R
+  0.917 through both epochs. That readout averages over the epoch's changing parameters and its own
+  frames; the panel tests the end-of-epoch checkpoint against all-atom on other proteins.
+* Over the two epochs the shared H-bond margin fell from +0.192 to +0.011 and then -0.034, and
+  glycine's to -0.203 and -0.350 (1.15 table, remote_jobs.md §1): the H-bond drift is the leading
+  candidate for the helix loss, not yet tested. The side-chain cause of ff30_gly's loss (e00_rot21
+  above) is unlikely here: the 10x smaller rot step held the side-chain change to rms 0.058 after 19
+  steps and 0.090 after 38, against 0.44 in ff30_gly's 19, yet helix is lost by the same -0.030. The
+  direct test is the same reset on h01 (`h01_hb21`, `h01_rot21`).
+
 **Inputs kept for the bottom-up fallback** (plan.md, proposed, not approved):
 * **ConDiv's derivative step takes any N/CA/C positions** (`compute_divergence`,
   `training/ConDiv.py:399`), so mapped all-atom frames can replace a simulated ensemble without
@@ -915,8 +956,8 @@ zero (plan.md Phase 8): an optional 15-entry `parameters` with a per-residue `re
   0.6-1.1e-2 (`rotamer`); `hbond_coverage_hydrophobe` does not converge (0.22-0.28). The energy's own difference needs a step of
   1e-3 A or less to agree with `deriv()` to 0.1%.
 * **Public folded-protein trajectories in the glycine map's own force field exist** (verified from
-  Charron et al., Nat Chem 17, 1284 (2025), SI section 1.1, and the Zenodo READMEs,
-  doi:10.5281/zenodo.15465782).
+  Charron et al., Nat Chem 17, 1284 (2025), https://www.nature.com/articles/s41557-025-01874-0, SI
+  section 1.1, and the Zenodo READMEs, doi:10.5281/zenodo.15465782).
   * Matching: amber99sb-ildn with TIP3P at 300 K, as our AWH dipeptides (`gly_peptides/awh.sbatch`:
     `-ff amber99sb-ildn -water tip3p`, `ref-t = 300`).
   * Protocol: 50 CATH domains (the first listed in the SI are 60-71 residues), started from native,
@@ -1058,6 +1099,183 @@ zero (plan.md Phase 8): an optional 15-entry `parameters` with a per-residue `re
   grid, so an AWH PMF enters as PMF / kT(300 K), not PMF / 2.914952774272 (GLY_sym.md §5).
 * The two `GLY|ALL` maps are read only by the `product` combining rule, which nothing uses, so any
   per-map statistic over the glycine row must exclude them.
+
+### 1.19 Glycine's in-chain handedness in all-atom peptides, and what the literature adds (2026-10-04)
+
+**Charron et al.'s octapeptides** (`training_a_cg_model.zip`, md5 verified; OPEP file: 1,100 L-only
+octapeptides, amber99sb-ildn/TIP3P, 300 K, ~20,600 frames each, decoys in separate `DECOY_*` groups;
+`scratchpad/ff3_local_test/scripts/opep_*.py`):
+* **Adaptive sampling, visible in the data.** Each peptide is ~100 consecutive segments of ~201
+  frames (~10 ns). The L residues' alpha_L decays inside the segments (alanine 0.283 -> 0.163,
+  serine 0.322 -> 0.241, still falling), so their raw populations are seed-biased (raw alanine
+  alpha_L 0.20, which no equilibrium amber99sb-ildn ensemble gives). Glycine's do not move: alpha_L
+  0.256 / alpha_R 0.133 in the first 10 frames, 0.254 / 0.132 in the last 50. Glycine's local
+  distribution is usable; theirs are not, without reweighting.
+* **Glycine inside a chain favours alpha_L.** Equilibrium numbers come from BioEmu's plain MD of the
+  same 1,100 peptides (Lewis et al., Science 2025; Zenodo 15641199, `ONE_octapeptides`; ff99sb-ildn,
+  300 K, run001-005 per peptide, 1 us each, a frame every 10 ns; first 100 ns of each run dropped;
+  `scripts/bioemu_phipsi.py`). ln(aR/aL), training/rama_basin.py basins, SE by bootstrap over
+  glycines: interior X-G-Y **-0.54 +- 0.04** (365), positions 2-5 alone -0.53 +- 0.05 (249); next
+  to the N-terminal residue -0.09, next to the C-terminal residue -0.88; G-G-G -0.22 (n 8); Gly
+  before Pro +1.05. Charron's adaptive frames give -0.70 for the same glycines, so the seeding biased
+  glycine by ~0.16 although glycine's populations did not drift inside the segments: a flat
+  within-segment profile does not prove an unbiased ensemble. Glycine P(phi > 0) is 0.555 here (agent
+  check: 0.530 over positions 1-6 in both sets).
+* **Glycine's neighbour contexts in the plain MD** (residues 2-5; ln aR/aL): X-G-Y -0.53 (249),
+  G-G-Y -0.19 (27), X-G-G -0.87 (25), X-G-P +1.06 (10; both helical basins nearly empty, aR 0.017,
+  aL 0.006), G-G-G -0.38 (5). So a glycine's handedness depends on which side the glycine neighbour
+  is, and each GLY|left|GLY / GLY|right|GLY / GLY|right|PRO entry is fitted on its own context.
+* **A fitted glycine entry goes into the coil and the sheet group alike.** The first fitting code
+  took the sheet entries' top from NDRD's sheet library (a strand map), so glycine's sheet entries
+  diverged from its coil entries and the coil/sheet mixture fed glycine extra beta that no coil
+  update could remove: beta stayed at 0.135 against the target's 0.078 over three passes. Fit once,
+  in the coil group with NDRD's coil top, and copy to the sheet group (rama31 is built that way).
+* **Units when a BioEmu (300 K) distribution becomes a map**: the library convention (up.md 2.8) is
+  that a map reproduces its source at T_up = 1, i.e. -ln P(300 K), as rama31's AWH surfaces entered
+  (PMF / kT(300 K)). A fit in Upside therefore runs Upside at T_up = 1 against the 300 K target with
+  update factor 1. Running it at the physical T_up = 0.8557 (300 K) scales the glycine map by 0.8557,
+  the 1.169x error up.md warns about, and leaves glycine inconsistent with every other map.
+* **The reference force field puts L residues at phi > 0 more than the PDB does**: plain-MD P(phi > 0),
+  positions 2-5: Ala 0.095, Ser 0.187, Lys 0.113, Leu 0.099, Asn 0.086 (NDRD alanine alpha_L 0.045).
+  Andrews et al. 2020 found ff14SB and others overpopulate glycine's helical basins against GGG
+  couplings. So glycine's in-chain alpha_L preference in ff99sb-ildn may be overstated; the target
+  is only as good as this force field, which is also the panel's.
+* **Against the library**: NDRD central glycine -1.15 pooled, -0.62 to -1.75 per neighbour map (mean
+  NDRD minus adaptive-frame octapeptide over the 40 maps -0.55). The engine totals (map + reference): ff2.1
+  GLY|left|ALA -1.09, GLY|left|LYS -1.74; rama31 -0.11; the octapeptide surface -0.70, with alpha_R
+  equal to rama31's (0.132) and the alpha_L excess taken from pPII.
+* So of NDRD's handedness (about -1.15), about -0.6 is selection and about -0.55 is in-chain physics
+  in this force field (plain MD, positions 2-5).
+
+**Every residue type, not only glycine** (user: all maps are PDB statistics; `scripts/allres_vs_ndrd.py`
+on the plain MD, residues 2-5, pooled over neighbours, NDRD's neighbour-marginal map in the engine
+frame). Handedness ln(aR/aL), NDRD minus all-atom: His -1.70, Asp -0.93, Asn -0.76, Gly -0.63, Glu
+-0.54 (NDRD puts more weight in alpha_L: the residues folds place at turns and caps), and Ser +1.33,
+Ile +0.83, Lys +0.75 the other way (the force field's Ser alpha_L is 0.184, likely its own excess).
+Helix against extended, ln[aR/(beta+pPII)]: Glu -0.86, Val -0.76, Thr -0.64, Cys -0.60, Asp -0.51,
+Ile -0.51 (NDRD less helical than the force field). So all maps carry selection or the force field's
+own errors, of similar size.
+**But only glycine's error reaches folded proteins as a flip** (selection panel, ff2.1 runs against
+the all-atom runs of the same 44 domains, folded frames, natively alpha_R residues by type;
+`/project/trsosnic/yinhan/checks/ff3_local_test_20261004/panel_by_type.py`): glycine (34) loses
+0.081 of alpha_R and visits alpha_L 0.073 (0.036 with the physics map, which loses the same alpha_R
+to the extended region instead); every other type visits its mirror basin <= 0.012, and its
+alpha_R error is -0.03 to +0.03 (Cys, His, Trp -0.05 to -0.06 with n 13-20, all to the extended
+region). Glycine is the one residue whose NDRD map puts alpha_L below alpha_R, so the selection
+changes the sign of its local preference; for the others it changes a margin the helix context
+covers. A residue-wide physics map would need a better reference than ff99sb-ildn for the L
+residues (its alpha_L excess is as large as the NDRD differences) and a retraining of everything
+trained against NDRD; it is recorded, not proposed.
+
+**Literature** (four sub-agent surveys, citations checked on publisher, PubMed or PMC pages; texts
+in the session scratchpad `lit/`):
+* No experiment resolves glycine's alpha_R/alpha_L with L neighbours; GGG and GxG hosts are achiral
+  (Eker PNAS 2004; Hagarman JACS 2010 [Abs]).
+* Physics force fields build glycine symmetric: CHARMM36's CMAP is the RIMP2/CBS dipeptide surface
+  "used without additional modification" (Best JCTC 2012); ff19SB: "PDB-based distributions show
+  significantly enhanced incidence of glycine in the positive phi region, which would be reflected
+  erroneously in force fields fit to these statistical distributions" (Tian JCTC 2020). Rosetta's
+  optional symmetric glycine table cites the same PDB effect; UNRES local terms are achiral and get
+  chirality from coupling to L neighbours (Lipska JPCL 2023); AWSEM drops glycine's Rama term.
+* The mechanism in the PDB: Hollingsworth & Karplus (Biomol Concepts 2010) -- glycine is physically
+  symmetric, and PDB distributions reflect a residue's energetics relative to the other residues at
+  the sites folds provide. Shortle (Protein Sci 2003): P(residue | conformation) behaves as an energy,
+  P(conformation | residue), Upside's form, fails. One sub-agent's own count (PISCES <= 1.2 A, 884
+  chains, not literature): alpha_L glycines 4,944 vs alpha_R 3,161; 25% sit at helix C' and 30% at
+  type II turn i+2; without those two motifs ln(aL/aR) = -0.34. Both motifs are one-sided because
+  their mirror images need an L residue at phi > 0, which is the same chirality transfer the
+  octapeptides show.
+* Upside's own derivation (Jumper thesis 4.3): the Rama term is a "naive Boltzmann inversion" of
+  NDRD TCB; the reference correction is the density "for the central residue of a free alanine chain
+  with no Ramachandran potential", a steric correction, applied to glycine as well. Ting 2010's TCB
+  set is 62.4% turns. Greener & Jones (PLoS ONE 2021) saw torsions trained on natives give glycine
+  low energy at phi > 0, the re-learning of rounds 2 and 3.
+* Energetics a model should reproduce: Gly -> D-Ala at phi > 0 sites +0.6 to +1.9 kcal/mol (Anil JACS
+  2004); Ala over Gly in helix interiors 0.4-2 kcal/mol (Scott PNAS 2007); lambda G46A/G48A Tm +6.5 C
+  (Liu, Gao & Gruebele JMB 2010; Y22W background). In 1LMB, G46 and G48 are alpha_R and G41, G53
+  (helix 3 C') alpha_L; in 2XOV, TM4's G202/G209/G215 (our 136/143/149) are alpha_R.
+
+**The alpha_R/alpha_L barrier: the engine reads the map faithfully, but NDRD's top is a floor, not a
+peak** (user questions; `scripts/rama_barrier.py`, `rama_spline_check.py`, `gly_flip_route.py`).
+* `rama_map_pot` fits a periodic 2D spline through the stored 72x72 values with no cap or default.
+  Read from the engine (a config with only bonded and Rama terms, the glycine of A-G-F rotated so
+  only its own map changes): on-grid values equal the stored total (map + reference) to 4e-4; at
+  half-cell points the splines dip below all four corners by at most 0.056 (NDRD) and 0.019 E_up
+  (AWH).
+* The basin difference alone is not the indicator (user): a flip has to cross the peak on the route
+  it takes, and in a helix that route is not the bare map's minimax path. The one crossing caught
+  in a 10-tu frame (e02_gly0 s3 GLY143) sat at (phi, psi) = (-21.5, -86.5), +8.65 on its map, i.e.
+  across phi = 0, not through the extended region; flipped glycines also dwell at phi 70-100, psi
+  -50 to -110 before alpha_L. Most flips fall between frames.
+* **NDRD has no data where glycine does not go and sits on a floor of ~9-11 E_up there.** GLY|left|ALA,
+  relative to alpha_R (engine frame):
+
+  | map | phi = 0 column min | E(0, -40), helical psi | E(0, 0) | via phi = 180 | alpha_L - alpha_R |
+  |---|---|---|---|---|---|
+  | NDRD (ff2.1) | 8.1 (psi +90) | 10.1 | 9.6 | 5.7 | -1.19 |
+  | AWH (rama31) | 9.4 (psi -90) | 14.4 | 17.2 | 3.1 | -0.16 |
+  | octapeptide surface (ff21_oct) | 6.6 | 6.9 | 7.7 | 2.8 | -0.86 |
+
+  Crossing phi = 0 at helical psi costs 4.3 E_up less on NDRD than on the physics surface (a factor
+  ~200 in rate at T 0.8), a route that need not unwind the helix. The octapeptide surface has the
+  same defect, worse, because the peptides rarely visit that region.
+* **Upside never designed the transition region, for any residue** (Jumper thesis 4.3 and 4.3.1): the
+  Rama term is a "naive Boltzmann inversion" of the coil library, and the reference correction (a free
+  alanine chain's steric density, depressed near phi = psi = 0 by i-1/i+1 overlap) exists so that
+  with backbone sterics the populations reproduce the library; it is aimed at populations ("the edge
+  of the bias region is sufficient to significantly alter the helical probability"). Every residue's
+  unvisited region is the NDRD density estimate's smooth tail (no cap; ~500 distinct values in each
+  map's top 10%), at a similar height for all types: phi = 0 column minimum (engine frame, above the
+  map minimum) Gly 7.8, Ala 7.1, Ser 7.1, Asn 8.1, Asp 5.8, Leu 8.2, Val 6.5, Ile 7.5, Thr 7.0, Lys
+  7.8, Glu 8.4, Phe 8.0, Pro 9.1. ff2.1 trained only the sheet weight, and contrastive divergence
+  cannot set barriers (its gradient on a cell is the native-minus-free population there, ~0 where
+  nothing goes). With sterics on, rigid one-residue scans hit chain-specific clashes and are not
+  free energies; minimax barriers barely move (glycine via phi = 0: 8.96 with sterics, 9.20 without).
+  Decision (user): leave the top as the library has it; a fitted glycine map keeps NDRD's glycine
+  top with its barrier height above alpha_R unchanged.
+* An earlier reading here, that "the failure is basin depth, not a missing barrier", is withdrawn:
+  it compared minimax barriers on bare maps, which is not the route a helical glycine takes. The
+  ff2.1-with-AWH-top test (`ff21_ndrdtop`) was stopped at ~200 tu by the user's decision before it
+  could say anything; whether the top matters is to be judged from crossing routes instead: in
+  all-atom (Charron's octapeptide segments, 0.1 ns frames, residues 2-5) alpha_R <-> alpha_L
+  crossings run ~134 per glycine per us, and of those resolved, 84% go through the extended region
+  (21,954) and 16% across phi = 0 (4,240); 42,813 fall inside one frame.
+
+**Round 4's library and the decision to train it (2026-10-05).**
+* **The fitted library** (now `parameters/common/rama31.dat`, up.md 2.8; scripts, data and logs in
+  `/project/trsosnic/yinhan/checks/gly_bioemu_map/`): every central-glycine entry fitted in Upside
+  to BioEmu at T_up = 1 with ff2.1's other terms. Its own pass (Upside with the map, octapeptides,
+  residues 2-5) against BioEmu: X-G-Y aR 0.166 / aL 0.286 / beta 0.082 vs 0.168 / 0.286 / 0.078,
+  ln(aR/aL) -0.55 vs -0.535; G-G-Y -0.37 vs -0.19 and X-G-G -0.83 vs -0.87 (both wobble +-0.1
+  between passes, within BioEmu's own SE of 0.09-0.10); G-G-G (not fitted) -0.36 vs -0.38. X-G-P's
+  helical basins hold only ~85 BioEmu frames, below the fit threshold, so they keep NDRD's values
+  (aR 0.08 vs 0.017). In the engine the X-G-Y glycine map reads ln(aR/aL) -0.58, alpha_L minimum
+  0.47 below alpha_R (ff2.1: -1.10, 1.25; rama31's AWH: -0.15, 0.14).
+* **Push probe from this library** (findings 1.15's data term on ConDiv divergence files, ff30_glyhb's
+  exact worker, no update, the 72 proteins of ff30_glyhb minibatches 0-2, local; setup verified
+  against midway2): d = **-0.014 [-0.041, +0.012]** (441 X-G-Y glycines); natively helical +0.169
+  (free aL 0.053 vs native 0.003, aR 0.857 vs 0.976), natively left-handed -0.172 (free aL 0.864 vs
+  0.989). From rama31's start, the same first 24 proteins: -0.105 [-0.150, -0.057]; paired on the
+  same 160 glycines the difference is +0.068 [+0.019, +0.112]. So the training data come to rest
+  at about BioEmu's L-R difference: the two native populations cancel there.
+* **glpG TM4 on the untrained start** (ff2.1 terms + this library, 3 x 4000 tu, T 0.80): no flips at
+  GLY136/143/149, TM4 helix 0.95 in the last block (one seed 0.84), TM1 0.89; ff2.1 0.80 with
+  GLY149 flipping 0.12; ff21_awh 0.97; round 3's e02 0.72 with GLY143 at 0.67.
+* **Decision** (user, 2026-10-05): by the pre-agreed rule a CI including zero meant "do not train",
+  but TM4 is stable on this start and no push is left for other terms to absorb (round 3's failure
+  mode), so the user started training with the library frozen: ff30_bio (remote_jobs.md).
+* **Run 2, ff30_gdepth** (user): the same training with glycine's alpha_R / alpha_L depths trainable
+  on ff2.1's own library (one pooled pair on the GLY|X maps, started at BioEmu's weights: c_aR
+  -0.0918, c_aL +0.4621, dL - dR +0.554), so the trained force field uses no data outside the
+  training set and BioEmu becomes the external check of where the depth settles. The push probe
+  above (d near zero at BioEmu's depth, -0.105 at rama31's) predicts it stays near the start; the
+  probe was measured on the BioEmu library's shapes, run 2 uses NDRD's shapes with matched weights.
+
+**Consequence for the map.** The selection-free target is glycine's in-chain distribution, not the
+isolated dipeptide's: part of the alpha_L excess is real local physics (turns and caps with L
+neighbours). Whether that part belongs in glycine's map or is already produced by Upside's L-residue
+maps and H-bonds is decided by fitting the map in Upside on the same unselected peptides (plan.md
+Phase 11), which counts it once.
 
 ---
 
@@ -3476,8 +3694,35 @@ loop after the function's last shared accumulation, with `dparams` grown only th
 bitwise equality of everything. So for a master-parity change in the engine: compare bitwise, not
 with a tolerance, and when only a reduction differs, look at code placement before the arithmetic.
 
-### 10.13 Other cluster and tooling lessons
+### 10.13 Test whether a fix holds, and put the fix where the cause is (2026-10-04)
 
+The cause of the helical-glycine failures is settled and was worked through over three rounds:
+glycine's deeper alpha_L basin in the PDB map is placement (selection), which Upside applies as
+energy; round 1 (symmetrised map) fixed TM4 but is physically wrong, round 2 (trained basin depth) was
+pushed back to alpha_L by the training data, round 3 (physics map plus trained glycine H-bond offsets)
+is ff30_glyhb. Two corrections from the user on the same day:
+* Asked to test ff3.0 on glpG TM4, I proposed runs to find out why the glycines flip. **Before
+  designing a diagnostic, read the memory and findings for the established mechanism, and aim the
+  test at whether the current fix holds under it.**
+* Asked for a new model, I designed it around glycine's H-bond energies (achiral offsets, a
+  bottom-up E_gly fit, an H-bond topology term). The user: the problem is the Rama map; resolve it
+  there. **A fix belongs to the term that carries the defect. Do not route a map problem through
+  another term's parameters**; that is what round 3 did, and the trainer used those parameters to
+  put the alpha_L preference back.
+
+### 10.14 Other cluster and tooling lessons
+
+* **`extract_ff.py` took the trainer from two directories above the checkpoint (2026-10-05).** Right
+  for `run_output/<step>/checkpoint.pkl`, wrong for `run_output/initial_checkpoint.pkl`: it then
+  imported `training/ConDiv.py` from PYTHONPATH instead of the run's own copy, silently. Harmless
+  while the two were identical (ff30_bio's start panel), a TypeError for a trainer with a different
+  `expand_param` (ff30_gdepth). It now uses the checkpoint's own directory when that holds
+  ConDiv.py. Test an extraction on the initial checkpoint of every new kind of run.
+* **A waiter built on `pgrep -f "<pattern>"` can match its own command line (2026-10-05).** Two
+  background waiters of the form `while pgrep -f "ibi_run.py ... T1_it0"; do sleep; done; <next>`
+  never ended, because the shell running the loop carries the pattern in its own arguments; the
+  next step waited 15 min after its input was done. Wait on a PID (`wait`, `kill -0 $pid`) or on the
+  output files the step writes, not on a process-name pattern the waiter itself contains.
 * **A wedged GPFS makes a dead job look healthy, and `squeue` will not tell you (2026-09-07).** Job
   48981235 was reported `RUNNING` for 3.5 h while all nine of its workers sat in `D` state at
   `00:00:00` CPU, wchan `cxiWaitEventWait` / `lookup_slow`, having never started their compute
@@ -3719,8 +3964,23 @@ H3 53-63, H4 72-78. What still holds from it:
     0.29 below 5 A in the last block) but does not stop it: the bundle still drifts, with H4 slipping
     (0.92 -> 0.85, local RMSD 0.61 -> 1.02). So the two helical glycines are the main cause, and a
     smaller packing drift remains.
-  * WT de novo (483 k tu): RMSD 9.6-11.0 A, never below 5 A; helix 3 is the helix that does not form
-    (aR 0.20-0.48) while H0, H3 and H4 form (0.84-1.00). G46A/G48A de novo still in its first chunk.
+  * **Native arms, both complete** (WT at 2.53 M tu 10-04 16:17; G46A/G48A at 2.53 M tu 10-05 01:24;
+    five blocks of ~507 k tu): WT native is unfolded from ~1 M tu on (blocks 3-5 RMSD 10.2-10.4 A,
+    0.00 below 5 A). G46A/G48A native keeps helix 3 (aR 0.97-0.99 in every block) and its bundle
+    drifts to a **plateau**, not to unfolding: block RMSD 5.47, 5.72, 6.95, 6.88, 6.93 A, with 0.31,
+    0.33, 0.44 of frames below 5 A over the last 1.5 M tu; helix 5 (H4) loosened (aR 0.78) and came
+    back (0.83-0.88). So removing the two glycines holds helix 3 and leaves a stable, partly native
+    bundle near 7 A where WT goes to 10 A; H0-H2 native contacts stay lost (0.03-0.15). One
+    coldest-replica trajectory per arm.
+  * De novo, neither arm folds: WT **complete at its 2.57 M tu target** (10-04 14:17) 9.5-10.2 A,
+    never below 5 A, helix 3 unformed for the first ~1 M tu (aR 0.29-0.35) and then forming (0.57,
+    0.74, 0.57) while H0, H1, H3 and H4 form. **WT's two arms meet on helix 3 from opposite sides**:
+    last block aR 0.61 native (0.75 -> 0.52 -> 0.61, complete at its 2.53 M tu target 10-04 16:17,
+    unfolded at 10.2-10.3 A from ~1 M tu) and 0.57 de novo (0.35 -> 0.57). So WT's equilibrium helix 3
+    is about 60% formed, not lost; against 0.97-0.99 in G46A/G48A it is still the large
+    destabilisation, and neither WT arm holds or reaches the fold; G46A/G48A **complete at its 2.57 M tu target** (10-04
+    10:38) 9.5-10.6 A, never below 5 A and at most 1% below 6 A, helix 3 forms (aR 0.80-0.88). In the mutant's first chunk H1-H3 crosses at
+    52-61 deg against native 120 and H1-H2 rises to 0.32 of its native contacts.
   * Experimentally wild-type lambda 6-85 folds; helix 3 is its least stable helix, which is why the
     fast-folding variants carry G46A/G48A. Upside at T 0.78 loses it, so helical glycines are too
     weak in Upside itself, consistent with the panel's helical-glycine deficit at ff2.1 (-0.08).

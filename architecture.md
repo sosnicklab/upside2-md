@@ -74,8 +74,8 @@ E_rama(i) = S(phi_i, psi_i) + w(neighbours of i) * A(phi_i, psi_i)
 
 * `S` symmetric and `A` antisymmetric under `(phi,psi) -> (-phi,-psi)`: the mirror-symmetric
   and antisymmetric projections of the measured `GLY|X` map (`parameters/common/rama31.dat`). The
-  current pooled surface is only mildly asymmetric (ln(aR/aL) -0.12 at T = 1), so `A` is small;
-  the form still applies, with less for `w` to switch.
+  BioEmu-fitted surface (since 2026-10-05) is moderately asymmetric (ln(aR/aL) about -0.55 in
+  Upside on the octapeptides); the AWH dipeptide surface it replaced was mildly so (-0.12).
 * `w` is a smooth scalar in roughly `[0,1]`, near 0 when both neighbours sit in alpha_R
   (helical context) and near 1 otherwise.
 

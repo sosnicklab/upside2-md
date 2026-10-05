@@ -10,7 +10,9 @@
 * **Folded-protein data cannot separate energy from selection**, either through residue counts
   per basin or through per-type context corrections (findings 1.16).
 * **ff3.0 takes glycine's row from the measurement and does not train it.**
-  `parameters/common/rama31.dat` was built on 2026-10-01 by `build_gly_library.py` (§5).
+  `parameters/common/rama31.dat` was built on 2026-10-01 by `build_gly_library.py` (§5) from the
+  AWH dipeptides; since 2026-10-05 it holds the row fitted to BioEmu's in-chain octapeptides
+  instead (findings 1.19, up.md 2.8), and this document describes the AWH build.
 * **With that map the trainer kept loop glycines left-handed by bending the shared H-bond, sheet
   and side-chain terms, and helical glycines paid.** So plan.md Phase 8 gives glycine its own
   offsets on the three H-bond basin energies, trained by ConDiv with everything else

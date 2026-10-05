@@ -23,8 +23,8 @@ modernised and restored to the published protocol. Differences from that file, e
     replica's final energy exceeded 1000 is removed: a blown-up replica must fail, not vanish.
     For the same reason a failed worker fails the step; the port summed whatever returned.
   * the Ramachandran library is a fixed input, `upside_input/rama.dat`, never trained. For ff3.0
-    it is parameters/common/rama31.dat, whose central-glycine row is the AWH-measured free energy
-    of capped glycine dipeptides (GLY_sym.md): the PDB row is part local energy and part
+    it is parameters/common/rama31.dat, whose central-glycine row is fitted in Upside to BioEmu's
+    plain-MD octapeptides (up.md 2.8, findings 1.19): the PDB row is part local energy and part
     evolutionary placement, and a map trained against native structures relearns the placement
     (findings 1.15).
   * two changes for ff3.0 (findings 1.17). Glycine has its own offsets on the three H-bond basin

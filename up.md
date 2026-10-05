@@ -448,7 +448,7 @@ no difference, because NaN comparisons are False.
 | file | what it is |
 |---|---|
 | `parameters/common/rama.dat` | ff2.1, as published. Shared, because ff2.1 never trained it |
-| `parameters/common/rama31.dat` | ff3.0's library, also shipped as `parameters/ff_3.0/rama.dat` once released: ff2.1's with the **central-glycine row, coil and sheet, replaced by AWH free energies** of capped glycine dipeptides (ff99SB-ILDN, 300 K, replica 1, 40 contexts at 400 ns). `GLY\|GLY` = the two Gly-Gly surfaces pooled and symmetrised; `GLY\|right\|PRO` = the Gly-Pro surface alone; every other `GLY\|X` = the other 37 surfaces pooled (probability means). Each entry is stored with `rama_map_pot_ref` subtracted, so the engine's total for a glycine is the measured surface: X-G-Y ln(aR/aL) = -0.120 at T = 1, G-G-G exactly 0. Built once, 2026-10-01, by `build_gly_library.py` (kept in scratchpad: its AWH input is cluster-only), which checked itself through `upside_config`; the previous build is in `backup/` |
+| `parameters/common/rama31.dat` | ff3.0's library (round 4, training as `ff30_bio`), also shipped as `parameters/ff_3.0/rama.dat` once released: ff2.1's with the **central-glycine row, coil and sheet, fitted in Upside to BioEmu's plain-MD octapeptides** (amber ff99sb-ildn, 300 K; Zenodo 15641199): iterative Boltzmann inversion at T_up = 1 (the library convention, below) with ff2.1's other terms, on glycines at residues 2-5; pooled `GLY\|X` fitted on X-G-Y (249 glycines), `GLY\|left\|GLY` on G-G-Y (27), `GLY\|right\|GLY` on X-G-G (25), `GLY\|right\|PRO` on X-G-P (10). Fitted where the all-atom data have >= 10 frames per cell; elsewhere NDRD's own coil top with its barrier height above alpha_R kept (Upside never designed the transition region, findings 1.19). Glycine's coil and sheet entries are the same map. Each entry is stored with `rama_map_pot_ref` subtracted. In Upside on the octapeptides it reproduces BioEmu's X-G-Y glycine within 0.01 per basin (ln(aR/aL) -0.55 vs -0.535). Built 2026-10-05 (IBI pass-6 map; scripts and data in `/project/trsosnic/yinhan/checks/gly_bioemu_map/`); root attribute `glycine_row` records its origin. The previous content (AWH capped dipeptides, round 3's library, 2026-10-01) is in git history and `backup/rama31.dat.bak_pre_bioemu_20261005` |
 
 `rama31.dat` differs from `common/rama.dat` only in the central-GLY row of the coil and sheet
 groups. **Its GLY entries assume the reference correction**: every config path applies
@@ -572,8 +572,8 @@ Force-field files (read-only, never modified at runtime):
                       class_restype GLY); entries 4-11 as ff_2.1
     sheet          -> trained per-type sheet mixing energies
     bb_env.dat     -> trained backbone-term scale; center/sharpness/hbond weight as ff_2.1
-    rama.dat       -> the fixed library it was trained with, common/rama31.dat (AWH glycine
-                      row, see 2.8); use this, not common/rama.dat
+    rama.dat       -> the fixed library it was trained with, common/rama31.dat (BioEmu-fitted
+                      glycine row, see 2.8); use this, not common/rama.dat
 ```
 
 **`parameters/ff_3.0` is absent from the tree on purpose (2026-09-24).** Both earlier versions were
@@ -623,18 +623,16 @@ Do NOT negate the `cos_theta_grid` in `_build_cgl_target_table`; the sign is
 already embedded in the convention string.
 
 **GLY Ramachandran**: glycine handedness belongs in the library file, never in
-`write_rama_map_pot`. There is no symmetrization step in that function and none
-should be added; an earlier note here called for one unconditionally, which was
-the superseded ff3.0's doctrine that forcing every glycine map mirror-symmetric is
-correct. It is not: symmetry is exact only for `GLY|GLY`, because a glycine
-flanked by L-amino acids sits in a chiral environment. The retrained ff3.0
-builds this into `parameters/ff_3.0/rama.dat` itself, a trained map per
-neighbour for `GLY|X` (central glycine, neighbour X) and mirror-symmetric
-`GLY|GLY` entries in both the coil and the sheet group, so the config writer
-stays ignorant of it and the coil/sheet and left/right mixtures give the middle
-glycine of `Gly-Gly-Gly` an exactly symmetric map on their own. Its only other
-trained maps are the pre-proline ones (`X|right|PRO`); every other map is the
-NDRD map unchanged. See `GLY_sym.md` and `training/README.md`.
+`write_rama_map_pot`. There is no symmetrization step in that function and none should be added.
+Mirror symmetry is exact only for a glycine in an achiral environment; a glycine flanked by
+L-amino acids sits in a chiral one. ff3.0's library (`parameters/common/rama31.dat`, 2.8) holds
+glycine entries fitted in Upside to unselected all-atom peptides (BioEmu plain MD), fixed and never
+trained: the pooled `GLY|X` and, each on its own context, `GLY|left|GLY` (G-G-Y), `GLY|right|GLY`
+(X-G-G) and `GLY|right|PRO` (X-G-P). The two `GLY|GLY` entries carry an L neighbour on the other
+side, so they are not mirror-symmetric; the data say so (findings 1.19). Glycine's coil and sheet
+entries are the same map, so the coil/sheet mixture leaves glycine unchanged, and the config writer
+stays ignorant of all of it. Every non-glycine map is the NDRD map unchanged. See `GLY_sym.md`
+(the earlier AWH build) and `training/README.md`.
 
 **Spline tables must reproduce the analytic potential exactly**: verify the
 tables against the analytic form (dry-MARTINI: reaction-field Coulomb with
