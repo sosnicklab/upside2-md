@@ -145,6 +145,22 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   `~/Downloads/bp_validation.{png,pdf}`. Everything the Mac had (scripts, the source patch as
   `make_src.py`, the build recipe as `build_libs.sh`, sources, libraries, SciencePlots styles,
   results; 325 files) mirrored to `bp_validation/static/`, md5 manifest identical (remote_jobs.md §0c).
+* 10-05: the figure was judged too dense and unclear in its point; replaced for Tobin by two slides,
+  `~/Downloads/bp_validation_slides.pptx`, in the group-meeting deck style (`make_slides.py`, same
+  data), framed on the user's question, whether ff2.1 needs retraining. No caption line on either
+  slide. Slide 1 (Upside units): energy error per frame against kT at T = 0.80, frame selection in
+  the bullets; the ConDiv rotamer gradient's change from the bug (0.1%, local to ff2.1) against its
+  sampling noise (7%) is in the speaker notes only. Slide 2: ff2.1 on both binaries, Ca-RMSD against
+  T in K (Peng's observable and FF2 calibration, T_up 0.85 = 298 K), panels titled by protein only;
+  sub-bullets give the protocol and the RMSD (to native, Peng's Fig S4 termini excluded, mean over
+  frames after the first 20%, read from `analyse_bp.py` on the cluster); bullets give T_m shifts up
+  to 2 K of both signs and seed-to-seed differences up to 4 K. Tried and dropped as closing claims:
+  Peng's 7 K model-vs-experiment T_m error (invites "would the fix reduce that error"), and a t-test
+  against seed noise (p = 0.55, 0.59, 0.10, 0.14; Fisher 0.22; judged not strong, kept in the notes).
+  Per protein, in the notes: inside the seed spread for protein G and homeodomain, above it for WW
+  domain (-0.7 K vs 0.3 K) and NTL9 (+2.0 K vs 1.0 K); NTL9's verdict depends on the observable (Rg:
+  +0.1 K vs 1.1 K): its low-T RMSD is 6.5-9 A and one fix seed sits lower. The gradient number
+  recorded in remote_jobs.md §0c did not reproduce and was corrected there.
 
 ## 2026-10-04: ff3.0 round-3 check, local (plan.md Phase 10)
 
@@ -219,3 +235,34 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   for initial checkpoints (findings 10.14); check_step.py would have crashed on an empty glycine-
   offset field (both round-4 runs). Submitted 49179457 with start panel 49179456; submit_new.sh
   serves both runs. Trainer files and gdepth_start_offsets.py in `checks/gly_bioemu_map/`.
+* ff30_gdepth moved to midway3 caslake (user, 10-05 12:20) for an earlier start: 49179457 held,
+  `slurm.args` set to caslake (backup `.bak_pre_mdw3_20261005`), resubmitted as 60098743 (estimate
+  21:42 against midway2's 10-06 05:24), then 49179457 cancelled. ff30_bio stays on midway2, whose
+  estimate had moved to 10-05 17:16, earlier than any caslake slot. Checked first on a caslake node
+  (`checks/mdw3_gdepth_env_20261005`): the run's env.sh and `$P` build load, engine bitwise equal
+  to midway2, trajectories diverge from rounding level (findings 10.14).
+* Glycine map figure: `~/Downloads/gly_rama_bioemu.png`, the BioEmu library in the format of
+  `gly_rama_bias.png` (`scratchpad/plot_gly_rama_file_ref.py` draws both; the ff2.1 panel is
+  bitwise the old figure).
+* Non-glycine maps checked against BioEmu (user): Upside (ff2.1 terms + BioEmu library, T_up 1) on
+  all 1,100 octapeptides, glycine yardstick with NDRD on its 270 peptides, and the panel by native
+  class; literature survey by sub-agent (its "adaptive sampling" claim about the run files was
+  checked and is wrong: run001-005 are plain MD). Result and recommendation (keep NDRD) in
+  findings 1.19; files in `checks/gly_bioemu_map/allres/`.
+
+## 2026-10-05 (afternoon): poly-Gly reference (plan.md Phase 12, PI's suggestion)
+
+* All-atom Ac-(Gly)20-NHMe (user's choices: 20 residues, amber99sb-ildn / TIP3P, midway2):
+  fully extended start (phi = psi = 180, mirror-symmetric), the `gly_peptides` mdp physics, 64,976
+  atoms; collapse phase submitted (remote_jobs.md). Files in `/project/trsosnic/yinhan/polygly/`.
+* Upside G20 under ff2.1 and bio_start (bio_start extracted from ff30_bio's initial checkpoint:
+  ff2.1 byte-identical except rama31 and sidechain.h5 round-off at 1e-16) ran on the Mac in 10 min:
+  both chiral, ln(aR/aL) -0.72 and -0.45, where the all-atom chain must read 0 (findings 1.20).
+* Files: `scratchpad/polygly/` (`build_polygly.py`, `upside_run.py`, `polygly_analysis.py`,
+  frozen `rama_basin.py`, params, Upside runs).
+* 16:20 (user): ff30_bio and the gdepth_start panel moved to midway3 caslake, where same-shape
+  `--test-only` projections were ~1.5 days earlier than broadwl's (fairshare 0.21 against 0.048):
+  each midway2 job held, the caslake job submitted and checked, then the midway2 one cancelled
+  (ff30_bio `slurm.args` backed up as `.bak_pre_mdw3_20261005`). bio_start followed at 16:30 (user;
+  ~2 h gain, so all round-4 jobs share one cluster); polygly stays on midway2. The panels'
+  `runs/*.submitted` markers carry the new ids. Watch cron recreated (remote_jobs.md).

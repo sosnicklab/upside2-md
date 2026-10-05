@@ -283,7 +283,7 @@ side chains) do.
     on the all-atom ensemble itself. Use only the real frames (not the 0.5 A decoys) of the 44 all-L
     domains (not the six D-residue ones, findings 1.17).
 
-### Phase 11 - round 4: a selection-free glycine map, fitted bottom-up and frozen (TRAINING since 2026-10-05: ff30_bio 49179449 and ff30_gdepth 49179457 on midway2, queued)
+### Phase 11 - round 4: a selection-free glycine map, fitted bottom-up and frozen (TRAINING since 2026-10-05: ff30_bio 60113187 and ff30_gdepth 60098743, both on midway3 caslake, queued)
 The defect is the map (user, 2026-10-04; findings 10.13): Upside uses glycine's PDB coil statistic as
 energy, and its alpha_L excess is fold selection. A design through H-bond terms was rejected: a map
 defect is fixed on the map. Rounds 2 and 3 showed that any glycine parameter trained against natives
@@ -321,6 +321,10 @@ Done:
   is left for other terms to absorb. ff30_bio initialized and submitted 07:44 (job 49179449, 76
   steps, gate up to 13 epochs); the empty glycine-offset field was tested through one parameter
   update and through extract_ff.py first. Panel of the untrained start (`bio_start`, job 49179451).
+- [x] Non-glycine maps against BioEmu, measured in Upside on all 1,100 octapeptides plus the panel
+  by native class (2026-10-05, findings 1.19): kept NDRD (recommendation to the user). Their gaps
+  to ff99sb-ildn are as large as glycine's was, but the reference is weaker for L residues and the
+  fit's direction (more alpha_R, more alpha_L) would worsen the folded-protein errors that exist.
 
 **Run 2, ff30_gdepth (user, 2026-10-05): the claim is a force field trained on the original training
 set alone, with no outside data, that keeps glpG TM4 stable; BioEmu is only the external check.**
@@ -359,15 +363,72 @@ Next (remote_jobs.md has the watch):
   maps see only nearest neighbours); ff99sb-ildn may overstate in-chain alpha_L (findings 1.19);
   lambda's helix 2/helix 4 packing error stays a known limitation (11d).
 
+### Phase 12 - poly-Gly: all-atom Ac-(Gly)20-NHMe as Upside's reference (STARTED 2026-10-05, PI's suggestion; collapse 49186415 queued)
+Where does a chain with no chiral residue go, and does Upside send it to the same place? With
+neutral caps the all-atom chain is achiral, so at equilibrium every glycine has alpha_R = alpha_L,
+beta = beta' and pPII = pPII' exactly; what the run measures in those pairs is its sampling error
+(the blank, findings 6.7). Upside's GLY|left|GLY and GLY|right|GLY entries carry L-neighbour
+contexts (NDRD; in the BioEmu library, fitted on G-G-Y and X-G-G, findings 1.19), so Upside's
+poly-Gly can be chiral: this is the one system where the glycine map's own handedness shows with
+nothing else present, alongside what the chain does globally (collapse, pPII, helices, hairpins).
+
+Decisions (user, 2026-10-05): Ac-(Gly)20-NHMe; amber99sb-ildn / TIP3P at 300 K (BioEmu's force
+field, so round 4's target, and our AWH dipeptides'); midway2 broadwl; compared with Upside under
+ff2.1 and bio_start, later each round-4 epoch.
+
+All-atom, the `gly_peptides` protocol and its mdp files (PME 1.0 nm, h-bond constraints, 2 fs,
+v-rescale 0.1 ps, C-rescale 1 bar; `gmx2024` with `gcc/10.1.0`):
+1. Build with `build_peptide.py` at phi = psi = 180: the fully extended chain is its own mirror
+   image, so the start carries no handedness. pdb2gmx `-ignh`, dodecahedron `-d 1.0` around the
+   ~8 nm chain (~70k atoms).
+2. Collapse: min, 500 ps NPT, 4 replicas with distinct seeds for one 36 h link (4 x 7 threads,
+   ~20 ns each, estimated). Rg(t) shows whether the chain has relaxed; this phase is discarded.
+3. Production box: each replica's last frame in one common dodecahedron whose image distance is the
+   largest chain diameter of step 2's second half plus 2.4 nm; solvate, min, 500 ps NPT. The
+   protein's minimum periodic-image distance (`gmx mindist -pi`) must stay above the 1.0 nm
+   cutoff through production; if it does not, the box is too small and production is redone.
+4. Production: 4 replicas, 1 us target, protein frames every 10 ps, chained 36 h links (successor
+   queued at link start, as `train_chain.sbatch`); 4 x 7 threads on one node; the first link
+   measures ns/day. Estimate ~55 ns/day per replica, ~18 days, ~12k core-hours.
+5. Converged when the blank is zero within its standard error over replicas, holds between the
+   halves of each replica, and the replicas agree on the Rg distribution; extended otherwise.
+
+Upside, `ibi_run.py`'s recipe (the force field's rama, sheet, hbond, side chains, environment and
+bb_env; common rama_reference; dt 0.009; T_up = 1, the library's convention against a 300 K
+ensemble, up.md 2.8; a frame every 10 tu):
+6. G20 from the 20 glycines' N, CA, C of the same extended build. ff21_released; bio_start
+   (`extract_ff.py` on ff30_bio's initial checkpoint); each round-4 epoch as the watch extracts it.
+   8 seeds each, length set from a measured short run; on the Mac, cost stated first (findings 10.7).
+
+Analysis, one script for both (all-atom xtc via mdtraj, Upside output via tables; interior glycines
+2-19): per-residue basin populations with `rama_basin.py`'s mirror-exact basins (copied, so the
+definition lives in one place); ln(aR/aL) per residue and pooled; Rg over N, CA, C; CA1-CA20
+distance; helix runs by hand (>= 4 consecutive residues in alpha_R or in alpha_L); CA contact map.
+Figure: all-atom gray, ff2.1 red, bio_start blue.
+
+Files: `/project/trsosnic/yinhan/polygly/` on the cluster holds build, mdp, sbatch, scripts and a
+README (authoritative); the Mac's `scratchpad/polygly/` holds the Upside runs and the analysis.
+Jobs are recorded in remote_jobs.md.
+
+- [x] Build and collapse job (`collapse.sbatch`, 64,976 atoms, grompp clean, physics diffed
+  identical to `gly_peptides/prod.mdp`), submitted 10-05 15:20 as 49186415
+- [ ] Production box from the measured diameter; production chain submitted
+- [x] Upside: an all-glycine config builds (2.8e6 tu/h on one core); ff21_released and bio_start,
+  8 seeds x 200,000 tu each: both chiral, ln(aR/aL) -0.72 and -0.45 (findings 1.20)
+- [ ] Analysis script; Upside results first, all-atom at each ~200 ns
+- [ ] Round-4 epochs as they come
+
 ## Known Errors / Blockers
 
 * **The midway2 tree's `training/` keeps the pre-merge layout until ff30_glyhb is released.**
   ff30_glyhb's gate calls `$P/training/gate_or_continue.sh` and its monitor is
   `$P/training/check_step.py`, both gone from the repo since the 10-02 merge (Phase 9). Do not
   sync the repo's `training/` to the cluster before then (remote_jobs.md, "Resume here").
-* **Run only on midway2 broadwl** (user, 10-01). No `amd`, `beagle3` or GPU partitions: CPU jobs
-  must not run on the group's GPU allocation. No midway3 jobs; its login node may be used to move or
-  read files on `/project` and `/beagle3` (user, 10-02).
+* **CPU work runs on midway2 broadwl unless the user names midway3 caslake** (user, 10-01; on
+  10-05 the user moved both round-4 trainings and their start panels to caslake for earlier
+  starts). No `amd`, `beagle3` or GPU partitions: CPU jobs must not run on the group's GPU
+  allocation. midway3's login node may be used to move or read files on `/project` and `/beagle3`
+  (user, 10-02).
 * **Beta for the PI's sheet modelling.** No residue type has a significant beta miss at ff2.1, and
   per-pair beta has no signal in these data; per-type beta is ff2.1's sheet mixing energy, trained.
 * **lambda's helix 2 / helix 4 packing misorientation** is a known ff2.1 limitation with no single

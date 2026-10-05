@@ -1114,7 +1114,10 @@ octapeptides, amber99sb-ildn/TIP3P, 300 K, ~20,600 frames each, decoys in separa
 * **Glycine inside a chain favours alpha_L.** Equilibrium numbers come from BioEmu's plain MD of the
   same 1,100 peptides (Lewis et al., Science 2025; Zenodo 15641199, `ONE_octapeptides`; ff99sb-ildn,
   300 K, run001-005 per peptide, 1 us each, a frame every 10 ns; first 100 ns of each run dropped;
-  `scripts/bioemu_phipsi.py`). ln(aR/aL), training/rama_basin.py basins, SE by bootstrap over
+  `scripts/bioemu_phipsi.py`). The deposit also holds Charron's ~100 adaptive segments per peptide
+  (`e*s*_*.xtc`), which are not used. A run file can be a restarted run (opep_1029's run005: 660 +
+  300 + 30 ns, the clock reset at each restart), and the drop is per file; if a restart began from
+  the start structure (all phi < 0), a few start-biased frames remain: small, and against alpha_L. ln(aR/aL), training/rama_basin.py basins, SE by bootstrap over
   glycines: interior X-G-Y **-0.54 +- 0.04** (365), positions 2-5 alone -0.53 +- 0.05 (249); next
   to the N-terminal residue -0.09, next to the C-terminal residue -0.88; G-G-G -0.22 (n 8); Gly
   before Pro +1.05. Charron's adaptive frames give -0.70 for the same glycines, so the seeding biased
@@ -1147,25 +1150,45 @@ octapeptides, amber99sb-ildn/TIP3P, 300 K, ~20,600 frames each, decoys in separa
 * So of NDRD's handedness (about -1.15), about -0.6 is selection and about -0.55 is in-chain physics
   in this force field (plain MD, positions 2-5).
 
-**Every residue type, not only glycine** (user: all maps are PDB statistics; `scripts/allres_vs_ndrd.py`
-on the plain MD, residues 2-5, pooled over neighbours, NDRD's neighbour-marginal map in the engine
-frame). Handedness ln(aR/aL), NDRD minus all-atom: His -1.70, Asp -0.93, Asn -0.76, Gly -0.63, Glu
--0.54 (NDRD puts more weight in alpha_L: the residues folds place at turns and caps), and Ser +1.33,
-Ile +0.83, Lys +0.75 the other way (the force field's Ser alpha_L is 0.184, likely its own excess).
-Helix against extended, ln[aR/(beta+pPII)]: Glu -0.86, Val -0.76, Thr -0.64, Cys -0.60, Asp -0.51,
-Ile -0.51 (NDRD less helical than the force field). So all maps carry selection or the force field's
-own errors, of similar size.
-**But only glycine's error reaches folded proteins as a flip** (selection panel, ff2.1 runs against
-the all-atom runs of the same 44 domains, folded frames, natively alpha_R residues by type;
-`/project/trsosnic/yinhan/checks/ff3_local_test_20261004/panel_by_type.py`): glycine (34) loses
-0.081 of alpha_R and visits alpha_L 0.073 (0.036 with the physics map, which loses the same alpha_R
-to the extended region instead); every other type visits its mirror basin <= 0.012, and its
-alpha_R error is -0.03 to +0.03 (Cys, His, Trp -0.05 to -0.06 with n 13-20, all to the extended
-region). Glycine is the one residue whose NDRD map puts alpha_L below alpha_R, so the selection
-changes the sign of its local preference; for the others it changes a margin the helix context
-covers. A residue-wide physics map would need a better reference than ff99sb-ildn for the L
-residues (its alpha_L excess is as large as the NDRD differences) and a retraining of everything
-trained against NDRD; it is recorded, not proposed.
+**Every residue type, not only glycine: the non-glycine maps stay NDRD** (user, 2026-10-04 and
+10-05: all maps are PDB statistics; scripts, tables and literature notes in
+`/project/trsosnic/yinhan/checks/gly_bioemu_map/allres/`).
+* **Measured in Upside, as glycine's map was fitted** (`allres_run.py`, `allres_compare.py`): ff2.1
+  terms with the BioEmu library at T_up = 1 on all 1,100 octapeptides (ibi_run.py's recipe),
+  residues 2-5 pooled over neighbours, ln(P_upside / P_BioEmu) per basin. Glycine, fitted, agrees
+  within 0.05 per basin (the measurement's check); with ff2.1's NDRD map it was alpha_R -0.35,
+  alpha_L +0.46, extended -0.10 (316 glycines). Every L type is less helical in Upside, alpha_R
+  -0.09 (Asn, Lys) to -0.66 (Val), median -0.31, and more extended, +0.14 to +0.62; alpha_L is lower
+  for most types (Ile -2.11, Ser -2.03, Val -1.85, Thr -1.57, Lys -1.15, Ala -0.97; SE 0.07-0.17)
+  and higher for His +1.09, Asn +0.43. So by size the L residues' gaps to ff99sb-ildn match or
+  exceed glycine's; size does not single glycine out. (The earlier map-only comparison, NDRD map plus
+  reference against BioEmu, `scripts/allres_vs_ndrd.py`, gave the same signs.)
+* **The reference is not better than NDRD for L residues** (literature, quotes verified on publisher
+  or PMC pages, `allres/lit/`). ff99sb-ildn changed only side-chain torsions (Lindorff-Larsen,
+  Proteins 2010); the ff99SB family samples too much beta against pPII (Wickstrom BJ 2009) and
+  "uniformly over-emphasize[s] alpha R in dipeptide simulations" (Beauchamp JCTC 2012); experiment
+  puts alanine at ~80% pPII in GxG (Hagarman JACS 2010) and ~90% in trialanine (Graf JACS 2007); on
+  residue-specific 3J(HN,Ha) of 256 dipeptides ff99sb-ildn scores r^2 0.56 against 0.82 for a
+  coil-library-fitted force field (RSFF2; Li & Elcock JPCL 2015). Alanine alpha_L: ff99SB Ala5 ~4%
+  (Best & Hummer JPCB 2009, residual population, mostly alpha_L), coil libraries ~5% (CHARMM36m
+  tuned non-glycine alpha_L to 5.7% for that reason), Upside 0.035, BioEmu 0.093. Glycine differed:
+  physics force fields build it near-symmetric and its NDRD sign is selection (above).
+* **Folded proteins: the BioEmu direction would worsen the errors that exist**
+  (`allres/panel_all_types.py`, the selection panel's ff2.1 runs against the all-atom runs of the
+  44 domains, folded frames, every native class). Natively alpha_R non-glycine residues lose <= 0.03
+  of alpha_R (Cys, His, Trp -0.05 to -0.06, n 13-20) and visit alpha_L <= 0.011. Natively extended
+  residues leak to alpha_R: Phe -0.127 +- 0.040 (alpha_R 0.150 against 0.018), His -0.075, Trp
+  -0.071, Asp -0.069, Tyr -0.047, every other type -0.04 or less. Glycine: alpha_R -0.081 with
+  alpha_L visits 0.073 against 0.025. A BioEmu fit deepens every L residue's alpha_R by 0.1-0.7
+  and its alpha_L by up to 2 (Ser 0.024 -> 0.184 in the octapeptides), so it pushes natively
+  extended residues further toward the helix and opens, for L residues, the alpha_L route that
+  only glycine takes now.
+* **Why glycine and not the others.** Glycine's replacement rested on three facts no L residue
+  shares: selection reverses the sign of its local preference, the reference is credible for it,
+  and the defect shows in folded proteins as flips (glpG TM4) that the fitted map removes. The L
+  residues' gap is mostly a shared helix-against-extended offset whose sign experiment does not
+  support, and replacing it would change what ff2.1's trained terms (H-bonds, sheet mixing) were
+  balanced against, so it would need a full retraining.
 
 **Literature** (four sub-agent surveys, citations checked on publisher, PubMed or PMC pages; texts
 in the session scratchpad `lit/`):
@@ -1276,6 +1299,32 @@ isolated dipeptide's: part of the alpha_L excess is real local physics (turns an
 neighbours). Whether that part belongs in glycine's map or is already produced by Upside's L-residue
 maps and H-bonds is decided by fitting the map in Upside on the same unselected peptides (plan.md
 Phase 11), which counts it once.
+
+### 1.20 Upside's poly-glycine is chiral; the all-atom chain cannot be (2026-10-05)
+
+A chain of glycines with neutral caps has no chiral residue, so in any physical force field each
+glycine's alpha_R and alpha_L populations are equal, and so are beta / beta' and pPII / pPII'
+(plan.md Phase 12; the all-atom Ac-(Gly)20-NHMe run is the reference, still running).
+* **Upside G20** (`scratchpad/polygly/`: `upside_run.py`, ibi_run.py's recipe at T_up = 1, 8 seeds x
+  200,000 tu from the fully extended start, the first 10% dropped; `polygly_analysis.py`, the
+  training's mirror-exact basins, residues 2-19), SE over seeds:
+
+  | | alpha_R | alpha_L | ln(aR/aL) | ln(beta/beta') | ln(pPII/pPII') | >= 4 alpha_L in a row | Rg (N, CA, C) |
+  |---|---|---|---|---|---|---|---|
+  | ff2.1 (NDRD) | 0.138 | 0.283 | -0.720 +- 0.010 | +0.157 +- 0.004 | +0.139 +- 0.007 | 0.058 of frames | 9.47 A |
+  | bio_start (BioEmu library) | 0.135 | 0.211 | -0.446 +- 0.014 | -0.020 +- 0.005 | +0.069 +- 0.003 | 0.030 | 9.81 A |
+
+  Runs of >= 4 alpha_R occur in 0.008 of frames under both. The handedness is uniform along the
+  chain (interior and end residues within 0.04), and each seed's halves agree, so it is not an end
+  effect or drift. Health: all coordinates finite, KE/1.5kT 1.002-1.005, backbone bond spread
+  0.141 A against equipartition's sqrt(T/k) = 0.144 A for Upside's k = 48 springs.
+* The BioEmu library removes most of NDRD's beta and pPII asymmetry but keeps an alpha_L excess
+  near the mean of its G-G-Y and X-G-G fits (-0.19, -0.87; findings 1.19), the contexts the
+  poly-Gly entries were fitted on. **Which terms carry the chirality is not measured**: the
+  GLY|GLY map entries are one candidate; the reference-state correction (built from a free alanine
+  chain, applied to glycine too; Jumper thesis 4.3) and any CB-dependent placement acting on
+  glycine are others. A per-term energy difference between frames and their mirror images would
+  separate them.
 
 ---
 
@@ -3718,6 +3767,22 @@ is ff30_glyhb. Two corrections from the user on the same day:
   while the two were identical (ff30_bio's start panel), a TypeError for a trainer with a different
   `expand_param` (ff30_gdepth). It now uses the checkpoint's own directory when that holds
   ConDiv.py. Test an extraction on the initial checkpoint of every new kind of run.
+* **The one midway2 binary gives the same forces on midway3 but not the same trajectory
+  (2026-10-05).** On 1ga3 with `$P/obj` (`checks/mdw3_gdepth_env_20261005`): energy, forces and
+  every parameter derivative are bitwise equal across the clusters, but a 200-unit run first
+  differs at step 6 by 3.7e-9 A and grows chaotically (1.6e-4 A at step 60, decorrelated by ~180);
+  KE/1.5kT 1.024 and 1.017. Within a cluster runs are bitwise: repeated runs, today against the
+  10-02 reference, and midway3's login (Gold 6346) against a compute node (Gold 6248R). The
+  difference follows the OS image (el7 against el8), not the CPU; which library carries it is not
+  identified. So a parity test of a binary run is valid only on one cluster, and a run that
+  changes cluster is a statistically equivalent continuation, not a bitwise one.
+* **Compare clusters with `sbatch --test-only` of the same shape, never with a held job's
+  StartTime (2026-10-05).** Right after `scontrol hold`, ff30_bio's midway2 StartTime read 10-06
+  08:56, a day and a half earlier than the 10-07 21:45 a fresh `--test-only` of its shape gave a
+  minute later; a held job is not scheduled, so its field is not a projection. Age priority is
+  negligible here (277 of ~110,000), so a fresh test stands in for a queued job. caslake has no
+  per-CPU memory default (`DefMemPerNode=UNLIMITED`; broadwl `DefMemPerCPU=2048`), so a job that
+  sets no memory, such as `panel.sbatch`, must be given `--mem` there.
 * **A waiter built on `pgrep -f "<pattern>"` can match its own command line (2026-10-05).** Two
   background waiters of the form `while pgrep -f "ibi_run.py ... T1_it0"; do sleep; done; <next>`
   never ended, because the shell running the loop carries the pattern in its own arguments; the
@@ -3796,6 +3861,19 @@ is ff30_glyhb. Two corrections from the user on the same day:
 * **Size trajectory output by its accumulation rate, not the seed.** A 2.4 TB balloon (2026-08-02)
   came from ~3000 frames per chunk with momentum over ~43 chunks and no purge of `output_previous_*`.
   Use `frame_interval` near 100 (~2000 frames), no `--record-momentum`, and one `--duration`.
+
+### 10.15 A results slide states the comparison, not the bookkeeping (2026-10-05)
+
+Three corrections from the user on the BP-validation slides: the 11-panel figure was too dense to say
+what it showed; the slides then named a single worst frame and described how the two bug seeds and
+two fix seeds were ordered; and they were framed as "does the fixed engine reproduce the result"
+when the question being decided is whether to retrain ff2.1. **Frame the slides on the decision they
+serve, and lead with the evidence that bears on it most directly (for retraining, the training
+gradient). A slide carries one comparison at the level of the whole set: the
+effect against its reference scale (energy error against kT, bug-induced T_mid shift against the seed
+spread). Single frames and per-seed orderings stay off the slide.** When the comparison does not come
+out the way the user expects (WW domain's 0.8 K shift is larger than its 0.3 K seed spread), state the
+numbers on the slide as measured and tell the user. Do not write the expected claim.
 
 ---
 
