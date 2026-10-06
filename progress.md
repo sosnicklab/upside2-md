@@ -317,12 +317,21 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   `training/ConDiv.py` and `train_chain.sbatch` are changed the same way. The initial force
   fields are verified byte-identical. New watch cron `250534b9`.
 
-## 2026-10-06 midday: watch moved to the MacBook Pro (Mac Studio session ended)
+## 2026-10-06 midday to 15:55: watch on the MacBook Pro, gdepth_start TM4, 12 seeds
 
 * Status pass at 11:30: both dt 0.009 runs healthy through steps 0-2 / 0-1 (KE/1.5kT at most 1.015,
   24 of 24). dt 0.009 confirmed in every worker's `--time-step` and in each run's driver copy.
 * Local glpG TM4 test rebuilt on the MacBook Pro from `checks/r4_epochs/tm4_local`. It reproduces the
   Mac Studio's b00 seed-1 log line for line over 200 tu, and its patched inputs are byte-identical.
   bio_start equals `ff21_bioT1_6`; gdepth_start (new baseline) launched, 3 seeds.
-* New watch cron `c34accf9` in this session (remote_jobs.md "Round-4 watch (MacBook Pro)").
-  Files: plan.md (Phase 11 TM4 item), remote_jobs.md.
+* Watch cron `c34accf9` ran hourly from 11:50 and was deleted at 15:55, when the user left to run
+  the monitor from another computer; remote_jobs.md "One watch at a time" says how to start it
+  there.
+* gdepth_start TM4 (seeds 1-3): one seed of three unwinds through a GLY143 flip, as d00 and d01m09
+  do, so the gdepth checkpoints were no loss against their own start; ff30_bio does move toward
+  destabilized (findings 1.22). The bio dt 0.009 margin fell faster than either dt 0.015 run's
+  (+0.107 at step 11; findings 1.21), so the hold at +0.10 is expected at step 12.
+* TM4 test moved to 12 seeds (user): `run_glpg.sh` takes a seed range, `tm4_local.py` counts unwound
+  and flipped seeds, both copied to `checks/r4_epochs/tm4_local/scripts`. Seeds 4-12 of the two
+  starts are pending.
+* Files: plan.md (Phase 11 TM4 item), findings.md (1.21, 1.22), remote_jobs.md.

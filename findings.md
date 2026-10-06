@@ -1489,6 +1489,14 @@ and 4hwiB01 are dropped for too few folded frames.
   does, and d00 and d01m09 do the same. Which glycine flips varies by seed. Read against bio_start,
   as before gdepth_start was run, the gdepth checkpoints looked like a loss; against their own
   start they are not one.
+
+  **Three seeds resolve only gross changes.** A seed's outcome is close to binary, so a set reports
+  how many seeds unwound. Against a start at one in three, only three of three is resolved (p 0.04);
+  one against two of three is what chance gives. By Fisher's exact test, 12 seeds per force field
+  resolve one in four against three in four (p 0.04), and one in three against two in three needs
+  24 (p 0.04; 12 give 0.22). From 10-06 the test runs 12 seeds (user), with the starts extended to
+  12. `tm4_local.py` counts a seed as unwound below 0.90 last-block TM4 and as flipped when a TM4
+  glycine has phi > 0 in more than 0.25 of the last block, criteria fixed before the 12-seed runs.
 * **Epoch 1 continues the loss** (`b01`, ff30_bio epoch_01_minibatch_18, margin +0.048; panel
   49194315). With `select ... ff21_released ff21_awh bio_start b00 b01` the set is 38 domains;
   six are dropped, mostly because b01 keeps too few folded frames. Folded and helix:

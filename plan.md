@@ -396,12 +396,15 @@ Next (remote_jobs.md has the watch):
   populations. **Hold for the user if the shared margin falls below +0.10** (round 3's failure mode:
   the alpha_L pull moving into shared terms).
 - [ ] Each epoch end: selection panel `b9_EE` / `d9_EE` (submit_new.sh), and locally the glpG TM4
-  test on the extracted checkpoint (3 seeds, T 0.80, 4000 tu, `run_glpg.sh` after `patch_glpg.py`;
-  on the MacBook Pro since 10-06, the Mac Studio session having ended). Each run is read against its
-  own start (`bio_start`; `gdepth_start`, run first since no local test of it exists), ff21_released
-  and its dt 0.015 checkpoint at the same step (b00, d00, ...). Three seeds overlap for every pair
-  of checkpoints, so direction is read from the sequence of epoch ends, not from one checkpoint.
-  Nothing is released without the user.
+  test on the extracted checkpoint (**12 seeds**, T 0.80, 4000 tu, `run_glpg.sh` after
+  `patch_glpg.py`, on the watch's computer). Revised 10-06 (user) from 3 seeds: TM4 is lost seed by
+  seed, and 3 seeds resolve only a start at one in three going to three in three, while 12 resolve
+  one in four against three in four (findings 1.22). Each checkpoint's unwound and flipped seed
+  counts are compared with its own start at 12 seeds (`bio_start` = `ff21_bioT1_6`, `gdepth_start`)
+  by Fisher's exact test, with ff21_released and the same-step dt 0.015 checkpoint (b00, d00, ...)
+  as context; direction is read across the epoch ends. Nothing is released without the user.
+  - [x] gdepth_start seeds 1-3 (no local test of it existed): one seed of three unwinds, as at d00.
+  - [ ] Seeds 4-12 of both starts, before the first epoch-end set.
 - [x] Automatic validation at convergence (user, 2026-10-05; caslake; Peng's 32 arms, with lambda
   helix 3, and glpG's 4 REMD variants per candidate). Deployed 10-05 20:05 (remote_jobs.md §1
   "Automatic validation"):
