@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-05 20:45).** Two round-4 trainings run on midway3 caslake (plan.md
+**Current state (2026-10-05 21:30).** Two round-4 trainings run on midway3 caslake (plan.md
 Phase 11), both from ff2.1 with its 12-entry hbond.h5 and no glycine H-bond offsets: **ff30_bio**
 (60113187, since 19:49; the BioEmu-fitted glycine library frozen) and **ff30_gdepth** (60098743,
 since 19:24; ff2.1's own library with glycine's alpha_R / alpha_L depths trained from BioEmu's
@@ -74,9 +74,10 @@ password line `set password "..."` in `~/.bin/ssh_mdw3` there. **Never run anyth
 node** (findings 10.6): a 60 GB analysis on 10-02 got every session on midway2-login1 killed five
 times in 40 min. If the socket keeps dropping, run `ps -u yinhanw --sort=-rss` there first.
 
-**One watch at a time.** A watch is a session cron (it dies with that Claude session). No watch runs
-since 10-05 17:55: the Mac Studio's cron `6aa7c547` ended with its session (no Claude session left
-on that machine at 17:55). Start one on one computer only, with the prompt below.
+**One watch at a time.** A watch is a session cron (it dies with that Claude session, and expires
+after 7 days). A watch runs on the Mac Studio since 10-05 21:35: session cron `02ff3878`, hourly at
+:17, the prompt below (expires 10-12). Start one on another computer only after that session has
+ended.
 
 **Round-4 watch prompt** (copy as the cron prompt): "Remote job watch for ff30_bio and ff30_gdepth
 (both training on midway3 caslake since 10-05 19:24/19:49; epoch panels as §1 says) (remote_jobs.md §1 and the watch steps below, once per run: `<run>` = ff30_bio
@@ -392,14 +393,14 @@ Q(T), so it differs by up to 0.001 from the per-seed values above.
 
 ## 1. Current jobs
 
-Snapshot **2026-10-05 20:45 CDT, verified live against `squeue` on midway2 and midway3.** Finished and cancelled
+Snapshot **2026-10-05 22:17 CDT, verified live against `squeue` on midway2 and midway3.** Finished and cancelled
 rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **60113187** (midway3) | **ff30_bio**: ff3.0 round 4 from ff2.1, the BioEmu-fitted glycine library frozen (`upside_input/rama.dat`, md5 69051b78, = repo `parameters/common/rama31.dat`), ff2.1 12-entry hbond.h5 (`hbg` empty), side-chain lr 10x smaller; `$P/training/ff30_bio`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30bio-gate`; converged: validated as `ff_3.0_bio`); on midway3 caslake since 10-05 16:20 (user; midway2's 49179449 held, then cancelled once this was queued; `slurm.args` = ff30_gdepth's, backup `slurm.args.bak_pre_mdw3_20261005`, so successors and the gate stay there); log `condiv-train_60113187.out`; 8 nodes / 336 CPUs (24 x 14), 36 h links, the first link queues its own `afterany` successor | R since 10-05 19:49 (step 0 from `initial_checkpoint.pkl`); successor 60118489 (`afterany`) | the watch every step; at step 76 (~10-07 02:30) the gate |
-| **60098743** (midway3) | **ff30_gdepth**: ff3.0 round 4, run 2: ff2.1's library (NDRD) with glycine's alpha_R / alpha_L depths trained, one pooled offset pair on the 37 GLY\|X maps started at BioEmu's weights (c_aR -0.0918, c_aL +0.4621), updated per epoch (round 2's rule; log `run_output/rama_rounds.txt`, libraries `rama_round_EE.dat`); otherwise as ff30_bio; trainer `ff30_gdepth/trainer/` (round 3's ConDiv + round 2's offset hooks), copied into run_output; `$P/training/ff30_gdepth`, 76 steps, on midway3 caslake (user, 10-05: `slurm.args` is `--partition=caslake --exclude=midway3-0014`, backup `slurm.args.bak_pre_mdw3_20261005`, so successors and the gate stay there; log `condiv-train_60098743.out`), gate up to 13 epochs (`ff30gdep-gate`; the gate judges only the Adam groups; converged: validated as `ff_3.0_gdepth`) | R since 10-05 19:24 (step 0 from `initial_checkpoint.pkl`, 1456 s, check_step healthy, margin +0.172); successor 60117847 (`afterany`) | as ff30_bio; plus the depth per step (check_step prints it) and per round |
-| 49186415 | **polygly collapse** (plan.md Phase 12 step 2): all-atom Ac-(Gly)20-NHMe, amber99sb-ildn / TIP3P, 300 K, 64,976 atoms; min + 500 ps NPT, then 4 replicas (gen-seed 20261006-09) to 30 ns or the wall clock, 7 pinned threads each, one 36 h link, `--no-requeue`; `/project/trsosnic/yinhan/polygly/` (README), log `logs/collapse_<jobid>.out`, replicas `collapse/repN/` | PD (Priority), submitted 10-05 15:20, Slurm estimate 10-06 03:37 | when it ends: Rg(t) per replica (relaxed or not), largest chain diameter of the second half, then the production box (step 3); resubmitting `collapse.sbatch` continues from the checkpoints. Discarded phase |
+| **60113187** (midway3) | **ff30_bio**: ff3.0 round 4 from ff2.1, the BioEmu-fitted glycine library frozen (`upside_input/rama.dat`, md5 69051b78, = repo `parameters/common/rama31.dat`), ff2.1 12-entry hbond.h5 (`hbg` empty), side-chain lr 10x smaller; `$P/training/ff30_bio`, target 76 steps, gate up to 13 epochs (`after_training.sbatch`, job name `ff30bio-gate`; converged: validated as `ff_3.0_bio`); on midway3 caslake since 10-05 16:20 (user; midway2's 49179449 held, then cancelled once this was queued; `slurm.args` = ff30_gdepth's, backup `slurm.args.bak_pre_mdw3_20261005`, so successors and the gate stay there); log `condiv-train_60113187.out`; 8 nodes / 336 CPUs (24 x 14), 36 h links, the first link queues its own `afterany` successor | R since 10-05 19:49 (step 0 from `initial_checkpoint.pkl`); successor 60118489 (`afterany`); 22:17: 6 steps, check_step healthy (KE/1.5kT 1.006-1.042), margin +0.192 +0.190 +0.190 +0.184 +0.179 +0.176, dhb -0.396, sheet 0.165, rot rms 0.035, helical GLY aL free/restr 0.050/0.002 (epoch so far) | the watch every step; at step 76 (~10-07 02:30) the gate |
+| **60098743** (midway3) | **ff30_gdepth**: ff3.0 round 4, run 2: ff2.1's library (NDRD) with glycine's alpha_R / alpha_L depths trained, one pooled offset pair on the 37 GLY\|X maps started at BioEmu's weights (c_aR -0.0918, c_aL +0.4621), updated per epoch (round 2's rule; log `run_output/rama_rounds.txt`, libraries `rama_round_EE.dat`); otherwise as ff30_bio; trainer `ff30_gdepth/trainer/` (round 3's ConDiv + round 2's offset hooks), copied into run_output; `$P/training/ff30_gdepth`, 76 steps, on midway3 caslake (user, 10-05: `slurm.args` is `--partition=caslake --exclude=midway3-0014`, backup `slurm.args.bak_pre_mdw3_20261005`, so successors and the gate stay there; log `condiv-train_60098743.out`), gate up to 13 epochs (`ff30gdep-gate`; the gate judges only the Adam groups; converged: validated as `ff_3.0_gdepth`) | R since 10-05 19:24 (step 0 from `initial_checkpoint.pkl`); successor 60117847 (`afterany`); 22:17: 7 steps of ~21-24 min, check_step healthy (KE/1.5kT 1.007-1.031), margin +0.172 +0.153 +0.147 +0.146 +0.141 +0.136 +0.131 (hold below +0.10), dhb -0.387, sheet 0.173, rot rms 0.037, helical GLY aL free/restr 0.058/0.005, depth dL - dR +0.554 (round 0) | as ff30_bio; plus the depth per step (check_step prints it) and per round |
+| 49186415 | **polygly collapse** (plan.md Phase 12 step 2): all-atom Ac-(Gly)20-NHMe, amber99sb-ildn / TIP3P, 300 K, 64,976 atoms; min + 500 ps NPT, then 4 replicas (gen-seed 20261006-09) to 30 ns or the wall clock, 7 pinned threads each, one 36 h link, `--no-requeue`; `/project/trsosnic/yinhan/polygly/` (README), log `logs/collapse_<jobid>.out`, replicas `collapse/repN/` | PD (Priority), submitted 10-05 15:20, Slurm estimate 10-07 13:50 | when it ends: Rg(t) per replica (relaxed or not), largest chain diameter of the second half, then the production box (step 3); resubmitting `collapse.sbatch` continues from the checkpoints. Discarded phase |
 
 **The lambda ff_2.1 benchmark is complete** (all four arms at target: WT de novo 10-04 14:17, WT native
 16:17, G46A/G48A de novo 10:37, G46A/G48A native 10-05 01:24; `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_*_ff_2.1/`):
@@ -435,8 +436,9 @@ offsets are bitwise 12 entries. `py/upside_config.py` there had been stale (it s
 updated yet: the benchmark arms run from it, and it must be synced from `$P` before ff3.0's
 benchmark or glpG runs.
 
-**Watch**: none since 10-05 17:55 (the Mac Studio's cron `6aa7c547` ended with its session; the
-round-4 prompt is under "One watch at a time" above). Epoch panels from `submit_new.sh` still go to broadwl
+**Watch**: session cron `02ff3878` on the Mac Studio, hourly at :17, since 10-05 21:35 (the
+round-4 prompt is under "One watch at a time" above; the earlier `6aa7c547` ended with its session
+at 17:55). Epoch panels from `submit_new.sh` still go to broadwl
 (`ff3_selection/slurm.args`); one sent to caslake needs `--mem` (panel.sbatch sets none). The gate
 (`after_training.sbatch`, 2 CPUs, no `--mem`) projects the same start on caslake with or without
 `--mem=4G` (`--test-only` 19:08: both 10-06 06:36; a fresh 8-node link 09:14), so it needs none.
