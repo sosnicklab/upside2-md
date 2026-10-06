@@ -40,7 +40,7 @@ TRAIN_DIR="$(cd "$RUN_DIR/.." && pwd)"     # run dirs live directly under traini
 SLURM_ARGS=$(cat "$RUN_DIR/slurm.args")
 
 MB_PER_EPOCH=19            # 456 proteins / 24
-STEPS_PER_LINK=90          # a step is ~21 min (5vhg, 150 res, 1242 s measured), so ~32 h in the 36 h wall
+STEPS_PER_LINK=54          # a step is ~36 min at dt 0.009 (5vhg's 1242 s at dt 0.015, scaled), so ~32 h in the 36 h wall
 
 cd "$RUN_DIR"
 CKPT=$(find run_output -name checkpoint.pkl -path "*/epoch_*/checkpoint.pkl" 2>/dev/null | sort | tail -1)

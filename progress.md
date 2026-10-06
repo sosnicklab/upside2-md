@@ -293,3 +293,26 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
 * Literature: Persson & Halle 2015, Peng et al. 2022 (full text), Linderstrøm-Lang EX1/EX2 limits;
   remaining full texts requested from the user.
 * Files: `findings.md` 5.1.
+
+## 2026-10-06 night: round 4, epoch 0 (watch)
+
+* Watch cron `02ff3878` hourly from 22:17. Destroyed free replicas found in ff30_gdepth steps 8, 12
+  and 14 (finite, so check_step passes them; findings 1.21); the watch now scans every step's KE.
+* Both runs' shared H-bond margin fell below +0.10 early in epoch 1 (ff30_bio step 20,
+  ff30_gdepth step 21); the user was notified and the runs are held for a decision, not cancelled.
+* Epoch 0 ended in both runs: panels b00 / d00 fold 0.465 / 0.471 against 0.60 at their starts,
+  and each start dominates its epoch in helix (findings 1.22). b00 on glpG TM4: no glycine flip.
+* ff30_gdepth's first link failed at step 22 (one worker, 1ga3); its successor resumed as designed.
+
+## 2026-10-06 morning: stop and restart at dt 0.009 (user)
+
+* glpG TM4 at the newest dt 0.015 checkpoints (b01m12, d01m09): last-block helix 0.87, down from
+  bio_start's 0.95; d01m09 flips GLY149 in one seed (findings 1.22).
+* Read-only comparisons found no engine, config-writer, library or trainer-code cause of the
+  destroyed replicas: FF1-form runs at dt 0.009 had 0 in 13,714 protein-steps, the FF2 runs at
+  0.015 had 20 in ~13,800 (findings 1.21).
+* The user stopped both runs (09:40, midway3, successors first) and restarted them at dt 0.009 on
+  broadwl (49194446 / 49194447, 09:46). Trainers, `train_chain.sbatch` (54 steps per link) and
+  `submit_new.sh` were changed, with backups `.bak_pre_dt009_20261006`; the repo's
+  `training/ConDiv.py` and `train_chain.sbatch` are changed the same way. The initial force
+  fields are verified byte-identical. New watch cron `250534b9`.

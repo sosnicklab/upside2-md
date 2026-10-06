@@ -1328,6 +1328,169 @@ glycine's alpha_R and alpha_L populations are equal, and so are beta / beta' and
 
 ---
 
+### 1.21 ConDiv workers sometimes destroy a free replica, and the step uses it (2026-10-06)
+
+ff30_gdepth step 12 (epoch_00_minibatch_12): protein 3jtz ended with replicas 11 and 12 at
+`avg_kinetic_energy/1.5kT` 59.3 and 176.9, while its other replicas read 1.007-1.029 and every
+other protein stayed below 1.05. Its log shows replica 8 at potential 2164 already at t = 20,
+during the anneal at T 0.05 (start -75). The broken configuration then sat in the top slots for all
+8000 time units, at potential ~1e4 with no H-bonds and Rg 25-34 A. Everything stays finite, so
+`check_step.py` passes it ("non-finite or missing: none"). Only the maximum of its KE line shows it.
+
+A scan of every protein-step of five runs (max KE/1.5kT > 1.2) finds the same event 9 times:
+- ff30_gdepth 2 of 330 (2fb0 step 8, 3jtz step 12); by step 14, 3 of 360 (3f5r step 14, r12 131.7,
+  from r8 at t = 499, T 0.98)
+- ff30_bio 0 of 312; by step 14, 0 of 360; by step 32, 0 of 792
+- ff30_gdepth by step 30: 4 of 744 (2i9c step 31, r12 24.2, from r10 at t = 7123, T 1.04, final Rg
+  55.6 A); by step 33, 5 of 816 (3f5r again, step 33, r12 20.7). This one starts in r0, **the
+  native-restrained replica**, at t = 6973, T 0.80 (potential 1850). Its heat then spreads along
+  the even replicas (r0 2.32, r2 1.29, r4 1.14, r6-r10 1.10-1.27), so a breakdown can begin in a
+  replica held near native. That fits integration better than conformational wandering.
+- ff30_bio by step 36: 0 of 888; then its first, 2i9c step 39 (r12 42.2, starting in r12 itself at
+  t = 6503, T 1.10). Both runs are susceptible, consistent with one shared rate.
+- ff30_glyhb 0 of 1560
+- ff30_gly 2 of 1584
+- ff30_basin 5 of 2736 (3jtz among them)
+
+With 3 of 360 against 7 of 5880 before (0.12%, so 0.43 expected), ff30_gdepth's rate is raised at
+p ~ 0.01 (Poisson, at least 3), while ff30_bio, the same ff2.1 terms with the BioEmu library, has
+none. The runs differ in the Ramachandran library: ff30_gdepth uses NDRD with basin-depth offsets,
+built like ff30_basin's (5 events); ff30_bio uses the fitted library. That fits a library cause but
+does not show it.
+
+In all nine of the first set, and in 3f5r, the hot replica at the end is r12, the hottest free
+replica (T 1.10). The breakdown
+starts elsewhere and at different times:
+- 4 cases at t = 10-20 in the anneal, at T 0.04-0.05, with potentials of 2e3-2e5;
+- 5 cases mid-run, at T 0.80-1.04.
+
+Replica exchange then carries the high-energy configuration up the ladder, as in glpG (§3,
+"exchange carries the wrecked replica"). The step's divergence for that protein includes the
+destroyed replica's frames.
+
+**Not caused by our code or library modifications (2026-10-06, three read-only comparisons; scripts
+and outputs in `/project/trsosnic/yinhan/checks/broken_replica_20261006/` `agentA`, `agentB`,
+`agentC`):**
+* **Engine vs master.** Every dry-MARTINI file and hook is inactive in a ConDiv worker: they need
+  `/input/mass`, `brownian`, `stage_parameters` and so on, which no training config writes.
+  Splines, `rama_map_pot`, sterics, environment, placement and the MC/pivot samplers are
+  byte-identical to master. The differences that are active are force-neutral for these configs:
+  - H-bond class offsets, which are 0 for a 12-entry file;
+  - a stricter rotamer BP convergence test, which is upstream;
+  - `-fno-finite-math-only`;
+  - the mass and fixed-atom branches, which are not taken.
+
+  One difference changes trajectories: swaps carry momenta rescaled by sqrt(T_dest/T_src)
+  (`main.cpp:477-488`, since 08-05). That decides where a broken configuration's heat goes, not the
+  onset. The event rate is the same on the pre- and post-10-02 builds (7/4320 against 4/3096,
+  p 0.77).
+* **Trainer vs original.** The worker protocol (`main_worker`) is identical in all deployed FF2
+  trainers, so it cannot explain differences between runs. Against the FF1 original
+  (`~/Documents/ConDiv`, a Dec 2025 FF1-form copy, not a git repository) it differs in:
+  - time step 0.015 against 0.009;
+  - the anneal start at 0.05 T, ramped to T over t 96-400;
+  - replica interval 5 against 10;
+  - 14 systems (12 free up to T 1.10, plus SARW) against 8;
+  - 8000 against 4000 time units;
+  - the FF2 terms.
+
+  The 0.015 and the anneal came with the FF2 trainer on 09-24 as "the port's schedule". Kleinmann's
+  port is not available locally to confirm it.
+* **Libraries.** The gdepth and basin offsets change any residue's rama gradient by at most 2.5
+  E_up/rad against NDRD. The only materially steeper library is the BioEmu one (glycine alpha_L
+  edge, grad 77, curvature 1014), and ff30_bio has no events: steepness runs against the event
+  rate. A residue's map spans about 20 E_up, so the rama term cannot hold the 1e3-1e5 seen. At
+  dt 0.015 its stiffest wall gives omega*dt 1.1, below Verlet's limit of 2. The destroyed-replica
+  proteins do not stand out from controls under any library.
+* **The event follows the FF2 training protocol.** In FF1-form runs at dt 0.009 (ff31-gly,
+  gly-sym, gly-ctx, ff21-restart) there are 0 events in 13,714 protein-steps. Every dt 0.015 FF2
+  run combined gives 20 in about 13,800 (ff30 9/5311, basin 5/2736, gly 2/1584, gdepth 4/792,
+  glyhb 0/1560, bio 0/863, fixedpoint 0/599, glyprobe 0/383). At 0.14%, 0 in 13,714 has
+  p ~ 1e-9, or ~1e-4 allowing for twice the duration. The two protocols differ in several things,
+  so this places the cause in the FF2 protocol or terms without isolating dt. Between FF2 runs the
+  rates are consistent with one shared rate (gdepth 4/792 is the high tail, p 0.03).
+
+In 3jtz the highest replica potential rises 2e3, 3e3, 1e4, 9e4 over t 20-70 with T at most 0.055.
+Exchange only permutes and pivots reject uphill moves at that T, so the energy enters through
+integration. That makes dt the leading candidate.
+
+**The cause is not identified.** A breakdown within 10-20 time units at T 0.05 is not thermal.
+Candidates to test are an integration failure at dt 0.015, a pivot move, and an exchange. The
+worker deletes its `.up` files, so only the log remains.
+
+To localize it, rerun 3jtz's step-12 worker for ~100 time units, at dt 0.015 and at 0.009, with a
+few seeds. Use the same command, seed 108620103 and that step's inputs, which survive in
+`epoch_00_minibatch_12`: `nesterov_temp__*` and `rama_round_00.dat`. 3jtz sends several free
+replicas into excursions within 50 time units, so a short run is enough. If the excursions vanish
+at 0.009, the time step is the cause. If they persist, check force against energy by finite
+differences, node by node, at the frame before the spike.
+
+The watch must scan the KE maximum of every protein in every new step.
+
+**Restarted at dt 0.009 (user, 2026-10-06 09:46).** Both round-4 runs were stopped and restarted
+from ff2.1 as `ff30_bio_dt009` and `ff30_gdepth_dt009` on broadwl. The trainers differ only in dt,
+and the initial force fields are byte-identical. If no free replica is destroyed in a comparable
+number of protein-steps (about 1,600 for the 0.14% rate to give 2 expected events), the time step
+is confirmed as the integration problem. **Step 0 already shows the thermostat holding:**
+- dt 0.009: `avg_kinetic_energy/1.5kT` min 0.996, median 1.005, max 1.014 over every replica of
+  both runs.
+- dt 0.015: median 1.017 and maximum 1.03-1.06 in every healthy step.
+
+So at 0.015 every replica ran 1-2% hot through integration error, not only the destroyed ones. A
+step takes 1833 s (ff30_bio_dt009) and 2158 s (ff30_gdepth_dt009). Whether it also drives the helix drift (1.22) is read from
+the same runs' margins, panels and glpG TM4.
+
+### 1.22 Round 4 after one epoch: the panels lose folding as round 3's did (2026-10-06)
+
+Epoch-0 panels, `b00` (ff30_bio) and `d00` (ff30_gdepth), from
+`select ... ff21_released ff21_awh bio_start gdepth_start b00 d00`. The set is 42 domains; 3g7lA00
+and 4hwiB01 are dropped for too few folded frames.
+
+| tag | folded | helix | beta | gly_helix | gly_left |
+|---|---|---|---|---|---|
+| ff21_released | 0.615 | -0.018 +- 0.004 | -0.018 +- 0.005 | -0.081 +- 0.048 | +0.034 +- 0.019 |
+| bio_start | 0.602 | -0.022 +- 0.005 | -0.017 +- 0.004 | -0.050 +- 0.041 | +0.005 +- 0.020 |
+| gdepth_start | 0.603 | -0.019 +- 0.005 | -0.015 +- 0.004 | -0.041 +- 0.044 | +0.013 +- 0.019 |
+| b00 | 0.465 | -0.032 +- 0.006 | -0.018 +- 0.004 | -0.096 +- 0.045 | -0.018 +- 0.023 |
+| d00 | 0.471 | -0.026 +- 0.005 | -0.017 +- 0.004 | -0.046 +- 0.038 | +0.009 +- 0.021 |
+
+* **Each start dominates its own epoch 0 in helix** (paired bootstrap): bio_start over b00,
+  gdepth_start over d00. Neither glycine class is resolved.
+* **The folded fraction falls from 0.60 to 0.47 in both runs.** Round 3's h00 and h01 fell to 0.460
+  and 0.469 (1.17). So the loss comes with ConDiv training of the shared terms from ff2.1 whatever
+  the glycine library: frozen BioEmu (b00) and trained depth (d00) end alike.
+* **The shared H-bond margin E_other - E_alpha crossed +0.10 in both runs** within the first three
+  steps of epoch 1. ff30_bio reached +0.088 at step 23; ff30_gdepth reached +0.099 at step 21. It
+  is driven mostly by E_alpha weakening (ff30_bio -1.961 to -1.862).
+* **glpG TM4 under b00** (local, 3 seeds, T 0.80, 4000 tu): no flip at GLY136/143/149. TM4 helix by
+  time block 0.98 / 0.92 / 0.91 / 0.92, against 0.98 / 0.99 / 0.97 / 0.95 at bio_start and 0.97 to
+  0.80 at ff2.1. The seed ranges overlap.
+* **glpG TM4 under d00** (same test): **GLY149 flips in one seed of three**, from the second block
+  on (0.99-1.00 in that seed, so 0.33 as the mean). GLY143 flips transiently in one seed (0.58 in
+  block 2). TM4 helix 0.95 / 0.90 / 0.92 / 0.92 and TM1 0.93 / 0.85 / 0.85 / 0.83. No local run
+  of gdepth_start exists to compare with. The nearest is ff2.1 itself (NDRD, depths untrained),
+  where GLY149 reaches 0.37 in one seed by the last block.
+* **glpG TM4 at the newest checkpoints** (user's request, 06:48; same test). These are b01m12
+  (ff30_bio step 32, margin +0.071) and d01m09 (ff30_gdepth step 29, +0.081). Last-block TM4 helix:
+  - ff30_bio: bio_start 0.95 [0.84-1.00], b00 0.92 [0.88-0.98], b01m12 0.87 [0.76-0.96]. That is
+    monotonic with training and the falling margin, about halfway back to ff2.1's 0.80. No glycine
+    flips, so it is a general helix weakening.
+  - ff30_gdepth: d00 0.92, d01m09 0.87 [0.74-0.98]. GLY149 flips in one seed of three again (from
+    block 3), and GLY143 in one seed in block 4. TM1 holds better (0.93, against b01m12's 0.89).
+
+  With 3 seeds no single step is resolved, but all four trained checkpoints lose TM4 helix
+  against bio_start, in step with the margin.
+* **Epoch 1 continues the loss** (`b01`, ff30_bio epoch_01_minibatch_18, margin +0.048; panel
+  49194315). With `select ... ff21_released ff21_awh bio_start b00 b01` the set is 38 domains;
+  six are dropped, mostly because b01 keeps too few folded frames. Folded and helix:
+  - bio_start 0.602, -0.022
+  - b00 0.465, -0.032
+  - b01 0.400, -0.034
+
+  bio_start dominates b01 in helix.
+* **ff30_gdepth's first depth round barely moved:** dL - dR +0.554 to +0.549, free-native gap
+  +0.005. The training data put almost no push on the BioEmu-weighted start.
+
 ## 2. The hybrid model: what each side supplies
 
 ### 2.1 Replaced by design

@@ -286,7 +286,7 @@ side chains) do.
     on the all-atom ensemble itself. Use only the real frames (not the 0.5 A decoys) of the 44 all-L
     domains (not the six D-residue ones, findings 1.17).
 
-### Phase 11 - round 4: a selection-free glycine map, fitted bottom-up and frozen (TRAINING since 2026-10-05 19:24/19:49: ff30_bio and ff30_gdepth on midway3 caslake; validated automatically at convergence)
+### Phase 11 - round 4: a selection-free glycine map, fitted bottom-up and frozen (dt 0.015 runs STOPPED 2026-10-06 09:40, user; RESTARTED at dt 0.009 on midway2 as ff30_bio_dt009 and ff30_gdepth_dt009)
 The defect is the map (user, 2026-10-04; findings 10.13): Upside uses glycine's PDB coil statistic as
 energy, and its alpha_L excess is fold selection. A design through H-bond terms was rejected: a map
 defect is fixed on the map. Rounds 2 and 3 showed that any glycine parameter trained against natives
@@ -351,6 +351,44 @@ set alone, with no outside data, that keeps glpG TM4 stable; BioEmu is only the 
 * Shared scripts changed for it (backups `.bak_pre_gdepth_20261005`): `extract_ff.py` writes a
   depth-training checkpoint's trained library and finds the run's own trainer for the initial
   checkpoint too; `check_step.py` skips the empty glycine-offset field and prints the depth.
+
+**Revised 2026-10-06 (user): both runs stopped and restarted at dt 0.009 on midway2.** At dt 0.015
+the first runs lost what the library had gained:
+- Both shared H-bond margins fell below +0.10 (ff30_bio +0.050 at step 37).
+- Both epoch-0 panels lost folding (0.60 to 0.47) and helix (findings 1.22).
+- glpG TM4 fell with every checkpoint (bio_start 0.95, b00 0.92, b01m12 0.87).
+- Free replicas were destroyed in 6 protein-steps.
+
+The time step is the protocol's one integration setting that departs from Upside's standard:
+- 0.015 came with the FF2 trainer on 09-24 as the port's schedule.
+- Master, the FF1 trainer and the Peng benchmark use 0.009.
+- FF1-form runs at 0.009 had 0 destroyed replicas in 13,714 protein-steps, against 20 in ~13,800
+  for FF2 runs at 0.015 (findings 1.21).
+
+So the restart puts the model's own integration step back; it does not tune physics to avoid a
+crash. Everything else is unchanged:
+- the ff2.1 start, the libraries and START offsets;
+- the side-chain lr / 10 and the 76-step target;
+- the gate and the automatic validation (candidates `ff_3.0_bio`, `ff_3.0_gdepth`; on broadwl, glpG
+  from `popepopg_REMD_mdw2`).
+
+A step takes ~1.67x longer (8000 time units at 0.009), so `train_chain.sbatch` links run 54 steps
+instead of 90.
+- [x] Trainers at dt 0.009: `$P/training/ConDiv.py` (ff30_bio's) and a copy of ff30_gdepth's
+  `trainer/`; repo `training/ConDiv.py` the same. Backups `.bak_pre_dt009_20261006`.
+- [x] New run dirs `ff30_bio_dt009` and `ff30_gdepth_dt009`, copied from the stopped runs:
+  - `upside_input` as hardlinks;
+  - midway2 `slurm.args`;
+  - `after_training.sbatch` with the candidate names.
+
+  Then initialize, and check that the initial force fields are byte-identical to the stopped
+  runs' and that the trainers differ only in dt.
+- [x] `train_chain.sbatch` STEPS_PER_LINK 54 (cluster and repo); `submit_new.sh` tags `b9_EE`
+  and `d9_EE`.
+- [x] Submitted 10-06 09:46 on broadwl, 49194446 / 49194447; both started at once from
+  `initial_checkpoint.pkl`, 54 steps per link. Watch cron `250534b9`. The trainers differ from the
+  stopped runs' only in dt, and the initial force fields are byte-identical
+  (`checks/dt009_init_20261006`).
 
 Next (remote_jobs.md has the watch):
 - [ ] Every step: check_step.py (all finite, KE/1.5kT, restrained RMSD, unfolded target); watch the

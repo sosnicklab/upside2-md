@@ -22,6 +22,9 @@ modernised and restored to the published protocol. Differences from that file, e
     now an exact max-subtracted one. The port's guard that silently dropped the DSE term when a
     replica's final energy exceeded 1000 is removed: a blown-up replica must fail, not vanish.
     For the same reason a failed worker fails the step; the port summed whatever returned.
+  * time step 0.009, Upside's standard (master, the FF1 trainer, the Peng benchmark), where the
+    port ran 0.015: at 0.015 about one worker protein-step in 700 destroys a free replica, which
+    stays finite and sits in the top replica at up to 177 times kT (findings 1.21).
   * the Ramachandran library is a fixed input, `upside_input/rama.dat`, never trained. For ff3.0
     it is parameters/common/rama31.dat, whose central-glycine row is fitted in Upside to BioEmu's
     plain-MD octapeptides (up.md 2.8, findings 1.19): the PDB row is part local energy and part
@@ -546,11 +549,12 @@ def main_worker():
                        restraint_spring_constant=native_restraint_strength)
     zero_for_sarw(configs[-1], sarw_scale)
 
-    # The port's schedule: start at 5% of T, relax, anneal up to T between t = 96 and 400, then
-    # sample at T. Swaps run among the restrained and free replicas; the SARW replica is apart.
+    # The port's schedule (start at 5% of T, relax, anneal up to T between t = 96 and 400, then
+    # sample at T) at Upside's time step 0.009. Swaps run among the restrained and free replicas;
+    # the SARW replica is apart.
     j = ru.run_upside('', configs, sim_time, frame_interval, n_threads=n_threads,
                       temperature=T * 0.05, swap_sets=ru.swap_table2d(n_system - 1, 1),
-                      mc_interval=5., replica_interval=5., time_step=0.015,
+                      mc_interval=5., replica_interval=5., time_step=0.009,
                       anneal_factor=20., anneal_start=96., anneal_end=400.)
     if j.job.wait() != 0:
         raise RuntimeError('RUN_FAIL')
