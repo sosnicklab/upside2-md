@@ -2429,6 +2429,39 @@ the EX2-like `k_obs = k_chem * (1-p_protected)` and `D(t) = 1-exp(-k_obs*t)` in 
 wrong friction or time mapping does not rescale the HDX time axis; it matters because it controls
 decorrelation and the ability to sample opening/closing equilibria.
 
+**The Rama map's undesigned transition region does not enter this estimator as a barrier (user question,
+2026-10-05).** The map has values along every route, but outside the data they are NDRD's untrained
+density tail (1.19). Under EX2, `PF = k_cl/k_op = 1/K_op`: both rates cross the same transition state, so
+its free energy cancels and only the open-state population counts. Langevin dynamics with REMD samples the
+Boltzmann distribution of the potential whatever the friction or barrier heights, and the estimator pools
+frames without order, so it depends on the energy surface alone. Persson & Halle (PNAS 2015) obtained BPTI
+protection factors from O-state populations; the O state lived about 100 ps for every amide, so the spread
+in HX rates is opening frequency, which under EX2 is still a population ratio. Peng 2022 used the same
+population estimator in Upside with Halle's O-state criteria adapted to H-bond score and burial. The top
+can still reach dG_HX in three ways:
+1. As equilibrium weight, through open frames whose phi/psi lie in cells with no library data. The top
+   sits about 6-9 E_up (4-6 kcal/mol) above each map's minimum, the range of the rare openings the TM4
+   comparison needs and above the estimator's present resolution (5.2). Unproven; measurable by binning
+   open frames by cell data count. An opened segment normally sits in coil basins, and a buried residue
+   crossing phi = 0 stays protected by burial.
+2. Through sampling, because barrier heights set decorrelation time and kinetic traps. Peng 2022 cut
+   ubiquitin trajectories at their first unfolding because misfolded states never refolded. The matching
+   check here is the protection-state autocorrelation time, still unmeasured (5.3b).
+3. Through the experiment's own regime. Upside cannot supply physical k_op or k_cl, so EX2 has to be shown
+   experimentally. Peng 2022 compared k_f with k_chem (EHEE_rd2_0005: 1700 against 9-26 s^-1). No such check
+   exists here for GlpG, and the Sosnick-lab GlpG HDX-MS abstracts (Biophys J 2023, 2024; seen only in
+   search snippets) describe regions that "cooperatively unfold only at long time scales". If the TM4
+   peptides show EX1 (bimodal envelopes), their uptake reports k_op, the dG_op ~ 10-11 kcal/mol in 7.1 is
+   not a free energy, and no equilibrium estimator can be compared with it.
+
+Order of checks: EX1/EX2 in the GlpG HXMS spectra before converting any TM4 peptide to dG; then the
+autocorrelation time; then the open-frame Rama binning, which only matters once dG above ~5.5 kcal/mol is
+resolvable. Separately, `4.calc_D_uptake.py:1046-1094` fits the target temperature to experimental uptake
+with `minimize_scalar`, which can absorb thermodynamic error, so agreement after that fit is weaker
+evidence than agreement at a fixed temperature. Full texts not yet read (requested from the user):
+Persson & Halle 2015 with SI, Peng 2022 SI (S11, S20-S22), McAllister & Konermann 2015, Skinner 2012
+(both), the GlpG Biophys J abstracts, Lin et al. JASMS 2025.
+
 `dG` is `RT log(p/(1-p))`, not helix occupancy. At `T_up = 0.70`, 2, 3 and 5 kcal/mol mean roughly 98.4%,
 99.79% and 99.9965% protection. Exact `p = 1` from a finite trajectory is censored, not a measured
 1000-kcal/mol value, so a defensible plot must separate censored markers from finite dG points.

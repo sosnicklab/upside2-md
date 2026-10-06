@@ -283,3 +283,13 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   engines bitwise equal on a Peng config. Two short real caslake test jobs were cancelled at the
   user's correction (findings 10.16) and their artifacts removed. One slip, caught by its own
   pre-check: a deploy loop written for bash ran under zsh and aborted before changing anything.
+
+## 2026-10-05 (night): does the missing Rama transition region affect HDX? (user question)
+
+* Analysis only, no code or job changes. The HDX estimator is equilibrium (MBAR-weighted binary
+  protection state, EX2 `PF = 1/K_op`), so the transition-state free energy cancels; the undesigned
+  map top can enter only as equilibrium weight of open frames, through sampling, or if the experiment
+  is not EX2. EX2 has never been checked for the GlpG TM4 HXMS data; that check comes first.
+* Literature: Persson & Halle 2015, Peng et al. 2022 (full text), Linderstrøm-Lang EX1/EX2 limits;
+  remaining full texts requested from the user.
+* Files: `findings.md` 5.1.
