@@ -266,3 +266,20 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   (ff30_bio `slurm.args` backed up as `.bak_pre_mdw3_20261005`). bio_start followed at 16:30 (user;
   ~2 h gain, so all round-4 jobs share one cluster); polygly stays on midway2. The panels'
   `runs/*.submitted` markers carry the new ids. Watch cron recreated (remote_jobs.md).
+
+## 2026-10-05 (evening): round-4 start panels and automatic validation (plan.md Phase 11)
+
+* Start panels finished on caslake (bio_start, gdepth_start, 176 of 176 each); neither start is
+  resolved from ff21_released in any class (table in remote_jobs.md §1). Both trainings started
+  19:24 / 19:49; ff30_gdepth's step 0 is healthy (check_step), 24 min per step on caslake.
+* Automatic validation (user: on caslake, converged gates only): a converged gate now runs
+  `validate_ff.sh`, which submits from the run's `slurm.args`, validates candidates side by side
+  (`ff_3.0_bio`, `ff_3.0_gdepth`; glpG as `<variant>.<ff>` in the new caslake campaign
+  `popepopg_REMD_mdw3`), and no longer overwrites shared seeds or deletes replica directories.
+  `bench.sbatch` resubmits with the job's own node exclusions. Files and backups in remote_jobs.md
+  §1 "Automatic validation".
+* Tests: gate branches with stubs (5 cases); `validate_ff.sh` end to end with `--test-only` (32 Peng
+  + 4 glpG PASSED, round trip 5e-15); patched seeds identical from two bases; `/beagle3` and `$P`
+  engines bitwise equal on a Peng config. Two short real caslake test jobs were cancelled at the
+  user's correction (findings 10.16) and their artifacts removed. One slip, caught by its own
+  pre-check: a deploy loop written for bash ran under zsh and aborted before changing anything.

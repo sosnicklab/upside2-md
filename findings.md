@@ -3761,6 +3761,27 @@ is ff30_glyhb. Two corrections from the user on the same day:
 
 ### 10.14 Other cluster and tooling lessons
 
+* **caslake rejects an `--exclude` that names midway2 nodes (2026-10-05).** `sbatch` there ends
+  with "allocation failure: Invalid node name specified", so a script carrying `#SBATCH
+  --exclude=midway2-[...]` (`ff3_benchmark/bench.sbatch`) runs on caslake only when the command line
+  overrides it, and a script that resubmits itself must carry that override: `bench.sbatch` now
+  passes the job's own `ExcNodeList` (from `scontrol show job`). Check a job shape on the other
+  cluster with `sbatch --test-only` before relying on it.
+* **midway2's module set does not exist on midway3 (2026-10-05).** `python/3.9.18` and
+  `openmpi/4.1.1+gcc-10.1.0`, which `popepopg_REMD_mdw2/remd.sbatch` loads, are absent there
+  (`hdf5/1.14.3+oneapi-2023.1` is on both). The caslake glpG campaign `popepopg_REMD_mdw3` takes
+  python and hdf5 from `env_shared.sh` and the binary from `$P`, as the training workers do.
+* **The `/beagle3` deployment and `$P` give bitwise the same energy and forces for a 12-entry
+  force field (2026-10-05).** lambda native under bio_start's force field, config written by each
+  tree exactly as `bench_run.py` writes it: E -199.4555816650 under both engines, max |dF| 0, and
+  the configs equal in every `/input` node but the recorded `args`. The two binaries are separate
+  builds, so this holds for configs without glycine H-bond offsets; one with them still needs the
+  deployment synced (`checks/r4val_20261005/engine_parity/`).
+* **`/input/potential/backbone_pairs/ref_pos` holds NaN by design**, glycine's CB
+  (`write_backbone_pair`; 23 rows in glpG), so `np.array_equal` reports two identical configs as
+  different. Compare float arrays with `equal_nan=True`. With that, glpG seeds patched by
+  `patch_glpg.py` from the live seed and from the pre-ff_3.0 seed are identical in all 191 `/input`
+  nodes: the patch output does not depend on which force field the seed carried.
 * **`extract_ff.py` took the trainer from two directories above the checkpoint (2026-10-05).** Right
   for `run_output/<step>/checkpoint.pkl`, wrong for `run_output/initial_checkpoint.pkl`: it then
   imported `training/ConDiv.py` from PYTHONPATH instead of the run's own copy, silently. Harmless
@@ -3874,6 +3895,18 @@ effect against its reference scale (energy error against kT, bug-induced T_mid s
 spread). Single frames and per-seed orderings stay off the slide.** When the comparison does not come
 out the way the user expects (WW domain's 0.8 K shift is larger than its 0.3 K seed spread), state the
 numbers on the slide as measured and tell the user. Do not write the expected claim.
+
+### 10.16 No smoke jobs for a pipeline that has already run in production (2026-10-05)
+
+User correction. To verify the automatic round-4 validation I submitted two short real caslake jobs
+(a Peng arm bounded to 15 min, a glpG calibration-only block) on top of the static checks. The user
+saw no point: the same Peng and glpG pipelines had already run as the ff_3.0 validation on midway2,
+so a real job adds nothing that `sbatch --test-only`, the sandbox runs of the changed scripts and the
+first production job (read by the watch) do not already show. Both were cancelled and their
+artifacts removed. **Verify a change to a proven pipeline with checks that submit nothing: `bash -n`,
+stubbed sandbox runs of the changed branches, `--test-only` of every submission and comparisons of
+the files it writes. Do not spend allocation on test jobs. If a real run on a new cluster looks
+needed, say why and ask first.**
 
 ---
 

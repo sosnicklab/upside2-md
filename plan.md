@@ -76,7 +76,10 @@ with nothing released (in the repo `train_chain.sbatch` runs `ConDiv.py gate` at
 `validate_ff.sh <run> ff_3.0
 <checkpoint>` releases the chosen one. Training is unchanged; not-converged still trains one more
 epoch. The selection panel and the final validation stay disjoint: the panel chooses, Peng and glpG
-judge.
+judge. **Revised for round 4 (user, 2026-10-05):** a converged gate validates its own final
+epoch-end checkpoint at once, on the cluster the run trains on (its `slurm.args`, caslake for both),
+as the candidates `ff_3.0_bio` and `ff_3.0_gdepth`; a run that reaches 13 epochs unconverged still
+stops for review. The epoch panels still run, and which candidate becomes ff_3.0 stays the user's.
 
 **Pre-proline is separate and parked (user, 2026-10-01).** It came from analysis, not from a
 simulation failure (Phase 6).
@@ -283,7 +286,7 @@ side chains) do.
     on the all-atom ensemble itself. Use only the real frames (not the 0.5 A decoys) of the 44 all-L
     domains (not the six D-residue ones, findings 1.17).
 
-### Phase 11 - round 4: a selection-free glycine map, fitted bottom-up and frozen (TRAINING since 2026-10-05: ff30_bio 60113187 and ff30_gdepth 60098743, both on midway3 caslake, queued)
+### Phase 11 - round 4: a selection-free glycine map, fitted bottom-up and frozen (TRAINING since 2026-10-05 19:24/19:49: ff30_bio and ff30_gdepth on midway3 caslake; validated automatically at convergence)
 The defect is the map (user, 2026-10-04; findings 10.13): Upside uses glycine's PDB coil statistic as
 energy, and its alpha_L excess is fold selection. A design through H-bond terms was rejected: a map
 defect is fixed on the map. Rounds 2 and 3 showed that any glycine parameter trained against natives
@@ -357,7 +360,23 @@ Next (remote_jobs.md has the watch):
 - [ ] Each epoch end: selection panel `bEE` (submit_new.sh), and locally the glpG TM4 test on the
   extracted checkpoint (3 seeds, T 0.80, 4000 tu, `run_glpg.sh` after `patch_glpg.py`), read
   against `bio_start`, ff21_released and ff21_awh. Nothing is released without the user.
-- [ ] After a release candidate: lambda helix 3 (Peng benchmark) and glpG REMD.
+- [x] Automatic validation at convergence (user, 2026-10-05; caslake; Peng's 32 arms, with lambda
+  helix 3, and glpG's 4 REMD variants per candidate). Deployed 10-05 20:05 (remote_jobs.md §1
+  "Automatic validation"):
+  - [x] `gate_or_continue.sh`: a converged gate runs `validate_ff.sh` on its epoch-end checkpoint.
+  - [x] `validate_ff.sh`: submissions from the run's `slurm.args`; Peng at the script's 12 h with
+    `runs/<tag>/input` made first; glpG per candidate (`<V>.<FF>` seeds and directories, nothing
+    shared overwritten or deleted).
+  - [x] `popepopg_REMD_mdw3/` for glpG on caslake (`env_shared.sh` + `$P`'s binary; mdw2's
+    `run_remd.py` unchanged); `bench.sbatch` resubmits with the job's own node exclusions.
+  - [x] `after_training.sbatch` of each run names its candidate.
+  - [x] Tests: sandbox gate branches; `validate_ff.sh` end to end with `--test-only`; base-seed
+    independence; engine parity of the two trees on a Peng config (bitwise).
+  - Short real test jobs dropped (user: the pipeline already ran in production; findings 10.16); the
+    first production Peng arm and glpG block on caslake are read by the watch.
+  - Not changed, flagged: `run_remd.py` rolls back NaN replicas and continues, which the NO GUARDS
+    rule forbids; it is copied unchanged so glpG stays comparable with the ff_2.1 and ff_3.0
+    campaigns. Whether to remove it is the user's decision.
 - Known limitations: X-G-P's helical basins keep NDRD values (too few BioEmu frames); a poly-Gly run
   gets the average of the G-G-Y and X-G-G entries, which carry their L-neighbour contexts (Upside's
   maps see only nearest neighbours); ff99sb-ildn may overstate in-chain alpha_L (findings 1.19);
@@ -426,7 +445,7 @@ Jobs are recorded in remote_jobs.md.
   sync the repo's `training/` to the cluster before then (remote_jobs.md, "Resume here").
 * **CPU work runs on midway2 broadwl unless the user names midway3 caslake** (user, 10-01; on
   10-05 the user moved both round-4 trainings and their start panels to caslake for earlier
-  starts). No `amd`, `beagle3` or GPU partitions: CPU jobs must not run on the group's GPU
+  starts, and chose caslake for their automatic validation). No `amd`, `beagle3` or GPU partitions: CPU jobs must not run on the group's GPU
   allocation. midway3's login node may be used to move or read files on `/project` and `/beagle3`
   (user, 10-02).
 * **Beta for the PI's sheet modelling.** No residue type has a significant beta miss at ff2.1, and
