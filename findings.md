@@ -1438,7 +1438,11 @@ is confirmed as the integration problem. **Step 0 already shows the thermostat h
 
 So at 0.015 every replica ran 1-2% hot through integration error, not only the destroyed ones. A
 step takes 1833 s (ff30_bio_dt009) and 2158 s (ff30_gdepth_dt009). Whether it also drives the helix drift (1.22) is read from
-the same runs' margins, panels and glpG TM4.
+the same runs' margins, panels and glpG TM4. **The margin's fall is not set by dt.** At step 9
+ff30_bio_dt009 stands at +0.116, below both dt 0.015 runs (ff30_bio +0.157, ff30_gdepth +0.128,
+interpolated from steps 8 and 10), while at step 5 ff30_gdepth_dt009 stands at +0.165, above its
+dt 0.015 twin's +0.136. The twins change order between the two runs, so run-to-run variation is at
+least as large as any dt effect on the margin.
 
 ### 1.22 Round 4 after one epoch: the panels lose folding as round 3's did (2026-10-06)
 
@@ -1462,24 +1466,29 @@ and 4hwiB01 are dropped for too few folded frames.
 * **The shared H-bond margin E_other - E_alpha crossed +0.10 in both runs** within the first three
   steps of epoch 1. ff30_bio reached +0.088 at step 23; ff30_gdepth reached +0.099 at step 21. It
   is driven mostly by E_alpha weakening (ff30_bio -1.961 to -1.862).
-* **glpG TM4 under b00** (local, 3 seeds, T 0.80, 4000 tu): no flip at GLY136/143/149. TM4 helix by
-  time block 0.98 / 0.92 / 0.91 / 0.92, against 0.98 / 0.99 / 0.97 / 0.95 at bio_start and 0.97 to
-  0.80 at ff2.1. The seed ranges overlap.
-* **glpG TM4 under d00** (same test): **GLY149 flips in one seed of three**, from the second block
-  on (0.99-1.00 in that seed, so 0.33 as the mean). GLY143 flips transiently in one seed (0.58 in
-  block 2). TM4 helix 0.95 / 0.90 / 0.92 / 0.92 and TM1 0.93 / 0.85 / 0.85 / 0.83. No local run
-  of gdepth_start exists to compare with. The nearest is ff2.1 itself (NDRD, depths untrained),
-  where GLY149 reaches 0.37 in one seed by the last block.
-* **glpG TM4 at the newest checkpoints** (user's request, 06:48; same test). These are b01m12
-  (ff30_bio step 32, margin +0.071) and d01m09 (ff30_gdepth step 29, +0.081). Last-block TM4 helix:
-  - ff30_bio: bio_start 0.95 [0.84-1.00], b00 0.92 [0.88-0.98], b01m12 0.87 [0.76-0.96]. That is
-    monotonic with training and the falling margin, about halfway back to ff2.1's 0.80. No glycine
-    flips, so it is a general helix weakening.
-  - ff30_gdepth: d00 0.92, d01m09 0.87 [0.74-0.98]. GLY149 flips in one seed of three again (from
-    block 3), and GLY143 in one seed in block 4. TM1 holds better (0.93, against b01m12's 0.89).
+* **glpG TM4, local test** (3 seeds, T 0.80, 4000 tu, four time blocks; per seed in
+  `checks/r4_epochs/tm4_local/tm4_perseed_20261006.txt`). TM4 is lost seed by seed: a seed either
+  holds 0.95-1.00 or unwinds to 0.55-0.89, so a three-seed mean mostly counts unwound seeds.
+  Last-block TM4 per seed, sorted, and glycine flips (fraction of frames with phi > 0):
+  - ff2.1: 0.55 / 0.92 / 0.94; GLY149 0.37 in the unwound seed.
+  - bio_start: 0.84 / 1.00 / 1.00; no flip.
+  - b00: 0.88 / 0.89 / 0.98; no flip.
+  - b01m12 (ff30_bio step 32, margin +0.071): 0.76 / 0.89 / 0.96; no flip.
+  - b01 (step 37, +0.048): 0.72 / 0.89 / 0.99; GLY143 and GLY136 0.41 in the unwound seed, this
+    run's first flips.
+  - gdepth_start (run 10-06 on the MacBook Pro): 0.76 / 0.95 / 1.00; GLY143 1.00 from block 3 in
+    the unwound seed.
+  - d00: 0.76 / 0.99 / 1.00; GLY149 1.00 from block 2 in the unwound seed.
+  - d01m09 (ff30_gdepth step 29, +0.081): 0.74 / 0.89 / 0.98; GLY149 1.00 from block 3 in the
+    unwound seed, GLY143 0.16-0.37 in block 4 in the other two.
 
-  With 3 seeds no single step is resolved, but all four trained checkpoints lose TM4 helix
-  against bio_start, in step with the margin.
+  ff30_bio moves toward destabilized, in step with the falling margin: from a start with no flip
+  and one partly unwound seed, to two partly unwound seeds at b00 and b01m12 (a general helix
+  weakening) and the first glycine flips at b01. Three seeds do not resolve it. ff30_gdepth does
+  not move: its untrained start already unwinds one seed of three through a glycine flip, as ff2.1
+  does, and d00 and d01m09 do the same. Which glycine flips varies by seed. Read against bio_start,
+  as before gdepth_start was run, the gdepth checkpoints looked like a loss; against their own
+  start they are not one.
 * **Epoch 1 continues the loss** (`b01`, ff30_bio epoch_01_minibatch_18, margin +0.048; panel
   49194315). With `select ... ff21_released ff21_awh bio_start b00 b01` the set is 38 domains;
   six are dropped, mostly because b01 keeps too few folded frames. Folded and helix:

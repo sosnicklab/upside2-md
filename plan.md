@@ -395,9 +395,13 @@ Next (remote_jobs.md has the watch):
   shared H-bond margin E_other - E_alpha (start +0.192) and the helical / left-handed glycine
   populations. **Hold for the user if the shared margin falls below +0.10** (round 3's failure mode:
   the alpha_L pull moving into shared terms).
-- [ ] Each epoch end: selection panel `bEE` (submit_new.sh), and locally the glpG TM4 test on the
-  extracted checkpoint (3 seeds, T 0.80, 4000 tu, `run_glpg.sh` after `patch_glpg.py`), read
-  against `bio_start`, ff21_released and ff21_awh. Nothing is released without the user.
+- [ ] Each epoch end: selection panel `b9_EE` / `d9_EE` (submit_new.sh), and locally the glpG TM4
+  test on the extracted checkpoint (3 seeds, T 0.80, 4000 tu, `run_glpg.sh` after `patch_glpg.py`;
+  on the MacBook Pro since 10-06, the Mac Studio session having ended). Each run is read against its
+  own start (`bio_start`; `gdepth_start`, run first since no local test of it exists), ff21_released
+  and its dt 0.015 checkpoint at the same step (b00, d00, ...). Three seeds overlap for every pair
+  of checkpoints, so direction is read from the sequence of epoch ends, not from one checkpoint.
+  Nothing is released without the user.
 - [x] Automatic validation at convergence (user, 2026-10-05; caslake; Peng's 32 arms, with lambda
   helix 3, and glpG's 4 REMD variants per candidate). Deployed 10-05 20:05 (remote_jobs.md §1
   "Automatic validation"):

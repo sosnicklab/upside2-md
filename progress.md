@@ -316,3 +316,13 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   `submit_new.sh` were changed, with backups `.bak_pre_dt009_20261006`; the repo's
   `training/ConDiv.py` and `train_chain.sbatch` are changed the same way. The initial force
   fields are verified byte-identical. New watch cron `250534b9`.
+
+## 2026-10-06 midday: watch moved to the MacBook Pro (Mac Studio session ended)
+
+* Status pass at 11:30: both dt 0.009 runs healthy through steps 0-2 / 0-1 (KE/1.5kT at most 1.015,
+  24 of 24). dt 0.009 confirmed in every worker's `--time-step` and in each run's driver copy.
+* Local glpG TM4 test rebuilt on the MacBook Pro from `checks/r4_epochs/tm4_local`. It reproduces the
+  Mac Studio's b00 seed-1 log line for line over 200 tu, and its patched inputs are byte-identical.
+  bio_start equals `ff21_bioT1_6`; gdepth_start (new baseline) launched, 3 seeds.
+* New watch cron `c34accf9` in this session (remote_jobs.md "Round-4 watch (MacBook Pro)").
+  Files: plan.md (Phase 11 TM4 item), remote_jobs.md.
