@@ -88,3 +88,11 @@ to 10-07 12:00 is in git history.
 * **13:35 ff21_ctrl_fz resubmitted** (user): with c9 it is the cleanest test of the hypothesis behind
   the freeze, H-bond drift destabilizing TM4, with no glycine change. That hypothesis rested on
   pre-fix TM4 counts and an unresolved b9_00 difference (p 0.41), and is untested on fixed inputs.
+* **14:00-14:10 poly-Gly production** (user approved). The collapse was read with gmx gyrate,
+  polystat and mindist -pi: compact within 4 ns, reopening, image distance >= 5.2 nm. Built four
+  7.5 nm dodecahedron starts (~28,950 atoms) and submitted the self-chaining `prod.sbatch` as
+  49204428. The collapse ran at 14 ns/day, not the planned 55; 1 us may take about a month.
+* **b9_01 on fixed inputs (12 seeds, 13:19-15:14):** unwound 6, flipped 5, against bio_start's 5 and
+  4 (Fisher p 1.00). Mean last-block TM4 0.83 against 0.90, Mann-Whitney one-sided p 0.23.
+  Unresolved; slightly toward unwound. The local queue ended for the shutdown; "continue jobs" on
+  the next computer starts at remote_jobs.md "Resume here" (pointer in CLAUDE.md).

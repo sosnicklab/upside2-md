@@ -184,10 +184,21 @@ glycine map's own handedness with nothing else present.
   error and the replicas agree on Rg.
 
 Status:
-- [x] Collapse job 49186415 submitted 10-05.
+- [x] Collapse: job 49186415 COMPLETED 10-07 12:48 at 19.79-20.00 ns of the 30 ns cap, at 14 ns/day
+  per replica. Every replica was compact (Rg < 0.75 nm) within 0.4-3.7 ns. Second-half Rg was
+  0.67-0.73 nm, with reopenings up to 19% of frames. The minimum periodic-image distance was
+  5.2 nm (`polygly/collapse_analysis/`).
+- [x] Production boxes (user, 10-07; `scripts/build_prod.sh`): each replica's last frame in a 7.5 nm
+  dodecahedron. 7.5 nm is the largest diameter after the first ns, 5.14 nm, plus 2.4 nm; the
+  plan's second-half rule gives 6.9 nm. About 28,950 atoms and 9,600 waters each, against 64,976
+  before. grompp is clean.
+- [x] Production chain `prod.sbatch` (minimise, 500 ps NPT with seeds 20261021-24, then 1 us,
+  chained 36 h links, frames every 10 ps). Submitted 10-07 14:10. Expected ~30 ns/day per replica,
+  about a month to 1 us; the first link measures it.
 - [x] Upside G20 under ff21_released and bio_start, 8 x 200,000 tu: both chiral, ln(aR/aL) -0.72 and
   -0.45 (findings 1.20).
-- [ ] Production box and chain.
+- [ ] First link: equilibration logs, ns/day, `gmx mindist -pi` above 1.0 nm. Then the blank at each
+  ~200 ns (step 5).
 - [ ] Analysis script.
 - [ ] Round-4 epochs.
 

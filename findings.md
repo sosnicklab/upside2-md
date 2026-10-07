@@ -1325,6 +1325,10 @@ These are the first TM4 counts on inputs patched by the fixed `patch_glpg.py` (m
 | set | serves as | unwound | flipped | jumps > 3000 | KE/1.5kT |
 |---|---|---|---|---|---|
 | `ff21_bioT1_6` (bio_start) | start of ff30_bio_dt009, ff30_bio_fz, ff30_bio_si | 5 / 12 | 4 / 12 | 1 seed (s3, 3026; TM4 1.00) | 1.001-1.011 |
+| `b9_01` | ff30_bio_dt009 step 37 (`epoch_01_minibatch_18`, half-trained) | 6 / 12 | 5 / 12 | 2 seeds (s5, 5986 at t 60; s11, 5754 at t 1130; both unwound) | 1.004-1.014 |
+
+The b9_01 seeds were paused for five minutes at 14:12 (SIGSTOP, then SIGCONT); simulated time is
+unaffected.
 
 **bio_start unwinds TM4 partly and gradually.**
 - Four of the five unwound seeds end at 0.81-0.88 (s4, s6, s7, s10). They lose helix over the run
@@ -1335,6 +1339,30 @@ These are the first TM4 counts on inputs patched by the fixed `patch_glpg.py` (m
   on in s5, and in the last block only for GLY136 in s11 and GLY143 in s12.
 - The seven seeds counted wound fall in two groups. s5, s11 and s12 end at 0.910-0.922, and the
   other four at 0.999. The count is 5 for any cut from 0.88 to 0.90, and 7 at 0.92.
+
+**b9_01 against bio_start: the test detects no difference.**
+- **Fisher's exact test.** Unwound 6 against 5 of 12 and flipped 5 against 4, two-sided p 1.00
+  for both.
+- **Continuous measures.** These lean toward b9_01 being worse, but not significantly. Last-block
+  TM4 mean is 0.833 against 0.899 (one-sided Mann-Whitney, b9_01 lower, p 0.23), and TM1 is 0.812
+  against 0.858 (p 0.20). Both tests were added after the counts and are not the pre-registered
+  test.
+- **The descriptive differences are not significant at 12 seeds.**
+  - b9_01's three lowest seeds end at 0.45, 0.60 and 0.68 (s7, s6, s5), each with two TM4 glycines
+    flipped. bio_start's lowest is 0.66 (s9, one flip).
+  - b9_01's TM4 block means (0.97, 0.94, 0.88, 0.83) are still falling in the last block, while
+    bio_start's are flat (0.90, 0.90). s7 holds 1.00 for half the run, then drops to 0.58 and 0.45.
+  - Four of b9_01's six unwound seeds have a flipped glycine (s4, s5, s6, s7), against one of
+    bio_start's five.
+- **Both b9_01 energy jumps are in seeds that end unwound.**
+  - s5's jump comes at t 60, before its TM4 loss (block means 0.93, 0.78, 0.71, 0.68).
+  - s11's comes at t 1130, while its TM4 is still 0.997; it falls only in the last block, to 0.883.
+  - The cause is not identified (1.22), and no frames were dropped.
+
+**The size of difference a 12-seed set can resolve.** With bio_start at 5 of 12 unwound, a
+one-sided Fisher test reaches p < 0.05 only if a checkpoint unwinds 10 or more of 12 (worse) or
+none (better). For flips (4 of 12) the thresholds are 9 or more, or none. A one- or two-seed
+difference, as here, cannot be resolved at 12 seeds per set.
 
 ## 2. The hybrid model: what each side supplies
 

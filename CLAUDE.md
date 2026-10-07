@@ -159,6 +159,9 @@ bash "$UPSIDE_HOME/example/16.MARTINI/<workflow>.sh"
 
 ### Remote Job Records
 
+**"continue jobs":** a session asked to continue the jobs starts at `remote_jobs.md` "Resume here,
+from any computer" and follows its checklist in order.
+
 **All remote job recording goes into `remote_jobs.md`, and nowhere else.** It is the single source of
 truth for what is running on midway2 and midway3: job ids, what each job is, its submit script, its
 log path, its data directory, and the next action each one is waiting on. Do not record jobs in `plan.md`,
