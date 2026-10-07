@@ -1,17 +1,24 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-06 15:55).** Two round-4 trainings run on midway2 broadwl at **dt 0.009**
-(plan.md Phase 11, revised 10-06), both from ff2.1 with its 12-entry hbond.h5. dt 0.009 is confirmed
-in every worker's `--time-step` (the only flag that differs from the dt 0.015 runs) and in each run's
-`run_output/ConDiv.py`, the driver the successor links load. **No watch runs since 15:55**: the
-user starts the next one on another computer ("One watch at a time"). ff30_bio_dt009's margin was
-+0.107 at step 11 and will likely cross +0.10 at step 12 (~16:15), so that watch's first pass
-records the hold:
-* **ff30_bio_dt009** (49194446, since 09:46): the BioEmu-fitted glycine library, frozen.
-* **ff30_gdepth_dt009** (49194447, since 09:46): ff2.1's library with glycine's alpha_R / alpha_L
-  depths trained from BioEmu's weights.
+**Current state (2026-10-07 09:00).** Round 4 on midway2 broadwl at **dt 0.009**, all from ff2.1
+(plan.md Phase 11): two trainings and their matched control run, and since 08:10 the same two
+designs with **hbond.h5 and sheet frozen** are queued (user, 10-07; plan.md Phase 11 revised
+decision). **No watch runs since 08:57** (the user moved to another computer; "One watch at a
+time" says how to start it there, and its first TM4 job is the stopped `b9_01` / `d9_00` sets).
+**ff30_bio_dt009 is on margin hold since step 14** (user told 10-06 17:35; trains on). **The user's
+question:** does training move glpG TM4 toward stable? Each half-trained force field (step 38,
+`epoch_01_minibatch_18`) is tested at 12 seeds against its own start and against the two "old"
+references, ff2.1 as released and the same workflow without the glycine change (findings 10.17):
+* **ff30_bio_dt009** (49194446): the BioEmu-fitted glycine library, frozen.
+* **ff30_gdepth_dt009** (49194447): ff2.1's library with glycine's alpha_R / alpha_L depths trained
+  from BioEmu's weights.
+* **ff21_ctrl_dt009** (49200579): the matched control, ff2.1's own library, target 38, running
+  since 10-06 23:52 (`--test-only` had projected 10-07 22:57). It runs on (user, 10-07 08:40).
+* **ff30_bio_fz** (49201673), **ff30_gdepth_fz** (49201674) and their control **ff21_ctrl_fz**
+  (49202118, target 38, no gate; user, 10-07 08:40): the same with hb, dhb, hbg and sheet at
+  learning rate 0, all pending.
 
-They restart the dt 0.015 runs ff30_bio and ff30_gdepth, which the user stopped on 10-06 at 09:40
+The two dt 0.009 designs restart the dt 0.015 runs ff30_bio and ff30_gdepth, which the user stopped on 10-06 at 09:40
 (midway3 60113187, 60098743, their successor 60117847 and both queued successors cancelled,
 successors first). At dt 0.015 the margins fell below +0.10, folding and helix were lost at epoch 0
 and glpG TM4 fell with every checkpoint (findings 1.22). Free replicas were destroyed in 6
@@ -90,35 +97,57 @@ node** (findings 10.6): a 60 GB analysis on 10-02 got every session on midway2-l
 times in 40 min. If the socket keeps dropping, run `ps -u yinhanw --sort=-rss` there first.
 
 **One watch at a time.** A watch is a session cron (it dies with that Claude session, and expires
-after 7 days). **No watch runs since 10-06 15:55**: the MacBook Pro's (`c34accf9`, which had
-replaced the Mac Studio's `250534b9` at 11:50) was deleted when the user left the office to run the
-monitor from another computer. Start the next one there (two watches would both submit panels).
-Each pass records its readouts in §1, so the newest §1 tells a new watch where the last one stopped.
+after 7 days). **No watch runs since 10-07 08:57**: the Mac Studio's (`c20b3ef9`) was deleted when
+the user moved to another computer, and its local TM4 runs were stopped. Start the next one there
+(two watches would both submit panels). Each pass records its readouts in §1, so the newest §1
+tells a new watch where the last one stopped.
 
 **Starting the watch on a computer** (the repo's md files current there, `.venv` and `obj/upside`
 built):
 1. Open the midway2 socket (`scratchpad/mdw2_master.exp`, one Duo push). midway3 is not needed: no
    jobs run there, and `/project` is readable from midway2.
-2. If `scratchpad/ff3_local_test` is missing, rebuild it from the cluster record
-   `/project/trsosnic/yinhan/checks/r4_epochs/tm4_local`: rsync `scripts/`, `seed/` and `runs/`
-   (4.3 GB) into it, and the force fields `checks/r4_epochs/{b00,bio_start,gdepth_start}` into
-   `ff/`; create `patched/`. `run_glpg.sh` expects the repo at `/Users/yinhan/Documents/upside2-md`.
+2. If `scratchpad/ff3_local_test` is missing or stale, rebuild it from the cluster record
+   `/project/trsosnic/yinhan/checks/r4_epochs/tm4_local`: rsync `scripts/`, `seed/`, `runs/`
+   (about 12 GB: ff21_released, ff21_bioT1_6, gdepth_start, fp_e00 and b9_00 at 12 seeds, b00, b01,
+   b01m12, d00, d01m09 at 3) and `events_vs_tm4.py`, and every force field
+   `checks/r4_epochs/<tag>` into `ff/<tag>`; create `patched/`. `run_glpg.sh` expects the repo at
+   `/Users/yinhan/Documents/upside2-md`; `events_vs_tm4.py` reads `scratchpad/ff3_local_test` from
+   the repo root. The seed is `seed/glpG-RKRK-79HIS.live.up` in a rebuilt copy (`seeds/` on the
+   Mac Studio).
 3. On a computer new to the test, check engine parity first: patch b00 (step 4 below) and run seed 1
    for 200 tu with `run_glpg.sh`'s flags (`--duration 200`), then compare its log with
    `runs/79HIS_b00_T080_s1.log` line by line. On the MacBook Pro every line through t = 200 matched.
-4. CronCreate hourly (an off-minute, e.g. `23 * * * *`) with the prompt below.
+4. **First TM4 work there: rerun `b9_01` (the half-trained bio checkpoint) and `d9_00`, seeds 1-12
+   each**, from `checks/r4_epochs/b9_01` and `d9_00` (both extracted 10-07 07:50). The Mac Studio's
+   sets were stopped at t ~1210 of 4000 and are not usable.
+5. CronCreate hourly (an off-minute, e.g. `23 * * * *`) with the prompt below.
 
-**Round-4 watch prompt** (copy as the cron prompt): "Round-4 remote job watch (the only monitor;
-remote_jobs.md "One watch at a time"). Runs: ff30_bio_dt009 (panel/TM4 tag b9_EE) and
-ff30_gdepth_dt009 (d9_EE), midway2 broadwl, dt 0.009 since 10-06 09:46; also polygly 49186415.
-Follow remote_jobs.md "Round-4 watch" exactly; read §1 first, since its newest readouts say where
-the last pass stopped. Obey CLAUDE.md (read-only git, no guards, no physics changes, nothing heavy
-on a login node) and findings 10.16 (no test jobs). Never cancel, resubmit or change any job without
-the user's approval. Do steps 1-7 of "Round-4 watch". Notify only for failures, a new margin hold, a
-TM4 or panel result, a gate, polygly ending, or a dead socket; otherwise stay quiet."
+**Round-4 watch prompt** (copy as the cron prompt; it is `c20b3ef9`'s with the computer left out):
+"Round-4 remote job watch (the only monitor; remote_jobs.md "One watch at a time"). Runs on
+midway2 broadwl, dt 0.009: ff30_bio_dt009 (tags b9_EE), ff30_gdepth_dt009 (d9_EE), the unfrozen
+control ff21_ctrl_dt009 (c9_EE, 49200579, target 38, no gate), and the hbond/sheet-frozen runs
+ff30_bio_fz (bz_EE, 49201673) and ff30_gdepth_fz (dz_EE, 49201674), target 76 with the gate, and
+their control ff21_ctrl_fz (cz_EE, 49202118, target 38, no gate). Also polygly 49186415. Follow
+remote_jobs.md "Round-4 watch" exactly; read §1 first. Obey CLAUDE.md (read-only git, no guards, no
+physics changes, nothing heavy on a login node) and findings 10.16 (no test jobs), 10.17 (same data,
+same workflow) and 10.18 (re-read the queue before any decision on job state). Never cancel,
+resubmit or change any job without the user's approval. Do steps 1-7 of "Round-4 watch" for every
+run listed. For a frozen run's first finished step, extract it and confirm hbond.h5 and sheet are
+byte-identical to ff2.1's (checks/fz_init_20261007/ff21_ctrl_fz) while sidechain.h5 moved; report
+that once. TM4 (user's request): each half-trained checkpoint (step 38 = epoch_01_minibatch_18:
+b9_01, d9_01, c9_01, bz_01, dz_01, cz_01) and each epoch-0 end at 12 seeds, against its own start
+(bio_start = ff21_bioT1_6, gdepth_start, ff21_released for the controls) and against the old
+references ff21_released and fp_e00; at most two sets at once, half-trained first. Run tm4_local.py
+on a directory of links without unfinished sets, scan finished seeds for total-potential jumps
+above 3000 between frames (events_vs_tm4.py) and report any. Copy each finished set's runs to
+checks/r4_epochs/tm4_local/runs/ and its table to tm4_local/. ff30_bio_dt009 is on margin hold (user
+told); notify only for failures, a TM4 or panel result, a gate, polygly ending, a new margin hold in
+an unfrozen run (gdepth or control below +0.10), a frozen run starting or failing its freeze check,
+or a dead socket; otherwise stay quiet."
 
-**Round-4 watch.** `<run>` = ff30_bio_dt009 (tags `b9_EE`) and ff30_gdepth_dt009 (`d9_EE`);
-`submit_new.sh` serves both.
+**Round-4 watch.** `<run>` = ff30_bio_dt009 (tags `b9_EE`), ff30_gdepth_dt009 (`d9_EE`), the
+control ff21_ctrl_dt009 (`c9_EE`; its start is ff21_released), ff30_bio_fz (`bz_EE`) and
+ff30_gdepth_fz (`dz_EE`); `submit_new.sh` serves all of them and ff21_ctrl_fz (`cz_EE`).
 1. Socket: `ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu`.
    If it fails, run `scratchpad/mdw2_master.exp` once, unless §1 records that the previous pass
    already tried and failed. If it is still down, record that in §1, notify once and stop the pass.
@@ -489,27 +518,52 @@ Q(T), so it differs by up to 0.001 from the per-seed values above.
 
 ## 1. Current jobs
 
-Snapshot **2026-10-06 15:55 CDT, verified live against `squeue` on midway2** (no jobs on midway3). Finished and cancelled
+Snapshot **2026-10-07 08:57 CDT, verified live against `squeue` on midway2** (last pass on the Mac Studio; no watch since) (no jobs on midway3). Finished and cancelled
 rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49194446** (midway2) | **ff30_bio_dt009**: ff30_bio restarted at dt 0.009, otherwise identical (trainer `$P/training/ConDiv.py`, which differs from ff30_bio's run copy only in dt; initial force field byte-identical, `checks/dt009_init_20261006`); `$P/training/ff30_bio_dt009`, target 76, 54 steps per link, gate `ff30bio9-gate` up to 13 epochs (converged: validated as `ff_3.0_bio` on broadwl); first-link log `$P/training/condiv-train_49194446.out` (submitted from `training/`), later links' logs in the run dir | R since 10-06 09:46; successor 49194448 queued; 15:50: steps 0-11 done (26-31 min each), step 12 running; all healthy, KE/1.5kT max 1.015 in every protein of every step; margin steps 0-11 +0.172 / +0.162 / +0.148 / +0.144 / +0.140 / +0.133 / +0.131 / +0.126 / +0.121 / +0.116 / +0.112 / +0.107 (E_beta below E_alpha from step 10: -1.899 against -1.893 at step 11), dhb -0.401 to -0.386, sheet 0.155 to 0.154, rot rms 0.012 to 0.048; step 11 helical GLY aL free/restr 0.002/0.000 (epoch so far 0.059/0.007). Margin below +0.10 expected at step 12: hold (notify once, no cancel). At ~0.005 a step it reaches +0.10 near step 12-13 (~16:30-17:00), below both dt 0.015 runs at step 9 (findings 1.21) | the watch every step; epoch-0 end (step 18) ~19:00-19:30: TM4 test `b9_00` |
-| **49194447** (midway2) | **ff30_gdepth_dt009**: ff30_gdepth restarted at dt 0.009, otherwise identical (trainer `ff30_gdepth_dt009/trainer/`, dt the only change; rama_round_00 and initial force field byte-identical); `$P/training/ff30_gdepth_dt009`, target 76, 54 steps per link, gate `ff30gdep9-gate` (converged: `ff_3.0_gdepth`); first-link log `$P/training/condiv-train_49194447.out` | R since 10-06 09:46; successor 49194449 queued; 15:50: steps 0-6 done (2158, 3560, 2374, 4055, 2619, 3065, 3386 s; steps 1 and 3 each waited on one worker, 4pqz 57 min and 1vjx 65 min), step 7 running; all healthy, KE/1.5kT max 1.015; margin +0.172 / +0.189 / +0.187 / +0.183 / +0.173 / +0.165 / +0.159, dhb -0.401 to -0.387, sheet 0.169 to 0.182, rot rms 0.037 (step 6), step 6 helical GLY aL free/restr 0.058/0.000; dL - dR +0.554 (round 0, no `rama_rounds.txt` yet) | as ff30_bio_dt009, plus the depth per step and round; epoch-0 end ~22:00-01:00: TM4 test `d9_00` |
-| 49186415 | **polygly collapse** (plan.md Phase 12 step 2): all-atom Ac-(Gly)20-NHMe, amber99sb-ildn / TIP3P, 300 K, 64,976 atoms; min + 500 ps NPT, then 4 replicas (gen-seed 20261006-09) to 30 ns or the wall clock, 7 pinned threads each, one 36 h link, `--no-requeue`; `/project/trsosnic/yinhan/polygly/` (README), log `logs/collapse_<jobid>.out`, replicas `collapse/repN/` | R since 10-06 ~02:22 on midway2-0236; 15:12: all 4 replicas at 7.0 ns (5.0 at 11:40), 297-301 K, constraint rmsd ~3e-6; ~0.57 ns/h, so ~20 ns at the 36 h wall (10-07 ~14:20), and one resubmission finishes 30 ns. Minimisation stopped at Fmax 1380 kJ/mol/nm (atom 124), above its 100 target; equilibration ran after it | when it ends: Rg(t) per replica (relaxed or not), largest chain diameter of the second half, then the production box (step 3); resubmitting `collapse.sbatch` continues from the checkpoints. Discarded phase |
+| **49194446** (midway2) | **ff30_bio_dt009**: ff30_bio restarted at dt 0.009, otherwise identical (trainer `$P/training/ConDiv.py`, which differs from ff30_bio's run copy only in dt; initial force field byte-identical, `checks/dt009_init_20261006`); `$P/training/ff30_bio_dt009`, target 76, 54 steps per link, gate `ff30bio9-gate` up to 13 epochs (converged: validated as `ff_3.0_bio` on broadwl); first-link log `$P/training/condiv-train_49194446.out` (submitted from `training/`), later links' logs in the run dir | R since 10-06 09:46; successor 49194448 queued; 08:57 10-07: steps 0-42 done (27-38 min each), step 43 running; all healthy, 24 of 24 finite, KE/1.5kT at most 1.017 in every protein of every step. **HOLD since step 14** (user told). Margin +0.192 start, +0.096 step 14, +0.072 step 24, **+0.050 at step 37** (`b9_01`), +0.038 at step 41: E_alpha -1.961 to -1.861, E_other -1.769 to -1.824; dhb -0.406 to -0.473, sheet mean 0.161 to 0.181, rot rms 0.098. Helical GLY aL free 0.07-0.13 per step, restrained <= 0.02. Panels: `b9_00` folded 0.478, helix -0.031 (bio_start dominates; findings 1.21); `b9_01` 49201619 running since 07:46 (b9_01 + d9_00: 316 of 352 npz at 08:57). TM4 `b9_01` stopped, to rerun | the watch every step; `b9_01` panel table; TM4 `b9_01` rerun |
+| **49194447** (midway2) | **ff30_gdepth_dt009**: ff30_gdepth restarted at dt 0.009, otherwise identical (trainer `ff30_gdepth_dt009/trainer/`, dt the only change; rama_round_00 and initial force field byte-identical); `$P/training/ff30_gdepth_dt009`, target 76, 54 steps per link, gate `ff30gdep9-gate` (converged: `ff_3.0_gdepth`); first-link log `$P/training/condiv-train_49194447.out` | R since 10-06 09:46; successor 49194449 queued; 08:57 10-07: steps 0-23 done (40-74 min each; step 16's 2nmu worker failed to launch and was relaunched, 24 of 24 returned), step 24 running; all healthy, KE/1.5kT at most 1.016. Margin +0.131 at step 13, **+0.141 at step 18** (epoch-0 end), +0.143 at step 22: flat since step 13, E_alpha -1.888, E_other -1.744 at step 22. Depth round 1 (`rama_rounds.txt`): free-native gap aR -0.002 aL +0.004, dL - dR +0.554 to +0.567. Panel `d9_00` 49201620 running since 07:46; TM4 `d9_00` stopped, to rerun | the watch every step and round; `d9_01` (step 38) ~10-07 23:00 at 55 min a step |
+| **49200579** (midway2) | **ff21_ctrl_dt009**, the matched control (user, 10-06 23:55; plan.md Phase 11): ff30_bio_dt009 with ff2.1's `rama.dat` in place of the BioEmu library, so its initial force field is ff2.1 exactly (`checks/ctrl_dt009_init_20261006`: every other file byte-identical to ff30_bio_dt009's, same trainer copy md5 `8977d7f7...`, same solver); `$P/training/ff21_ctrl_dt009`, **target 38** (epoch_01_minibatch_18), **no gate** (no `after_training.sbatch`); first-link log `$P/training/condiv-train_49200579.out` | **R since 10-06 23:52** (five minutes after submission); successor 49200622 queued; 08:57: steps 0-15 done (27-35 min), step 16 running; KE/1.5kT at most 1.017. Margin **+0.132 at step 14** (ff30_bio_dt009 +0.096, ff30_gdepth_dt009 +0.131 at 13) | step 38 ~20:00 10-07, then it stops (no gate); panels and TM4 `c9_00`, `c9_01`. Runs on (user, 10-07 08:40) |
+| **49201673** (midway2) | **ff30_bio_fz**: ff30_bio_dt009 with hb, dhb, hbg and sheet at learning rate 0 (user, 10-07; plan.md Phase 11 revised decision), trainer copy `ff30_bio_fz/trainer/ConDiv.py` (md5 `a97e95a6...`; differs from `$P/training/ConDiv.py` only in that rate line, its comment and three docstring items); initial force field byte-identical to ff30_bio_dt009's (`checks/fz_init_20261007`); target 76, gate `ff30biofz-gate` up to 13 epochs (converged: validated as `ff_3.0_bio_fz`); first-link log `$P/training/condiv-train_49201673.out` | PD (Resources) since 08:10; `--test-only` projected 10-09 09:44 | at step 0: confirm hbond.h5 and sheet byte-identical to ff2.1's in the step-0 extraction (the proof of the freeze); panels and TM4 `bz_EE` |
+| **49201674** (midway2) | **ff30_gdepth_fz**: ff30_gdepth_dt009 with the same freeze, trainer copy `ff30_gdepth_fz/trainer/ConDiv.py` (md5 `84704d98...`); initial force field and `rama_round_00.dat` byte-identical to ff30_gdepth_dt009's; target 76, gate `ff30gdepfz-gate` (converged: `ff_3.0_gdepth_fz`); first-link log `$P/training/condiv-train_49201674.out` | PD (Resources) since 08:10 | as ff30_bio_fz; tags `dz_EE` |
+| **49202118** (midway2) | **ff21_ctrl_fz**: the frozen runs' matched control (user, 10-07 08:40): ff21_ctrl_dt009 with the freeze, the same trainer copy as ff30_bio_fz (md5 `a97e95a6...`), ff2.1's `rama.dat`; initial force field is ff2.1 exactly (`checks/fz_init_20261007`); **target 38, no gate**; first-link log `$P/training/condiv-train_49202118.out` | PD (Priority) since 08:42 | as the frozen runs; tags `cz_EE`, TM4 against ff21_released |
+| 49186415 | **polygly collapse** (plan.md Phase 12 step 2): all-atom Ac-(Gly)20-NHMe, amber99sb-ildn / TIP3P, 300 K, 64,976 atoms; min + 500 ps NPT, then 4 replicas (gen-seed 20261006-09) to 30 ns or the wall clock, 7 pinned threads each, one 36 h link, `--no-requeue`; `/project/trsosnic/yinhan/polygly/` (README), log `logs/collapse_<jobid>.out`, replicas `collapse/repN/` | R since 10-06 ~02:22 on midway2-0236; 10-07 08:57: all 4 replicas at 17.0 ns in `collapse.log` (12.0 at 23:30, 7.0 at 15:12 on 10-06); the 36 h wall ends ~14:20 10-07, 297-301 K, constraint rmsd ~3e-6; ~0.57 ns/h, so ~20 ns at the 36 h wall (10-07 ~14:20), and one resubmission finishes 30 ns. Minimisation stopped at Fmax 1380 kJ/mol/nm (atom 124), above its 100 target; equilibration ran after it | when it ends: Rg(t) per replica (relaxed or not), largest chain diameter of the second half, then the production box (step 3); resubmitting `collapse.sbatch` continues from the checkpoints. Discarded phase |
 
 **Local glpG TM4 tests of the dt 0.009 runs** (`scratchpad/ff3_local_test` on the watch's computer;
 the record is `checks/r4_epochs/tm4_local`). **12 seeds from 10-06 (user)**, since 3 seeds resolve
 only gross changes (findings 1.22); `run_glpg.sh` takes a seed range and `tm4_local.py` counts
 unwound and flipped seeds (both updated 10-06, backups `.bak_pre_seedrange_20261006` and
 `.bak_pre_counts_20261006`, identical on the cluster).
-* Done, seeds 1-3: `gdepth_start` (ff30_gdepth_dt009's `initial_checkpoint.pkl`, extracted to
-  `checks/r4_epochs/gdepth_start`; run on the MacBook Pro 13:09) unwinds one seed of three through a
-  GLY143 flip, as d00 and d01m09 do. `bio_start` (`checks/r4_epochs/bio_start`) patches to an input
-  byte-identical to `ff21_bioT1_6`, whose seeds 1-3 are its baseline.
-* **Pending, first: seeds 4-12 of `ff21_bioT1_6` and `gdepth_start`** (18 runs, watch step 4).
-* Pending at the epoch-0 ends: `b9_00` (~19:00 on 10-06) and `d9_00` (~01:30 on 10-07), seeds
-  1-12. Epoch-1 ends: bio ~04:00, gdepth ~17:30 on 10-07.
+* **Starts, 12 seeds, done.** `gdepth_start` is ff30_gdepth_dt009's `initial_checkpoint.pkl`
+  (`checks/r4_epochs/gdepth_start`; seeds 1-3 on the MacBook Pro). `bio_start`
+  (`checks/r4_epochs/bio_start`) patches to an input equal to `ff21_bioT1_6` in every dataset and
+  attribute (bytes differ; `ref_pos` holds NaN by design and is equal as an array), so its seeds run
+  under that name. Seeds 4-12 ran on the Mac Studio 17:59-20:12, KE/1.5kT 1.006-1.014: bio_start
+  unwound 4 of 12, flipped 1; gdepth_start unwound 6 of 12, flipped 3 (findings 1.22). Runs and
+  `tm4_compare_baselines12.txt` are in `checks/r4_epochs/tm4_local/`.
+* **`b9_00` done** (20:12-22:10, KE/1.5kT 1.001-1.020): unwound 7 of 12, flipped 2 (GLY149), against
+  bio_start's 4 and 1 (Fisher p 0.41, 1.00); toward unwound, not resolved (findings 1.21). Runs and
+  `tm4_compare_b9_00.txt` in `checks/r4_epochs/tm4_local/`.
+* **The two "old" references, 12 seeds, done** (10-06 23:40 to 10-07 02:06; findings 1.22):
+  `ff21_released` unwound 8, flipped 6 (GLY143 in five), last-block mean 0.80, the worst of every
+  force field tested; `fp_e00` (ff21-fixedpoint's epoch 0, dt 0.015, full side-chain rate; from
+  `ff3_selection/params/fp_e00`, equal to `extract_ff.py`'s output) unwound 5, flipped 1.
+  **`fp_e00` seed 11 blew up at t = 3630** (total potential -22,510 to +17,828 in 30 tu, H-bonds
+  189 to 61; KE/1.5kT 1.595 over the run), so its last block is not a TM4 measurement. Smaller
+  jumps (3,000-12,000 against a normal frame-to-frame 80-150) are in 12 more of 105 seeds under
+  every force field, ff2.1 included, mostly without TM4 unwinding; cause not identified (findings
+  1.22).
+* **`b9_01` (half-trained bio) and `d9_00` were stopped at 08:56** at t ~1210 of 4000 (user moved
+  computers; the partial runs sit in the Mac Studio's `runs_stopped_20261007/`, unusable). **Rerun
+  seeds 1-12 of both first** on the next computer, from `checks/r4_epochs/b9_01` and `d9_00`.
+* Next: `d9_01` (~10-07 23:00), the control's `c9_00` / `c9_01`, and the frozen runs' epoch ends
+  (`bz`, `dz`, `cz`).
+* The Mac Studio's copy has `seeds/` (not `seed/`) and `ff/<tag>`; its `run_glpg.sh` and
+  `tm4_local.py` are the cluster's 10-06 versions (local backups with the same suffixes). An
+  unfinished set still appears in `tm4_local.py`'s table (b9_00 at t = 50 showed 300 frames and
+  TM4 1.00 throughout); run the table on a directory of links without it.
 
 **The lambda ff_2.1 benchmark is complete** (all four arms at target: WT de novo 10-04 14:17, WT native
 16:17, G46A/G48A de novo 10:37, G46A/G48A native 10-05 01:24; `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/lambda_*_ff_2.1/`):
@@ -550,7 +604,8 @@ benchmark or glpG runs.
   it; `ff30_gdepth_dt009/trainer/ConDiv.py` the same. The repo's `training/ConDiv.py` matches.
 * `$P/training/train_chain.sbatch` has STEPS_PER_LINK 54, against 90 at dt 0.015; the repo's the
   same.
-* `ff3_selection/submit_new.sh` maps the new runs to tags `b9_EE` and `d9_EE`.
+* `ff3_selection/submit_new.sh` maps the new runs to tags `b9_EE` and `d9_EE`, and since 10-06 23:58
+  the control `ff21_ctrl_dt009` to `c9_EE` (backup `.bak_pre_ctrl_20261006`).
 
 **Watch**: the dt 0.015 runs' cron `02ff3878` was deleted with them (10-06 09:41); see "One watch
 at a time" for the current one. Epoch panels from `submit_new.sh` still go to broadwl

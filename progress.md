@@ -335,3 +335,40 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   and flipped seeds, both copied to `checks/r4_epochs/tm4_local/scripts`. Seeds 4-12 of the two
   starts are pending.
 * Files: plan.md (Phase 11 TM4 item), findings.md (1.21, 1.22), remote_jobs.md.
+
+## 2026-10-06 17:35 to 10-07 00:00: watch on the Mac Studio, 12-seed starts, b9_00, control
+
+* Watch cron `b8e11b65` (hourly at :23) on the Mac Studio from 18:00 (user). ff30_bio_dt009's margin
+  fell below +0.10 at step 14 (+0.096) and levelled near +0.072 by step 25; the user was told.
+* Mac Studio's `ff3_local_test` brought to the cluster's 10-06 scripts; the starts' seeds 4-12 ran
+  (bio_start 4 of 12 unwound, gdepth_start 6 of 12), so seeds 1-3 had caught bio_start's stable end
+  and the dt 0.015 checkpoints did not differ from their start (findings 1.22).
+* b9_00: panel folded 0.478, helix -0.031, the same as b00 at dt 0.015, bio_start dominates in
+  helix; glpG TM4 7 of 12 unwound against 4 (p 0.41), not resolved (findings 1.21).
+* User correction (findings 10.17): ff3.0 keeps ff2.1's data and workflow, so drifts are read
+  against a same-workflow control, not fixed by retuning. Started ff21_released seeds 4-12 and the
+  ff21-fixedpoint epoch-0 checkpoint (fp_e00) on TM4, and submitted the matched control
+  ff21_ctrl_dt009 (49200579, target 38, no gate; initial force field verified to be ff2.1 and to
+  differ from ff30_bio_dt009's only in rama.dat). `submit_new.sh` maps it to c9_EE.
+* Files: findings.md (1.21, 1.22, 10.17), plan.md (Phase 11), remote_jobs.md.
+
+## 2026-10-07 to 08:30: frozen hbond/sheet runs, the two "old" TM4 references
+
+* User decision: both designs also train with hbond.h5 and sheet frozen (learning rate 0 for hb,
+  dhb, hbg, sheet in each run's own trainer copy), as the retired ff3.0 v1 did; keep the dt 0.009
+  runs; gate as round 4. Built and verified ff30_bio_fz, ff30_gdepth_fz and ff21_ctrl_fz (initial
+  force fields byte-identical to their unfrozen twins', ff2.1 for the control); submitted
+  ff30_bio_fz 49201673 and ff30_gdepth_fz 49201674; `submit_new.sh` maps bz/dz/cz (backup
+  `.bak_pre_fz_20261007`). The gate judges only groups with a non-zero rate, so it works unchanged.
+* The unfrozen control 49200579 had started at 10-06 23:52, not pending as reported. Asked again,
+  the user kept it and added the frozen control ff21_ctrl_fz (49202118, target 38).
+* No watch pass ran overnight (the session waited on a question). Caught up at 08:00: panels
+  b9_01 and d9_00 submitted, TM4 b9_01 and d9_00 started locally; all steps healthy.
+* TM4 at 12 seeds: ff2.1 released 8 unwound, 6 flipped (the worst); fp_e00 5 and 1; bio_start
+  4 and 1. fp_e00 seed 11 blew up at t = 3630; jumps in 13 of 105 seeds, cause unknown (findings 1.22).
+* Files: plan.md (Phase 11), findings.md (1.22), remote_jobs.md.
+* 08:57: the user moved to another computer. Local TM4 sets b9_01 and d9_00 stopped at t ~1210
+  (parents first, so no false "set finished"; logs marked STOPPED; partial runs moved to the Mac
+  Studio's `runs_stopped_20261007/`). Watch cron `c20b3ef9` deleted; no watch runs. remote_jobs.md
+  "One watch at a time" and "Starting the watch on a computer" say how to resume, first job the
+  b9_01 / d9_00 rerun. Every finished TM4 set is on the cluster (`checks/r4_epochs/tm4_local`).

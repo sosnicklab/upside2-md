@@ -404,7 +404,29 @@ Next (remote_jobs.md has the watch):
   by Fisher's exact test, with ff21_released and the same-step dt 0.015 checkpoint (b00, d00, ...)
   as context; direction is read across the epoch ends. Nothing is released without the user.
   - [x] gdepth_start seeds 1-3 (no local test of it existed): one seed of three unwinds, as at d00.
-  - [ ] Seeds 4-12 of both starts, before the first epoch-end set.
+  - [x] Seeds 4-12 of both starts: bio_start unwinds 4 of 12, gdepth_start 6 of 12 (findings 1.22).
+  - [x] b9_00: 7 of 12 unwound against bio_start's 4 (p 0.41; findings 1.21).
+  - [ ] The two "old" references at 12 seeds (user, 10-06): ff21_released seeds 4-12 and the
+    ff21-fixedpoint epoch-0 checkpoint (`fp_e00`).
+- [ ] **Matched control `ff21_ctrl_dt009` (user, 2026-10-06 23:55).** ff3.0 changes only glycine on
+  ff2.1's data and workflow (findings 10.17), but the workflow alone moves ff2.1 (ff21-fixedpoint:
+  folded 0.615 to 0.531, margin 0.192 to ~0.13 at epoch 0), so a comparison with released ff2.1
+  mixes the workflow's drift with the glycine change. The control is ff30_bio_dt009 with ff2.1's
+  `rama.dat` in place of the BioEmu library: same trainer copy (dt 0.009, side-chain rate / 10),
+  ff2.1 `init_param`, same proteins (fresh shuffle, as every run's), no gate. Target 38 steps (the
+  half-trained point, epoch_01_minibatch_18); panels `c9_00`, `c9_01` and the TM4 test at both.
+  Running since 10-06 23:52 (49200579); it runs on beside the frozen control (user, 10-07 08:40).
+- [ ] **Revised decision (user, 2026-10-07): both designs also train with hbond.h5 and sheet
+  frozen**, `ff30_bio_fz` and `ff30_gdepth_fz`, beside the running dt 0.009 runs. Why: the margin
+  falls in every run (ff30_bio_dt009 +0.192 to +0.072 by step 24, 69% of it E_alpha weakening),
+  b9_00 loses helix on the panel and unwinds TM4 in 7 of 12 seeds against bio_start's 4, mostly
+  without a glycine flip; the retired ff3.0 v1 kept TM4 stable, and its FF1-form port trained
+  neither `hb` nor `sheet` (findings 9e). Freeze by learning rate 0 for `hb`, `dhb`, `hbg` and
+  `sheet` in each run's own trainer copy (`<run>/trainer/`), so every hbond.h5 entry and the 20
+  sheet values stay ff2.1's; everything else as the dt 0.009 runs. Target 76 and the gate as round 4
+  (candidates `ff_3.0_bio_fz`, `ff_3.0_gdepth_fz`). The matched control `ff21_ctrl_fz` (ff2.1's
+  `rama.dat`, frozen the same way, target 38, no gate; 49202118) runs beside the unfrozen control. Tags
+  `bz_EE`, `dz_EE`, `cz_EE`; TM4 baselines are bio_start, gdepth_start and ff21_released.
 - [x] Automatic validation at convergence (user, 2026-10-05; caslake; Peng's 32 arms, with lambda
   helix 3, and glpG's 4 REMD variants per candidate). Deployed 10-05 20:05 (remote_jobs.md §1
   "Automatic validation"):

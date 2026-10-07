@@ -1442,7 +1442,17 @@ the same runs' margins, panels and glpG TM4. **The margin's fall is not set by d
 ff30_bio_dt009 stands at +0.116, below both dt 0.015 runs (ff30_bio +0.157, ff30_gdepth +0.128,
 interpolated from steps 8 and 10), while at step 5 ff30_gdepth_dt009 stands at +0.165, above its
 dt 0.015 twin's +0.136. The twins change order between the two runs, so run-to-run variation is at
-least as large as any dt effect on the margin.
+least as large as any dt effect on the margin. **Nor is the epoch-0 panel.** `b9_00`
+(ff30_bio_dt009 epoch 0) gives folded 0.478 and helix -0.031 +- 0.006, against b00's 0.465 and
+-0.033 on the same 41 domains (`select ... ff21_released bio_start b00 b9_00`); bio_start
+dominates it in helix, as it does b00. By 21:15 on 10-06 the two runs had 840 protein-steps
+with no destroyed replica, KE/1.5kT at most 1.016. **glpG TM4 after epoch 0** (12 seeds,
+`tm4_compare_b9_00.txt`): b9_00 unwinds 7 of 12 and flips 2 (GLY149 1.00 in both), against
+bio_start's 4 and 1 (Fisher p 0.41 and 1.00). Last-block TM4 per seed, sorted: 0.68 / 0.69 / 0.77
+/ 0.86 / 0.88 / 0.89 / 0.89 / 0.91 / 0.97 / 0.99 / 0.99 / 1.00, mean 0.88 against bio_start's
+0.93. The direction is toward unwound; 12 seeds do not resolve it. Five of the seven unwound seeds
+have no TM4 glycine flip (bio_start: three of four), so the extra loss is a general helix loss, not
+the glycine signature, which stays at one and two of 12.
 
 ### 1.22 Round 4 after one epoch: the panels lose folding as round 3's did (2026-10-06)
 
@@ -1465,7 +1475,18 @@ and 4hwiB01 are dropped for too few folded frames.
   the glycine library: frozen BioEmu (b00) and trained depth (d00) end alike.
 * **The shared H-bond margin E_other - E_alpha crossed +0.10 in both runs** within the first three
   steps of epoch 1. ff30_bio reached +0.088 at step 23; ff30_gdepth reached +0.099 at step 21. It
-  is driven mostly by E_alpha weakening (ff30_bio -1.961 to -1.862).
+  is driven mostly by E_alpha weakening (ff30_bio -1.961 to -1.862). Without any glycine change
+  (ff21-fixedpoint, dt 0.015) it stayed at +0.127 to +0.142 over steps 13-25 (1.17), and all four
+  round-4 runs are below that by steps 20-30 (ff30_bio_dt009 +0.072 at step 25). Whether the extra
+  drop is the natives' selection moving into the shared H-bond energies, which the push probe (1.19:
+  net push on glycine's map near zero) does not measure, or run-to-run variation (about 0.04, 1.21)
+  is decided by the matched control ff21_ctrl_dt009. At step 14 it stands at +0.132, with
+  ff30_gdepth_dt009 at +0.131 (step 13, flat at +0.14 through step 22) and ff30_bio_dt009 at
+  +0.096 (+0.050 at step 37): the BioEmu run's extra drop, 0.036 at step 14, is at the edge of
+  run-to-run variation, and step 38 compares again. Round 1's symmetrised map held TM4 under the
+  FF1-form port, which trained no H-bond energy (9e: the port dropped `hb` and `sheet`). From round 2
+  the FF2 trainer fits E_other, which is shared by all 20 types and near-degenerate with glycine's
+  alpha_L depth (9e), so a map without the selection leaves the training data a second route to it.
 * **glpG TM4, local test** (3 seeds, T 0.80, 4000 tu, four time blocks; per seed in
   `checks/r4_epochs/tm4_local/tm4_perseed_20261006.txt`). TM4 is lost seed by seed: a seed either
   holds 0.95-1.00 or unwinds to 0.55-0.89, so a three-seed mean mostly counts unwound seeds.
@@ -1482,13 +1503,12 @@ and 4hwiB01 are dropped for too few folded frames.
   - d01m09 (ff30_gdepth step 29, +0.081): 0.74 / 0.89 / 0.98; GLY149 1.00 from block 3 in the
     unwound seed, GLY143 0.16-0.37 in block 4 in the other two.
 
-  ff30_bio moves toward destabilized, in step with the falling margin: from a start with no flip
-  and one partly unwound seed, to two partly unwound seeds at b00 and b01m12 (a general helix
-  weakening) and the first glycine flips at b01. Three seeds do not resolve it. ff30_gdepth does
-  not move: its untrained start already unwinds one seed of three through a glycine flip, as ff2.1
-  does, and d00 and d01m09 do the same. Which glycine flips varies by seed. Read against bio_start,
-  as before gdepth_start was run, the gdepth checkpoints looked like a loss; against their own
-  start they are not one.
+  Read against bio_start's first three seeds (no flip, one partly unwound), ff30_bio looked to
+  move toward destabilized with the falling margin: two partly unwound seeds at b00 and b01m12 and
+  the first glycine flips at b01. ff30_gdepth did not move: its untrained start already unwinds one
+  seed of three through a glycine flip, as ff2.1 does, and d00 and d01m09 do the same. Which
+  glycine flips varies by seed. The 12-seed starts (below) show that neither run's 3-seed sets
+  differ from their start.
 
   **Three seeds resolve only gross changes.** A seed's outcome is close to binary, so a set reports
   how many seeds unwound. Against a start at one in three, only three of three is resolved (p 0.04);
@@ -1497,6 +1517,37 @@ and 4hwiB01 are dropped for too few folded frames.
   24 (p 0.04; 12 give 0.22). From 10-06 the test runs 12 seeds (user), with the starts extended to
   12. `tm4_local.py` counts a seed as unwound below 0.90 last-block TM4 and as flipped when a TM4
   glycine has phi > 0 in more than 0.25 of the last block, criteria fixed before the 12-seed runs.
+
+  **The starts at 12 seeds unwind a third to a half of seeds** (seeds 4-12 run 10-06 on the Mac
+  Studio; `checks/r4_epochs/tm4_local/tm4_compare_baselines12.txt`). Last-block TM4 per seed,
+  sorted:
+  - bio_start: 0.79 / 0.84 / 0.84 / 0.88 / 0.90 / 0.91 / 0.99 / 1.00 (five seeds); unwound 4,
+    flipped 1 (GLY136 0.99, in the 0.79 seed).
+  - gdepth_start: 0.75 / 0.76 / 0.76 / 0.82 / 0.87 / 0.89 / 0.95 / 0.97 / 0.97 / 1.00 (three
+    seeds); unwound 6, flipped 3 (GLY143 1.00 in two, GLY136 1.00 in one).
+
+  The two starts are not resolved from each other (Fisher p 0.68 unwound, 0.59 flipped). Two of
+  three unwound, every dt 0.015 checkpoint's count, is what bio_start gives (p 0.53), so seeds 1-3
+  had caught bio_start's more stable end. The dt 0.009 checkpoints are read against these 12-seed
+  counts.
+
+  **ff2.1 itself at 12 seeds is the worst TM4 of all** (seeds 4-12 run 10-07; `tm4_compare_old12.txt`):
+  unwound 8, flipped 6 (GLY143 in five, GLY149 in one), last-block mean 0.80; per seed 0.55 / 0.60
+  / 0.63 / 0.71 / 0.72 / 0.83 / 0.84 / 0.88 / 0.92 / 0.93 / 0.94 / 1.00. Against it, flips fall to 1
+  at bio_start (Fisher p 0.069), 3 at gdepth_start (0.40) and 2 at b9_00 (0.19). ff2.1's own
+  workflow after one epoch without any glycine change (`fp_e00`, ff21-fixedpoint at dt 0.015 and
+  the full side-chain rate) unwinds 5 and flips 1 (p 0.069). So the selection-free BioEmu map removes
+  most of ff2.1's TM4 glycine flips, as designed, and one epoch of training does not bring them back.
+
+* **Energy jumps in the local glpG runs** (10-07, every run log; `events_vs_tm4.py` in the session
+  scratchpad): between frames 10 tu apart the total potential normally changes by 80-150, but 13 of
+  105 seeds show single jumps of 3,000-12,000, under every force field (ff21_released, bio_start and
+  ff21_awh included). One is catastrophic: `fp_e00` seed 11 at t = 3630, -22,510 to +17,828 in
+  30 tu, H-bonds 189 to 61, Rg 20.4 to 23.9 A, after which the thermostat cools it (KE/1.5kT 1.595
+  over the run); its last block is not a TM4 measurement. Six of the 45 unwound seeds carry a jump,
+  so they do not drive the unwound counts. These runs are dt 0.009 Verlet in the dry-MARTINI
+  bilayer, a different simulation from ConDiv's workers (1.21), and the cause is not identified;
+  the jumps are a defect to localize, not frames to drop.
 * **Epoch 1 continues the loss** (`b01`, ff30_bio epoch_01_minibatch_18, margin +0.048; panel
   49194315). With `select ... ff21_released ff21_awh bio_start b00 b01` the set is 38 domains;
   six are dropped, mostly because b01 keeps too few folded frames. Folded and helix:
@@ -4120,6 +4171,29 @@ artifacts removed. **Verify a change to a proven pipeline with checks that submi
 stubbed sandbox runs of the changed branches, `--test-only` of every submission and comparisons of
 the files it writes. Do not spend allocation on test jobs. If a real run on a new cluster looks
 needed, say why and ask first.**
+
+### 10.17 ff3.0 is a controlled comparison: same data, same workflow (2026-10-06)
+
+User correction. Asked whether TM4's drift means a design problem, I suggested finding the
+denatured-state weight that holds ff2.1 balanced and noted that no membrane protein is in the
+training set. The user restated the point of the project: redesign the Upside force field without
+adding data, so that the old and the updated force field can be compared. **Never propose new
+training data, a different contrast weight or any other workflow change as a fix; the only design
+change is glycine's (plan.md Project Goal). Attribute a drift by comparing against the same
+workflow run without the glycine change (`ff21-fixedpoint`), not by retuning the workflow.** The
+TM4 defect's cause is known: glycine's map is basin energy plus fold selection, and Upside applies it
+all as energy (plan.md Project Goal). The control is the benchmark's baseline, not a rival
+explanation; the question it answers is whether training puts the selection back into other terms.
+
+### 10.18 Re-read the queue before a decision that depends on job state (2026-10-07)
+
+I told the user the control 49200579 was pending and had never run, from `sbatch --test-only`'s
+projection of a start 23 h away, and the user chose to cancel and convert it on that basis. It had
+started five minutes after submission and trained 15 steps by the time the plan was carried out.
+Nothing was cancelled, because the state was checked before acting, and the user was asked again.
+**A `--test-only` start time is a projection, often a day too pessimistic on broadwl. Run `squeue`
+immediately before presenting any choice that depends on whether a job is running, and again
+before acting on it.**
 
 ---
 
