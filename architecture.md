@@ -1,13 +1,13 @@
 # Proposed architecture change: a context-resolved glycine Ramachandran term
 
-**Status: PROPOSED, NOT APPROVED, NOT STARTED, and superseded in part.** plan.md Phase 8 adds a
-smaller context term: glycine-specific offsets on the three H-bond basin energies, trained by
-ConDiv, which read the glycine's own H-bond state and basin rather than its neighbours' (phi, psi).
-This document is the larger fallback if that fails. Section 6 is the decision gate; read it before
-writing any code.
+**Status: PROPOSED, NOT APPROVED, NOT STARTED.** It is the larger fallback if round 4 (plan.md
+Phase 11) fails. Round 4 replaces glycine's map with a selection-free one (BioEmu-fitted, or NDRD with
+a trained depth) and adds no glycine context term. Round 3's smaller context term, glycine
+offsets on the three H-bond basin energies, was retired on 10-04 (findings 1.17). Section 6 is the
+decision gate; read it before writing any code.
 
-Written 2026-09-20, updated 2026-10-02. The physics is in `GLY_sym.md`, the measurements in
-`findings.md` 1.15-1.17, and the retired learned-map work in findings 9e.
+Written 2026-09-20, updated 2026-10-07. The physics is in `GLY_sym.md`, the measurements in
+`findings.md` 1.15-1.19, and the retired learned-map work in findings 9e.
 
 ---
 
@@ -140,26 +140,24 @@ mirror-symmetric by construction.
 
 ## 6. Decision gate
 
-Do not build this unless the smaller term fails. Order of operations:
+Do not build this unless round 4 fails. Order of operations:
 
-1. Train ff3.0 as plan.md Phase 8 specifies (`ff30_glyhb`): ff2.1's workflow from ff2.1, the AWH
-   glycine map fixed, glycine's H-bond offsets trained, the side-chain step damped.
-2. Validate it: the selection panel at every epoch end (helical and natively left-handed glycines
-   against all-atom), lambda's helix 3 (wild type against G46A/G48A), glpG TM4's helical glycines,
-   and the Peng benchmark paired against ff2.1.
-3. **Trigger: helical glycines still lose their helix, or natively left-handed glycines still lose
-   alpha_L, with the H-bond offsets trained.** That says the glycine's own H-bond state is not
-   enough context, which is what neighbour (phi,psi) adds. If both classes pass, delete this
-   document.
+1. Train round 4 as plan.md Phase 11 specifies: ff2.1's workflow from ff2.1, a selection-free
+   glycine map, H-bond and sheet either trained or frozen, the side-chain step damped.
+2. Validate each candidate:
+   - glpG TM4 in the hybrid, the deciding test (findings 10.19), on coverage-fixed inputs only
+     (findings 3.11);
+   - the selection panel;
+   - lambda's helix 3 (wild type against G46A/G48A);
+   - the Peng benchmark paired against ff2.1.
+3. **Trigger: TM4's helical glycines still flip, or natively left-handed glycines lose alpha_L,
+   under every round-4 candidate.** That says a context-free glycine map is not enough, and neighbour
+   (phi,psi) is the context this term adds.
 
-The 32-arm benchmark statistics that first motivated this concerned the retired symmetrised ff3.0
-(findings 9d).
-
-**What is measured already, and what is not.** Native glycines are H-bonded in both basins, in
-different `hbond` branches, and 62-66% of the glycine-specific helical loss sits in glycines with
-their own H-bond (findings 1.16), which is why Phase 8 tries the H-bond term first. If the trigger
-fires, split the remaining glycine loss by whether the neighbours are in alpha_R before writing any
-code: that number says how much `w` would have to do.
+**What is measured already.** Native glycines are H-bonded in both basins, in different `hbond`
+branches, and 62-66% of the glycine-specific helical loss sits in glycines with their own H-bond
+(findings 1.16). If the trigger fires, first split the remaining glycine loss by whether the
+neighbours are in alpha_R; that number says how much `w` would have to do.
 
 ## 7. Risks
 

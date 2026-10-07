@@ -1,22 +1,24 @@
 # Glycine Ramachandran handedness: the problem, the measurement, and ff3.0
 
-## 0. Where this stands (2026-10-02)
+## 0. Where this stands (2026-10-07)
 
 * **Training a context-free map cannot fix glycine.** One map serves helical glycines, which need
   less alpha_L, and natively left-handed loop glycines, which need more. A map trained against
   native structures therefore relearns where evolution placed glycine. Three attempts all show
-  this: the full-map row, ff3.0's basin offsets (released 09-30, failed in glpG, validation
-  cancelled) and a probe started from equal depth (findings 1.14-1.15).
+  this: the full-map row, ff3.0's basin offsets (released 09-30 and withdrawn; its glpG run had
+  mixed coverage tables, findings 3.11) and a probe started from equal depth (findings
+  1.14-1.15).
 * **Folded-protein data cannot separate energy from selection**, either through residue counts
   per basin or through per-type context corrections (findings 1.16).
 * **ff3.0 takes glycine's row from the measurement and does not train it.**
   `parameters/common/rama31.dat` was built on 2026-10-01 by `build_gly_library.py` (§5) from the
   AWH dipeptides; since 2026-10-05 it holds the row fitted to BioEmu's in-chain octapeptides
   instead (findings 1.19, up.md 2.8), and this document describes the AWH build.
-* **With that map the trainer kept loop glycines left-handed by bending the shared H-bond, sheet
-  and side-chain terms, and helical glycines paid.** So plan.md Phase 8 gives glycine its own
-  offsets on the three H-bond basin energies, trained by ConDiv with everything else
-  (findings 1.17).
+* **With the AWH map the trainer kept loop glycines left-handed by bending the shared H-bond,
+  sheet and side-chain terms, and helical glycines paid.** Round 3 gave glycine its own offsets on
+  the three H-bond basin energies, and they went left-handed (findings 1.17).
+* **Round 4 (plan.md Phase 11) fits glycine's map to selection-free data and freezes it**, or
+  trains only its depth on ff2.1's map. It is judged by glpG TM4 in the hybrid (findings 10.19).
 * **The experimental check:** our Gly-Gly surface agrees with the GGG spectroscopic distribution
   as closely as ff14SB does on the matched system. No experiment resolves handedness (findings
   1.16).
@@ -279,7 +281,7 @@ A glycine map learned by ConDiv (Track A) was tried with the FF1-form trainer an
 
 The retired symmetrised ff3.0 gained on native benchmark arms and lost on de novo ones (findings
 9d); if that came from removing glycine's turn-nucleating αL bias, the measured map should not
-show it, which the Peng validation in plan.md Phase 8 tests.
+show it, which the Peng validation of plan.md Phase 11 tests.
 
 ### The achiral blank: resolved, and it is the convergence criterion
 
