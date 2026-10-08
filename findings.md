@@ -1208,6 +1208,19 @@ folded frames.
   49194315). With `select ... ff21_released ff21_awh bio_start b00 b01` the set is 38 domains, six
   dropped mostly because b01 keeps too few folded frames. Folded and helix: bio_start 0.602, -0.022;
   b00 0.465, -0.032; b01 0.400, -0.034. bio_start dominates b01 in helix.
+* **The matched control loses at least as much at epoch 0** (`c9_00`: ff21_ctrl_dt009, ff2.1's own
+  library, otherwise ff30_bio_dt009; panel 49203544, 10-07 17:24). With `select ... ff21_released
+  ff21_awh bio_start gdepth_start b9_00 b9_01 d9_00 c9_00` the set is 35 domains, nine dropped,
+  eight of them for too few folded frames in an epoch candidate. Folded and helix: ff21_released
+  0.615, -0.017; b9_00 0.478, -0.027; d9_00 0.477, -0.023; b9_01 0.465, -0.030; c9_00 0.390,
+  -0.032 (beta -0.019, gly_helix -0.113, gly_left +0.017). d9_00 dominates c9_00 in helix and
+  beta. So the soluble panel's folding loss comes with the training itself, not with the glycine
+  change. This is the panel, not TM4 (10.19).
+  - **The control's second epoch recovers little** (`c9_01`, step 37, its final checkpoint; panel
+    49206076, 10-07 23:38). Adding it leaves 34 domains (`select_c9_01_login1_20261007.txt`).
+    c9_01 is folded 0.405, helix -0.029, beta -0.015, gly_helix -0.106, gly_left +0.019, against
+    c9_00's 0.390, -0.031 on the same set, and ff21_released's 0.615, -0.017. gdepth_start
+    dominates c9_01 in helix.
 * **ff30_gdepth's first depth round barely moved:** dL - dR +0.554 to +0.549, free-native gap
   +0.005. The training data put almost no push on the BioEmu-weighted start.
 * **The shared H-bond margin E_other - E_alpha crossed +0.10 in both runs** within the first three
@@ -1315,7 +1328,9 @@ Jumper's or Peng's soluble training. Its precedents are the FF1-form port, which
 These are the first TM4 counts on inputs patched by the fixed `patch_glpg.py` (md5 `70589119...`,
 3.11).
 - **Setup.** Each set is 12 seeds of hybrid dry-MARTINI glpG (79HIS): Verlet dt 0.009, T 0.80,
-  4000 tu, on the MacBook Pro.
+  4000 tu. bio_start and b9_01 ran on the MacBook Pro, later sets on the Mac Studio. The Mac Studio's
+  re-patched bio_start input equals the MacBook Pro's in all 150 `/input` datasets, and a 200 tu
+  run of it reproduces the MacBook Pro's seed-1 log frame for frame.
 - **Counts** (`tm4_local.py`). A seed is unwound if its last-block TM4 helix fraction is below 0.90.
   It is flipped if GLY136, 143 or 149 has phi > 0 in more than 0.25 of the last block.
 - **Test.** Each checkpoint is compared with its own start by Fisher's exact test (10.19).
@@ -1325,7 +1340,15 @@ These are the first TM4 counts on inputs patched by the fixed `patch_glpg.py` (m
 | set | serves as | unwound | flipped | jumps > 3000 | KE/1.5kT |
 |---|---|---|---|---|---|
 | `ff21_bioT1_6` (bio_start) | start of ff30_bio_dt009, ff30_bio_fz, ff30_bio_si | 5 / 12 | 4 / 12 | 1 seed (s3, 3026; TM4 1.00) | 1.001-1.011 |
+| `b9_00` | ff30_bio_dt009 step 18 (`epoch_00_minibatch_18`) | 4 / 12 | 4 / 12 | 2 seeds (s7, 8958 at t 170, TM4 1.00; s10, 4297 at t 3090, unwound) | 1.004-1.014 |
 | `b9_01` | ff30_bio_dt009 step 37 (`epoch_01_minibatch_18`, half-trained) | 6 / 12 | 5 / 12 | 2 seeds (s5, 5986 at t 60; s11, 5754 at t 1130; both unwound) | 1.004-1.014 |
+| `ff21_released` (ff2.1) | start of ff21_ctrl_dt009 and ff21_ctrl_fz | 9 / 12 | 5 / 12 | 2 seeds (s8, 5421 at t 40; s9, 3542 at t 3590; both unwound) | 1.004-1.015 |
+| `gdepth_start` | start of ff30_gdepth_dt009, ff30_gdepth_si, ff30_gdepth_fz | 7 / 12 | 2 / 12 | 4 seeds (s12, 8487 at t 140, two events; s11, 4638 at t 1540; s6, 3878 at t 50; s7, 3504 at t 2620; all but s11 unwound) | 1.004-1.012 |
+| `d9_00` | ff30_gdepth_dt009 step 18 (`epoch_00_minibatch_18`) | 5 / 12 | 2 / 12 | 1 seed (s1, 5716 at t 280; TM4 1.00) | 1.004-1.015 |
+| `d9_01` | ff30_gdepth_dt009 step 37 (`epoch_01_minibatch_18`, half-trained) | 6 / 12 | 4 / 12 | 2 seeds (s4, 6697 at t 919, TM4 1.00; s3, 6339 at t 1060, unwound) | 1.003-1.012 |
+| `c9_00` | ff21_ctrl_dt009 step 18 (`epoch_00_minibatch_18`) | 7 / 12 | 1 / 12 | 4 seeds (s9, 6631 at t 3730; s10, 4768 at t 3010; s8, 3364 at t 110; s5, 3193 at t 1990; all but s5 unwound) | 1.005-1.016 |
+| `c9_01` | ff21_ctrl_dt009 step 37 (`epoch_01_minibatch_18`, final) | 10 / 12 | 6 / 12 | 2 seeds (s10, 9135 at t 90; s1, 7649 at t 1060; both unwound) | 1.004-1.015 |
+| `fp_e00` | ff21-fixedpoint step 18: the ff2.1 workflow's epoch 0 at dt 0.015 | 5 / 12 | 4 / 12 | 1 seed (s1, 20140 at t 3030; unwound) | 1.003-1.023 |
 
 The b9_01 seeds were paused for five minutes at 14:12 (SIGSTOP, then SIGCONT); simulated time is
 unaffected.
@@ -1339,6 +1362,20 @@ unaffected.
   on in s5, and in the last block only for GLY136 in s11 and GLY143 in s12.
 - The seven seeds counted wound fall in two groups. s5, s11 and s12 end at 0.910-0.922, and the
   other four at 0.999. The count is 5 for any cut from 0.88 to 0.90, and 7 at 0.92.
+
+**b9_00 against bio_start, its own start: the test detects no difference.**
+- **Fisher's exact test.** Unwound 4 against 5 of 12, two-sided p 1.00; flipped 4 against 4,
+  p 1.00.
+- **Continuous measures** (added tests). Last-block TM4 mean 0.901 against 0.899 (one-sided
+  Mann-Whitney, b9_00 lower, p 0.78). TM1 is lower, 0.781 against 0.858 (b9_00 lower, p 0.05);
+  that is one of several added tests, uncorrected, and TM1 has no glycine.
+- **Seeds.** One unwinds deeply: s12 to 0.53, falling from the second block, with GLY149 flipped
+  in the last block (0.64). s11 ends at 0.77 with GLY143 flipped from block 3, and s6 and s10 at
+  0.87. s10's GLY143 flips in blocks 2-3 (0.82, 0.91) and recovers in the last. s2 flips GLY136
+  from block 3 and s5 GLY143 in the last block (0.28), while their TM4 stays at 0.93-0.97.
+- Along ff30_bio_dt009, unwound goes 5, 4, 6 and last-block TM4 0.899, 0.901, 0.833 at the start,
+  step 18 and step 37. The first epoch leaves TM4 where it was; the lean toward worse appears only
+  at b9_01, and no step is resolved.
 
 **b9_01 against bio_start: the test detects no difference.**
 - **Fisher's exact test.** Unwound 6 against 5 of 12 and flipped 5 against 4, two-sided p 1.00
@@ -1359,10 +1396,103 @@ unaffected.
   - s11's comes at t 1130, while its TM4 is still 0.997; it falls only in the last block, to 0.883.
   - The cause is not identified (1.22), and no frames were dropped.
 
+**ff21_released against bio_start, which differ only in the glycine library: not resolved.**
+- **Fisher's exact test.** Unwound 9 against 5 of 12, two-sided p 0.21 (one-sided, ff2.1 more,
+  p 0.11); flipped 5 against 4, p 1.00.
+- **Continuous measures** (added tests, as for b9_01). Last-block TM4 mean 0.827 against 0.899
+  (one-sided Mann-Whitney, ff2.1 lower, p 0.13); TM1 0.848 against 0.858.
+- **Most of ff2.1's unwound seeds lose little.** Seven of the nine end at 0.85-0.89, so the count
+  depends on the cut: at 0.85 both sets count 3. s6 and s7 unwind deeply in the second half (0.40,
+  0.54). s6 has GLY136 and GLY149 flipped in the last block, and s7 has GLY143 flipped from block 3.
+- ff2.1's TM4 also unwinds partly on fixed inputs, so the start of the controls is not a stable
+  TM4.
+
+**gdepth_start against ff21_released, which differ only in glycine's basin depths: not resolved.**
+- **Fisher's exact test.** Unwound 7 against 9 of 12, two-sided p 0.67; flipped 2 against 5,
+  p 0.37. Against bio_start (5 and 4): p 0.68 and 0.64.
+- **Continuous measures** (added tests). Last-block TM4 mean 0.849 against ff2.1's 0.827 and
+  bio_start's 0.899 (one-sided Mann-Whitney p 0.35 and 0.29); TM1 0.859.
+- **Seeds.** Two unwind deeply: s3 to 0.55 from the second block on, with GLY136 flipped in the
+  last block (0.96), and s12 to 0.63 in the second half, with no flip. s4 and s9 end at 0.76 and
+  0.75, losing helix late. The other flip is s5's GLY149 (from block 2), while its TM4 stays at
+  0.93. No seed flips GLY143 (at most 0.12 of a block), which ff2.1 flips in s2 and s7.
+- gdepth_start is the start of ff30_gdepth_dt009, ff30_gdepth_si and ff30_gdepth_fz; their
+  checkpoints are compared with it.
+
+**d9_00 against gdepth_start, its own start: not resolved.**
+- **Fisher's exact test.** Unwound 5 against 7 of 12, two-sided p 0.68; flipped 2 against 2,
+  p 1.00. Against gdepth_start's 7, only 2 or fewer would resolve as better.
+- **Continuous measures** (added tests). Last-block TM4 mean 0.900 against 0.849 (one-sided
+  Mann-Whitney, d9_00 higher, p 0.22); TM1 0.883 against 0.859.
+- **Seeds.** Two unwind deeply, s9 to 0.64 with no flip and s8 to 0.72 in the last block with
+  GLY143 flipped (0.79). s12 ends at 0.83 with GLY143 flipped from block 3. Both flips are GLY143,
+  which gdepth_start never flips, while gdepth_start's (GLY136, GLY149) are gone.
+- One epoch of the gdepth training, with its margin at +0.141, leans toward fewer unwound seeds,
+  as c9_00 does against ff2.1, while b9_01 leans the other way.
+
+**d9_01 against gdepth_start, its own start: not resolved; it is below d9_00.**
+- **Fisher's exact test.** Unwound 6 against 7 of 12, two-sided p 1.00; flipped 4 against 2,
+  p 0.64. Against d9_00 (secondary, for direction, `tm4_compare_cov_d9_01_vs_d9_00.txt`): 6
+  against 5 and 4 against 2, p 1.00 and 0.64.
+- **Continuous measures** (added tests). Last-block TM4 mean 0.827, against gdepth_start's 0.849
+  (Mann-Whitney p 0.49) and d9_00's 0.900 (d9_01 lower, p 0.20); TM1 0.844.
+- **Seeds.** s5 unwinds to 0.29 in the last block, the lowest of any seed on fixed inputs, with
+  GLY136 flipped from block 3 and GLY143 and GLY149 in the last block. s2 ends at 0.65 with GLY143
+  flipped from block 2, s12 at 0.67 with GLY149 from block 2, and s7 at 0.75. Five seeds end at
+  0.99-1.00.
+- d9_00's lean toward fewer unwound seeds is gone at epoch 1, as c9_00's is at c9_01, while
+  ff30_gdepth_dt009's margin went from +0.141 to +0.097 over epoch 1.
+
+**c9_00 against ff21_released, its own start: not resolved.**
+- **Fisher's exact test.** Unwound 7 against 9 of 12, two-sided p 0.67; flipped 1 against 5,
+  two-sided p 0.16 (one-sided, c9_00 fewer, p 0.077). Only 0 flipped would resolve.
+- **Continuous measures** (added tests). Last-block TM4 mean 0.882 against 0.827 (one-sided
+  Mann-Whitney, c9_00 higher, p 0.24); TM1 0.883 against 0.848.
+- **The unwinding is shallower and more even.** c9_00's unwound seeds end at 0.75-0.89, with no seed
+  near ff2.1's 0.40 and 0.54. Four of them end at 0.75-0.79 (s1, s2, s6, s10), so at a 0.85 cut
+  c9_00 counts 4 against ff2.1's 3.
+- **One flip.** It is s2's GLY143, flipped in blocks 1-3 and down to 0.32 in the last. No seed flips
+  GLY136 or GLY149. ff2.1 flips GLY149 in s6 and s12, and GLY136 in s6 and s8.
+- One epoch of the same training on ff2.1 cuts the panel's folded fraction to 0.390 (1.22), but it
+  does not make TM4 worse here.
+
+**c9_01 against ff21_released, its own start: not resolved; against c9_00 it is worse.**
+- **Fisher's exact test.** Unwound 10 against 9 of 12, flipped 6 against 5, two-sided p 1.00 for
+  both. Against ff2.1's 9 no count of 12 can resolve as worse.
+- **Against c9_00, the epoch before** (a secondary comparison for direction, table
+  `tm4_compare_cov_c9_01_vs_c9_00.txt`). Unwound 10 against 7, p 0.37; flipped 6 against 1,
+  two-sided p 0.069 (one-sided, c9_01 more, p 0.034). Last-block TM4 mean 0.783 against 0.882
+  (Mann-Whitney p 0.11). Only the flip count comes near resolving, and only one-sided.
+- **Seeds.** Three unwind deeply: s1 to 0.54, with GLY143 flipped from block 2 and GLY149 in the
+  last block; s8 to 0.53, GLY143 from block 3; s12 to 0.50, GLY136 from block 2. s5 and s11 end at
+  0.75 and 0.79. No seed ends above 0.94, while c9_00 and ff2.1 each had seeds at 0.99-1.00.
+- **The second epoch reverses the first.** c9_00 leaned better than ff2.1 (7 unwound, 1 flip),
+  c9_01 leans worse than both. ff30_bio_dt009 does the same: b9_00 even with bio_start, b9_01
+  worse. c9's H-bond margin stayed at +0.125 to +0.157 through epoch 1 (b9's fell to +0.050), so
+  this lean does not follow the margin.
+
+**fp_e00 against ff21_released, its own start: not resolved.**
+- **Fisher's exact test.** Unwound 5 against 9 of 12, two-sided p 0.21 (one-sided, fp_e00 fewer,
+  p 0.11); flipped 4 against 5, p 1.00. Only 4 or fewer unwound would resolve.
+- **Continuous measures** (added tests). Last-block TM4 mean 0.902 against 0.827 (one-sided
+  Mann-Whitney, fp_e00 higher, p 0.05); TM1 0.882 against 0.848 (p 0.16).
+- **Seeds.** One unwinds deeply: s1 to 0.42 in the last block, with GLY143 flipped in blocks 2-3
+  and GLY136 in the last (0.95). Its total potential jumps by 20140 at t 3030, the largest in any
+  set on fixed inputs, and its KE/1.5kT of 1.023 is the highest of any such seed (normal, far below
+  the 1.2 flag). The others unwound end at
+  0.83-0.89: s2 with no flip, s5, s8 with GLY149 flipped from block 1, and s10 with GLY143 flipped
+  in the last block. s11 flips GLY143 (0.30) while TM4 stays at 0.98. Seven seeds end at 0.98-1.00,
+  against ff2.1's two.
+- Two independent epoch-0 trainings from ff2.1, fp_e00 at dt 0.015 and c9_00 at dt 0.009, both
+  lean toward fewer unwound seeds than ff2.1 (5 and 7 against 9). Neither is resolved, and they
+  are separate tests, not a pooled one.
+
 **The size of difference a 12-seed set can resolve.** With bio_start at 5 of 12 unwound, a
 one-sided Fisher test reaches p < 0.05 only if a checkpoint unwinds 10 or more of 12 (worse) or
 none (better). For flips (4 of 12) the thresholds are 9 or more, or none. A one- or two-seed
-difference, as here, cannot be resolved at 12 seeds per set.
+difference, as here, cannot be resolved at 12 seeds per set. Against ff21_released's 9 of 12, the
+controls' checkpoints (c9, cz) can resolve only as better, at 4 or fewer; no count of 12 resolves
+as worse.
 
 ## 2. The hybrid model: what each side supplies
 

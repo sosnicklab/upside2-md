@@ -238,8 +238,18 @@ Midway3 (caslake) has very long Priority queue times and should only be used whe
 
 ```bash
 # Submit to midway2:
-ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu 'cd <project_dir> && sbatch <script>'
+ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu 'cd <project_dir> && sbatch $(cat /project/trsosnic/yinhan/slurm/midway2.args) <script>'
 ```
+
+**midway2 node exclusions are one law** (`remote_jobs.md` §0d). `/project/trsosnic/yinhan/slurm/midway2.args`
+holds `--partition=broadwl` and the excluded nodes; it is the only place a midway2 node list is written.
+* Submit with `sbatch $(cat /project/trsosnic/yinhan/slurm/midway2.args) ...`, or through a
+  `slurm.args` made with `ln -s /project/trsosnic/yinhan/slurm/midway2.args slurm.args`. Never write
+  `--exclude=midway2-...` into a script, and never copy the list into a `slurm.args`.
+* `~/bin/sbatch` on midway2 adds the law's `--exclude` to every other submission. A caller's own
+  `--exclude` replaces it, so pass one only on purpose.
+* Add a node only for its own record of failures. Edit the one line, record the evidence in
+  `README.md` beside it, then run `update_pending.sh` there so queued jobs follow.
 
 ### Cluster SSH: Self-Connection
 

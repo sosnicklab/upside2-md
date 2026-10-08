@@ -149,8 +149,9 @@ Done:
   force fields byte-identical).
 - [x] Control `ff21_ctrl_dt009` submitted.
 - [x] Frozen arm submitted. ff30_bio_fz's step 0 keeps `hbond.h5` and `sheet` md5-identical to
-  ff2.1's. ff30_gdepth_fz was cancelled unstarted (10-07); ff21_ctrl_fz was cancelled with it and
-  resubmitted (user).
+  ff2.1's. ff30_gdepth_fz was cancelled unstarted (10-07 13:12) and resubmitted unchanged at 21:50
+  (user: run every frozen arm, though it departs from the group's workflow); ff21_ctrl_fz was
+  cancelled with it and resubmitted (user).
 - [x] SI-rate arm `ff30_bio_si` and `ff30_gdepth_si` built, initialised and submitted (10-07
   13:15). Initial force fields and gdepth's round-0 library are byte-identical to their twins'.
   The trainers differ only in the rate lines (`checks/si_init_20261007`).
@@ -159,11 +160,24 @@ Done:
 - [x] `patch_glpg.py` coverage fix (findings 3.11), local and on midway2.
 - [x] Pre-fix TM4 runs moved aside; local inputs re-patched.
 
+- [x] midway2 node exclusions as one law (user, 10-08 09:40; built and tested by 09:40): `/project/trsosnic/yinhan/slurm/
+  midway2.args`, read by every submission path (slurm.args symlinks, `submit_remd.sh`,
+  `bench.sbatch`), a `~/bin/sbatch` wrapper for the rest, `update_pending.sh` for queued jobs;
+  midway2-0027 added (remote_jobs.md §0d).
+
 Next:
-- [ ] **TM4 on fixed inputs, 12 seeds.**
-  - On the MacBook Pro by 10-07 15:00: bio_start, b9_01.
-  - Then on the next computer, in this order (remote_jobs.md "Handoff"): ff21_released, c9_00,
-    gdepth_start, d9_00, b9_00, fp_e00, and every new epoch end, half-trained (step 38) first.
+- [ ] **TM4 on fixed inputs, 12 seeds; the frozen comparisons at 24** (user, 10-08 09:10).
+  bz_00 against b9_00 and cz_00 against c9_00 run seeds 13-24 as well. A 24-seed set runs as two
+  12-seed halves (queue line `<tag> 13 24`), and `tm4_compare.py` reads seeds 1-24 from
+  `runs_cov/` and `runs/` together, with each set's own n in the Fisher table.
+  - Done: bio_start 5 of 12 unwound, b9_00 4, b9_01 6, ff21_released 9, c9_00 7, c9_01 10,
+    fp_e00 5, gdepth_start 7, d9_00 5, d9_01 6; no pair resolved (findings 1.24). All three
+    trainings tested at two epoch ends lean better or even at epoch 0 and worse at epoch 1, the
+    control included.
+  - Locally, on the Mac Studio, which keeps the jobs (user, 10-08 09:15; another computer stands
+    by until told to take over, remote_jobs.md "Handoff"), in this order: bs_00 (from 08:12), bz_00 (seeds 1-24), b9_00 seeds 13-24,
+    b9_02, ds_00, c9_00 seeds 13-24, and every new epoch end, half-trained (step 37) first;
+    cz_00 at 24 seeds. Its engine and inputs reproduce the MacBook Pro's runs.
 - [ ] **Answer the user's question: which run moves TM4 toward stable.** Compare each checkpoint
   with its own start, each frozen run with its unfrozen twin at the same step, and read the direction
   across epoch ends. With 12 seeds only large changes resolve (findings 1.22); run 24 seeds where a

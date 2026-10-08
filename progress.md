@@ -96,3 +96,74 @@ to 10-07 12:00 is in git history.
   4 (Fisher p 1.00). Mean last-block TM4 0.83 against 0.90, Mann-Whitney one-sided p 0.23.
   Unresolved; slightly toward unwound. The local queue ended for the shutdown; "continue jobs" on
   the next computer starts at remote_jobs.md "Resume here" (pointer in CLAUDE.md).
+* **16:20-16:35, Mac Studio takes over ("continue jobs").** midway2 socket live (landed on
+  login1). Link 49194446 (ff30_bio_dt009) ended normally at step 53, 16:02; successor queued.
+  New steps all healthy (24 of 24, KE/1.5kT <= 1.013). Margins: b9 +0.015 (step 53), d9 +0.110
+  (step 29, nearing the +0.10 hold), c9 +0.127 (step 26). Nothing else started.
+  - Local TM4 test brought up to date: fixed `patch_glpg.py` installed, pre-fix `runs/` and
+    `patched/` moved aside, eight queue inputs re-patched, `c9_00` and `runs_cov/` fetched.
+  - Parity: the re-patched bio_start input equals the MacBook Pro's in all 150 `/input` datasets,
+    and a 200 tu run reproduces its seed-1 log frame for frame.
+  - New driver `scripts/tm4_queue.sh` runs `tm4_queue.txt` one set at a time; ff21_released started
+    16:29. Watch cron `cad6ca59` hourly at :23.
+* **17:46-18:40, watch pass.** ff30_bio_si started 16:34; its rates are confirmed from the checkpoint
+  and the first step's changes. ff30_gdepth_si started 17:20. Panel c9_00: folded 0.390, below
+  b9_00 and d9_00 (findings 1.22). TM4 ff21_released (Mac Studio, 16:29-18:26): unwound 9, flipped
+  5 against bio_start's 5 and 4, p 0.21, not resolved (findings 1.24). New
+  `scripts/tm4_compare.py` reproduces the b9_01 table exactly; `events_vs_tm4.py` reads logs
+  beside the runs (both copied to the cluster).
+* **19:47-20:35, watch passes.** All steps 24 of 24, KE/1.5kT at most 1.016. ff30_gdepth_dt009's
+  margin fell to +0.097 at step 33: hold, user told. TM4 c9_00 (Mac Studio, 18:26-20:25): unwound
+  7, flipped 1 against ff21_released's 9 and 5, not resolved (findings 1.24); set and table copied to
+  `tm4_local/runs_cov/`. gdepth_start started 20:25.
+* **21:45-21:55, frozen arm completed (user).** ff30_gdepth_fz resubmitted unchanged as 49206070
+  after checking its inputs against ff30_gdepth_dt009's (plan.md Phase 11). ff21_ctrl_dt009
+  finished at its target (21:25); c9_01 extracted, patched, queued for TM4, panel 49206076.
+  ff21_ctrl_fz started 21:16; ff30_bio_fz resumed from step 4 at 21:46. ff30_gdepth_dt009's first
+  link timed out in step 35 (remote_jobs.md §8); its successor resumes from step 34.
+* **22:10-22:55, watch passes.** ff21_ctrl_fz freeze check passed at step 0. TM4 gdepth_start
+  (20:25-22:25): unwound 7, flipped 2, not resolved from ff2.1 or bio_start (findings 1.24); copied
+  to `tm4_local/runs_cov/`. polygly production started ~22:41; minimisation stopped at 5000 steps
+  with Fmax 223-1411 on protein atoms, as the collapse's did; equilibration running.
+* **23:47, watch pass.** Panel c9_01: folded 0.405, helix -0.029 (c9_00 0.390; findings 1.22).
+  polygly equilibrated 23:03 at 33.7 ns/day per replica; image distance 3.5-4.9 nm over the first
+  1.1 ns. Frozen runs hold +0.1919; ff30_bio_si +0.125 at step 13.
+* **00:10-00:35 10-08, handoff prepared** (user: the jobs move to the work computer ~10:00).
+  remote_jobs.md "Handoff" rewritten for the Mac Studio to work computer move (last-pass steps,
+  queue state, setup with an exact parity check), header, §1 and the stored watch prompt updated
+  (ff30_gdepth_fz added). Watch probes saved on midway2 as `~/watch_probe/stock.sh` and `steps.sh`.
+  ff30_bio_dt009 link 2 started 00:12 (step 54); ff21_ctrl_fz's link 49204264 ended in NODE_FAIL at
+  00:12 in step 2, its successor queued.
+* **00:26, TM4 d9_00:** unwound 5, flipped 2 against gdepth_start's 7 and 2, not resolved (findings
+  1.24); copied to `tm4_local/runs_cov/`. b9_00 started 00:26.
+* **02:23-03:00, TM4 b9_00 and three epoch ends.** b9_00: unwound 4, flipped 4 against bio_start's
+  5 and 4, not resolved (findings 1.24); copied to `tm4_local/runs_cov/`. fp_e00 started 02:23.
+  `submit_new.sh` submitted panels b9_02, d9_01, bs_00 (49207052-54); the three are extracted to
+  `checks/r4_epochs/`, patched and queued (d9_01 first).
+* **04:19-05:00, TM4 fp_e00; bz_00.** fp_e00: unwound 5, flipped 4 against ff21_released's 9 and 5,
+  not resolved (findings 1.24); copied to `tm4_local/runs_cov/`. c9_01 started 04:19. bz_00
+  extracted (hbond.h5, sheet identical to bio_start's), panel 49207340, patched and queued.
+* **06:15-07:00, TM4 c9_01; ff30_bio_si hold.** c9_01: unwound 10, flipped 6 against ff2.1's 9 and
+  5 and c9_00's 7 and 1, not resolved (findings 1.24); copied to `tm4_local/runs_cov/` with a
+  second table against c9_00. d9_01 started 06:15. ff30_bio_si's margin fell below +0.10 at step 26
+  (+0.097); user told, it trains on.
+* **08:12-08:50, TM4 d9_01; ff30_bio_dt009 node failure; ds_00.** d9_01: unwound 6, flipped 4
+  against gdepth_start's 7 and 2 and d9_00's 5 and 2, not resolved (findings 1.24); copied to
+  `tm4_local/runs_cov/`. bs_00 started 08:12. ff30_bio_dt009's link 49194448 ended in NODE_FAIL at
+  08:32 in step 64 (batch host midway2-0027, which failed ff21_ctrl_fz's link at 00:12); successor
+  49206580 resumes from step 63. ds_00 extracted, panel 49207993, patched and queued.
+* **09:10-09:25, 24-seed frozen comparisons; the Mac Studio keeps the jobs.** User approved 24 seeds
+  for bz_00 against b9_00 and cz_00 against c9_00, and then kept the jobs on the Mac Studio with
+  another computer standing by. `tm4_compare.py` reads seeds 1-24 from `runs_cov/` and `runs/`
+  with a per-set n (reproduces the earlier tables; mock 24-seed test as expected); `tm4_queue.sh`
+  takes `<tag> 13 24` lines (stub test), installed by rename under the running driver, which exits
+  after bs_00 when a waiter starts the new one (both scripts copied to `tm4_local/scripts/`, backups
+  `.bak_pre_24seed_20261008`). remote_jobs.md "Handoff" rewritten as one owner at a time, with a
+  live `tm4_local/WATCH_STATUS.md` on the cluster that each watch pass rewrites.
+* **09:25-09:40, midway2 node exclusion law** (user; plan approved). `/project/trsosnic/yinhan/slurm/
+  midway2.args` is the one list (midway2-0027 added for two NODE_FAILs as batch host), with
+  `README.md` (each node's record), `update_pending.sh` and `sbatch_wrapper` (linked as
+  `~/bin/sbatch`). 13 `slurm.args` symlinked to it; `submit_remd.sh` and `bench.sbatch` read it;
+  `train_chain.sbatch` and training `README.md` comments point at it (backups
+  `.bak_pre_law_20261008`). Tests with `--test-only` and stubs all as expected; all 13 pending jobs
+  updated, dependencies intact. remote_jobs.md §0d and CLAUDE.md "Default Cluster" carry the rule.
