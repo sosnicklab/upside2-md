@@ -167,3 +167,114 @@ to 10-07 12:00 is in git history.
   `train_chain.sbatch` and training `README.md` comments point at it (backups
   `.bak_pre_law_20261008`). Tests with `--test-only` and stubs all as expected; all 13 pending jobs
   updated, dependencies intact. remote_jobs.md §0d and CLAUDE.md "Default Cluster" carry the rule.
+* **10:48-11:05, TM4 bs_00.** bs_00: unwound 6, flipped 5 against bio_start's 5 and 4 (p 1.00)
+  and its twin b9_00's 4 and 4 (p 0.68, 1.00), not resolved (findings 1.24); copied to
+  `tm4_local/runs_cov/` with both tables (md5 checked). The waiter started the seed-range driver at
+  10:08 and bz_00 runs (ends ~12:05). check_step on 7 new steps: 24 of 24, KE/1.5kT at most 1.014;
+  no new hold. The permission check refused `submit_new.sh`; it had nothing to submit (every epoch
+  end has its panel). User (11:05): the watch keeps submitting panels on its own.
+* **11:35-11:50, bs_01 panel and TM4; ff30_gdepth_si node failure.** `submit_new.sh` (user
+  approved 11:05 and 11:40) submitted bs_01's panel 49208587, the first panel under the exclusion
+  law (ExcNodeList carries 0027). bs_01 extracted (rama.dat identical to bs_00's, hbond.h5 moved),
+  patched and queued behind `b9_00 13 24`. ff30_gdepth_si's link 49204256 ended NODE_FAIL at 11:07
+  in step 21 on midway2-0027 (third failure there today; it started before the law); successor
+  49205173 resumes from step 20, estimate 10-09 20:34. Recorded in remote_jobs.md, the law's
+  README and `WATCH_STATUS.md`.
+* **12:05-12:20, TM4 bz_00 seeds 1-12; `tm4_compare.py` reads a first half.** The script refused
+  bz_00 while its seeds 13-24 ran; it now takes an optional third argument N (12 or 24) that reads
+  seeds 1-N of each set (link dir `SET_vs_REF_N/`; backup `.bak_pre_nseeds_20261008`, md5
+  `46984192...`; reproduces b9_00's table with and without N; bz_00 without N still refused).
+  bz_00: unwound 3, flipped 0 against 5 / 4 (bio_start) and 4 / 4 (b9_00); flips one-sided p 0.047,
+  two-sided 0.093, unwound not resolved; s8 unwinds to 0.45 with GLY143 flipped in blocks 1-3
+  (findings 1.24). Seeds 1-12 and both tables copied to `tm4_local/runs_cov/`, the script to
+  `tm4_local/scripts/` (old one backed up there).
+* **14:00-14:20, TM4 bz_00 at 24 seeds; bz_01.** bz_00's seeds 13-24 unwound 5 and flipped 4 of
+  12, bio_start's counts; at 24 seeds 8 and 4 against bio_start's 5 and 4 of 12 (one-sided p 0.45,
+  0.24), last-block TM4 0.897 against 0.899. The first half's zero flips (p 0.047) did not repeat
+  (findings 1.24). Seeds 13-24 and `tm4_compare_cov_bz_00_24.txt` copied to `tm4_local/runs_cov/`
+  (48 files, md5 checked). bz_01 (step 37, 13:58): panel 49210456 (carries the law), extracted
+  (hbond.h5, sheet, rama.dat identical to bz_00's), patched, queued behind bs_01; its patched input
+  has bio_start's H-bond energy and Rama map exactly. b9_00 seeds 13-24 run until ~16:00.
+* **15:56-16:10, TM4 b9_00 and bz_00 at 24 seeds each.** b9_00's seeds 13-24 unwound 3 and flipped
+  1; at 24 seeds 7 and 5 against bio_start's 5 and 4 of 12 (two-sided p 0.48, 0.44). bz_00 against
+  b9_00, 24 seeds each: 8 against 7 unwound, 4 against 5 flipped, p 1.00; TM4 0.897 against 0.914.
+  TM1 is higher in bz_00 (0.891 against 0.813, added Mann-Whitney p 0.003, both halves the same
+  way), and bz_00 against bio_start in TM1 is p 0.25 (findings 1.24). Tables
+  `tm4_compare_cov_bz_00_24_vs_b9_00.txt` and `tm4_compare_cov_b9_00_24.txt` and b9_00's seeds
+  13-24 copied to `tm4_local/runs_cov/` (md5 checked). bs_01 runs from 15:56.
+* **17:47-18:10, d9_02; TM4 bs_01.** d9_02 (ff30_gdepth_dt009 step 56, depth round 3, dL - dR
+  +0.602): panel 49212678 from `submit_new.sh` (carries the law), extracted, patched, queued last.
+  bs_01: unwound 5, flipped 2 of 12, against bio_start's 5 and 4 (p 1.00, 0.64) and b9_01's 6 and 5
+  (p 1.00, 0.37); last-block TM4 0.879 against b9_01's 0.833. s9 unwinds to 0.51 with GLY149
+  flipped, TM1 0.32 and a total-potential jump of 18081 (findings 1.24). Seeds and tables copied to
+  `tm4_local/runs_cov/`. bz_01 runs from 17:53.
+* **18:47-20:10, TM4 bz_01.** bz_01 (ff30_bio_fz step 37, H-bond and sheet frozen): unwound 6,
+  flipped 2 of 12, against bio_start's 5 and 4 (p 1.00, 0.64) and b9_01's 6 and 5 (p 1.00, 0.37);
+  last-block TM4 0.846 against 0.899 and 0.833, block means falling as b9_01's do; s12 ends at
+  0.22, the lowest on fixed inputs. The freeze does not stop the epoch-1 lean. A dataset-by-dataset
+  comparison of the patched inputs shows bz_00 and bz_01 differ from bio_start in the rotamer pair
+  interactions as well as the two coverage tables; findings 1.24 had listed only the coverage
+  tables, corrected. Seeds and tables copied to `tm4_local/runs_cov/`. b9_02 runs from 19:49.
+* **20:47-21:50, TM4 b9_02 and three panels.** b9_02 (ff30_bio_dt009 step 56): unwound 8, flipped 4
+  of 12, against bio_start's 5 and 4 (p 0.41, 1.00) and b9_01's 6 and 5 (p 0.68, 1.00); last-block
+  TM4 0.830 against 0.899 and 0.833. Its loss comes in the last block (block means 0.99, 0.98,
+  0.93, 0.83), and two of the eight unwound end at 0.889 (findings 1.24). Panels b9_02, d9_01 and
+  bs_00 (34 domains): folded 0.448, 0.457, 0.457, each dominated by gdepth_start in helix; b9_00
+  does not dominate bs_00 (findings 1.21). Seeds and tables copied to `tm4_local/runs_cov/` (md5
+  checked). ff30_gdepth_fz's first link started 21:34; its successor 49214121 carries the law, which
+  closes the law's end-to-end check (remote_jobs.md §0d). ds_00 runs from 21:45.
+* **21:47-22:55, panels bz_00, ds_00, bs_01; ff30_gdepth_fz freeze check.** Folded fraction on 36
+  domains: bz_00 0.450, bs_01 0.430 and ds_00 0.412 against their port-rate twins' 0.478, 0.465
+  and 0.477; d9_00 dominates ds_00 in helix, b9_01 dominates bs_01 in helical glycine, and b9_00
+  does not dominate bz_00 (findings 1.21). ff30_gdepth_fz steps 0-1 clean; its freeze check passed
+  (hbond.h5 and sheet identical to ff2.1's, `checks/fz_init_20261007/dz_step00`). ff21_ctrl_fz's
+  successor 49205852 started 22:28 from step 2 as designed; its next link carries the law.
+* **22:47-23:59, TM4 ds_00 and panel bz_01.** ds_00 (ff30_gdepth_si step 18): unwound 9, flipped 3
+  of 12, against gdepth_start's 7 and 2 (p 0.67, 1.00) and d9_00's 5 and 2 (p 0.21, 1.00);
+  last-block TM4 0.775, the lowest mean of any set (against d9_00's 0.900, added Mann-Whitney
+  p 0.05). s7's jump of 9732 at t 3776 heats the protein to 4.3 and the lipids to 3.0 times their
+  kinetic energy; its run KE/1.5kT is 1.080, below the 1.2 flag (findings 1.24). Panel bz_01:
+  folded 0.461 against b9_01's 0.465 and bz_00's 0.450, so the frozen run's gap closes at epoch 1
+  (findings 1.21). Seeds and tables copied to `tm4_local/runs_cov/`. c9_00 seeds 13-24 run from
+  23:41.
+* **01:47-02:10 10-09, TM4 c9_00 at 24 seeds; bz_02.** c9_00's seeds 13-24 unwound 9 and flipped 8
+  of 12, against seeds 1-12's 7 and 1 (same input, binary and flags; p 0.009 between the halves).
+  At 24 seeds against ff21_released: 16 and 9 against 9 and 5 of 12 (p 0.72, 1.00), last-block TM4
+  0.843 against 0.827. Its 12-seed lean toward fewer flips was chance, and c9_01's flip excess over
+  c9_00 (one-sided p 0.034 at 12 seeds) is p 0.50 against the 24; findings 1.24 corrected in the
+  c9_00, c9_01, d9_00, d9_01 and fp_e00 paragraphs and the resolution note. bz_02 (ff30_bio_fz
+  step 56) extracted (frozen files identical to bz_01's), panel 49214736 submitted, patched and
+  queued after d9_02 (from 01:37). New steps clean (d9 to 66 at +0.073; bz to 56; dz to 6; cz to 7).
+* **02:15-03:15 10-09, TM4 secondary structure by DSSP (user).** The TM4 test scored helix from
+  phi/psi boxes alone. Added DSSP (mdtraj, on N, CA, C and Upside's own carbonyl O from
+  `infer_H_O`) to `tm4_local.py` and `tm4_compare.py`: alpha-helix and any-helix fractions of
+  135-151 per block, alpha per residue, Mann-Whitney on each (backups `*.bak_pre_dssp_20261009`).
+  Old and new scripts give identical old lines on four comparisons; all 28 tables regenerated with
+  no earlier line changed (pre-DSSP copies in `tables_pre_dssp_20261009/`). DSSP alpha is 0.10-0.22
+  below the box in every set: where they disagree TM4 has turned partly into pi-helix (i->i+4 O...N
+  3.9-5.3 A) or frayed at 147-151. The order of sets is nearly the same (Spearman 0.88) and nothing
+  resolves (findings 1.25, lesson 10.20). Uploaded scripts, README and tables to `tm4_local/`.
+* **03:09-03:16 10-09, watch pass; panel d9_02.** ff30_bio_fz's link 49202419 COMPLETED 02:55
+  after its 54 steps (5-58); successor 49206071 pending. Panel d9_02 COMPLETED 02:04: folded
+  0.439, helix -0.030 (41 domains), dominated by gdepth_start in helix; 0.439 against d9_01's
+  0.457 on 39 shared domains (findings 1.21). ff21_ctrl_fz's step 10 relaunched 12 workers (5
+  twice) and all 24 ran. New steps clean (d9 to 67 at +0.080; bz to 58; dz to 9; cz to 9).
+  Successor start estimates slipped: 49206580 to 17:06, 49205039 and 49205173 to 10-10 06:10.
+* **03:20-03:55 10-09, DSSP primary (user); TM4 d9_02.** `tm4_compare.py` now leads with the primary
+  test, last-block DSSP alpha of 135-151 by a two-sided Mann-Whitney with a bootstrap interval; the
+  dihedral counts are secondary (backups `*.bak_pre_dssp_primary_20261009`). All 30 tables carry it.
+  No in-training checkpoint is resolved from its start (findings 1.25 table). d9_02 (01:37-03:35):
+  alpha 0.765 against gdepth_start's 0.657 (p 0.58) and d9_01's 0.615 (p 0.21), levelling off over
+  the last two blocks, no energy jump. Power by resampling: at 12 seeds a true 0.10 / 0.15
+  difference is detected 18% / 31% of the time, at 24 seeds 34% / 58%. bz_02 runs from 03:35.
+* **04:04-04:15 10-09, watch pass; ff21_ctrl_fz link ending on midway2-0088.** Step 11 of
+  ff21_ctrl_fz (from 03:42) lost 8 srun launches; 2r2y, 3jyz and 4qbo failed all three on
+  midway2-0088 ("Invalid job credential"), so the step raises and link 49205852 ends; successor
+  49214161 resumes from step 10. 0088's second such event (first: ff30_bio_fz 10-07 14:40), the
+  documented record to exclude it; asked the user. Steps 10 of cz and dz and 68 of d9 clean (d9
+  margin +0.087). Every pending job's start estimate is now 10-10 03:33-03:53.
+* **04:12 10-09, midway2-0088 excluded (user).** Added to `/project/trsosnic/yinhan/slurm/midway2.args`
+  with its record in README.md (backups `*.bak_pre_0088_20261009`); `--test-only` accepted the list,
+  the wrapper refused `-w midway2-0088`, and `update_pending.sh` set all 9 pending jobs to it. Every
+  midway2 `slurm.args` symlink reads it. ff21_ctrl_fz's link 49205852 FAILED 04:11 as expected (3 of
+  24 workers failed); successor 49214161 resumes from step 10.

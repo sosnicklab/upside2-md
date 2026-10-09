@@ -170,13 +170,36 @@ Next:
   bz_00 against b9_00 and cz_00 against c9_00 run seeds 13-24 as well. A 24-seed set runs as two
   12-seed halves (queue line `<tag> 13 24`), and `tm4_compare.py` reads seeds 1-24 from
   `runs_cov/` and `runs/` together, with each set's own n in the Fisher table.
-  - Done: bio_start 5 of 12 unwound, b9_00 4, b9_01 6, ff21_released 9, c9_00 7, c9_01 10,
-    fp_e00 5, gdepth_start 7, d9_00 5, d9_01 6; no pair resolved (findings 1.24). All three
-    trainings tested at two epoch ends lean better or even at epoch 0 and worse at epoch 1, the
-    control included.
+  - Done: bio_start 5 of 12 unwound, b9_00 7 of 24, b9_01 6, b9_02 8, bs_00 6, bs_01 5, bz_00 8 of 24, bz_01 6, ds_00 9, d9_02 4, ff21_released 9,
+    c9_00 16 of 24, c9_01 10, fp_e00 5, gdepth_start 7, d9_00 5, d9_01 6 (findings 1.24). No pair is
+    resolved. bz_00's first half flipped none of 12 (one-sided p 0.047); its seeds 13-24 flipped 4,
+    bio_start's count, and against b9_00 at 24 seeds each it is 8 against 7 unwound and 4 against 5
+    flipped, so freezing H-bond and sheet shows no TM4 change at epoch 0. All three trainings tested
+    at two epoch ends lean better or even at epoch 0 and worse at epoch 1, the control included.
+    bs_00 leans worse than its twin b9_00; bs_01 leans better than b9_01 (2 flipped against 5,
+    p 0.37), the first half-trained end not leaning worse than its epoch 0. bz_01 leans as b9_01
+    does (6 unwound each, TM4 0.846 against 0.833): freezing H-bond and sheet does not stop the
+    epoch-1 lean, and in the glpG test bz differs from bio_start only in the side-chain tables.
+    b9_02 keeps b9_01's lean at epoch 2 (TM4 0.830 against 0.833, 8 unwound against 6, p 0.68).
+    ds_00 leans worse than its twin d9_00 (9 unwound against 5, p 0.21; TM4 0.775, the lowest mean).
+    c9_00's seeds 13-24 flipped 8 of 12 against seeds 1-12's 1 (same input, p 0.009 between
+    halves), so its 12-seed lean was chance; at 24 seeds it is even with ff2.1 (16 and 9 against 9
+    and 5 of 12, TM4 0.843 against 0.827). A lean in one 12-seed set is a reason for 24 seeds.
+  - [x] **TM4 secondary structure by DSSP** (user, 10-09 02:15: "make sure you are testing the
+    stability of the secondary structure of TM4"; findings 1.25). The count scores helix from
+    phi/psi boxes alone; `tm4_local.py` and `tm4_compare.py` now also give DSSP alpha-helix and
+    any-helix fractions of 135-151 per block, alpha per residue, and a Mann-Whitney on each, with
+    the model's own carbonyl O and mdtraj's DSSP. All 28 tables regenerated, earlier lines
+    unchanged. DSSP alpha is 0.10-0.22 below the box in every set, the order of the sets is nearly
+    the same, and nothing resolves.
+  - [x] **DSSP alpha-helix is the primary TM4 test** (user, 10-09 03:20): each seed's last-block
+    alpha of 135-151, two-sided Mann-Whitney, resolved at p < 0.05, with a bootstrap interval;
+    the dihedral counts are secondary. All tables carry it. No in-training checkpoint is resolved
+    from its start; d9_02 leans highest (0.765 against gdepth_start's 0.657, p 0.58). At 12 seeds
+    a true 0.10-0.15 difference is detected 18-31% of the time (findings 1.25).
   - Locally, on the Mac Studio, which keeps the jobs (user, 10-08 09:15; another computer stands
-    by until told to take over, remote_jobs.md "Handoff"), in this order: bs_00 (from 08:12), bz_00 (seeds 1-24), b9_00 seeds 13-24,
-    b9_02, ds_00, c9_00 seeds 13-24, and every new epoch end, half-trained (step 37) first;
+    by until told to take over, remote_jobs.md "Handoff"), in this order: bz_02 (from 03:35),
+    and every new epoch end, half-trained (step 37) first;
     cz_00 at 24 seeds. Its engine and inputs reproduce the MacBook Pro's runs.
 - [ ] **Answer the user's question: which run moves TM4 toward stable.** Compare each checkpoint
   with its own start, each frozen run with its unfrozen twin at the same step, and read the direction

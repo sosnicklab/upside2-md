@@ -1,6 +1,6 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-08 09:20; the Mac Studio keeps running the watch and the local TM4 queue
+**Current state (2026-10-08 10:48; the Mac Studio keeps running the watch and the local TM4 queue
 (user, 10-08); another computer stands by until the user moves the jobs: "Handoff" below, and the
 live `WATCH_STATUS.md` on the cluster).** The glpG TM4
 repair training, round 4 (plan.md Phase 11), runs on midway2 broadwl at dt 0.009, every run from
@@ -30,15 +30,26 @@ Job ids, states and readouts are in §1. ff30_bio_dt009 has been on margin hold 
 ff30_gdepth_dt009 since step 33 (+0.097, 10-07 20:18) and ff30_bio_si since step 26 (+0.097,
 10-08 06:06); the user was told of each, and all train on. Links that ended and resume by chain design: ff30_bio_dt009's first at step 53 (normal) and its
 second on a node failure in step 64 (10-08 08:32; successor queued), ff30_gdepth_dt009's at its wall time in step 35 (successor queued),
-ff30_bio_fz's on a node fault at step 5 (resumed 10-07 21:46), and ff21_ctrl_fz's on a node failure
-in step 2 (10-08 00:12; successor queued). ff30_gdepth_fz waits for its first link.
+ff30_bio_fz's on a node fault at step 5 (resumed 10-07 21:46), ff30_bio_si's first at step 53 (normal, 10-08 20:10; successor queued), ff21_ctrl_fz's on a node failure
+in step 2 (10-08 00:12; successor queued), and ff30_gdepth_si's on a node failure in step 21 (10-08
+11:07, midway2-0027 again; successor queued). ff30_gdepth_fz's first link runs from 21:34 10-08.
 
-**TM4 on fixed inputs so far** (findings 1.24): bio_start 5 of 12 unwound, b9_00 4, b9_01 6,
-ff21_released 9, c9_00 7, c9_01 10, fp_e00 5, gdepth_start 7, d9_00 5, d9_01 6. No pair is resolved. Until 10-07 11:22, `patch_glpg.py` left the
+**TM4 on fixed inputs so far** (findings 1.24): bio_start 5 of 12 unwound, b9_00 7 of 24, b9_01 6,
+bs_00 6, bs_01 5 (2 flipped, against b9_01's 5; p 0.37), bz_00 8 of 24, bz_01 6 (2 flipped; TM4 0.846
+against b9_01's 0.833, so the freeze does not stop the epoch-1 lean), b9_02 8 (4 flipped; TM4 0.830, so
+epoch 2 keeps b9_01's lean), ds_00 9 (TM4 0.775, the lowest mean; d9_00 5, p 0.21), ff21_released 9, c9_00 16 of 24 (flipped 1 in seeds 1-12, 8 in 13-24, so its 12-seed lean was chance), c9_01 10, fp_e00 5, gdepth_start 7, d9_00 5,
+d9_01 6. No pair is resolved. bz_00's first half flipped none of 12 (one-sided p 0.047 against
+bio_start's and b9_00's 4); its seeds 13-24 flipped 4 of 12, so that was chance. At 24 seeds each,
+bz_00 against b9_00 is 8 against 7 unwound and 4 against 5 flipped (p 1.00); only TM1, in an added
+test, is higher in bz_00 (0.891 against 0.813, p 0.003). Until 10-07 11:22, `patch_glpg.py` left the
 retired FF1-form ff_3.0's coverage tables in every glpG input (findings 3.11), so every earlier TM4
 count is invalid. The queue runs locally ("Handoff" below; §1 "Local glpG TM4 test"). Panels:
 every epoch end so far loses folding against its start (findings 1.22), the control as much as
-any (c9_00 0.390, c9_01 0.405 against ff2.1's 0.615).
+any (c9_00 0.390, c9_01 0.405 against ff2.1's 0.615). b9_02 0.448, d9_01 0.457, d9_02 0.439 and bs_00 0.457
+(findings 1.21): each is dominated by gdepth_start in helix, and folding falls about 0.015 an epoch
+after epoch 0's 0.125. The frozen and SI-rate runs fold less than their port-rate twins at the same
+step (bz_00 0.450, bs_01 0.430, ds_00 0.412 against 0.478, 0.465, 0.477); d9_00 dominates ds_00 in
+helix and b9_01 dominates bs_01 in helical glycine.
 
 Also on midway2:
 - polygly production 49204428 (`polygly/prod.sbatch`, self-chaining; plan.md Phase 12), running
@@ -76,18 +87,15 @@ findings.md (pulled from git) and on the cluster.
    Tell the user what started, finished or failed since the last pass in §1, and the current
    margins.
 4. **Owed checks, once each:**
-   - **ff30_gdepth_fz 49206070** (queued 21:46): freeze check on its first step, as ff30_bio_fz's
-     and ff21_ctrl_fz's passed. `hbond.h5` and `sheet` should be byte-identical to ff2.1's
-     (`checks/fz_init_20261007`), with `sidechain.h5` moved.
-   - **ff21_ctrl_fz** successor 49205852 should resume from step 1 (node failure in step 2):
-     confirm from its link log's first line, `step 2 of 38, resuming from
-     run_output/epoch_00_minibatch_01/checkpoint.pkl` (ff30_gdepth_dt009's successor did so,
-     00:22 10-08).
    - **ff30_bio_dt009** successor 49206580 should resume from step 63 (node failure in step 64,
      08:32 10-08): its log `ff30_bio_dt009/condiv-train_49206580.out` should begin `step 64 of 76,
      resuming from run_output/epoch_03_minibatch_06/checkpoint.pkl`, `this link runs 12 steps`.
-   - **The exclusion law in use** (§0d): the next chain successor submitted from a running link
-     and the next panel should show `ExcNodeList=midway2-[...,0027,...]` in `scontrol show job`.
+   - **ff30_gdepth_si** successor 49205173 should resume from step 20 (node failure in step 21,
+     11:07 10-08): its log `ff30_gdepth_si/condiv-train_49205173.out` should begin `step 21 of 76,
+     resuming from run_output/epoch_01_minibatch_01/checkpoint.pkl`.
+   - **ff30_bio_si** successor 49205039 (link 1 COMPLETED 20:10 10-08 at step 53): its log
+     `ff30_bio_si/condiv-train_49205039.out` should begin `step 54 of 76, resuming from
+     run_output/epoch_02_minibatch_15/checkpoint.pkl`, `this link runs 22 steps`.
    - **ff30_bio_dt009's gate** (`ff30bio9-gate`) after step 75, ~7 h after 49206580 starts: read
      `gate_step<N>.txt` and the gate log (watch step 6). Converged means validation was queued:
      32 Peng arms and 4 glpG chains for `ff_3.0_bio`. Not converged means one more epoch.
@@ -101,11 +109,11 @@ findings.md (pulled from git) and on the cluster.
    run the TM4 queue from `WATCH_STATUS.md` (a set left running is rerun unless `runs_cov/` has
    it), start the watch ("The watch"), and rewrite `WATCH_STATUS.md` with the new owner.
 7. **Open questions for the user.** Nothing is blocking. Queue waits on broadwl run to days; midway3
-   caslake is an option only on the user's word, after checking its current estimate. Awaiting the
-   user:
-   - (10-07) 12 more seeds of ff21_released, with c9_00's (now queued for the frozen comparison),
-     to test their flip difference (1 against 5 of 12, one-sided p 0.077). ~2 h.
-   The 24-seed frozen comparisons were approved 10-08 09:10, and the midway2 exclusion law
+   caslake is an option only on the user's word, after checking its current estimate. Nothing awaits
+   the user. midway2-0088 joined the law 10-09 04:12 (user; §0d). The user made DSSP alpha-helix the
+   primary TM4 test (10-09). The 10-07 offer of 12 more ff21_released seeds, to test c9_00's flip difference (1
+   against 5 of 12), is withdrawn: c9_00's own seeds 13-24 flipped 8, which removes it (findings
+   1.24). The 24-seed frozen comparisons were approved 10-08 09:10, and the midway2 exclusion law
    (§0d, midway2-0027 added) was built at the user's word 10-08 09:40.
 
 ### Handoff: two computers, one owner (2026-10-08)
@@ -152,50 +160,52 @@ current word.
 **24 seeds for the frozen comparisons** (user, 10-08 09:10). bz_00 against b9_00 and cz_00 against
 c9_00 run seeds 13-24 as well as 1-12. A 24-seed set is two queue lines, `<tag>` (seeds 1-12) and
 `<tag> 13 24` (log `run_<tag>_s13-24.log`); `tm4_queue.sh` reads both forms (10-08 09:19, md5
-`eac953d0...`). `tm4_compare.py` (md5 `a4e52689...`) reads a set's seeds 1-12 or 1-24 from
-`runs_cov/` and `runs/` together and gives each set its own n in the Fisher table; it reproduces
-the earlier 12-seed tables exactly, and a mock 24-seed set (b9_00 plus c9_00 seeds) gave the
-expected 11 unwound of 24. Read bz_00 at 12 seeds when its first half ends, and the 24-seed
-comparison once both halves of bz_00 and b9_00 are done. Copy seeds 13-24 and their table to
+`eac953d0...`). `tm4_compare.py` (10-09, with the DSSP primary test; md5 in "Setting up the next computer") reads a set's seeds 1-12 or
+1-24 from `runs_cov/` and `runs/` together and gives each set its own n in the Fisher table; it
+reproduces the earlier 12-seed tables exactly, and a mock 24-seed set (b9_00 plus c9_00 seeds) gave
+the expected 11 unwound of 24. A set whose seeds 13-24 have started is read at 12 seeds with a third
+argument, `tm4_compare.py <tag> <ref> 12` (it reproduces b9_00's table with and without it). bz_00
+was read so at 12:05; the 24-seed comparison follows once both halves of bz_00 and b9_00 are done. Copy seeds 13-24 and their table to
 `runs_cov/` like any set. The patched inputs of b9_00 and c9_00 are the files seeds 1-12 ran on
 (every `/input` dataset equal; `ref_pos` holds NaN placeholders, so compare it NaN-aware).
 
 **The TM4 queue** (one 12-seed half at a time, T 0.80, 4000 tu, `run_glpg.sh 10 <first> <last>
 <tag>`; about 2 h each on the Mac Studio's cores). Each tag is patched from `checks/r4_epochs/<tag>`
 (ff21_released from `parameters/ff_2.1`) with the fixed `patch_glpg.py`. Done on fixed inputs:
-bio_start (`ff21_bioT1_6`), b9_00, b9_01, ff21_released, c9_00, c9_01, fp_e00, gdepth_start,
-d9_00, d9_01. State at 09:20 10-08:
-1. `bs_00`: ff30_bio_si step 18, against bio_start and its twin b9_00. Running since 08:12 under
-   the old 12-seed driver (PID 21598), ends ~10:08. That driver then finds `tm4_queue.txt` empty
-   and exits; a one-time waiter (PID 38106) moves `tm4_queue.next` into `tm4_queue.txt` and starts
-   the seed-range driver, logging `seed-range driver started` to `tm4_queue.log`.
-2. `bz_00`: ff30_bio_fz step 18, seeds 1-12, against bio_start and its twin b9_00.
-3. `bz_00 13 24`.
-4. `b9_00 13 24`.
-5. `b9_02`: ff30_bio_dt009 step 56, against bio_start.
-6. `ds_00`: ff30_gdepth_si step 18, against gdepth_start and its twin d9_00.
-7. `c9_00 13 24`, ready for cz_00 at 24 seeds.
-   2-7 are patched (02:59, 04:55, 08:47; b9_00 and c9_00 10-07 16:24).
-8. New epoch ends as they come. Each is extracted with `$P/training/extract_ff.py`, its panel
+bio_start (`ff21_bioT1_6`), b9_00, bz_00 and c9_00 (24 seeds each; `tm4_compare_cov_bz_00_24_vs_b9_00.txt`,
+`tm4_compare_cov_b9_00_24.txt`, `tm4_compare_cov_c9_00_24.txt`), b9_01, b9_02, bs_00, bs_01, bz_01, ds_00, ff21_released,
+c9_01, fp_e00, gdepth_start, d9_00, d9_01, d9_02. State at 03:50 10-09:
+1. `bz_02`: ff30_bio_fz step 56, against bio_start and b9_02. Running since 03:35, ends ~05:31.
+2. The queue file is empty behind it.
+3. New epoch ends as they come. Each is extracted with `$P/training/extract_ff.py`, its panel
    goes in through `submit_new.sh`, and it is patched and added to `tm4_queue.txt` (watch step 4).
-   A half-trained (`_01`) end goes behind the 24-seed lines of 2-4 and ahead of the other epoch
+   A half-trained (`_01`) end goes behind the 24-seed lines and ahead of the other epoch
    ends. `cz_00` runs as `cz_00` and `cz_00 13 24`. `submit_new.sh` skips a checkpoint written
-   less than 5 min ago, so a pass that finds one that new runs it again later. Expected (09:20):
-   `bz_01` (step 37, against bio_start and b9_01) ~14:00 10-08; `b9_03` (step 75, the end of
-   training) ~7 h after 49206580 starts; `cz_00` about 14 h after successor 49205852 starts
-   (~50 min a step); `dz_00` about 12 h after 49206070 starts.
+   less than 5 min ago, so a pass that finds one that new runs it again later. Expected (01:56 10-09):
+   `cz_00` (step 18, against ff21_released and c9_00 at 24 seeds) ~07:40 10-09 and `dz_00` (step 18,
+   against gdepth_start and d9_00) ~08:00 10-09, both in their running links at ~32 min a step; `d9_03` (step
+   75, the end of training) ~10:00-14:00 10-09, in the running link or, past its 12:22 wall, in
+   successor 49206658; `bs_02` (step 56) ~2 h after
+   successor 49205039 starts; `ds_01` (step 37, against
+   gdepth_start and d9_01) about 13 h after successor 49205173 starts; `b9_03` (step 75, the end of
+   training) ~7 h after 49206580 starts.
 
-Reading: each checkpoint against its own start (header table), on seeds unwound (last-block TM4 <
-0.90) and seeds flipped (a TM4 glycine at phi > 0 in > 0.25 of the last block), by Fisher's exact
-test. bz, cz, dz and the SI-rate runs are also compared with their port-rate twin at the same step
-(bz_00 and bs_00 with b9_00, cz_00 with c9_00, dz_00 and ds_00 with d9_00). The direction is read
-across epoch ends. What 12 seeds can resolve (one-sided Fisher, p < 0.05):
-- against bio_start (5 of 12 unwound, 4 flipped): 10 or more, or none; flips 9 or more, or none;
-- against ff21_released (9 of 12, 5 flipped): 4 or fewer unwound (no count resolves as worse);
-  flips 10 or more, or none;
-- at 24 seeds (start 10 of 24) the unwound thresholds are 17 or more, or 3 or fewer.
-A difference of one or two seeds is noise. Beyond the frozen comparisons (24 seeds, above), extend
-a set to 24 seeds only where it differs by three or more seeds.
+Reading: each checkpoint against its own start (header table). **The primary test is TM4's
+secondary structure** (user, 10-09; findings 1.25): each seed's DSSP alpha-helix fraction of 135-151
+over the last block, set against reference by a two-sided Mann-Whitney, resolved at p < 0.05, with a
+bootstrap 95% interval on the difference (`tm4_compare.py`, "## primary test"). bz, cz, dz and the
+SI-rate runs are also compared with their port-rate twin at the same step (bz_00 and bs_00 with
+b9_00, cz_00 with c9_00, dz_00 and ds_00 with d9_00). The direction is read across epoch ends.
+- **What it can resolve.** Seeds spread with SD 0.28 in last-block alpha. A true difference of 0.10,
+  0.15, 0.20 or 0.30 is detected with power 18%, 31%, 47% or 73% at 12 seeds per set, 34%, 58%, 80%
+  or 96% at 24, and 56%, 86%, 97% or 100% at 48. The differences seen so far are 0.01-0.15.
+- **Secondary tests**, kept so earlier results stay comparable: the dihedral-box counts
+  pre-registered 10-06, unwound (last-block TM4 < 0.90) and flipped (a TM4 glycine at phi > 0 in
+  > 0.25 of the last block), by Fisher's exact test; and the DSSP fraction in helix of any kind.
+  The box accepts pi-bulges and frayed residues, and DSSP alpha runs 0.10-0.22 below it in every
+  set. c9_00's two halves, on one input, flipped 1 and 8 of 12.
+- **24 seeds** run for the frozen comparisons (above). Any other extension is the user's decision,
+  given the power figures.
 
 **Setting up the next computer**
 1. Pull the repo (the user commits these files first; Claude never touches git); build `.venv` and
@@ -203,7 +213,7 @@ a set to 24 seeds only where it differs by three or more seeds.
 2. Open the midway2 socket ("Connect" below).
 3. Make `scratchpad/ff3_local_test` from `checks/r4_epochs/tm4_local` (not in git):
    - `scripts/` (fixed `patch_glpg.py` md5 `705891194b57b2139f1e817b80b0135a`, `run_glpg.sh`,
-     `tm4_local.py`, `tm4_compare.py` md5 `a4e52689...`, `tm4_queue.sh` md5 `eac953d0...`) and
+     `tm4_local.py` md5 `2701e5d0...`, `tm4_compare.py` md5 `ce50f0c6...`, `tm4_queue.sh` md5 `eac953d0...`) and
      `events_vs_tm4.py` (md5 `ef9ce96c...`).
    - `seed/glpG-RKRK-79HIS.live.up` into `seeds/` (the watch prompt names `seeds/`).
    - `runs_cov/` (~14 GB): the finished sets `tm4_compare.py` reads, seeds 13-24 included.
@@ -305,7 +315,8 @@ this computer the queue runs through scripts/tm4_queue.sh and tm4_queue.txt (wat
 seed directory is seeds/.
 - One 12-seed set at a time, on inputs patched with the fixed patch_glpg.py (md5 70589119...).
 - Compare each checkpoint with its own start, and bz / cz / dz / bs / ds with their port-rate twin
-  at the same step, by Fisher's exact test.
+  at the same step, by the primary DSSP test (findings 1.25; it replaced Fisher's exact test on
+  10-09 at the user's word).
 - Scan finished seeds for total-potential jumps above 3000 between frames (events_vs_tm4.py).
 - Copy each finished set and its table to checks/r4_epochs/tm4_local/runs_cov/.
 Notify only for: failures, a TM4 or panel result, a gate, polygly ending, a new margin hold in a
@@ -319,7 +330,8 @@ Otherwise stay quiet."
    already tried. If it is still down, record that in §1, notify once and stop the pass. Never loop
    on connection attempts.
 2. **Queue and logs.** Run `squeue -u yinhanw` and `bash
-   /project/trsosnic/yinhan/ff3_selection/submit_new.sh`. Check the newest link log of each run for
+   /project/trsosnic/yinhan/ff3_selection/submit_new.sh`, which submits each new epoch end's panel
+   without asking (user, 10-08 11:05). Check the newest link log of each run for
    `WORKER_FAIL`, `Traceback`, `STOPPED`, `never started`.
 3. **Every step finished since the last pass.**
    - Run `cd $P/training && source <run>/env.sh && python3 check_step.py <run>
@@ -347,9 +359,15 @@ Otherwise stay quiet."
      scratchpad/ff3_local_test/tm4_compare_cov_<tag>.txt`, with `<ref>` the tag's start (header
      table); a second table against the twin or the epoch before is
      `tm4_compare_cov_<tag>_vs_<ref>.txt`, and a 24-seed table `tm4_compare_cov_<tag>_24.txt`. It
-     refuses a set with an unfinished log or seeds other than 1-12 or 1-24. Its output holds:
+     refuses a set with an unfinished log or seeds other than 1-12 or 1-24; a first half read while
+     its seeds 13-24 run takes a third argument, 12. Its output holds:
      - per-seed `avg_kinetic_energy/1.5kT` (~1.0) and `tm4_local.py`'s tables;
-     - Fisher's exact test on unwound and flipped seeds, with the counts that would resolve;
+     - TM4's DSSP alpha-helix and any-helix fractions (135-151) per seed and block, and alpha per
+       residue;
+     - the primary test, DSSP alpha-helix by a two-sided Mann-Whitney with a bootstrap interval
+       (findings 1.25);
+     - the secondary tests: Fisher's exact test on unwound and flipped seeds, with the counts that
+       would resolve, and one-sided Mann-Whitney tests on the dihedral TM4, TM1 and any-helix;
      - the energy jumps (`events_vs_tm4.py`).
      It reproduces the MacBook Pro's b9_01 table exactly. Read the direction across epoch ends.
    - Record the result in findings.md, copy the runs (seeds 13-24 too) and the tables to
@@ -625,8 +643,11 @@ Q(T), so it differs by up to 0.001 from the per-seed values above.
 ## 0d. midway2 node exclusions: one law (2026-10-08)
 
 **The only midway2 node list is `/project/trsosnic/yinhan/slurm/midway2.args`** (user, 10-08):
-`--partition=broadwl --exclude=midway2-[0003,0010-0011,0027,0033-0035,0037,0060,0080,0085,0342-0345]`.
-Each node's record of failures is in `README.md` beside it; §8 has the history. Before 10-08 the
+`--partition=broadwl --exclude=midway2-[0003,0010-0011,0027,0033-0035,0037,0060,0080,0085,0088,0342-0345]`.
+Each node's record of failures is in `README.md` beside it; §8 has the history. midway2-0088 was
+added 10-09 04:12 at the user's word (backups `*.bak_pre_0088_20261009`), and `update_pending.sh`
+gave all 9 pending jobs the new list; `--test-only` accepted the list and the wrapper refused `-w
+midway2-0088`. Before 10-08 the
 list was copied by hand into 13 `slurm.args`, `submit_remd.sh`, `bench.sbatch` and a dozen static
 `#SBATCH` lines in three versions, and a queued chain never saw a node added later.
 
@@ -665,36 +686,37 @@ keeps the link; plain `cp` copies the text, which then drifts).
   on a midway2 host and its own flags on a midway3 one.
 * `update_pending.sh` set all 13 pending jobs. Their dependencies were intact, although squeue
   briefly showed reason "None".
+* End to end on real submissions: bs_01's panel 49208587 (11:43) and the first chain successor
+  submitted from a running link, ff30_gdepth_fz's 49214121 (21:35), carry 0027 in ExcNodeList.
 
 ## 1. Current jobs
 
-Snapshot **2026-10-08 09:46 CDT, verified live against `squeue` on midway2**, a Mac Studio watch pass (the MacBook Pro's last was 15:47; the socket landed on midway2-login1, whose `/project` answers; login2's hung from 10:48, §8) (no jobs on midway3). Finished and cancelled
+Snapshot **2026-10-09 04:47 CDT, verified live against `squeue` on midway2**, a Mac Studio watch pass (the MacBook Pro's last was 15:47; the socket landed on midway2-login1, whose `/project` answers; login2's hung from 10:48, §8) (no jobs on midway3). Finished and cancelled
 rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49206580** (midway2) | **ff30_bio_dt009**: ff30_bio restarted at dt 0.009, otherwise identical (trainer `$P/training/ConDiv.py`, which differs from ff30_bio's run copy only in dt; initial force field byte-identical, `checks/dt009_init_20261006`); `$P/training/ff30_bio_dt009`, target 76, 54 steps per link, gate `ff30bio9-gate` up to 13 epochs (converged: validated as `ff_3.0_bio` on broadwl); first-link log `$P/training/condiv-train_49194446.out` (submitted from `training/`), later links' logs in the run dir | First link 49194446 COMPLETED 10-07 16:02 after its 54 steps (0-53, `epoch_02_minibatch_15`); link 2, 49194448 (from 00:12 10-08; `step 54 of 76, resuming from run_output/epoch_02_minibatch_15/checkpoint.pkl`), **NODE_FAIL 10-08 08:32** in step 64 (`epoch_03_minibatch_07` half-written): its batch host midway2-0027 failed, as it did for ff21_ctrl_fz's link at 00:12 (0027 is MIXED again at 08:45, and is ff30_gdepth_si's batch host; excluded by the law from 09:40, §0d, and every pending job carries it). Steps 54-63 done. **Successor 49206580 PD (Priority), Slurm start estimate 10-09 05:20 (09:46)**; it resumes from step 63 by chain design (nothing resubmitted) with 12 steps left, so the gate comes ~7 h after it starts. Steps 29-63 min each, except 106 min for step 46, which relaunched five workers that never started, as step 45 did six; 24 of 24 returned every step; KE/1.5kT at most 1.017 over every replica of every step (all 1,104 protein-steps to step 45, findings 1.21; at most 1.015 at steps 46-53). **HOLD since step 14** (user told). Margin +0.192 start, +0.096 step 14, +0.072 step 24, **+0.050 at step 37** (`b9_01`), +0.036 / +0.034 / +0.032 at steps 43-45, +0.027 / +0.022 / +0.018 / +0.014 / +0.014 / +0.015 / +0.014 / +0.015 at steps 46-53, +0.017 / +0.018 / +0.020 / +0.016 / +0.011 / +0.005 / +0.002 / +0.003 / +0.001 / +0.002 at steps 54-63 (01:15-07:46, the last link-2 step; KE/1.5kT at most 1.014): E_alpha -1.961 to -1.828, E_other -1.769 to -1.816; dhb -0.406 to -0.492, sheet mean 0.161 to 0.199. Helical GLY aL free 0.02-0.11 per step, restrained <= 0.002. Panels: `b9_00` folded 0.478, helix -0.030; **`b9_01` 0.465, -0.031** (bio_start 0.602, -0.019; findings 1.21). **TM4 `b9_01` on fixed inputs** (finished 15:14): unwound 6, flipped 5 of 12, against bio_start's 5 and 4, Fisher p 1.00 for both; last-block TM4 mean 0.833 against 0.899 (findings 1.24; runs in `tm4_local/runs_cov/`) | the watch every step; **`b9_02`** (step 56) finished 02:36: extracted, panel 49207052 PD (estimate 10-08 17:21 at 09:46), TM4 queued; then the gate at step 76 (`ff30bio9-gate`) ~7 h after 49206580 starts |
-| **49194449** (midway2) | **ff30_gdepth_dt009**: ff30_gdepth restarted at dt 0.009, otherwise identical (trainer `ff30_gdepth_dt009/trainer/`, dt the only change; rama_round_00 and initial force field byte-identical); `$P/training/ff30_gdepth_dt009`, target 76, 54 steps per link, gate `ff30gdep9-gate` (converged: `ff_3.0_gdepth`); first-link log `$P/training/condiv-train_49194447.out` | **First link 49194447 TIMEOUT 10-07 21:46** at its 36 h wall, in step 35 (`epoch_01_minibatch_16` half-written): its steps took 40-115 min, not the ~36 min the 54-step link assumed (§8). Steps 0-34 done (`epoch_01_minibatch_15` 21:13); workers relaunched after a failed launch at step 16 (2nmu) and step 31 (3tjy), 24 of 24 returned every step; KE/1.5kT at most 1.016 over every replica of all 840 protein-steps. **Successor 49194449 R since 00:22 10-08** (18 nodes; log `ff30_gdepth_dt009/condiv-train_49194449.out`: `step 35 of 76, resuming from run_output/epoch_01_minibatch_15/checkpoint.pkl`, `this link runs 41 steps`; at ~60 min a step it will time out again near step 70); its successor 49206658 queued. Margin +0.131 at step 13, **+0.141 at step 18** (epoch-0 end), +0.140 at step 24, then falling: +0.138 / +0.130 / +0.121 / +0.114 / +0.110 / +0.108 / +0.105 / +0.101 / +0.097 / +0.096 at steps 25-34, +0.097 / +0.096 / +0.097 / +0.101 / +0.106 / +0.109 / +0.111 / +0.108 / +0.104 / +0.099 / **+0.091** at steps 35-45 (00:57-08:59, steps 38-45 on round 2's library; 24 of 24, KE/1.5kT at most 1.015; E_alpha -1.856, E_other -1.759; dhb -0.460, sheet mean 0.217, rot rms 0.090). **HOLD since step 33** (user told 20:30); it trains on. Depth round 1 (`rama_rounds.txt`): free-native gap aR -0.002 aL +0.004, dL - dR +0.567; round 2 (epoch-1 end): gap aR +0.000 aL +0.007, offsets aR -0.0965 aL +0.4808, dL - dR +0.577. Panel **`d9_00` 0.477, helix -0.024** (gdepth_start 0.603, -0.018, dominates it in helix); **TM4 `d9_00` on fixed inputs** (Mac Studio 22:25-00:26): unwound 5, flipped 2 of 12, against gdepth_start's 7 and 2, Fisher p 0.68 and 1.00, not resolved; last-block TM4 mean 0.900 against 0.849 (findings 1.24). TM4 **`d9_01`** (Mac Studio 06:15-08:12): unwound 6, flipped 4, against gdepth_start's 7 and 2 and d9_00's 5 and 2, not resolved (findings 1.24) | the watch every step and round; **`d9_01`** (step 37) finished 02:16: extracted, panel 49207053 PD (estimate 10-08 21:20 at 09:46), TM4 queued |
-| **49202419** (midway2) | **ff30_bio_fz**: ff30_bio_dt009 with hb, dhb, hbg and sheet at learning rate 0 (user, 10-07; plan.md Phase 11 revised decision), trainer copy `ff30_bio_fz/trainer/ConDiv.py` (md5 `a97e95a6...`; differs from `$P/training/ConDiv.py` only in that rate line, its comment and three docstring items); initial force field byte-identical to ff30_bio_dt009's (`checks/fz_init_20261007`); target 76, gate `ff30biofz-gate` up to 13 epochs (converged: validated as `ff_3.0_bio_fz`); first-link log `$P/training/condiv-train_49201673.out` | **First link FAILED 10-07 14:40** (exit 1, 4 h 35 min): at step 5, 2cwr and 4exo could not start on midway2-0088 (`srun: Invalid job credential`, a node-side Slurm fault; 22 of 24 workers had finished), and after two relaunches each the step raised `2 of 24 workers failed` (`condiv-train_49201673.out`). Steps 0-4 done (11:56-14:03), 24 of 24 each, KE/1.5kT at most 1.013; hb, dhb, sheet unchanged through step 4 (margin +0.1919). **Successor 49202419 R since 21:46 10-07**; its log `ff30_bio_fz/condiv-train_49202419.out` reads `step 5 of 76, resuming from run_output/epoch_00_minibatch_04/checkpoint.pkl` (owed check done); its successor 49206071 queued. 09:46: steps 5-28 done (22:16-09:39), 24 of 24, KE/1.5kT at most 1.017, margin +0.1919 (frozen), step 29 running. **`bz_00`** (step 18) extracted: its hbond.h5, sheet and rama.dat are md5-identical to bio_start's (`checks/r4_epochs`); panel 49207340 PD (estimate 10-09 02:50 at 09:46); TM4 queued. **Freeze check passed** (12:05; `checks/fz_init_20261007/bz_step00`): hbond.h5 and sheet md5-identical to ff2.1's, hb / dhb / sheet mean unchanged (margin +0.1919); sidechain.h5, environment.h5, bb_env.dat moved; rama.dat the frozen BioEmu library | the watch every step; panels and TM4 `bz_EE` (`bz_01`, step 37, ~10-08 14:00 at ~28 min a step) |
-| **49204255** (midway2) | **ff30_bio_si**: ff30_bio_dt009 with every group but rot at the SI's learning rate (user, 10-07; plan.md Phase 11; findings 1.23): `alpha_scale` 0.25, rot base doubled so rot stays 0.0125, hence hb 0.005, dhb 0.0025, sheet 0.0075, burial groups halved. Trainer copy `ff30_bio_si/trainer/ConDiv.py` (md5 `a1943099...`; differs from `$P/training/ConDiv.py` only in those lines, their comment and docstring); initial force field byte-identical to ff30_bio_dt009's (`checks/si_init_20261007`, build log and trainer diff there); target 76, gate `ff30biosi-gate` up to 13 epochs (converged: validated as `ff_3.0_bio_si`); first-link log `$P/training/condiv-train_49204255.out` | **R since 16:34 10-07** (14 nodes); successor 49205039 queued. 09:46: steps 0-33 done (17:09-09:23; 26-35 min each), step 34 running; **`bs_00`** (step 18, 02:09) extracted, panel 49207054 PD (estimate 10-09 01:20 at 09:46), TM4 queued; 24 of 24 each, KE/1.5kT at most 1.015. **Rates confirmed** at step 0: checkpoint `initial_alpha` hb 0.005, dhb 0.0025, sheet 0.0075, rot 0.0125, and the first step moved each parameter by exactly that (ff30_bio_dt009's step 0: 0.01, 0.005, 0.015, 0.0125); the link log prints no rates. Margin +0.192, +0.190, +0.186, +0.181, +0.176, +0.169, +0.162, +0.155, +0.149, +0.142, +0.135, +0.131, +0.127, +0.125, +0.122, +0.121, +0.119, +0.117, +0.115, +0.115, +0.113, +0.111, +0.109, +0.107, +0.104, +0.100 (+0.1001), **+0.097**, +0.095, +0.092, +0.090, +0.088, +0.087, +0.088, +0.088 at steps 0-33. **HOLD since step 26** (06:06; user told 06:50); it trains on (ff30_bio_dt009 +0.144 at step 3, +0.126 at step 7); dhb -0.416, sheet mean 0.171 at step 31 | watch as the dt 0.009 runs; tags `bs_EE`; TM4 against bio_start and ff30_bio_dt009 at the same step |
-| **49204256** (midway2) | **ff30_gdepth_si**: ff30_gdepth_dt009 at the same SI rates, trainer copy `ff30_gdepth_si/trainer/ConDiv.py` (md5 `90ae572c...`); initial force field and `rama_round_00.dat` byte-identical to ff30_gdepth_dt009's; depth start the same (alpha_R -0.0918, alpha_L +0.4621); target 76, gate `ff30gdepsi-gate` (converged: `ff_3.0_gdepth_si`); first-link log `$P/training/condiv-train_49204256.out` | **R since 17:20 10-07** (24 nodes); successor 49205173 queued. 09:46: steps 0-19 done (18:00-09:17; 29-63 min), step 20 running; **`ds_00`** (step 18) extracted, panel 49207993 PD (estimate 10-09 02:50 at 09:46), TM4 queued. Depth round 1 (`rama_rounds.txt`): gap aR +0.001 aL +0.008, offsets aR -0.0882 aL +0.4754, dL - dR +0.564; 24 of 24, KE/1.5kT at most 1.015. **Rates confirmed** at step 0, as ff30_bio_si's (`initial_alpha` hb 0.005, dhb 0.0025, sheet 0.0075, rot 0.0125, and the first step moved each parameter by exactly that; ff30_gdepth_dt009's step 0: 0.01, 0.005, 0.015, 0.0125). Margin +0.192, +0.191, +0.185, +0.179, +0.175, +0.170, +0.168, +0.165, +0.162, +0.160, +0.157, +0.155, +0.152, +0.149, +0.147, +0.144, +0.142, +0.140, +0.136, +0.134 at steps 0-19 (ff30_gdepth_dt009 +0.183 at step 3); depth round 0, dL - dR +0.554 | watch as the dt 0.009 runs; tags `ds_EE`; TM4 against gdepth_start and ff30_gdepth_dt009 |
-| **49205852** (midway2) | **ff21_ctrl_fz**: the frozen arm's matched control, resubmitted unchanged after its 13:12 cancellation (user, 10-07 13:35): ff21_ctrl_dt009 with hb, dhb, hbg and sheet at learning rate 0 (trainer copy md5 `a97e95a6...`, the same as ff30_bio_fz's), ff2.1's `rama.dat`; initial force field is ff2.1 exactly (`checks/fz_init_20261007`); **target 38, no gate**; first-link log `$P/training/condiv-train_49204264.out` | **First link 49204264 NODE_FAIL 10-08 00:12** in step 2: its batch node midway2-0027 failed (`CANCELLED ... DUE TO NODE FAILURE`; 0027 is allocated again, now as ff30_bio_dt009's batch host). Steps 0-1 done (22:10, 23:17; 54 and 67 min), 24 of 24, KE/1.5kT at most 1.012, margin +0.1919 (frozen). **Successor 49205852 PD (Priority), Slurm start estimate 10-09 04:34 (09:46)**; it resumes from step 1 (chain design; nothing resubmitted). **Freeze check passed** (22:12; `checks/fz_init_20261007/cz_step00`, log `extract_cz_step00.log`): hbond.h5 and sheet md5-identical to `checks/fz_init_20261007/ff21_ctrl_fz` and to `$P/parameters/ff_2.1`, rama.dat unchanged; sidechain.h5, environment.h5, bb_env.dat moved; check_step: hb / dhb / sheet mean unchanged, margin +0.1919 | the watch every step; tags `cz_EE`; TM4 against ff21_released and against c9 at the same step |
-| **49206070** (midway2) | **ff30_gdepth_fz**: ff30_gdepth_dt009 with hb, dhb, hbg and sheet at learning rate 0, resubmitted unchanged after its 13:12 cancellation (user, 10-07 21:45: run every frozen arm, though it departs from the group's workflow). Trainer copy `ff30_gdepth_fz/trainer/ConDiv.py` (md5 `84704d98...`), which differs from `ff30_gdepth_dt009/trainer/ConDiv.py` only in that rate line, its comment and one docstring item; `init_param/` (all five files, so hbond.h5 and sheet are ff2.1's), `rama_round_00.dat`, `rama_basin.py`, `pdb_list`, `env.sh` and the `upside_input` listing identical to ff30_gdepth_dt009's (checked 21:45); target 76, gate `ff30gdepfz-gate` (converged: `ff_3.0_gdepth_fz`); first-link log `$P/training/condiv-train_49206070.out` | PD since 21:46 10-07; Slurm start estimate 10-08 18:49 (07:46) | report its start; on step 0 the freeze check (extract to `checks/fz_init_20261007/dz_step00`; hbond.h5 and sheet byte-identical to `checks/fz_init_20261007/ff30_gdepth_fz`); tags `dz_EE`; TM4 against gdepth_start and against d9 at the same step |
+| **49206580** (midway2) | **ff30_bio_dt009**: ff30_bio restarted at dt 0.009, otherwise identical (trainer `$P/training/ConDiv.py`, which differs from ff30_bio's run copy only in dt; initial force field byte-identical, `checks/dt009_init_20261006`); `$P/training/ff30_bio_dt009`, target 76, 54 steps per link, gate `ff30bio9-gate` up to 13 epochs (converged: validated as `ff_3.0_bio` on broadwl); first-link log `$P/training/condiv-train_49194446.out` (submitted from `training/`), later links' logs in the run dir | First link 49194446 COMPLETED 10-07 16:02 after its 54 steps (0-53, `epoch_02_minibatch_15`); link 2, 49194448 (from 00:12 10-08; `step 54 of 76, resuming from run_output/epoch_02_minibatch_15/checkpoint.pkl`), **NODE_FAIL 10-08 08:32** in step 64 (`epoch_03_minibatch_07` half-written): its batch host midway2-0027 failed, as it did for ff21_ctrl_fz's link at 00:12 (0027 is MIXED again at 08:45, and is ff30_gdepth_si's batch host; excluded by the law from 09:40, §0d, and every pending job carries it). Steps 54-63 done. **Successor 49206580 PD (Priority), Slurm start estimate 10-10 03:43 (04:47)**; it resumes from step 63 by chain design (nothing resubmitted) with 12 steps left, so the gate comes ~7 h after it starts. Steps 29-63 min each, except 106 min for step 46, which relaunched five workers that never started, as step 45 did six; 24 of 24 returned every step; KE/1.5kT at most 1.017 over every replica of every step (all 1,104 protein-steps to step 45, findings 1.21; at most 1.015 at steps 46-53). **HOLD since step 14** (user told). Margin +0.192 start, +0.096 step 14, +0.072 step 24, **+0.050 at step 37** (`b9_01`), +0.036 / +0.034 / +0.032 at steps 43-45, +0.027 / +0.022 / +0.018 / +0.014 / +0.014 / +0.015 / +0.014 / +0.015 at steps 46-53, +0.017 / +0.018 / +0.020 / +0.016 / +0.011 / +0.005 / +0.002 / +0.003 / +0.001 / +0.002 at steps 54-63 (01:15-07:46, the last link-2 step; KE/1.5kT at most 1.014): E_alpha -1.961 to -1.828, E_other -1.769 to -1.816; dhb -0.406 to -0.492, sheet mean 0.161 to 0.199. Helical GLY aL free 0.02-0.11 per step, restrained <= 0.002. Panels: `b9_00` folded 0.478, helix -0.030; **`b9_01` 0.465, -0.031** (bio_start 0.602, -0.019; findings 1.21); **`b9_02` 0.448, -0.026** on 34 domains (49207052, COMPLETED 21:28), dominated by gdepth_start in helix (findings 1.21). **TM4 `b9_01` on fixed inputs** (finished 15:14): unwound 6, flipped 5 of 12, against bio_start's 5 and 4, Fisher p 1.00 for both; last-block TM4 mean 0.833 against 0.899 (findings 1.24; runs in `tm4_local/runs_cov/`). **TM4 `b9_02`** (Mac Studio 19:49-21:45): unwound 8, flipped 4 of 12, against bio_start's 5 and 4 (p 0.41, 1.00) and b9_01's 6 and 5 (p 0.68, 1.00); last-block TM4 0.830 against 0.899 and 0.833, so epoch 2 keeps the epoch-1 lean (findings 1.24) | the watch every step; the gate at step 76 (`ff30bio9-gate`) ~7 h after 49206580 starts |
+| **49194449** (midway2) | **ff30_gdepth_dt009**: ff30_gdepth restarted at dt 0.009, otherwise identical (trainer `ff30_gdepth_dt009/trainer/`, dt the only change; rama_round_00 and initial force field byte-identical); `$P/training/ff30_gdepth_dt009`, target 76, 54 steps per link, gate `ff30gdep9-gate` (converged: `ff_3.0_gdepth`); first-link log `$P/training/condiv-train_49194447.out` | **First link 49194447 TIMEOUT 10-07 21:46** at its 36 h wall, in step 35 (`epoch_01_minibatch_16` half-written): its steps took 40-115 min, not the ~36 min the 54-step link assumed (§8). Steps 0-34 done (`epoch_01_minibatch_15` 21:13); workers relaunched after a failed launch at step 16 (2nmu) and step 31 (3tjy), 24 of 24 returned every step; KE/1.5kT at most 1.016 over every replica of all 840 protein-steps. **Successor 49194449 R since 00:22 10-08** (18 nodes; log `ff30_gdepth_dt009/condiv-train_49194449.out`: `step 35 of 76, resuming from run_output/epoch_01_minibatch_15/checkpoint.pkl`, `this link runs 41 steps`; at the 36-70 min of steps 57-64 it reaches step 75 ~10:00-14:00 10-09, so its wall (12:22) may come first; if it times out, successor 49206658 finishes the run); its successor 49206658 queued. Margin +0.131 at step 13, **+0.141 at step 18** (epoch-0 end), +0.140 at step 24, then falling: +0.138 / +0.130 / +0.121 / +0.114 / +0.110 / +0.108 / +0.105 / +0.101 / +0.097 / +0.096 at steps 25-34, +0.097 / +0.096 / +0.097 / +0.101 / +0.106 / +0.109 / +0.111 / +0.108 / +0.104 / +0.099 / +0.091 / +0.084 / +0.078 / +0.077 / +0.075 / +0.075 / +0.074 / +0.073 / +0.073 / +0.070 / +0.066 / +0.066 / +0.067 / +0.072 / +0.075 / +0.078 / +0.075 / +0.074 / +0.074 / +0.072 / +0.073 / +0.073 / +0.080 / +0.087 / **+0.091** at steps 35-69 (00:57-04:07 10-09, steps 38-56 on round 2's library and 57-69 on round 3's; steps 57-69 took 36-70 min, step 67 relaunched 1pz4 once; step 60 relaunched 1wjg once, 24 of 24 returned), 30-54 min each; 24 of 24, KE/1.5kT at most 1.015; E_alpha -1.854, E_other -1.775 at step 47; dhb -0.488, sheet mean 0.222, rot rms 0.107). **HOLD since step 33** (user told 20:30); it trains on. Depth round 1 (`rama_rounds.txt`): free-native gap aR -0.002 aL +0.004, dL - dR +0.567; round 2 (epoch-1 end): gap aR +0.000 aL +0.007, offsets aR -0.0965 aL +0.4808, dL - dR +0.577; round 3 (epoch-2 end): gap aR -0.001 aL +0.013, offsets aR -0.1002 aL +0.5017, dL - dR +0.602. Panel **`d9_00` 0.477, helix -0.024** (gdepth_start 0.603, -0.018, dominates it in helix); **`d9_01` 0.457, -0.025** on 34 domains (49207053, COMPLETED 21:35), dominated by gdepth_start in helix (findings 1.21); **TM4 `d9_00` on fixed inputs** (Mac Studio 22:25-00:26): unwound 5, flipped 2 of 12, against gdepth_start's 7 and 2, Fisher p 0.68 and 1.00, not resolved; last-block TM4 mean 0.900 against 0.849 (findings 1.24). TM4 **`d9_01`** (Mac Studio 06:15-08:12): unwound 6, flipped 4, against gdepth_start's 7 and 2 and d9_00's 5 and 2, not resolved (findings 1.24); DSSP alpha 0.801 at d9_00 and 0.615 at d9_01, against 0.657 (findings 1.25) | the watch every step and round; **`d9_02`** (step 56, 16:49): panel 49212678 COMPLETED 02:04: **`d9_02` 0.439, helix -0.030** (41 domains), dominated by gdepth_start in helix; 0.439 against d9_01's 0.457 on their 39 shared domains (findings 1.21); **TM4 `d9_02`** (Mac Studio 01:37-03:35), primary test: DSSP alpha 0.765 against gdepth_start's 0.657 (+0.108 [-0.105, +0.320], p 0.58) and d9_01's 0.615 (p 0.21), not resolved; it levels off over the last two blocks and has no energy jump (findings 1.25); secondary counts 4 unwound, 3 flipped; `d9_03` (step 75): extract, panel, patch, TM4 |
+| **49206071** (midway2) | **ff30_bio_fz**: ff30_bio_dt009 with hb, dhb, hbg and sheet at learning rate 0 (user, 10-07; plan.md Phase 11 revised decision), trainer copy `ff30_bio_fz/trainer/ConDiv.py` (md5 `a97e95a6...`; differs from `$P/training/ConDiv.py` only in that rate line, its comment and three docstring items); initial force field byte-identical to ff30_bio_dt009's (`checks/fz_init_20261007`); target 76, gate `ff30biofz-gate` up to 13 epochs (converged: validated as `ff_3.0_bio_fz`); first-link log `$P/training/condiv-train_49201673.out` | **First link FAILED 10-07 14:40** (exit 1, 4 h 35 min): at step 5, 2cwr and 4exo could not start on midway2-0088 (`srun: Invalid job credential`, a node-side Slurm fault; 22 of 24 workers had finished), and after two relaunches each the step raised `2 of 24 workers failed` (`condiv-train_49201673.out`). Steps 0-4 done (11:56-14:03), 24 of 24 each, KE/1.5kT at most 1.013; hb, dhb, sheet unchanged through step 4 (margin +0.1919). Link 2, 49202419 (from 21:46 10-07, `step 5 of 76, resuming from run_output/epoch_00_minibatch_04/checkpoint.pkl`), **COMPLETED 10-09 02:55** after its 54 steps (5-58, `epoch_03_minibatch_01`; 28-53 min each), 24 of 24 every step, KE/1.5kT at most 1.017, margin +0.1919 (frozen). **Successor 49206071 PD (Priority, estimate 10-10 03:43 at 04:47)**; it resumes from step 58 by chain design with 17 steps left (owed: its first line `step 59 of 76, resuming from run_output/epoch_03_minibatch_01/checkpoint.pkl`). **`bz_01`** (step 37, 13:58) extracted: hbond.h5, sheet and rama.dat md5-identical to bz_00's (so bio_start's); panel 49210456 COMPLETED 23:14: **`bz_01` 0.461, helix -0.028** (38 domains; b9_01 0.465, -0.031; bz_00 0.450), neither it nor b9_01 dominating, gdepth_start dominating it in helix (findings 1.21); patched, **TM4 `bz_01`** (Mac Studio 17:53-19:49): unwound 6, flipped 2 of 12, against bio_start's 5 and 4 (p 1.00, 0.64) and b9_01's 6 and 5 (p 1.00, 0.37); last-block TM4 0.846 against 0.899 and 0.833, so the freeze does not stop the epoch-1 lean; s12 ends at 0.22, the lowest on fixed inputs (findings 1.24). **`bz_00`** (step 18) extracted: its hbond.h5, sheet and rama.dat are md5-identical to bio_start's (`checks/r4_epochs`); panel 49207340 COMPLETED 21:47: **`bz_00` 0.450, helix -0.030** (36 domains; b9_00 0.478, -0.030), not dominated by b9_00, dominated by gdepth_start in helix (findings 1.21); **TM4 `bz_00`, 24 seeds** (Mac Studio 10:08-14:00): seeds 1-12 unwound 3, flipped 0 (one-sided p 0.047 against bio_start's and b9_00's 4 flips), seeds 13-24 unwound 5, flipped 4; at 24 seeds 8 and 4 against bio_start's 5 and 4 of 12, p 0.45 and 0.24, not resolved (findings 1.24). Against b9_00 at 24 seeds (16:05): 8 against 7 unwound, 4 against 5 flipped, p 1.00; TM1 higher in bz_00 (0.891 against 0.813, an added test, p 0.003). **Freeze check passed** (12:05; `checks/fz_init_20261007/bz_step00`): hbond.h5 and sheet md5-identical to ff2.1's, hb / dhb / sheet mean unchanged (margin +0.1919); sidechain.h5, environment.h5, bb_env.dat moved; rama.dat the frozen BioEmu library | the watch every step; **`bz_02`** (step 56, 01:42): extracted (hbond.h5, sheet and rama.dat md5-identical to bz_01's), panel 49214736 (01:47, carries the law; estimate 10-10 03:43 at 04:47), patched, TM4 queued after d9_02, against bio_start and b9_02 |
+| **49205039** (midway2) | **ff30_bio_si**: ff30_bio_dt009 with every group but rot at the SI's learning rate (user, 10-07; plan.md Phase 11; findings 1.23): `alpha_scale` 0.25, rot base doubled so rot stays 0.0125, hence hb 0.005, dhb 0.0025, sheet 0.0075, burial groups halved. Trainer copy `ff30_bio_si/trainer/ConDiv.py` (md5 `a1943099...`; differs from `$P/training/ConDiv.py` only in those lines, their comment and docstring); initial force field byte-identical to ff30_bio_dt009's (`checks/si_init_20261007`, build log and trainer diff there); target 76, gate `ff30biosi-gate` up to 13 epochs (converged: validated as `ff_3.0_bio_si`); first-link log `$P/training/condiv-train_49204255.out` | First link 49204255 (from 16:34 10-07, 14 nodes) **COMPLETED 10-08 20:10** after its 54 steps (0-53, `epoch_02_minibatch_15`; 26-41 min each). **Successor 49205039 PD (Priority), Slurm start estimate 10-10 03:43 (04:47)**, carrying the law; it resumes from step 53 by chain design with 22 steps left; **`bs_00`** (step 18, 02:09) extracted, panel 49207054 COMPLETED 21:39: **`bs_00` 0.457, helix -0.028** on 34 domains, dominated by gdepth_start in helix and not by its twin b9_00 (findings 1.21); **`bs_01`** (step 37, 11:18) extracted 11:44 (rama.dat md5-identical to bs_00's, hbond.h5 moved), panel 49208587 COMPLETED 22:41: **`bs_01` 0.430, helix -0.033** (36 domains; b9_01 0.465, -0.031), dominated by its twin b9_01 in helical glycine (findings 1.21); **TM4 `bs_01`** (Mac Studio 15:56-17:53): unwound 5, flipped 2 of 12, against bio_start's 5 and 4 (p 1.00, 0.64) and its twin b9_01's 6 and 5 (p 1.00, 0.37), not resolved, leaning better than b9_01 (last-block TM4 0.879 against 0.833; findings 1.24); **TM4 `bs_00`** (Mac Studio 08:12-10:08): unwound 6, flipped 5 of 12, against bio_start's 5 and 4 (p 1.00) and its twin b9_00's 4 and 4 (p 0.68, 1.00), not resolved, leaning worse than b9_00 (findings 1.24); 24 of 24 each, KE/1.5kT at most 1.015. **Rates confirmed** at step 0: checkpoint `initial_alpha` hb 0.005, dhb 0.0025, sheet 0.0075, rot 0.0125, and the first step moved each parameter by exactly that (ff30_bio_dt009's step 0: 0.01, 0.005, 0.015, 0.0125); the link log prints no rates. Margin +0.192, +0.190, +0.186, +0.181, +0.176, +0.169, +0.162, +0.155, +0.149, +0.142, +0.135, +0.131, +0.127, +0.125, +0.122, +0.121, +0.119, +0.117, +0.115, +0.115, +0.113, +0.111, +0.109, +0.107, +0.104, +0.100 (+0.1001), **+0.097**, +0.095, +0.092, +0.090, +0.088, +0.087, +0.088, +0.088, +0.088, +0.086, +0.086, +0.084, +0.083, +0.081, +0.079, +0.076, +0.072, +0.069, +0.066, +0.063, +0.062, +0.060, +0.060, +0.059, +0.059, +0.060, +0.060, +0.060 at steps 0-53. **HOLD since step 26** (06:06; user told 06:50); it trains on (ff30_bio_dt009 +0.144 at step 3, +0.126 at step 7); dhb -0.416, sheet mean 0.171 at step 31 | watch as the dt 0.009 runs; tags `bs_EE`; TM4 against bio_start and ff30_bio_dt009 at the same step |
+| **49205173** (midway2) | **ff30_gdepth_si**: ff30_gdepth_dt009 at the same SI rates, trainer copy `ff30_gdepth_si/trainer/ConDiv.py` (md5 `90ae572c...`); initial force field and `rama_round_00.dat` byte-identical to ff30_gdepth_dt009's; depth start the same (alpha_R -0.0918, alpha_L +0.4621); target 76, gate `ff30gdepsi-gate` (converged: `ff_3.0_gdepth_si`); first-link log `$P/training/condiv-train_49204256.out` | Link 49204256 (R from 17:20 10-07, 24 nodes) **NODE_FAIL 10-08 11:07** in step 21 (`epoch_01_minibatch_02` half-written): its batch host midway2-0027 failed, the third such failure today; the link started before the law excluded 0027. Steps 0-20 done (18:00-10:05; 29-63 min). **Successor 49205173 PD (Priority), Slurm start estimate 10-10 03:43 (04:47)**, carrying the law; it resumes from step 20 by chain design (nothing resubmitted); **`ds_00`** (step 18) extracted, **TM4 `ds_00`** (Mac Studio 21:45-23:41): unwound 9, flipped 3 of 12, against gdepth_start's 7 and 2 (p 0.67, 1.00) and its twin d9_00's 5 and 2 (p 0.21, 1.00), not resolved; last-block TM4 0.775, the lowest mean of any set (findings 1.24); panel 49207993 COMPLETED 22:39: **`ds_00` 0.412, helix -0.030** (36 domains; d9_00 0.477, -0.024), dominated by its twin d9_00 in helix (findings 1.21), TM4 queued. Depth round 1 (`rama_rounds.txt`): gap aR +0.001 aL +0.008, offsets aR -0.0882 aL +0.4754, dL - dR +0.564; 24 of 24, KE/1.5kT at most 1.015. **Rates confirmed** at step 0, as ff30_bio_si's (`initial_alpha` hb 0.005, dhb 0.0025, sheet 0.0075, rot 0.0125, and the first step moved each parameter by exactly that; ff30_gdepth_dt009's step 0: 0.01, 0.005, 0.015, 0.0125). Margin +0.192, +0.191, +0.185, +0.179, +0.175, +0.170, +0.168, +0.165, +0.162, +0.160, +0.157, +0.155, +0.152, +0.149, +0.147, +0.144, +0.142, +0.140, +0.136, +0.134, +0.132 at steps 0-20 (ff30_gdepth_dt009 +0.183 at step 3); depth round 0, dL - dR +0.554 | watch as the dt 0.009 runs; tags `ds_EE`; TM4 against gdepth_start and ff30_gdepth_dt009 |
+| **49214161** (midway2) | **ff21_ctrl_fz**: the frozen arm's matched control, resubmitted unchanged after its 13:12 cancellation (user, 10-07 13:35): ff21_ctrl_dt009 with hb, dhb, hbg and sheet at learning rate 0 (trainer copy md5 `a97e95a6...`, the same as ff30_bio_fz's), ff2.1's `rama.dat`; initial force field is ff2.1 exactly (`checks/fz_init_20261007`); **target 38, no gate**; first-link log `$P/training/condiv-train_49204264.out` | **First link 49204264 NODE_FAIL 10-08 00:12** in step 2: its batch node midway2-0027 failed (`CANCELLED ... DUE TO NODE FAILURE`; 0027 is allocated again, now as ff30_bio_dt009's batch host). Steps 0-1 done (22:10, 23:17; 54 and 67 min), 24 of 24, KE/1.5kT at most 1.012, margin +0.1919 (frozen). **Successor 49205852 R since 22:28 10-08** (12 nodes; log `ff21_ctrl_fz/condiv-train_49205852.out`: `step 2 of 38, resuming from run_output/epoch_00_minibatch_01/checkpoint.pkl`, `this link runs 36 steps`, owed check done); its successor 49214161 queued 22:28, carrying the law. Steps 2-10 done (23:01-03:42 10-09; 28-45 min each; step 10 relaunched 12 workers, 5 twice, and returned 24 of 24). **Link 49205852 FAILED 10-09 04:11 in step 11** (exit 1, `RuntimeError: 3 of 24 workers failed: 2r2y 3jyz 4qbo`): 8 workers' srun launches failed at 03:42, and those three failed all three on midway2-0088 (`Invalid job credential`). Steps 0-10 stand. **Successor 49214161 PD (Priority, estimate 10-10 03:43 at 04:47)**, which resumes from step 10 by chain design; midway2-0088, the node's second such event (§8), is excluded by the law since 04:12 (user), and 49214161 carries it (owed: its first line `step 11 of 38, resuming from run_output/epoch_00_minibatch_10/checkpoint.pkl`), 24 of 24, KE/1.5kT at most 1.015, margin +0.1919. **Freeze check passed** (22:12; `checks/fz_init_20261007/cz_step00`, log `extract_cz_step00.log`): hbond.h5 and sheet md5-identical to `checks/fz_init_20261007/ff21_ctrl_fz` and to `$P/parameters/ff_2.1`, rama.dat unchanged; sidechain.h5, environment.h5, bb_env.dat moved; check_step: hb / dhb / sheet mean unchanged, margin +0.1919 | the watch every step; tags `cz_EE`; `cz_00` (step 18) ~07:40 10-09: TM4 as `cz_00` and `cz_00 13 24`, against ff21_released and c9_00 at 24 seeds |
+| **49206070** (midway2) | **ff30_gdepth_fz**: ff30_gdepth_dt009 with hb, dhb, hbg and sheet at learning rate 0, resubmitted unchanged after its 13:12 cancellation (user, 10-07 21:45: run every frozen arm, though it departs from the group's workflow). Trainer copy `ff30_gdepth_fz/trainer/ConDiv.py` (md5 `84704d98...`), which differs from `ff30_gdepth_dt009/trainer/ConDiv.py` only in that rate line, its comment and one docstring item; `init_param/` (all five files, so hbond.h5 and sheet are ff2.1's), `rama_round_00.dat`, `rama_basin.py`, `pdb_list`, `env.sh` and the `upside_input` listing identical to ff30_gdepth_dt009's (checked 21:45); target 76, gate `ff30gdepfz-gate` (converged: `ff_3.0_gdepth_fz`); first-link log `$P/training/condiv-train_49206070.out` | **First link 49206070 R since 21:34 10-08** (17 nodes; log `training/condiv-train_49206070.out`: `step 0 of 76, resuming from run_output/initial_checkpoint.pkl`, `this link runs 54 steps`); successor 49214121 queued 21:35, carrying the law with 0027. Steps 0-11 done (22:14-04:21 10-09; 24-54 min; step 10 relaunched 2kph and 2ejx once; step 2 relaunched 2krc and 4bou once), 24 of 24, KE/1.5kT at most 1.016; hb, dhb and sheet mean unchanged (margin +0.1919), depth round 0 (dL - dR +0.554). **Freeze check passed** (22:50; `checks/fz_init_20261007/dz_step00`, log `extract_dz_step00.log`): hbond.h5 and sheet md5-identical to `checks/fz_init_20261007/ff30_gdepth_fz` and to `$P/parameters/ff_2.1`, rama.dat unchanged (depth round 0, offsets aR -0.0918 aL +0.4621); sidechain.h5, environment.h5, bb_env.dat moved | the watch every step; tags `dz_EE`; `dz_00` (step 18) ~08:00 10-09: TM4 against gdepth_start and d9_00 |
 | **49204428** (midway2) | **polygly production** (plan.md Phase 12, step 4; user 10-07): Ac-(Gly)20-NHMe, 4 replicas from the collapse's last frames in 7.5 nm dodecahedra (~28,950 atoms each; `polygly/scripts/build_prod.sh`, log `polygly/logs/build_prod.log`), 1 us cap, 7 threads each on one broadwl node. `polygly/prod.sbatch` minimises, runs 500 ps NPT (seeds 20261021-24), then production. It self-chains: successor queued at link start, cancelled when all four reach 1 us; three links from the same steps, or `polygly/prod/STOP`, end it. Logs `polygly/logs/prod_<jobid>.out`; replicas `polygly/prod/repN/` | **R since ~22:41 10-07** on midway2-0612 (`polygly/logs/prod_49204428.out`: GROMACS 2024.4, AVX2_256, starting steps 0 0 0 0 of 500000000); successor 49206266 queued. Minimisation (`mdrun_min.log`) stopped at its 5000 steps without reaching Fmax < 100: Fmax 1326 / 1411 / 223 / 543 kJ/mol/nm on protein atoms 110 / 117 / 131 / 47, potential -4.758e5 to -4.764e5, as the collapse's did (1380, atom 124) before it ran cleanly. 500 ps NPT equilibration finished 23:03 in all four (no LINCS or SETTLE warnings; `equil.log` Performance 33.7-33.8 ns/day per replica); production at 1.1 ns by 23:47, so 1 us takes ~30 days (~20 links). `gmx mindist -pi` on each replica's first 1.1 ns (protein-only `prot.tpr`, 112-113 frames): minimum image distance 3.54 / 4.53 / 4.55 / 4.94 nm, above 1.0 nm | the watch: the `prod.log` Performance line at this link's end and mindist -pi over the link; then the blank at each ~200 ns |
 
 **Local glpG TM4 test** (the hybrid glpG 79HIS seed in POPE/POPG dry-MARTINI, one checkpoint
 patched in, T 0.80, 4000 tu, 12 seeds; `scratchpad/ff3_local_test`, record in
 `checks/r4_epochs/tm4_local`).
 * **Valid sets (coverage-fixed inputs, from 10-07 11:22):** `ff21_bioT1_6` (bio_start) and `b9_01`
-  on the MacBook Pro; `ff21_released`, `c9_00`, `gdepth_start`, `d9_00`, `b9_00`, `fp_e00`, `c9_01` and `d9_01` on the Mac Studio, whose engine
+  on the MacBook Pro; `ff21_released`, `gdepth_start`, `d9_00`, `b9_00` (24 seeds), `c9_00` (24 seeds), `fp_e00`, `c9_01`, `d9_01`, `d9_02`, `bs_00`, `bs_01`, `bz_00` (24 seeds), `bz_01`, `b9_02` and `ds_00` on the Mac Studio, whose engine
   and inputs reproduce the MacBook Pro's frame for frame. The rest is the queue in "Handoff". Each
   is in `tm4_local/runs_cov/`, with its table `tm4_compare_cov_<set>.txt`.
 * **Mac Studio, from 10-07 16:20, the owner** ("Handoff"). Driver `scripts/tm4_queue.sh` under
   `nohup caffeinate -is`; it pops the first line of `tm4_queue.txt` (`<tag>` or `<tag> 13 24`),
   runs it and logs to `run_<tag>.log` or `run_<tag>_s13-24.log`; its own log is `tm4_queue.log`.
-  09:20 10-08: `bs_00` running since 08:12 under the old driver, ends ~10:08; then the seed-range
-  driver takes `bz_00`, `bz_00 13 24`, `b9_00 13 24`, `b9_02`, `ds_00`, `c9_00 13 24` (held in
-  `tm4_queue.next` until the old driver exits). Its pre-fix sets are in `runs_precov_20261007/`.
+  03:50 10-09: the seed-range driver (from 10:08) runs `bz_02` (from 03:35, ends ~05:31);
+  `tm4_queue.txt` is empty behind it. Its pre-fix sets are in `runs_precov_20261007/`.
 * **Invalid, kept as a record:** every set before 10-07 11:22. That covers ff21_released,
   ff21_bioT1_6, gdepth_start, fp_e00 and b9_00 at 12 seeds, and b00, b01, b01m12, d00 and d01m09 at
   3 seeds (cluster `tm4_local/runs/`). Each paired its force field with the retired FF1-form
@@ -1169,9 +1191,12 @@ Slurm and filesystem:
   launches; 2cwr and 4exo failed twice more on midway2-0088 ("Invalid job credential"). The step
   was discarded, steps 0-4 stand, and the successor resumes from step 4 but re-enters the queue.
   It is one event on 0088, so no exclusion yet; a second on the same node is the record to exclude
-  it.
+  it. **The second came 10-09 03:42:** ff21_ctrl_fz step 11 (link 49205852) lost 8 launches, and
+  2r2y, 3jyz and 4qbo failed all three on 0088 ("Invalid job credential"), and the link FAILED at
+  04:11. 0088 was added to the law at 04:12 (user, §0d).
 * **Node exclusions are per record of failures; since 10-08 the list lives only in the law
-  (§0d).** midway2-0027 was added then for two NODE_FAILs as a batch host (00:12, 08:32).
+  (§0d).** midway2-0027 was added then for two NODE_FAILs as a batch host (00:12, 08:32); a third,
+  ff30_gdepth_si's link at 11:07, had started on it before the law.
   midway2-[0010-0011] (three NODE_FAILs in one
   campaign) and midway2-0037 (two links in three hours on 2026-09-26) are excluded in `slurm.args`;
   two later link failures named no node and excluded nothing. On 2026-10-02 20:40:36-37 midway2-0003 and
