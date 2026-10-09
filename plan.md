@@ -164,13 +164,20 @@ Done:
   midway2.args`, read by every submission path (slurm.args symlinks, `submit_remd.sh`,
   `bench.sbatch`), a `~/bin/sbatch` wrapper for the rest, `update_pending.sh` for queued jobs;
   midway2-0027 added (remote_jobs.md §0d).
+- [x] **ff30_gdepth_dt009 converged and is the local ff_3.0** (gate 10-09 08:54, findings 1.26; user,
+  10-09 10:40: "pull ff30_gdepth_dt009 down locally as ff3.0", to show). `parameters/ff_3.0/` holds
+  the six released files, md5-identical to `$P/parameters/ff_3.0_gdepth` and to `d9_03`. Its glycine
+  library is its own `rama.dat`: the example scripts read `parameters/common/rama.dat`, and
+  `py/martini_prepare_system.py:1922-1924` takes rama, sheet and hbond from ff_2.1, so a run on
+  ff_3.0 passes its files explicitly or is patched with `patch_glpg.py --ff parameters/ff_3.0`.
+  `martini.h5` and `membrane.h5` are not trained and stay ff_2.1's. Its validation runs on.
 
 Next:
 - [ ] **TM4 on fixed inputs, 12 seeds; the frozen comparisons at 24** (user, 10-08 09:10).
   bz_00 against b9_00 and cz_00 against c9_00 run seeds 13-24 as well. A 24-seed set runs as two
   12-seed halves (queue line `<tag> 13 24`), and `tm4_compare.py` reads seeds 1-24 from
   `runs_cov/` and `runs/` together, with each set's own n in the Fisher table.
-  - Done: bio_start 5 of 12 unwound, b9_00 7 of 24, b9_01 6, b9_02 8, bs_00 6, bs_01 5, bz_00 8 of 24, bz_01 6, ds_00 9, d9_02 4, ff21_released 9,
+  - Done: bio_start 5 of 12 unwound, b9_00 7 of 24, b9_01 6, b9_02 8, bs_00 6, bs_01 5, bz_00 8 of 24, bz_01 6, bz_02 4, ds_00 9, d9_02 4, dz_00 4, ff21_released 9,
     c9_00 16 of 24, c9_01 10, fp_e00 5, gdepth_start 7, d9_00 5, d9_01 6 (findings 1.24). No pair is
     resolved. bz_00's first half flipped none of 12 (one-sided p 0.047); its seeds 13-24 flipped 4,
     bio_start's count, and against b9_00 at 24 seeds each it is 8 against 7 unwound and 4 against 5
@@ -195,11 +202,12 @@ Next:
   - [x] **DSSP alpha-helix is the primary TM4 test** (user, 10-09 03:20): each seed's last-block
     alpha of 135-151, two-sided Mann-Whitney, resolved at p < 0.05, with a bootstrap interval;
     the dihedral counts are secondary. All tables carry it. No in-training checkpoint is resolved
-    from its start; d9_02 leans highest (0.765 against gdepth_start's 0.657, p 0.58). At 12 seeds
-    a true 0.10-0.15 difference is detected 18-31% of the time (findings 1.25).
+    from its start; d9_02 leans highest (0.765 against gdepth_start's 0.657, p 0.58). bz_02 against
+    its twin b9_02 is the first resolved primary test, only just: 0.856 against 0.694, p 0.046, with
+    the bootstrap interval reaching -0.010, one of 32 tables read; against bio_start p 0.30. At 12
+    seeds a true 0.10-0.15 difference is detected 18-31% of the time (findings 1.25).
   - Locally, on the Mac Studio, which keeps the jobs (user, 10-08 09:15; another computer stands
-    by until told to take over, remote_jobs.md "Handoff"), in this order: bz_02 (from 03:35),
-    and every new epoch end, half-trained (step 37) first;
+    by until told to take over, remote_jobs.md "Handoff"), in this order: d9_03 (from 10:46, the released ff_3.0_gdepth), bs_02, then every new epoch end, half-trained (step 37) first;
     cz_00 at 24 seeds. Its engine and inputs reproduce the MacBook Pro's runs.
 - [ ] **Answer the user's question: which run moves TM4 toward stable.** Compare each checkpoint
   with its own start, each frozen run with its unfrozen twin at the same step, and read the direction

@@ -278,3 +278,45 @@ to 10-07 12:00 is in git history.
   the wrapper refused `-w midway2-0088`, and `update_pending.sh` set all 9 pending jobs to it. Every
   midway2 `slurm.args` symlink reads it. ff21_ctrl_fz's link 49205852 FAILED 04:11 as expected (3 of
   24 workers failed); successor 49214161 resumes from step 10.
+* **05:47 10-09, watch pass; TM4 bz_02.** Steps 70 of d9 (margin +0.091) and 12-13 of dz clean
+  (24 of 24, KE/1.5kT at most 1.016); every pending start estimate 10-10 03:52. bz_02 finished
+  05:33: DSSP alpha 0.856 against its twin b9_02's 0.694 (+0.162 [-0.010, +0.330], p 0.046), the
+  first resolved primary test, only just; against bio_start 0.769, p 0.30. Tables
+  `tm4_compare_cov_bz_02.txt`, `_vs_b9_02.txt`; findings 1.24-1.25, remote_jobs §1 and Handoff,
+  plan.md. The TM4 queue is empty until dz_00.
+* **08:47 10-09, watch pass; dz_00 and two links started.** ff30_bio_dt009's successor 49206580
+  (08:23, `step 64 of 76`) and ff30_gdepth_si's 49205173 (08:40, `step 21 of 76`) started as
+  designed, and their successors carry the law. ff30_gdepth_fz reached its epoch-0 end (step 18,
+  depth round 1 dL - dR +0.567). dz_00 extracted (hbond.h5 and sheet md5-identical to gdepth_start's),
+  panel 49216103 submitted by submit_new.sh, patched, and TM4 started 08:50. d9 steps 72-74 clean
+  (margin +0.082); bz_02's panel runs (116 of 176).
+* **09:47 10-09, watch pass; ff30_gdepth_dt009 converged, two NODE_FAILs.** ff30_gdepth_dt009
+  reached step 76 (08:49); gate 49216104 CONVERGED (steps 58-76, every p > 0.005, dhb 0.045) and
+  released step 75 as ff_3.0_gdepth (round-4 library; margin +0.082, under the hold); 32 benchmark
+  arms and 4 glpG chains queued, the first arms' logs sane. d9_03 extracted (byte-identical to the
+  release), panel 49216387, patched, queued behind dz_00. At 09:17:42 ff30_bio_dt009's and
+  ff30_gdepth_si's links NODE_FAILed with other users' jobs on excluded nodes (the controller-link
+  signature); midway2-0103 and 0116 NOT_RESPONDING after; successors resume from steps 64 and 21;
+  asked the user about excluding the two. Panels: bz_02 0.424 (b9_02 0.448), dz_00 0.432 (d9_00
+  0.477, dominating). polygly link 1 COMPLETED at -maxh (~48 ns per replica, mindist -pi >= 2.35
+  nm). findings 1.21 and new 1.26; remote_jobs §1, §8 and Handoff.
+* **10:30 10-09, midway2-0103 and 0116 excluded (user).** Added to `/project/trsosnic/yinhan/slurm/midway2.args`
+  with a README.md row (backups `*.bak_pre_0103_20261009`); `--test-only` accepted the list, the
+  wrapper refused both nodes as it refuses 0088 and accepted 0110, and `update_pending.sh` set all
+  19 pending jobs to it. No running job sits on either node.
+* **10:40 10-09, TM4 residues along ff30_gdepth_dt009 (user question).** New
+  `scratchpad/ff3_local_test/scripts/tm4_residue_ss.py` (tm4_local.py's own reader and DSSP) tables
+  the last-block DSSP code per TM4 residue; `tm4_residue_ss_d9.txt` for gdepth_start, d9_00-02 and
+  ff2.1. The weak end moves (N-terminal at d9_00, C-terminal 148-151 at d9_01-02); ff2.1's
+  midplane pi loss is absent. findings 1.25 "Where it is lost".
+* **10:42 10-09, ff_3.0 locally (user).** Copied ff30_gdepth_dt009's release (six files) into
+  `parameters/ff_3.0/` (untracked; the two Sep 10 `.bak` files there kept); md5 equal to
+  `$P/parameters/ff_3.0_gdepth` and byte-equal to `ff/d9_03`. Recorded the rama/sheet/hbond paths
+  a run must pass (plan.md Phase 11, findings 1.26, remote_jobs 1b).
+* **10:47 10-09, watch pass; TM4 dz_00.** dz_00 finished 10:46: DSSP alpha 0.791 against
+  gdepth_start's 0.657 (p 0.47) and its twin d9_00's 0.801 (p 0.80), not resolved; strong N-terminal
+  half, weak C-terminal, the reverse of d9_00; s11's jump 23501 the largest on fixed inputs.
+  d9_03 started 10:46. Steps 55 of bs (+0.058) and 21-22 of dz clean; all 32 benchmark arms run.
+* **10:58 10-09, bs_02.** ff30_bio_si step 56 clean (margin +0.055, 24 of 24, KE/1.5kT at most
+  1.014); panel 49216513 submitted by submit_new.sh with the new law; extracted (rama.dat as
+  bs_01's), patched, queued behind d9_03.

@@ -1200,6 +1200,17 @@ ff21_awh bio_start gdepth_start b9_00 b9_01 b9_02 d9_00 d9_01 bs_00 c9_00 c9_01`
   `select_last_d9_02_login1_20261009.txt`): folded 0.439, helix -0.030 on 41 domains, dominated
   by gdepth_start in helix (-0.020). With d9_01 on the 39 domains both keep
   (`select_last_d9_01_d9_02_login1_20261009.txt`): 0.439 against 0.457, helix -0.028 against -0.026.
+- **`bz_02`** (ff30_bio_fz step 56, H-bond and sheet frozen; `select_last_bz_02_login1_20261009.txt`):
+  folded 0.424, helix -0.031 on 42 domains, dominated by gdepth_start in helix. With its twin
+  b9_02 on 40 domains (`select_last_b9_02_bz_02_login1_20261009.txt`): 0.424 against 0.448, helix
+  -0.031 against -0.032, neither dominating. The frozen run folds less than its twin at each end
+  (bz_00 0.450 against 0.478, bz_01 0.461 against 0.465), while bz_02 keeps TM4 more helical than
+  b9_02 in the glpG test (1.25).
+- **`dz_00`** (ff30_gdepth_fz step 18, frozen; `select_last_dz_00_login1_20261009.txt`): folded
+  0.432, helix -0.033 on 41 domains, dominated by gdepth_start in helix. With its twin d9_00 on
+  38 domains (`select_last_d9_00_dz_00_login1_20261009.txt`): 0.432 against 0.477, helix -0.033
+  against -0.024, dominated by d9_00 in helix. Every frozen and SI-rate end so far folds less than its port-rate
+  twin at the same step.
 - Folding falls by 0.013-0.017 per epoch after epoch 0's 0.125 in ff30_bio_dt009, and by 0.020 and
   0.018 in ff30_gdepth_dt009's epochs 1 and 2, while helix error stays at -0.023 to -0.030.
 - No glycine class is resolved from the starts (gly_helix SE 0.05-0.07, gly_left 0.02-0.03).
@@ -1398,6 +1409,7 @@ These are the first TM4 counts on inputs patched by the fixed `patch_glpg.py` (m
 | `d9_00` | ff30_gdepth_dt009 step 18 (`epoch_00_minibatch_18`) | 5 / 12 | 2 / 12 | 1 seed (s1, 5716 at t 280; TM4 1.00) | 1.004-1.015 |
 | `d9_01` | ff30_gdepth_dt009 step 37 (`epoch_01_minibatch_18`, half-trained) | 6 / 12 | 4 / 12 | 2 seeds (s4, 6697 at t 919, TM4 1.00; s3, 6339 at t 1060, unwound) | 1.003-1.012 |
 | `d9_02` | ff30_gdepth_dt009 step 56 (`epoch_02_minibatch_18`, round-3 library) | 4 / 12 | 3 / 12 | none | 1.003-1.012 |
+| `dz_00` | ff30_gdepth_fz step 18 (`epoch_00_minibatch_18`, its round-1 library; twin `d9_00`) | 4 / 12 | 5 / 12 | 2 seeds (s11, 23501 at t 120, two events, the largest on fixed inputs; s6, 4827 at t 260; both flipped, TM4 0.95 and 0.92) | 1.004-1.012 |
 | `ds_00` | ff30_gdepth_si step 18 (`epoch_00_minibatch_18`; twin `d9_00`) | 9 / 12 | 3 / 12 | 3 seeds (s7, 9732 at t 3776, unwound before it; s10, 3991 at t 2210; s12, 3579 at t 1680, flipped; all unwound) | 1.002-1.013, s7 1.080 |
 | `c9_00` | ff21_ctrl_dt009 step 18 (`epoch_00_minibatch_18`; twin of `cz_00`), 24 seeds | 16 / 24 (7 in 1-12, 9 in 13-24) | 9 / 24 (1 in 1-12, 8 in 13-24) | 5 seeds (s9, 6631 at t 3730; s10, 4768 at t 3010; s21, 4274 at t 2170; s8, 3364 at t 110; s5, 3193 at t 1990; all but s5 unwound) | 1.002-1.017 |
 | `c9_01` | ff21_ctrl_dt009 step 37 (`epoch_01_minibatch_18`, final) | 10 / 12 | 6 / 12 | 2 seeds (s10, 9135 at t 90; s1, 7649 at t 1060; both unwound) | 1.004-1.015 |
@@ -1731,6 +1743,7 @@ Last block, mean over seeds (alpha by block in the last column):
 | `d9_00` | 12 | 0.900 | 0.801 | 0.843 | 0.157 | 0.96 0.93 0.86 0.80 |
 | `d9_01` | 12 | 0.827 | 0.615 | 0.702 | 0.298 | 0.92 0.85 0.71 0.61 |
 | `d9_02` | 12 | 0.899 | 0.765 | 0.821 | 0.179 | 0.89 0.82 0.77 0.77 |
+| `dz_00` | 12 | 0.912 | 0.791 | 0.852 | 0.148 | 0.95 0.89 0.84 0.79 |
 | `ds_00` | 12 | 0.775 | 0.572 | 0.652 | 0.348 | 0.83 0.68 0.58 0.57 |
 | `ff21_released` (ff2.1) | 12 | 0.827 | 0.610 | 0.709 | 0.291 | 0.91 0.84 0.70 0.61 |
 | `c9_00` | 24 | 0.843 | 0.660 | 0.719 | 0.281 | 0.92 0.81 0.71 0.66 |
@@ -1749,9 +1762,19 @@ Last block, mean over seeds (alpha by block in the last column):
   set (gdepth_start 0.95, 0.86, 0.75, 0.66; ff2.1 0.91, 0.84, 0.70, 0.61). 4000 tu does not reach a
   plateau, so the readout is how fast TM4 loses its helix, not where it settles (4.4, "Compare
   trends, not means").
-- **Where it is lost.** In the starts, at both ends (135-136, 150-151) and around the midplane
-  139-143 (ff2.1 0.40 at 142 and 0.45 at 143; bio_start 0.63 at 142-143). d9_01 loses its
-  C-terminal end instead (0.20-0.35 at 149-151).
+- **Where it is lost** (TM4 135-151 is T G V V Y A L M G Y V W L R G E R; last-block DSSP codes
+  per residue from `scripts/tm4_residue_ss.py`, table `tm4_residue_ss_d9.txt`). ff2.1 loses the
+  midplane: alpha 0.40-0.52 at 141-143, pi-helix 0.17-0.19 at 140-143 and turn 0.22-0.25 at
+  142-147. bio_start loses less there (0.63 at 142-143). gdepth_start loses evenly along TM4
+  (0.52-0.77), mostly to turn and coil, with almost no pi.
+  - **Along ff30_gdepth_dt009 the weak end moves.** d9_00 keeps 145-148 at 0.97-0.99 and loses the
+    N-terminal half (0.58-0.75 at 135-142; pi 0.08 at 135-139). d9_01 loses the C-terminal end
+    (0.35, 0.27, 0.20 at GLY149, GLU150, ARG151; turn, bend and 3-10). d9_02 recovers 137-142
+    (0.81-0.88) and keeps the C-terminal end weakest (0.72, 0.68, 0.62, 0.46 at 148-151), there
+    as turn 0.14-0.19, bend up to 0.20 and 3-10 0.10. Pi at the midplane stays at or below 0.09.
+  - **A seed loses a stretch, not a residue.** In d9_02 s6 loses 140-150 whole, s7 143-151, s8
+    135-139 in part and 148-151, and s5 139-145; the other eight keep TM4 at 0.80-0.99. The
+    per-residue means are set by these 2-4 seeds per set.
 - **The primary test from 10-09 (user).** Each seed's DSSP alpha-helix fraction of 135-151 over the
   last block is compared, checkpoint against reference, by a two-sided Mann-Whitney test, resolved
   at p < 0.05, with a bootstrap 95% interval on the difference of means (`tm4_compare.py`,
@@ -1774,6 +1797,7 @@ interval is the bootstrap 95% interval of the difference):
 | `d9_00` | gdepth_start | 0.801 | 0.657 | +0.144 [-0.056, +0.345] | 0.36 |
 | `d9_01` | gdepth_start | 0.615 | 0.657 | -0.042 [-0.295, +0.205] | 0.62 |
 | `d9_02` | gdepth_start | 0.765 | 0.657 | +0.108 [-0.105, +0.320] | 0.58 |
+| `dz_00` | gdepth_start | 0.791 | 0.657 | +0.134 [-0.074, +0.346] | 0.47 |
 | `ds_00` | gdepth_start | 0.572 | 0.657 | -0.085 [-0.335, +0.169] | 0.54 |
 | `c9_00` (24 seeds) | ff2.1 | 0.660 | 0.610 | +0.050 [-0.146, +0.261] | 1.00 |
 | `c9_01` | ff2.1 | 0.595 | 0.610 | -0.015 [-0.243, +0.219] | 0.89 |
@@ -1799,9 +1823,15 @@ interval is the bootstrap 95% interval of the difference):
   - In the glpG test bz_02 differs from b9_02 in the H-bond and sheet tables, which bz_02 keeps at
     bio_start's, and in side-chain tables trained alongside them.
   - Two total-potential jumps (s7, s11), both in seeds that keep TM4 at 1.00.
+- **dz_00 against its twin d9_00: the same total, the other end weak**
+  (`tm4_compare_cov_dz_00_vs_d9_00.txt`). Alpha 0.791 against 0.801 (-0.010 [-0.174, +0.145],
+  p 0.80). dz_00 keeps 136-141 at 0.93-0.96, where d9_00 is weakest (0.70-0.75), and is weakest
+  at 143-151 (0.58-0.74), where d9_00 keeps 0.67-0.99. Secondary: unwound 4 and flipped 5 of 12,
+  against d9_00's 5 and 2 (p 1.00, 0.37). Its s11 jumps by 23501 at t 120, the largest jump on
+  fixed inputs, and still keeps TM4 at 0.95.
 - **Along each training** (start, then steps 18, 37, 56): ff30_bio_dt009 0.769, 0.815, 0.711,
   0.694; ff30_bio_fz 0.769, 0.794, 0.739, 0.856; ff30_bio_si 0.769, 0.684, 0.760; ff30_gdepth_dt009
-  0.657, 0.801, 0.615, 0.765; ff30_gdepth_si 0.657, 0.572; ff21_ctrl_dt009 0.610, 0.660, 0.595.
+  0.657, 0.801, 0.615, 0.765; ff30_gdepth_fz 0.657, 0.791; ff30_gdepth_si 0.657, 0.572; ff21_ctrl_dt009 0.610, 0.660, 0.595.
   The bio runs end at or below bio_start from epoch 1 on. ff30_gdepth_dt009 is the only run with an
   epoch-2 end above its start, and d9_02 reaches bio_start's level, not above it.
 - **d9_02 is the first set whose alpha levels off** (block means 0.89, 0.82, 0.77, 0.77, against
@@ -1814,6 +1844,28 @@ interval is the bootstrap 95% interval of the difference):
   0.20 and 0.30 with power 18%, 31%, 47% and 73% at 12 seeds per set, 34%, 58%, 80% and 96% at 24,
   and 56%, 86%, 97% and 100% at 48. The differences seen (0.01-0.15) are below what 12 seeds
   resolve; 0.10-0.15 needs about 48 seeds per set.
+
+### 1.26 The first converged round-4 gate: ff30_gdepth_dt009 at step 76 (2026-10-09)
+
+- **The gate.** ff30_gdepth_dt009 reached target 76 at 08:49 10-09. Its gate
+  (`ff30_gdepth_dt009/gate_step76.txt`) read steps 58-76 and passed every group at p > 0.005: hb
+  0.95, sheet 1.00, rot 1.00, the environment groups 0.99-1.00, bbenve 0.79, and dhb lowest at
+  0.045. It released `epoch_03_minibatch_18` (d9_03) as `ff_3.0_gdepth`, with depth round 4's
+  glycine library (offsets aR -0.1068 aL +0.5169, dL - dR +0.624 against the start's +0.554).
+- **What converged is the held run.** The released H-bond margin is +0.082, under the +0.10 hold
+  since step 33 (start +0.192); dhb -0.551 (start -0.406), sheet mean 0.228 (start 0.161). The
+  gate tests a fixed point, not the margin.
+- **Its panels before the end:** every epoch end folded less than gdepth_start and was dominated
+  by it in helix (d9_00 0.477, d9_01 0.457, d9_02 0.439, against 0.603; 1.21). Its TM4 by the
+  primary test was unresolved from gdepth_start at every end (d9_00 0.801, d9_01 0.615, d9_02
+  0.765, against 0.657; 1.25).
+- **Validation is automatic and running:** the 32 benchmark arms and the 4 glpG chains on the
+  released file (remote_jobs.md §1). The d9_03 panel and its local TM4 come first.
+- **The user took it as ff_3.0** (10-09 10:40, to show): `parameters/ff_3.0/` locally,
+  md5-identical to the release. Its trained glycine library is the `rama.dat` in that directory;
+  the example scripts read `parameters/common/rama.dat` (ff2.1's) and the hybrid preparation reads
+  rama, sheet and hbond from ff_2.1 (`py/martini_prepare_system.py:1922-1924`), so a run takes
+  ff_3.0's files explicitly or is patched with `patch_glpg.py`, as every TM4 input is.
 
 ## 2. The hybrid model: what each side supplies
 
