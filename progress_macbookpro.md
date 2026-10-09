@@ -26,4 +26,12 @@ Separate from `progress.md` while the Mac Studio owns it (user, 10-09). No track
   of ff2.1 seed 1 with pair diagnostics started.
 * **14:20-14:35, VTF and the phantom O.** `~/Downloads/glpG_79HIS_ff3.0_T080_s1.vtf` (ff3.0, seed 1, no
   TM1 term). The stationary atom the user saw is residue 210's unused O slot (M7); fixed in
-  `py/martini_extract_vtf.py` (the one tracked file modified, uncommitted) and the VTF regenerated.
+  `py/martini_extract_vtf.py` (since committed by the user, 14a27cc3) and the VTF regenerated.
+* **15:39-15:50, option A result.** ff2.1 + term finished (12 seeds, 401 frames each). Helicity up in
+  every TM helix (TM1 0.79 -> 0.90, TM4 primary 0.609 -> 0.788), but 5 seeds jump > 3000 E_up and two
+  tear TM4's backbone (C-N 9.5 A). M8. `analyze_hbmem.py` limited to the finished set and its frame
+  check tightened (401 frames, t 0); output `analyze_hbmem.txt`. Positions saved compactly as
+  `runs_hbmem_ff21_pos.npz` and copied to the cluster with the logs, kick outputs and these records.
+* **15:40, DSSP figure question.** The DSSP-alpha figure differs from slide 13 at t 0 because of the
+  criterion (31 residues, mostly 3-10 and turns outside the TMs, plus TM2's pi label); the phi/psi
+  figure matches the slide's first frame on 208/208 residues.

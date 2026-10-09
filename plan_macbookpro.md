@@ -42,9 +42,12 @@ on the stored frames it would charge about +38 E_up for the opening, far more th
 - [x] Term built into copies of both inputs (`scratchpad/glpg_tm1_hbmem/add_hbmem.py`). Verified on
       stored frames (`verify_hbmem.txt`): E_new - E_old equals the node value and an independent
       evaluation to 1e-3 E_up; node forces match finite differences to ~1e-3. +86.5 E_up at t 0.
-- [ ] Test, reduced for the 16:00 shutdown (user): ff2.1 + term, seeds 1-12, started 13:48, the ff3.0
-      twelve stopped at t 60 (13:52). Ends ~15:35. Compare with ff21_released (`analyze_hbmem.py`).
-- [ ] ff3.0 + term, 12 seeds, on another computer or the cluster.
+- [x] Test, ff2.1 + term, seeds 1-12 (finished 15:39; findings_macbookpro M8): every TM helix more
+      helical (TM1 +0.11, TM4 primary +0.18), but TM4's backbone tears in 2 seeds and the protein
+      potential jumps > 3000 E_up in 5. Not acceptable as it stands.
+- [ ] Find why the term produces the tears (replay s1 around t 1680 or s2 around t 2940 with dense
+      frames and the per-node force ablation of kick/force_by_node.py) before any further use of it.
+- [ ] ff3.0 + term, 12 seeds, on another computer or the cluster, after the tears are explained.
 - [ ] Report; decide production implementation with the user.
 
 ## Second lead: transient backbone excursions (findings_macbookpro M6)

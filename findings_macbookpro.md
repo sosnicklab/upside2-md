@@ -81,7 +81,7 @@ the reverse of crystallographic B-factors; it reads like a prediction confidence
   15.9 A (ff3.0 +4.4 / +5.3 / +6.4). The hybrid has no such term: it charges about half of what
   Upside's membrane model says opening TM1's middle costs.
 - The bilayer centre sits within 1 A of z = 0 and drifts 1-2 A over 4000 tu (PO4 mid-plane).
-- Not tested yet: whether adding the term holds TM1. Cause stated as the missing cost, not proven.
+- Tested with ff2.1 (M8): the term raises TM1's helicity but tears TM4's backbone in 2 of 12 seeds.
 
 ## M6. Transient backbone excursions sit where the helices fail (2026-10-09, 13:50-14:05)
 
@@ -129,7 +129,25 @@ as an atom. Fixed there by the engine's own rule: `build_backbone_projection_map
 (`backbone_output_atoms`, shared by modes 1 and 2), the frame assembly and the bonds (`backbone_bonds`,
 which replaces `mode2_backbone_bonds`) follow it. glpG now has 839 backbone atoms (209 O), bonds
 N-CA 210, CA-C 210, C-O 209, C-N 209; O positions equal the trajectory's to 0.001 A; modes 1 and 2
-both run. Uncommitted.
+both run. In the user's commit 14a27cc3.
+
+## M8. The membrane H-bond term holds TM1 but tears TM4 (ff2.1, 12 seeds, 2026-10-09 15:40)
+
+`scratchpad/glpg_tm1_hbmem/analyze_hbmem.txt`; ff2.1 + term (option A, half-thickness 15.9 A) against
+ff21_released, last block, DSSP any-helix (alpha), two-sided Mann-Whitney on 12 seeds each.
+- **Every TM helix is more helical:** TM1 0.79 -> 0.90 (p 0.03), TM4 0.71 -> 0.82 (p 0.02), TM5
+  0.92 -> 0.97 (p < 0.01), TM2/TM3/TM6 +0.01 to +0.04 (n.s.); TM4 primary 0.609 -> 0.788 (p 0.03).
+  Seeds with TM1 below 0.80 fall from 6 to 2; TM1 32-38 i->i+4 H-bonds 0.56 -> 0.66.
+- **It fails the health check.** Protein potential jumps by 3,800-17,900 E_up between stored frames in
+  5 of 12 seeds (s1, s2, s9, s11, s12; the local no-term ff2.1 seed 1 has none above 2,500). In s1
+  (t 1680) and s2 (t 2940) TM4's backbone tears over 137-148, C-N up to 9.5 A, for 2-3 stored frames;
+  the others are single-bond tears at 36, 198 and 74-84. Frames with any C-N > 2 A: 27 against 28,
+  but 8 above 4 A against 4, and no TM4 tear of that size in ff21_released. Rg and the protein's
+  depth are unchanged; KE/1.5kT 1.001-1.073 (s2 high, from its tear).
+- Cause of the tears not measured. The term acts through protein_hbond's p on N, CA and C and its
+  forces matched finite differences on stored frames (verify_hbmem.txt), so a wrong derivative is
+  not the explanation; whether it raises the stored strain that M6's excursions release is untested.
+- Not run: ff3.0 + term (stopped at t 60 for the shutdown).
 
 ## Lessons (this session)
 
@@ -144,5 +162,10 @@ both run. Uncommitted.
   (user, 10-09); git must show `plan.md`, `findings.md`, `progress.md`, `remote_jobs.md` unchanged.
 - **A DSSP pi label is not a gap.** Check the i->i+4 and i->i+5 O...N distances before reading a
   white band in a DSSP-alpha figure as a helix break.
+- **Compare a figure with a reference only under the reference's criterion.** The slide used a phi/psi
+  box; a DSSP-alpha companion differed from frame 0 on 31 residues (3-10, turns, the TM2 pi label)
+  and the user read it as a different structure. Name the criterion in the companion's title.
+- **An interim health count is not a trend.** Mid-run, the term set had fewer C-N excursions; the
+  finished set has the largest tears of any. Report health only from finished runs.
 - SciencePlots' `science` style sets `savefig.bbox: tight`, which crops a fixed page size; set
   `'savefig.bbox': 'standard'` for a print page.
