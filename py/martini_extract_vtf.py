@@ -471,6 +471,15 @@ def build_backbone_projection_map(struct_h5, input_pos):
             raise ValueError(
                 "hybrid_bb_map/atom_indices do not point at %s for every residue" % list(ref_atom_names))
 
+    # The engine writes a residue's O slot only where infer_H_O has an acceptor on that residue's
+    # carbonyl C (martini_hybrid.cpp, resolve_bb_o_hbond_elements). The C-terminal residue has none, so
+    # its O slot keeps the input coordinate for the whole run and is not part of the trajectory.
+    if "input/potential/infer_H_O/acceptors/id" not in struct_h5:
+        raise ValueError("hybrid_bb_map requires /input/potential/infer_H_O/acceptors, which supplies the O slots")
+    carbonyl_c = np.asarray(struct_h5["input/potential/infer_H_O/acceptors/id"][:, 1], dtype=int)
+    carrier_present = np.ones(runtime_carrier_index.shape, dtype=bool)
+    carrier_present[:, 3] = np.isin(runtime_carrier_index[:, 2], carbonyl_c)
+
     return {
         "bb_atom_index": bb_atom_index,
         "bb_residue_index": bb_residue_index,
@@ -478,7 +487,19 @@ def build_backbone_projection_map(struct_h5, input_pos):
         "bb_chain_ids": bb_chain_ids,
         "ref_atom_names": np.array(ref_atom_names, dtype=object),
         "runtime_carrier_index": runtime_carrier_index,
+        "carrier_present": carrier_present,
     }
+
+
+def backbone_output_atoms(bb_map):
+    """(atom name, residue name, residue id, chain id) of every backbone carrier the trajectory updates,
+    in the order reconstruct_backbone_aa writes their coordinates."""
+    for row, (resid, rname, chain_id) in enumerate(
+        zip(bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"])
+    ):
+        for k, aname in enumerate(bb_map["ref_atom_names"]):
+            if bb_map["carrier_present"][row, k]:
+                yield str(aname), str(rname), int(resid), str(chain_id).strip() or "A"
 
 
 def build_mode1_mapping(
@@ -525,16 +546,13 @@ def build_mode1_mapping(
     ]
     include_aa_backbone = bb_map is not None
     if include_aa_backbone:
-        for resid, rname, chain_id in zip(
-            bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"]
-        ):
-            for aname in bb_map["ref_atom_names"]:
-                out_atom_names.append(str(aname))
-                out_atom_types.append(str(aname))
-                out_res_names.append(str(rname))
-                out_res_ids.append(int(resid))
-                out_chain_ids.append(str(chain_id).strip() or "A")
-                out_atomic_numbers.append(infer_atomic_number(aname))
+        for aname, rname, resid, chain_id in backbone_output_atoms(bb_map):
+            out_atom_names.append(aname)
+            out_atom_types.append(aname)
+            out_res_names.append(rname)
+            out_res_ids.append(resid)
+            out_chain_ids.append(chain_id)
+            out_atomic_numbers.append(infer_atomic_number(aname))
 
     return {
         "mode": 1,
@@ -598,16 +616,13 @@ def build_mode2_mapping(
         for aname, atype in zip(out_atom_names, out_atom_types)
     ]
 
-    for resid, rname, chain_id in zip(
-        bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"]
-    ):
-        for aname in bb_map["ref_atom_names"]:
-            out_atom_names.append(str(aname))
-            out_atom_types.append(str(aname))
-            out_res_names.append(str(rname))
-            out_res_ids.append(int(resid))
-            out_chain_ids.append(str(chain_id).strip() or "A")
-            out_atomic_numbers.append(infer_atomic_number(aname))
+    for aname, rname, resid, chain_id in backbone_output_atoms(bb_map):
+        out_atom_names.append(aname)
+        out_atom_types.append(aname)
+        out_res_names.append(rname)
+        out_res_ids.append(resid)
+        out_chain_ids.append(chain_id)
+        out_atomic_numbers.append(infer_atomic_number(aname))
 
     return {
         "mode": 2,
@@ -623,22 +638,22 @@ def build_mode2_mapping(
     }
 
 
-def mode2_backbone_bonds(start_idx, n_bb, bb_chain_ids=None):
+def backbone_bonds(start_idx, bb_map):
+    """N-CA, CA-C and C-O within each residue and C-N to the next residue of the same chain, indexed
+    over the carriers backbone_output_atoms writes (a residue without an O slot has no C-O bond)."""
+    present = bb_map["carrier_present"]
+    out_index = np.full(present.shape, -1, dtype=int)
+    out_index[present] = start_idx + np.arange(int(present.sum()))
+    chain_ids = [str(c).strip() or " " for c in bb_map["bb_chain_ids"]]
     bonds = []
-    for r in range(n_bb):
-        b = start_idx + 4 * r
-        bonds.append((b + 0, b + 1))
-        bonds.append((b + 1, b + 2))
-        bonds.append((b + 2, b + 3))
-    for r in range(n_bb - 1):
-        if bb_chain_ids is not None:
-            chain_left = str(bb_chain_ids[r]).strip() or " "
-            chain_right = str(bb_chain_ids[r + 1]).strip() or " "
-            if chain_left != chain_right:
-                continue
-        b0 = start_idx + 4 * r
-        b1 = start_idx + 4 * (r + 1)
-        bonds.append((b0 + 2, b1 + 0))
+    for r in range(present.shape[0]):
+        n, ca, c, o = out_index[r]
+        bonds.append((n, ca))
+        bonds.append((ca, c))
+        if o >= 0:
+            bonds.append((c, o))
+        if r + 1 < present.shape[0] and chain_ids[r] == chain_ids[r + 1]:
+            bonds.append((c, out_index[r + 1, 0]))
     return bonds
 
 
@@ -649,10 +664,10 @@ def reconstruct_backbone_aa(frame_pos, bb_map):
     rigidly translated a stored reference geometry by the BB proxy's displacement, which could not
     represent any backbone rotation and only existed because the proxy predated the carriers being
     addressable. A build whose BB map does not resolve all four carriers is a broken build, not a case to
-    approximate around.
+    approximate around. Only the carriers the trajectory updates are written (carrier_present).
     """
-    carriers = bb_map["runtime_carrier_index"]
-    return np.asarray(frame_pos[carriers.reshape(-1)], dtype=np.float32).reshape(-1, 3)
+    carriers = bb_map["runtime_carrier_index"][bb_map["carrier_present"]]
+    return np.asarray(frame_pos[carriers], dtype=np.float32).reshape(-1, 3)
 
 
 def assemble_mode1_frame(frame_pos, mapping, box_lengths=None):
@@ -886,26 +901,12 @@ def main():
             idx_map = {int(old): int(new) for new, old in enumerate(mart_idx)}
             out_bonds = remap_bonds(dist_bonds, idx_map)
             if mapping.get("include_aa_backbone", False):
-                bb_start = len(mart_idx)
-                out_bonds.extend(
-                    mode2_backbone_bonds(
-                        bb_start,
-                        mapping["bb_map"]["bb_atom_index"].shape[0],
-                        mapping["bb_map"].get("bb_chain_ids"),
-                    )
-                )
+                out_bonds.extend(backbone_bonds(len(mart_idx), mapping["bb_map"]))
         else:
             non_idx = mapping["non_protein_idx"]
             idx_map = {int(old): int(new) for new, old in enumerate(non_idx)}
             out_bonds = remap_bonds(dist_bonds, idx_map)
-            bb_start = len(non_idx)
-            out_bonds.extend(
-                mode2_backbone_bonds(
-                    bb_start,
-                    mapping["bb_map"]["bb_atom_index"].shape[0],
-                    mapping["bb_map"].get("bb_chain_ids"),
-                )
-            )
+            out_bonds.extend(backbone_bonds(len(non_idx), mapping["bb_map"]))
 
         if args.split_segments:
             output_groups = list_output_groups(t)
