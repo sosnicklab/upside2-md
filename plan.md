@@ -24,6 +24,10 @@ are not TM4 evidence (findings 10.19).
 (findings 4.6). It is addressed in the hybrid itself, by correct physics and without retraining
 (Phase 13).
 
+**ff3.1** (user, 10-09, after talking with Jumper). Train the relative depth of every basin of every
+Ramachandran map, not only glycine's pair, as offsets from NDRD under an explicit L2 prior, with no
+new input simulations (route 1 of findings 1.28; Phase 14).
+
 ## Architecture and Key Decisions
 
 **Trainer.** `training/ConDiv.py` is O. Kleinmann's Python 3 port of Peng's FF2 dual-target trainer,
@@ -155,7 +159,10 @@ Done:
 - [x] Frozen arm submitted. ff30_bio_fz's step 0 keeps `hbond.h5` and `sheet` md5-identical to
   ff2.1's. ff30_gdepth_fz was cancelled unstarted (10-07 13:12) and resubmitted unchanged at 21:50
   (user: run every frozen arm, though it departs from the group's workflow); ff21_ctrl_fz was
-  cancelled with it and resubmitted (user).
+  cancelled with it and resubmitted (user). **All three frozen arms stopped 10-09 23:09 (user):**
+  the dt 0.009 training already gives a force field that keeps TM4 stable, so the frozen
+  comparison no longer decides anything (ff30_bio_fz at step 58, ff30_gdepth_fz at 45, ff21_ctrl_fz
+  at 10; remote_jobs.md §1). Their TM4 and panel results stand (findings 1.21-1.25).
 - [x] SI-rate arm `ff30_bio_si` and `ff30_gdepth_si` built, initialised and submitted (10-07
   13:15). Initial force fields and gdepth's round-0 library are byte-identical to their twins'.
   The trainers differ only in the rate lines (`checks/si_init_20261007`).
@@ -175,6 +182,10 @@ Done:
   `py/martini_prepare_system.py:1922-1924` takes rama, sheet and hbond from ff_2.1, so a run on
   ff_3.0 passes its files explicitly or is patched with `patch_glpg.py --ff parameters/ff_3.0`.
   `martini.h5` and `membrane.h5` are not trained and stay ff_2.1's. Its validation runs on.
+- [x] **ff30_bio_si converged** (gate 10-10 02:25, steps 58-76, lowest dhb p 0.0125) and was
+  released as `ff_3.0_bio_si` (= bs_03; the frozen BioEmu library, SI rates); its 32 benchmark arms
+  and 4 glpG chains are queued (remote_jobs.md §1). Its TM4 is level with ff_3.0_gdepth's (0.739
+  against 0.726, p 1.00; findings 1.31). Choosing between them stays the user's.
 
 Next:
 - [ ] **TM4 on fixed inputs, 12 seeds; the frozen comparisons at 24** (user, 10-08 09:10).
@@ -292,19 +303,106 @@ Status (A):
 - [x] Test, ff2.1 + term, seeds 1-12 (finished 15:39; findings 4.8): every TM helix more helical
   (TM1 +0.11, TM4 primary +0.18), but TM4's backbone tears in 2 seeds and the protein potential
   jumps > 3000 E_up in 5. Not acceptable as it stands.
-- [ ] Find why the term produces the tears (replay s1 around t 1680 or s2 around t 2940 with dense
-  frames and the per-node force ablation of `kick/force_by_node.py`) before any further use of it.
-- [ ] ff3.0 + term, 12 seeds, locally or on the cluster, after the tears are explained (the first
-  attempt stopped at t 60).
-- [ ] Report; decide production implementation with the user.
-
 Second lead, transient backbone excursions (findings 4.9):
 - [x] Dense-frame replay of ff2.1 seed 1 to t 420 (`kick/replay.sh`): bitwise reproduction; onset
   between t 407.70 and 407.97 at MET34's backbone; no MARTINI pair spike before it; no term's force
-  on 33-35 abnormal at the stored frames (`kick/force_by_node.txt`).
-- [ ] Replay saving every step from t ~407.6 (whole run from t 0, ~2.6 h at the MacBook Pro's output
-  cost, or with a cheaper output path), then the per-term force decomposition of each step, with the
-  side-chain/lipid 1-body table split out of rotamer.
+  on 33-35 abnormal at the stored frames (`kick/force_by_node.txt`). The impulse lies inside 10
+  steps that no stored frame shows.
+
+**Local plan on the Mac Studio** (user, 10-09 21:40: resolve TM1 in the local ff3.0, d9_03 =
+ff_3.0_gdepth, by local simulation). The excursions come first: TM1's middle opens at one (findings
+4.9), the unexplained TM4-test jumps may share their cause (Known Errors), and so may option A's
+tears. Option A on ff3.0 is the second line, and runs the same night on the idle cores (user, 10-09
+21:55): step 5's set with `obj/upside` while step 2 runs; any tear in it is replayed exactly with
+the probe later, and the set is rerun if step 3 changes the engine.
+* **Readout, fixed before any new run.** TM1 primary: each seed's last-block DSSP alpha of 29-48,
+  two-sided Mann-Whitney against the 12 local d9_03 seeds (`ff3_local_test/runs/`, not rerun),
+  resolved at p < 0.05, with a bootstrap 95% interval. Also TM1 32-38 i->i+4 H-bonds, TM4's primary,
+  and health: frames with a C-N above 2 A, total-potential jumps above 3000, KE/1.5kT, Rg and the
+  protein's depth. TM4-test flags unchanged (`run_glpg.sh`: T 0.80, 4000 tu, dt 0.009).
+* **Cores.** The TM4 queue comes first (12 cores a set; bs_03 expected ~02:00 10-10). TM1 work uses
+  at most 16 cores minus the running TM4 seeds, and never replaces `obj/`, the TM4 driver's binary.
+1. [x] Set up `scratchpad/glpg_tm1/` from midway2's `checks/tm1_hbmem_20261009/` (script paths
+   fixed); TM1 baseline table for d9_03 and ff21_released from the local runs.
+2. [x] Localise the impulse in ff3.0 (findings 4.10): the side-chain/lipid table
+   (`martini.h5` `sc_table`) is sampled on 24 directions and one bead frame, and its one-node ridges
+   give single-evaluation spikes up to 33,260 E_up/A on CA34/CA35. Method: a temporary probe build: a copy of `src/` in
+   `scratchpad/glpg_tm1/src_probe`, built into its own `obj_probe/` (the tracked `src/` is not
+   touched). An environment-gated ring buffer keeps the last ~40 steps' positions and momenta and
+   writes them out when a protein backbone atom moves more than a set distance in one step; it only
+   reads. First check that it reproduces a stored d9_03 log frame for frame. Then run d9_03 s10 (TM1
+   excursion by t 140), s7 (t 250), s8 (t 260) and s11 (t 440) to just past their events, and
+   evaluate every potential node's force on 33-36 at each written step, with the rotamer's
+   side-chain/lipid 1-body table split out and the integrator stage that carries the spike named.
+3. [x] Fix at the root, tested locally: the table built with converged azimuthal sampling (600 directions x 12
+   frames, `kick_ff30/sc_table_vectorized.py`, the builder's own computation vectorised), tested in
+   a copy of `patched/79HIS_d9_03.up` with only `rotamer_full_energy_eup` replaced.
+   `parameters/ff_2.1/martini.h5`, `py/martini_build_tables.py` and the cluster stay unchanged until
+   the user decides: the round-4 TM4 sets all ran on the old table.
+4. [x] Fixed ff3.0, 12 seeds (findings 4.13): TM1 0.931 against 0.685, p 0.002, resolved; TM4
+   0.924 against 0.726, p 0.10; no evaluation above 1000 E_up/A; one C-N excursion frame against 33.
+5. [x] Option A on ff3.0, 12 seeds each. On the old table (findings 4.11): TM1 0.818 against
+   0.685, p 0.073, not resolved. On the fixed table (findings 4.14, `runs_sc600x12_hbmem/`, probe
+   on): TM1 0.964 (p < 0.001) and TM4 0.959 against 0.726 (p 0.009), both resolved; against the
+   table alone TM1 +0.033 (p 0.049) and TM4 p 0.21; no C-N excursion, no jump; three evaluations
+   above 1000 E_up/A, protein side-chain contacts outside TM1 and TM4. ff2.1 + term's tears are the
+   table's kicks on MET142 (findings 4.8). The literature (findings 4.12) supports the term's
+   magnitude and forbids combining it with option B (double counting).
+6. [ ] Report; production implementation decided with the user. The probe build and its source are
+   deleted at the end.
+
+### Phase 14 - ff3.1: every basin depth of every map, under an L2 prior (STARTED 2026-10-09, user)
+Route 1 of findings 1.28 (user, 10-09: no new simulations for input data). Each coil map (central,
+direction, neighbour) gets one offset per basin of `rama_basin.py`'s six (alpha_R, alpha_L, beta,
+pPII and the two phi > 0 extended regions; five free per map after renormalisation), trained on that
+map's own reads with its own Gaussian prior centred on NDRD. No pooling across maps (rule 1.8);
+the sheet group stays as in ff3.0. The update is the depth rounds' damped Newton step with the
+prior, which is the MAP (ridge) estimate, not Adam (findings 1.28: Adam moves noise-only
+coordinates at its full rate).
+1. [x] **Probe on recorded data, no job** (findings 1.29): cross-validation finds a finite width
+   (0.3 nat), but per-map depths transfer less well than pooled ones and what transfers is a global
+   alpha_R deepening. Go or no-go is with the user. Method: ff21_ctrl_dt009 (c9: ff2.1's NDRD maps unchanged, 38
+   steps, each protein twice) saved every residue's native-restrained and free basin populations in
+   its `divergence.pkl`. For every (map, basin): the free-native gap over the reads the map serves,
+   with each residue's left/right share; its protein-bootstrap error; split-half reliability (protein
+   halves, and epoch 0 against epoch 1); the MAP step for a range of prior widths, with the width
+   chosen by cross-validation over protein folds of the linear response. Report how many depths carry
+   signal at that width, which, and whether the push points to the native placement of the map's
+   class (1.15). Go or no-go to the user.
+2. [x] Trainer (`training/ff31/`, findings 1.30): `rama_basin.py` generalised to per-(map, basin)
+   offsets with a trainable mask; its reads reproduce round 4's round-1 glycine statistics exactly
+   on recorded data, and its first step was simulated on c9's epoch 0 in both modes.
+3. [x] Both variants (user, 10-09 23:05) from ff2.1 with every offset at 0 (user): `ff31_depth_all`
+   (5,040 depths, prior 0.3) and `ff31_depth_data` (1,442, prior 0.2), midway2 49218340 and
+   49218341, submitted 23:40, target 76, same 456 proteins and workflow, no gate. The push at the
+   first epoch end (`rama_rounds.txt`, held-out gap left) is read before the user lets more epochs
+   count.
+4. [ ] Judged as round 4: glpG TM4 and TM1 in the hybrid, the selection panels, the gate.
+
+Risks recorded before the probe (findings 1.28): the depths can learn native placement and absorb
+H-bond and side-chain physics, which a prior does not prevent; 46 held-out proteins sit at the
+sample-size floor (1.12), so the width needs cross-validation over many folds.
+
+### Phase 15 - the side-chain/lipid table at converged sampling, in production (STARTED 2026-10-10, user)
+The user's word (10-10 08:30): apply Phase 13's table fix to the force-field files so future
+simulations run with it. The fix is a sampling density, not a parameter: the same potential, Boltzmann
+average and grids, at 600 target directions x 12 side-chain bead frames instead of 24 x 1
+(findings 4.10, 4.13). Not part of it: the membrane H-bond term (option A stays a separate decision).
+1. [ ] Builder `py/martini_build_tables.py`: `_run_sc_task`'s per-sample loop replaced by the
+   vectorised computation of `scratchpad/glpg_tm1/kick_ff30/sc_table_vectorized.py` (the same pair
+   energy, anchor, binning and average), and the sampling made explicit arguments with defaults 600 and
+   12; the `UPSIDE_MARTINI_*BEAD_FRAME_COUNT` overrides go. Gate: at 24 x 1 it reproduces every
+   dataset of the current `sc_table`; at 600 x 12 its `rotamer_full_energy_eup` equals the tested
+   `sc_table_600x12.npz`.
+2. [ ] Rebuild `parameters/ff_2.1/martini.h5` (backup `.bak_pre_sc600x12_20261010`, overwritten in
+   place): `particles` unchanged, `sc_table` the converged one. A fresh preparation then writes it
+   into every new hybrid input (`py/martini_prepare_system*.py` read this file).
+3. [ ] `up.md` documents the sampling; findings 4.15 records the build and its checks.
+4. [ ] Seed-patched runs (local TM4 queue, glpG validation): `patch_glpg.py` carries martini.h5's
+   table into the patched seed, scope as the user decides (asked 10-10).
+5. [ ] Cluster: the rebuilt martini.h5 (and the builder) to `/beagle3/.../upside2-md` and `$P`, md5
+   checked; no running job reads martini.h5 (benchmarks are soluble, queued glpG chains read their
+   already-patched seeds).
 
 ## Known Errors / Blockers
 

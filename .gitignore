@@ -38,5 +38,6 @@ training/*
 !training/*.sh
 !training/*.sbatch
 !training/pdb_list
+!training/ff31/
 
 *.bak_*

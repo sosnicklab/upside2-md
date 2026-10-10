@@ -15,7 +15,7 @@ import importlib.util
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple
 
 import h5py
 import numpy as np
@@ -45,6 +45,12 @@ PARTICLES_R_MIN_A = 0.3
 PARTICLES_R_MAX_A = 12.0
 DRY_MARTINI_NONBONDED_CUTOFF_NM = PARTICLES_R_MAX_A * ANGSTROM_TO_NM
 NUMERICAL_DISTANCE_GUARD_NM = 1.0e-6
+# The SC-particle table is an azimuthal average, so it must sample the azimuth densely enough to
+# converge. 24 target directions and one side-chain bead frame left about two directions per cos node
+# and one-node ridges of up to 1e9 E_up that gave single-evaluation force spikes of 33,000 E_up/A in
+# glpG; 600 x 12 and 2400 x 24 agree to 0.01 E_up (findings 4.10, 4.13).
+SC_TABLE_DIRECTION_COUNT = 600
+SC_TABLE_BEAD_FRAME_COUNT = 12
 
 CANONICAL_RESIDUES = (
     "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY",
@@ -113,40 +119,32 @@ def _bead_frame_angles(count: int) -> np.ndarray:
 
 
 def _boltzmann_free_energy_kj_mol(
-    values_kj_mol: list[float] | np.ndarray,
+    values_kj_mol: np.ndarray,
+    weights: np.ndarray,
+    sampled: np.ndarray,
     temperature: float,
-    weights: list[float] | np.ndarray | None = None,
-) -> float:
-    values = np.asarray(values_kj_mol, dtype=np.float64)
-    if values.size == 0:
-        return 0.0
-    if weights is None:
-        weights_arr = np.ones(values.shape, dtype=np.float64)
-    else:
-        weights_arr = np.asarray(weights, dtype=np.float64)
-    positive = weights_arr > 0.0
-    if not np.any(positive):
-        return float(np.mean(values))
-    values = values[positive]
-    weights_arr = weights_arr[positive]
+) -> np.ndarray:
+    """Weighted Boltzmann free energy over the last axis, of the samples a bin was given (`sampled`).
+    It runs over the positive-weight samples, and is their weighted mean at temperature 0; a bin whose
+    samples all have weight 0 takes their plain mean."""
+    values, weights, sampled = np.broadcast_arrays(
+        np.asarray(values_kj_mol, dtype=np.float64), np.asarray(weights, dtype=np.float64), sampled
+    )
+    positive = weights > 0.0
+    weights = np.where(positive, weights, 0.0)
+    weight_sum = weights.sum(axis=-1)
+    norm = np.where(weight_sum > 0.0, weight_sum, 1.0)
     if temperature <= 0.0:
-        return float(np.average(values, weights=weights_arr))
-
-    kbt = float(temperature) * ENERGY_CONVERSION_KJ_PER_EUP
-    emin = float(np.min(values))
-    z = float(np.sum(weights_arr * np.exp(-(values - emin) / kbt)) / np.sum(weights_arr))
-    return float(emin - kbt * math.log(max(z, 1e-300)))
-
-
-def _bead_frame_count(kind: str, default: int = 1) -> int:
-    default = int(default)
-    specific = os.environ.get(f"UPSIDE_MARTINI_{kind.upper()}_BEAD_FRAME_COUNT", "").strip()
-    if specific:
-        return _positive_int_env(f"UPSIDE_MARTINI_{kind.upper()}_BEAD_FRAME_COUNT", default)
-    shared = os.environ.get("UPSIDE_MARTINI_BEAD_FRAME_COUNT", "").strip()
-    if shared:
-        return _positive_int_env("UPSIDE_MARTINI_BEAD_FRAME_COUNT", default)
-    return default
+        free = (weights * np.where(positive, values, 0.0)).sum(axis=-1) / norm
+    else:
+        kbt = float(temperature) * ENERGY_CONVERSION_KJ_PER_EUP
+        emin = np.where(positive, values, np.inf).min(axis=-1)
+        emin = np.where(np.isfinite(emin), emin, 0.0)
+        shifted = np.where(positive, values - emin[..., None], 0.0)
+        z = (weights * np.exp(-shifted / kbt)).sum(axis=-1) / norm
+        free = emin - kbt * np.log(np.maximum(z, 1e-300))
+    plain_mean = np.where(sampled, values, 0.0).sum(axis=-1) / np.maximum(sampled.sum(axis=-1), 1)
+    return np.where(weight_sum > 0.0, free, plain_mean)
 
 
 def _write_common_table_contract_attrs(
@@ -164,20 +162,12 @@ def _write_common_table_contract_attrs(
     group.attrs["target_object"] = target_object
     group.attrs["projection_ensemble"] = projection_ensemble
     group.attrs["base_energy_source"] = "dry_martini_pair_params_lj_coulomb"
-    group.attrs["base_energy_helper"] = "_compute_pair_energy_and_gradient"
+    group.attrs["base_energy_helper"] = "_pair_energy_kj_mol"
     group.attrs["correction_layer"] = correction_layer
     group.attrs["unit_contract"] = "native_dry_martini_nm_kjmol_e_to_upside_runtime_attrs"
     group.attrs["runtime_representation"] = runtime_representation
     group.attrs["nonbonded_cutoff_nm"] = np.float32(DRY_MARTINI_NONBONDED_CUTOFF_NM)
     group.attrs["numerical_distance_guard_nm"] = np.float32(NUMERICAL_DISTANCE_GUARD_NM)
-
-
-def _clamp(x: float, lo: float, hi: float) -> float:
-    return max(lo, min(hi, x))
-
-
-def _dot3(a: Iterable[float], b: Iterable[float]) -> float:
-    return float(sum(x * y for x, y in zip(a, b)))
 
 
 def _linspace(start: float, stop: float, count: int) -> List[float]:
@@ -202,36 +192,34 @@ def _fibonacci_sphere(count: int) -> List[List[float]]:
     return directions
 
 
-def _accumulate_sample_on_cos_grid(
-    cos_theta: float,
-    value: float,
-    sample_grid: List[List[float]],
-    sample_weight_grid: List[List[float]],
+def _cos_grid_bin_weights(
+    cos_theta: np.ndarray,
     cos_grid: List[float],
-    sample_weight: float = 1.0,
-) -> None:
-    if len(cos_grid) == 1:
-        sample_grid[0].append(value)
-        sample_weight_grid[0].append(sample_weight)
-        return
-    step = cos_grid[1] - cos_grid[0]
-    coord = (cos_theta - cos_grid[0]) / step
-    if coord <= 0.0:
-        sample_grid[0].append(value)
-        sample_weight_grid[0].append(sample_weight)
-        return
-    if coord >= len(cos_grid) - 1:
-        sample_grid[-1].append(value)
-        sample_weight_grid[-1].append(sample_weight)
-        return
-    lo = int(math.floor(coord))
-    hi = lo + 1
-    hi_weight = coord - float(lo)
-    lo_weight = 1.0 - hi_weight
-    sample_grid[lo].append(value)
-    sample_weight_grid[lo].append(sample_weight * lo_weight)
-    sample_grid[hi].append(value)
-    sample_weight_grid[hi].append(sample_weight * hi_weight)
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Linear binning of each sample's cos(theta) onto the grid, as (weights, sampled), each
+    (n_sample, n_angle). A sample at or beyond an end node goes whole to it; an interior one is split
+    between its two nodes, and one on a node still reaches the next node, with weight 0."""
+    cos_theta = np.asarray(cos_theta, dtype=np.float64)
+    n_sample, n_angle = cos_theta.size, len(cos_grid)
+    weights = np.zeros((n_sample, n_angle), dtype=np.float64)
+    sampled = np.zeros((n_sample, n_angle), dtype=bool)
+    if n_angle == 1:
+        weights[:, 0] = 1.0
+        sampled[:, 0] = True
+        return weights, sampled
+    coord = (cos_theta - cos_grid[0]) / (cos_grid[1] - cos_grid[0])
+    rows = np.arange(n_sample)
+    for end, at_end in ((0, coord <= 0.0), (n_angle - 1, coord >= n_angle - 1)):
+        weights[rows[at_end], end] = 1.0
+        sampled[rows[at_end], end] = True
+    inner = (coord > 0.0) & (coord < n_angle - 1)
+    lo = np.floor(coord[inner]).astype(np.int64)
+    hi_weight = coord[inner] - lo
+    weights[rows[inner], lo] = 1.0 - hi_weight
+    weights[rows[inner], lo + 1] = hi_weight
+    sampled[rows[inner], lo] = True
+    sampled[rows[inner], lo + 1] = True
+    return weights, sampled
 
 
 def _factorize_one_sided_orientation(
@@ -622,99 +610,72 @@ def _run_sc_task(
     dist_min_nm: float = NUMERICAL_DISTANCE_GUARD_NM,
     temperature: float = 0.0,
 ) -> Dict[str, Any]:
-    n_rotamer = len(rotamer_bead_positions_nm)
-    n_angle = len(cos_theta_grid)
-    n_radial = len(r_values)
-    rotamer_positions = [
-        np.asarray(pos, dtype=np.float64) for pos in rotamer_bead_positions_nm
-    ]
     n_bead = len(sidechain_bead_types)
+    rotamer_positions = [np.asarray(pos, dtype=np.float64) for pos in rotamer_bead_positions_nm]
     for irot, pos in enumerate(rotamer_positions):
         if pos.shape != (n_bead, 3):
             raise RuntimeError(
                 f"{residue} rotamer {irot} has bead geometry shape {pos.shape}, "
                 f"expected ({n_bead}, 3)"
             )
+    n_rotamer = len(rotamer_positions)
+    n_angle = len(cos_theta_grid)
+    n_radial = len(r_values)
 
-    angular_energy = [[0.0 for _ in r_values] for _ in cos_theta_grid]
-    rotamer_angular_energy = [
-        [[0.0 for _ in r_values] for _ in cos_theta_grid]
-        for _ in range(n_rotamer)
-    ]
+    bead_params = []
+    for bead_type, bead_charge in zip(sidechain_bead_types, sidechain_bead_charges):
+        params = pair_params.get((bead_type, target_type))
+        if params is None:
+            params = pair_params.get((target_type, bead_type))
+        if params is None:
+            raise RuntimeError(f"Missing pair params for ({bead_type}, {target_type})")
+        charge_product = bead_charge * target_charge if bead_charge and target_charge else 0.0
+        bead_params.append((params["sigma_nm"], params["epsilon_kj_mol"], charge_product))
 
     cb_anchor_arr = np.asarray(cb_anchor_nm, dtype=np.float64)
     cb_vector_arr = np.asarray(cb_vector_unit, dtype=np.float64)
     cb_vector_arr /= max(float(np.linalg.norm(cb_vector_arr)), 1e-12)
     bead_frame_angles = [float(x) for x in sidechain_bead_frame_angles] or [0.0]
+    # every rotamer's beads in every bead frame: (n_rotamer, n_frame, n_bead, 3)
+    framed_positions = np.stack([
+        np.stack([
+            _rotate_points_about_axis_np(pos, cb_vector_arr, angle, cb_anchor_arr)
+            for angle in bead_frame_angles
+        ])
+        for pos in rotamer_positions
+    ])
 
+    directions = np.asarray(direction_vectors, dtype=np.float64)
+    cos_theta = np.clip(-(directions @ np.asarray(cb_vector_unit, dtype=np.float64)), -1.0, 1.0)
+    bin_weight, bin_sampled = _cos_grid_bin_weights(cos_theta, cos_theta_grid)
+    if not bin_sampled.any(axis=0).all():
+        raise RuntimeError(f"Cos(theta) bin empty for {residue} target {target_type}")
+    # A bin's samples run over (bead frame, target direction), each direction carrying its bin weight
+    # in every frame; the rotamer-pooled average also weights each rotamer by its probability.
+    sample_weight = np.tile(bin_weight.T, (1, len(bead_frame_angles)))
+    sample_sampled = np.tile(bin_sampled.T, (1, len(bead_frame_angles)))
+    rotamer_weight_arr = np.asarray(rotamer_weights, dtype=np.float64)
+    pooled_weight = (rotamer_weight_arr[None, :, None] * sample_weight[:, None, :]).reshape(n_angle, -1)
+    pooled_sampled = np.repeat(sample_sampled[:, None, :], n_rotamer, axis=1).reshape(n_angle, -1)
+
+    angular_energy = np.zeros((n_angle, n_radial), dtype=np.float64)
+    rotamer_angular_energy = np.zeros((n_rotamer, n_angle, n_radial), dtype=np.float64)
     for ir, r_nm in enumerate(r_values):
-        energy_samples = [[] for _ in cos_theta_grid]
-        energy_sample_weights = [[] for _ in cos_theta_grid]
-        rotamer_energy_samples = [[[] for _ in cos_theta_grid] for _ in range(n_rotamer)]
-        rotamer_energy_sample_weights = [[[] for _ in cos_theta_grid] for _ in range(n_rotamer)]
-
-        for direction in direction_vectors:
-            target_pos_nm = [
-                cb_anchor_nm[0] + r_nm * direction[0],
-                cb_anchor_nm[1] + r_nm * direction[1],
-                cb_anchor_nm[2] + r_nm * direction[2],
-            ]
-            cos_theta = _clamp(-_dot3(direction, cb_vector_unit), -1.0, 1.0)
-            for irot, (sc_positions, rot_weight) in enumerate(
-                zip(rotamer_positions, rotamer_weights)
-            ):
-                target = np.asarray(target_pos_nm, dtype=np.float64).reshape(1, 3)
-                for sc_frame_angle in bead_frame_angles:
-                    framed_sc_positions = _rotate_points_about_axis_np(
-                        sc_positions, cb_vector_arr, sc_frame_angle, cb_anchor_arr
-                    )
-                    rot_energy, _, _ = _compute_pair_energy_and_gradient(
-                        framed_sc_positions,
-                        target,
-                        sidechain_bead_types,
-                        [target_type],
-                        sidechain_bead_charges,
-                        [target_charge],
-                        pair_params,
-                        dist_min_nm=dist_min_nm,
-                    )
-                    _accumulate_sample_on_cos_grid(
-                        cos_theta,
-                        float(rot_energy),
-                        rotamer_energy_samples[irot],
-                        rotamer_energy_sample_weights[irot],
-                        cos_theta_grid,
-                    )
-                    _accumulate_sample_on_cos_grid(
-                        cos_theta,
-                        float(rot_energy),
-                        energy_samples,
-                        energy_sample_weights,
-                        cos_theta_grid,
-                        sample_weight=float(rot_weight),
-                    )
-
-        for ia in range(n_angle):
-            if not energy_samples[ia]:
-                raise RuntimeError(
-                    f"Cos(theta) bin empty for {residue} target {target_type} at r={r_nm:.4f} nm"
-                )
-            angular_energy[ia][ir] = _boltzmann_free_energy_kj_mol(
-                energy_samples[ia],
-                temperature,
-                energy_sample_weights[ia],
-            )
-            for irot in range(n_rotamer):
-                if not rotamer_energy_samples[irot][ia]:
-                    raise RuntimeError(
-                        f"Rotamer cos(theta) bin empty for {residue} target {target_type} "
-                        f"rotamer={irot} at r={r_nm:.4f} nm"
-                    )
-                rotamer_angular_energy[irot][ia][ir] = _boltzmann_free_energy_kj_mol(
-                    rotamer_energy_samples[irot][ia],
-                    temperature,
-                    rotamer_energy_sample_weights[irot][ia],
-                )
+        target_pos_nm = cb_anchor_arr[None, :] + r_nm * directions
+        dist_nm = np.linalg.norm(
+            framed_positions[:, :, :, None, :] - target_pos_nm[None, None, None, :, :], axis=-1
+        )
+        energy = sum(
+            _pair_energy_kj_mol(dist_nm[:, :, ib], *bead_params[ib], dist_min_nm=dist_min_nm)
+            for ib in range(n_bead)
+        )
+        samples = energy.reshape(n_rotamer, -1)
+        rotamer_angular_energy[:, :, ir] = _boltzmann_free_energy_kj_mol(
+            samples[:, None, :], sample_weight[None], sample_sampled[None], temperature
+        )
+        angular_energy[:, ir] = _boltzmann_free_energy_kj_mol(
+            samples.reshape(1, -1), pooled_weight, pooled_sampled, temperature
+        )
 
     radial_energy, angular_profile, angular_radial_energy, rms_error = (
         _factorize_one_sided_orientation(angular_energy, cos_theta_grid)
@@ -732,7 +693,6 @@ def _run_sc_task(
         rotamer_angular_profile.append(rp)
         rotamer_angular_radial_energy.append([float(v) for v in ra])
         rotamer_rms_error.append(rrm)
-
     return {
         "residue": residue,
         "target_label": target_type,
@@ -776,7 +736,8 @@ def _build_sc_table_group(
     r_min_nm: float = 0.25,
     r_max_nm: float = 1.20,
     r_count: int = 96,
-    direction_count: int = 24,
+    direction_count: int = SC_TABLE_DIRECTION_COUNT,
+    bead_frame_count: int = SC_TABLE_BEAD_FRAME_COUNT,
     cos_theta_count: int = 13,
     average_temperature: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
 ) -> None:
@@ -786,7 +747,7 @@ def _build_sc_table_group(
     cos_theta_grid = _linspace(-1.0, 1.0, cos_theta_count)
     cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
     cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
-    sidechain_bead_frame_angles = [float(x) for x in _bead_frame_angles(_bead_frame_count("SC", 1))]
+    sidechain_bead_frame_angles = [float(x) for x in _bead_frame_angles(bead_frame_count)]
 
     # Determine residue-task and target-task lists
     residue_tasks = []
@@ -910,6 +871,7 @@ def _build_sc_table_group(
     g.attrs["forcefield_name"] = "martini22"
     g.attrs["sample_dist_min_nm"] = np.float32(NUMERICAL_DISTANCE_GUARD_NM)
     g.attrs["sidechain_bead_frame_count"] = np.int32(len(sidechain_bead_frame_angles))
+    g.attrs["target_direction_count"] = np.int32(direction_count)
     g.attrs["orientation_sampling"] = "target_direction_vector_grid"
     g.attrs["azimuthal_average"] = first.get("azimuthal_average", "")
     g.attrs["azimuthal_average_temperature_upside"] = np.float32(average_temperature)
@@ -970,91 +932,39 @@ def _write_h5_atomically(output_path: Path, writer: Callable[[h5py.File], None])
             tmp_path.unlink()
 
 
-def _compute_pair_energy_and_gradient(
-    pos1: np.ndarray,
-    pos2: np.ndarray,
-    bead_types1: list,
-    bead_types2: list,
-    bead_charges1: list,
-    bead_charges2: list,
-    pair_params: dict,
+def _pair_energy_kj_mol(
+    dist_nm: np.ndarray,
+    sigma_nm: float,
+    epsilon_kj_mol: float,
+    charge_product: float,
     dist_min_nm: float = NUMERICAL_DISTANCE_GUARD_NM,
-    cutoff_nm: float | None = DRY_MARTINI_NONBONDED_CUTOFF_NM,
-) -> tuple:
-    """Compute non-bonded (LJ+Coulomb) energy and per-bead gradients for a pair of lipids.
+    cutoff_nm: float = DRY_MARTINI_NONBONDED_CUTOFF_NM,
+) -> np.ndarray:
+    """Dry-MARTINI pair energy (kJ/mol) at an array of distances (nm).
 
-    pos1, pos2: (14, 3) float64 arrays in nm.
+    The same MARTINI 2 nonbonded contract as the particle-particle grids: LJ potential-shift and
+    reaction-field Coulomb, so energy and force both reach the cutoff smoothly. Truncating bare leaves a
+    step of k*q1q2/r_c at r_c -- ~3.5 kT for a charged pair at 1.2 nm -- which breaks energy
+    conservation every time a pair crosses (findings 75, 79-80).
 
-    `dist_min_nm` is a numerical singularity guard, not a model parameter.
-    Production table builds pass `NUMERICAL_DISTANCE_GUARD_NM`.
-
-    Returns (total_energy_kj_mol, grad1, grad2) where grad1, grad2 are (14, 3).
+    `dist_min_nm` is a numerical singularity guard, not a model parameter. Production table builds
+    pass `NUMERICAL_DISTANCE_GUARD_NM`.
     """
-    n1, n2 = pos1.shape[0], pos2.shape[0]
-    total_energy = 0.0
-    grad1 = np.zeros_like(pos1)
-    grad2 = np.zeros_like(pos2)
-
-    for i in range(n1):
-        for j in range(n2):
-            dx = pos2[j] - pos1[i]
-            dist_sq = float(np.dot(dx, dx))
-            dist = float(np.sqrt(dist_sq))
-            if cutoff_nm is not None and dist > float(cutoff_nm):
-                continue
-            eff_dist = max(dist, dist_min_nm)
-
-            key = (bead_types1[i], bead_types2[j])
-            params = pair_params.get(key)
-            if params is None:
-                params = pair_params.get((bead_types2[j], bead_types1[i]))
-            if params is None:
-                raise RuntimeError(
-                    f"Missing pair params for ({bead_types1[i]}, {bead_types2[j]})"
-                )
-
-            sigma_nm = params["sigma_nm"]
-            epsilon_kj = params["epsilon_kj_mol"]
-
-            # Same MARTINI 2 nonbonded contract as the particle-particle grids: LJ potential-shift and
-            # reaction-field Coulomb, so energy and force both reach the cutoff smoothly. Truncating
-            # bare leaves a step of k*q1q2/r_c at r_c -- ~3.5 kT for a charged pair at 1.2 nm -- which
-            # breaks energy conservation every time a pair crosses (findings 75, 79-80).
-            sr = sigma_nm / eff_dist
-            sr2 = sr * sr
-            sr6 = sr2 * sr2 * sr2
-            lj = 4.0 * epsilon_kj * (sr6 * sr6 - sr6)
-            if cutoff_nm is not None:
-                src6 = (sigma_nm / float(cutoff_nm)) ** 6
-                lj -= 4.0 * epsilon_kj * (src6 * src6 - src6)
-            total_energy += lj
-
-            if dist > 1e-10:
-                dlj_dr = 4.0 * epsilon_kj * (-12.0 * sr6 * sr6 / eff_dist + 6.0 * sr6 / eff_dist)
-                unit = dx / dist
-                grad1[i] -= dlj_dr * unit
-                grad2[j] += dlj_dr * unit
-
-            q1 = bead_charges1[i]
-            q2 = bead_charges2[j]
-            if q1 and q2 and dist > 1e-10:
-                coul_eff = max(dist, dist_min_nm)
-                kq = COULOMB_K_DRY_KJ_NM * q1 * q2
-                if cutoff_nm is not None:
-                    r_c = float(cutoff_nm)
-                    k_rf = 1.0 / (2.0 * r_c ** 3)
-                    c_rf = 3.0 / (2.0 * r_c)
-                    coul = kq * (1.0 / coul_eff + k_rf * coul_eff * coul_eff - c_rf)
-                    dcoul_dr = kq * (-1.0 / (coul_eff * coul_eff) + 2.0 * k_rf * coul_eff)
-                else:
-                    coul = kq / coul_eff
-                    dcoul_dr = -kq / (coul_eff * coul_eff)
-                total_energy += coul
-                unit = dx / dist
-                grad1[i] -= dcoul_dr * unit
-                grad2[j] += dcoul_dr * unit
-
-    return total_energy, grad1, grad2
+    dist_nm = np.asarray(dist_nm, dtype=np.float64)
+    eff_dist = np.maximum(dist_nm, dist_min_nm)
+    sr = sigma_nm / eff_dist
+    sr2 = sr * sr
+    sr6 = sr2 * sr2 * sr2
+    src6 = (sigma_nm / float(cutoff_nm)) ** 6
+    energy = 4.0 * epsilon_kj_mol * (sr6 * sr6 - sr6) - 4.0 * epsilon_kj_mol * (src6 * src6 - src6)
+    if charge_product:
+        kq = COULOMB_K_DRY_KJ_NM * charge_product
+        r_c = float(cutoff_nm)
+        k_rf = 1.0 / (2.0 * r_c ** 3)
+        c_rf = 3.0 / (2.0 * r_c)
+        coulomb = kq * (1.0 / eff_dist + k_rf * eff_dist * eff_dist - c_rf)
+        energy = energy + np.where(dist_nm > 1e-10, coulomb, 0.0)
+    return np.where(dist_nm > float(cutoff_nm), 0.0, energy)
 
 
 def _rotation_about_axis_np(axis: np.ndarray, angle: float) -> np.ndarray:

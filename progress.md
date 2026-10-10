@@ -359,3 +359,58 @@ to 10-07 12:00 is in git history.
   nothing local runs (TM4 queue empty after dz_01). remote_jobs "Handoff" has the restart steps
   (one catch-up pass, then CronCreate with the prompt in "The watch"); "Resume here" step 4 lists the
   current owed checks. WATCH_STATUS.md carries the restart note.
+* **21:25-23:00 10-09, Mac Studio after the restart: watch, md merge, TM1 kick found.** One watch
+  pass (21:27; ff30_gdepth_fz step 42 clean; 25 of 32 ff_3.0_gdepth benchmark chunks carry the
+  pre-10:30 exclusion list, asked); cron `45cc9e4a`. The MacBook Pro's records merged into plan.md
+  Phase 13, findings 1.26-1.27, 3.8, 4.6-4.9, 10.14 and 10.20-10.22, and its three files deleted.
+  TM1 (user: resolve it locally in ff3.0): option A on ff3.0, 12 seeds, running from 21:58
+  (`scratchpad/glpg_tm1/glpg_tm1_hbmem/runs`); a read-only kick probe (bitwise against the stored
+  runs) found the TM1-middle kicks to be the side-chain/lipid table's under-sampling (findings 4.10);
+  a converged table is being built (`kick_ff30/sc_table_600x12`).
+* **22:40-23:05 10-09, ff3.1 research and the route-1 probe (user).** Literature and trainer study
+  (findings 1.28): the parameter count is no obstacle (Upside already trains 31,285), the data per
+  depth and the native-placement target are. User chose route 1 (per-map depths under an L2 prior,
+  no new simulations; plan.md Phase 14). Probe on c9's recorded basin populations
+  (`scratchpad/ff31_probe/`, findings 1.29): cross-validated width 0.3 nat, per-map detail transfers
+  less well than pooled offsets, and the transferable push is a global alpha_R deepening.
+* **23:05-23:50 10-09, frozen arms stopped; ff3.1 built and submitted (user).** Cancelled
+  ff30_gdepth_fz's link 49206070 (after its successor 49214121), the successors 49206071 and 49214161,
+  and the dz_01 panel 49218034 (user: the dt 0.009 training already keeps TM4 stable). ff3.1 trainer
+  `training/ff31/` (per-map basin depths; findings 1.30), tested offline (reproduces round 4's
+  round 1 exactly), deployed as `ff31_depth_all` (49218340) and `ff31_depth_data` (49218341), both
+  from ff2.1 at NDRD, target 76, no gate. `check_step.py` and `submit_new.sh` extended (backups
+  `.bak_pre_ff31_20261009`); watch cron `cfa1b8c7`. remote_jobs.md, WATCH_STATUS.md.
+* **00:09-00:20 10-10, TM1: option A on ff3.0 finished.** TM1 last-block alpha 0.818 against d9_03's
+  0.685 (p 0.073, not resolved), no jump above 3000 (findings 4.11). The probe build gained a start
+  evaluation (`UPSIDE_KICK_PROBE_START`) and was rebuilt in place while the fixed-table seeds ran on
+  it; all 12 survived, but a live binary is rebuilt only into a fresh path from now on. Replays of
+  ff2.1 + term s1 (to t 1700) and s2 (to t 2960) started, frame for frame with the MacBook Pro's logs,
+  to read the tears of findings 4.8.
+* **00:25-00:35 10-10, TM1 literature (user question) and the combined test.** Literature agent
+  (findings 4.12): no experiment shows GlpG's TM1 opening; the core costs 6.3-9 E_up per broken
+  H-bond against the hybrid's 1.96; option A supplies about the low end, A and B must not be
+  combined. Fixed table + term set started 00:32 (`run_probe_set.sh`, `runs_sc600x12_hbmem/`).
+* **01:40 10-10, ff2.1 + term's tears explained.** The probe replays (bit for bit with the MacBook
+  Pro's runs) show both TM4 tears start with a side-chain/lipid table spike on MET142's CA (77,407 and
+  153,463 E_up/A), not the term (findings 4.8, 4.10). Every kick site so far is a MET (34, 35, 142).
+* **02:07 10-10, TM1 resolved by the table fix.** The fixed-table set finished: TM1 last-block
+  alpha 0.931 against d9_03's 0.685 (p 0.002), TM4 0.924 against 0.726 (p 0.10), no evaluation above
+  1000 E_up/A, one C-N excursion frame against 33 (findings 4.13). Production (martini.h5, the
+  builder, the cluster) waits for the user. The fixed-table + term set runs to ~04:10.
+* **02:47 10-10, watch pass; ff30_bio_si converged.** Step 75 at 02:18; gate 49218437 converged
+  (steps 58-76, lowest dhb p 0.0125) and released ff_3.0_bio_si (= bs_03, md5 in both trees); 32
+  benchmark arms (10 R, first logs clean) and 4 glpG chains queued; bs_03 panel 49218518 (submit_new).
+  bs_03 extracted, patched (matches the gate's own patch), TM4 from 02:50; the TM1 combined set's seeds
+  9-12 paused for it and resumed when it finishes. remote_jobs.md §1, WATCH_STATUS.md, plan.md Phase 11.
+* **04:48 10-10, TM4 bs_03 (= ff_3.0_bio_si) finished.** DSSP alpha 0.739 against bio_start's 0.769
+  (p 0.89), bs_02's 0.684 (p 0.71) and d9_03's 0.726 (p 1.00, added): not resolved; unwound 4,
+  flipped 2 of 12. s1 carries a transient protein-potential jump to +200,071 at t 1490 (recovered,
+  TM4 0.99). Findings 1.24 table, 1.25, new 1.31; tables `tm4_compare_cov_bs_03*.txt`, runs to
+  `runs_cov/` (local hardlinks, cluster rsync). The TM1 seeds 9-12 resumed at 04:46.
+  remote_jobs.md §1, WATCH_STATUS.md.
+* **06:05 10-10, TM1: the term on the fixed table (Phase 13 step 5 done).** The fixed-table + term
+  set finished 05:49: TM1 0.964 and TM4 0.959 against d9_03's 0.685 and 0.726 (p < 0.001, 0.009),
+  both resolved; against the table fix alone TM1 +0.033 (p 0.049), TM4 p 0.21; no C-N excursion, no
+  jump; three evaluations above 1000 E_up/A, protein side-chain contacts (ASN185, SER119), not the
+  table or the term. Findings 4.14 (new), plan.md Phase 13. TM1 data and README_mac_studio.txt
+  uploaded to `checks/tm1_hbmem_20261009/mac_studio_20261010/` (5.7 GB, sizes verified 06:31).

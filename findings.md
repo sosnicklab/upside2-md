@@ -10,7 +10,7 @@ cluster lessons (10), references (11) and claims that turned out to be wrong (12
 
 ---
 
-## 1. Standing rules, and the ff3.0 Ramachandran work (1.8-1.27)
+## 1. Standing rules, and the ff3.0 Ramachandran work (1.8-1.28)
 
 ### 1.1 A spline table must BE the published potential
 
@@ -1402,6 +1402,7 @@ These are the first TM4 counts on inputs patched by the fixed `patch_glpg.py` (m
 | `bs_00` | ff30_bio_si step 18 (`epoch_00_minibatch_18`; twin `b9_00`) | 6 / 12 | 5 / 12 | 1 seed (s1, 6238 at t 380; unwound) | 1.003-1.012 |
 | `bs_01` | ff30_bio_si step 37 (`epoch_01_minibatch_18`, half-trained; twin `b9_01`) | 5 / 12 | 2 / 12 | 1 seed (s9, 18081 at t 929; unwound, flipped) | 1.003-1.011 |
 | `bs_02` | ff30_bio_si step 56 (`epoch_02_minibatch_18`; twin `b9_02`) | 5 / 12 | 2 / 12 | none | 1.002-1.013 |
+| `bs_03` | ff30_bio_si step 75 (`epoch_03_minibatch_18`), released as ff_3.0_bio_si (1.31) | 4 / 12 | 2 / 12 | 2 seeds (s1, 201861 at t 1490, the largest on fixed inputs, TM4 0.99; s11, 3076 at t 1040, TM4 1.00) | 1.003-1.012 |
 | `bz_01` | ff30_bio_fz step 37 (`epoch_01_minibatch_18`, half-trained; twin `b9_01`) | 6 / 12 | 2 / 12 | 2 seeds (s12, 8855 at t 1410; s1, 8266 at t 3530; both unwound) | 1.003-1.012 |
 | `bz_02` | ff30_bio_fz step 56 (`epoch_02_minibatch_18`; twin `b9_02`) | 4 / 12 | 3 / 12 | 2 seeds (s7, 6591 at t 2930; s11, 4279 at t 589; both TM4 1.00) | 1.003-1.021 |
 | `bz_00` | ff30_bio_fz step 18 (`epoch_00_minibatch_18`; twin `b9_00`), 24 seeds | 8 / 24 (3 in 1-12, 5 in 13-24) | 4 / 24 (0 in 1-12, 4 in 13-24) | 3 seeds (s16, 4140 at t 1430, unwound; s18, 4208 at t 2900, TM4 1.00; s5, 3486 at t 1920, TM4 0.94) | 1.003-1.016 |
@@ -1868,7 +1869,7 @@ interval is the bootstrap 95% interval of the difference):
     b9_02's 8 and 4 (p 0.41, 0.64). No total-potential jump; KE/1.5kT 1.002-1.013.
   - bs's margin at step 56 was +0.055, b9's +0.020; the TM4 totals are level.
 - **Along each training** (start, then steps 18, 37, 56, 75): ff30_bio_dt009 0.769, 0.815, 0.711,
-  0.694; ff30_bio_fz 0.769, 0.794, 0.739, 0.856; ff30_bio_si 0.769, 0.684, 0.760, 0.684; ff30_gdepth_dt009
+  0.694; ff30_bio_fz 0.769, 0.794, 0.739, 0.856; ff30_bio_si 0.769, 0.684, 0.760, 0.684, 0.739; ff30_gdepth_dt009
   0.657, 0.801, 0.615, 0.765, 0.726; ff30_gdepth_fz 0.657, 0.791, 0.780; ff30_gdepth_si 0.657, 0.572; ff21_ctrl_dt009 0.610, 0.660, 0.595.
   The bio runs end at or below bio_start from epoch 1 on, except bz_02. ff30_gdepth_dt009's epoch-2
   and epoch-3 ends are above its start, unresolved, and below bio_start's level.
@@ -1947,6 +1948,144 @@ Measured on the MacBook Pro; files are in its `scratchpad/glpg_ff21_vs_ff30/` un
   (BioEmu-fitted). Scripts `scratchpad/plot_gly_rama_ff30.py` and `plot_gly_rama_nonhelix_zero.py`;
   figures `gly_rama_ff30.png`, `*_nonhelix_zero.png` and the US Letter page
   `gly_rama_nonhelix_zero_page.pdf`, in the MacBook Pro's `~/Downloads`.
+
+### 1.28 Training every basin depth (an ff3.1 question): the parameter count is not the limit (2026-10-09)
+
+The user's question (10-09, after talking with Jumper): ff3.0 trains one glycine depth pair; could
+ff3.1 train the relative depth of every basin of every map, given 456 proteins? Jumper said the
+parameter count is no obstacle, citing deep-learning practice (regularization, early stopping).
+- **The count is no obstacle, and Upside is the precedent.** ff2.1's ConDiv already trains 31,285
+  parameters with a gradient (rot 30,800 of them) on 456 proteins; Jumper et al. 2018 (PLoS Comput
+  Biol 14:e1006578, Discussion): "very large numbers of parameters (even ~20000 in our case) are no
+  obstacle", and (Results) "continuing the contrastive divergence until convergence does not
+  necessarily produce better results". That paper trained one Ramachandran parameter (the sheet
+  term) on fixed NDRD maps. The literature agrees with conditions: gradient descent stopped early
+  is close to ridge toward its start (Yao et al. 2007; Ali, Kolter, Tibshirani 2019); double descent
+  needs the stopping time or penalty set on held-out data (Belkin et al. 2019; Nakkiran et al. 2020,
+  2021); Potts/DCA models fit 1e5-1e7 couplings to far fewer sequences only with L2 (Ekeberg et al.
+  2013). The data count is sites, not proteins: 49,401 interior residues, 98,802 map reads.
+- **A per-map depth model.** 800 coil maps (840 with cis-proline) of 72 x 72; with the trainer's six
+  basins (alpha_R, alpha_L, beta, pPII and the two phi > 0 extended regions) that is 4,000 depths
+  for coil alone, 2,400 with four basins. The engine's `rama_map_pot` has no parameter derivative,
+  so a depth gradient comes from basin populations, as `rama_basin.py`'s rounds do.
+- **The data per depth are thin.** Native sites per (map, basin) in the 410 training proteins have
+  median 40 (alpha_R), 23 (beta), 16 (pPII) and 1 (alpha_L; 649 of 800 maps have fewer than 5).
+  Measured per-pair resolution (1.12): one epoch's per-offset step has split-half correlation 0.07,
+  true per-pair corrections SD ~0.04 nat against 0.074 noise, 70% of it the protein set, so more
+  epochs remove little. Under a penalty set on held-out data most depths stay at NDRD; the
+  effective parameters are the aggregates the data resolve (the GLY|X alpha_L class, per-central
+  beta against pPII, which the `sheet` energies already carry).
+- **Regularization does not touch the bias.** A depth trained so the free ensemble matches the
+  native-restrained one converges to where evolution placed the residue (1.15-1.16, rule 1.8;
+  round 2's alpha_L, the pre-proline offsets fitting composition, 1.14). Jumper's thesis (2017,
+  section 4.3, PDF page 94): "it is imperative to limit the capacity of the Ramachandran potential
+  to avoid capturing protein physics that should be described in the hydrogen bonding and side chain
+  interactions"; free depths give ConDiv a route to stabilise native secondary structure past the
+  H-bond and side-chain terms.
+- **Two practical limits.** Adam normalises each coordinate's step, so a depth that receives only
+  noise still moves at the learning rate: early stopping is ridge only for plain gradient descent
+  (Wilson et al. 2017; an inference for ConDiv). The 46-protein held-out set sits at its sample-size
+  floor (1.12), so it cannot show overfitting; a penalty or stopping time needs a validation signal
+  that resolves (split-half reproducibility of the depths, a larger held-out set, the panels).
+- Hierarchical pooling (a per-central mean plus penalised per-neighbour deviations, as NDRD and DCA
+  do) is the standard shrinkage, but it is what rule 1.8 forbids for corrections; that is the
+  user's call.
+- Sources checked 10-09 (literature agent; the thesis and paper quotes read directly): Zhang et al.
+  ICLR 2017; Belkin et al. PNAS 2019; Nakkiran et al. ICLR 2020 and 2021; Bartlett et al. PNAS 2020;
+  Yao et al. Constr Approx 2007; Ali et al. AISTATS 2019; Li et al. AISTATS 2020; Prechelt 1998;
+  Wilson et al. NeurIPS 2017; Jumper et al. PLoS Comput Biol 2018 (e1006342, e1006578); Jumper thesis
+  2017; Peng et al. JCTC 2022; Hinton UTML TR 2010-003; Ekeberg et al. PRE 2013; Morcos et al. PNAS
+  2011; Ting et al. PLoS Comput Biol 2010.
+
+### 1.29 The ff3.1 probe on recorded data: per-map depths do not transfer between proteins (2026-10-09)
+
+Route 1 (user, 10-09; plan.md Phase 14 step 1), measured on ff21_ctrl_dt009's recorded basin
+populations (c9: ff2.1's NDRD maps, 38 steps, each of the 456 proteins once per epoch; 98,802
+interior residue-steps) with no new simulation. `scratchpad/ff31_probe/probe_depths.py`, output
+`probe_depths.txt`, `probe_global_by_epoch.txt`.
+- **The model.** One offset per (coil map, basin), 840 maps x 6 basins of `rama_basin.py`; an
+  interior residue reads its left and right map at share 1/2 each; MAP under a Gaussian prior of
+  width sigma centred on NDRD, no pooling, solved jointly to first order in the populations' response.
+  The width is chosen by 10-fold cross-validation over proteins (both epochs of a protein in one
+  fold).
+- **There is signal beyond noise.** Per-map gaps with |z| > 2 against protein bootstrap: alpha_R 99,
+  pPII 97, alpha_L 76, beta 56 of 777 maps with >= 40 reads, against 35 by chance.
+- **Most of it is the proteins, not the maps.** Split-half correlation of the per-map gaps between
+  random protein halves: alpha_R 0.11, beta 0.05, pPII 0.11, alpha_L 0.29; between epoch 0 and 1
+  of the same proteins 0.63-0.70. A map's gap is mostly a property of the proteins that read it (as
+  1.12 found for the glycine offsets).
+- **Cross-validation.** Held-out squared gap left: per residue 0.988 at the best width (0.3 nat),
+  1.008 at 1, 1.049 at 5 (overfitting above ~0.5). On the map-level gap (the part an offset can act
+  on): per-map 0.970 at 0.3 and 1.03-1.13 for sigma >= 1; one offset set per central residue (a
+  pooled model, diagnostic only) 0.956; one global set 0.965. The pooled models transfer better at
+  every width, so the per-neighbour detail adds variance at 456 proteins.
+- **What transfers is a global helix push.** At sigma 0.3 the per-map fit moves 1,012 of 5,040
+  depths by more than 0.1 nat, and its mean over each central residue deepens alpha_R for all 21
+  (-0.01 to -0.13) and raises pPII. The global fit is alpha_R -0.18, alpha_L +0.18, pPII +0.07 to
+  +0.10 nat, the same in epoch 0 as in epoch 1: the free ensemble under-populates alpha_R by 0.9
+  points per residue. Freed depths would stabilise helices through the map, the work hb and dhb do
+  in the same training (Jumper's capacity warning, 1.28).
+- **Glycine agrees with ff3.0.** The per-central glycine offsets raise alpha_L (+0.35 to +0.40) and
+  deepen alpha_R, the direction ff3.0's own glycine pair took (1.27: aR -0.107, aL +0.517).
+- Limits: first-order response; c9's free ensembles under drifting non-Ramachandran terms; the share
+  of 1/2 for each map; the held-out gap carries the held-out proteins' own sampling noise, so the
+  removable fraction is small for every model.
+
+### 1.30 The ff3.1 trainer, and the two runs (2026-10-09)
+
+The user chose to try both route-1 variants (10-09 23:05). Trainer `training/ff31/` (ConDiv.py,
+rama_basin.py): round 4's gdepth trainer with only its Ramachandran calls generalised; deployed as
+`ff31_depth_all` and `ff31_depth_data` (remote_jobs.md §1; `checks/ff31_deploy_20261009`).
+- **The model.** One offset per (coil map, basin), 840 maps (21 centrals with cis-proline) x 6 basins,
+  started at zero (NDRD), each under its own Gaussian prior; per epoch one damped (ETA 0.5) Newton
+  step on the MAP objective, solved jointly over the maps by conjugate gradient, with shares 1/2 for
+  an interior residue's two maps and 1 for a terminal residue's one. Mode `all` trains all 5,040
+  depths at width 0.3 (1.29's cross-validated width); mode `data` the 1,442 with at least 20 native
+  sites in the 410 training proteins (alpha_R 604, beta 458, pPII 317, alpha_L 39 of which 34 are
+  GLY|X, beta' 13, pPII' 11) at width 0.2.
+- **Tests before deployment** (`scratchpad/ff31_trainer_test/`). Its read assignment and
+  accumulator, summed the round-4 way over the 37 GLY|X maps, reproduce ff30_gdepth_dt009's round 1
+  from its own epoch-0 data exactly (reads 5,421 / 611; gap alpha_R -0.0023, alpha_L +0.0042; held
+  out -0.0186, +0.0193). Zero offsets reproduce every map to 1e-6 with the sheet group and the
+  weights unchanged; an offset of +0.5 scales its basin by exp(-0.5) before renormalising. The CG
+  solve reaches relative residual 4e-6, and mode `data` leaves every untrainable depth at zero.
+  `ConDiv.py initialize` runs locally and on midway2 with the counts above.
+- **The first step predicted** from c9's epoch 0 (ff2.1, the same start): mode `all` step rms 0.030,
+  68 depths beyond 0.1, GLY|X alpha_L +0.057, held-out map-level gap left 0.989; mode `data` rms
+  0.026, 3 beyond 0.1, 0.994. Both steps transfer to the held-out proteins.
+- **No gate and no release.** Neither run has `after_training.sbatch`: the convergence gate judges
+  only the Adam groups, and a converged gate would release and validate (95k core-hours each)
+  unasked. They stop at step 76 for the user.
+- `check_step.py` prints `basin depth offsets ...` (the run's `rama_basin.describe`) for a per-map
+  run; on a round-4 step its output is identical to the old version's (backup
+  `check_step.py.bak_pre_ff31_20261009`).
+
+### 1.31 The second converged round-4 gate: ff30_bio_si at step 76 (2026-10-10)
+
+- **The gate.** ff30_bio_si reached target 76 at 02:18 10-10. Its gate
+  (`ff30_bio_si/gate_step76.txt`) read steps 58-76 and passed every group at p > 0.005: hb 0.84,
+  rot, sheet and the environment groups 0.98-1.00, and dhb lowest at 0.0125. It released
+  `epoch_03_minibatch_18` (bs_03) as `ff_3.0_bio_si`, with the frozen BioEmu-fitted glycine library.
+  The released H-bond margin is +0.058, under the +0.10 hold since step 26 (start +0.192).
+- **Its TM4 (Mac Studio 02:50-04:46) is not resolved from its start, from bs_02, or from the other
+  released candidate** (`tm4_compare_cov_bs_03.txt`, `_vs_bs_02.txt`, `_vs_d9_03.txt`; the d9_03
+  table is an added comparison outside the plan; its port-rate twin b9_03 does not exist yet). DSSP
+  alpha 0.739 against bio_start's 0.769 (-0.030 [-0.195, +0.133], p 0.89), bs_02's 0.684 (+0.055
+  [-0.140, +0.265], p 0.71) and d9_03's 0.726 (+0.013 [-0.179, +0.221], p 1.00).
+  - Per residue it holds 135-143 at 0.79-0.88, where bio_start dips to 0.63 at 142-143, and loses
+    the C-terminal end (0.57, 0.47, 0.48 at 149-151), as bs_02 did.
+  - Seeds: s9, s11 and s12 keep 0.99-1.00, s5 and s10 0.91-0.92. s4 loses most of TM4 in the last
+    block only (0.39; GLY143 flipped 0.67 there), s8 from block 3 (0.45) and s3 from block 2 (0.48)
+    with no flip, s2 0.59, s7 0.65 (GLY143 1.00 in the last block), s6 0.73, s1 0.77.
+  - Secondary: unwound 4 and flipped 2 of 12, against bio_start's 5 and 4 (p 1.00, 0.64). TM1
+    last block 0.851 against 0.858. KE/1.5kT 1.003-1.012.
+  - **s1 carries the largest jump on fixed inputs:** the protein potential goes from -1578 to
+    +200,071 at t 1490, is +2,368 and +530 in the next frames and back near -1,500 by t 1700; no
+    NaN, and TM4 stays at 0.99. The run used the old side-chain/lipid table, whose single-evaluation
+    kicks are in 4.10; this event has not been probed.
+- **Validation is automatic and running:** the 32 benchmark arms (all running at 03:48, no error in
+  any log) and the 4 glpG chains, queued, which run on the old side-chain/lipid table (4.13). The
+  bs_03 panel is queued. Choosing between ff_3.0_gdepth and ff_3.0_bio_si is the user's.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -3186,9 +3325,13 @@ what stayed on the MacBook Pro; the scripts carry the MacBook Pro's absolute pat
   the others are single-bond tears at 36, 198 and 74-84. Frames with any C-N > 2 A: 27 against 28,
   but 8 above 4 A against 4, and no TM4 tear of that size in ff21_released. Rg and the protein's
   depth are unchanged; KE/1.5kT 1.001-1.073 (s2 high, from its tear).
-- Cause of the tears not measured. The term acts through protein_hbond's p on N, CA and C and its
-  forces matched finite differences on stored frames (`verify_hbmem.txt`), so a wrong derivative is
-  not the explanation; whether it raises the stored strain that 4.9's excursions release is untested.
+- **The tears are the side-chain/lipid table's kicks, not the term** (measured 10-10, 4.10). Probe
+  replays of s1 to t 1700 and s2 to t 2960 reproduce the MacBook Pro's runs bit for bit (171 and 297
+  frames); each tear starts with one evaluation of 77,407 (s1) and 153,463 (s2) E_up/A on MET142's CA,
+  all of it the rotamer node's and gone with the table zeroed (9.6, 17.7 left); the events after are
+  Spring_omega and Spring_angle pulling the torn backbone back, and `hb_membrane_potential` is never
+  the largest term (`kick_ff30/attribute_events_ff21_hbmem.txt`). The term's forces had matched
+  finite differences on stored frames (`verify_hbmem.txt`).
 - Not run: ff3.0 + term (its twelve seeds started with the ff2.1 set and were stopped at t 60 when
   the MacBook Pro shut down).
 
@@ -3226,6 +3369,155 @@ frames.
   evaluations) and is not seen at either frame. Not tested: the side-chain/lipid 1-body table
   separately (it sits inside rotamer), and the steps themselves (a replay saving every step takes
   ~2.6 h on the MacBook Pro at ~0.6 s per frame).
+- Localised in ff3.0 by a kick probe (4.10): the impulse is the side-chain/lipid table's.
+
+### 4.10 The TM1-middle kicks come from the side-chain/lipid table's sampling (local ff3.0, 2026-10-09)
+
+Mac Studio, `scratchpad/glpg_tm1/kick_ff30/` (scripts and outputs; plan.md Phase 13 step 2).
+- **The probe.** A temporary read-only build (`scratchpad/glpg_tm1/src_probe`, `obj_probe/`; never
+  in `src/`) records, after every derivative evaluation, the largest |dE/dx| over protein atoms 0-839
+  and keeps the last 120 evaluations' positions, written out when it exceeds 1000 E_up/A. It
+  reproduces the stored d9_03 logs of s7, s8, s10 and s11 frame for frame (21-38 frames). Over s8 to
+  t 300 the median is 85 E_up/A and the 99.9th percentile 550.
+- **The events.** 16 above 1000 E_up/A by t 200-500 (four per seed, the probe's cap), up to 33,260
+  E_up/A, each one evaluation between normal ones (s8: 9.6, 8,305, 5.2 on CA34). They sit on CA34
+  and CA35 (TM1's middle; both MET) except two on CA83 and one on CA169. ff2.1 + term's TM4 tears
+  (4.8) start the same way on MET142, GLY143's neighbour; whether its kicks feed GLY143's flips in
+  the TM4 test is not measured. A single evaluation at 8,305 E_up/A
+  gives a CA about 18 A/tu (thermal 1.6), the size of the excursions in 4.9.
+- **The term.** The engine evaluated offline at the written positions reproduces the recorded dE/dx
+  to 5e-4 E_up/A, so no term carries hidden state. In 15 of 16 events the whole spike is the rotamer
+  node's; with `martini_sc_table_1body`'s tables zeroed it falls to 0.7-36 E_up/A, and with BP
+  converged to tol 1e-6 it stays (8,300). The sixteenth (s8, N36, 6,088 E_up/A) is Spring_omega
+  pulling back the backbone the 33,260 kick tore 576 evaluations earlier.
+- **The mechanism** (s8, evaluation 4688). MET34's rotamer 2 (weight 0.59) against a lipid tail bead
+  (C1) at 4.90 A and angular coordinate 0.167, a grid node: value -0.61 E_up, dV/dcos -12,593,
+  1,504 E_up/A on the CB point; one evaluation later 0.83. The table slice has a ridge one node wide
+  at cos theta = 0, 2,091 E_up at 4.9 A and 795,448 at 3.5 A against 4.9 and -0.6 at the neighbouring
+  nodes, and bilinear interpolation turns it into a wall across two cells.
+- **The ridge is sampling, not the potential.** `parameters/ff_2.1/martini.h5` `sc_table` (copied
+  unchanged into every hybrid input) was built by `py/martini_build_tables.py` `_build_sc_table_group`
+  with 24 target directions over the whole sphere and one side-chain bead frame
+  (`sidechain_bead_frame_count` 1), so each of the 13 cos nodes rests on about two directions, not
+  the azimuthal average the table states (tempered Boltzmann at T 25). The builder's own
+  `_run_sc_task` reproduces the stored slice at those settings (to 0.03 E_up); with 12 frames it gives
+  8.67 E_up at 4.9 A (stored 2,091) and 11.87 at 4.0 A (stored 85,257), and 600 directions x 12
+  frames and 2400 x 24 agree to 0.01 (`sc_table_convergence_MET_C1_rot2.txt`). Over the whole table
+  the largest value is 1.1e9 E_up and 145,841 steps between neighbouring cos nodes exceed 100 E_up.
+- **A vectorised rebuild** (`sc_table_vectorized.py`) uses the builder's pair energy (equal to
+  `_compute_pair_energy_and_gradient` to 7e-15 relative), anchor, binning and average; at 24
+  directions x 1 frame it reproduces all 5.1 M stored cells to 1.2e-7 relative, so only the sampling
+  density changes.
+- **The converged table removes the kicks** (`old_vs_fixed_traces.txt`). The whole table rebuilt at
+  600 directions x 12 frames (finite; largest value 1.4e7 against 1.1e9; angular steps above 100
+  E_up at r >= 4 A 3,230 against 25,912, those left near cos theta = +-1, mostly ARG, LYS, ASP and
+  PRO), written into a copy of the d9_03 input with only `rotamer_full_energy_eup` changed. Over the
+  same durations as the replays (s10 to t 200, s7 and s8 to 300, s11 to 500) the largest |dE/dx| on
+  a protein atom is 187-236 E_up/A against 32,572-65,012, no evaluation exceeds 500 against 152-1,343,
+  the median falls from 134-212 to 66-69, and the largest displacement of a protein atom between
+  evaluations from 0.16-0.33 A to 0.012 A.
+- Every hybrid run reads this table, the TM4-test sets and the glpG validation chains included.
+  Replacing it is a force-field change and the user's decision (plan.md Phase 13 step 3).
+
+### 4.11 The membrane H-bond term on ff3.0: TM1 leans more helical, no tears (2026-10-10)
+
+Option A (4.8) on the local ff3.0: d9_03's patched input plus the term (the MacBook Pro's
+`79HIS_ff_3.0_hbmem.up`, equal to `patched/79HIS_d9_03.up` in every other dataset), 12 seeds with
+`run_glpg.sh`'s flags on `obj/upside` and the old side-chain/lipid table, 21:58 10-09 to 00:09 10-10
+(`scratchpad/glpg_tm1/tm1_compare_ff30_hbmem_vs_d9_03.txt`, `tm1_compare.py`).
+- **TM1, the readout fixed before the run** (last-block DSSP alpha of 29-48, two-sided
+  Mann-Whitney): 0.818 against d9_03's 0.685, +0.133 [-0.000, +0.259], p 0.073, not resolved. Helix
+  of any kind 0.889 against 0.848 (p 0.18); the middle's i->i+4 H-bonds 4.63 against 4.41 (p 0.53).
+  Nine of twelve seeds keep TM1 alpha above 0.70 in the last block; s5, s7 and s12 lose it
+  (0.50-0.61), as s1, s4, s7 and s11 do without the term.
+- **TM4** 0.829 against 0.726 (p 0.49), not resolved.
+- **Health.** No total-potential jump above 3000 (ff2.1 + term had them in 5 of 12 seeds and two
+  TM4 tears, 4.8); frames with a C-N above 2 A 37 against d9_03's 33; KE/1.5kT 1.002-1.018.
+- The kicks of 4.10 are still in these runs (the old table), so the term and the table fix are
+  separate questions; the fixed-table set (plan.md Phase 13 step 4) answers the second.
+
+### 4.12 Is TM1 fixable without training? What the literature says (2026-10-10)
+
+The user's question (10-10 00:25). Literature agent, citations checked against abstracts or full
+text; numbers converted at 1 E_up = 0.697 kcal/mol.
+- **Experiment does not show TM1 opening.** GlpG's crystal structures (Wang, Zhang, Ha 2006 Nature;
+  Wu et al. 2006 NSMB; Ben-Shem et al. 2007 PNAS) and solid-state NMR in liposomes (Shi et al. 2019
+  JACS) put the mobility in TM5, loop L4 and the gating loops. In folding studies TM1-TM2 carry the
+  folding nucleus (Paslawski et al. 2015 PNAS), folding runs N to C in hairpins (Choi et al. 2019
+  Science), the N-subdomain TM1-TM3 is the more stable (Guo et al. 2016 Nat Chem Biol; Gaffney et
+  al. 2022 PNAS), and TM1 and TM2 are GlpG's most hydrophobic helices (Lu, Schafer, Wolynes 2018 Nat
+  Commun). The one contrary hint: HDX-MS in native nanodiscs (Reading et al. 2017 Angew Chem) found a
+  TM1 peptide (94-108, full-length numbering, not mapped to ours) relatively unprotected; it cannot
+  say where along TM1.
+- **The physical cost the hybrid lacks.** Water to alkane, a helical peptide unit costs 2.1 kcal/mol
+  H-bonded and 6.4 not (Ben-Tal et al. 1996 Biophys J); an amide H-bond is worth about -0.5 in water
+  and -4.4 kcal/mol in alkane in helix geometry (Ben-Tal et al. 1997 J Phys Chem B); White & Wimley
+  1999 (Annu Rev Biophys) give 4-5 kcal/mol per broken H-bond in the core, against ~0.4 at the
+  interface (Ladokhin & White 1999; Almeida et al. 2012). That is 6.3-9 E_up per broken H-bond at
+  the midplane; the hybrid charges 1.96 E_up (Upside's soluble-calibrated E_alpha), the water value,
+  and MARTINI's helix-typed BB adds nothing (4.7). The undercharge favours each opened residue by
+  ~e^4-e^6, and it sits in the coupling, which is why every force field shows it (4.6).
+- **The magnitude of the two options.** Option A (4.8, Upside's membrane term, a knowledge-based
+  depth-dependent term from native TM statistics, Wang et al. 2018 Biophys J, about 2 RT per
+  unpaired group) brings a broken H-bond at the midplane to about 6 E_up with the H-bond itself,
+  the low end of the physical range. Option B (MARTINI's own BB typing by H-bond state, +38 E_up for
+  TM1's middle, 4.7) is above it. Using both charges the same cost twice; only one may be used.
+- **Coarse-grained precedent.** MARTINI keeps secondary structure as an input and does its H-bond
+  bookkeeping by BB polarity (Monticelli et al. 2008 JCTC; dry MARTINI, Arnarez et al. 2015 JCTC);
+  PLUM, which lets TM helices fold, keeps WALP helical but underestimates insertion by ~15 kcal/mol,
+  the size of a missing backbone desolvation (Bereau et al. 2015 J Chem Phys; our reading).
+- What would prove the mechanism in our runs: opened TM1 residues within ~10 A of the midplane with
+  unpartnered NH and C=O (4.6-4.7 put 32-38 at CA z -7 to +3 A), the same residues closed near the
+  interface, and TM1 holding once the cost is added on a defect-free table (plan.md Phase 13).
+
+### 4.13 The converged side-chain/lipid table holds TM1, with no training and no new term (2026-10-10)
+
+ff3.0 (d9_03) with only `rotamer_full_energy_eup` replaced by the 600 x 12 table (4.10), 12 seeds
+with `run_glpg.sh`'s flags on the probe build, 22:33 10-09 to 02:07 10-10, against the 12 local d9_03
+seeds on the old table (`scratchpad/glpg_tm1/tm1_compare_sc600x12_vs_d9_03.txt`, `runs_sc600x12/`).
+- **TM1, the readout fixed before the run:** last-block DSSP alpha 0.931 against 0.685, +0.246
+  [+0.146, +0.341], two-sided Mann-Whitney p 0.002, **resolved**. Every seed keeps TM1 at 0.81 or more
+  (old table: four seeds at 0.43-0.60). Helix of any kind 0.960 against 0.848 (p 0.043); the middle's
+  i->i+4 H-bonds 6.01 of 7 against 4.41 (p 0.017).
+- **TM4** 0.924 against 0.726 (+0.197 [+0.043, +0.376], p 0.10), not resolved.
+- **Health.** No evaluation above 1000 E_up/A in 12 x 741,543 (largest 769; old-table replays had
+  17-143 in t 200-500 alone); one frame in 4,812 with a C-N above 2 A against 33; no total-potential
+  jump above 3000; KE/1.5kT 0.999-1.005 against 1.002-1.012; largest protein-atom displacement between
+  evaluations 0.012-0.013 A.
+- So TM1's loss under ff3.0 was the table defect, not missing physics and not the force field: the
+  table is the potential the builder defines, computed with enough azimuthal samples, so this
+  changes no parameter. The cost of unpaired backbone groups in the core (4.12) is still absent from
+  the hybrid; the fixed-table + term set (4.14) shows what it adds on top.
+- Every hybrid run so far used the old table (the round-4 TM4 sets, the glpG validation chains):
+  their comparisons with each other stand, their absolute TM1 and TM4 values do not. Rebuilding
+  `parameters/ff_2.1/martini.h5` and fixing `py/martini_build_tables.py` (24 directions, one bead
+  frame by default) is the user's decision.
+
+### 4.14 The membrane H-bond term on the converged table: TM1 and TM4 both held (2026-10-10)
+
+Option A (4.8) on top of 4.13: d9_03 with the 600 x 12 table and the membrane H-bond term
+(`fixed/79HIS_d9_03_sc600x12_hbmem.up`), 12 seeds with `run_glpg.sh`'s flags on the probe build,
+00:32-05:49 10-10 (seeds 9-12 paused 02:50-04:46 for the TM4 queue, which does not change a run).
+Tables `scratchpad/glpg_tm1/tm1_compare_sc600x12_hbmem_vs_d9_03.txt` and `_vs_sc600x12.txt`.
+- **Against d9_03 on the old table:** TM1 last-block DSSP alpha 0.964 against 0.685 (+0.279
+  [+0.183, +0.373], p < 0.001), helix of any kind 0.979 against 0.848 (p 0.003), middle i->i+4
+  H-bonds 6.89 of 7 against 4.41 (p 0.001). **TM4 0.959 against 0.726 (+0.232 [+0.085, +0.405],
+  p 0.009), resolved**, the first resolved TM4 difference of any local set. Every seed keeps TM1 at
+  0.85 or more and TM4 at 0.84 or more.
+- **Against the table fix alone (4.13):** TM1 0.964 against 0.931 (+0.033 [-0.003, +0.069], p
+  0.049), just resolved, with the interval reaching below zero; middle H-bonds 6.89 against 6.01 (p
+  0.001); TM4 0.959 against 0.924 (p 0.21), not resolved. The table fix carries most of the gain;
+  the term adds a small one to TM1's middle.
+- **Health.** No total-potential jump above 3000, no frame with a C-N above 2 A (old table 33,
+  table alone 1), KE/1.5kT 0.998-1.005. Three evaluations above 1000 E_up/A in 12 x 741,543 (the
+  table alone: none, largest 769): two consecutive at t ~3692 in s7 (1,567 on ASN185's CA) and one
+  at t ~2698 in s9 (1,283 on SER119's CA), outside TM1 and TM4. `attribute_events.py` puts both in
+  the rotamer node and keeps them with the side-chain/lipid table zeroed (1,479 and 1,283), so they
+  are protein side-chain interactions, neither the table nor the term
+  (`kick_ff30/attribute_events_sc600x12_hbmem.txt`); largest displacement per evaluation 0.012 A.
+- The term is Upside's own membrane H-bond potential (Wang et al. 2018), not added to the hybrid
+  before; whether production carries it, and whether only the table is fixed, is the user's
+  decision (4.12: never with option B).
 
 ---
 
@@ -4767,6 +5059,14 @@ of 10-09 wrote its plan, findings and progress to separate files, which the owne
 **When another computer owns the shared md files, write this session's records to separate
 `*_<computer>.md` files; git must show `plan.md`, `findings.md`, `progress.md` and `remote_jobs.md`
 unchanged. The owner merges them and deletes the separate files.**
+
+### 10.23 Write a remote file only from a local file that is redirected in and checked non-empty (2026-10-09)
+
+At 22:34 a `WATCH_STATUS.md` upload ran `ssh ... 'cat > $W.new && mv $W.new $W'` without `< file`;
+`cat` read an empty stdin and the `mv` replaced the live file with nothing. It was restored from the
+local copy within two minutes (md5 equal). **Every remote write goes `ssh ... '... cat > $W.new &&
+[ -s $W.new ] && mv $W.new $W' < LOCAL_FILE`, with the remote md5 checked against the local one
+afterwards.**
 
 ---
 
