@@ -320,6 +320,23 @@ to 10-07 12:00 is in git history.
 * **10:58 10-09, bs_02.** ff30_bio_si step 56 clean (margin +0.055, 24 of 24, KE/1.5kT at most
   1.014); panel 49216513 submitted by submit_new.sh with the new law; extracted (rama.dat as
   bs_01's), patched, queued behind d9_03.
+* **11:52-15:50 10-09, MacBook Pro session: glpG TM1** (user). Its records were kept in separate files
+  while the Mac Studio owned the shared ones, and merged here the same day (findings 10.22). A read-only status
+  check at 11:52: bio runs at steps 57-64 of 76, the 32 ff_3.0_gdepth benchmark arms running, 4 glpG
+  chains queued.
+  - Glycine map figures, the three maps on one zero (findings 1.27). Local glpG pair, ff2.1 and
+    ff3.0 seed 1, bitwise equal to the cluster's seed-1 runs (1.26); figures
+    `~/Downloads/glpg_tm4_ss_ff21_vs_ff30.png` (slide-13 format, phi/psi) and
+    `glpg_tm4_dssp_ff21_vs_ff30.png` (DSSP alpha), the six TM helices marked from our PDB (11).
+  - TM helices across 9 sets x 12 seeds (4.6) and the TM1 diagnosis (4.7); the user chose option A,
+    Upside's membrane H-bond term (plan.md Phase 13). Built and verified 13:45-13:52; 24 runs
+    started 13:48. The ff3.0 twelve were stopped at t 60 for the 16:00 shutdown; the ff2.1 twelve
+    finished 15:39: helicity up in every TM helix (TM1 0.79 -> 0.90, TM4 primary 0.609 -> 0.788), but
+    5 seeds jump > 3000 E_up and two tear TM4's backbone (C-N 9.5 A) (4.8).
+  - Transient backbone excursions found in the baseline sets and localised by a dense-frame replay
+    (4.9). The VTF's stationary atom is residue 210's unused O slot; `py/martini_extract_vtf.py`
+    fixed (user's commit 14a27cc3) and the VTF regenerated (3.8). The DSSP companion figure differs
+    from slide 13 because of its criterion (10.20).
 * **12:47 10-09, watch pass; TM4 d9_03, the released ff_3.0.** d9_03 finished 12:43: DSSP alpha
   0.726 against gdepth_start's 0.657 (+0.069 [-0.165, +0.300], p 0.64) and d9_02's 0.765 (p 1.00),
   not resolved; against ff2.1's 0.610 (added) p 0.25; 5 unwound, 4 flipped, no energy jump; weakest
