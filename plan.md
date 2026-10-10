@@ -202,12 +202,13 @@ Next:
   - [x] **DSSP alpha-helix is the primary TM4 test** (user, 10-09 03:20): each seed's last-block
     alpha of 135-151, two-sided Mann-Whitney, resolved at p < 0.05, with a bootstrap interval;
     the dihedral counts are secondary. All tables carry it. No in-training checkpoint is resolved
-    from its start; d9_02 leans highest (0.765 against gdepth_start's 0.657, p 0.58). bz_02 against
+    from its start; d9_02 leans highest (0.765 against gdepth_start's 0.657, p 0.58), and the
+    released d9_03 is 0.726 (p 0.64; against d9_02 p 1.00; findings 1.26). bz_02 against
     its twin b9_02 is the first resolved primary test, only just: 0.856 against 0.694, p 0.046, with
     the bootstrap interval reaching -0.010, one of 32 tables read; against bio_start p 0.30. At 12
     seeds a true 0.10-0.15 difference is detected 18-31% of the time (findings 1.25).
   - Locally, on the Mac Studio, which keeps the jobs (user, 10-08 09:15; another computer stands
-    by until told to take over, remote_jobs.md "Handoff"), in this order: d9_03 (from 10:46, the released ff_3.0_gdepth), bs_02, then every new epoch end, half-trained (step 37) first;
+    by until told to take over, remote_jobs.md "Handoff"), every new epoch end as it comes (dz_01 done 20:45; the queue is empty), half-trained (step 37) first;
     cz_00 at 24 seeds. Its engine and inputs reproduce the MacBook Pro's runs.
 - [ ] **Answer the user's question: which run moves TM4 toward stable.** Compare each checkpoint
   with its own start, each frozen run with its unfrozen twin at the same step, and read the direction

@@ -320,3 +320,25 @@ to 10-07 12:00 is in git history.
 * **10:58 10-09, bs_02.** ff30_bio_si step 56 clean (margin +0.055, 24 of 24, KE/1.5kT at most
   1.014); panel 49216513 submitted by submit_new.sh with the new law; extracted (rama.dat as
   bs_01's), patched, queued behind d9_03.
+* **12:47 10-09, watch pass; TM4 d9_03, the released ff_3.0.** d9_03 finished 12:43: DSSP alpha
+  0.726 against gdepth_start's 0.657 (+0.069 [-0.165, +0.300], p 0.64) and d9_02's 0.765 (p 1.00),
+  not resolved; against ff2.1's 0.610 (added) p 0.25; 5 unwound, 4 flipped, no energy jump; weakest
+  at 148-151 and 140-142, no pi-helix (`tm4_residue_ss_d9_03.txt`). 27 files and the ff2.1 table in
+  runs_cov, md5 verified. bs_02 started 12:43. Steps 25-26 of dz (frozen; 2j6b returned) and 58 of
+  bs (+0.050) clean. findings 1.24-1.26, remote_jobs §1 and Handoff, WATCH_STATUS.md.
+* **14:47 10-09, watch pass; TM4 bs_02.** bs_02 finished 14:38: DSSP alpha 0.684 against
+  bio_start's 0.769 (p 0.58) and its twin b9_02's 0.694 (p 0.93), not resolved; strong N-terminal,
+  weak C-terminal, the reverse of b9_02; 5 unwound, 2 flipped, no energy jump. The TM4 queue is
+  empty. Steps 28-29 of dz (frozen) and 60 of bs (+0.043) clean. findings 1.24-1.25, remote_jobs §1
+  and Handoff, WATCH_STATUS.md.
+* **18:47-20:47 10-09, watch passes; dz_01 extracted and TM4 dz_01.** ff30_gdepth_fz's epoch-1 end
+  (step 37, 18:36): extracted (hbond.h5 and sheet = gdepth_start's, rama.dat its round-2 library,
+  dL - dR +0.574), panel 49218034 by submit_new.sh (carries the law), patched, TM4 18:49-20:45:
+  DSSP alpha 0.780 against gdepth_start's 0.657 (p 0.58) and its twin d9_01's 0.615 (+0.165
+  [-0.056, +0.385], p 0.069), not resolved; strong at 144-149 where d9_01 is weakest; 5 unwound,
+  3 flipped (all GLY143). dz steps 34-41 (frozen) and bs steps 63-67 (+0.037 to +0.042) clean.
+  findings 1.24-1.25, remote_jobs §1 and Handoff, WATCH_STATUS.md.
+* **21:20 10-09, session closed for an upgrade (user).** The watch cron `cad6ca59` ends with it;
+  nothing local runs (TM4 queue empty after dz_01). remote_jobs "Handoff" has the restart steps
+  (one catch-up pass, then CronCreate with the prompt in "The watch"); "Resume here" step 4 lists the
+  current owed checks. WATCH_STATUS.md carries the restart note.
