@@ -1,64 +1,29 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-08 10:48; the Mac Studio keeps running the watch and the local TM4 queue
-(user, 10-08); another computer stands by until the user moves the jobs: "Handoff" below, and the
-live `WATCH_STATUS.md` on the cluster).** The glpG TM4
-repair training, round 4 (plan.md Phase 11), runs on midway2 broadwl at dt 0.009, every run from
-ff2.1. The user's question is which run moves glpG TM4 toward stable. It is judged only by the
-hybrid glpG TM4 test of each checkpoint against its own start (findings 10.19):
+**Current state (2026-10-11 23:50; the Mac Studio runs the watch, another computer stands by until
+the user moves the jobs: "Handoff" below, and the live `WATCH_STATUS.md` on the cluster).** The user
+chose the basin-depth training path (10-11, plan.md "The basin-depth path"): ff3.0 is ff_3.0_gdepth,
+the only branch kept (10-12), and ff3.1 expands its depth training to every residue; on midway2
+broadwl at dt 0.009, every run from ff2.1:
 
-| run (tags) | glycine library | `hb`, `dhb`, `sheet` | target | TM4 start |
+| run (tags) | Ramachandran library | `hb`, `dhb`, `sheet` | target | state |
 |---|---|---|---|---|
-| ff30_bio_dt009 (`b9_EE`) | BioEmu-fitted, frozen | trained | 76, gate | bio_start (`ff21_bioT1_6`) |
-| ff30_gdepth_dt009 (`d9_EE`) | NDRD, glycine depth trained | trained | 76, gate | gdepth_start |
-| ff21_ctrl_dt009 (`c9_EE`) | ff2.1's (control) | trained | 38, no gate | ff21_released |
-| ff30_bio_fz (`bz_EE`, stopped 10-09 23:09) | BioEmu-fitted, frozen | frozen | 76, gate | bio_start |
-| ff30_gdepth_fz (`dz_EE`, stopped 10-09 23:09) | NDRD, glycine depth trained | frozen | 76, gate | gdepth_start |
-| ff21_ctrl_fz (`cz_EE`, stopped 10-09 23:09) | ff2.1's (control) | frozen | 38, no gate | ff21_released |
-| ff30_bio_si (`bs_EE`, converged 10-10 02:25, released as ff_3.0_bio_si) | BioEmu-fitted, frozen | trained at the SI's rate | 76, gate | bio_start |
-| ff30_gdepth_si (`ds_EE`) | NDRD, glycine depth trained | trained at the SI's rate | 76, gate | gdepth_start |
-| ff31_depth_all (`fa_EE`, ff3.1) | NDRD, every coil map's six basin depths trained, prior 0.3 | trained | 76, no gate | ff21_released |
-| ff31_depth_data (`fd_EE`, ff3.1) | NDRD, the 1,442 depths with >= 20 native sites trained, prior 0.2 | trained | 76, no gate | ff21_released |
+| ff30_gdepth_dt009 (`d9_EE`) | NDRD, glycine's depth trained | trained | 76, gate | released as ff_3.0_gdepth 10-09; validation runs |
+| ff21_ctrl_dt009 (`c9_EE`) | ff2.1's (control) | trained | 38, no gate | finished 10-07 |
+| ff31_depth_all (`fa_EE`, ff3.1) | NDRD, every coil map's six basin depths, prior 0.3 | trained | 76, no gate | training |
+| ff31_depth_data (`fd_EE`, ff3.1) | NDRD, the 1,442 depths with >= 20 native sites, prior 0.2 | trained | 76, no gate | training |
 
-"Trained" is the port's rate (hb 0.01). "The SI's rate" (user, 10-07; findings 1.23) is every group
-but rot at half that (hb 0.005, as FF2 was trained); rot is 0.0125 in every run. The SI-rate runs
-started 10-07 16:34 (bio) and 17:20 (gdepth); both runs' rates are confirmed. ff30_gdepth_fz and
-ff21_ctrl_fz were cancelled before they started (10-07 13:12). ff21_ctrl_fz was resubmitted at 13:35
-and ff30_gdepth_fz at 21:46 (user: run every frozen arm, though freezing H-bond and sheet departs
-from the group's workflow). ff21_ctrl_fz against c9 is the cleanest test of "H-bond drift
-destabilizes TM4", with no glycine change. ff21_ctrl_dt009 (c9) finished at its target at 21:25.
-All three frozen arms were stopped 10-09 23:09 by the user (§1): the dt 0.009 training already gave
-a force field that keeps TM4 stable.
-
-Job ids, states and readouts are in §1. ff30_bio_dt009 has been on margin hold since step 14,
-ff30_gdepth_dt009 since step 33 (+0.097, 10-07 20:18) and ff30_bio_si since step 26 (+0.097,
-10-08 06:06); the user was told of each, and all train on. Links that ended and resume by chain design: ff30_bio_dt009's first at step 53 (normal) and its
-second on a node failure in step 64 (10-08 08:32; successor queued), ff30_gdepth_dt009's at its wall time in step 35 (successor queued),
-ff30_bio_fz's on a node fault at step 5 (resumed 10-07 21:46), ff30_bio_si's first at step 53 (normal, 10-08 20:10; successor queued), ff21_ctrl_fz's on a node failure
-in step 2 (10-08 00:12; successor queued), and ff30_gdepth_si's on a node failure in step 21 (10-08
-11:07, midway2-0027 again; successor queued). ff30_gdepth_fz's first link runs from 21:34 10-08.
-
-**TM4 on fixed inputs so far** (findings 1.24): bio_start 5 of 12 unwound, b9_00 7 of 24, b9_01 6,
-bs_00 6, bs_01 5 (2 flipped, against b9_01's 5; p 0.37), bz_00 8 of 24, bz_01 6 (2 flipped; TM4 0.846
-against b9_01's 0.833, so the freeze does not stop the epoch-1 lean), b9_02 8 (4 flipped; TM4 0.830, so
-epoch 2 keeps b9_01's lean), ds_00 9 (TM4 0.775, the lowest mean; d9_00 5, p 0.21), ff21_released 9, c9_00 16 of 24 (flipped 1 in seeds 1-12, 8 in 13-24, so its 12-seed lean was chance), c9_01 10, fp_e00 5, gdepth_start 7, d9_00 5,
-d9_01 6. No pair is resolved. bz_00's first half flipped none of 12 (one-sided p 0.047 against
-bio_start's and b9_00's 4); its seeds 13-24 flipped 4 of 12, so that was chance. At 24 seeds each,
-bz_00 against b9_00 is 8 against 7 unwound and 4 against 5 flipped (p 1.00); only TM1, in an added
-test, is higher in bz_00 (0.891 against 0.813, p 0.003). Until 10-07 11:22, `patch_glpg.py` left the
-retired FF1-form ff_3.0's coverage tables in every glpG input (findings 3.11), so every earlier TM4
-count is invalid. The queue runs locally ("Handoff" below; §1 "Local glpG TM4 test"). Panels:
-every epoch end so far loses folding against its start (findings 1.22), the control as much as
-any (c9_00 0.390, c9_01 0.405 against ff2.1's 0.615). b9_02 0.448, d9_01 0.457, d9_02 0.439 and bs_00 0.457
-(findings 1.21): each is dominated by gdepth_start in helix, and folding falls about 0.015 an epoch
-after epoch 0's 0.125. The frozen and SI-rate runs fold less than their port-rate twins at the same
-step (bz_00 0.450, bs_01 0.430, ds_00 0.412 against 0.478, 0.465, 0.477); d9_00 dominates ds_00 in
-helix and b9_01 dominates bs_01 in helical glycine.
+"Trained" is the port's rate (hb 0.01); "the SI's rate" (user, 10-07; findings 1.23) halves every group
+but rot (hb 0.005); rot is 0.0125 in every run. Each epoch end gets its selection panel (findings 1.21),
+and the ff3.1 runs a steric check at every step (findings 1.33). Dropped by the user and deleted: on 10-12
+ff30_gdepth_si (the SI-rate twin), and on 10-11 the BioEmu-map line (ff30_bio, ff30_bio_dt009, ff30_bio_si; ff_3.0_bio, ff_3.0_bio_si), the
+H-bond-frozen arms, polygly, and the local TM4 glycine-flip test, because on the converged
+side-chain/lipid table ff2.1 itself holds TM4 (findings 4.15; §1 "Finished runs"). TM4 HDX stays open:
+the glpG REMD chain on ff2.1 with the fixed table and the HDX requests (§1). Job ids, states and
+readouts are in §1.
 
 Also on midway2:
-- polygly production 49204428 (`polygly/prod.sbatch`, self-chaining; plan.md Phase 12), running
-  since 10-07 22:41 at 33.7 ns/day per replica, so 1 us takes ~30 days. Its collapse (49186415)
-  finished 10-07 12:48.
+- polygly production was stopped by the user 10-11 23:05 (§1 "Finished runs").
 - The BP validation deck for Tobin (§0c) is not yet sent.
 
 CPU work runs on midway2 broadwl unless the user names midway3 caslake. midway3's login node may be
@@ -90,173 +55,60 @@ findings.md (pulled from git) and on the cluster.
    newest `run_output/epoch_*` and check its link log for `WORKER_FAIL`, `Traceback`, `STOPPED`.
    Tell the user what started, finished or failed since the last pass in §1, and the current
    margins.
-4. **Owed checks, once each** (as of 10-09 23:10; `WATCH_STATUS.md` "Owed checks" is the current list):
-   - ff3.1's first links (49218340 ff31_depth_all, 49218341 ff31_depth_data): `step 0 of 76, resuming
-     from run_output/initial_checkpoint.pkl`, `this link runs 54 steps`; the first step's
-     `check_step.py` line `basin depth offsets round 0, ...`.
-   - Successors' first lines: ff30_bio_dt009 49215780 `step 65 of 76, resuming from
-     run_output/epoch_03_minibatch_07/checkpoint.pkl`; ff30_gdepth_si 49216034 `step 22 of 76,
-     resuming from run_output/epoch_01_minibatch_02/checkpoint.pkl`; polygly 49206266's first lines.
-   - Panels at 176 npz (watch step 6): d9_03 49216387, bs_02 49216513.
-   - ff_3.0_gdepth validation: the 32 benchmark arms (R in their second chunk, logs clean at 21:27) and the 4 glpG chains
-     49216140-49216143 (PD) once they start.
-   - ff_3.0_bio_si validation (released 02:25 10-10): the 32 benchmark arms 49218439-49218470 and
-     the 4 glpG chains 49218471-49218474 once they start; bs_03's panel 49218518 at 176 npz (its TM4
-     is done, findings 1.31).
-   - **ff30_bio_dt009's gate** (`ff30bio9-gate`) after step 75, ~7 h after 49215780 starts: read
-     `gate_step<N>.txt` and the gate log (watch step 6). Converged means validation was queued:
-     32 Peng arms and 4 glpG chains for `ff_3.0_bio`. Not converged means one more epoch.
+4. **Owed checks, once each** (as of 10-11 23:55; `WATCH_STATUS.md` "Owed checks" is the current list):
+   - ff31_depth_all's next link 49219752 after its 36 h wall (00:39 10-12): `step 38 of 76, resuming
+     from run_output/epoch_01_minibatch_18/checkpoint.pkl`; ff31_depth_data's 49221772 after ~12:00.
+   - Each ff3.1 epoch end (fa_01 ~23:40, fd_01 ~06:30 10-12, ...): `rama_rounds.txt`, the steric check
+     on the new library, the panel.
+   - glpG REMD ff2.1_sc (49223635): STOP during block 2's last chunk, then its HDX (§1 row).
+   - HDX on ff_3.0_gdepth's chains after their block 2 (~04:00-07:15 10-13; §1 "Requested").
 5. **Find the owner** ("Handoff" below): read `checks/r4_epochs/tm4_local/WATCH_STATUS.md` on the
    cluster. While the Mac Studio owns the jobs and its last pass is under 2 h old, stand by: report
    status read only, start nothing. A new session on the Mac Studio itself after a restart follows
    "Mac Studio session restart" in "Handoff" instead.
-6. **Only on the user's "take over":** set up the local TM4 test ("Setting up the next computer"),
-   run the TM4 queue from `WATCH_STATUS.md` (a set left running is rerun unless `runs_cov/` has
-   it), start the watch ("The watch"), and rewrite `WATCH_STATUS.md` with the new owner.
-7. **Open questions for the user.** Nothing is blocking. Queue waits on broadwl run to days; midway3
-   caslake is an option only on the user's word, after checking its current estimate. midway2-0103
-   and 0116 joined the law 10-09 10:30 (user; §8, 09:17). **Asked 10-09 21:30:** 25 of the 32
-   ff_3.0_gdepth benchmark chunks run on the pre-10:30 list, without 0103 and 0116, because
-   `bench.sbatch:25` resubmits each chunk with its own job's `ExcNodeList`, so the gap carries to
-   every later chunk; 49218194 (proteinB native) runs on midway2-0103 (by 07:47 10-10, after 31
-   chunks rolled over, all 32 carry the full law, as do all 32 ff_3.0_bio_si arms, so the gap no
-   longer touches a running job). The fix would be
-   `bench.sbatch` taking the law file on midway2; nothing changed without the user. Offered to
-   the user (10-09 05:50): seeds 13-24 of bz_02 and b9_02, whose 12-seed primary test resolved at
-   p 0.046 with an interval reaching -0.010 (findings 1.25). midway2-0088 joined the law 10-09 04:12 (user; §0d). The user made DSSP alpha-helix the
-   primary TM4 test (10-09). The 10-07 offer of 12 more ff21_released seeds, to test c9_00's flip difference (1
-   against 5 of 12), is withdrawn: c9_00's own seeds 13-24 flipped 8, which removes it (findings
-   1.24). The 24-seed frozen comparisons were approved 10-08 09:10, and the midway2 exclusion law
-   (§0d, midway2-0027 added) was built at the user's word 10-08 09:40.
+6. **Only on the user's "take over":** start the watch ("The watch") and rewrite `WATCH_STATUS.md`
+   with the new owner. (The local TM4 glycine-flip test is retired, so there is no queue to move.)
+7. **Open questions for the user.** Nothing is blocking.
+   - Whether ff3.1's later epochs count (both first rounds came out as predicted, findings 1.30).
+   - Whether to add midway2-0151 to the law (two failures under our jobs 10-10).
+   - `bench.sbatch` resubmits each chunk with its own `ExcNodeList`, so a law change does not reach
+     running benchmark chains; the fix would read the law file (asked 10-09 21:30).
 
 ### Handoff: two computers, one owner (2026-10-08)
 
-**The Mac Studio keeps the jobs** (user, 10-08 09:15, replacing the planned 10:00 move). It runs
-the watch (session cron `cfa1b8c7`, hourly) and the local TM4 driver (`scratchpad/ff3_local_test`).
-Another computer, such as the user's work computer, may open a session at any time. It must know
-what the Mac Studio is doing and must not do it a second time: two watches would both submit
-panels, and two TM4 drivers would run the same sets.
-
-**One owner at a time.** The owner runs the watch and the TM4 driver; every other computer only
-reads. **Owner now: the Mac Studio.**
+**The Mac Studio keeps the jobs** (user, 10-08 09:15). It runs the watch (session cron, "The
+watch" below). Another computer, such as the user's work computer, may open a session at any time;
+it must know what the Mac Studio is doing and not do it a second time, since two watches would both
+submit panels. **One owner at a time; owner now: the Mac Studio.** (The local TM4 glycine-flip driver
+the owner also ran was retired 10-11; its record is §1 "Local glpG TM4 test".)
 
 **Mac Studio session restart.** The watch cron is session-only and ends with its session; the Mac
-Studio stays the owner. The TM4 driver runs under `nohup` and the midway2 socket master is its own
-process, so both survive unless the computer restarts. The new session on the Mac Studio:
+Studio stays the owner, and the midway2 socket master is its own process, which survives unless the
+computer restarts. The new session:
 1. Reads §1 and `WATCH_STATUS.md`, and checks the socket (the expect script once if it is dead).
-2. Runs one watch pass at once (watch steps 1-7) for the steps since the last pass.
+2. Runs one watch pass at once (watch steps 1-5) for the steps since the last pass.
 3. Starts the watch again: CronCreate hourly at `23 * * * *` with the prompt in "The watch" below.
 4. Rewrites `WATCH_STATUS.md` (last pass; any restart note removed).
-The last restart (10-09 21:20, user: an upgrade) ended cron `cad6ca59`; the new session ran the
-pass at 21:27 and started cron `45cc9e4a` at 21:28; at 23:12 it was replaced by `3aeb9b93`, whose
-prompt drops the stopped frozen arms, and at 23:45 by `cfa1b8c7`, which adds the ff3.1 runs.
 
 **Live status on the cluster:** `/project/trsosnic/yinhan/checks/r4_epochs/tm4_local/WATCH_STATUS.md`.
-The owner rewrites it at every watch pass (watch step 7): owner, time of the last pass, the TM4 set
-running and the queue behind it, and what is owed. This file (`remote_jobs.md`) reaches another
-computer only through the user's commits, so it can be hours old there; `WATCH_STATUS.md` is the
-current word.
+The owner rewrites it at every watch pass (watch step 5): owner, time of the last pass, the newest
+step of each run, and what is owed. This file (`remote_jobs.md`) reaches another computer only
+through the user's commits, so it can be hours old there; `WATCH_STATUS.md` is the current word.
 
 **What another computer does on "continue jobs"** (after "Resume here" steps 1-4):
 1. `cat` `WATCH_STATUS.md` over the midway2 socket.
-2. **If the owner is the Mac Studio and its last pass is less than 2 h old: stand by.** Do not
-   start a watch or a TM4 driver; do not submit, extract or patch anything. Reporting status read
-   only and answering the user's questions are fine. To be ready to take over, it may set up
-   `scratchpad/ff3_local_test` and run the parity check ("Setting up the next computer", steps 1-4).
+2. **If the owner is the Mac Studio and its last pass is less than 2 h old: stand by.** Do not start
+   a watch or submit anything; reporting status read only and answering the user are fine.
 3. **Take over only on the user's word** ("take over"). If the last pass is more than 2 h old, tell
-   the user and ask whether the Mac Studio has stopped; do not assume it. Taking over:
-   1. If the Mac Studio's session is still open, the user has it run its stop steps (below) first.
-   2. Set up as in "Setting up the next computer".
-   3. Write the queue from `WATCH_STATUS.md` into `tm4_queue.txt`. A set listed as running is
-      rerun unless `tm4_local/runs_cov/` has all its seeds and its table (a rerun reproduces it
-      frame for frame), and its lines go first. Then start the driver (setup step 5).
-   4. Start the watch ("Starting the watch") and rewrite `WATCH_STATUS.md` with the new owner.
+   the user and ask whether the Mac Studio has stopped; do not assume it. Taking over: if the Mac
+   Studio's session is still open, the user has it run its stop steps first; then pull the repo
+   (the user commits; Claude never touches git), open the midway2 socket ("Connect" below), start
+   the watch ("Starting the watch") and rewrite `WATCH_STATUS.md` with the new owner. The probes
+   `~/watch_probe/stock.sh` and `~/watch_probe/steps.sh <run>:<step> ...` on midway2 do watch steps
+   2-3.
 
-**The Mac Studio's stop steps** (when the user says "hand off" or "stop"):
-1. Move the remaining lines of `scratchpad/ff3_local_test/tm4_queue.txt` (and `tm4_queue.next`
-   while it exists) into `WATCH_STATUS.md`'s queue and empty the file. The driver runs under
-   `nohup`, outlives the session, and with the file empty exits after its current set.
-2. Copy every finished set and its table to `tm4_local/runs_cov/` (watch step 5).
-3. Record the set still running and when it ends. If the session is open when it ends, compare and
-   copy it as usual; if not, the next owner reruns it.
-4. Update §1, this section and `WATCH_STATUS.md` (owner: none), then CronDelete `cfa1b8c7`.
-
-**24 seeds for the frozen comparisons** (user, 10-08 09:10). bz_00 against b9_00 and cz_00 against
-c9_00 run seeds 13-24 as well as 1-12. A 24-seed set is two queue lines, `<tag>` (seeds 1-12) and
-`<tag> 13 24` (log `run_<tag>_s13-24.log`); `tm4_queue.sh` reads both forms (10-08 09:19, md5
-`eac953d0...`). `tm4_compare.py` (10-09, with the DSSP primary test; md5 in "Setting up the next computer") reads a set's seeds 1-12 or
-1-24 from `runs_cov/` and `runs/` together and gives each set its own n in the Fisher table; it
-reproduces the earlier 12-seed tables exactly, and a mock 24-seed set (b9_00 plus c9_00 seeds) gave
-the expected 11 unwound of 24. A set whose seeds 13-24 have started is read at 12 seeds with a third
-argument, `tm4_compare.py <tag> <ref> 12` (it reproduces b9_00's table with and without it). bz_00
-was read so at 12:05; the 24-seed comparison follows once both halves of bz_00 and b9_00 are done. Copy seeds 13-24 and their table to
-`runs_cov/` like any set. The patched inputs of b9_00 and c9_00 are the files seeds 1-12 ran on
-(every `/input` dataset equal; `ref_pos` holds NaN placeholders, so compare it NaN-aware).
-
-**The TM4 queue** (one 12-seed half at a time, T 0.80, 4000 tu, `run_glpg.sh 10 <first> <last>
-<tag>`; about 2 h each on the Mac Studio's cores). Each tag is patched from `checks/r4_epochs/<tag>`
-(ff21_released from `parameters/ff_2.1`) with the fixed `patch_glpg.py`. Done on fixed inputs:
-bio_start (`ff21_bioT1_6`), b9_00, bz_00 and c9_00 (24 seeds each; `tm4_compare_cov_bz_00_24_vs_b9_00.txt`,
-`tm4_compare_cov_b9_00_24.txt`, `tm4_compare_cov_c9_00_24.txt`), b9_01, b9_02, bs_00, bs_01, bs_02, bz_01, ds_00, ff21_released,
-c9_01, fp_e00, gdepth_start, d9_00, d9_01, d9_02, d9_03, bz_02, dz_00, dz_01. State at 21:27 10-09:
-1. Nothing runs: the driver finished bs_03 at 04:46 10-10 and exited with `tm4_queue.txt` empty;
-   the next epoch end restarts it (watch step 4).
-2. New epoch ends as they come. Each is extracted with `$P/training/extract_ff.py`, its panel
-   goes in through `submit_new.sh`, and it is patched and added to `tm4_queue.txt` (watch step 4).
-   A half-trained (`_01`) end goes behind the 24-seed lines and ahead of the other epoch
-   ends. `submit_new.sh` skips a checkpoint written
-   less than 5 min ago, so a pass that finds one that new runs it again later. Expected (04:51 10-10):
-   `b9_03` (step 75, the end of training; also against bs_03, its SI-rate twin) ~7 h after successor 49215780 starts; `ds_01`
-   (step 37, against gdepth_start and d9_01) ~10-13 h after successor 49216034 starts. Both of the
-   last two links ended by NODE_FAIL at 09:17 (§8).
-
-Reading: each checkpoint against its own start (header table). **The primary test is TM4's
-secondary structure** (user, 10-09; findings 1.25): each seed's DSSP alpha-helix fraction of 135-151
-over the last block, set against reference by a two-sided Mann-Whitney, resolved at p < 0.05, with a
-bootstrap 95% interval on the difference (`tm4_compare.py`, "## primary test"). bz, cz, dz and the
-SI-rate runs are also compared with their port-rate twin at the same step (bz_00 and bs_00 with
-b9_00, cz_00 with c9_00, dz_00 and ds_00 with d9_00). The direction is read across epoch ends.
-- **What it can resolve.** Seeds spread with SD 0.28 in last-block alpha. A true difference of 0.10,
-  0.15, 0.20 or 0.30 is detected with power 18%, 31%, 47% or 73% at 12 seeds per set, 34%, 58%, 80%
-  or 96% at 24, and 56%, 86%, 97% or 100% at 48. The differences seen so far are 0.01-0.15.
-- **Secondary tests**, kept so earlier results stay comparable: the dihedral-box counts
-  pre-registered 10-06, unwound (last-block TM4 < 0.90) and flipped (a TM4 glycine at phi > 0 in
-  > 0.25 of the last block), by Fisher's exact test; and the DSSP fraction in helix of any kind.
-  The box accepts pi-bulges and frayed residues, and DSSP alpha runs 0.10-0.22 below it in every
-  set. c9_00's two halves, on one input, flipped 1 and 8 of 12.
-- **24 seeds** run for the frozen comparisons (above). Any other extension is the user's decision,
-  given the power figures.
-
-**Setting up the next computer**
-1. Pull the repo (the user commits these files first; Claude never touches git); build `.venv` and
-   `obj/upside`.
-2. Open the midway2 socket ("Connect" below).
-3. Make `scratchpad/ff3_local_test` from `checks/r4_epochs/tm4_local` (not in git):
-   - `scripts/` (fixed `patch_glpg.py` md5 `705891194b57b2139f1e817b80b0135a`, `run_glpg.sh`,
-     `tm4_local.py` md5 `2701e5d0...`, `tm4_compare.py` md5 `ce50f0c6...`, `tm4_queue.sh` md5 `eac953d0...`) and
-     `events_vs_tm4.py` (md5 `ef9ce96c...`).
-   - `seed/glpG-RKRK-79HIS.live.up` into `seeds/` (the watch prompt names `seeds/`).
-   - `runs_cov/` (~14 GB): the finished sets `tm4_compare.py` reads, seeds 13-24 included.
-   - `checks/r4_epochs/<tag>` into `ff/<tag>` for every tag still to run, and `bio_start` into
-     `ff/ff21_bioT1_6` for the parity run. Patch each:
-     `python3 scripts/patch_glpg.py --ff ff/<tag> --seed seeds/glpG-RKRK-79HIS.live.up --out
-     patched/79HIS_<tag>.up`. Its output lists `hbond_coverage changed by ...` (~19.8 / ~14.2).
-   - `run_glpg.sh` and `tm4_queue.sh` set
-     `L=/Users/yinhan/Documents/upside2-md/scratchpad/ff3_local_test`; change it if the repo lives
-     elsewhere. `tm4_queue.sh` uses macOS `sed -i ''` (GNU: `sed -i`). `run_glpg.sh` runs the 12
-     seeds in parallel, one core each, so a set needs 12 free cores to take ~2 h.
-4. **Engine parity**, once per new computer. Run the patched `ff21_bioT1_6` with `run_glpg.sh`'s
-   flags for 200 tu (`--duration 200`, `--seed 1`, same integrator flags) and compare its frame
-   lines, from `time` on, with the first 21 of `runs_cov/79HIS_ff21_bioT1_6_T080_s1.log` (t 0-200):
-   `diff <(grep ^step NEW.log | sed 's/^step [0-9]* \/ [0-9]* //') <(grep ^step
-   runs_cov/79HIS_ff21_bioT1_6_T080_s1.log | head -n 21 | sed 's/^step [0-9]* \/ [0-9]* //')`. The
-   Mac Studio matched exactly (10-07 16:29). A mismatch means its sets are not comparable.
-5. Write the queue's remaining lines (`<tag>` or `<tag> 13 24`) into `tm4_queue.txt` and start the driver from
-   `scratchpad/ff3_local_test`: `nohup caffeinate -is bash scripts/tm4_queue.sh >> tm4_queue.log
-   2>&1 &` (on Linux, without `caffeinate -is`).
-6. Start the watch ("Starting the watch" below). The probes `~/watch_probe/stock.sh` (newest steps,
-   fail patterns) and `~/watch_probe/steps.sh <run>:<step> ...` (check_step.py and the KE scan) on
-   midway2 do watch steps 2-3.
+**The Mac Studio's stop steps** (when the user says "hand off" or "stop"): finish the pass in hand,
+update §1 and `WATCH_STATUS.md` (owner: none), then CronDelete the watch cron.
 
 ### Where things are
 
@@ -284,6 +136,11 @@ authoritative copies are on the cluster:
     a README of what stayed on the MacBook Pro. Its `mac_studio_20261010/` holds the Mac Studio's
     follow-up (findings 4.10-4.14): the fixed-table inputs, both fixed-table sets, the kick-probe
     analysis and `README_mac_studio.txt`.
+  - `sc_table_20261010`: the converged side-chain/lipid table's deployment (findings 4.15): the
+    staged martini.h5, builder and `patch_glpg.py`, `deploy.sh`/`.log`, and `repatch.sh`/`.log` with
+    `check_repatch.py` for the 8 re-patched glpG seeds. Every replaced file is kept beside itself as
+    `.bak_pre_sc600x12_20261010`. `$P/py/martini_build_tables.py` keeps the old sampling (campaign
+    rule): never rebuild martini.h5 in `$P`.
 
 Claude's memory is per computer; the rules that matter are in this file and findings.md §10.
 
@@ -315,9 +172,9 @@ anything heavy on a login node** (findings 10.6).
 ### The watch
 
 **One watch at a time.** A watch is a session cron: it dies with its Claude session and expires
-after 7 days. The current one runs on the Mac Studio, hourly at :23 (cron `cfa1b8c7`, created
-10-09 23:45 with the ff3.1 runs; it expires 10-16, so a session still open then starts
-another). It runs until the user moves the jobs ("Handoff" above); another computer starts its own
+after 7 days. The current one runs on the Mac Studio, hourly at :23 (cron `c618e779`, created
+10-12 00:35 for ff3.0 and ff3.1 only, replacing `56a4d6f9`; it expires 10-19, so a session still
+open then starts another). It runs until the user moves the jobs ("Handoff" above); another computer starts its own
 only after the Mac Studio's has ended. Two watches would both submit panels. Each pass records its
 readouts in §1, so the newest §1 tells a new watch where the last one stopped.
 
@@ -325,33 +182,21 @@ readouts in §1, so the newest §1 tells a new watch where the last one stopped.
 (e.g. `23 * * * *`) with the prompt below.
 
 **Round-4 watch prompt:**
-"Round-4 remote job watch, the only monitor (remote_jobs.md "The watch"). Runs on midway2 broadwl,
-dt 0.009: ff30_bio_dt009 (b9_EE, the port's rates), ff30_bio_si (bs_EE) and ff30_gdepth_si (ds_EE)
-(SI learning rates), target 76 with the gate; ff30_gdepth_dt009 (d9_EE) finished and released as ff_3.0_gdepth,
-whose validation runs; the H-bond-frozen arms were stopped 10-09 23:09 (user). ff3.1 (plan.md
-Phase 14): ff31_depth_all (fa_EE) and ff31_depth_data (fd_EE), per-map basin depths, target 76, no
-gate (they stop at the target for the user's review); read run_output/rama_rounds.txt at each
-epoch end. Job ids are in §1.
-Also polygly production (polygly_prod, self-chaining): at its first link's end read each replica's
-prod.log Performance line, and check `gmx mindist -pi` stays above 1.0 nm. Follow "Round-4 watch" steps 1-7 exactly;
-read §1 first. Obey:
+"Round-4 remote job watch, the only monitor (remote_jobs.md "The watch"). ff3.0 is ff_3.0_gdepth
+(ff30_gdepth_dt009, d9_EE; user 10-12: the only branch kept), whose validation runs on midway2
+broadwl; its expansion to every residue is ff3.1 (plan.md Phase 14): ff31_depth_all (fa_EE) and ff31_depth_data (fd_EE),
+per-map basin depths, target 76, no gate (they stop at the target for the user's review); read
+run_output/rama_rounds.txt at each epoch end, and run the steric check (watch step 3) at every step.
+Job ids are in §1. ff30_gdepth_si, the BioEmu-map line, the H-bond-frozen arms, polygly and the
+local TM4 glycine-flip test were dropped and deleted by the user 10-11/12 (§1 "Finished runs"); TM4 HDX continues
+(the ff2.1_sc REMD chain and the HDX requests in §1). Follow "Round-4 watch" steps 1-5 exactly; read
+§1 first. Obey:
 - CLAUDE.md: read-only git, no guards, no physics changes, nothing heavy on a login node;
-- findings 10.16 (no test jobs), 10.17 (same data, same workflow), 10.18 (re-read the queue before
-  any decision on job state) and 10.19 (TM4 is judged only by the hybrid glpG test).
+- findings 10.16 (no test jobs), 10.17 (same data, same workflow) and 10.18 (re-read the queue
+  before any decision on job state).
 Never cancel, resubmit or change a job without the user's approval.
-For an SI-rate run's first finished step, confirm from its link log that the solver rates are hb
-0.005, dhb 0.0025, sheet 0.0075 and rot 0.0125, and report it once.
-TM4: run the queue in remote_jobs.md "Handoff", then each new epoch end, half-trained first. On
-this computer the queue runs through scripts/tm4_queue.sh and tm4_queue.txt (watch step 4); the
-seed directory is seeds/.
-- One 12-seed set at a time, on inputs patched with the fixed patch_glpg.py (md5 70589119...).
-- Compare each checkpoint with its own start, bs / ds with their port-rate twin at the same step,
-  and fa / fd with ff21_released and with each other at the same step, by the primary DSSP test (findings 1.25; it replaced Fisher's exact test on
-  10-09 at the user's word).
-- Scan finished seeds for total-potential jumps above 3000 between frames (events_vs_tm4.py).
-- Copy each finished set and its table to checks/r4_epochs/tm4_local/runs_cov/.
-Notify only for: failures, a TM4 or panel result, a gate, polygly ending, a new margin hold in a
-trained-H-bond run (below +0.10), an SI-rate run starting, or a dead socket.
+Notify only for: failures, a panel result, a gate, a new margin hold in a trained-H-bond run
+(below +0.10), a steric flag, a disk warning, or a dead socket.
 Otherwise stay quiet."
 
 **Round-4 watch.** `<run>` is any of the running or queued run directories under `$P/training` (§1).
@@ -364,6 +209,8 @@ Otherwise stay quiet."
    /project/trsosnic/yinhan/ff3_selection/submit_new.sh`, which submits each new epoch end's panel
    without asking (user, 10-08 11:05). Check the newest link log of each run for
    `WORKER_FAIL`, `Traceback`, `STOPPED`, `never started`.
+2b. **Disk.** `df -h /project/trsosnic`; record the free space in §1 "Disk" when it moves by more than
+   100 G, and tell the user before it falls under 200 G (10-11: it reached 88 G unnoticed).
 3. **Every step finished since the last pass.**
    - Run `cd $P/training && source <run>/env.sh && python3 check_step.py <run>
      <epoch_xx_minibatch_yy>` under `ulimit -v 4000000`.
@@ -374,45 +221,36 @@ Otherwise stay quiet."
      (start +0.554) and `run_output/rama_rounds.txt`.
    - **A trained-H-bond run whose margin falls below +0.10:** notify the user once and hold. The run
      keeps training; nothing is cancelled without the user.
-4. **TM4**, in `scratchpad/ff3_local_test` with the repo `.venv` and `source.sh`.
-   - For a new `epoch_EE_minibatch_18`, extract it: `$P/training/extract_ff.py
-     <run>/run_output/epoch_EE_minibatch_18/checkpoint.pkl /project/trsosnic/yinhan/checks/r4_epochs/<tag>`.
-   - rsync it to `ff/<tag>` and run `patch_glpg.py --ff ff/<tag> --seed seeds/glpG-RKRK-79HIS.live.up
-     --out patched/79HIS_<tag>.up`.
-   - Add `<tag>` to `tm4_queue.txt` in the order "The TM4 queue" gives (a half-trained end behind
-     the 24-seed lines, ahead of other epoch ends). If
-     `tm4_queue.log` ends in `queue empty`, restart the driver:
-     `nohup caffeinate -is bash scripts/tm4_queue.sh >> tm4_queue.log 2>&1 &`. It runs one line at
-     a time: `<tag>` as `run_glpg.sh 10 1 12 <tag>` logged to `run_<tag>.log`, `<tag> 13 24` as
-     seeds 13-24 logged to `run_<tag>_s13-24.log`.
-5. **A set whose log says `set finished`.**
-   - From the repo root, `python3 scratchpad/ff3_local_test/scripts/tm4_compare.py <tag> <ref> >
-     scratchpad/ff3_local_test/tm4_compare_cov_<tag>.txt`, with `<ref>` the tag's start (header
-     table); a second table against the twin or the epoch before is
-     `tm4_compare_cov_<tag>_vs_<ref>.txt`, and a 24-seed table `tm4_compare_cov_<tag>_24.txt`. It
-     refuses a set with an unfinished log or seeds other than 1-12 or 1-24; a first half read while
-     its seeds 13-24 run takes a third argument, 12. Its output holds:
-     - per-seed `avg_kinetic_energy/1.5kT` (~1.0) and `tm4_local.py`'s tables;
-     - TM4's DSSP alpha-helix and any-helix fractions (135-151) per seed and block, and alpha per
-       residue;
-     - the primary test, DSSP alpha-helix by a two-sided Mann-Whitney with a bootstrap interval
-       (findings 1.25);
-     - the secondary tests: Fisher's exact test on unwound and flipped seeds, with the counts that
-       would resolve, and one-sided Mann-Whitney tests on the dihedral TM4, TM1 and any-helix;
-     - the energy jumps (`events_vs_tm4.py`).
-     It reproduces the MacBook Pro's b9_01 table exactly. Read the direction across epoch ends.
-   - Record the result in findings.md, copy the runs (seeds 13-24 too) and the tables to
-     `tm4_local/runs_cov/`, and notify.
-6. **A panel or a gate.**
+   - **The ff3.1 runs: the steric check** (user 10-10, after Jumper; plan.md Phase 14 step 5,
+     findings 1.33). `cd $P/training && source <run>/env.sh && nice python3
+     /project/trsosnic/yinhan/checks/ff31_steric/steric_check.py <run> <step> >
+     /project/trsosnic/yinhan/checks/ff31_steric/<run>_<step>.txt` under `ulimit -v 4000000`
+     (without `<step>` it reads the newest finished step)
+     (3 min, 360 MB; repo `training/ff31/steric_check.py`, md5 `e35e3d98...`). Record the
+     side-chain clash probability now / start, the largest map and residue ratios, and the
+     non-glycine free beta' + pPII'. A `STERIC FLAG` line (a coil map or training residue whose
+     clash probability more than doubled against NDRD, the training residues' mean side-chain clash
+     probability up by more than 10%, or a step's free non-glycine beta' + pPII' above the run's
+     steps 0-18): notify the user once, with the table. The run keeps training; nothing changes
+     without the user.
+**The local glpG TM4 glycine-flip (stability) test is retired** (user, 10-11 23:10: "We have a working ff and we are trying
+to expand it so that metric no longer matters and no longer needs to be tested locally"). ff2.1
+holds TM4 on the fixed side-chain/lipid table (findings 4.15), so new epoch ends are not extracted,
+patched or queued for it. The tools stay in `scratchpad/ff3_local_test/` (`run_glpg.sh`,
+`tm4_queue.sh`, `tm4_compare.py`; method in findings 1.25 and 4.15) and every set run is in
+`tm4_local/runs_cov/`. **TM4 HDX is not retired** (user 23:15: "Whether the delta g of tm4 should go to
+infinity or not is still not resolved"): the ff2.1_sc REMD chain and the HDX requests in §1 continue.
+4. **A panel or a gate.**
    - A panel whose `ff3_selection/runs/<tag>/` holds 176 npz: run `panel.py select aa domains runs
-     ff21_released ff21_awh bio_start gdepth_start <tags>` with the run's env (70 s, 300 MB) and
+     ff21_released ff21_awh gdepth_start <tags>` with the run's env (70 s, 300 MB; bio_start was
+     deleted with the BioEmu line 10-11 23:45) and
      notify the table.
    - A gate: read `gate_step<N>.txt` and the gate log. Converged means `validate_ff.sh` ran inside
      it, so confirm 32 Peng arms and 4 glpG chains for the candidate were queued, and read their
      first logs.
-7. **Update §1 briefly, and rewrite the cluster's `WATCH_STATUS.md`** ("Handoff"): owner and
-   computer, time of this pass, the TM4 line running and its expected end, the queue in order, the
-   newest step of each run with its margin, and anything owed or awaiting the user.
+5. **Update §1 briefly, and rewrite the cluster's `WATCH_STATUS.md`** ("Handoff"): owner and
+   computer, time of this pass, the newest step of each run with its margin, and anything owed or
+   awaiting the user.
 
 **Validation of the round-4 candidates is automatic** (§1 "Automatic validation"). Each converged
 gate runs `validate_ff.sh`, whose glpG seeds now carry the candidate's coverage tables. Choosing
@@ -723,42 +561,64 @@ keeps the link; plain `cp` copies the text, which then drifts).
 
 ## 1. Current jobs
 
-Snapshot **2026-10-10 07:47 CDT, verified live against `squeue` on midway2**, a Mac Studio watch pass (TM4 bs_03 done 04:46; no training link running; 31 ff_3.0_gdepth benchmark chunks rolled over 06:05-07:45, all with the full law, logs clean; all 32 ff_3.0_bio_si benchmark arms R; start estimates (they move hourly) 10-10 10:25 for ff30_bio_dt009's successor, 17:53 for the d9_03 panel, 21:50 for the bs_02 panel, 10-11 02:06 for ff30_gdepth_si's successor, ff_3.0_gdepth's glpG chains and polygly, 17:54 for both ff3.1 runs, ff_3.0_bio_si's glpG chains and the bs_03 panel; the socket on midway2-login1) (no jobs on midway3). Finished and cancelled
+Snapshot **2026-10-12 13:46 CDT, verified live against `squeue` on midway2**, a Mac Studio pass (18 jobs, 16 R; `/project` 1.3 T free; ff30_gdepth_si, the BioEmu line, the frozen arms and polygly stopped or deleted by the user 10-11/12, §1 "Finished runs"); **panel fa_01 COMPLETED: folded 0.444, helix -0.033**, dominated in helix by gdepth_start and by fa_00; ff31_depth_all link 2 49219752 R from 00:39, **step 54 +0.0961, on hold since step 53 (below +0.10, user notified)**; **ff31_depth_data's epoch-1 end (step 37): depth round 2, 26 depths beyond 0.1, gap left 0.9959**, **panel fd_01 COMPLETED: folded 0.472, helix -0.028**, dominated by gdepth_start in helix, not by fd_00; link 2 49221772 R from 12:07, step 46 +0.1157, **steric flag at step 39** (free beta' + pPII' 0.0050 against 0.0047, user notified); ff_3.0_gdepth's 4 glpG chains in block 2 and 9 benchmark arms R; glpG REMD ff2.1_sc block 1 R; the socket on midway2-login1) (no jobs on midway3). Finished and cancelled
 rows are deleted; their lessons are in §8.
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49215780** (midway2) | **ff30_bio_dt009**: ff30_bio restarted at dt 0.009, otherwise identical (trainer `$P/training/ConDiv.py`, which differs from ff30_bio's run copy only in dt; initial force field byte-identical, `checks/dt009_init_20261006`); `$P/training/ff30_bio_dt009`, target 76, 54 steps per link, gate `ff30bio9-gate` up to 13 epochs (converged: validated as `ff_3.0_bio` on broadwl); first-link log `$P/training/condiv-train_49194446.out` (submitted from `training/`), later links' logs in the run dir | First link 49194446 COMPLETED 10-07 16:02 after its 54 steps (0-53, `epoch_02_minibatch_15`); link 2, 49194448 (from 00:12 10-08; `step 54 of 76, resuming from run_output/epoch_02_minibatch_15/checkpoint.pkl`), **NODE_FAIL 10-08 08:32** in step 64 (`epoch_03_minibatch_07` half-written): its batch host midway2-0027 failed, as it did for ff21_ctrl_fz's link at 00:12 (0027 is MIXED again at 08:45, and is ff30_gdepth_si's batch host; excluded by the law from 09:40, §0d, and every pending job carries it). Steps 54-63 done. Link 3, 49206580 (from 08:23 10-09, 16 nodes; `step 64 of 76, resuming from run_output/epoch_03_minibatch_06/checkpoint.pkl`, `this link runs 12 steps`, owed check done), finished step 64 (08:57, margin +0.007, 24 of 24, KE/1.5kT at most 1.008) and **NODE_FAILed 10-09 09:17:42 in step 65** (`epoch_03_minibatch_08` half-written), in the same second as ff30_gdepth_si's link and another user's job on midway2-0085; its node midway2-0103 shows NOT_RESPONDING afterwards (§8). **Successor 49215780 PD (Priority, estimate 10-10 22:05 at 11:47)**, carrying the law, resumes from step 64 by chain design with 11 steps left (owed: its first line `step 65 of 76, resuming from run_output/epoch_03_minibatch_07/checkpoint.pkl`). Steps 29-63 min each, except 106 min for step 46, which relaunched five workers that never started, as step 45 did six; 24 of 24 returned every step; KE/1.5kT at most 1.017 over every replica of every step (all 1,104 protein-steps to step 45, findings 1.21; at most 1.015 at steps 46-53). **HOLD since step 14** (user told). Margin +0.192 start, +0.096 step 14, +0.072 step 24, **+0.050 at step 37** (`b9_01`), +0.036 / +0.034 / +0.032 at steps 43-45, +0.027 / +0.022 / +0.018 / +0.014 / +0.014 / +0.015 / +0.014 / +0.015 at steps 46-53, +0.017 / +0.018 / +0.020 / +0.016 / +0.011 / +0.005 / +0.002 / +0.003 / +0.001 / +0.002 at steps 54-63 (01:15-07:46, the last link-2 step; KE/1.5kT at most 1.014): E_alpha -1.961 to -1.828, E_other -1.769 to -1.816; dhb -0.406 to -0.492, sheet mean 0.161 to 0.199. Helical GLY aL free 0.02-0.11 per step, restrained <= 0.002. Panels: `b9_00` folded 0.478, helix -0.030; **`b9_01` 0.465, -0.031** (bio_start 0.602, -0.019; findings 1.21); **`b9_02` 0.448, -0.026** on 34 domains (49207052, COMPLETED 21:28), dominated by gdepth_start in helix (findings 1.21). **TM4 `b9_01` on fixed inputs** (finished 15:14): unwound 6, flipped 5 of 12, against bio_start's 5 and 4, Fisher p 1.00 for both; last-block TM4 mean 0.833 against 0.899 (findings 1.24; runs in `tm4_local/runs_cov/`). **TM4 `b9_02`** (Mac Studio 19:49-21:45): unwound 8, flipped 4 of 12, against bio_start's 5 and 4 (p 0.41, 1.00) and b9_01's 6 and 5 (p 0.68, 1.00); last-block TM4 0.830 against 0.899 and 0.833, so epoch 2 keeps the epoch-1 lean (findings 1.24) | the watch every step; `b9_03` (step 75): extract, panel, patch, TM4; the gate at step 76 (`ff30bio9-gate`) ~7 h after 49215780 starts |
-| **49216108-49216143** (midway2) | **ff30_gdepth_dt009**: ff30_gdepth restarted at dt 0.009, otherwise identical (trainer `ff30_gdepth_dt009/trainer/`, dt the only change; rama_round_00 and initial force field byte-identical); `$P/training/ff30_gdepth_dt009`, target 76, 54 steps per link, gate `ff30gdep9-gate` (converged: `ff_3.0_gdepth`); first-link log `$P/training/condiv-train_49194447.out` | **Target 76 reached: link 49194449 COMPLETED 10-09 08:49** after step 75 (`epoch_03_minibatch_18`: margin +0.082, dhb -0.551, sheet mean 0.228; depth round 4 offsets aR -0.1068 aL +0.5169, dL - dR +0.624; steps 70-75 24 of 24, KE/1.5kT at most 1.013); the chain cancelled successor 49206658 at 08:49. **Gate 49216104 CONVERGED** (08:54; `ff30_gdepth_dt009/gate_step76.txt`, log `ff30gdep9-gate_49216104.out`): steps 58-76, every group p > 0.005 (lowest dhb 0.045, then bbenve 0.79). It released `epoch_03_minibatch_18` as **ff_3.0_gdepth** to `$P/parameters/ff_3.0_gdepth` and `/beagle3/trsosnic/yinhan/upside2-md/parameters/ff_3.0_gdepth` (md5 verified; `release_20261009-085341`, rama.dat = `rama_round_04.dat`), byte-identical to `checks/r4_epochs/d9_03`. `validate_ff.sh` submitted the 32 benchmark arms 49216108-49216139 (all R at 11:47; the first at 40k of 2.7 M tu with sane T, Rg and potential; logs `/beagle3/trsosnic/yinhan/ff3_benchmark/logs/<prot>_<kind>_ff_3.0_gdepth_<jobid>.out`; at 21:27 all 32 R, 31 in a second chunk 49218083-49218237 resubmitted 19:34-21:14 and ubiquitin de novo 49216137 still in its first, 0.22-1.31 M tu done, no error in any log; 25 of the chunks carry the pre-10:30 exclusion list without 0103 and 0116, and 49218194 runs on 0103, see "Resume here" step 7; 17 second chunks COMPLETED 06:05-06:45 10-10 and resubmitted as third chunks 49218932-49218988, 16 R and lambda's 49218988 PD at 06:47, carrying the full law, logs clean, e.g. BBA de novo 1.91 of 4.0 M tu) and the 4 glpG chains 49216140-49216143 (79HIS and 79ALA, each also S115T; PD, estimates 10-10 08:52-22:05 at 11:47; logs `popepopg_REMD_mdw2/logs/remd.<variant>.ff_3.0_gdepth.<jobid>.out`), all carrying the law. Before: **First link 49194447 TIMEOUT 10-07 21:46** at its 36 h wall, in step 35 (`epoch_01_minibatch_16` half-written): its steps took 40-115 min, not the ~36 min the 54-step link assumed (§8). Steps 0-34 done (`epoch_01_minibatch_15` 21:13); workers relaunched after a failed launch at step 16 (2nmu) and step 31 (3tjy), 24 of 24 returned every step; KE/1.5kT at most 1.016 over every replica of all 840 protein-steps. **Successor 49194449 R since 00:22 10-08** (18 nodes; log `ff30_gdepth_dt009/condiv-train_49194449.out`: `step 35 of 76, resuming from run_output/epoch_01_minibatch_15/checkpoint.pkl`, `this link runs 41 steps`; at the 36-70 min of steps 57-71 it reaches step 75 ~09:00-10:15 10-09, before its 12:22 wall; if it times out, successor 49206658 finishes the run); its successor 49206658 queued. Margin +0.131 at step 13, **+0.141 at step 18** (epoch-0 end), +0.140 at step 24, then falling: +0.138 / +0.130 / +0.121 / +0.114 / +0.110 / +0.108 / +0.105 / +0.101 / +0.097 / +0.096 at steps 25-34, +0.097 / +0.096 / +0.097 / +0.101 / +0.106 / +0.109 / +0.111 / +0.108 / +0.104 / +0.099 / +0.091 / +0.084 / +0.078 / +0.077 / +0.075 / +0.075 / +0.074 / +0.073 / +0.073 / +0.070 / +0.066 / +0.066 / +0.067 / +0.072 / +0.075 / +0.078 / +0.075 / +0.074 / +0.074 / +0.072 / +0.073 / +0.073 / +0.080 / +0.087 / +0.091 / +0.091 / +0.089 / +0.089 / +0.085 / **+0.082** at steps 35-74 (00:57-08:16 10-09, steps 38-56 on round 2's library and 57-74 on round 3's; steps 57-74 took 36-70 min, step 67 relaunched 1pz4 once; step 60 relaunched 1wjg once, 24 of 24 returned), 30-54 min each; 24 of 24, KE/1.5kT at most 1.015; E_alpha -1.854, E_other -1.775 at step 47; dhb -0.488, sheet mean 0.222, rot rms 0.107). **HOLD since step 33** (user told 20:30); it trains on. Depth round 1 (`rama_rounds.txt`): free-native gap aR -0.002 aL +0.004, dL - dR +0.567; round 2 (epoch-1 end): gap aR +0.000 aL +0.007, offsets aR -0.0965 aL +0.4808, dL - dR +0.577; round 3 (epoch-2 end): gap aR -0.001 aL +0.013, offsets aR -0.1002 aL +0.5017, dL - dR +0.602. Panel **`d9_00` 0.477, helix -0.024** (gdepth_start 0.603, -0.018, dominates it in helix); **`d9_01` 0.457, -0.025** on 34 domains (49207053, COMPLETED 21:35), dominated by gdepth_start in helix (findings 1.21); **TM4 `d9_00` on fixed inputs** (Mac Studio 22:25-00:26): unwound 5, flipped 2 of 12, against gdepth_start's 7 and 2, Fisher p 0.68 and 1.00, not resolved; last-block TM4 mean 0.900 against 0.849 (findings 1.24). TM4 **`d9_01`** (Mac Studio 06:15-08:12): unwound 6, flipped 4, against gdepth_start's 7 and 2 and d9_00's 5 and 2, not resolved (findings 1.24); DSSP alpha 0.801 at d9_00 and 0.615 at d9_01, against 0.657 (findings 1.25) | the watch: benchmark arms and glpG chains; **`d9_03`** (step 75, the released ff_3.0_gdepth): extracted 09:50, panel 49216387 (09:47, carries the law; estimate 10-10 22:05), patched (its glpG patch matches the gate's own to the printed digits); **TM4 `d9_03`** (Mac Studio 10:46-12:43), primary test: DSSP alpha 0.726 against gdepth_start's 0.657 (+0.069 [-0.165, +0.300], p 0.64) and d9_02's 0.765 (p 1.00), not resolved; 5 unwound, 4 flipped, no energy jump (findings 1.26). d9_02's panel and TM4 are in findings 1.21 and 1.25. Choosing ff_3.0 stays the user's |
-| **49218439-49218474** (midway2) | **ff30_bio_si**: ff30_bio_dt009 with every group but rot at the SI's learning rate (user, 10-07; plan.md Phase 11; findings 1.23): `alpha_scale` 0.25, rot base doubled so rot stays 0.0125, hence hb 0.005, dhb 0.0025, sheet 0.0075, burial groups halved. Trainer copy `ff30_bio_si/trainer/ConDiv.py` (md5 `a1943099...`; differs from `$P/training/ConDiv.py` only in those lines, their comment and docstring); initial force field byte-identical to ff30_bio_dt009's (`checks/si_init_20261007`, build log and trainer diff there); target 76, gate `ff30biosi-gate` up to 13 epochs (converged: validated as `ff_3.0_bio_si`); first-link log `$P/training/condiv-train_49204255.out` | **Target 76 reached: link 49205039 finished step 75 at 02:18 10-10** (24 of 24, KE/1.5kT at most 1.014, margin +0.058; the chain cancelled successor 49216105). **Gate 49218437 CONVERGED** 02:25 (`ff30_bio_si/gate_step76.txt`, log `ff30biosi-gate_49218437.out`): steps 58-76, every group p > 0.005 (lowest dhb 0.0125). It released `epoch_03_minibatch_18` as **ff_3.0_bio_si** to `$P/parameters/ff_3.0_bio_si` and `/beagle3/.../parameters/ff_3.0_bio_si` (md5 verified; `release_20261010-022559`), file-identical to `checks/r4_epochs/bs_03`. `validate_ff.sh` submitted the 32 benchmark arms 49218439-49218470 (all 32 R at 03:48, no error in any log, BBA native at 155k of 2.9 M tu with sane T, Rg and potential; logs `ff3_benchmark/logs/<prot>_<kind>_ff_3.0_bio_si_<jobid>.out`) and the 4 glpG chains 49218471-49218474 (PD; logs `popepopg_REMD_mdw2/logs/remd.<variant>.ff_3.0_bio_si.<jobid>.out`), all carrying the law; they run on the old side-chain/lipid table (findings 4.13), which the user is asked about. Before: First link 49204255 (from 16:34 10-07, 14 nodes) **COMPLETED 10-08 20:10** after its 54 steps (0-53, `epoch_02_minibatch_15`; 26-41 min each). **Successor 49205039 R since 08:49 10-09** (16 nodes; log `ff30_bio_si/condiv-train_49205039.out`: `step 54 of 76, resuming from run_output/epoch_02_minibatch_15/checkpoint.pkl`, `this link runs 22 steps`, owed check done), carrying the law; steps 54-74 done 09:32-01:40 10-10 (margin +0.060, +0.058, +0.055, +0.053, +0.050, +0.047, +0.043, +0.040, +0.038, +0.037, +0.038, +0.040, +0.040, +0.042, +0.043, +0.044, +0.047, +0.051, +0.054, +0.056, +0.057; 24 of 24, KE/1.5kT at most 1.016); **`bs_02`** (step 56) extracted 10:58 (rama.dat md5-identical to bs_01's; hbond.h5 and sheet moved), panel 49216513 (10:57, carries the law; estimate 10-10 22:05), patched, **TM4 `bs_02`** (Mac Studio 12:43-14:38), primary test: DSSP alpha 0.684 against bio_start's 0.769 (p 0.58) and its twin b9_02's 0.694 (p 0.93), not resolved; strong at 135-138, weak at 149-151 (b9_02 the reverse); 5 unwound, 2 flipped, no energy jump (findings 1.25); its successor 49216105 queued with the law; **`bs_00`** (step 18, 02:09) extracted, panel 49207054 COMPLETED 21:39: **`bs_00` 0.457, helix -0.028** on 34 domains, dominated by gdepth_start in helix and not by its twin b9_00 (findings 1.21); **`bs_01`** (step 37, 11:18) extracted 11:44 (rama.dat md5-identical to bs_00's, hbond.h5 moved), panel 49208587 COMPLETED 22:41: **`bs_01` 0.430, helix -0.033** (36 domains; b9_01 0.465, -0.031), dominated by its twin b9_01 in helical glycine (findings 1.21); **TM4 `bs_01`** (Mac Studio 15:56-17:53): unwound 5, flipped 2 of 12, against bio_start's 5 and 4 (p 1.00, 0.64) and its twin b9_01's 6 and 5 (p 1.00, 0.37), not resolved, leaning better than b9_01 (last-block TM4 0.879 against 0.833; findings 1.24); **TM4 `bs_00`** (Mac Studio 08:12-10:08): unwound 6, flipped 5 of 12, against bio_start's 5 and 4 (p 1.00) and its twin b9_00's 4 and 4 (p 0.68, 1.00), not resolved, leaning worse than b9_00 (findings 1.24); 24 of 24 each, KE/1.5kT at most 1.015. **Rates confirmed** at step 0: checkpoint `initial_alpha` hb 0.005, dhb 0.0025, sheet 0.0075, rot 0.0125, and the first step moved each parameter by exactly that (ff30_bio_dt009's step 0: 0.01, 0.005, 0.015, 0.0125); the link log prints no rates. Margin +0.192, +0.190, +0.186, +0.181, +0.176, +0.169, +0.162, +0.155, +0.149, +0.142, +0.135, +0.131, +0.127, +0.125, +0.122, +0.121, +0.119, +0.117, +0.115, +0.115, +0.113, +0.111, +0.109, +0.107, +0.104, +0.100 (+0.1001), **+0.097**, +0.095, +0.092, +0.090, +0.088, +0.087, +0.088, +0.088, +0.088, +0.086, +0.086, +0.084, +0.083, +0.081, +0.079, +0.076, +0.072, +0.069, +0.066, +0.063, +0.062, +0.060, +0.060, +0.059, +0.059, +0.060, +0.060, +0.060 at steps 0-53, +0.060, +0.058, +0.055, +0.053 at steps 54-57. **HOLD since step 26** (06:06; user told 06:50); it trains on (ff30_bio_dt009 +0.144 at step 3, +0.126 at step 7); dhb -0.416, sheet mean 0.171 at step 31 | the watch: the benchmark arms and glpG chains; **`bs_03`** (step 75, = ff_3.0_bio_si): extracted 02:49, panel 49218518 (submit_new.sh, 02:47), patched, **TM4 `bs_03`** (Mac Studio 02:50-04:46), primary test: DSSP alpha 0.739 against bio_start's 0.769 (p 0.89), bs_02's 0.684 (p 0.71) and d9_03's 0.726 (p 1.00), not resolved; 4 unwound, 2 flipped; s1 has a transient protein-potential jump to +200,071 at t 1490 (TM4 0.99 after; findings 1.31); runs and tables in `runs_cov/`; against b9_03 once it exists |
-| **49216034** (midway2) | **ff30_gdepth_si**: ff30_gdepth_dt009 at the same SI rates, trainer copy `ff30_gdepth_si/trainer/ConDiv.py` (md5 `90ae572c...`); initial force field and `rama_round_00.dat` byte-identical to ff30_gdepth_dt009's; depth start the same (alpha_R -0.0918, alpha_L +0.4621); target 76, gate `ff30gdepsi-gate` (converged: `ff_3.0_gdepth_si`); first-link log `$P/training/condiv-train_49204256.out` | Link 49204256 (R from 17:20 10-07, 24 nodes) **NODE_FAIL 10-08 11:07** in step 21 (`epoch_01_minibatch_02` half-written): its batch host midway2-0027 failed, the third such failure today; the link started before the law excluded 0027. Steps 0-20 done (18:00-10:05; 29-63 min). Link 2, 49205173 (from 08:40 10-09, 16 nodes; `step 21 of 76, resuming from run_output/epoch_01_minibatch_01/checkpoint.pkl`, owed check done), finished step 21 (09:09, margin +0.128, 24 of 24, KE/1.5kT at most 1.014) and **NODE_FAILed 10-09 09:17:42 in step 22** (`epoch_01_minibatch_03` half-written), with ff30_bio_dt009's link; its node midway2-0116 shows NOT_RESPONDING afterwards (§8). **Successor 49216034 PD (Priority, estimate 10-10 22:05 at 11:47)**, carrying the law, resumes from step 21 by chain design (owed: its first line `step 22 of 76, resuming from run_output/epoch_01_minibatch_02/checkpoint.pkl`); **`ds_00`** (step 18) extracted, **TM4 `ds_00`** (Mac Studio 21:45-23:41): unwound 9, flipped 3 of 12, against gdepth_start's 7 and 2 (p 0.67, 1.00) and its twin d9_00's 5 and 2 (p 0.21, 1.00), not resolved; last-block TM4 0.775, the lowest mean of any set (findings 1.24); panel 49207993 COMPLETED 22:39: **`ds_00` 0.412, helix -0.030** (36 domains; d9_00 0.477, -0.024), dominated by its twin d9_00 in helix (findings 1.21), TM4 queued. Depth round 1 (`rama_rounds.txt`): gap aR +0.001 aL +0.008, offsets aR -0.0882 aL +0.4754, dL - dR +0.564; 24 of 24, KE/1.5kT at most 1.015. **Rates confirmed** at step 0, as ff30_bio_si's (`initial_alpha` hb 0.005, dhb 0.0025, sheet 0.0075, rot 0.0125, and the first step moved each parameter by exactly that; ff30_gdepth_dt009's step 0: 0.01, 0.005, 0.015, 0.0125). Margin +0.192, +0.191, +0.185, +0.179, +0.175, +0.170, +0.168, +0.165, +0.162, +0.160, +0.157, +0.155, +0.152, +0.149, +0.147, +0.144, +0.142, +0.140, +0.136, +0.134, +0.132, +0.128 at steps 0-21 (ff30_gdepth_dt009 +0.183 at step 3); depth round 0, dL - dR +0.554 | watch as the dt 0.009 runs; tags `ds_EE`; TM4 against gdepth_start and ff30_gdepth_dt009 |
-| **49218340** (midway2) | **ff31_depth_all** (ff3.1, user 10-09; plan.md Phase 14, findings 1.28-1.30): ff2.1 with every coil map's six basin depths trained as offsets from NDRD (840 maps, 5,040 depths), each under its own Gaussian prior of width 0.3 nat, one damped Newton step per epoch solved jointly over the maps; trainer `ff31_depth_all/trainer/` (repo `training/ff31/`; ConDiv.py md5 `df3e2497...`, rama_basin.py `f0556bba...`, the round-4 gdepth trainer with only its rama calls generalised); init_param ff2.1 exactly, `upside_input` hard-linked from ff30_gdepth_dt009 (rama.dat NDRD `996a607b...`); target 76, **no `after_training.sbatch`**: it stops at its target for review, nothing is gated, released or validated by itself; first-link log `ff31_depth_all/condiv-train_49218340.out` | **PD since 23:40 10-09** (Priority), carrying the law. Initialised 23:38 (`initialize.log`: 5,040 trainable, 46 held out) | the watch every step; owed: first lines `step 0 of 76, resuming from run_output/initial_checkpoint.pkl`, `this link runs 54 steps`; `run_output/rama_rounds.txt` at each epoch end (the held-out gap left after the step, below 1 if the step transfers); epoch ends `fa_EE`: extract, panel, patch, TM4 against ff21_released |
-| **49218341** (midway2) | **ff31_depth_data** (ff3.1): as ff31_depth_all, but only the 1,442 (map, basin) depths with at least 20 native sites in the training proteins train (alpha_R 604, beta 458, pPII 317, alpha_L 39, beta' 13, pPII' 11), prior 0.2; its rama_basin.py differs only in `MODE` (md5 `235a1bf7...`); target 76, no `after_training.sbatch`; first-link log `ff31_depth_data/condiv-train_49218341.out` | **PD since 23:40 10-09** (Priority), carrying the law. Initialised 23:38 (1,442 trainable, 46 held out) | as ff31_depth_all; epoch ends `fd_EE` |
-| **49206266** (midway2) | **polygly production** (plan.md Phase 12, step 4; user 10-07): Ac-(Gly)20-NHMe, 4 replicas from the collapse's last frames in 7.5 nm dodecahedra (~28,950 atoms each; `polygly/scripts/build_prod.sh`, log `polygly/logs/build_prod.log`), 1 us cap, 7 threads each on one broadwl node. `polygly/prod.sbatch` minimises, runs 500 ps NPT (seeds 20261021-24), then production. It self-chains: successor queued at link start, cancelled when all four reach 1 us; three links from the same steps, or `polygly/prod/STOP`, end it. Logs `polygly/logs/prod_<jobid>.out`; replicas `polygly/prod/repN/` | **Link 1, 49204428, COMPLETED 10-09 09:12** at its `-maxh 34.5`: 24.08-24.19 M steps (48.2-48.4 ns) per replica, `prod.log` Performance 33.99 / 33.91 / 33.85 / 33.84 ns/day; `gmx mindist -pi` over the link (4816-4838 frames; `polygly/prod_analysis/link1_49204428/`): minimum image distance 2.35 / 2.97 / 3.29 / 3.57 nm (rep1-4), above 1.0 nm. **Successor 49206266 PD (Priority)**, carrying the law, continues from the checkpoints; ~20 more links to 1 us. Link 1: **R since ~22:41 10-07** on midway2-0612 (`polygly/logs/prod_49204428.out`: GROMACS 2024.4, AVX2_256, starting steps 0 0 0 0 of 500000000); successor 49206266 queued. Minimisation (`mdrun_min.log`) stopped at its 5000 steps without reaching Fmax < 100: Fmax 1326 / 1411 / 223 / 543 kJ/mol/nm on protein atoms 110 / 117 / 131 / 47, potential -4.758e5 to -4.764e5, as the collapse's did (1380, atom 124) before it ran cleanly. 500 ps NPT equilibration finished 23:03 in all four (no LINCS or SETTLE warnings; `equil.log` Performance 33.7-33.8 ns/day per replica); production at 1.1 ns by 23:47, so 1 us takes ~30 days (~20 links). `gmx mindist -pi` on each replica's first 1.1 ns (protein-only `prot.tpr`, 112-113 frames): minimum image distance 3.54 / 4.53 / 4.55 / 4.94 nm, above 1.0 nm | the watch: the next link's first lines; at each link end the Performance line and mindist -pi; the blank at each ~200 ns (~4 links) |
+| **49216108-49216143** (midway2) | **ff30_gdepth_dt009**: ff30_gdepth restarted at dt 0.009, otherwise identical (trainer `ff30_gdepth_dt009/trainer/`, dt the only change; rama_round_00 and initial force field byte-identical); `$P/training/ff30_gdepth_dt009`, target 76, 54 steps per link, gate `ff30gdep9-gate` (converged: `ff_3.0_gdepth`); first-link log `$P/training/condiv-train_49194447.out` | **Target 76 reached: link 49194449 COMPLETED 10-09 08:49** after step 75 (`epoch_03_minibatch_18`: margin +0.082, dhb -0.551, sheet mean 0.228; depth round 4 offsets aR -0.1068 aL +0.5169, dL - dR +0.624; steps 70-75 24 of 24, KE/1.5kT at most 1.013); the chain cancelled successor 49206658 at 08:49. **Gate 49216104 CONVERGED** (08:54; `ff30_gdepth_dt009/gate_step76.txt`, log `ff30gdep9-gate_49216104.out`): steps 58-76, every group p > 0.005 (lowest dhb 0.045, then bbenve 0.79). It released `epoch_03_minibatch_18` as **ff_3.0_gdepth** to `$P/parameters/ff_3.0_gdepth` and `/beagle3/trsosnic/yinhan/upside2-md/parameters/ff_3.0_gdepth` (md5 verified; `release_20261009-085341`, rama.dat = `rama_round_04.dat`), byte-identical to `checks/r4_epochs/d9_03`. `validate_ff.sh` submitted the 32 benchmark arms 49216108-49216139 (all R at 11:47; the first at 40k of 2.7 M tu with sane T, Rg and potential; logs `/beagle3/trsosnic/yinhan/ff3_benchmark/logs/<prot>_<kind>_ff_3.0_gdepth_<jobid>.out`; at 21:27 all 32 R, 31 in a second chunk 49218083-49218237 resubmitted 19:34-21:14 and ubiquitin de novo 49216137 still in its first, 0.22-1.31 M tu done, no error in any log; 25 of the chunks carry the pre-10:30 exclusion list without 0103 and 0116, and 49218194 runs on 0103, see "Resume here" step 7; 17 second chunks COMPLETED 06:05-06:45 10-10 and resubmitted as third chunks 49218932-49218988, 16 R and lambda's 49218988 PD at 06:47, carrying the full law, logs clean, e.g. BBA de novo 1.91 of 4.0 M tu; BBA native COMPLETE 11:02 and BBL native 14:26 10-10 at their targets, 2.89 and 2.08 M tu; the third chunks hit the 10.5 h wall 16:35-18:37 and resubmitted, all carrying the law; alpha3d native COMPLETE 18:29, alpha3d de novo 19:36, homeodomain de novo 20:30, BBA de novo 22:39, NTL9 native 23:49 and WWdomain de novo 01:45 at their targets (2.71, 3.04, 3.08, 4.0, 4.0, 4.0 M tu); cspA native, cspA de novo and BBL de novo resubmitted at their wall 03:16 (49222157-49222159), gpW native and de novo 04:06 and top7 de novo 04:30 likewise, proteinL, proteinG native, WWdomain native and top7 native 07:27 (49222585-49222589); WWdomain native COMPLETE 08:11 at its target; ubiquitin native resubmitted 09:17 (49222934), ubiquitin de novo 10:07 (49223180) and 20:47 (49223720); lambda de novo COMPLETE 20:47 and ubiquitin native 22:22; proteinG native COMPLETE 11:42, proteinB native 12:12, NuG2 native 13:21, hyp native 14:05, lambda native 15:20 and top7 native 16:16 at their targets; proteinL native and de novo resubmitted 18:07 (49223642-49223643); proteinB de novo COMPLETE 19:04, proteinL native 19:16 and cspA native 20:20 at their targets; ubiquitin native resubmitted 19:57 (49223703); **79HIS's glpG chain finished block 1** (49216140, 19:12, whole: last chunk from remaining 18,313 s, `resubmit next block`); **block 2 49223675 R from 19:13** on midway2-0028 (`block 2/5`, calibration 685.5 ms/step); 79ALA_S115T's block 1 ended whole 20:29, block 2 49223713 R from 20:29 on midway2-0102; 79HIS_S115T's 20:59, block 2 49223725 R on midway2-0113; 79ALA's 22:11, block 2 49223807 R on midway2-0233 (all four in block 2), so 79HIS's HDX (§1 request) can run after block 2 ends, ~07:00 10-13; gpW and hyp de novo, lambda, proteinB and NuG2 de novo chunks resubmitted 15:17-15:20 (49223506-49223543); cspA native and de novo and BBL de novo resubmitted 13:47 (49223440-49223442); homeodomain native COMPLETE 04:46 at its target; hyp, lambda, NuG2 and proteinB chunks resubmitted 04:46-05:16 (49222291-49222367), logs clean; ubiquitin native's next chunk 49220973 R 22:50, ubiquitin de novo 49221054 PD) and the 4 glpG chains 49216140-49216143 (79HIS and 79ALA, each also S115T; all 4 R on the fixed table (79HIS and 79HIS_S115T from 10:16 10-10, chunk 1 at 52 tu by 11:45, 645-653 ms/step; 79ALA from 11:21 and 79ALA_S115T from 11:34, in calibration; no ROLLBACK or error; replicas 0, 13 and 27 of each checked); logs `popepopg_REMD_mdw2/logs/remd.<variant>.ff_3.0_gdepth.<jobid>.out`), all carrying the law; their seeds `popepopg_REMD_mdw2/seeds/<variant>.ff_3.0_gdepth.up` were re-patched 08:46 10-10 onto the converged side-chain/lipid table (user; findings 4.15; old seeds `.bak_pre_sc600x12_20261010`). Before: **First link 49194447 TIMEOUT 10-07 21:46** at its 36 h wall, in step 35 (`epoch_01_minibatch_16` half-written): its steps took 40-115 min, not the ~36 min the 54-step link assumed (§8). Steps 0-34 done (`epoch_01_minibatch_15` 21:13); workers relaunched after a failed launch at step 16 (2nmu) and step 31 (3tjy), 24 of 24 returned every step; KE/1.5kT at most 1.016 over every replica of all 840 protein-steps. **Successor 49194449 R since 00:22 10-08** (18 nodes; log `ff30_gdepth_dt009/condiv-train_49194449.out`: `step 35 of 76, resuming from run_output/epoch_01_minibatch_15/checkpoint.pkl`, `this link runs 41 steps`; at the 36-70 min of steps 57-71 it reaches step 75 ~09:00-10:15 10-09, before its 12:22 wall; if it times out, successor 49206658 finishes the run); its successor 49206658 queued. Margin +0.131 at step 13, **+0.141 at step 18** (epoch-0 end), +0.140 at step 24, then falling: +0.138 / +0.130 / +0.121 / +0.114 / +0.110 / +0.108 / +0.105 / +0.101 / +0.097 / +0.096 at steps 25-34, +0.097 / +0.096 / +0.097 / +0.101 / +0.106 / +0.109 / +0.111 / +0.108 / +0.104 / +0.099 / +0.091 / +0.084 / +0.078 / +0.077 / +0.075 / +0.075 / +0.074 / +0.073 / +0.073 / +0.070 / +0.066 / +0.066 / +0.067 / +0.072 / +0.075 / +0.078 / +0.075 / +0.074 / +0.074 / +0.072 / +0.073 / +0.073 / +0.080 / +0.087 / +0.091 / +0.091 / +0.089 / +0.089 / +0.085 / **+0.082** at steps 35-74 (00:57-08:16 10-09, steps 38-56 on round 2's library and 57-74 on round 3's; steps 57-74 took 36-70 min, step 67 relaunched 1pz4 once; step 60 relaunched 1wjg once, 24 of 24 returned), 30-54 min each; 24 of 24, KE/1.5kT at most 1.015; E_alpha -1.854, E_other -1.775 at step 47; dhb -0.488, sheet mean 0.222, rot rms 0.107). **HOLD since step 33** (user told 20:30); it trains on. Depth round 1 (`rama_rounds.txt`): free-native gap aR -0.002 aL +0.004, dL - dR +0.567; round 2 (epoch-1 end): gap aR +0.000 aL +0.007, offsets aR -0.0965 aL +0.4808, dL - dR +0.577; round 3 (epoch-2 end): gap aR -0.001 aL +0.013, offsets aR -0.1002 aL +0.5017, dL - dR +0.602. Panel **`d9_00` 0.477, helix -0.024** (gdepth_start 0.603, -0.018, dominates it in helix); **`d9_01` 0.457, -0.025** on 34 domains (49207053, COMPLETED 21:35), dominated by gdepth_start in helix (findings 1.21); **TM4 `d9_00` on fixed inputs** (Mac Studio 22:25-00:26): unwound 5, flipped 2 of 12, against gdepth_start's 7 and 2, Fisher p 0.68 and 1.00, not resolved; last-block TM4 mean 0.900 against 0.849 (findings 1.24). TM4 **`d9_01`** (Mac Studio 06:15-08:12): unwound 6, flipped 4, against gdepth_start's 7 and 2 and d9_00's 5 and 2, not resolved (findings 1.24); DSSP alpha 0.801 at d9_00 and 0.615 at d9_01, against 0.657 (findings 1.25) | the watch: benchmark arms and glpG chains; **`d9_03`** (step 75, the released ff_3.0_gdepth): extracted 09:50, panel 49216387 COMPLETED 11:21 10-10: **`d9_03` 0.464, helix -0.030** on 41 domains, dominated by gdepth_start (0.603, -0.018) in helix, beta and helical glycine (`ff3_selection/select_last_d9_03_login1_20261010.txt`; findings 1.21), patched (its glpG patch matches the gate's own to the printed digits); **TM4 `d9_01_sc`** (fixed table, 18:25-20:21): 0.925 against gdepth_start_sc's 0.947 (-0.023 [-0.074, +0.031], p 0.45), not resolved, 0 unwound or flipped; d9_03_sc against it 0.884 (p 0.29) (findings 4.15); **TM4 `d9_03`** (Mac Studio 10:46-12:43), primary test: DSSP alpha 0.726 against gdepth_start's 0.657 (+0.069 [-0.165, +0.300], p 0.64) and d9_02's 0.765 (p 1.00), not resolved; 5 unwound, 4 flipped, no energy jump (findings 1.26). d9_02's panel and TM4 are in findings 1.21 and 1.25. Choosing ff_3.0 stays the user's |
+| **49219752** (midway2; link 1 49218340) | **ff31_depth_all** (ff3.1, user 10-09; plan.md Phase 14, findings 1.28-1.30): ff2.1 with every coil map's six basin depths trained as offsets from NDRD (840 maps, 5,040 depths), each under its own Gaussian prior of width 0.3 nat, one damped Newton step per epoch solved jointly over the maps; trainer `ff31_depth_all/trainer/` (repo `training/ff31/`; ConDiv.py md5 `df3e2497...`, rama_basin.py `f0556bba...`, the round-4 gdepth trainer with only its rama calls generalised); init_param ff2.1 exactly, `upside_input` hard-linked from ff30_gdepth_dt009 (rama.dat NDRD `996a607b...`); target 76, **no `after_training.sbatch`**: it stops at its target for review, nothing is gated, released or validated by itself; first-link log `ff31_depth_all/condiv-train_49218340.out` | **R from 12:39 10-10** (24 nodes, batch host midway2-0089), carrying the law: `step 0 of 76, resuming from run_output/initial_checkpoint.pkl`, `this link runs 54 steps`, as owed; next link 49219752 queued (afterany). Initialised 23:38 10-09 (`initialize.log`: 5,040 trainable, 46 held out). Step 0 (13:27, 48 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.192 (E_alpha, E_beta and E_other each moved +0.010), `basin depth offsets round 0, mode all, sigma 0.30: 5040 trainable depths on 840 coil maps, 0 with |c| > 0.1, max |c| 0.0000` (the depths take their first Newton step at the epoch end), dhb -0.401, sheet mean 0.158; step 1 (14:28, 60 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.190, offsets still 0 (round 0), dhb -0.396, sheet mean 0.159, helical GLY aL free 0.155, restrained 0.007; step 2 (15:25, 57 min): 24 of 24, KE/1.5kT at most 1.010, margin +0.187, offsets 0, dhb -0.391; step 3 (16:00, 35 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.185, offsets 0, dhb -0.387; step 4 (16:54, 54 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.180, offsets 0, dhb -0.386; step 5 (17:55, 61 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.174, offsets 0, dhb -0.386; step 6 (18:55, 60 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.168, offsets 0, dhb -0.386; step 7 (20:03, 68 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.169, offsets 0, dhb -0.388; step 8 (20:55, 52 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.167, offsets 0, dhb -0.392; step 9 (21:41, 46 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.164, offsets 0, dhb -0.396, sheet mean 0.178; step 10 (22:41, 59 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.162, offsets 0, dhb -0.399, sheet mean 0.181, helical GLY aL free 0.028, restrained 0.000 (epoch 0 so far 0.108 / 0.004); step 11 (23:35, 55 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.158, offsets 0, dhb -0.402, sheet mean 0.185; step 12 (00:56, 82 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.157, offsets 0, dhb -0.405, sheet mean 0.189; step 13 (02:01, 64 min): 24 of 24, KE/1.5kT at most 1.010, margin +0.155, offsets 0, dhb -0.408, sheet mean 0.190; step 14 (02:51, 50 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.155, offsets 0, dhb -0.410, sheet mean 0.191; step 15 (03:46, 56 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.153, offsets 0, dhb -0.411, sheet mean 0.193; step 16 (04:50, 64 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.151, offsets 0, dhb -0.412, sheet mean 0.194; step 17 (05:53, 63 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.149, offsets 0; **step 18, the epoch-0 end** (06:37, 44 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.146, dhb -0.415, sheet mean 0.195; **depth round 1** (`rama_rounds.txt`): reads 89,480 / 10,234 held out, map-level gap 0.00059 / held out 0.00402, **held-out gap left after the step 0.9903**, step rms 0.0305, max 0.2657, 66 of 5,040 with |c| > 0.1, offsets rms alpha_R 0.048, alpha_L 0.027, beta 0.030, pPII 0.037, beta' 0.011, pPII' 0.014, GLY|X aR -0.012 aL +0.066; as predicted from c9's epoch 0 (rms 0.030, 68 beyond 0.1, GLY|X aL +0.057, gap left 0.989; findings 1.29); `rama_round_01.dat` md5 `a258a95f...`; step 19 (07:24, 46 min), the first on round 1's library: 24 of 24, KE/1.5kT at most 1.013, margin +0.145, dhb -0.417, sheet mean 0.196; step 20 (08:01, 37 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.146, dhb -0.419; steps 21 (08:57) and 22 (09:28): 24 of 24, KE/1.5kT at most 1.014, margin +0.146, +0.144, dhb -0.420, -0.422; step 23 (10:19, 50 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.140, dhb -0.424; step 24 (11:23, 64 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.136, dhb -0.427; step 25 (12:21, 58 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.132, dhb -0.429; step 26 (13:25, 63 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.131, dhb -0.432, steric x1.0026, no flag; step 27 (14:10, 45 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.127, dhb -0.436, steric x1.0025, no flag; step 28 (14:58, 48 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.122, dhb -0.440, steric x1.0023, no flag; step 29 (15:58, 60 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.117, dhb -0.442, steric x1.0022, no flag; step 30 (16:55, 57 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.113, steric x1.0023, free beta' + pPII' 0.0038, no flag (read 17:15 at the user's status request); step 31 (17:53, 58 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.108, steric x1.0023, free beta' + pPII' 0.0043, no flag; steps 32 (18:55) and 33 (19:46): 24 of 24, KE/1.5kT at most 1.013, margin +0.105360, +0.102907 (full precision), steric x1.0023, free beta' + pPII' 0.0035, no flag; step 34 (20:42, 57 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.100650, steric x1.0023, free beta' + pPII' 0.0031, no flag; step 35 (21:46, 63 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.101806, steric x1.0022, no flag; step 36 (22:42, 56 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.102335, steric x1.0022, no flag; **step 37, the epoch-1 end** (23:28, 46 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.101608; **depth round 2**: 235 of 5,040 beyond 0.1, step rms 0.022, max 0.146, held-out gap left 0.9937 (findings 1.30); **steric check on round 2's library: no flag** (coil maps at most x1.16, residues' side chain x1.0021, backbone depths x1.0133; findings 1.33); **fa_01** panel 49223845 (submitted by `submit_new.sh` 23:46) COMPLETED 00:40 10-12: **folded 0.444, helix -0.033** on 39 domains, gdepth_start dominates it in helix and gly_helix, and fa_00 (0.471, -0.025) dominates it in helix on 36 domains (findings 1.21); step 38 (00:15, 47 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.1027, dhb -0.467, sheet mean 0.194, rot rms 0.092, helical GLY aL free 0.109 / restrained 0.029; link 1 TIMEOUT 00:39 at its 36 h wall in step 39 (2hlq relaunched once); **link 2 49219752 R from 00:39** (log `ff31_depth_all/condiv-train_49219752.out`: `step 39 of 76, resuming from run_output/epoch_02_minibatch_00/checkpoint.pkl`, `this link runs 37 steps`), successor 49223866 queued; step 39 (01:38, 59 min with the restart): 24 of 24, KE/1.5kT at most 1.011, margin +0.1052, dhb -0.470, sheet mean 0.194, rot rms 0.094; steric at steps 38-39 no flag: residues' side chain x1.0022, x1.0024 (depths x0.9993), largest residue x1.158, backbone x1.016, coil maps at most x1.158, free beta' + pPII' 0.0020 at step 39; step 40 (02:24, 46 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.1060, dhb -0.472, sheet mean 0.195, rot rms 0.095, steric x1.0025, largest residue x1.158, free beta' + pPII' 0.0029, no flag; steps 41 (03:04, 40 min) and 42 (03:35, 31 min): 24 of 24, KE/1.5kT at most 1.015, margin +0.1046, +0.1028, dhb -0.474, -0.476, rot rms 0.097, 0.099, steric x1.0026, largest residue x1.158, free beta' + pPII' 0.0021, no flag; step 43 (04:03, 28 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.1027, dhb -0.478, rot rms 0.101, steric x1.0024, free beta' + pPII' 0.0033, no flag; step 44 (04:48, 45 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.1022, dhb -0.480, rot rms 0.102, steric x1.0021, largest residue x1.158, free beta' + pPII' 0.0034, no flag; step 45 (05:32, 44 min): 24 of 24, KE/1.5kT at most 1.015, margin +0.1058, dhb -0.482, rot rms 0.104, steric x1.0019, largest residue x1.158, free beta' + pPII' 0.0025, no flag; step 46 (06:05, 33 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.1082, dhb -0.486, rot rms 0.106, steric x1.0018, largest residue x1.158, free beta' + pPII' 0.0029, no flag; step 47 (07:01, 56 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.1077, dhb -0.489, rot rms 0.107, steric x1.0016, largest residue x1.158, free beta' + pPII' 0.0035, no flag; step 48 (07:58, 57 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.1068, dhb -0.491, rot rms 0.109, steric x1.0016, free beta' + pPII' 0.0027, no flag; step 49 (08:47, 49 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.1041, dhb -0.493, rot rms 0.110, steric x1.0016, largest residue x1.158, free beta' + pPII' 0.0041, no flag; step 50 (09:32, 45 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.1032, dhb -0.497, rot rms 0.112, steric x1.0018, largest residue x1.158, free beta' + pPII' 0.0032, no flag; step 51 (10:23, 51 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.1016, dhb -0.501, rot rms 0.113, steric x1.0019, largest residue x1.159, free beta' + pPII' 0.0033, no flag; step 52 (11:30, 67 min): 24 of 24, KE/1.5kT at most 1.015, margin +0.1008, dhb -0.503, rot rms 0.115, steric x1.0018, largest residue x1.158, free beta' + pPII' 0.0042, no flag; **step 53 (12:29, 59 min): margin +0.0982, below +0.10: HOLD** (user notified 12:50; the run trains on, as ff30_gdepth_dt009 did from step 33 to +0.082 at step 75); 24 of 24, KE/1.5kT at most 1.012, dhb -0.505, sheet mean 0.193, rot rms 0.116, steric x1.0018, largest residue x1.158, free beta' + pPII' 0.0029, no flag; step 54 (13:13, 44 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.0961 (on hold), dhb -0.507, rot rms 0.117, steric x1.0019, largest residue x1.158, free beta' + pPII' 0.0026, no flag. **Steric check** (watch step 3; user 10-10 after Jumper) at step 8: depth round 0, depths x1.0000 against NDRD; training residues' mean side-chain clash probability 0.0318 against 0.0318 at the start (x1.0011, all from the sheet energies), largest residue x1.034; non-glycine free beta' + pPII' 0.0017-0.0049 over steps 0-8 (restrained 0.0016-0.0042); no flag (`checks/ff31_steric/ff31_depth_all_epoch_00_minibatch_08.txt`); step 10: depths x1.0000, mean side-chain clash 0.03180 against 0.03175 (x1.0016, sheet), largest residue x1.038 (3di5 149 VAL-TYR), backbone x1.0020; free beta' + pPII' 0.0042 and 0.0033 at steps 9-10 (restrained 0.0057, 0.0025); no flag; step 9: x1.0013, largest residue x1.035, no flag (`_epoch_00_minibatch_09.txt`, `_10.txt`); step 11: x1.0020 (sheet), largest residue x1.041 (3di5 149), backbone x1.0025, free beta' + pPII' 0.0043 (restrained 0.0038), no flag; the side-chain ratio creeps up with the sheet energies, x1.0011 to x1.0020 over steps 8-11; step 12: x1.0024, largest residue x1.044 (3di5 149), backbone x1.0029, free beta' + pPII' 0.0034, no flag; step 13: x1.0025, largest x1.046, free beta' + pPII' 0.0034, no flag; step 14: x1.0027, largest x1.046, free beta' + pPII' 0.0021 at step 15, no flag; step 15: x1.0029, largest x1.046, free beta' + pPII' 0.0031 at step 16, no flag; step 16: x1.0030, largest x1.045, no flag; step 17: x1.0030, no flag; **step 18, the first moved library (round 1): no flag**: coil maps side chain step / NDRD median 0.997, max 1.097 (GLU right GLY), backbone median 1.006, max 1.092 (VAL right ALA), none above 2x; training residues' side chain x1.0029 (depths x0.9997, sheet x1.0032), largest residue x1.105 (ARG-LEU-PRO), backbone x1.0126 (depths x1.0090), largest x1.115; steps 0-18 free beta' + pPII' at most 0.0049, the threshold for later steps (findings 1.33); **fa_00** extracted 06:58 (`checks/r4_epochs/fa_00`, rama.dat = `rama_round_01.dat`), panel 49222532 (submitted 06:47 by `submit_new.sh`), patched (`patched/79HIS_fa_00_sc.up`); step 19, the first simulated on it: x1.0030, largest residue x1.105, free non-glycine beta' + pPII' 0.0043 (restrained 0.0041), under steps 0-18's 0.0049, no flag; step 20: x1.0031, largest residue x1.105, free beta' + pPII' 0.0016, no flag; steps 21-22: x1.0031, x1.0032, free beta' + pPII' at most 0.0029, no flag; step 23: x1.0032, free beta' + pPII' 0.0025, no flag. step 24: x1.0030, free beta' + pPII' 0.0034, no flag; step 25: x1.0028, 0.0033, no flag. **fa_00 panel** 49222532 (its own extraction, `params/fa_00/rama.dat` = round 1's library) COMPLETED 11:33: **folded 0.471, helix -0.027** on 40 domains (ff21_released 0.615, -0.017), dominated by gdepth_start in helix, as the round-4 epoch-0 ends (findings 1.21); **TM4 `fa_00_sc`** (11:00-12:55): 0.926 against ff21_released_sc 0.944 (-0.018 [-0.098, +0.046], p 0.60), not resolved, 0 unwound or flipped, no jump; lower at 135-145 (seed s8), higher at 149-151 (findings 4.15); runs and table in `runs_cov/`; against fd_00_sc when it exists | the watch every step, the steric check included; `run_output/rama_rounds.txt` at each epoch end (the held-out gap left after the step, below 1 if the step transfers); epoch ends `fa_EE`: the panel (`submit_new.sh`); the local TM4 glycine-flip test is retired (user 10-11; TM4 HDX continues) |
+| **49221772** (midway2; link 1 49218341) | **ff31_depth_data** (ff3.1): as ff31_depth_all, but only the 1,442 (map, basin) depths with at least 20 native sites in the training proteins train (alpha_R 604, beta 458, pPII 317, alpha_L 39, beta' 13, pPII' 11), prior 0.2; its rama_basin.py differs only in `MODE` (md5 `235a1bf7...`); target 76, no `after_training.sbatch`; first-link log `ff31_depth_data/condiv-train_49218341.out` | **R from 00:06:39 10-11** (24 nodes, batch host midway2-0118; midway2-0151, not in the law, among them), carrying the law: `step 0 of 76, resuming from run_output/initial_checkpoint.pkl`, `this link runs 54 steps`, as owed; next link 49221772 queued (afterany, 12 nodes, the law). Step 0 (00:53, 45 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.192 (E_alpha, E_beta and E_other each moved +0.010, as ff31_depth_all's step 0), `basin depth offsets round 0, mode data, sigma 0.20: 1442 trainable depths on 840 coil maps, 0 with |c| > 0.1, max |c| 0.0000` (owed check done), dhb -0.401, sheet mean 0.166; step 1 (01:43, 50 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.192, offsets 0, dhb -0.396, helical GLY aL free 0.156, restrained 0.000; step 2 (02:29, 46 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.191, offsets 0, dhb -0.391, steric x1.0001, largest residue x1.013, no flag; step 3 (03:09, 40 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.186, offsets 0, dhb -0.387, steric x1.0001, largest residue x1.015, no flag; step 4 (04:02, 53 min): 24 of 24, KE/1.5kT at most 1.017, margin +0.181, offsets 0, dhb -0.384, steric x1.0004, largest residue x1.017, free beta' + pPII' 0.0031, no flag; step 5 (04:57, 55 min): margin +0.173, KE/1.5kT at most 1.012, steric x1.0010, largest x1.020; step 6 (05:34, 37 min): margin +0.171, KE/1.5kT at most 1.014, dhb -0.383, steric x1.0015, largest x1.022, free beta' + pPII' 0.0037; 24 of 24 each, offsets 0, no flag; step 7 (06:23, 49 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.175, offsets 0, dhb -0.385, steric x1.0019 (sheet), largest residue x1.025, no flag; step 8 (07:21, 57 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.175, offsets 0, steric x1.0022, no flag; step 9 (08:19, 58 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.177, steric x1.0026, no flag; step 10 (09:23, 64 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.178, steric x1.0028, no flag; step 11 (10:06, 43 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.177, steric x1.0029, no flag; step 12 (10:57, 51 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.179, steric x1.0031, no flag; steps 13 (11:49) and 14 (12:20): 24 of 24, KE/1.5kT at most 1.012, margin +0.180, +0.178, steric x1.0032, x1.0033, no flag; steps 15 (12:52) and 16 (13:22): 24 of 24, KE/1.5kT at most 1.012, margin +0.177, +0.175, steric x1.0035, x1.0037, no flag; step 17 (13:58, 36 min) relaunched 3ouv once (`never started (srun launch failed)`), then 24 of 24, KE/1.5kT at most 1.012, margin +0.173, steric x1.0038, no flag; **step 18, the epoch-0 end** (15:03, 65 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.169, dhb -0.420, sheet mean 0.197; **depth round 1** (`rama_rounds.txt`): reads 89,480 / 10,234 held out, map-level gap 0.00056 / held out 0.00399, **held-out gap left 0.9944**, step rms 0.0262, max 0.1355, 3 of 1,442 beyond 0.1, offsets rms aR 0.028 aL 0.051 beta 0.019 pPII 0.027 beta' 0.040 pPII' 0.037, GLY|X aR -0.006 aL +0.034, as predicted (0.026, 3, 0.994; findings 1.30); `rama_round_01.dat` md5 `53455418...`; **steric check on it: no flag** (coil maps at most x1.025 side chain, x1.051 backbone; residues' side chain x1.0041, depths x1.0002; largest residue x1.062; steps 0-18 free beta' + pPII' at most 0.0047; findings 1.33); step 19 (15:43, 40 min), the first on it: 24 of 24, KE/1.5kT at most 1.014, margin +0.165, free beta' + pPII' 0.0021, no flag; step 20 (16:38, 55 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.162, steric x1.0042, free beta' + pPII' 0.0042, no flag; step 21 (17:13, 35 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.157, steric x1.0041, no flag; steps 22 (17:52) and 23 (18:45): 24 of 24, KE/1.5kT at most 1.014, margin +0.150, +0.144, steric x1.0040, x1.0041, no flag; step 24 (19:46, 61 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.136, steric x1.0042, no flag (read 20:25 at the user's status request); step 25 (20:29, 43 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.130, steric x1.0043, free beta' + pPII' 0.0039, no flag; step 26 (21:20, 51 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.126, steric x1.0044, no flag; step 27 (22:16, 56 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.120, steric x1.0045, no flag; steps 28 (22:49) and 29 (23:50): 24 of 24, KE/1.5kT at most 1.013, margin +0.114, +0.110, steric x1.0047, no flag; step 30 (00:27, 37 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.1066; step 31 (01:17, 50 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.1068, dhb -0.439, sheet mean 0.202, rot rms 0.083; steric at steps 30-31 x1.0046, largest residue x1.062, free beta' + pPII' 0.0032 at step 31, no flag; step 32 (02:17, 60 min, 2ewt relaunched once): 24 of 24, KE/1.5kT at most 1.014, margin +0.1094, dhb -0.444, sheet mean 0.202, rot rms 0.084, steric x1.0046, no flag; step 33 (02:50, 33 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.1146, dhb -0.448, rot rms 0.085, steric x1.0045, largest residue x1.062, free beta' + pPII' 0.0036, no flag; step 34 (03:23, 33 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.1213, dhb -0.453, rot rms 0.087, steric x1.0045, no flag; step 35 (03:53, 30 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.1246, dhb -0.457, rot rms 0.088, steric x1.0045, largest residue x1.062, free beta' + pPII' 0.0024, no flag; step 36 (04:52, 59 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.1252, dhb -0.461, rot rms 0.089, steric x1.0046, largest residue x1.062, free beta' + pPII' 0.0035, no flag; **step 37, the epoch-1 end** (06:02, 70 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.1225, dhb -0.465, sheet mean 0.199, epoch-1 helical GLY aL free 0.089 / restrained 0.006; **depth round 2**: 26 of 1,442 beyond 0.1, step rms 0.0185, max 0.092, held-out gap left 0.9959, GLY|X aR -0.011 aL +0.050 (findings 1.30); **steric check on round 2's library: no flag** (coil maps at most x1.051 side chain, x1.072 backbone; residues' side chain x1.0045, depths x1.0002, largest x1.081; backbone x1.0104; steps 19-37 free beta' + pPII' at most 0.0042; findings 1.33); **fd_01** panel 49224221 submitted 06:46 by `submit_new.sh`; step 38 (06:43, 41 min), the first on round 2: 24 of 24, KE/1.5kT at most 1.015, margin +0.1213, dhb -0.469, rot rms 0.092, steric x1.0045, free beta' + pPII' 0.0022, no flag; step 39 (07:39, 56 min): 24 of 24, KE/1.5kT at most 1.015, margin +0.1190, dhb -0.472, rot rms 0.094, steric x1.0044, largest residue x1.081, **STERIC FLAG** (the first): free non-glycine beta' + pPII' 0.0050 (restrained 0.0045) above steps 0-18's maximum 0.0047 (`checks/ff31_steric/ff31_depth_data_epoch_02_minibatch_01.txt`); minibatch 1 is the same 24 proteins every epoch, and on them step 1 (NDRD) read 0.0047 / 0.0048 and step 20 (round 1) 0.0042 / 0.0041; side-chain and backbone classes unchanged; user notified 07:55, the run trains on (findings 1.33); step 40 (08:19, 40 min): 24 of 24, KE/1.5kT at most 1.015, margin +0.1144, dhb -0.472, rot rms 0.095, steric x1.0042, free beta' + pPII' 0.0022 (the check still prints step 39's flag, as its table holds every step; no new flag); **fd_01 panel** 49224221 COMPLETED 09:12: **folded 0.472, helix -0.028** on 43 domains, gdepth_start dominates it in helix; fd_00 (0.479, -0.027) does not; fa_01 0.444, -0.033 on their 39 shared (findings 1.21); step 41 (09:00, 41 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.1126, dhb -0.474, rot rms 0.097, steric x1.0042, free beta' + pPII' 0.0035, no new flag; step 42 (09:47, 47 min): 24 of 24, KE/1.5kT at most 1.014, margin +0.1085, dhb -0.474, rot rms 0.099, steric x1.0042, largest residue x1.081, free beta' + pPII' 0.0028, no new flag; step 43 (10:42, 55 min): 24 of 24, KE/1.5kT at most 1.012, margin +0.1042, dhb -0.476, rot rms 0.100, steric x1.0044, free beta' + pPII' 0.0031, no new flag; step 44 (11:22, 40 min): 24 of 24, KE/1.5kT at most 1.013, margin +0.1058, dhb -0.479, rot rms 0.102, steric x1.0047, free beta' + pPII' 0.0039, no new flag; link 1 49218341 TIMEOUT 12:07 at its 36 h wall in step 45; **link 2 49221772 R from 12:07** (24 nodes, the law; log `ff31_depth_data/condiv-train_49221772.out`: `step 45 of 76, resuming from run_output/epoch_02_minibatch_06/checkpoint.pkl`, `this link runs 31 steps`), successor 49225264 queued; step 45 (12:37, 30 min after the restart): 24 of 24, KE/1.5kT at most 1.019, margin +0.1118, dhb -0.482, rot rms 0.104, steric x1.0049, free beta' + pPII' 0.0032, no new flag; step 46 (13:15, 38 min): 24 of 24, KE/1.5kT at most 1.011, margin +0.1157, dhb -0.485, rot rms 0.105, steric x1.0049, free beta' + pPII' 0.0035, no new flag; step 32 relaunched 2ewt once (`never started`); **fd_00** extracted 15:47 (`checks/r4_epochs/fd_00`, rama.dat = `rama_round_01.dat`), panel 49223540 R from 15:46 (submitted by `submit_new.sh`; 88 of 176 at 16:46), patched, **TM4 `fd_00_sc`** (15:48-17:44): 0.914 against ff21_released_sc 0.944 (p 0.23) and fa_00_sc 0.926 (p 0.53), not resolved; 1 unwound, 1 flipped (s10, GLY149), no jump; holds 136-147, loses 148-151 (findings 4.15); runs and tables in `runs_cov/`; **panel `fd_00`** COMPLETED 17:35: **0.479, helix -0.027** on 42 domains, dominated by gdepth_start in helix; with fa_00 0.479 against 0.471 (findings 1.21). **Steric check** from its first step (owed check done): steps 0 and 1 depths x1.0000, mean side-chain clash x1.0004 and x1.0003 (sheet), largest residue x1.009 (3l9a 80 VAL-HIS), free non-glycine beta' + pPII' 0.0024 and 0.0047 (restrained 0.0025, 0.0048), no flag (`checks/ff31_steric/ff31_depth_data_epoch_00_minibatch_0{0,1}.txt`). PD from 23:40 10-09 (QOSMaxNodePerUserLimit). Initialised 23:38 10-09 (1,442 trainable, 46 held out) | as ff31_depth_all, the steric check from its first step; epoch ends `fd_EE` |
+| **49223635** (midway2) | **glpG REMD, ff2.1 on the fixed table** (user 10-11 17:35, at the request of session upside2-md-87): does the pre-fix TM4 HDX lability (`popepopg_REMD/glpG-RKRK-79HIS/hdx/results/`, 08-27, 48 rungs: at the 0.851 rung core 138-148 pp_fail 0.10-0.25, 142-144 dG 4.1-4.4 kcal/mol; HXMS 6.1-7.4) survive the 09-10 temperature fix and the 10-10 table? Variant `glpG-RKRK-79HIS.ff_2.1_sc`, run dir `popepopg_REMD_mdw2/glpG-RKRK-79HIS.ff_2.1_sc/`, log `popepopg_REMD_mdw2/logs/remd.glpG-RKRK-79HIS.ff_2.1_sc.<jobid>.out`; seed `seeds/glpG-RKRK-79HIS.ff_2.1_sc.up` (md5 `05d7cdb5...`) = the live seed `seeds/glpG-RKRK-79HIS.up` (`57a1969b...`, the ff3.0 chains' base) patched by `$P/training/patch_glpg.py` (`97ca3294...`) with `ff3_selection/params/ff21_released` (ff2.1 + NDRD `rama.dat` `996a607b...`) and `$P/parameters/ff_2.1/martini.h5` (`2e612261...`); checked (`checks/ff21sc_remd_20261011/`): against the pristine ff2.1 seed (`popepopg_REMD/seeds/glpG-RKRK-79HIS.up.bak_production_handoff`) only the four table arrays differ (rama_pot to 3.6e-15; the pristine seed lacks the coverage and placement nodes), against the live seed exactly the nine ff3.0-to-ff2.1 and table datasets, against the Mac's `patched/79HIS_ff21_released_sc.up` only rama_pot by at most 2.6e-6 (6 residues); its table equals martini.h5. `submit_remd.sh` unchanged, as the ff3.0 chains: 1 node, 28 CPUs, 36 h blocks, 28 replicas T 0.70-0.90 (the pre-fix set had 48 rungs over the same span), the law | **R from 17:41 10-11** on midway2-0234: `block 1/5, wall 129600s, 28 replicas T 0.7-0.9`, calibration 639.6 ms/step (ff3.0 chains 645-653), chunks of 11,256 steps, no error | the watch: block 1's log each pass; **2 blocks only (user)**: `submit_remd.sh` sets `REMD_MAX_BLOCKS=5`, so during block 2, once its log shows a chunk line whose remaining is under ~18,500 s (MARGIN 2100 + 2.25 x the chunk wall, ~7,300 s: the last chunk), write `glpG-RKRK-79HIS.ff_2.1_sc/STOP`; STOP is read only at a chunk's start, so block 2 finishes whole and no block 3 is submitted. Then HDX as the 10-11 00:00 request (block 1 dropped, `HDX_N=28`, `hdx_sc600x12_ff_2.1/`, membrane term on, PS_protein and PS, record the topology) at the 0.80, 0.85, 0.90 rungs, TM4 130-151 dG with censoring and the ESS bound, pp_fail and acc, 142-144 against the pre-fix 0.851 rung and HXMS, and TM4 DSSP alpha per rung; message upside2-md-87 the results path |
+
+**Requested, not yet submitted: glpG HDX on the fixed-table REMD chains** (from session
+upside2-md-87 on 10-11 00:00, which reports the user's approval; low priority, defer if allocation
+is tight; the user was told). Why: the only surviving hybrid HDX set (`popepopg_REMD/<V>/hdx/`,
+ff2.1, 09-04) puts TM4 at 3.5-4.9 kcal/mol against the H145A HXMS peptide 140-144's 6.1-7.4, and
+it predates the 09-10 temperature fix and the 10-10 side-chain/lipid table (findings 5.5).
+* **When:** after block 2 of the chosen chains completes, with block 1 dropped as equilibration.
+  The chains run 5 blocks of 36 h; ff_3.0_gdepth's (49216140-43, block 2 from 19:13-22:11 10-11)
+  are the ones (the BioEmu line's ff_3.0_bio_si chains were cancelled 10-11 by the user), so block 2
+  ends ~04:00-07:15 10-13.
+* **What:** 79ALA (the experiment is H145A S201T), 79HIS too if cheap. The usual HDX pipeline on
+  midway3 (`.venv_el8_py311_bak`), CPU on caslake or broadwl only, after re-uploading the repo's HDX
+  scripts (the cluster copies drift). The membrane term on:
+  `py/martini_hdx_membrane_accessibility.py` into `combine_hdx_protection.py --water-accessibility`;
+  keep both PS_protein and PS. The HDX topology from the chain's own force field, or record which
+  one it used (§1b open item).
+* **Traps:** `HDX_N=28` and a new directory `hdx_sc600x12_<ff>/` (the resubmit block's
+  `HDX_WORK=.../hdx` without `HDX_N=28` overwrites the pre-fix baseline, §1b). Do not use
+  `4.calc_D_uptake.py`'s uptake curves (PF capped at 1000, deferred by the user); change no HDX
+  post-processing code.
+* **Readout,** at T 0.85 (298 K) and the 0.80 and 0.90 rungs: per-residue unclipped dG with the
+  censored flag and the bound 0.001987 T_K ln(ESS), for PS_protein and PS; TM4 130-150, TM1 30-48,
+  TM5 162-169 (construct numbering, E. coli - 66); TM4's per-residue frame fractions of pp_fail and
+  acc (as findings 5.3); dG of 142-144 against the peptide's k_obs 4.8e-6 s^-1 (k_int 0.14-0.27
+  s^-1 at pD 6.0, 20 C, or 0.27-0.54 at 25 C).
+* When it finishes, message upside2-md-87 the results path.
 
 **The three H-bond-frozen arms were stopped 10-09 23:09 by the user** ("meaningless at this point:
 the general training at dt 0.009 already made a force field that keeps TM4 stable"): successor
 49214121 cancelled first, then ff30_gdepth_fz's running link 49206070 and the pending successors
-49206071 (ff30_bio_fz) and 49214161 (ff21_ctrl_fz). Newest finished checkpoints, kept:
-`ff30_bio_fz/run_output/epoch_03_minibatch_01` (step 58), `ff30_gdepth_fz/.../epoch_02_minibatch_07`
-(step 45), `ff21_ctrl_fz/.../epoch_00_minibatch_10` (step 10); every step frozen at margin +0.1919,
-24 of 24, KE/1.5kT at most 1.017. Their TM4 and panel results (bz_00-02, dz_00-01) stand in
-findings 1.21-1.25; `cz_00` and `dz_02` will not exist. The dz_01 panel 49218034 was cancelled 23:16 (user).
+49206071 (ff30_bio_fz) and 49214161 (ff21_ctrl_fz); re-checked 10-11 23:30, no job runs from an
+`_fz` directory. They reached step 58, 45 and 10, every step frozen at margin +0.1919, 24 of 24,
+KE/1.5kT at most 1.017. **The three run directories were deleted entirely 10-11 23:33-23:40 at
+the user's word** ("They are wrong and no longer needed"), with their first-link logs
+`training/condiv-train_{49201673,49204264,49206070}.out`; file lists in
+`checks/disk_reclaim_20261011/manifest_<run>_{steps,all}.txt`. Their derived products (extracted
+ends bz_00-02 and dz_00-01, their panels and TM4 sets) were deleted 10-11 23:45 with the BioEmu line
+("Finished runs"), and `submit_new.sh` no longer names them. Their TM4 and panel results stand in
+findings 1.21-1.25. The dz_01 panel 49218034 was cancelled 23:16 (user).
 
 **Local glpG TM4 test** (the hybrid glpG 79HIS seed in POPE/POPG dry-MARTINI, one checkpoint
 patched in, T 0.80, 4000 tu, 12 seeds; `scratchpad/ff3_local_test`, record in
-`checks/r4_epochs/tm4_local`).
-* **Valid sets (coverage-fixed inputs, from 10-07 11:22):** `ff21_bioT1_6` (bio_start) and `b9_01`
-  on the MacBook Pro; `ff21_released`, `gdepth_start`, `d9_00`, `b9_00` (24 seeds), `c9_00` (24 seeds), `fp_e00`, `c9_01`, `d9_01`, `d9_02`, `d9_03`, `bs_00`, `bs_01`, `bs_02`, `bz_00` (24 seeds), `bz_01`, `bz_02`, `b9_02`, `ds_00`, `dz_00` and `dz_01` on the Mac Studio, whose engine
-  and inputs reproduce the MacBook Pro's frame for frame. The rest is the queue in "Handoff". Each
-  is in `tm4_local/runs_cov/`, with its table `tm4_compare_cov_<set>.txt`.
-* **Mac Studio, from 10-07 16:20, the owner** ("Handoff"). Driver `scripts/tm4_queue.sh` under
-  `nohup caffeinate -is`; it pops the first line of `tm4_queue.txt` (`<tag>` or `<tag> 13 24`),
-  runs it and logs to `run_<tag>.log` or `run_<tag>_s13-24.log`; its own log is `tm4_queue.log`.
-  22:31 10-09: the driver is idle (it finished `dz_01` at 20:45 with `tm4_queue.txt` empty). The
-  cores run the TM1 work of plan.md Phase 13 until ~02:00 (12 + 12 seeds in
-  `scratchpad/glpg_tm1/`); its launcher starts a seed only while fewer than 16 engines run, and a
-  TM4 set started meanwhile goes first. Its pre-fix sets are in `runs_precov_20261007/`.
+`checks/r4_epochs/tm4_local`). **Retired 10-11 23:10 (user)**. The sets kept in `tm4_local/runs_cov/`
+(and the Mac's `runs/`) are the depth path's and the controls': ff21_released, gdepth_start, d9_00-03,
+c9_00-01, fp_e00, and on the fixed table ff21_released_sc, gdepth_start_sc, d9_01_sc, d9_02_sc,
+d9_03_sc, fa_00_sc, fd_00_sc. The BioEmu line's and the frozen arms' sets (b9_EE, bs_EE, ff21_bioT1_6,
+bz_EE, dz_EE) were deleted 10-11 23:45 with their runs, and ff30_gdepth_si's (ds_00, ds_01_sc,
+ds_02_sc) on 10-12; their `tm4_compare_cov_*.txt` tables stay, and findings 1.21-1.26, 1.31, 4.15
+hold their numbers.
 * **Invalid, kept as a record:** every set before 10-07 11:22. That covers ff21_released,
   ff21_bioT1_6, gdepth_start, fp_e00 and b9_00 at 12 seeds, and b00, b01, b01m12, d00 and d01m09 at
   3 seeds (cluster `tm4_local/runs/`). Each paired its force field with the retired FF1-form
@@ -934,6 +794,9 @@ short `output_previous_N` groups (100-287 frames), all finite (`checks/glpg_frag
 ### Finished runs whose files are still used
 
 * **ff21_ctrl_dt009 (49200579) COMPLETED 10-07 21:25 at its target 38** (`target 38 reached`; the chain cancelled successor 49200622; no gate). The matched control: ff30_bio_dt009 with ff2.1's `rama.dat`, so it starts from ff2.1 exactly (`checks/ctrl_dt009_init_20261006`); `$P/training/ff21_ctrl_dt009`, log `condiv-train_49200579.out`. Steps 0-37, 24 of 24 each, KE/1.5kT at most 1.017. Margin +0.132 at step 14, +0.135 at step 18, +0.125-0.130 over steps 19-31, then +0.134 / +0.139 / +0.147 / +0.152 / +0.155 / **+0.157** at steps 32-37; dhb -0.468, sheet mean 0.174 at step 37. Panel **`c9_00` folded 0.390, helix -0.032** (findings 1.22); TM4 `c9_00` unwound 7, flipped 1 against ff21_released's 9 and 5, not resolved (findings 1.24). `c9_01` (step 37) extracted to `checks/r4_epochs/c9_01` (21:47); **panel `c9_01` (49206076, 22:50-23:38): folded 0.405, helix -0.029** on 34 domains, c9_00 0.390, -0.031 on the same set (findings 1.22); **TM4 `c9_01`** (Mac Studio 04:19-06:15): unwound 10, flipped 6 of 12, against ff21_released's 9 and 5 (p 1.00) and c9_00's 7 and 1 (flipped two-sided p 0.069), not resolved (findings 1.24).
+* **ff30_gdepth_si deleted by the user 10-12 00:25** ("since ff3.0 is working, it is the only branch we need (and its expansion to all residues). delete ff_3.0_gdepth_si"; then "clean up to save disk space. no need to keep input files"): the SI-rate twin of ff30_gdepth_dt009 (hb 0.005, dhb 0.0025, sheet 0.0075, rot 0.0125; findings 1.23), stopped at step 72 of 76, before its target and gate, so nothing was released (link 49219651 and successor 49222183 cancelled 00:24). Margin on hold since step 48, +0.1004 at step 70; glycine dL - dR +0.575 after round 3. Deleted (manifest `checks/disk_reclaim_20261011/manifest_ff30_gdepth_si_20261012.txt`, 54.5 G, mostly a half-written step): the run directory and its first-link log, the ds_00-02 extracted ends, panels and TM4 sets (ds_00, ds_01_sc, ds_02_sc) on the cluster and the Mac. Its results stand in findings 1.21, 1.24 and 4.15; the comparison tables are kept. `submit_new.sh` drops it (backup `.bak_pre_gdepth_si_drop_20261012`).
+* **The BioEmu-map line was dropped by the user 10-11 23:50** ("the training based on bio emu Rama map is no longer needed ... we decided to go with basin depth training path (as it is expandable to all residues)"): ff30_bio (dt 0.015), ff30_bio_dt009 (b9_EE, released `ff_3.0_bio`) and ff30_bio_si (bs_EE, released `ff_3.0_bio_si`), all finished. Their 57 running validation jobs were cancelled (64 benchmark arms' chunks and the 8 glpG chains, STOP first; `checks/disk_reclaim_20261011/cancelled_bio_jobs_20261011.txt`). **Deleted entirely** (user 10-11 23:40: "Delete them as well. Also no need to leave input file for this case"; manifests in `checks/disk_reclaim_20261011/`): the three run directories and their first-link logs, `parameters/ff_3.0_bio` and `ff_3.0_bio_si` in both trees, the 8 glpG chains with their seeds and logs, the 64 benchmark run directories and logs on `/beagle3`; and the derived products of this line and of the frozen arms: extracted ends `checks/r4_epochs/{b00,b01,b01m12,b9_*,bs_*,bio_start,bz_*,dz_*}`, their panels (`ff3_selection/runs`, `params`, logs, `.submitted`), their TM4 sets on the cluster and the Mac. Freed ~230 G on `/project`, ~40 G on `/beagle3`, ~45 G on the Mac. Kept as the record: the `tm4_compare_cov_*.txt` and `select_last_*.txt` tables; findings 1.21, 1.31, 1.32, 4.15. `submit_new.sh` lists only the live lines since 10-11 23:47 (backup `.bak_pre_bio_drop_20261012`); panel tables now use ff21_released, ff21_awh and gdepth_start as baselines. Not touched: the BioEmu glycine library itself (repo `parameters/common/rama31.dat`, `checks/gly_bioemu_map/`).
+* **polygly production stopped by the user 10-11 23:05** ("I don't think poly GLY matters any more as our fix repaired tm4 issue in GLY flip"; plan.md Phase 12): `polygly/prod/STOP` written, successor 49223804 then link 3 49219705 cancelled; every replica checkpointed at 23:05, ~97 ns each (link 1 49204428 to 48.3 ns at 33.8-34.0 ns/day, link 2 49206266 to 94.4-94.7 ns at 32.4-32.6 ns/day); `gmx mindist -pi` minimum 2.31-3.57 nm over both links (`polygly/prod_analysis/`; gmx 2024.4 needs `module load gcc/10.1.0`). All of `polygly/` is kept (213 MB: protein-only trajectories, checkpoints, builds, scripts), so it can resume from `prod.cpt` after deleting STOP.
 * **polygly collapse (49186415) COMPLETED 10-07 12:48** (exit 0, 34.4 h, stopped by `-maxh 34.5`): 4 replicas of Ac-(Gly)20-NHMe, amber99sb-ildn / TIP3P, 300 K, reached 19.79-20.00 ns of the 30 ns cap. Minimisation had stopped at Fmax 1380 kJ/mol/nm (atom 124), above its 100 target. Replicas are in `polygly/collapse/repN/`, log `polygly/logs/collapse_49186415.out`; their last frames start production 49204428.
 
 **ff30_basin** (released ff_3.0, 2026-09-28 to 09-30; plan.md Phase 4, findings 1.8-1.14):
@@ -994,6 +857,26 @@ point reports the 6.3 PB device. That distinction is the whole trap.
 | `/project2/trsosnic` (group) | - | 1.45 T of a 1.49 T soft quota, **97%** | - | nothing in these campaigns writes there |
 | midway3 home | - | 28.6 of 30 G | 21 G | |
 
+**2026-10-11 17:20: `/project/trsosnic` 88 G free of 3.9 T (98%), inodes 32%.** Ours: training
+313 G, ff3_selection 422 G (84 panel tags of ~11 G each, of which the 176 `.up` trajectories are
+~11 G and the npz `panel.py select` reads ~70 MB), popepopg_REMD 638 G (pre-fix baselines, kept),
+NP-1AO6 491 G (deletion awaiting the user), popepopg_REMD_mdw2 199 G, checks 113 G, polygly 0.2 G;
+other users the rest. Growth: each of the 12 running glpG chains adds ~0.22 GB/h (seed 5.9 G,
+then ff_3.0_gdepth 13 G at 31 h, ff_3.0_bio_si 12 G at 29 h, ff_3.0_bio 9 G at 14 h), ~63 G a day,
+so the 88 G lasts ~1.4 days, less each new panel (~11 G) and each training step in flight (~37 G
+of replica files, deleted at the step's end). Their remaining blocks need ~410 G.
+**Reclaimed 17:26-17:29 at the user's word** ("delete the trajectory file but try to keep the setup
+scripts so I can regenerate them"), manifests and log in `checks/disk_reclaim_20261011/`: the 39
+finished panels' `.up` trajectories, 6,864 files, 397 G (npz, `.up.output`, `params/`, `domains/` and
+`panel.py` kept; `select` reproduces b9_03's table byte for byte); NP-1AO6's `prod_ff3` (471 G),
+`prod_ff3_armM_20260910-084115` (14 G), `prod_counterion` (3 G) and `tscan` (1 G), keeping every top-level
+script (`build_np_ff3.py`/`.sbatch`, `build_tscan.py`, `np_hybrid.py`, `run_np_prod.py`, `np_prod.sbatch`,
+`submit_np.sh`, ...); the four `glpG-*.ff_3.0_cancelled_20260930` directories (40 G, replica files and
+counters only). The NP directories also held each orientation's built `system.MARTINI.pdb` and
+`hybrid_mapping.h5` (regenerated by the build scripts) and two small analysis scripts,
+`prod_counterion/onset.py` and `onset2.py` (1.6 and 1.3 KB), which had no copy and are gone.
+**17:42: 1,041 G free (74%).**
+
 `/project` is the one to watch: ~965 G free (2026-09-30); the glpG REMD trees hold ~1.26 T
 (`popepopg_REMD_mdw2`'s four variant directories ~150 GB each, `popepopg_REMD` another 638 G), and
 `NP-1AO6` at ~0.5 T is the reclaim.
@@ -1018,8 +901,8 @@ must not be forgotten:
     `popepopg_REMD_mdw2/<V>/hdx_10k/`, both recorded here before, are on neither `/project` nor
     `/beagle3` (searched to depth 5, 2026-09-30); `hdx_results/` holds only the DDM-campaign figures
     and MBAR files.
-* **Deletion decisions waiting on the user:**
-  * `NP-1AO6/` data, including `prod_ff3/` (~500 GB).
+* **Deletion decisions waiting on the user:** (NP-1AO6's run data were deleted 10-11, scripts kept;
+  §1 "Disk")
   * midway3 DDM data `glpG_DDM_micelle_REMD/`, `glpG_DDM_REMD/`.
   * rockfish post-fix glpG data `/scratch4/rherna21/ywang268/upside2-md-rf/popepopg_REMD/<variant>/`
     (~72 GB, needed only for an independent-seed cross-check), before scratch is reaped.
@@ -1027,7 +910,6 @@ must not be forgotten:
   `armM_discarded/`.
 * **Open, unverified, recorded so they are not lost:**
   * The HDX topology uses ff_2.1 tables on an ff_3.0 trajectory.
-  * TM4 shields only ~5 residues in HDX, not checked against the crystal structure.
   * `NP-1AO6/np_footprint.py` has CB-offset and minimum-image bugs, with no record of a fix.
   * The one-shot upgrade line in `NP-1AO6/np_prod.sbatch` is still to delete.
   * An NP orientation at T = 0.70-0.75 was never run.

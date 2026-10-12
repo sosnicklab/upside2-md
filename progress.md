@@ -414,3 +414,235 @@ to 10-07 12:00 is in git history.
   jump; three evaluations above 1000 E_up/A, protein side-chain contacts (ASN185, SER119), not the
   table or the term. Findings 4.14 (new), plan.md Phase 13. TM1 data and README_mac_studio.txt
   uploaded to `checks/tm1_hbmem_20261009/mac_studio_20261010/` (5.7 GB, sizes verified 06:31).
+* **08:30-08:58 10-10, the side-chain/lipid table fix in production (plan.md Phase 15; findings
+  4.15).** User: apply it so future runs use it, everywhere (re-patch the queued glpG chains, rerun
+  TM4 references). `py/martini_build_tables.py`: the SC task as arrays, sampling 600 x 12 by default,
+  env overrides removed; at 24 x 1 it reproduces the old table (9 cells one float32 step off), at
+  600 x 12 the tested table to float32 rounding; deterministic. `parameters/ff_2.1/martini.h5`
+  rebuilt (`2e612261...`, old `.bak_pre_sc600x12_20261010`). `patch_glpg.py` (`97ca3294...`) copies
+  martini.h5's table into patched seeds. Cluster: martini.h5 in both trees, builder in /beagle3, patch
+  tool in `$P/training/` and `tm4_local/scripts/` (`checks/sc_table_20261010/deploy.sh`); the 8
+  queued glpG seeds re-patched and checked (`repatch.sh`; first check script failed on PyTables'
+  vlen strings, rewritten with h5py). TM4: six `_sc` reference sets queued from 08:50 (d9_03_sc,
+  bs_03_sc, ff21_bioT1_6_sc, gdepth_start_sc, ff21_released_sc, d9_01_sc). up.md 2.6; watch prompt
+  and cron (`aa713659`, replacing `cfa1b8c7`); remote_jobs.md, WATCH_STATUS.md.
+* **10:50 10-10, watch pass; first fixed-table results.** d9_03_sc (08:50-10:45) reproduces Phase
+  13's table-only set within noise (TM1 0.882 against 0.931, p 0.19; TM4 0.884 against 0.924, p 0.24;
+  no jump), not frame for frame (float32-rounding table difference, probe build); table
+  `glpg_tm1/tm1_compare_d9_03_sc_vs_sc600x12.txt`, runs to `runs_cov/`. ff_3.0_gdepth's 79HIS glpG
+  chains started 10:16 on the fixed table (replicas 0, 13, 27 checked). ff_3.0_bio_si proteinL de
+  novo NODE_FAILed 09:52 on 0151 and was requeued by Slurm. findings 4.15, plan.md Phase 15,
+  remote_jobs.md §1, WATCH_STATUS.md.
+* **11:20 10-10, the membrane H-bond term not adopted (user).** With the table fixed its gain is
+  below the spread between two table-only sets; it imposes the bilayer geometry from outside. findings
+  4.14-4.15, plan.md Phase 13/15 and Known Errors, WATCH_STATUS.md. ff30_bio_dt009's successor
+  49215780 R from 10:44 with the owed first lines (remote_jobs.md §1).
+* **11:43 10-10, watch pass; d9_03 panel.** d9_03 (= ff_3.0_gdepth) folds 0.464, helix -0.030 on
+  41 domains, dominated by gdepth_start in helix, beta and helical glycine (findings 1.21).
+  ff30_gdepth_si's link 49216034 R from 11:10 (first line as owed); ff30_bio_dt009 step 65 +0.012; all
+  4 ff_3.0_gdepth glpG chains R on the fixed table. remote_jobs.md §1, WATCH_STATUS.md.
+* **12:43 10-10, watch pass; bs_03_sc TM4 and bs_02 panel.** bs_03_sc against d9_03_sc 0.951 against
+  0.884 (p 0.10), no jump (findings 4.15); bs_02 panel 0.429, helix -0.030, dominated by gdepth_start
+  in helix, not by its twin b9_02 (findings 1.21). ff31_depth_all's first link R from 12:39 (first
+  lines as owed); polygly link 2 R from 11:55; all 8 glpG validation chains R on the fixed table.
+  ff30_bio_dt009 steps 66-67, ff30_gdepth_si step 22 clean. remote_jobs.md §1, WATCH_STATUS.md.
+* **13:43 10-10, watch pass; bs_03 panel.** bs_03 (= ff_3.0_bio_si) folds 0.467, helix -0.028 on 41
+  domains, dominated by gdepth_start in helix; with d9_03 0.467 against 0.464, helix -0.027 against
+  -0.033 (findings 1.21). ff31_depth_all step 0 clean (offsets 0 at round 0); ff30_bio_dt009 steps
+  68-69 and ff30_gdepth_si step 23 clean; 20 bio_si benchmark chunks rolled over. remote_jobs.md §1,
+  WATCH_STATUS.md.
+* **14:43 10-10, watch pass; bs_03_sc against its start.** bs_03_sc 0.951 against ff21_bioT1_6_sc's
+  0.939 (p 0.77), no jump (findings 4.15); gdepth_start_sc running. ff30_bio_dt009 steps 70-71,
+  ff30_gdepth_si step 24 and ff31_depth_all step 1 clean; ff_3.0_gdepth BBL native benchmark at
+  target. findings 4.15, plan.md Phase 15, remote_jobs.md §1, WATCH_STATUS.md.
+* **16:43 10-10, watch pass; ff30_bio_dt009 gate CONVERGED, d9_03_sc against its start.**
+  ff30_bio_dt009 reached step 76 at 16:37; its gate passed every group (lowest dhb p 0.13) and
+  released b9_03 as ff_3.0_bio, md5 verified; 32 benchmark arms and 4 glpG chains queued with the
+  law (findings 1.32). b9_03 extracted, its panel submitted, patched and queued as b9_03_sc.
+  d9_03_sc against gdepth_start_sc 0.884 against 0.947, p 0.13 (findings 4.15). findings 1.32 and
+  4.15, plan.md Phase 11, remote_jobs.md §1 and "The TM4 queue", WATCH_STATUS.md.
+* **18:43 10-10, watch pass; ff2.1 on the fixed table.** ff21_released_sc holds TM4: 0.944 against
+  its old-table 0.610 (p 0.002), unwound 0 against 9 of 12; every start reads alike and neither
+  tested candidate improves on ff2.1 (findings 4.15). Tables `tm4_compare_cov_ff21_released_sc*.txt`,
+  `_gdepth_start_sc.txt`, `_d9_03_sc_vs_ff21_released_sc.txt`, `_bs_03_sc_vs_ff21_released_sc.txt`.
+  ff_3.0_bio's 32 benchmark arms R with clean first logs. findings 4.15, plan.md Phase 11,
+  remote_jobs.md §1, WATCH_STATUS.md.
+* **20:43 10-10, watch pass; d9_01_sc.** d9_01_sc against gdepth_start_sc 0.925 against 0.947,
+  p 0.45, not resolved, 0 unwound or flipped (findings 4.15); tables `tm4_compare_cov_d9_01_sc.txt`
+  and `_d9_03_sc_vs_d9_01_sc.txt`, set and tables copied to runs_cov, md5 verified. b9_03_sc
+  running. ff30_gdepth_si step 30 and ff31_depth_all step 7 clean. findings 4.15, remote_jobs.md §1
+  and "The TM4 queue", WATCH_STATUS.md.
+* **21:38 10-10, the ff3.1 steric check (user, after Jumper).** New `training/ff31/steric_check.py`
+  (deployed `checks/ff31_steric/`, md5 e35e3d98): each step's library against a hard-sphere
+  Ramachandran map, side-chain and backbone clash classes, per coil map and per training residue's
+  engine map, plus the non-glycine phi > 0 populations of the free ensembles. Verified: CB within
+  0.08 A of 1AO6's, alanine's allowed share 21%, round 0 x1.0000; on the predicted first round no map
+  above x1.17. ff31_depth_all step 8 (+0.167): no flag. Watch step 3 and the cron prompt carry it
+  (cron `c6b0479e` replaces `aa713659`). findings 1.33, plan.md Phase 14 step 5, remote_jobs.md,
+  WATCH_STATUS.md.
+* **22:46 10-10, watch pass; b9_03_sc, and ff30_gdepth_si's node failure.** b9_03_sc (= ff_3.0_bio)
+  0.950 against its start ff21_bioT1_6_sc's 0.939 (p 0.36) and its twin bs_03_sc's 0.951 (p 0.30),
+  not resolved; against d9_03_sc 0.884, p just under 0.05 with the bootstrap touching zero (added);
+  set and 4 tables copied to runs_cov, md5 verified (findings 4.15). ff30_gdepth_si's link 49216034
+  NODE_FAILed 20:52:43 in step 32 with another user's job on midway2-0151; step 31 (+0.127) is
+  complete and successor 49219651 is PD. ff31_depth_all steps 9-10 clean, steric check no flag; the
+  watch's steric command now names its step (without it the script reads the newest step).
+  findings 4.15, remote_jobs.md §1 and watch step 3, WATCH_STATUS.md.
+* **10-10, literature: TM-helix HDX in a bilayer.** Three literature agents plus the lab's H145A HXMS
+  file. TM cores exchange slowly but finitely (PF ~10^5-10^7); exchange needs both an opening and
+  water/OH- access, and the bilayer suppresses both. Our binary `acc` makes lipid-shielded PF infinite by
+  construction. Corrected the TM4 140-144 uptake quoted in findings 5.1 and 7.1 (34% at 24 h, not 50%).
+  findings 5.5.
+* **10-11, HDX follow-up (records only, no code changed).** Recorded the uptake PF = 1000 cap, the
+  "non-exchanging" wording and the interface-boundary check as pending the user's decision (findings 5.5,
+  plan.md Known Errors). TM4: crystal SASA and a tail-sized probe show TM4 protein-buried with ~5 amides
+  within 7 A of lipid-reachable surface, matching the hybrid's shielded set (open item closed in
+  remote_jobs.md); the HXMS TM4 peptide gives dG ~6.1-7.4 kcal/mol, so the implicit's off-scale TM4 is
+  consistent with experiment and the hybrid's 3.5-4.9 is too labile. Corrected findings 5.3b's model ranking.
+* **23:46 10-10, watch pass; quiet.** ff31_depth_all step 11 (+0.158) clean, steric check no flag;
+  ff_3.0_bio_si's second benchmark chunks resubmitted at their wall. **00:00 10-11:** session
+  upside2-md-87 asked for a glpG HDX analysis on the fixed-table REMD chains (reported user-approved,
+  low priority); recorded as deferred to block 2 (~10-13) in remote_jobs.md §1. The WATCH_STATUS.md
+  upload stalled at ~00:40 with `/project` unresponsive on midway2-login1 (`echo` and `hostname`
+  answer); the local copy (md5 c33ad9e6) is the one to upload. If the stalled write lands, the
+  remote file reads e3ee8d8f (same text, one path missing). remote_jobs.md §1, WATCH_STATUS.md.
+* **00:46 10-11, watch pass.** ff31_depth_data started 00:06 (24 nodes; first lines as owed,
+  successor 49221772). Reads of the cluster's WATCH_STATUS.md still hang on midway2-login1 (a GPFS
+  wait on that one file; the rest of `/project` answered) until ~00:56; it then cleared and the file
+  was rewritten at 01:00, md5 verified. remote_jobs.md §1.
+* **01:46-04:46 10-11, watch passes.** ff31_depth_data's first steps 0-4 and ff31_depth_all's
+  12-15 clean, steric check no flag (largest residue x1.046). ff30_gdepth_si's successor resumed
+  step 32 at 03:27 (30 min steps). ff_3.0_bio's 4 glpG chains started 03:27, their replicas on
+  martini.h5's table. **b9_03 panel** (= ff_3.0_bio): 0.452, helix -0.029, dominated by
+  gdepth_start in helix; of the three released candidates bs_03 leads (0.467) and dominates d9_03
+  in helix and beta (findings 1.21). remote_jobs.md §1, WATCH_STATUS.md.
+* **05:46-06:46 10-11, watch passes; two epoch ends.** ff31_depth_all step 18: depth round 1 as
+  predicted (held-out gap left 0.990, 66 depths beyond 0.1, findings 1.30); the steric check on the
+  first moved library has no flag (coil maps at most x1.10, findings 1.33). ff30_gdepth_si step 37
+  (+0.111), depth round 2. ds_01 and fa_00 extracted (rama.dat md5-equal to the runs' libraries),
+  panels submitted, glpG inputs patched; their local TM4 sets held at the user's word (06:48, "run
+  another session's simulation first"), and upside2-md-87 reports nothing to run locally. findings
+  1.30, 1.33, remote_jobs.md §1 and "The TM4 queue", WATCH_STATUS.md.
+* **07:09-09:20 10-11, local TM4 HDX on the fixed table (plan.md Phase 16; user: "run this
+  session's job first").** ff21_released_sc, 12 seeds, T 0.85, 4000 tu, frame interval 2, on the
+  Mac Studio (`scratchpad/tm4_hdx_local/`), ahead of the TM4 queue (released 09:05). Analysis on the
+  stale set's ff2.1 HDX topology (md5 166c9d12; H-bond parameters equal to the input's) with the
+  repo's HDX steps, through a scratch projection because the local runs log at `basic` (no
+  `/output/hbond`). Result: TM4 137-148 lose protein protection in at most 0.06% of frames at
+  298 K, against 10-25% in the surviving pre-fix 48-rung set; 142-144 never exchange (dG > 5.8);
+  DSSP alpha 0.94-0.95, none unwound. The 10-10 T 0.80 sets agree. Findings 5.5 rewritten,
+  including the stale set's provenance (files dated 08-27, not 09-04). A stray `results/` written
+  to the repo root by the first test was removed. 17:20: the user chose a remote REMD over a local
+  old-table control (the Mac Studio is busy); an ff2.1 79HIS fixed-table chain with HDX after block
+  2 was requested of upside2-md-98 (plan.md Phase 16). Held on a 98%-full `/project` until the
+  user approved a 928 G reclaim; submitted 17:41 for 2 blocks by upside2-md-98, seed checks in
+  `checks/ff21sc_remd_20261011/`.
+* **11:46 10-11, watch pass; ds_01_sc and two panels.** ds_01_sc 0.894 against gdepth_start_sc
+  0.947 (p 0.19) and d9_01_sc 0.925 (p 0.62), not resolved; set and tables in runs_cov, md5
+  verified (findings 4.15). Panels ds_01 0.420 and fa_00 0.471 (ff3.1's first end), each dominated
+  by gdepth_start in helix (findings 1.21). ff30_gdepth_si step 47 margin +0.100008, on the hold
+  line. fa_00_sc running. findings 1.21, 4.15, remote_jobs.md §1, WATCH_STATUS.md.
+* **12:46 10-11, watch pass; ff30_gdepth_si on hold.** Its H-bond margin fell below +0.10 at step 48
+  (+0.099957; step 49 +0.099370), read at full precision from the extracted hbond.h5; the user was
+  told and the run trains on. ff31_depth_all 25 and ff31_depth_data 13-14 clean, no steric flag.
+  remote_jobs.md §1, WATCH_STATUS.md.
+* **13:46 10-11, watch pass; fa_00_sc.** ff3.1's first end in glpG TM4: 0.926 against
+  ff21_released_sc 0.944 (p 0.60), not resolved, 0 unwound or flipped; lower at 135-145, higher at
+  149-151 (findings 4.15); set and table in runs_cov, md5 verified. Local queue empty. Training
+  steps clean, no steric flag. findings 4.15, remote_jobs.md §1, WATCH_STATUS.md.
+* **15:46 10-11, watch pass; ff31_depth_data's first epoch end.** Depth round 1 as predicted
+  (held-out gap left 0.994, 3 of 1,442 depths beyond 0.1; findings 1.30); the steric check on its
+  library has no flag (findings 1.33). fd_00 extracted (rama.dat = round 1's), panel 49223540
+  running, patched, TM4 fd_00_sc running from 15:48. findings 1.30, 1.33, remote_jobs.md §1,
+  WATCH_STATUS.md.
+* **17:15-17:45 10-11: disk and a new REMD chain.** Checking headroom for session upside2-md-87's
+  request found `/project/trsosnic` at 98% (88 G free), with the 12 glpG chains needing ~410 G more.
+  At the user's word 928 G was freed (panel `.up` trajectories 397 G, NP-1AO6 run data 489 G, the
+  four ff_3.0_cancelled glpG directories 40 G; manifests in `checks/disk_reclaim_20261011/`); the NP
+  and panel scripts were kept, two 1.5 KB NP analysis scripts inside a deleted directory were lost.
+  `panel.py select` reproduces its table from the npz alone. Then, user-approved for 2 blocks, glpG
+  REMD 49223635 (79HIS, ff2.1 on the fixed table) from a seed checked against the pristine ff2.1
+  seed, the live seed and the Mac's input. The watch gains a disk step (2b). remote_jobs.md §1,
+  "The watch", WATCH_STATUS.md.
+* **17:46 10-11, watch pass; fd_00_sc and two panels.** fd_00_sc 0.914 against ff21_released_sc
+  0.944 (p 0.23) and fa_00_sc 0.926 (p 0.53), not resolved, one seed with GLY149 flipped; the two
+  ff3.1 variants fray TM4 at opposite ends (findings 4.15). Panels fd_00 0.479 and ds_02 0.406, both
+  dominated by gdepth_start in helix (findings 1.21). ds_02_sc running; d9_02_sc, its fixed-table
+  twin, patched and queued. The ff2.1_sc REMD chain calibrated at 639.6 ms/step.
+* **18:46-19:46 10-11, watch passes; ds_02_sc.** ds_02_sc 0.889 against gdepth_start_sc 0.947
+  (p 0.47), not resolved, weakest at 135-139 (findings 4.15). ff_3.0_gdepth's 79HIS glpG chain
+  finished block 1 whole and started block 2. ff31_depth_all margin +0.103 at step 33, near the
+  hold line; training steps clean, no steric flag. remote_jobs.md §1, WATCH_STATUS.md.
+* **21:46 10-11, watch pass; d9_02_sc.** d9_02_sc 0.916 against gdepth_start_sc 0.947 (p 0.17) and
+  ds_02_sc against it 0.889 (p 0.67), not resolved; across ff30_gdepth_dt009's epoch ends TM4's
+  C-terminal end frays step by step, the SI-rate run's does not (findings 4.15). Local queue empty.
+  ff_3.0_gdepth's 79HIS_S115T glpG chain in block 2. TM4 queue paragraph in remote_jobs.md rewritten
+  as one block. findings 4.15, remote_jobs.md §1, WATCH_STATUS.md.
+* **22:46 10-11, watch pass; polygly link 2.** Link 2 ended at its -maxh at 94.4-94.7 ns per replica,
+  32.4-32.6 ns/day; mindist -pi over the appended trajectories 2.31-3.28 nm (gmx 2024.4 needs
+  `module load gcc/10.1.0` on the login node, now in the §1 row). Link 3 runs. All four ff_3.0_gdepth
+  glpG chains and ff_3.0_bio_si's 79ALA_S115T are in block 2. Training steps clean, no steric flag.
+  remote_jobs.md §1, WATCH_STATUS.md.
+* **23:05 10-11, polygly stopped (user).** The user judged poly-Gly no longer needed, since the table
+  fix repaired TM4's glycine flips (findings 4.15); agreed. STOP written, successor 49223804 and link 3
+  49219705 cancelled, ~97 ns per replica checkpointed and kept (`polygly/` is only 213 MB, so nothing
+  was deleted). plan.md Phase 12 closed; remote_jobs.md §1 row moved to "Finished runs"; the watch
+  prompt text no longer names polygly.
+* **23:10-23:25 10-11, the local TM4 glycine-flip test retired (user).** "We have a working ff and we
+  are trying to expand it so that metric no longer matters"; then, 23:15, "I meant the test for tm4 GLY
+  flips, not for tm4 hdx". Nothing was running or queued locally. Watch steps 4-5 (extract, patch,
+  queue, compare) replaced by a retirement note; the watch is steps 1-5 now. TM4 HDX continues (the
+  ff2.1_sc REMD chain, the HDX requests). Watch cron `eae86453` (23:20, expires 10-18) replaces
+  `c6b0479e` with the prompt in remote_jobs.md. plan.md Phase 14 step 4, remote_jobs.md "The watch",
+  "The TM4 queue" and §1, WATCH_STATUS.md.
+* **23:30-23:40 10-11, frozen-H-bond arms deleted (user).** Re-checked: no job runs from ff30_bio_fz,
+  ff30_gdepth_fz or ff21_ctrl_fz (cancelled 10-09 23:09). Their step directories (6.1 G) went first;
+  then, at the user's "they are wrong and no longer needed", the whole run directories and their three
+  first-link logs (manifests in `checks/disk_reclaim_20261011/`). Their derived bz/dz products are kept
+  pending the user. Lesson 10.25. remote_jobs.md, findings 10.25, WATCH_STATUS.md.
+* **23:50 10-11, the BioEmu-map line dropped (user).** "We decided to go with basin depth training
+  path (as it is expandable to all residues)." The three BioEmu runs had finished; their 57 running
+  validation jobs (64 benchmark arms' chunks, 8 glpG chains) were cancelled after STOP files, none
+  resubmitted. Deleted with manifests: step directories (39 G, mostly ff30_bio's half-written step),
+  the 8 glpG chain directories (92 G), the benchmark replica files (40 G on /beagle3); setup, released
+  parameters, seeds, logs, extracted ends and panel npz kept. /project 1,144 G free. plan.md decision
+  "The basin-depth path", findings 1.32, remote_jobs.md ("Resume here" rewritten, §1 rows moved to
+  "Finished runs"), memory, WATCH_STATUS.md.
+* **23:45 10-11, the dropped lines deleted with their inputs (user).** "Delete them as well. Also no
+  need to leave input file for this case." Cluster: the BioEmu run directories and logs, released
+  ff_3.0_bio and ff_3.0_bio_si (both trees), the 8 glpG chains' seeds and logs, the 64 benchmark run
+  directories and logs, and both lines' extracted ends, panels and TM4 sets (851 targets, 12,133
+  files, 48 G apparent; manifest `checks/disk_reclaim_20261011/manifest_bio_and_derived_20261012.txt`).
+  Mac: 871 local files (45 G). Kept: comparison tables, `select_last_*` tables, the BioEmu library
+  itself (repo `rama31.dat`, `checks/gly_bioemu_map/`). Panel selection checked without bio_start;
+  `submit_new.sh` lists only the live lines (it then submitted fa_01's panel). remote_jobs.md's
+  current-state header and "Handoff" rewritten without the retired lines. plan.md, remote_jobs.md,
+  WATCH_STATUS.md.
+* **23:50 10-11, watch pass; ff31_depth_all's epoch-1 end.** Depth round 2: 235 of 5,040 depths beyond
+  0.1, held-out gap left 0.994 (findings 1.30); steric check on round 2's library no flag (findings
+  1.33); fa_01 panel running. ff31_depth_data step 29 +0.110, ff30_gdepth_si step 70 +0.1004. Watch
+  cron `56a4d6f9` replaces `eae86453` with a prompt for the basin-depth path only. Tonight's deletion
+  times corrected to 23:45 10-11.
+* **00:25 10-12, ff30_gdepth_si stopped and deleted (user).** "Since ff3.0 is working, it is the only
+  branch we need (and its expansion to all residues)." Successor 49222183 and link 49219651 were
+  cancelled at step 72, before the target and gate, so nothing was released. Deleted with its inputs
+  (cluster 54.5 G, mostly a half-written step; Mac 8 G): run directory, first-link log, ds_00-02
+  extracted ends, panels and TM4 sets. `submit_new.sh` lists d9, c9, fa, fd only. Watch cron
+  `c618e779` replaces `56a4d6f9`. plan.md, findings 1.32, remote_jobs.md, memory, WATCH_STATUS.md.
+* **01:51 10-12, watch pass; panel fa_01.** fa_01 (ff31_depth_all step 37, round 2's library) folded
+  0.444, helix -0.033 on 39 domains, dominated in helix by gdepth_start and by fa_00 (findings 1.21).
+  ff31_depth_all link 2 49219752 resumed at step 39 after link 1's wall (00:39), step 39 +0.1052;
+  ff31_depth_data step 31 +0.1068; steric no flag on all four new steps; KE/1.5kT at most 1.012.
+  WATCH_STATUS.md rewritten short; stale frozen-arm and ds-set lines in remote_jobs.md §1 corrected.
+* **06:46 10-12, watch pass; ff31_depth_data's epoch-1 end.** Depth round 2 (step 37): 26 of 1,442
+  depths beyond 0.1, step rms 0.0185, held-out gap left 0.9959 (findings 1.30); steric check on round
+  2's library no flag (findings 1.33); fd_01 panel 49224221 submitted. ff31_depth_all step 46 +0.108.
+* **07:46 10-12, watch pass; the first steric flag.** ff31_depth_data step 39: free non-glycine beta' +
+  pPII' 0.0050 above steps 0-18's 0.0047 (restrained 0.0045); the same minibatch read 0.0047 at step 1;
+  clash classes unchanged. User notified; nothing changed (findings 1.33).
+* **09:46 10-12, watch pass; panel fd_01.** fd_01 (ff31_depth_data step 37, round 2's library) folded
+  0.472, helix -0.028 on 43 domains; gdepth_start dominates it in helix, fd_00 does not (findings 1.21).
+  Steric: no new flag (fd steps 40-42 at most 0.0035). ff31_depth_all step 50 +0.1032.
+* **12:46 10-12, watch pass; ff31_depth_all on margin hold.** Step 53 margin +0.0982, below +0.10
+  (step 52 +0.1008); user notified, the run trains on. ff31_depth_data link 1 TIMEOUT 12:07 at its wall,
+  link 2 49221772 resumed at step 45 (+0.1118).

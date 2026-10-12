@@ -380,7 +380,18 @@ Attrs document the derivation: `@schema='martini_sc_combined'`,
 `@spline_control_quantity='direct_rotamer_free_energy_kj_mol'`,
 `@azimuthal_average='tempered_boltzmann_free_energy'`,
 `@azimuthal_average_temperature_upside=25.0`,
-`@nonbonded_cutoff_nm=1.2`.
+`@nonbonded_cutoff_nm=1.2`, `@target_direction_count=600`,
+`@sidechain_bead_frame_count=12`.
+
+Each cell averages the dry-MARTINI energy of a rotamer's beads with one target bead
+over 600 Fibonacci-sphere target directions and 12 rotations of the beads about the
+CB vector, binned linearly onto the cos(theta) grid. The sampling must converge:
+the table built before 2026-10-10 used 24 directions and one bead frame, about two
+directions per cos node, and its one-node ridges (up to 1e9 E_up) gave
+single-evaluation force spikes in glpG (`findings.md` 4.10, 4.15). The runtime node
+`martini_sc_table_1body` uses `rotamer_full_energy_eup` when present (always, from
+the preparation and from `patch_glpg.py`); the factorised `rotamer_radial`/`angular`
+tables are read but serve only a file without it.
 
 | Dataset | Shape | Notes |
 |---|---|---|

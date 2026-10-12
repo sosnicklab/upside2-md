@@ -1200,6 +1200,13 @@ ff21_awh bio_start gdepth_start b9_00 b9_01 b9_02 d9_00 d9_01 bs_00 c9_00 c9_01`
   `select_last_d9_02_login1_20261009.txt`): folded 0.439, helix -0.030 on 41 domains, dominated
   by gdepth_start in helix (-0.020). With d9_01 on the 39 domains both keep
   (`select_last_d9_01_d9_02_login1_20261009.txt`): 0.439 against 0.457, helix -0.028 against -0.026.
+- **`d9_03`** (ff30_gdepth_dt009 step 75, margin +0.082, the released ff_3.0_gdepth; 10-10,
+  `select_last_d9_03_login1_20261010.txt`): folded 0.464, helix -0.030, beta -0.021, gly_helix
+  -0.121, gly_left -0.008 on 41 domains, against gdepth_start's 0.603, -0.018, -0.013, -0.059,
+  +0.002; gdepth_start dominates it in helix, beta and helical glycine. The end of training folds
+  0.139 less than its start; d9_00 to d9_03 fold 0.477, 0.457, 0.439, 0.464 (each on its own 34-41
+  domains), so nearly all of the loss is epoch 0's. The panel is solvated, so the side-chain/lipid
+  table (4.15) does not enter it.
 - **`bz_02`** (ff30_bio_fz step 56, H-bond and sheet frozen; `select_last_bz_02_login1_20261009.txt`):
   folded 0.424, helix -0.031 on 42 domains, dominated by gdepth_start in helix. With its twin
   b9_02 on 40 domains (`select_last_b9_02_bz_02_login1_20261009.txt`): 0.424 against 0.448, helix
@@ -1235,6 +1242,64 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   Alone with b9_01 (39 domains) neither dominates; gdepth_start dominates bz_01 in helix. So
   ff30_bio_fz gains folding over epoch 1 while ff30_bio_dt009 loses 0.013, and the SI-rate bs_01's
   gap widens instead.
+- **`bs_02`** (step 56, margin +0.055; 10-10, `select_last_bs_02_login1_20261010.txt`, 39 domains):
+  folded 0.429, helix -0.030, against bio_start's 0.602, -0.019; gdepth_start dominates it in helix.
+  With its twin (`select_last_b9_02_bs_02_login1_20261010.txt`, 38 domains): 0.429 against b9_02's
+  0.448, helix -0.031 against -0.030, and b9_02 does not dominate it. bs_00 to bs_02 fold 0.457,
+  0.430, 0.429: the SI-rate gap to the twin is 0.021, 0.035, 0.019.
+- **`bs_03`** (step 75, margin +0.058, the released ff_3.0_bio_si; `select_last_bs_03_login1_20261010.txt`,
+  41 domains): folded 0.467, helix -0.028, beta -0.015, gly_helix -0.076, gly_left -0.008, against
+  bio_start's 0.602, -0.024, -0.019, -0.055, +0.005; gdepth_start dominates it in helix. bs_00 to
+  bs_03 fold 0.457, 0.430, 0.429, 0.467. With d9_03 (= ff_3.0_gdepth) on the 39 domains both keep
+  (`select_last_d9_03_bs_03_login1_20261010.txt`): folded 0.467 against 0.464, helix -0.027 against
+  -0.033, beta -0.015 against -0.022, gly_helix -0.099 against -0.134, gly_left -0.012 against -0.007;
+  d9_03 does not dominate it, and the reverse is not tested. Both released candidates lose ~0.14 of
+  folding to their starts; bs_03 leans closer to all-atom, as it leans higher in glpG TM4 (4.15).
+- **`b9_03`** (ff30_bio_dt009 step 75, margin +0.013, the released ff_3.0_bio; 49220750 COMPLETED
+  04:02 10-11; `select_last_b9_03_login1_20261011.txt`, 39 domains): folded 0.452, helix -0.029,
+  beta -0.021, gly_helix -0.039, gly_left -0.025, against bio_start's 0.602, -0.019, -0.017,
+  -0.055, +0.002; gdepth_start dominates it in helix. b9_00 to b9_03 fold 0.478, 0.465, 0.448,
+  0.452. With its SI-rate twin bs_03 on 38 domains (`select_last_bs_03_b9_03_login1_20261011.txt`):
+  0.452 against 0.467, helix -0.030 against -0.026, beta -0.021 against -0.015, gly_helix -0.043
+  against -0.075, gly_left -0.026 against -0.006; gdepth_start dominates b9_03 in helix, and the
+  pair's own dominance is not printed. All three released candidates on their 36 shared domains
+  (`select_last_b9_03_bs_03_d9_03_login1_20261011.txt`, an added comparison): folded b9_03 0.452,
+  bs_03 0.467, d9_03 0.464; helix -0.030, -0.025, -0.030; beta -0.020, -0.014, -0.023; bs_03
+  dominates d9_03 in helix and beta, and is worse than ff2.1 in helix. So in the all-atom panel
+  bs_03 (ff_3.0_bio_si) leads the three, as in glpG TM4 it ties b9_03 and leads d9_03 (4.15).
+- **`ds_01`** (ff30_gdepth_si step 37, margin +0.111; 49222529 COMPLETED 11:28 10-11;
+  `select_last_ds_01_login1_20261011.txt`, 42 domains): folded 0.420, helix -0.028, beta -0.016,
+  gly_helix -0.096, gly_left +0.038; gdepth_start (0.603, -0.018) dominates it in helix. ds_00 0.412.
+  With its twin d9_01 on 39 domains (`select_last_d9_01_ds_01_login1_20261011.txt`): 0.420 against
+  0.457, helix -0.026 against -0.024; gdepth_start dominates ds_01 in helix.
+- **`fa_00`** (ff31_depth_all step 18, the first ff3.1 end, with depth round 1's library; 49222532
+  COMPLETED 11:33 10-11; `select_last_fa_00_login1_20261011.txt`, 40 domains): folded 0.471,
+  helix -0.027, beta -0.017, gly_helix -0.071, gly_left +0.041, against its start ff21_released's
+  0.615, -0.017, -0.016, -0.056, +0.042; gdepth_start dominates it in helix. It loses folding as
+  the round-4 epoch-0 ends did (b9_00 0.478, d9_00 0.477, bs_00 0.457, ds_00 0.412), and keeps
+  ff2.1's glycine alpha_L.
+- **`fd_00`** (ff31_depth_data step 18, round 1's library; 49223540 COMPLETED 17:35 10-11;
+  `select_last_fd_00_login1_20261011.txt`, 42 domains): folded 0.479, helix -0.027, beta -0.014,
+  gly_helix -0.083, gly_left +0.021 (ff21_released 0.615, -0.018, -0.018, -0.081, +0.034);
+  gdepth_start dominates it in helix. With fa_00 on 39 domains: 0.479 against 0.471, helix -0.026 and
+  -0.026, beta -0.013 against -0.017. The two ff3.1 variants' first ends read alike in the panel.
+- **`fa_01`** (ff31_depth_all step 37, margin +0.102, depth round 2's library; 49223845 COMPLETED
+  00:40 10-12; `select_last_fa_01_login1_20261012.txt`, 39 domains): folded 0.444, helix -0.033,
+  beta -0.020, gly_helix -0.119, gly_left +0.005 (ff21_released 0.615, -0.018, -0.016, -0.089,
+  +0.032); gdepth_start dominates it in helix and gly_helix. With fa_00 on 36 domains
+  (`select_last_fa_00_fa_01_login1_20261012.txt`): 0.444 against 0.471, helix -0.031 against
+  -0.025, beta -0.019 against -0.014; fa_00 dominates it in helix. The second epoch loses folding
+  and helix again, as d9_00 to d9_01 did (0.477, 0.457).
+- **`fd_01`** (ff31_depth_data step 37, margin +0.1225, depth round 2's library; 49224221 COMPLETED
+  09:12 10-12; `select_last_fd_01_login1_20261012.txt`, 43 domains): folded 0.472, helix -0.028,
+  beta -0.018, gly_helix -0.094, gly_left +0.020 (ff21_released 0.615, -0.018, -0.017, -0.081,
+  +0.029); gdepth_start dominates it in helix. With fd_00 on 42 domains: 0.472 against 0.479, helix
+  -0.027 and -0.027, and fd_00 does not dominate it, so the data-masked run holds its first epoch's
+  panel where `all` lost more. With fa_01 on 39 domains (`select_last_fa_01_fd_01_login1_20261012.txt`):
+  0.472 against 0.444, helix -0.027 against -0.033, beta -0.015 against -0.020.
+- **`ds_02`** (ff30_gdepth_si step 56, margin +0.096; 49223609 COMPLETED 17:33 10-11; 40 domains):
+  folded 0.406, helix -0.030; gdepth_start dominates it in helix. With its twin d9_02 on 39 domains:
+  0.406 against 0.439, helix -0.031 against -0.029. ds_00 to ds_02 fold 0.412, 0.420, 0.406.
 - In glpG TM4 none of these pairs is resolved (1.24): bs_01 leans better than b9_01 while its panel
   is dominated by it.
 
@@ -2053,6 +2118,27 @@ rama_basin.py): round 4's gdepth trainer with only its Ramachandran calls genera
 - **The first step predicted** from c9's epoch 0 (ff2.1, the same start): mode `all` step rms 0.030,
   68 depths beyond 0.1, GLY|X alpha_L +0.057, held-out map-level gap left 0.989; mode `data` rms
   0.026, 3 beyond 0.1, 0.994. Both steps transfer to the held-out proteins.
+- **ff31_depth_all's first round came out as predicted** (step 18, 10-11 06:37; `rama_rounds.txt`):
+  step rms 0.0305, max 0.266, 66 depths beyond 0.1, GLY|X alpha_R -0.012 alpha_L +0.066, held-out
+  map-level gap left 0.990 (map-level gap 0.00059 on the training reads, 0.00402 held out). The
+  largest offsets are alpha_R's (rms 0.048), then pPII 0.037, beta 0.030, alpha_L 0.027, the two
+  phi > 0 extended basins 0.011 and 0.014. Transfer is ~1% of the held-out gap, as 1.29 found:
+  the per-map push is small and mostly not shared between proteins. This is the read plan.md Phase
+  14 step 3 asks for before the user lets more epochs count; the runs keep training meanwhile.
+- **ff31_depth_all round 2** (step 37, 10-11 23:28): step rms 0.0222, max 0.146, 235 of 5,040 depths
+  now beyond 0.1 (66 after round 1), held-out gap left 0.9937; offsets rms alpha_R 0.068, pPII 0.055,
+  beta 0.043, alpha_L 0.036, beta' 0.017, pPII' 0.019; GLY|X alpha_R -0.026 alpha_L +0.097. The second
+  step is smaller than the first and transfers about as little (0.6% of the held-out gap).
+- **ff31_depth_data's first round, as predicted too** (step 18, 10-11 15:03): step rms 0.0262, max
+  0.136, 3 of 1,442 depths beyond 0.1, GLY|X alpha_R -0.006 alpha_L +0.034, held-out gap left 0.994
+  (predicted 0.026, 3, 0.994). Offsets rms alpha_R 0.028, alpha_L 0.051, beta 0.019, pPII 0.027,
+  beta' 0.040, pPII' 0.037: the tighter prior (0.2) and the data mask give a smaller step than
+  `all`'s, weighted toward the few phi > 0 depths the data supports.
+- **ff31_depth_data round 2** (step 37, 10-12 06:02): step rms 0.0185, max 0.092, 26 of 1,442 depths
+  now beyond 0.1 (3 after round 1), held-out gap left 0.9959 (map-level gap 0.00052 training, 0.00362
+  held out); offsets rms alpha_R 0.039, alpha_L 0.076, beta 0.028, pPII 0.039, beta' 0.060, pPII'
+  0.048; GLY|X alpha_R -0.011 alpha_L +0.050. As in `all`, the second step is smaller than the first
+  and transfers less (0.4% of the held-out gap).
 - **No gate and no release.** Neither run has `after_training.sbatch`: the convergence gate judges
   only the Adam groups, and a converged gate would release and validate (95k core-hours each)
   unasked. They stop at step 76 for the user.
@@ -2086,6 +2172,94 @@ rama_basin.py): round 4's gdepth trainer with only its Ramachandran calls genera
 - **Validation is automatic and running:** the 32 benchmark arms (all running at 03:48, no error in
   any log) and the 4 glpG chains, queued, which run on the old side-chain/lipid table (4.13). The
   bs_03 panel is queued. Choosing between ff_3.0_gdepth and ff_3.0_bio_si is the user's.
+
+### 1.32 The third converged round-4 gate: ff30_bio_dt009 at step 76 (2026-10-10)
+
+- **The gate.** ff30_bio_dt009 reached target 76 at 16:37 10-10. Its gate 49220744
+  (`ff30_bio_dt009/gate_step76.txt`, log `ff30bio9-gate_49220744.out`) read steps 58-76 and passed
+  every group at p > 0.005: hb 0.82, bbenve 0.91, envc 0.98, the other environment groups, rot and
+  sheet 0.99-1.00, and dhb lowest at 0.13. It released `epoch_03_minibatch_18` (b9_03) as
+  `ff_3.0_bio` to both trees, md5 verified (`release_20261010-164651`), file-identical to
+  `checks/r4_epochs/b9_03`. Its rama.dat is ff_3.0_bio_si's (md5 `69051b78...`): both carry the
+  frozen BioEmu-fitted glycine library untrained.
+- **The released H-bond margin is +0.013**, under the +0.10 hold since step 14 (start +0.192;
+  ff_3.0_bio_si +0.058, ff_3.0_gdepth +0.082). dhb -0.539, sheet mean 0.236; steps 70-75 24 of 24,
+  KE/1.5kT at most 1.016.
+- **Validation is automatic and queued** (16:47, all carrying the law): the 32 benchmark arms
+  49220754-49220785 and the 4 glpG chains 49220786-49220789. The gate's glpG seeds carry the
+  converged side-chain/lipid table (`side-chain/lipid table changed by max 1.062e+09`, 4.15); it is
+  the first gate whose own patch carries the table (the other two were re-patched by hand). The b9_03 panel 49220750 and the local TM4 set b9_03_sc are
+  queued. Choosing among ff_3.0_gdepth, ff_3.0_bio_si and ff_3.0_bio is the user's.
+- **10-12 00:25: ff3.0 is ff_3.0_gdepth, the only branch kept** (user); ff30_gdepth_si was stopped at
+  step 72, before its gate, and deleted with its derived sets.
+- **10-11 23:50: the user dropped the BioEmu-map line for the basin-depth path** (expandable to every
+  residue, ff3.1). ff_3.0_bio's and ff_3.0_bio_si's validation was cancelled unfinished; their results
+  above stand as the record (plan.md, "The basin-depth path").
+
+### 1.33 The steric check on ff3.1's moving maps (2026-10-10)
+
+Jumper's point, through the user (10-10 21:10): a Ramachandran map free to move can open
+conformations where the side chain and the backbone clash. In Upside the map is the only term that
+keeps a residue's CB off its neighbours' backbone (the rotamer table is side chain to side chain,
+20 x 20, and the coverage and environment nodes carry no excluded volume), so the watch measures it (`training/ff31/steric_check.py`, plan.md
+Phase 14 step 5).
+- **The reference** is the hard-sphere Ramachandran map at Ramachandran's outer limits, from ideal
+  geometry with CB, amide H, and a following proline's CD; glycine without CB. Its CB is the
+  standard ideal one: on 1AO6 it lands 0.08 A (median) from the crystal CB, so the chirality is L.
+  Clashing share of the plane: CB 0.48 side chain / 0.44 backbone (21% allowed, the textbook ~22%
+  for alanine), no CB 0.00 / 0.44.
+- **NDRD's own mass sits partly in it**: per coil map median 0.030 on side-chain clashes (alanine
+  0.020, asparagine 0.089, valine 0.005; most of it alpha_L, by C(i-1)..CB) and 0.227 on backbone
+  ones (alpha_R's upper phi edge by C(i-1)..C(i), the bridge by N(i)..H(i+1)). Proteins occupy those by
+  widening N-CA-C, so the backbone class is read by its change only, and the alarm is on the side
+  chain.
+- **Why the trainer cannot open a new region**: an offset scales its basin's probability as a
+  whole and keeps NDRD's shape inside it, so a map's clash probability moves only by the weights of
+  the basins that hold it. A basin the free ensemble over-populates against the native one is
+  raised.
+- **Measured.** ff31_depth_all at step 8 (round 0): depths x1.0000; the training residues' mean
+  side-chain clash probability x1.0011, all from the sheet energies. On the trainer's predicted first
+  round (findings 1.30, from c9's epoch 0): no map or residue above x1.17, the mean side-chain x0.999
+  and backbone x1.007. Non-glycine free beta' + pPII' 0.0017-0.0049 over steps 0-8, the restrained
+  replica 0.0016-0.0042.
+- **The flags** (watch step 3): a coil map or training residue whose clash probability more than
+  doubles against NDRD (an offset of about -0.7 nat, beyond 2 sigma of the 0.3 prior), the mean
+  side-chain clash probability up by more than 10%, or a step's free non-glycine beta' + pPII' above
+  the run's own steps 0-18 (NDRD). The 2x and 10% are set by policy; the third is measured on the run
+  it guards. The check sees the CB, not side-chain atoms beyond it.
+- **The first moved library, ff31_depth_all round 1 (step 18, 10-11 06:37): no flag, as predicted.**
+  Coil maps against NDRD: side chain median x0.997, largest x1.097 (GLU right GLY), backbone median
+  x1.006, largest x1.092 (VAL right ALA). Training residues: the mean side-chain clash probability
+  x1.0029, of which the depths x0.9997 and the sheet energies x1.0032; the largest residue x1.105
+  (ARG-LEU-PRO, pre-proline); backbone x1.0126, the depths x1.0090. So the round lowers the
+  side-chain class slightly and raises the backbone class by under 1%, as the prediction said
+  (x0.999, x1.007). Free non-glycine beta' + pPII' over steps 0-18, the threshold for later steps:
+  at most 0.0049 (`checks/ff31_steric/ff31_depth_all_epoch_00_minibatch_18.txt`). Steps 0-17 had
+  the depths at 0; their slow side-chain rise (x1.0011 to x1.0030 over steps 8-17) is the sheet
+  energies'.
+- **ff31_depth_all round 2 (step 37): no flag.** Coil maps at most x1.158 side chain (GLU right GLY)
+  and x1.156 backbone (VAL right ALA); training residues' side chain x1.0021 (depths x0.9993), largest
+  residue x1.159 (ASN-PRO-PRO); backbone x1.0159, the depths' part rising from x1.0090 to x1.0133;
+  free non-glycine beta' + pPII' at most 0.0043 over steps 19-37 (threshold 0.0049).
+- **ff31_depth_data round 1 (step 18, 10-11 15:03): no flag.** Coil maps: side chain largest x1.025
+  (GLU right GLY), backbone largest x1.051 (VAL right ALA). Training residues: side chain x1.0041
+  (depths x1.0002, sheet x1.0039), largest residue x1.062 (ASP-PRO-PRO); backbone x1.0082 (depths
+  x1.0044). Steps 0-18 free beta' + pPII' at most 0.0047; step 19, the first on the library, 0.0021.
+  Through ff31_depth_all step 28 (round 1's library, nine steps simulated on it) nothing moved: the
+  side-chain class x1.0023-1.0032, free beta' + pPII' at most 0.0043.
+- **ff31_depth_data round 2 (step 37, 10-12 06:02): no flag.** Coil maps at most x1.051 side chain
+  (ASP right GLY) and x1.072 backbone (VAL left LEU); training residues' side chain x1.0045 (depths
+  x1.0002), largest residue x1.081 (ARG-LEU-PRO); backbone x1.0104, the depths' part rising from
+  x1.0044 to x1.0062; free non-glycine beta' + pPII' at most 0.0042 over steps 19-37 (threshold
+  0.0047). The data-masked run moves its clash classes about half as far as `all`.
+- **ff31_depth_data step 39 (10-12 07:39), the first STERIC FLAG:** free non-glycine beta' + pPII'
+  0.0050 (restrained 0.0045) above steps 0-18's maximum 0.0047; the side-chain and backbone classes
+  did not move (x1.0044, x1.0103). A minibatch is the same 24 proteins in every epoch (checked for
+  minibatch 1), so the same proteins read 0.0047 / 0.0048 at step 1 (NDRD) and 0.0042 / 0.0041 at
+  step 20 (round 1): against its own NDRD value the free share is up 0.0003, and the restrained one
+  is down 0.0003. Whether that is more than step-to-step noise is not established. The threshold
+  (one maximum over all minibatches) was set before the fixed composition was known; it is not
+  changed. User notified; the run trains on.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -3416,8 +3590,8 @@ Mac Studio, `scratchpad/glpg_tm1/kick_ff30/` (scripts and outputs; plan.md Phase
   a protein atom is 187-236 E_up/A against 32,572-65,012, no evaluation exceeds 500 against 152-1,343,
   the median falls from 134-212 to 66-69, and the largest displacement of a protein atom between
   evaluations from 0.16-0.33 A to 0.012 A.
-- Every hybrid run reads this table, the TM4-test sets and the glpG validation chains included.
-  Replacing it is a force-field change and the user's decision (plan.md Phase 13 step 3).
+- Every hybrid run before 10-10 read this table, the TM4-test sets and the glpG validation chains
+  included. It was replaced in production on 10-10 at the user's word (4.15).
 
 ### 4.11 The membrane H-bond term on ff3.0: TM1 leans more helical, no tears (2026-10-10)
 
@@ -3489,9 +3663,8 @@ seeds on the old table (`scratchpad/glpg_tm1/tm1_compare_sc600x12_vs_d9_03.txt`,
   changes no parameter. The cost of unpaired backbone groups in the core (4.12) is still absent from
   the hybrid; the fixed-table + term set (4.14) shows what it adds on top.
 - Every hybrid run so far used the old table (the round-4 TM4 sets, the glpG validation chains):
-  their comparisons with each other stand, their absolute TM1 and TM4 values do not. Rebuilding
-  `parameters/ff_2.1/martini.h5` and fixing `py/martini_build_tables.py` (24 directions, one bead
-  frame by default) is the user's decision.
+  their comparisons with each other stand, their absolute TM1 and TM4 values do not. The builder
+  and `parameters/ff_2.1/martini.h5` carry the converged table from 10-10 (4.15).
 
 ### 4.14 The membrane H-bond term on the converged table: TM1 and TM4 both held (2026-10-10)
 
@@ -3516,8 +3689,157 @@ Tables `scratchpad/glpg_tm1/tm1_compare_sc600x12_hbmem_vs_d9_03.txt` and `_vs_sc
   are protein side-chain interactions, neither the table nor the term
   (`kick_ff30/attribute_events_sc600x12_hbmem.txt`); largest displacement per evaluation 0.012 A.
 - The term is Upside's own membrane H-bond potential (Wang et al. 2018), not added to the hybrid
-  before; whether production carries it, and whether only the table is fixed, is the user's
-  decision (4.12: never with option B).
+  before. **Not adopted** (user, 10-10 11:20): with the table fixed its gain (TM1 +0.033) is below
+  the spread between two table-only sets (0.931 and 0.882, 4.15); it is knowledge-based and imposes
+  the bilayer's centre and thickness on the protein from outside, against an explicit bilayer that
+  drifts; it may double-count MARTINI's backbone-lipid cost; and it would void every TM4 reference
+  again. Reopen it only if a fixed-table run shows a TM helix opening in the core with unpaired
+  backbone groups (4.12's test); a fix then belongs in the backbone-environment interaction, not a
+  z profile. Never with option B (4.12).
+
+### 4.15 The converged side-chain/lipid table in production (2026-10-10)
+
+The user's word (10-10 08:30): apply 4.13's fix to the force-field files so future simulations run
+with it; at 08:45, everywhere: the queued glpG chains re-patched and the TM4 references rerun on it
+(plan.md Phase 15). Records `scratchpad/glpg_tm1/sc_table_prod/` and midway2's
+`checks/sc_table_20261010/`.
+- **The builder.** `py/martini_build_tables.py` `_run_sc_task` computes all samples of a (residue,
+  target) task as arrays (`_pair_energy_kj_mol`, `_cos_grid_bin_weights`, and
+  `_boltzmann_free_energy_kj_mol` over the last axis), with the old loop's pair energy, anchor, binning
+  and average. The sampling is `SC_TABLE_DIRECTION_COUNT` 600 x `SC_TABLE_BEAD_FRAME_COUNT` 12, as
+  arguments of `_build_sc_table_group`, stored as `@target_direction_count` and
+  `@sidechain_bead_frame_count`; the `UPSIDE_MARTINI_*BEAD_FRAME_COUNT` overrides are gone.
+  - At 24 x 1 it reproduces every dataset of the old table exactly, except 9 of 5.1 M full-table
+    cells one float32 step off (1.5e-8; `gate_old24.txt`).
+  - At 600 x 12 the full table equals the TM1-tested `sc_table_600x12.npz` to float32 rounding
+    (1.2e-7 relative). `particles` and the file attributes are identical; it builds in 40 s on 16
+    workers, and two builds are md5-identical (`gate_prod.txt`).
+- **`parameters/ff_2.1/martini.h5`** is md5 `2e612261...` (was `87e8cfbf...`, kept as
+  `.bak_pre_sc600x12_20261010`), locally from 08:39 and in both cluster trees (`deploy.sh`,
+  `deploy.log`). The preparation reads this file, so every new hybrid input carries the table.
+- **Patched seeds.** `patch_glpg.py` (md5 `97ca3294...`, was `70589119...`) also copies the
+  table into `martini_sc_table_1body` (`--martini`, default the file the preparation reads).
+  - With the old martini.h5 it reproduces the existing d9_03 TM4 input in all 150 datasets.
+  - With the new one it differs from the TM1-tested input only in the table: the full table at
+    float32 rounding, and the factorised tables, which the test left old and the engine does not
+    read when the full table is present.
+  - It is installed in `$P/training/` and `tm4_local/scripts/`, so the next validation uses it.
+- **The queued glpG chains** of ff_3.0_gdepth (49216140-43) and ff_3.0_bio_si (49218471-74) were
+  re-patched 08:46-08:49, after the method gate passed for each force field (round trip worst
+  3.6e-15). In each of the 8 seeds only the four table arrays changed, and they equal martini.h5
+  (`check_repatch.py`, `repatch.log`; old seeds kept as `.bak_pre_sc600x12_20261010`). A chain reads
+  its seed when it starts, so all 8 run on the fixed table. ff_3.0_gdepth's 79HIS and 79HIS_S115T
+  chains started 10:16; replicas 0, 13 and 27 of each carry martini.h5's table.
+- **TM4 references** are rerun locally on the fixed table as `<tag>_sc` sets, from 08:50: d9_03_sc,
+  bs_03_sc, ff21_bioT1_6_sc, gdepth_start_sc, ff21_released_sc. Each `_sc` input differs from its
+  old-table input only in the table. Old-table sets keep their tags and compare only among
+  themselves.
+  - **d9_03_sc** (08:50-10:45) reproduces 4.13's table-only set within noise: TM1 DSSP alpha 0.882
+    against 0.931 (p 0.19), TM4 0.884 against 0.924 (p 0.24), middle H-bonds 5.87 against 6.01; no
+    jump, no peptide C-N above 2 A, KE/1.5kT 0.997-1.008 (`glpg_tm1/tm1_compare_d9_03_sc_vs_sc600x12.txt`).
+    It is not frame-identical: the production table differs from the tested one by float32 rounding
+    and the test ran on the probe build, so the trajectories part after the first frame (same
+    initial energy, -24938.38).
+  - **bs_03_sc** (= ff_3.0_bio_si, 10:45-12:40) against d9_03_sc (= ff_3.0_gdepth), the two
+    released candidates at the same step: DSSP alpha 0.951 against 0.884, +0.067 [+0.011, +0.125],
+    p 0.10, not resolved; the 135-151 residue profile is the same except 148-151 (0.99, 0.98, 0.74,
+    0.66 against 0.83, 0.72, 0.46, 0.42). Unwound 2 and 2, flipped 0 and 1 of 12; TM1 0.978 against
+    0.966; no jump in either (old table: bs_03 s1 +200,071, 1.31)
+    (`tm4_compare_cov_bs_03_sc_vs_d9_03_sc.txt`).
+  - **bs_03_sc against its start ff21_bioT1_6_sc** (12:40-14:36): DSSP alpha 0.951 against 0.939,
+    +0.012 [-0.026, +0.050], p 0.77, not resolved; 148-151 0.99, 0.98, 0.74, 0.66 against 0.97,
+    0.94, 0.67, 0.58. Unwound 2 against 0, flipped 0 and 0 (Fisher p 0.48); TM1 0.978 against 0.974;
+    no jump in either; KE/1.5kT 0.995-1.008 (`tm4_compare_cov_bs_03_sc.txt`). On the fixed table
+    ff_3.0_bio_si keeps its start's TM4, and the start itself sits above d9_03_sc (0.939 against
+    0.884).
+  - **d9_03_sc against its start gdepth_start_sc** (14:36-16:31): DSSP alpha 0.884 against 0.947,
+    -0.063 [-0.124, -0.001], p 0.13, not resolved; the bootstrap interval just excludes zero. The
+    loss is the C-terminal end: 147-151 0.92, 0.83, 0.72, 0.46, 0.42 against 1.00, 1.00, 0.95,
+    0.73, 0.65, the rest within 0.04. Unwound 2 against 1, flipped 1 against 0; secondary dihedral
+    TM4 0.952 against 0.987 (one-sided lower p 0.04); TM1 0.966 against 0.972; no jump in either;
+    KE/1.5kT 0.997-1.008 (`tm4_compare_cov_d9_03_sc.txt`). On the old table d9_03 led its start
+    (0.726 against 0.657, p 0.64); both pairs are unresolved, so the sign change is not evidence.
+    On the fixed table the two starts read alike (gdepth_start_sc 0.947, ff21_bioT1_6_sc 0.939).
+  - **ff21_released_sc: on the fixed table ff2.1 itself holds TM4** (16:31-18:25). DSSP alpha
+    0.944, 0 of 12 unwound or flipped, no jump, KE/1.5kT 0.997-1.003. Against its old-table set,
+    which differs from it only in the table: 0.944 against 0.610, +0.334 [+0.160, +0.527], p 0.002,
+    **resolved**; unwound 0 against 9 (Fisher p < 0.001), flipped 0 against 5 (p 0.037); dihedral
+    TM4 0.985 against 0.827, TM1 0.973 against 0.848; the old set's 135-151 profile (0.40-0.80) is
+    0.99-1.00 to 148, then 0.89, 0.63, 0.58 (`tm4_compare_cov_ff21_released_sc_vs_ff21_released.txt`).
+    So the TM4 loss the round-4 training was asked to fix was, in this test, the table defect.
+  - **On the fixed table every start reads alike and no candidate improves on ff2.1.** ff2.1 0.944,
+    bio_start 0.939 (p 0.73), gdepth_start 0.947 (p 0.82). ff_3.0_bio_si (bs_03_sc) 0.951 against
+    ff2.1's 0.944 (+0.008 [-0.034, +0.050], p 0.91), ff_3.0_bio (b9_03_sc) 0.950 (+0.006 [-0.051,
+    +0.059], p 0.67). ff_3.0_gdepth (d9_03_sc) 0.884 (-0.059 [-0.121, +0.001], p 0.15), not
+    resolved, losing 147-151 as against its own start; dihedral TM4 one-sided lower p 0.04
+    (`tm4_compare_cov_ff21_released_sc.txt`, `_gdepth_start_sc.txt`, `_d9_03_sc_vs_ff21_released_sc.txt`,
+    `_bs_03_sc_vs_ff21_released_sc.txt`, `_b9_03_sc_vs_ff21_released_sc.txt`). The last three are
+    added comparisons outside the plan.
+  - **b9_03_sc** (= ff_3.0_bio, 20:21-22:18) against its start ff21_bioT1_6_sc: DSSP alpha 0.950
+    against 0.939, +0.011 [-0.044, +0.059], p 0.36, not resolved; 147-151 1.00, 0.99, 0.99, 0.76,
+    0.69 against 0.97, 0.97, 0.94, 0.67, 0.58. Unwound 1 (s5, last-block DSSP 0.75) against 0,
+    flipped 0 and 0; TM1 0.971 against 0.974; no jump in either; KE/1.5kT 0.997-1.005
+    (`tm4_compare_cov_b9_03_sc.txt`). Against its SI-rate twin bs_03_sc: 0.950 against 0.951,
+    -0.001 [-0.054, +0.045], p 0.30, not resolved, unwound 1 against 2 (`_b9_03_sc_vs_bs_03_sc.txt`).
+    Against d9_03_sc (an added comparison): 0.950 against 0.884, +0.065 [-0.003, +0.131], p just
+    under 0.05, resolved by the primary test with the bootstrap interval touching zero; the gap is
+    147-151 (1.00, 0.99, 0.99, 0.76, 0.69 against 0.92, 0.83, 0.72, 0.46, 0.42), and dihedral TM4
+    0.980 against 0.952 (one-sided higher p 0.02) (`_b9_03_sc_vs_d9_03_sc.txt`). So on the fixed
+    table the two bio candidates read as their start and ff2.1; ff_3.0_gdepth's lower 147-151 is
+    resolved only against b9_03_sc, and there at the edge.
+  - **ds_01_sc** (ff30_gdepth_si step 37, the SI-rate gdepth run's half-trained end; 09:05-11:00 10-11)
+    against its start gdepth_start_sc: DSSP alpha 0.894 against 0.947, -0.053 [-0.139, +0.017],
+    p 0.19, not resolved; against its port-rate twin d9_01_sc: 0.894 against 0.925, -0.030 [-0.117,
+    +0.042], p 0.62, not resolved. It is weaker than both in the middle, 141-145 at 0.91-0.92
+    (start 0.99-1.00, twin 0.92-0.99), and at the end, 149-151 0.82, 0.60, 0.55 (start 0.95, 0.73,
+    0.65). Unwound 1 (s1, last block 0.52) against 1 and 0, flipped 0; dihedral TM4 0.984; TM1 0.969
+    against the twin's 0.988 (one-sided lower p 0.05); no jump; KE/1.5kT 0.996-1.004
+    (`tm4_compare_cov_ds_01_sc.txt`, `_ds_01_sc_vs_d9_01_sc.txt`). The SI-rate gdepth run leans
+    below its twin at step 37, as ds_00 did on the old table (1.24); d9_03_sc's later loss of
+    147-151 is not yet in ds_01_sc's 147-148 (0.98).
+  - **fa_00_sc** (ff31_depth_all step 18, the first ff3.1 end, on depth round 1's library;
+    11:00-12:55 10-11) against its start ff21_released_sc: DSSP alpha 0.926 against 0.944, -0.018
+    [-0.098, +0.046], p 0.60, not resolved. 0 of 12 unwound or flipped; dihedral TM4 0.995 against
+    0.985; any-helix 0.965 against 0.948; TM1 0.969 against 0.973; no jump; KE/1.5kT 0.997-1.005
+    (`tm4_compare_cov_fa_00_sc.txt`). The profile differs from ff2.1's in both directions: 135-145
+    lower (0.91-0.95 against 0.99-1.00), largely seed s8 (alpha 0.57 in the last block, any-helix
+    0.88, so a non-alpha helix rather than coil), and the C-terminal end higher, 149-151 0.99, 0.80,
+    0.75 against 0.89, 0.63, 0.58.
+  - **fd_00_sc** (ff31_depth_data step 18, on its round-1 library; 15:48-17:44 10-11) against
+    ff21_released_sc: DSSP alpha 0.914 against 0.944, -0.030 [-0.082, +0.023], p 0.23, not resolved;
+    against fa_00_sc at the same step: 0.914 against 0.926, -0.012 [-0.079, +0.071], p 0.53, not
+    resolved. Unwound 1 and flipped 1, the same seed: s10's GLY149 at phi > 0 in 0.34 of block 3 and
+    all of block 4 (TM4 dihedral 0.85, DSSP alpha 0.76 in the last block); TM1 0.983; no jump;
+    KE/1.5kT 0.996-1.005 (`tm4_compare_cov_fd_00_sc.txt`, `_fd_00_sc_vs_fa_00_sc.txt`). The two ff3.1
+    variants fray TM4 at opposite ends: fd_00_sc holds 136-147 at 0.99-1.00 and loses 148-151 (0.91,
+    0.76, 0.53, 0.44 against ff2.1's 0.99, 0.89, 0.63, 0.58); fa_00_sc is lower at 135-145 and
+    stronger at 149-151. Neither difference is resolved at 12 seeds.
+  - **ds_02_sc** (ff30_gdepth_si step 56, margin +0.096; 17:44-19:44 10-11) against gdepth_start_sc:
+    DSSP alpha 0.889 against 0.947, -0.059 [-0.158, +0.026], p 0.47, not resolved; against ds_01_sc
+    0.894 (p 0.71, added). Its loss moved to the N-terminal end: 135-139 0.61, 0.89, 0.91, 0.92,
+    0.92 (start 0.90-1.00), 140-142 1.00, 143-149 0.86-0.97, 150-151 0.69, 0.67 as the start's.
+    Unwound 1, flipped 0; TM1 0.977; no jump; KE/1.5kT 0.997-1.004 (`tm4_compare_cov_ds_02_sc.txt`,
+    `_ds_02_sc_vs_ds_01_sc.txt`). Against its twin d9_02_sc: 0.889 against 0.916, -0.027 [-0.128,
+    +0.056], p 0.67, not resolved (`_ds_02_sc_vs_d9_02_sc.txt`).
+  - **d9_02_sc** (ff30_gdepth_dt009 step 56, ds_02's twin; 19:44-21:41 10-11) against gdepth_start_sc:
+    DSSP alpha 0.916 against 0.947, -0.032 [-0.082, +0.021], p 0.17, not resolved. Unwound 2, flipped 1
+    (GLY149 at phi > 0 in up to 0.72 of one seed's last block); dihedral TM4 0.964 against 0.987
+    (one-sided lower p 0.06); TM1 0.965; no jump; KE/1.5kT 0.996-1.007 (`tm4_compare_cov_d9_02_sc.txt`).
+    **Across ff30_gdepth_dt009's epochs TM4's C-terminal end frays step by step** (147-151, last
+    block): start 1.00, 1.00, 0.95, 0.73, 0.65; d9_01_sc 0.99, 0.99, 0.88, 0.68, 0.62; d9_02_sc 0.99,
+    0.92, 0.79, 0.47, 0.52; d9_03_sc 0.92, 0.83, 0.72, 0.46, 0.42. No single step is resolved; the
+    direction is the same at every epoch end. The SI-rate twin ds_EE does not follow it: ds_02_sc
+    holds 147-151 near the start (0.97, 0.89, 0.86, 0.69, 0.67) and loses 135-139 instead.
+  - **d9_01_sc against gdepth_start_sc** (ff30_gdepth_dt009 step 37, ds_01's twin reference;
+    18:25-20:21): DSSP alpha 0.925 against 0.947, -0.023 [-0.074, +0.031], p 0.45, not resolved;
+    unwound 0 against 1, flipped 0 and 0; TM1 0.988 against 0.972; no jump; KE/1.5kT 0.998-1.006
+    (`tm4_compare_cov_d9_01_sc.txt`). Its 147-151 read 0.99, 0.99, 0.88, 0.68, 0.62, close to the
+    start's, so d9_03_sc's lower 147-149 is not yet there at step 37. d9_03_sc against it: 0.884
+    against 0.925, -0.040 [-0.105, +0.025], p 0.29, not resolved (an added comparison,
+    `tm4_compare_cov_d9_03_sc_vs_d9_01_sc.txt`).
+- Unchanged: the membrane H-bond term (4.14, not adopted). `$P/py/martini_build_tables.py`
+  keeps the old sampling (the training tree is not overwritten during a campaign); never rebuild
+  martini.h5 there.
 
 ---
 
@@ -3555,7 +3877,7 @@ can still reach dG_HX in three ways:
    experimentally. Peng 2022 compared k_f with k_chem (EHEE_rd2_0005: 1700 against 9-26 s^-1). No such check
    exists here for GlpG, and the Sosnick-lab GlpG HDX-MS abstracts (Biophys J 2023, 2024; seen only in
    search snippets) describe regions that "cooperatively unfold only at long time scales". If the TM4
-   peptides show EX1 (bimodal envelopes), their uptake reports k_op, the dG_op ~ 10-11 kcal/mol in 7.1 is
+   peptides show EX1 (bimodal envelopes), their uptake reports k_op, the dG ~6.1-7.4 kcal/mol of 5.5 is
    not a free energy, and no equilibrium estimator can be compared with it.
 
 Order of checks: EX1/EX2 in the GlpG HXMS spectra before converting any TM4 peptide to dG; then the
@@ -3834,16 +4156,15 @@ hybrid does not (res 126 **0.577** vs 0.051; res 150 0.212 vs 0.062; res 25 0.13
 defensible statement is that implicit is close to all-or-nothing per amide while the hybrid breathes a
 few percent throughout.
 
-**Net position: do not rank the two models.** Implicit wins the textbook-mechanism comparisons
-(one-at-a-time, short-ranged, clean frayed-terminus/rigid-core profile) and internal self-consistency.
-The hybrid wins the only *quantitative* comparison to a measured number -- its TM4 core at 3.5-4.9
-kcal/mol sits inside the 3-4 (poly-Ala) to 5-6 (Leu) range Langosch reports for TM-helix cores, whereas
-implicit's frozen amides imply >5.4 kcal/mol at best and >7.8 if frames were independent, at or above the
-top of that range. That bound depends on the **effective** number of independent frames, which has not
-been measured; **an autocorrelation-time estimate on the implicit protection state is the one live
-quantitative discriminator** and is the next thing to run. Both errors I made today ran in the same
-direction, toward flattering the hybrid, which is worth remembering when reading any model-ranking claim
-in this file.
+**Net position.** Implicit wins the textbook-mechanism comparisons (one-at-a-time, short-ranged, clean
+frayed-terminus/rigid-core profile) and internal self-consistency. On TM4 the one GlpG measurement also
+favours implicit (5.5): the 3-4 (poly-Ala) to 5-6 (Leu) kcal/mol range Langosch reports is measured in 80%
+TFE, with no lipid and no protein packing, so it is not a TM4 reference; the lab's HXMS TM4 peptide 140-144
+gives 6.1-7.4 kcal/mol, above the hybrid's 3.5-4.9 and consistent with implicit's >5.4 (>7.8 if frames were
+independent). That bound depends on the **effective** number of independent frames, which has not been
+measured; **an autocorrelation-time estimate on the implicit protection state is still the live
+quantitative discriminator.** Every error made in this comparison, the TFE reference included, ran toward
+flattering the hybrid, which is worth remembering when reading any model-ranking claim in this file.
 
 ### 5.3c The protein carries no explicit charge in the hybrid, and what follows from it (2026-09-12)
 
@@ -3911,6 +4232,154 @@ stage fix, so its protein was frozen (3.4). The valid ff2.1 reference is the 202
   Cold rungs earn their keep as ladder rungs for exchange, not as reporting temperatures.
 * Helical donors read median dG 2.04 with 9% negative against loop donors' -0.05 with 51% negative, so the
   profile does track secondary structure.
+
+### 5.5 TM-helix exchange in a bilayer: what the literature says (2026-10-10)
+
+The user's question: do the TM spikes go to infinity, are the helices frozen, or do they open with water
+blocked. Three literature agents; citations checked against abstract or full text unless marked.
+
+**Experiment measures slow, finite exchange, and reports "none" only as the end of its window.** WALP16 in
+DMPC: half-lives up to ~2x10^4 min, slowest in the bilayer core (Demmers et al. 2000 PNAS). M13 coat protein
+(SDS): 15-20 TM amides >=10^5 and V29-V33 ~10^6-fold slower than poly-DL-Ala (Henry & Sykes 1990
+Biochemistry). APP C99 (LMPG, 45 C): TM half-lives hours to weeks, I45-I47 none in several weeks (Cao et al.
+2017 JACS). bR helices: little exchange after 48 h (Earnest et al. 1990 Biophys J); 71% very slow over
+1.5-25 h (Downer et al. 1986 JBC). That is PF ~10^5-10^7, dG_HX ~7-9.5 kcal/mol at 298 K, a lower bound
+where nothing exchanged. GlpG: in SMALPs over 9 s-2.5 h, TM2-6 protected and TM1 (94-108, E. coli numbering)
+relatively unprotected (Reading et al. 2017 Angew Chem); in liposomes, many core amides still deuterated
+after 10 days in protonated buffer at pH 7.4, with TM5/TM6 exchanged (Chevelkov et al. 2023 ACS Phys Chem
+Au). Hebling et al. 2010 Anal Chem is GGCX, not GlpG.
+
+The lab's H145A HXMS (`~/OneDrive - The University of Chicago/glpG/Final H145A w reps ... all peps.csv`,
+pD 6, 10 s to 20 d, 3 replicates; construct numbering = ours, verified: 79 A, 135 T, 188 H = H254):
+
+| peptide | helix | %D 18 h | %D 29 h | %D 20 d |
+|---|---|---|---|---|
+| 140-144 ALMGY | TM4 | 26.5 | 41.6 | 97.6 |
+| 109-113 / 110-118 | TM3 | 39.5 / 12.5 | 40.9 / 15.4 | 85.7 / 84.6 |
+| 193-200 AVGLAMAF | TM6 | 52.8 | 62.8 | 71.8 |
+| 35-64 (TM1 + loop) | TM1 | 13.2 | 14.3 | 19.9 |
+| 162-169 GLIIFALI | TM5 | 1.6 | 1.3 | 1.7 (0.10 of 6 D, flat from 10 s) |
+
+Not back-exchange corrected (the His-tag peptide 1-20 reads 13-20% at every time). TM4 140-144 half-exchanges
+at ~1.6 d (k_obs 4.8e-6 s^-1, steady from 18 h to 3 d); k_int for amides 142-144 from
+`4.calc_D_uptake.py`'s own tables is 0.14-0.27 s^-1 at pD 6.0 and 20 C, up to 0.69-1.36 at pD 6.4 and
+25 C, so PF ~3x10^4-3x10^5 and dG ~6.1-7.4 kcal/mol. The TM5 peptide is
+the only one with no measurable uptake; the overlapping 157-186 is too noisy to confirm it (s.d. 11 D at
+20 d) and it conflicts with the ssNMR's exchanged TM5, so it is unconfirmed.
+
+**Exchange needs an opening and water/OH- at the amide, and the bilayer suppresses both.**
+* Opening still matters inside the bilayer: Pro speeds exchange along the whole WALP TM segment (Demmers et
+  al. 2001 JBC); rates span three orders of magnitude along one APP TM helix (Cao 2017).
+* Opening costs more: an H-bond is worth ~-1 kcal/mol in water against ~-5 in alkane (Ben-Tal et al. 1997
+  J Phys Chem B, snippet only), against White & Wimley's 4-5 kcal/mol per broken H-bond in the core (4.12).
+* Access matters separately: protection follows helical periodicity at constant H-bond type (alamethicin in
+  DOPC, Dempsey & Handcock 1996 Biophys J; melittin, Dempsey & Butler 1992 Biochemistry; M2, Tian et al. 2003
+  Protein Sci); alamethicin exchanges by partitioning into water; a Gly packing defect raises local hydration
+  (Hogel et al. 2018 Biochemistry). Langosch 2026 Chem Rev: membrane-embedded parts of a helix "are not
+  accessible to the catalytic hydroxide ions", which is why that lab measures TM cores in 80% TFE (3-4
+  kcal/mol poly-Ala, 5-6 Leu). Those numbers are therefore TFE values with no lipid shielding.
+* Core water is low, not zero: the Wiener, King & White 1991 Gaussian (centre 22.5 A, 1/e half-width 4.6 A)
+  extrapolates to 7e-4 of peak at 10 A and 6e-7 at 5 A from the midplane (fit tail, not measured); Marrink &
+  Berendsen 1994 put the water barrier at 26 kJ/mol (~1e-4 of bulk). No one has measured k_ch in the acyl core.
+
+**What this means for our estimator.** `combine_hdx_protection.py` uses `exchange = (1-pp)*acc` with `acc` in
+{0,1}, so a lipid-shielded amide has k_ch = 0 exactly and its PF is infinite by construction. The logic has
+precedent: Peng 2022's burial term is the implicit-solvent stand-in for Halle's "no water", master's
+`--use-TM-region` ORs in lipid-facing TM amides, the HDXer tutorial (Lee et al. 2021 LiveCoMS) says lipid may
+be counted in N_C, and Jia et al. 2023 JACS counted POPE atoms for XylE (HDXer's own default excludes lipid).
+None of these papers reports or treats TM saturation; Best-Vendruscolo PFs are finite by form. The physics
+says k_ch in the core is reduced, not zero, so a lipid-shielded amide's true PF is finite. Two consequences:
+1. A TM `+inf` is a censored value, as experiment's "no exchange" is, and the measured TM-core range (6-9.5
+   kcal/mol) mostly lies above the estimator's ~5.5 kcal/mol limit (5.2), so most TM cores would be censored
+   even with a nonzero `acc`.
+2. A continuous `acc` needs a water profile for this bilayer. Dry MARTINI has no water, so the profile would
+   come from outside this simulation, which 1.6 rules out unless decided deliberately. Not done.
+
+**What the post-processing gets wrong in the light of this (recorded 2026-10-11; the user decides later,
+nothing changed).** The protection rule and the dG profile (`calc_hdx_ht.py`, `plot_ref_style.py`) stand.
+* **Uptake cap.** `4.calc_D_uptake.py:499-500` sets `k_obs = k_chem/1000` when `mean_pf == 1`, i.e. PF =
+  1000 (4.1 kcal/mol at 298 K) for every amide that never exchanges, below the ~10^4 resolution bound (5.2)
+  and below amides resolved at 4.1-5.5 kcal/mol, so the most protected amides are predicted to exchange
+  fastest among the protected ones. On glpG at T 0.85 that is ~85 of 203 amides, nearly all TM, predicted
+  half-exchanged in minutes to hours against TM4's ~1.6 d and TM5's none in 20 d. Master's
+  `00.AnalysisScripts` has the same line (master's `04.HDX/4.calc_HDX.py` uses a dG sentinel instead),
+  so a fix changes master's uptake output for soluble proteins too. No current figure uses it
+  (`run_hdx_analysis.sh` sets `skip_experiment_data=true`), but any comparison with the HXMS file would.
+  Proposed: the per-temperature ESS bound in place of 1000, and censored amides carried as lower bounds in
+  the uptake comparison. Even fixed, a censored amide's uptake is determined only to t ~ 0.1*ESS/k_int,
+  about 10^3-10^4 s, so the multi-day HXMS points cannot test the TM cores at the present sampling.
+* **Wording.** `py/martini_hdx_membrane_accessibility.py` ("the continuous +inf that a non-exchanging TM
+  helix should show") and `helpers/plot_ref_style.py` ("a non-exchanging transmembrane helix") say
+  non-exchanging where the literature says slower than the estimator resolves. `00.AnalysisScripts/README.md`
+  (~113-117) rejects a phosphate-plane Boolean because "it saturates stable transmembrane amides", which is
+  what the literature predicts, and does not mention the tail-contact criterion.
+* **Interface boundary (a measurement to make, not a change).** The 7 A tail contact sits between the
+  phosphate and ester beads, so an amide at the glycerol/carbonyl level counts as dry, where the Wiener-White
+  profile still has a few percent of bulk water and non-H-bonded interfacial amides exchange near intrinsic
+  rates (O'Neil & Sykes 1989; Huster 2003). It may over-protect helix ends. Check on existing trajectories:
+  how many censored amides have an ester bead nearer than any deeper tail bead.
+
+**TM4: protein-buried, finite in experiment, and more protected than the hybrid says (user question,
+2026-10-11).** The user's concern: implicit TM4 runs off-scale, hybrid TM4 does not, and TM4 is buried in the
+protein with no bilayer contact.
+* **TM4 is mostly protein-buried, but not sealed.** In the OPM-oriented E. coli structure in the lab folder
+  (`glpg.pdb`, 91-271), relative SASA of construct 131-145 is <=0.05 (146-150: 0.09-0.56). Probe centres a
+  2.35 A tail-sized probe can reach in |z| < 13 A sit 4.1-6.3 A from the backbone N of 142, 143, 144, 146,
+  147 and 7.2-10.8 A from the rest of TM4, so the crystal predicts that ~5 TM4 amides register a tail contact
+  under the 7 A rule, the same ones the hybrid shields (5.3: `acc` ~0 at 143, 144, 146, 147). The hybrid's
+  lipid term on TM4 matches the crystal; it is not lipid intrusion. (The exterior/cavity split used a crude
+  radial ray test, which put 4488 of 4498 probe centres outside.)
+* **The off-scale implicit TM4 is not lipid.** The implicit analysis applied no membrane term (5.3b), so its
+  TM4 is off-scale because H-bond or protein burial held in every frame: TM4 never opened, dG >5.4.
+* **The finite pre-fix hybrid TM4 is protein protection failing, not lipid.** Two pre-fix sources, which
+  differ in level:
+  - 5.3: TM4 135-151 `pp_fail` 0.032, `acc` 0.42, on a 16-replica ladder that is no longer on `/project`.
+  - The surviving 48-rung ff2.1 set (`popepopg_REMD/glpG-RKRK-79HIS/hdx/results/`, T 0.70-0.90): at the
+    0.851 rung, core 138-148 has `pp_fail` 0.10-0.25 and `acc` 0.001-0.08, and 142-144 resolve at
+    4.1-4.4 kcal/mol (3.7-4.7 at the 0.799 rung).
+  - That set's files are dated 08-27 on `/project`, not 09-04 as recorded before. Its protection arrays
+    fluctuate, so it is not the rigid-protein set of 3.4. Which campaign it belongs to is not established.
+* **Experiment sides with the off-scale reading.** 140-144 (amides 142-144) gives dG ~6.1-7.4 kcal/mol,
+  above the estimator's ~5.5 limit, so a correct, well-sampled model shows TM4 off-scale or at the limit.
+  The pre-fix hybrid's resolved 3.5-4.9 (2.7 median under ff2.1, 5.3d) means half-exchange in 8-170 min at
+  298 K and pD 6, against ~1.6 d measured, i.e. 1-4 kcal/mol too labile. If its 142 (`acc` 0.42) sat in
+  that range, the peptide would be a third deuterated within an hour; it reads ~10% at 1-6 h.
+* **On current inputs the TM4 core holds (plan.md Phase 16, 2026-10-11).** Setup: local single-temperature
+  runs on the converged side-chain/lipid table, after the temperature fix, 79HIS, 12 seeds of 4000 tu
+  from the live seed, the first 1000 tu dropped, the ff2.1 HDX topology. Every other step is the
+  repo's HDX code (`scratchpad/tm4_hdx_local/`, readouts in `results/`).
+  - ff2.1 at T 0.85 (298 K), 18,024 frames: 137-148 lose protein protection in at most 0.06% of
+    frames (`pp_fail` <= 0.0006). 135, 138 and 140-148 never exchange, so dG > 5.8 kcal/mol; 137 and
+    139 exchange in one frame each. That bound counts every frame as independent, so it is the most
+    the set can resolve. GLY136 is the one amide inside 135-148 that resolves, at 3.4 kcal/mol
+    (`pp_fail` 0.0038).
+  - Otherwise losses are at the helix ends: 130-134 and 149-151, 1.0-2.9 kcal/mol, mostly seed 1.
+  - Helicity in the same runs: DSSP alpha-helix fraction of 135-151 is 0.94-0.95 in every block, with
+    no seed unwound and no glycine flipped.
+  - T 0.80 (the 10-10 `_sc` sets, 3,612 frames each): ff2.1 loses protection in one frame in 139-149
+    (at 146). ff3.0 (`d9_03_sc`) has at most 0.012 in 135-147 (at 147), and its 148-150 fray
+    (0.11-0.14). Neither exchanges at 142-144 (dG > 4.6).
+  - Against the pre-fix set's `pp_fail` of 0.10-0.25 on the same amides, the lability does not reproduce
+    on current inputs. It was the hybrid's stale table and temperature, not the Upside core, as far as
+    this sampling can tell.
+  - Two limits remain. Crystal-start 4000 tu runs cannot rule out slow TM4 openings that a REMD
+    equilibrium would sample. And 79HIS is not the experiment's 79ALA. The midway3 REMD analysis on the
+    fixed-table chains (remote_jobs.md §1) is the matched test, with per-residue dG at 142-144 against
+    this peptide. For ff2.1 that is `glpG-RKRK-79HIS.ff_2.1_sc` (plan.md Phase 16).
+  - Its first 8 chunks (~800 tu of block 1, 10-12) drift far less than the pre-fix chain did.
+    Mean backbone H-bonds over the T 0.80-0.87 replicas go 205 -> 191 there, 201 -> 117 in the pre-fix
+    ff2.1 79HIS block 1 (09-01, log 48890657), and 199 -> 180 in ff_3.0_gdepth (49216140); at
+    T >= 0.87, 200 -> 176, 194 -> 115 and 192 -> 163. This is whole-protein, not TM4, and read from the
+    driver logs only.
+* **If that test shows a residual, the core's trained parameters alone cannot explain it:** the implicit run uses
+  the same core and keeps TM4 closed. What differs is how each model embeds the core: the implicit
+  membrane's backbone H-bond cost at the midplane, where TM4a sits (|z| 1.47 A, 3.10c; the term raised
+  hybrid TM4 0.71 -> 0.82 on the old table, 4.8, and 0.924 -> 0.959 n.s. on the converged one, 4.14);
+  helix-helix packing balanced only against soluble proteins while lipid attraction is full dry-MARTINI
+  (4.4's open hypothesis, consistent with TM4's HDX openings needing H-bond and protein burial to fail
+  together); and the untested rotamer 1-body node (4.1). The missing environment terms are ruled out for
+  TM4 (4.4). The one core parameter that acts on TM4 specifically is glycine's map (3 Gly; 3.10c), the
+  ff3.0 target, which is the same in both models.
 
 ---
 
@@ -4102,8 +4571,8 @@ the most buried helix, was the only one that failed (helicity 0.90 -> 0.17 acros
 the edge of that core while no residue inside it did. This is not tunable: lamellar thickness is
 `2*V_tail/APL`, and `V(C12) ~ 324 A^3` means a 28 A core needs APL ~ 23 A^2, which a maltose head
 (>= 40 A^2) cannot reach, which is why DDM forms micelles. Experiment settles which result is right: the
-HXMS TM4 peptide 140-144 reaches only 50% deuteration at 24 h (dG_op ~ 10-11 kcal/mol), so a trajectory that
-unwinds TM4 in a sub-microsecond segment is inconsistent with the data as well as with the implicit model.
+HXMS TM4 peptide 140-144 is ~34% deuterated at 24 h and half-exchanges at ~1.6 d (dG ~6.1-7.4 kcal/mol,
+5.5), so a trajectory that unwinds TM4 in a sub-microsecond segment is inconsistent with the data as well as with the implicit model.
 Note also that `--membrane-thickness-angstrom` does not set slab geometry; it is only read for ion counting.
 
 Building the micelle taught three things, each found by measurement: seed from the shell VOLUME rather than
@@ -5067,6 +5536,27 @@ At 22:34 a `WATCH_STATUS.md` upload ran `ssh ... 'cat > $W.new && mv $W.new $W'`
 local copy within two minutes (md5 equal). **Every remote write goes `ssh ... '... cat > $W.new &&
 [ -s $W.new ] && mv $W.new $W' < LOCAL_FILE`, with the remote md5 checked against the local one
 afterwards.**
+
+### 10.24 Recompute a comparator from its files before citing it (2026-10-11)
+
+Findings 5.5 cited TM4 `pp_fail` 3.2% and `acc` 0.42 as "the one surviving set (`popepopg_REMD/<V>/hdx/`,
+09-04)". Read from that set's own arrays, the 0.851 rung gives 0.20 and 0.11. The 3.2% came from 5.3's
+16-replica ladder, and the surviving files are dated 08-27. The conclusion survived, because both sources
+are pre-fix and both show TM4 failing, but the cited level was off by six times. **Before quoting a
+stale set as the comparator, open its files, recompute the number at the cited condition, and record
+the path, the file dates and the value read.** Also from the same day: a scratch script that `cd`s into
+the repo wrote its relative output path into the repo root. **A script that changes directory takes
+absolute paths only.**
+
+### 10.25 Deleting run data: remove the data, keep what regenerates it (2026-10-11)
+
+Freeing `/project` at the user's word, NP-1AO6's four run directories went with `rm -rf` whole. The
+user then asked to keep the setup scripts so the runs can be regenerated; by then the directories were
+gone, and with them two small analysis scripts (`prod_counterion/onset.py`, `onset2.py`) that had no
+other copy. **Before deleting a directory, list its non-data files (`*.py`, `*.sh`, `*.sbatch`,
+configs, inputs) and remove only the trajectories and per-step outputs; write the manifest first.**
+The panel cleanup that followed did this and kept every script; the frozen-H-bond arms kept theirs
+until the user asked for those runs to go entirely.
 
 ---
 

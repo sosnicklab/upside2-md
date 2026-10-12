@@ -28,6 +28,17 @@ are not TM4 evidence (findings 10.19).
 Ramachandran map, not only glycine's pair, as offsets from NDRD under an explicit L2 prior, with no
 new input simulations (route 1 of findings 1.28; Phase 14).
 
+**The basin-depth path, not the BioEmu map** (user, 10-11 23:50: "we decided to go with basin depth
+training path (as it is expandable to all residues)"). The BioEmu-map line (ff30_bio, ff30_bio_dt009,
+ff30_bio_si; released ff_3.0_bio, ff_3.0_bio_si) is dropped and its validation cancelled. **ff3.0 is
+ff_3.0_gdepth** (user, 10-12 00:25: "since ff3.0 is working, it is the only branch we need (and its
+expansion to all residues)"): its SI-rate twin ff30_gdepth_si was stopped at step 72 before its gate
+and deleted, and ff3.1 (Phase 14) extends the depth training to every residue. The
+H-bond-frozen arms, polygly (stopped) and the local TM4 glycine-flip test (retired) went the same
+day, and the BioEmu line and the frozen arms were deleted with their inputs and derived products
+(10-11 23:45, user; remote_jobs.md §1 "Finished runs"): on the fixed side-chain/lipid table ff2.1 holds TM4 (findings
+4.15). TM4 HDX stays open (Phase 16).
+
 ## Architecture and Key Decisions
 
 **Trainer.** `training/ConDiv.py` is O. Kleinmann's Python 3 port of Peng's FF2 dual-target trainer,
@@ -144,7 +155,7 @@ glycine change.
 - Phase 10: the local glpG test of round 3. Its TM4 counts used pre-fix inputs and are invalid
   (3.11).
 
-### Phase 11 - round 4 (TRAINING on midway2 broadwl since 2026-10-06; frozen arm since 10-07)
+### Phase 11 - round 4 (TRAINING on midway2 broadwl since 2026-10-06; BioEmu and frozen arms dropped 10-11, user)
 
 Done:
 - [x] BioEmu-fitted library in `rama31.dat`. Its own pass matches BioEmu's X-G-Y glycine within
@@ -228,14 +239,18 @@ Next:
 - [ ] **Answer the user's question: which run moves TM4 toward stable.** Compare each checkpoint
   with its own start, each frozen run with its unfrozen twin at the same step, and read the direction
   across epoch ends. With 12 seeds only large changes resolve (findings 1.22); run 24 seeds where a
-  difference falls between.
+  difference falls between. On the fixed side-chain/lipid table (10-10) ff2.1 itself holds TM4
+  (0.944 against 0.610 on the old table, p 0.002), every start reads alike and no released
+  candidate improves on it (findings 4.15); what follows from that is the user's.
 - [ ] Every step: `check_step.py`, the KE scan, the margin and glycine readouts. A trained-H-bond run
-  whose margin falls below +0.10 holds for the user; ff30_bio_dt009 has been on hold since step 14
-  and trains on.
+  whose margin falls below +0.10 holds for the user; ff30_bio_dt009 was on hold from step 14 to its
+  end.
 - [ ] Each epoch end: selection panel (`submit_new.sh`).
-- [ ] At a converged gate: automatic validation. The user chooses ff_3.0.
+- [ ] At a converged gate: automatic validation. The user chooses ff_3.0. Converged: ff_3.0_gdepth
+  (10-09 08:54), ff_3.0_bio_si (10-10 02:25), ff_3.0_bio (10-10 16:46; findings 1.26, 1.31, 1.32);
+  ff30_gdepth_si still trains.
 
-### Phase 12 - poly-Gly: all-atom Ac-(Gly)20-NHMe as Upside's reference (STARTED 2026-10-05, PI's suggestion)
+### Phase 12 - poly-Gly: all-atom Ac-(Gly)20-NHMe as Upside's reference (STOPPED 2026-10-11, user; started 10-05, PI's suggestion)
 With neutral caps the chain is achiral, so alpha_R = alpha_L exactly at equilibrium. It shows the
 glycine map's own handedness with nothing else present.
 - Setup: amber99sb-ildn / TIP3P at 300 K on midway2. Files and README in
@@ -258,10 +273,12 @@ Status:
   about a month to 1 us; the first link measures it.
 - [x] Upside G20 under ff21_released and bio_start, 8 x 200,000 tu: both chiral, ln(aR/aL) -0.72 and
   -0.45 (findings 1.20).
-- [ ] First link: equilibration logs, ns/day, `gmx mindist -pi` above 1.0 nm. Then the blank at each
-  ~200 ns (step 5).
-- [ ] Analysis script.
-- [ ] Round-4 epochs.
+- [x] Links 1 and 2: 33.8-34.0, then 32.4-32.6 ns/day; `gmx mindist -pi` 2.31-3.57 nm, above 1.0 nm.
+- **Stopped by the user at ~97 ns per replica (10-11 23:05):** the question it served, the glycine map
+  behind TM4's glycine flips, was settled by the side-chain/lipid table fix (findings 4.15: ff2.1 holds
+  TM4 on the fixed table, 0 of 12 flipped). The blank, the analysis script and the round-4 epochs are
+  not pursued. The data are kept (`polygly/`, 213 MB), and the chain resumes from `prod.cpt` if the
+  glycine map's own handedness (Upside G20 ln(aR/aL) -0.72, findings 1.20) is ever taken up.
 
 ### Phase 13 - glpG TM1: hold it in the hybrid by correct physics (STARTED 2026-10-09, user)
 Hold glpG's TM1 in the hybrid without retraining the force field (user, 10-09): no scaling or
@@ -348,8 +365,8 @@ the probe later, and the set is rerun if step 3 changes the engine.
    above 1000 E_up/A, protein side-chain contacts outside TM1 and TM4. ff2.1 + term's tears are the
    table's kicks on MET142 (findings 4.8). The literature (findings 4.12) supports the term's
    magnitude and forbids combining it with option B (double counting).
-6. [ ] Report; production implementation decided with the user. The probe build and its source are
-   deleted at the end.
+6. [ ] Delete the probe build and its source. The report is done (10-10): the table fix is in
+   production (Phase 15); the term is not adopted (user, 10-10 11:20; findings 4.14).
 
 ### Phase 14 - ff3.1: every basin depth of every map, under an L2 prior (STARTED 2026-10-09, user)
 Route 1 of findings 1.28 (user, 10-09: no new simulations for input data). Each coil map (central,
@@ -377,32 +394,89 @@ coordinates at its full rate).
    49218341, submitted 23:40, target 76, same 456 proteins and workflow, no gate. The push at the
    first epoch end (`rama_rounds.txt`, held-out gap left) is read before the user lets more epochs
    count.
-4. [ ] Judged as round 4: glpG TM4 and TM1 in the hybrid, the selection panels, the gate.
+4. [ ] Judged by the selection panels and the steric check. The local glpG TM4 glycine-flip test was
+   retired by the user 10-11 23:10 (ff2.1 holds TM4 on the fixed table, findings 4.15; "we have a
+   working ff and we are trying to expand it"), after fa_00_sc and fd_00_sc. TM4 HDX stays open: whether
+   TM4's dG should be effectively infinite is unresolved (user, 23:15).
+5. [x] **Steric watch** (user, 10-10 21:10, after Jumper: a moving map may open conformations where
+   the side chain and backbone clash; findings 1.33). Upside has no excluded volume between a
+   residue's CB and its neighbours' backbone, so the map is what keeps them apart.
+   `training/ff31/steric_check.py` (deployed `checks/ff31_steric/`) measures the step's library
+   against a hard-sphere Ramachandran map (outer-limit contacts, ideal geometry, CB, amide H, a
+   following proline's CD; glycine without CB), as side-chain and backbone clash probability of
+   every coil map and of every training residue's engine map against NDRD, and the free ensembles'
+   non-glycine phi > 0 populations per step. The watch runs it at every ff3.1 step (cron
+   `c618e779`) and notifies on a `STERIC FLAG`; the jobs change only with the user. Step 8: no flag.
 
 Risks recorded before the probe (findings 1.28): the depths can learn native placement and absorb
 H-bond and side-chain physics, which a prior does not prevent; 46 held-out proteins sit at the
 sample-size floor (1.12), so the width needs cross-validation over many folds.
 
-### Phase 15 - the side-chain/lipid table at converged sampling, in production (STARTED 2026-10-10, user)
+### Phase 15 - the side-chain/lipid table at converged sampling, in production (DONE 2026-10-10, user)
 The user's word (10-10 08:30): apply Phase 13's table fix to the force-field files so future
 simulations run with it. The fix is a sampling density, not a parameter: the same potential, Boltzmann
 average and grids, at 600 target directions x 12 side-chain bead frames instead of 24 x 1
-(findings 4.10, 4.13). Not part of it: the membrane H-bond term (option A stays a separate decision).
-1. [ ] Builder `py/martini_build_tables.py`: `_run_sc_task`'s per-sample loop replaced by the
-   vectorised computation of `scratchpad/glpg_tm1/kick_ff30/sc_table_vectorized.py` (the same pair
-   energy, anchor, binning and average), and the sampling made explicit arguments with defaults 600 and
-   12; the `UPSIDE_MARTINI_*BEAD_FRAME_COUNT` overrides go. Gate: at 24 x 1 it reproduces every
-   dataset of the current `sc_table`; at 600 x 12 its `rotamer_full_energy_eup` equals the tested
-   `sc_table_600x12.npz`.
-2. [ ] Rebuild `parameters/ff_2.1/martini.h5` (backup `.bak_pre_sc600x12_20261010`, overwritten in
-   place): `particles` unchanged, `sc_table` the converged one. A fresh preparation then writes it
-   into every new hybrid input (`py/martini_prepare_system*.py` read this file).
-3. [ ] `up.md` documents the sampling; findings 4.15 records the build and its checks.
-4. [ ] Seed-patched runs (local TM4 queue, glpG validation): `patch_glpg.py` carries martini.h5's
-   table into the patched seed, scope as the user decides (asked 10-10).
-5. [ ] Cluster: the rebuilt martini.h5 (and the builder) to `/beagle3/.../upside2-md` and `$P`, md5
-   checked; no running job reads martini.h5 (benchmarks are soluble, queued glpG chains read their
-   already-patched seeds).
+(findings 4.10, 4.13). Not part of it: the membrane H-bond term (option A, not adopted; findings 4.14).
+1. [x] Builder `py/martini_build_tables.py`: the per-sample loop computed as arrays, sampling
+   600 x 12 by default (explicit arguments; the env overrides removed). At 24 x 1 it reproduces the
+   old table (9 of 5.1 M cells one float32 step off); at 600 x 12 it equals the tested table to
+   float32 rounding (findings 4.15).
+2. [x] `parameters/ff_2.1/martini.h5` rebuilt (md5 `2e612261...`; old kept as
+   `.bak_pre_sc600x12_20261010`): `particles` identical, `sc_table` converged. Every new hybrid
+   preparation reads it.
+3. [x] `up.md` 2.6 documents the sampling; findings 4.15 the build and its checks.
+4. [x] Seed-patched runs (user 10-10 08:45: everywhere). `patch_glpg.py` (md5 `97ca3294...`) copies
+   martini.h5's table into the seed. The 8 queued glpG chains (ff_3.0_gdepth, ff_3.0_bio_si) were
+   re-patched and checked. TM4 sets run as `<tag>_sc` from now on.
+5. [x] Cluster: martini.h5 in `$P` and `/beagle3/.../upside2-md`, the builder in `/beagle3` and
+   `patch_glpg.py` in `$P/training/` and `tm4_local/scripts/`, md5 checked
+   (`checks/sc_table_20261010/`). `$P/py/martini_build_tables.py` stays old (campaign rule).
+6. [x] TM4 references on the fixed table, run locally 08:50-22:18 10-10: d9_03_sc, bs_03_sc,
+   ff21_bioT1_6_sc, gdepth_start_sc, ff21_released_sc, d9_01_sc and b9_03_sc. d9_03_sc reproduces
+   Phase 13's table-only set within noise; ff2.1 holds TM4 on the fixed table, every start reads
+   alike, and none of the three released candidates is resolved from its start (findings 4.15).
+   Each later epoch end is patched with the new tool and compared with its `_sc` start and twin.
+
+### Phase 16 - glpG TM4 HDX on the fixed table, locally (STARTED 2026-10-11, user)
+
+The only hybrid HDX set (ff2.1, 09-04) gives TM4 3.5-4.9 kcal/mol against the H145A peptide
+140-144's 6.1-7.4, through protein protection failing (`pp_fail` 0.032 on 135-151 at the T 0.85
+rung, findings 5.3). It predates the 09-10 temperature fix and the 10-10 table (findings 5.5). The
+test repeats its force field and temperature with both fixes: if TM4's `pp_fail` falls, the gap
+was the stale inputs; if not, the residual candidates of findings 5.5 stand. User, 10-11: "go
+ahead and run this session's job first", ahead of the TM4 queue.
+
+* Inputs: `ff3_local_test/patched/79HIS_ff21_released_sc.up` (ff2.1, fixed table, the 10-10
+  `ff21_released_sc` set's input), 12 seeds, T 0.85 (298 K), 4000 tu, frame interval 2, the
+  `run_glpg.sh` integrator. Runs and analysis in `scratchpad/tm4_hdx_local/`.
+* Analysis: the repo's HDX steps unchanged (projection, `get_protection_state.py`,
+  `martini_hdx_membrane_accessibility.py`) on the ff2.1 HDX topology; no MBAR, no uptake curves.
+  Readout per TM4 amide 135-151: `pp_fail`, `acc`, exchanged fraction, dG at 298 K with the
+  censored bound; 142-144 against the peptide. The 10-10 T 0.80 `ff21_released_sc` and
+  `d9_03_sc` runs are read the same way at no cost.
+* Limits: 4000 tu from the crystal is not the REMD's equilibrium, and 79HIS is not the
+  experiment's 79ALA; the midway3 REMD analysis (remote_jobs.md §1) stays the matched readout.
+
+- [x] 12 seeds run 07:09-09:04 10-11: KE/1.5kT 0.999-1.004; TM4 DSSP alpha 0.94-0.95 per block,
+  0 unwound, 0 flipped (`results/tm4_local_T085.txt`).
+- [x] HDX topology (the stale set's, md5 166c9d12) and per-seed arrays; tail-contact radius 7.00 A
+  on every T 0.85 seed.
+- [x] Readout (findings 5.5): ff2.1's TM4 137-148 lose protein protection in at most 0.06% of frames
+  at 298 K, against 10-25% in the surviving pre-fix set; 142-144 never exchange (dG > 5.8, the
+  frame-count bound). The pre-fix lability does not reproduce on current inputs. Open: the REMD
+  readout (79ALA, equilibrium sampling) on midway3.
+- [ ] ff2.1 REMD on the fixed table (user, 10-11 17:20: "just run REMD on remote to see if the
+  problem still exist", in place of a local control while the Mac Studio is busy). The ff3.0 chains
+  cannot make this test: the pre-fix lability was measured under ff2.1, 79HIS, and ff3.0 changes
+  TM4's three glycines. One 79HIS chain from the pristine ff_2.1 seed with the fixed table, the
+  ff3.0 chains' protocol, HDX after block 2 as in remote_jobs.md §1; readout against the pre-fix
+  set's 0.851 rung (138-148 `pp_fail` 0.10-0.25, 142-144 dG 4.1-4.4). Requested of upside2-md-98,
+  which submits and records it in remote_jobs.md. **Running** (job and paths in remote_jobs.md):
+  `glpG-RKRK-79HIS.ff_2.1_sc` from 17:41 10-11, 2 blocks (user), HDX after block 2 (earliest
+  ~17:40 10-14, plus queue waits). Its seed differs from the pristine ff2.1 seed only in the four table arrays, and
+  from the local T 0.85 input only in rama_pot (at most 2.6e-6), so the REMD and local runs share
+  inputs. 28 replicas over T 0.70-0.90, not the pre-fix set's 48, so rungs are compared by
+  temperature.
 
 ## Known Errors / Blockers
 
@@ -412,16 +486,20 @@ average and grids, at 600 target directions x 12 side-chain bead frames instead 
   - any other glpG run from the live seeds under a force field other than the FF1-form ff_3.0.
 
   Each of these used the FF1-form ff_3.0's coverage tables. `patch_glpg.py` is fixed (local, `$P/training/`,
-  `tm4_local/scripts/`, md5 `70589119...`); the automatic validation uses the fixed copy. Another
-  computer must update its local copy before use (remote_jobs.md "Setting up the next computer").
+  `tm4_local/scripts/`; md5 `97ca3294...` since 10-10, which also carries the side-chain/lipid table);
+  the automatic validation uses it. Another computer must update its local copy before use
+  (remote_jobs.md "Setting up the next computer").
+* **Every hybrid run before 2026-10-10 08:39 used the under-sampled side-chain/lipid table**
+  (findings 4.10, 4.15): every round-4 TM4 set and both candidates' first glpG patches. Their
+  comparisons with each other stand; their absolute TM1 and TM4 values do not, and they are not
+  compared with `_sc` sets.
 * **Total-potential jumps in local glpG runs** (findings 1.22): 13 of 105 pre-fix seeds, one blow-up.
-  Cause not identified. Check the fixed-input runs for them; do not drop frames. One-frame backbone
+  The likely cause is the old table's kicks (findings 4.10; none in the 24 fixed-table seeds of 4.13
+  and 4.14), unproven for the jumps themselves. Check the `_sc` sets for them; do not drop frames. One-frame backbone
   excursions below the 3000 cut sit where the helices fail (findings 4.9, Phase 13's second lead).
-* **The TM1 term is a modelling decision for the user** (Phase 13). The membrane model's f was
-  trained in Upside's implicit membrane, with its own burial terms; using its state-dependent part in
-  the hybrid is a physics change.
-* **The TM1 term is anchored at z = 0 and acts on the protein only.** Watch the protein's depth
-  against the explicit bilayer in every test (`analyze_hbmem.py` health block).
+* **The TM1 term is not adopted** (user, 10-10 11:20; findings 4.14). Its f was trained in Upside's
+  implicit membrane and it is anchored at z = 0; any later test of it watches the protein's depth
+  against the explicit bilayer (`analyze_hbmem.py` health block).
 * **midway2-login2's `/project` hangs** (since 10-07 10:48). Route `/project` work through login1
   (remote_jobs.md §8).
 * **The cluster's `training/` keeps the pre-10-02 layout** while round 4 trains. Do not sync the
@@ -430,5 +508,9 @@ average and grids, at 600 target directions x 12 side-chain bead frames instead 
   kept unchanged so glpG stays comparable across campaigns. Whether to remove it is the user's call.
 * **CPU work runs on midway2 broadwl** unless the user names midway3 caslake. No `amd`, `beagle3`
   or GPU partitions, and not `broadwl-lc` (its nodes cannot see `/project`).
+* **HDX post-processing items await the user's decision** (user, 10-11; findings 5.5): the
+  `4.calc_D_uptake.py` PF = 1000 cap on never-exchanging amides (a master line), three docstring/README
+  statements that call TM helices non-exchanging, and the unmeasured interface boundary of the 7 A
+  tail-contact criterion. Nothing is changed until then; do not compare uptake with the HXMS data before.
 * **lambda's helix 2 / helix 4 misorientation** is a known ff2.1 limitation with no single
   side-chain cause (findings 11d). It is re-tested after ff3.0, not trained against.
