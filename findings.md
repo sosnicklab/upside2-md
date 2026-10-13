@@ -3337,11 +3337,18 @@ intended repair. The CB correction also did not improve fold fidelity (`base` at
 the 4.15 A previously measured, though the two are not directly comparable, 4.15 A being a 16-replica REMD
 segment average and 4.61 A a single longer trajectory).
 
+Stock Upside in its implicit membrane is no more faithful (2026-10-13, 4.16): four ff2.1 REMD runs from
+the simulation PDB (1.27 A from the crystal) reach helical-core CA-RMSD 3.5 A in the first quarter of
+600,000 tu and 4.8-6.1 A in the last at T 0.70 (three of the four still rising), and the fraction of the
+start's CA contacts (8 A) kept falls from 0.45-0.49 to 0.23-0.29. Those runs use standard Upside's
+`placement_scalar` and no dry-MARTINI coupling, so neither is needed for a deviation of this size.
+
 So the cause remains **unidentified**. Ruled out so far: the integrator, the H-bond assignment, lipid
 packing and voids, hydrophobic mismatch, the burial threshold, the CB placement, and the absent
-protein-protein environment terms. **Not** tested: the rotamer 1-body representation
-(`placement_fixed_scalar`, fixed rotamer probabilities, versus standard Upside's rama-dependent
-`placement_scalar`), which is the one remaining node-level difference from a standard configuration.
+protein-protein environment terms. The one remaining node-level difference from a standard
+configuration, the rotamer 1-body representation (`placement_fixed_scalar`, fixed rotamer
+probabilities, versus standard Upside's rama-dependent `placement_scalar`), is not needed for the
+deviation (the implicit runs above); whether it changes its size is not tested.
 Consequence for the deliverable: do not add the environment terms to production.
 
 ### 4.2 Helical H-bond occupancy and non-cooperative opening
@@ -3948,6 +3955,52 @@ with it; at 08:45, everywhere: the queued glpG chains re-patched and the TM4 ref
   keeps the old sampling (the training tree is not overwritten during a campaign); never rebuild
   martini.h5 there.
 
+### 4.16 TM5 stays helical but leaves TM6 for TM2, at T 0.70 and 0.80 alike, in both membrane models (2026-10-13)
+
+The PI's question (for an H145A intermediate model): does TM5 stay folded and docked against TM6, and
+how different are the T 0.70 and T 0.80 contact maps. Measured with the established definitions: native
+CA-CA < 8 A, |i-j| >= 5 (`diag_contacts.py`) and CA-CA < 10 A (`tm1_diag.py` bundle), the PCA-axis
+packing flag > 5 A / > 35 deg (`diag_packing.py`), DSSP as `tm_attribution.py`; reference = the seed
+at t = 0 (6.2), which is also the implicit runs' first frame. Two data sets:
+* hybrid: the ff_3.0_gdepth chains' rungs 0 (T 0.70) and 14 (T 0.8006), production = blocks 2-3
+  (chunks 20-42, ~22 chunks of ~90 tu; block 3 was running), plus the ff2.1_sc chain;
+* implicit membrane: `implicit_79HIS_src{,2,3,4}` (stock Upside ff2.1 with `cb_`/`hb_membrane_potential`,
+  WT, the old common `rama.dat`, 08-19), four independent 48-replica REMD runs, rungs 0 and 24
+  (T 0.799), 12,000 frames over 600,000 tu, the first 500 dropped as `hdx_implicit.sbatch` does; O
+  placed as `py/mdtraj_upside.py`, which reproduces the engine's O exactly (DSSP identical on hybrid
+  frames). There is no ff3.0 or H145A implicit run.
+Scripts, `contacts.json`, maps and figures: `scratchpad/tm5_tm6/` and midway2
+`checks/tm5_tm6_contacts_20261013/` (backbone npz there).
+- **The start has a thin TM5-TM6 interface.** TM5-TM6 has 5 CA pairs < 8 A in the seed (2 in the
+  crystal, which sits 1.27 A core CA-RMSD from the seed) and 20 < 10 A; TM6 packs mainly on TM4 (49)
+  and TM3 (24).
+- **TM5 stays helical.** Hybrid H145A any-helix 0.82 at both rungs; 163-172 at 0.91-1.00, the ends
+  161-162 and 173-175 fray; alpha 0.77 against 0.55, the T 0.80 loss at 167-173 going to other helix
+  types. Implicit 0.99 and 0.99 (alpha 0.99, 0.98), helical from 158 to 175. This matches the H145A
+  HXMS TM5 peptide 162-169 (no uptake in 20 d, 5.5).
+- **TM5 leaves TM6 and packs on TM2, at both rungs and in both models.** CA pairs within 10 A of TM5,
+  start / T 0.70 / T 0.80: hybrid H145A TM6 20 / 3.6 / 5.9, TM4 15 / 4.5 / 6.5, TM2 0 / 17.0 / 16.8,
+  L5 19 / 23.7 / 24.6; implicit TM6 20 / 6.3 / 5.4, TM4 15 / 18.1 / 21.5, TM2 0 / 28.8 / 28.9.
+  TM5-TM6 native retention (10 A): hybrid H145A 0.117 +- 0.015 and 0.188 +- 0.011 (centroid 16.6 A at
+  the start, 23.4 and 20.5 A, flag at T 0.70 only); implicit 0.20 +- 0.02 and 0.16 +- 0.01 over the four
+  runs (centroid 19.0 and 19.1 A, no flag). In the hybrid the loss happens within the first ~300 tu at
+  both rungs and T 0.70 keeps falling in block 3 (0.25, 0.13, 0.04 by block); in the implicit runs it
+  falls between the two segments (e.g. 0.23 -> 0.17). Other hybrid chains: WT ff3.0 0.17 / 0.13,
+  H145A+S181T 0.21 / 0.23, WT+S181T 0.23 / 0.17, WT ff2.1_sc 0.34 / 0.26 (5 chunks). So the move is
+  neither H145A's, nor ff3.0's, nor the dry-MARTINI coupling's.
+- **In the implicit model TM5-TM6 is the weakest interface.** Its Q 0.20 is the lowest of the nine TM
+  pairs, against 0.62-0.65 at T 0.70 for TM4-TM6, TM2-TM4, TM3-TM4 and TM2-TM3; in the hybrid every pair
+  touching TM5 or TM6 is low (0.07-0.26) and only TM2-TM4, TM1-TM3, TM2-TM3 keep 0.41-0.68.
+- **T 0.70 and T 0.80 maps differ no more than repeat runs at one temperature.** Hybrid: mean |dP|
+  over present pairs 0.15 between rungs against 0.18 between T 0.70's blocks 2 and 3 (T 0.80's 0.12);
+  total contacts 761 and 746; the largest differences are TM6's register on TM4 (T 0.70 samples
+  140-144 on 185-191, T 0.80 the start's 143-144 on 196-199), not TM5-TM6. Implicit, pooled: 0.05
+  between rungs against 0.07-0.09 between independent runs at T 0.70; total 980 and 906, and the 3 pairs
+  that change by more than 0.2 (142-196, 98-142, 121-133) are all 0.20-0.22 lower at T 0.80.
+- **Every helix pair loses start packing in both models** (hybrid whole-protein Q 0.29 / 0.26 at 8 A,
+  core CA-RMSD 1 -> 4-5 A within ~300 tu; implicit 4.1). TM5's move onto TM2 comes with it, so neither
+  model shows that H145A's TM5 undocks from TM6 in the real protein.
+
 ---
 
 ## 5. HDX: what the estimator measures and how to read it
@@ -4528,6 +4581,11 @@ helper and `check_seeds_current.py` return -phi_std; GLY49 and GLY133 are helix 
 in the crystal seed, so there is no glycine-phi criterion; and a protein "leaving the bilayer" in a
 VTF is the N-terminal tail. A VTF lists N, CA, C, O per residue from atom 0, and phi of residue i
 uses C(i-1), N(i), CA(i), C(i).
+
+A fourth trap: a REMD replica file's `/input/pos` is not the t = 0 structure. `run_remd.py` rewrites
+it at every chunk restart, so a native-contact set read from it is the current chunk's start and
+differs by rung (TM2-TM4 21 against 31 contacts) and drifts toward the latest block. Take the reference
+from the chain's seed `popepopg_REMD_mdw2/seeds/glpG-RKRK-<V>.<ff>.up` (= the simulation PDB, 11).
 
 ### 6.3 Detecting a frozen or rigid protein
 
