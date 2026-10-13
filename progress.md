@@ -646,3 +646,38 @@ to 10-07 12:00 is in git history.
 * **12:46 10-12, watch pass; ff31_depth_all on margin hold.** Step 53 margin +0.0982, below +0.10
   (step 52 +0.1008); user notified, the run trains on. ff31_depth_data link 1 TIMEOUT 12:07 at its wall,
   link 2 49221772 resumed at step 45 (+0.1118).
+* **14:46 10-12, watch pass; ff31_depth_all's epoch-2 end.** Depth round 3 (step 56): 345 of 5,040
+  depths beyond 0.1, held-out gap left 0.9992 (transfer 1.0%, 0.6%, 0.1% over rounds 1-3; findings
+  1.30); steric on round 3's library no flag, largest map x1.22 (findings 1.33); margin +0.0950, on
+  hold since step 53; fa_02 panel submitted. ff31_depth_data step 49 +0.1091.
+* **15:46 10-12, watch pass; panel fa_02.** fa_02 (ff31_depth_all step 56, round 3's library) folded
+  0.404, helix -0.028 on 40 domains; fa_00-02 fold 0.471, 0.444, 0.404 (findings 1.21). Steric no new
+  flag; ff31_depth_all step 57 +0.0979 (hold), ff31_depth_data step 50 +0.1101.
+* **18:46 10-12, watch pass; ff31_depth_data's epoch-2 end.** Depth round 3 (step 56): 39 of 1,442
+  depths beyond 0.1, held-out gap left 0.9983 (transfer 0.6%, 0.4%, 0.2%; findings 1.30); steric on
+  round 3's library no new flag (findings 1.33); fd_02 panel running. ff31_depth_all step 62 +0.0986.
+  New in the queue: the MacBook session's ff21_nobp_dt009 and the ff_2.1_ctrl38 benchmark (34 jobs,
+  user's request, recorded in the run's README); a §1 row points to it; this watch leaves them alone.
+* **19:46 10-12, watch pass; panel fd_02.** fd_02 (ff31_depth_data step 56, round 3) folded 0.449,
+  helix -0.029 on 40 domains; fd_00-02 0.479, 0.472, 0.449, fa_02 0.404 on 39 shared (findings 1.21).
+  Step 58 (step 39's minibatch, round 3) reads 0.0047, at the steric threshold: step 39 was scatter
+  (findings 1.33). ff31_depth_all step 64 +0.0969, ff31_depth_data step 59 +0.1174.
+* **02:46 10-13, watch pass; glpG REMD ff2.1_sc block 2.** Block 1 49223635 COMPLETED whole 02:40;
+  block 2 49299095 R (`block_count` 2); STOP owed at block 2's last chunk (~12:30 10-14). ff31_depth_all
+  step 73 +0.0754 (hold), ff31_depth_data step 73 +0.1430; steric no new flag.
+* **03:46 10-13, watch pass; both ff3.1 runs at target 76.** ff31_depth_data 03:37 (margin +0.141,
+  round 4: 58 depths beyond 0.1, gap left 0.9994), ff31_depth_all 03:53 (margin +0.070, round 4: 418
+  beyond 0.1, gap left 1.0001); both stopped for the user's review, no gate (findings 1.30); steric on
+  both round-4 libraries no flag (findings 1.33); last panels fd_03 49311326 and fa_03 49313290
+  submitted. NTL9 de novo benchmark COMPLETE. WATCH_STATUS.md rewritten for the review.
+* **05:50 10-13, watch pass; ff3.1's last panels.** fa_03 (ff31_depth_all step 75) folded 0.406, helix
+  -0.030; fd_03 (ff31_depth_data step 75) 0.452, -0.025; on 37 shared domains fd_03 leads; gdepth_start
+  (0.603, -0.018) dominates both in helix (findings 1.21, plan.md Phase 14 step 4). 79ALA_S115T's glpG
+  chain finished block 2 whole 05:37, block 3 R. Logs clean.
+* **10:20-11:00 10-13, user: no HDX on ff3.0, midway2-0151 excluded, ff3.1 reviewed.** HDX on
+  ff_3.0_gdepth's chains declined (remote_jobs.md §1 spec kept for the ff2.1_sc chain). midway2-0151
+  added to `slurm/midway2.args` with its README row (two NODE_FAILs 10-10; backups `*.bak_pre_0151_20261013`;
+  the wrapper refuses `-w midway2-0151`; no job pending). ff3.1 review (findings 1.34, plan.md Phase 14
+  step 4): matched-step panels and paired bootstraps (`checks/ff31_review/`): `all` worse than ff3.0,
+  `data` ties it; two trainings of the ff2.1 control differ by 0.14 folded, so single-run gaps of
+  ~0.05 are not attributable.

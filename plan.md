@@ -394,7 +394,17 @@ coordinates at its full rate).
    49218341, submitted 23:40, target 76, same 456 proteins and workflow, no gate. The push at the
    first epoch end (`rama_rounds.txt`, held-out gap left) is read before the user lets more epochs
    count.
-4. [ ] Judged by the selection panels and the steric check. The local glpG TM4 glycine-flip test was
+4. [x] Judged by the selection panels and the steric check; **reviewed 10-13 (user; findings 1.34):
+   ff31_depth_all is worse than ff_3.0_gdepth (folded -0.058, paired) and keeps losing; ff31_depth_data
+   ties it (folded -0.012, not resolved; helix and beta lean better by about one SE). Neither earns
+   replacing ff_3.0_gdepth on the panel; whether fd_03 is released for the Peng benchmark is the
+   user's.** Both runs reached target 76 on 10-13 (ff31_depth_data 03:37, ff31_depth_all 03:53). Four depth
+   rounds closed 1.6% (`all`) and 1.3% (`data`) of the held-out gap, `all`'s last round none
+   (findings 1.30); folding fell over the first three epochs and held in the last, `all` 0.471, 0.444,
+   0.404, 0.406 (fa_00-03) and `data` 0.479, 0.472, 0.449, 0.452 (fd_00-03), against ff2.1's 0.615 and
+   gdepth_start's 0.603, which dominates every end in helix; at the target `data` leads `all`, 0.452
+   against 0.406, helix -0.024 against -0.030 (findings 1.21); no steric flag except
+   `data`'s step 39, shown to be scatter (findings 1.33). The choice is the user's. The local glpG TM4 glycine-flip test was
    retired by the user 10-11 23:10 (ff2.1 holds TM4 on the fixed table, findings 4.15; "we have a
    working ff and we are trying to expand it"), after fa_00_sc and fd_00_sc. TM4 HDX stays open: whether
    TM4's dG should be effectively infinite is unresolved (user, 23:15).
@@ -407,6 +417,12 @@ coordinates at its full rate).
    every coil map and of every training residue's engine map against NDRD, and the free ensembles'
    non-glycine phi > 0 populations per step. The watch runs it at every ff3.1 step (cron
    `c618e779`) and notifies on a `STERIC FLAG`; the jobs change only with the user. Step 8: no flag.
+6. [ ] **Validate ff31_depth_data's step 75 (fd_03) as `ff_3.1_depth_data`** (user, 10-13 12:00: "Use
+   Peng validation set and glpG TM4 to validate ff3.1"; ff31_depth_all is not validated, findings
+   1.34). The established `validate_ff.sh` by hand on `epoch_03_minibatch_18`, from a 2-CPU launcher
+   job as the gates run it: release to both trees (md5 against the panel's `params/fd_03`), the 32
+   Peng arms, and the 4 glpG REMD chains patched onto the fixed side-chain/lipid table. Judged against
+   ff_3.0_gdepth's arms and chains, TM4 above all. The name avoids the retired `ff_3.1_trained`.
 
 Risks recorded before the probe (findings 1.28): the depths can learn native placement and absorb
 H-bond and side-chain physics, which a prior does not prevent; 46 held-out proteins sit at the

@@ -1297,6 +1297,35 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   -0.027 and -0.027, and fd_00 does not dominate it, so the data-masked run holds its first epoch's
   panel where `all` lost more. With fa_01 on 39 domains (`select_last_fa_01_fd_01_login1_20261012.txt`):
   0.472 against 0.444, helix -0.027 against -0.033, beta -0.015 against -0.020.
+- **`fa_02`** (ff31_depth_all step 56, margin +0.095, depth round 3's library; 49225744 COMPLETED
+  15:29 10-12; `select_last_fa_02_login1_20261012.txt`, 40 domains): folded 0.404, helix -0.028,
+  beta -0.018, gly_helix -0.072, gly_left +0.006 (ff21_released 0.615, -0.018, -0.019, -0.081,
+  +0.033); gdepth_start dominates it in helix. fa_00 to fa_02 on 35 shared domains
+  (`select_last_fa_00_fa_01_fa_02_login1_20261012.txt`): folded 0.471, 0.444, 0.404, helix -0.026,
+  -0.032, -0.027. With fd_01 on 40 domains: 0.404 against 0.472, helix -0.028 both. `all` loses
+  about 0.03-0.04 of folded frames per epoch; helix recovers fa_01's extra loss.
+- **`fd_02`** (ff31_depth_data step 56, margin +0.119, depth round 3's library; 49235715 COMPLETED
+  19:29 10-12; `select_last_fd_02_login1_20261012.txt`, 40 domains): folded 0.449, helix -0.029,
+  beta -0.017, gly_helix -0.084, gly_left +0.034 (ff21_released 0.615, -0.018, -0.019, -0.081,
+  +0.035); gdepth_start dominates it in helix. fd_00 to fd_02 on the same 40 domains: 0.479, 0.472,
+  0.449, helix -0.027, -0.027, -0.029. With fa_02 on 39 domains (`select_last_fa_02_fd_02_*`): 0.449
+  against 0.404, helix -0.028 against -0.027. `data` loses folding more slowly than `all` (0.030 over
+  two epochs against 0.067) and keeps ff2.1's gly_left; both lose it in every epoch.
+- **`fa_03`** (ff31_depth_all step 75, the target, margin +0.070, depth round 4's library; 49313290
+  COMPLETED 05:28 10-13; `select_last_fa_03_login1_20261013.txt`, 39 domains): folded 0.406, helix
+  -0.030, beta -0.014, gly_helix -0.100, gly_left +0.013 (ff21_released 0.615, -0.017, -0.017, -0.081,
+  +0.031); gdepth_start dominates it in helix. fa_00 to fa_03 on 35 domains
+  (`select_last_fa_00_fa_01_fa_02_fa_03_*`): folded 0.471, 0.444, 0.404, 0.406, helix -0.026, -0.032,
+  -0.027, -0.031.
+- **`fd_03`** (ff31_depth_data step 75, the target, margin +0.141, depth round 4's library; 49311326
+  COMPLETED 05:29 10-13; `select_last_fd_03_login1_20261013.txt`, 41 domains): folded 0.452, helix
+  -0.025, beta -0.015, gly_helix -0.062, gly_left +0.014 (ff21_released 0.615, -0.018, -0.017, -0.081,
+  +0.022); gdepth_start dominates it in helix. fd_00 to fd_03 on 38 domains
+  (`select_last_fd_00_fd_01_fd_02_fd_03_*`): folded 0.479, 0.472, 0.449, 0.452, helix -0.026, -0.026,
+  -0.027, -0.025. With fa_03 on 37 domains (`select_last_fa_03_fd_03_*`): 0.452 against 0.406, helix
+  -0.024 against -0.030, gly_helix -0.062 against -0.100. At the target neither run improves on its
+  start (gdepth_start 0.603, -0.018): both stop losing folding in the last epoch, and `data` ends
+  ahead of `all` in folding and helix.
 - **`ds_02`** (ff30_gdepth_si step 56, margin +0.096; 49223609 COMPLETED 17:33 10-11; 40 domains):
   folded 0.406, helix -0.030; gdepth_start dominates it in helix. With its twin d9_02 on 39 domains:
   0.406 against 0.439, helix -0.031 against -0.029. ds_00 to ds_02 fold 0.412, 0.420, 0.406.
@@ -2129,6 +2158,29 @@ rama_basin.py): round 4's gdepth trainer with only its Ramachandran calls genera
   now beyond 0.1 (66 after round 1), held-out gap left 0.9937; offsets rms alpha_R 0.068, pPII 0.055,
   beta 0.043, alpha_L 0.036, beta' 0.017, pPII' 0.019; GLY|X alpha_R -0.026 alpha_L +0.097. The second
   step is smaller than the first and transfers about as little (0.6% of the held-out gap).
+- **ff31_depth_all round 3** (step 56, 10-12 14:31): step rms 0.0192, max 0.108, 345 of 5,040 depths
+  beyond 0.1, held-out gap left 0.9992 (map-level gap 0.00043 training, 0.00378 held out); offsets rms
+  alpha_R 0.078, pPII 0.065, beta 0.050, alpha_L 0.040, beta' 0.019, pPII' 0.020; GLY|X alpha_R
+  -0.031 alpha_L +0.107. The training-read gap keeps closing (0.00059, 0.00050, 0.00043) while the
+  held-out transfer falls (1.0%, 0.6%, 0.1%): the depths fit the training proteins' own maps and
+  carry almost nothing to held-out reads.
+- **ff31_depth_all round 4 and its target** (step 75, 10-13 03:53, `target 76 reached`): step rms
+  0.0191, max 0.120, 418 of 5,040 depths beyond 0.1, held-out gap left 1.0001 (training 0.00046, held
+  out 0.00364): the last step moves the held-out gap the wrong way by 0.01%. Offsets rms alpha_R
+  0.085, pPII 0.071, beta 0.056, alpha_L 0.043, beta' 0.021, pPII' 0.022; GLY|X alpha_R -0.029
+  alpha_L +0.118 (`rama_round_04.dat` md5 `3ffc75bf...`). Four rounds closed 1.6% of the held-out
+  gap (0.97%, 0.63%, 0.08%, -0.01%), against `data`'s 1.3% with under a third of the depths moved;
+  margin +0.070 at the end (start +0.192; under +0.10 from step 62 on, and at steps 53-57).
+- **ff31_depth_data round 3** (step 56, 10-12 18:33): step rms 0.0150, max 0.059, 39 of 1,442 depths
+  beyond 0.1, held-out gap left 0.9983 (map-level gap 0.00050 training, 0.00388 held out); offsets rms
+  alpha_R 0.044, alpha_L 0.083, beta 0.032, pPII 0.045, beta' 0.069, pPII' 0.052; GLY|X alpha_R
+  -0.014 alpha_L +0.054. Transfer per round 0.6%, 0.4%, 0.2%: the same fall as `all`'s, at about
+  a fifth of `all`'s step.
+- **ff31_depth_data round 4 and its target** (step 75, 10-13 03:37, `target 76 reached`): step rms
+  0.0146, max 0.077, 58 of 1,442 depths beyond 0.1, held-out gap left 0.9994 (held out 0.00363);
+  offsets rms alpha_R 0.049, alpha_L 0.091, beta 0.035, pPII 0.049, beta' 0.080, pPII' 0.055; GLY|X
+  alpha_R -0.017 alpha_L +0.062 (`rama_round_04.dat` md5 `4b6a9aaf...`). Four rounds closed 1.3% of
+  the held-out gap in all (0.56%, 0.41%, 0.17%, 0.06%); margin +0.141 at the end (start +0.192).
 - **ff31_depth_data's first round, as predicted too** (step 18, 10-11 15:03): step rms 0.0262, max
   0.136, 3 of 1,442 depths beyond 0.1, GLY|X alpha_R -0.006 alpha_L +0.034, held-out gap left 0.994
   (predicted 0.026, 3, 0.994). Offsets rms alpha_R 0.028, alpha_L 0.051, beta 0.019, pPII 0.027,
@@ -2252,6 +2304,25 @@ Phase 14 step 5).
   x1.0002), largest residue x1.081 (ARG-LEU-PRO); backbone x1.0104, the depths' part rising from
   x1.0044 to x1.0062; free non-glycine beta' + pPII' at most 0.0042 over steps 19-37 (threshold
   0.0047). The data-masked run moves its clash classes about half as far as `all`.
+- **ff31_depth_all round 3 (step 56, 10-12 14:31): no flag.** Coil maps at most x1.219 side chain
+  (GLU right GLY, its alpha_R and pPII depths +0.13 and +0.24, beta -0.23) and x1.181 backbone (VAL
+  right ALA); training residues' side chain x1.0017 (depths x0.9989), largest residue x1.217 (2opc 0
+  GLU-GLY); backbone x1.0179, the depths' part rising from x1.0133 to x1.0153; free non-glycine beta' +
+  pPII' at most 0.0049 over steps 38-56 (threshold 0.0049, reached at step 38). The largest map ratio
+  grows each round (x1.10, x1.16, x1.22), still far from 2x.
+- **ff31_depth_all round 4 (step 75, the target, 10-13 03:53): no flag.** Coil maps at most x1.237
+  side chain (GLU right GLY) and x1.223 backbone (VAL left LEU); training residues' side chain x1.0043
+  (depths x0.9984), largest residue x1.238 (2opc 0 GLU-GLY); backbone x1.0223, the depths' part
+  x1.0166; free non-glycine beta' + pPII' over steps 57-75 at most 0.0047 (threshold 0.0049). The
+  largest map ratio over the four rounds: x1.10, x1.16, x1.22, x1.24.
+- **ff31_depth_data round 3 (step 56, 10-12 18:33): no new flag.** Coil maps at most x1.052 side
+  chain (GLU right GLY) and x1.096 backbone (VAL left LEU); training residues' side chain x1.0054
+  (depths x0.9999), largest residue x1.106 (LEU-VAL-PRO); backbone x1.0131, the depths' part x1.0073;
+  free non-glycine beta' + pPII' over steps 38-56 at most 0.0050, step 39's (below).
+- **ff31_depth_data round 4 (step 75, the target, 10-13 03:37): no new flag.** Coil maps at most
+  x1.052 side chain (ASN and GLU right GLY) and x1.104 backbone (VAL left LEU); training residues'
+  side chain x1.0057 (depths x0.9994), largest residue x1.112 (LEU-VAL-PRO); backbone x1.0146, the
+  depths' part x1.0081; free non-glycine beta' + pPII' over steps 57-75 at most 0.0047 (step 58).
 - **ff31_depth_data step 39 (10-12 07:39), the first STERIC FLAG:** free non-glycine beta' + pPII'
   0.0050 (restrained 0.0045) above steps 0-18's maximum 0.0047; the side-chain and backbone classes
   did not move (x1.0044, x1.0103). A minibatch is the same 24 proteins in every epoch (checked for
@@ -2259,7 +2330,42 @@ Phase 14 step 5).
   step 20 (round 1): against its own NDRD value the free share is up 0.0003, and the restrained one
   is down 0.0003. Whether that is more than step-to-step noise is not established. The threshold
   (one maximum over all minibatches) was set before the fixed composition was known; it is not
-  changed. User notified; the run trains on.
+  changed. User notified; the run trains on. The same minibatch at step 58 (round 3's library, 10-12
+  19:28) reads 0.0047 / 0.0042, at the threshold and not above: over the four epochs 0.0047, 0.0042,
+  0.0050, 0.0047 free. Step 39 reads as this minibatch's step-to-step scatter about ~0.0047, not a
+  trend with the library.
+
+### 1.34 The ff3.1 review at the target: `all` is worse, `data` ties ff3.0 (2026-10-13)
+
+Asked by the user 10-13 10:20. Paired comparisons with panel.py's own functions
+(`checks/ff31_review/ff31_review_pairs.py`, output `pairs_20261013.txt`; 44 domains): folded
+fraction over every domain, and each class's |error| over the domains both keep (36-40), each with a
+95% paired bootstrap over domains. The bootstrap holds the force fields fixed, so it measures panel
+sampling, not how two trainings of one design differ.
+- **Two trainings of one design can differ more than the designs do.** After epoch 0 the ff2.1
+  control's two runs, fp_e00 (dt 0.015) and c9_00 (dt 0.009), differ by +0.141 folded [+0.091,
+  +0.192]; gdepth's two, d00 and d9_00, by -0.006 [-0.040, +0.030]. Each pair also differs in dt.
+  d9, fa and fd all fold 0.04-0.09 more than c9 at steps 18 and 37, less than the control's own
+  twin gap, so c9 cannot credit folding to the depths.
+- **At the target `all` is worse and `data` ties ff3.0.** Against d9_03 (the released
+  ff_3.0_gdepth): fa_03 folded -0.058 [-0.101, -0.015], helix +0.001 (not resolved), beta -0.008
+  [-0.016, -0.002]; fd_03 folded -0.012 [-0.058, +0.035], helix -0.006 [-0.012, -0.000], beta
+  -0.007 [-0.013, -0.002], gly_helix -0.039 [-0.088, +0.007]. fd_03 against fa_03: folded +0.046
+  [+0.015, +0.082], helix -0.006 [-0.011, -0.001]. Over 16 pairs and 5 measures, an interval that
+  touches zero, as fd_03's helix does, is within what multiplicity produces.
+- **Over training** fa loses folding from epoch 0 to the target (-0.065 [-0.117, -0.021]) while its
+  depths grow (418 beyond 0.1) and its margin falls to +0.070; fd (-0.027 [-0.058, +0.003]) and d9
+  (-0.013 [-0.046, +0.021]) hold, d9 losing beta (+0.009 [+0.003, +0.016]).
+- **The depths carry no transferable rule.** Four rounds closed 1.6% (`all`) and 1.3% (`data`) of
+  the held-out gap, falling to zero by round 4 while the training gap kept closing (1.30), as the
+  probe predicted (1.29). `data` reached nearly `all`'s transfer with 58 depths beyond 0.1 against
+  418, so `all`'s extra depths fit the training proteins. `all`'s falling margin fits the capacity
+  warning of 1.28 (depths taking helix work from the H-bond term); that is not shown.
+- **Read.** ff31_depth_all is worse than ff3.0 and than ff31_depth_data and keeps losing.
+  ff31_depth_data is not distinguishable from ff_3.0_gdepth in folding and leans better in helix
+  and beta by about one standard error, through 1,442 depths that transfer 1.3% of the held-out gap.
+  On the panel neither earns replacing ff_3.0_gdepth; the panel cannot separate fd_03 from d9_03,
+  and the Peng benchmark (32 arms) is the larger test, the user's to order.
 
 ## 2. The hybrid model: what each side supplies
 
