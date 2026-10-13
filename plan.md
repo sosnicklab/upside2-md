@@ -419,10 +419,12 @@ coordinates at its full rate).
    `c618e779`) and notifies on a `STERIC FLAG`; the jobs change only with the user. Step 8: no flag.
 6. [ ] **Validate ff31_depth_data's step 75 (fd_03) as `ff_3.1_depth_data`** (user, 10-13 12:00: "Use
    Peng validation set and glpG TM4 to validate ff3.1"; ff31_depth_all is not validated, findings
-   1.34). The established `validate_ff.sh` by hand on `epoch_03_minibatch_18`, from a 2-CPU launcher
-   job as the gates run it: release to both trees (md5 against the panel's `params/fd_03`), the 32
-   Peng arms, and the 4 glpG REMD chains patched onto the fixed side-chain/lipid table. Judged against
-   ff_3.0_gdepth's arms and chains, TM4 above all. The name avoids the retired `ff_3.1_trained`.
+   1.34). Launched 12:10 10-13: the established `validate_ff.sh` on `epoch_03_minibatch_18` from a
+   2-CPU launcher job, as the gates run it. Released to both trees, every file equal to the panel's
+   `params/fd_03`; 32 Peng arms with ff_3.0_gdepth's targets; 4 glpG REMD chains whose seeds differ from
+   ff_3.0_gdepth's only in the five force-field datasets, so they carry the fixed side-chain/lipid
+   table (remote_jobs.md §1). Judged against ff_3.0_gdepth's arms and chains, TM4 above all. The name
+   avoids the retired `ff_3.1_trained`.
 
 Risks recorded before the probe (findings 1.28): the depths can learn native placement and absorb
 H-bond and side-chain physics, which a prior does not prevent; 46 held-out proteins sit at the

@@ -2365,7 +2365,8 @@ sampling, not how two trainings of one design differ.
   ff31_depth_data is not distinguishable from ff_3.0_gdepth in folding and leans better in helix
   and beta by about one standard error, through 1,442 depths that transfer 1.3% of the held-out gap.
   On the panel neither earns replacing ff_3.0_gdepth; the panel cannot separate fd_03 from d9_03,
-  and the Peng benchmark (32 arms) is the larger test, the user's to order.
+  and the Peng benchmark (32 arms) is the larger test. The user ordered it with glpG TM4 (10-13 12:00):
+  fd_03 is validated as `ff_3.1_depth_data` (plan.md Phase 14 step 6).
 
 ## 2. The hybrid model: what each side supplies
 

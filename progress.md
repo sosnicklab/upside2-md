@@ -681,3 +681,9 @@ to 10-07 12:00 is in git history.
   step 4): matched-step panels and paired bootstraps (`checks/ff31_review/`): `all` worse than ff3.0,
   `data` ties it; two trainings of the ff2.1 control differ by 0.14 folded, so single-run gaps of
   ~0.05 are not attributable.
+* **12:15 10-13, user: validate ff3.1 on the Peng set and glpG TM4.** ff31_depth_data's step 75 released
+  as `ff_3.1_depth_data` by `validate_ff.sh` from launcher 49350700 (`ff31_depth_data/validate_fd03.sbatch`):
+  both trees md5 verified and equal to the panel's fd_03; 32 Peng arms 49350797-49350828 and 4 glpG chains
+  49350829-49350832, all with the law including 0151. Checked: patch round trip 3.6e-15; each glpG seed
+  differs from its ff_3.0_gdepth twin only in the five force-field datasets (fixed table carried); a
+  benchmark input's hbond equals the release; first frames sane. plan.md Phase 14 step 6, remote_jobs.md §1.
