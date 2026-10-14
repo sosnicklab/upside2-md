@@ -2368,6 +2368,22 @@ sampling, not how two trainings of one design differ.
   and the Peng benchmark (32 arms) is the larger test. The user ordered it with glpG TM4 (10-13 12:00):
   fd_03 is validated as `ff_3.1_depth_data` (plan.md Phase 14 step 6).
 
+### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical through block 1's first chunks (2026-10-14)
+
+Asked by the user 10-14 01:00. `checks/tm4_ff31_20261014/tm4_ff31.py` (output `tm4_ff31_20261014.txt`),
+remote_jobs.md §5's criterion (phi in [-130,-20], psi in [-90,15]) on rotated groups only, T 0.70
+(run.0) and 0.80 (run.14), against ff_3.0_gdepth on the same group indices, its seeds differing only
+in the force-field datasets (6-7 groups, ~1,800-2,100 frames per variant at T 0.70, ~13 h of block 1).
+- TM4 134-151: 0.97-1.00 per group at T 0.70 and 0.98-1.00 at 0.80 in all four variants, no downward
+  trend; ff_3.0_gdepth on the same groups 0.95-1.00. TM1 30-48: 0.96-1.00. Pass is > 0.8 at T 0.70.
+- TM4's glycines 136, 143 and 149 are never at phi > 0 under either force field, so the depth
+  training did not reopen the glycine flip that ff3.0 closed (1.25, 4.15).
+- The least helical residue is 134, TM4's N-terminal end next to the non-helical 131-133 (0.81-0.94
+  pooled; ff_3.0_gdepth 0.72-0.95); 150-151 at the C end 0.96-1.00.
+- Limit: these are block 1's first chunks only. ff_3.0_gdepth's own TM4 at T 0.70 is still 0.94-1.00
+  in its latest groups (44-47, block 3), but 79ALA_S115T's T 0.80 rung reads 0.83-0.89 there, so the
+  ff3.1 chains are to be read again at each block end.
+
 ## 2. The hybrid model: what each side supplies
 
 ### 2.1 Replaced by design
@@ -4523,14 +4539,20 @@ protein with no bilayer contact.
     on current inputs. It was the hybrid's stale table and temperature, not the Upside core, as far as
     this sampling can tell.
   - Two limits remain. Crystal-start 4000 tu runs cannot rule out slow TM4 openings that a REMD
-    equilibrium would sample. And 79HIS is not the experiment's 79ALA. The midway3 REMD analysis on the
-    fixed-table chains (remote_jobs.md §1) is the matched test, with per-residue dG at 142-144 against
-    this peptide. For ff2.1 that is `glpG-RKRK-79HIS.ff_2.1_sc` (plan.md Phase 16).
-  - Its first 8 chunks (~800 tu of block 1, 10-12) drift far less than the pre-fix chain did.
-    Mean backbone H-bonds over the T 0.80-0.87 replicas go 205 -> 191 there, 201 -> 117 in the pre-fix
-    ff2.1 79HIS block 1 (09-01, log 48890657), and 199 -> 180 in ff_3.0_gdepth (49216140); at
-    T >= 0.87, 200 -> 176, 194 -> 115 and 192 -> 163. This is whole-protein, not TM4, and read from the
-    driver logs only.
+    equilibrium would sample. And 79HIS is not the experiment's 79ALA. Neither limit has a test
+    planned: the fixed-table ff2.1 REMD chain `glpG-RKRK-79HIS.ff_2.1_sc`, the matched test, was
+    cancelled by the user 10-14 01:11 before its HDX (block 1 whole, block 2 to chunk step 6,930 of
+    10,494, data kept), and the user declined HDX on the ff3.0 chains (10-13).
+  - The driver logs give whole-protein backbone H-bonds only, not TM4. Under the same protocol and
+    the fixed table, ff2.1 holds more than ff_3.0_gdepth. Mean over the T 0.80-0.87 replicas:
+    | chain | block 1 start -> end | block 2 |
+    |---|---|---|
+    | ff2.1, fixed table (79HIS) | 205 -> 182 | 181-186 |
+    | ff_3.0_gdepth 79HIS | 199 -> 170 | 161-172 (block 3 162-165) |
+    | ff_3.0_gdepth 79ALA | 202 -> 160 | 158-160 |
+    | pre-fix ff2.1 79HIS (09-01, log 48890657) | 201 -> 116 by chunk 10 | |
+    At T < 0.80 block 2 reads 191-196 for ff2.1 against 175-187 for ff_3.0_gdepth. This agrees with
+    4.15's local TM4 (ff2.1 0.944, ff_3.0_gdepth 0.884, not resolved).
 * **If that test shows a residual, the core's trained parameters alone cannot explain it:** the implicit run uses
   the same core and keeps TM4 closed. What differs is how each model embeds the core: the implicit
   membrane's backbone H-bond cost at the midplane, where TM4a sits (|z| 1.47 A, 3.10c; the term raised
@@ -5722,6 +5744,17 @@ other copy. **Before deleting a directory, list its non-data files (`*.py`, `*.s
 configs, inputs) and remove only the trajectories and per-step outputs; write the manifest first.**
 The panel cleanup that followed did this and kept every script; the frozen-H-bond arms kept theirs
 until the user asked for those runs to go entirely.
+
+### 10.26 Show the evidence before asking the user to decide (2026-10-13)
+
+The user proposed switching glpG's TM4 HDX from ff2.1 to ff3.0 because "ff2.1 with hybrid dryMARTINI
+has a known defect that is causing TM4 to unfold". The fixed-table records say otherwise (4.15, 5.5).
+I asked which runs to keep without first showing that. The user chose to stop the ff2.1 chain, and the
+evidence reached them only after the choice; the choice was then withdrawn in the session that owns the
+jobs. **When a request rests on a premise the records contradict, state the contradiction with its
+numbers before offering options, and put it in the question itself.** A decision about another
+session's jobs is confirmed by the user in that session, so relay it with its evidence and record it
+only once that session confirms.
 
 ---
 

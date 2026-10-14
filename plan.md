@@ -37,7 +37,7 @@ and deleted, and ff3.1 (Phase 14) extends the depth training to every residue. T
 H-bond-frozen arms, polygly (stopped) and the local TM4 glycine-flip test (retired) went the same
 day, and the BioEmu line and the frozen arms were deleted with their inputs and derived products
 (10-11 23:45, user; remote_jobs.md §1 "Finished runs"): on the fixed side-chain/lipid table ff2.1 holds TM4 (findings
-4.15). TM4 HDX stays open (Phase 16).
+4.15). TM4 HDX has the local readout only; its REMD test was cancelled 10-14 (Phase 16).
 
 ## Architecture and Key Decisions
 
@@ -406,8 +406,9 @@ coordinates at its full rate).
    against 0.406, helix -0.024 against -0.030 (findings 1.21); no steric flag except
    `data`'s step 39, shown to be scatter (findings 1.33). The choice is the user's. The local glpG TM4 glycine-flip test was
    retired by the user 10-11 23:10 (ff2.1 holds TM4 on the fixed table, findings 4.15; "we have a
-   working ff and we are trying to expand it"), after fa_00_sc and fd_00_sc. TM4 HDX stays open: whether
-   TM4's dG should be effectively infinite is unresolved (user, 23:15).
+   working ff and we are trying to expand it"), after fa_00_sc and fd_00_sc. Whether TM4's HDX dG
+   should be effectively infinite is unresolved (user, 23:15); its REMD test was cancelled 10-14
+   (Phase 16).
 5. [x] **Steric watch** (user, 10-10 21:10, after Jumper: a moving map may open conformations where
    the side chain and backbone clash; findings 1.33). Upside has no excluded volume between a
    residue's CB and its neighbours' backbone, so the map is what keeps them apart.
@@ -424,7 +425,8 @@ coordinates at its full rate).
    `params/fd_03`; 32 Peng arms with ff_3.0_gdepth's targets; 4 glpG REMD chains whose seeds differ from
    ff_3.0_gdepth's only in the five force-field datasets, so they carry the fixed side-chain/lipid
    table (remote_jobs.md §1). Judged against ff_3.0_gdepth's arms and chains, TM4 above all. The name
-   avoids the retired `ff_3.1_trained`.
+   avoids the retired `ff_3.1_trained`. **TM4 stays helical** over block 1's first 6-7 chunks of all four
+   chains (user, 10-14 01:00; findings 1.35), as under ff_3.0_gdepth on the same chunks; the benchmark runs.
 
 Risks recorded before the probe (findings 1.28): the depths can learn native placement and absorb
 H-bond and side-chain physics, which a prior does not prevent; 46 held-out proteins sit at the
@@ -455,7 +457,7 @@ average and grids, at 600 target directions x 12 side-chain bead frames instead 
    alike, and none of the three released candidates is resolved from its start (findings 4.15).
    Each later epoch end is patched with the new tool and compared with its `_sc` start and twin.
 
-### Phase 16 - glpG TM4 HDX on the fixed table, locally (STARTED 2026-10-11, user)
+### Phase 16 - glpG TM4 HDX on the fixed table (local readout done; ff2.1 REMD cancelled, ff3.0 REMD requested 2026-10-14, user; owner upside2-md-98)
 
 The only hybrid HDX set (ff2.1, 09-04) gives TM4 3.5-4.9 kcal/mol against the H145A peptide
 140-144's 6.1-7.4, through protein protection failing (`pp_fail` 0.032 on 135-151 at the T 0.85
@@ -481,20 +483,35 @@ ahead and run this session's job first", ahead of the TM4 queue.
   on every T 0.85 seed.
 - [x] Readout (findings 5.5): ff2.1's TM4 137-148 lose protein protection in at most 0.06% of frames
   at 298 K, against 10-25% in the surviving pre-fix set; 142-144 never exchange (dG > 5.8, the
-  frame-count bound). The pre-fix lability does not reproduce on current inputs. Open: the REMD
-  readout (79ALA, equilibrium sampling) on midway3.
-- [ ] ff2.1 REMD on the fixed table (user, 10-11 17:20: "just run REMD on remote to see if the
+  frame-count bound). The pre-fix lability does not reproduce on current inputs. No REMD readout is
+  pending: the ff2.1_sc chain below was cancelled by the user 10-14 01:11. HDX on the ff3.0 chains
+  stays declined (user 10-13 10:20, "Do not do hdx on ff3.0"; a 20:25 "ff3.0 only" was withdrawn ~21:00, when the user
+  told upside2-md-98 directly to keep this plan), so no 79ALA readout is planned. If it is ever
+  approved: ff_3.0_gdepth block 2, 79ALA then 79HIS, skip S115T.
+- [-] ff2.1 REMD on the fixed table, cancelled (user, 10-11 17:20: "just run REMD on remote to see if the
   problem still exist", in place of a local control while the Mac Studio is busy). The ff3.0 chains
   cannot make this test: the pre-fix lability was measured under ff2.1, 79HIS, and ff3.0 changes
   TM4's three glycines. One 79HIS chain from the pristine ff_2.1 seed with the fixed table, the
   ff3.0 chains' protocol, HDX after block 2 as in remote_jobs.md §1; readout against the pre-fix
-  set's 0.851 rung (138-148 `pp_fail` 0.10-0.25, 142-144 dG 4.1-4.4). Requested of upside2-md-98,
-  which submits and records it in remote_jobs.md. **Running** (job and paths in remote_jobs.md):
-  `glpG-RKRK-79HIS.ff_2.1_sc` from 17:41 10-11, 2 blocks (user), HDX after block 2 (earliest
-  ~17:40 10-14, plus queue waits). Its seed differs from the pristine ff2.1 seed only in the four table arrays, and
-  from the local T 0.85 input only in rama_pot (at most 2.6e-6), so the REMD and local runs share
-  inputs. 28 replicas over T 0.70-0.90, not the pre-fix set's 48, so rungs are compared by
-  temperature.
+  set's 0.851 rung (138-148 `pp_fail` 0.10-0.25, 142-144 dG 4.1-4.4) and the HXMS 6.1-7.4.
+  Requested of upside2-md-98, which submits and records it in remote_jobs.md. **Cancelled by the user
+  10-14 01:11** ("you can cancel ff2.1 job"): `glpG-RKRK-79HIS.ff_2.1_sc` ran from 17:41 10-11, block 1
+  whole and block 2 to chunk step 6,930 of 10,494; its files are kept and read back, and its HDX
+  (with the pre-HDX checks: KE/1.5kT, mixing, TM4 by half of block 2) was not run (remote_jobs.md §1
+  "Finished runs"). Its seed differs from the pristine ff2.1 seed only in the four table arrays,
+  and from the local T 0.85 input only in rama_pot (at most 2.6e-6), so the REMD and local runs
+  share inputs. 28 replicas over T 0.70-0.90, not the pre-fix set's 48, so rungs are compared by
+  temperature. One block resolves the pre-fix 4.1-4.4 (censored bound ~5.0 kcal/mol at one 298 K
+  rung) but not the HXMS 6.1-7.4.
+- [ ] ff3.0 REMD readout (user 10-14 01:19: "check if you have enough data from ff3.0 or ff3.1 ...
+  Check if the TM4 still stretched down from infinity now"). ff_3.0_gdepth block 2 is whole in all
+  four chains (17-18 chunks, ~5,100-5,400 frames per replica, bound ~5.1 kcal/mol at one 298 K
+  rung); ff_3.1_depth_data has block 1 only until ~10-16. 79ALA then 79HIS, the spec of the ff2.1
+  item above. It reverses the 10-13 decline; the user confirmed it to upside2-md-98 ("Yes, 79ALA
+  then 79HIS"), which runs it (pre-checks: `checks/hdx_ff30_20261014/`). Resolved if 137-147 stay censored above ~5.1 at 298 K and 148-151 fray no more
+  than locally (ff3.0 T 0.80: 148-151 at 1.6-2.4, mostly one seed); HXMS stays a sampling limit.
+  **This phase, the request and the deferred fixes of findings 5.5 moved to upside2-md-98 10-14
+  01:35 (user: "append jobs of this session to another session"); upside2-md-87 closed.**
 
 ## Known Errors / Blockers
 
