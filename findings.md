@@ -4539,10 +4539,10 @@ protein with no bilayer contact.
     on current inputs. It was the hybrid's stale table and temperature, not the Upside core, as far as
     this sampling can tell.
   - Two limits remain. Crystal-start 4000 tu runs cannot rule out slow TM4 openings that a REMD
-    equilibrium would sample. And 79HIS is not the experiment's 79ALA. Neither limit has a test
-    planned: the fixed-table ff2.1 REMD chain `glpG-RKRK-79HIS.ff_2.1_sc`, the matched test, was
-    cancelled by the user 10-14 01:11 before its HDX (block 1 whole, block 2 to chunk step 6,930 of
-    10,494, data kept), and the user declined HDX on the ff3.0 chains (10-13).
+    equilibrium would sample. And 79HIS is not the experiment's 79ALA. The ff_3.0_gdepth REMD readout
+    below meets both for ff3.0; the matched ff2.1 test, the fixed-table REMD chain
+    `glpG-RKRK-79HIS.ff_2.1_sc`, was cancelled by the user 10-14 01:11 before its HDX (block 1 whole,
+    block 2 to chunk step 6,930 of 10,494, data kept).
   - The driver logs give whole-protein backbone H-bonds only, not TM4. Under the same protocol and
     the fixed table, ff2.1 holds more than ff_3.0_gdepth. Mean over the T 0.80-0.87 replicas:
     | chain | block 1 start -> end | block 2 |
@@ -4553,6 +4553,32 @@ protein with no bilayer contact.
     | pre-fix ff2.1 79HIS (09-01, log 48890657) | 201 -> 116 by chunk 10 | |
     At T < 0.80 block 2 reads 191-196 for ff2.1 against 175-187 for ff_3.0_gdepth. This agrees with
     4.15's local TM4 (ff2.1 0.944, ff_3.0_gdepth 0.884, not resolved).
+* **REMD readout, ff_3.0_gdepth block 2 (2026-10-14, user; plan.md Phase 16).** 79ALA and 79HIS, block 1
+  dropped, 5,723 and 5,421 frames per rung on 28 rungs T 0.70-0.90; the repo's HDX steps with the
+  ff_3.0_gdepth HDX topology (`checks/hdx_ff30_20261014/`; outputs
+  `popepopg_REMD_mdw2/<V>.ff_3.0_gdepth/hdx_sc600x12_ff_3.0_gdepth/`, `results/<V>_tm4_readout.txt`;
+  figures `~/Downloads/glpG_TM4_HDX_ff3.0_gdepth_block2/`).
+  - Mixing: KE/1.5kT 0.998-1.002 and swap acceptance 0.36-0.53, but no walker crosses the ladder (each
+    spans 8-23 of 28 slots and drifts ~1.7 slots per chunk against ~21 accepted swaps per frame
+    interval): a configuration stays near the temperature its energy fits. Each rung is canonical, but
+    its frames come from a few nearby walkers, so the ESS bounds below count correlated frames and
+    overstate what is resolved.
+  - PS (membrane term on), T 0.85 (298 K, MBAR bound 5.85 kcal/mol): 79HIS 137-148 censored; 79ALA
+    135-136, 138 and 140-147 censored, 137 and 139 at the bound (5.69, 5.83), 148 at 4.99. The same core
+    is censored at T 0.80 (bound 5.45-5.49) and 0.90 (5.75-5.81). Only the ends resolve: 130-134 at
+    0.7-3.9 and 149-151 at 0.8-4.0 (79ALA's 150 at 0.9-1.3, below the local runs' 1.6-2.4).
+  - PS_protein: 79HIS 137-146 censored at 0.80-0.85; 79ALA's 139-142 and 147-148 resolve at 2.1-5.7,
+    their rare protein-protection losses lipid-shielded under PS (`acc` 0.0-0.6).
+  - Unweighted at the 0.853 rung, 137-148 lose protein protection in at most 0.37% of frames (79ALA's
+    148, 0.24% at 147; 79HIS at most 0.06%) against the pre-fix set's 10-25%, and at most 0.5% in either
+    half of block 2;
+    `acc` moves between halves (79HIS 140: 0.13 to 0.01), `pp_fail` does not.
+  - Read: TM4's core does not open at any rung, and 142-144 are censored above 5.85 against the pre-fix
+    4.1-4.4, so the dip is gone under ff_3.0_gdepth on the fixed inputs. TM4 sits at the estimator's
+    limit ("+inf" on the plot), as the HXMS 6.1-7.4 predicts for a limit of ~5.9; whether its dG is
+    finite, as experiment says, is beyond this sampling (kT ln ESS = 7.4 needs ~3e5 independent frames
+    per rung). On upside2-md-87's criterion (137-147 censored above ~5.1 at 298 K, 148-151 no more
+    frayed than locally) 79HIS passes, and 79ALA passes on 137-147 with 150 slightly more frayed.
 * **If that test shows a residual, the core's trained parameters alone cannot explain it:** the implicit run uses
   the same core and keeps TM4 closed. What differs is how each model embeds the core: the implicit
   membrane's backbone H-bond cost at the midplane, where TM4a sits (|z| 1.47 A, 3.10c; the term raised

@@ -457,7 +457,7 @@ average and grids, at 600 target directions x 12 side-chain bead frames instead 
    alike, and none of the three released candidates is resolved from its start (findings 4.15).
    Each later epoch end is patched with the new tool and compared with its `_sc` start and twin.
 
-### Phase 16 - glpG TM4 HDX on the fixed table (local readout done; ff2.1 REMD cancelled, ff3.0 REMD requested 2026-10-14, user; owner upside2-md-98)
+### Phase 16 - glpG TM4 HDX on the fixed table (local readout done; ff2.1 REMD cancelled; ff3.0 REMD readout done 2026-10-14; ff3.1 owed; owner: the next "continue jobs" session)
 
 The only hybrid HDX set (ff2.1, 09-04) gives TM4 3.5-4.9 kcal/mol against the H145A peptide
 140-144's 6.1-7.4, through protein protection failing (`pp_fail` 0.032 on 135-151 at the T 0.85
@@ -512,6 +512,37 @@ ahead and run this session's job first", ahead of the TM4 queue.
   than locally (ff3.0 T 0.80: 148-151 at 1.6-2.4, mostly one seed); HXMS stays a sampling limit.
   **This phase, the request and the deferred fixes of findings 5.5 moved to upside2-md-98 10-14
   01:35 (user: "append jobs of this session to another session"); upside2-md-87 closed.**
+  - [x] Pre-checks on block 2 (`prechecks.py`, `prechecks_20261014.txt`): KE/1.5kT 0.998-1.002 per
+    slot; swap acceptance 0.36-0.53 per pair; no 0 -> 27 -> 0 round trip in either variant (walkers
+    span 8-23 slots; net ~1.7 slots per chunk against ~21 accepted swaps per frame interval: each
+    configuration stays near the temperature its energy fits). Each rung is still canonical, but its
+    frames come from the few walkers near it, so the readout says so.
+  - [x] One caslake job per variant (60668572, 60668573, 01:59-02:04 10-14; the user asked for midway2, where no
+    environment has mdtraj, pymbar and matplotlib), `checks/hdx_ff30_20261014/hdx_block2.sbatch`: hdx_cluster.sbatch's
+    pipeline with block 2 copied out of the live file first (`extract_block.py`: rotated groups
+    only, every dataset compared; /input from the seed, pos = the block's first frame), concat
+    discard 0, the HDX topology from ff_3.0_gdepth (rama from `common/rama.dat`, as 1.config.py
+    always does), the repo's `martini_hdx_project.py` (coupled potential; the cluster copy re-scores
+    a protein-only one), the stability dG on PS and on PS_protein, the reference-style plot, and
+    `readout.py` (dG or "> bound" at 0.80/0.85/0.90 for TM4 130-151, pp_fail/acc/exchanged at the
+    nearest replica, 135-151 by half at 0.85). Output `<chain>/hdx_sc600x12_ff_3.0_gdepth/`
+    (~40 GB per variant). 79ALA groups 20-38, 79HIS 18-35.
+  - [x] Readout (findings 5.5): TM4's core is censored at every rung, above 5.85 at 298 K (79ALA's 137 and
+    139 at the bound), 142-144 against the pre-fix 4.1-4.4; only 130-134 and 149-151 resolve. 79HIS
+    passes the closing criterion; 79ALA passes on 137-147, its 150 slightly more frayed than locally.
+    Whether TM4's dG is finite, as HXMS says, needs ~3e5 independent frames per rung, and block 2's
+    walkers do not cross the ladder.
+  - [ ] **The same readout on ff_3.1_depth_data** (user 10-14 02:10: "Do the analysis on ff3.1 as well"), 79ALA
+    then 79HIS, when each chain's block 2 closes (block 1 ~23:30 10-14 to ~01:00 10-15, block 2 ~36 h later
+    plus queue). Step by step in remote_jobs.md §1 "TM4 HDX on ff_3.1_depth_data: the recipe": block 2's
+    groups from the logs' run counts (output_previous_0 is the seed's; each block's first group is its
+    calibration, 287 frames to t 18.0; `prechecks.py` asserts the log's run count matches); `prechecks.py
+    ff_3.1_depth_data <V> FIRST LAST JOBID` on midway2; then `hdx_block2.sbatch` with `FF=ff_3.1_depth_data`
+    on caslake (midway3 socket: a Duo push), the HDX topology from ff_3.1_depth_data; then TM4 at 298 K
+    against ff_3.0_gdepth's, one figure per variant. Launcher and pre-check take the force field and
+    block as arguments (the ff3.0 run's copies kept as `*.ff30_run_20261014`; the refactored pre-check
+    reproduces its output exactly). The 10-14 session moved this phase's tools off its scratchpad onto
+    the cluster (`plot_tm4.py` beside the launcher).
 
 ## Known Errors / Blockers
 

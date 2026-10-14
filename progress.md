@@ -731,3 +731,35 @@ to 10-07 12:00 is in git history.
   never opens. Told the user TM4 HDX is not resolved until the REMD readout. Relayed the ff3.0 HDX
   request (msg 974b0511) and, at the user's request, handed Phase 16 and the deferred fixes to
   upside2-md-98 (msg 404b8295). Files: plan.md (Phase 16), progress.md.
+* **01:20-02:00 10-14, TM4 HDX on ff_3.0_gdepth block 2 (user, relayed 01:19 and confirmed here: "Yes, 79ALA then
+  79HIS"; upside2-md-87 handed over its Phase 16 work and closed).** Pre-checks (`checks/hdx_ff30_20261014/prechecks.py`):
+  KE/1.5kT 0.998-1.002 per slot, swap acceptance 0.36-0.53, no ladder round trip in block 2 (walkers stay near the
+  temperature their energy fits; reseed continuity and swap-set alternation verified). New launcher `hdx_block2.sbatch`
+  (hdx_cluster.sbatch's steps; block 2 copied out of the live file by `extract_block.py`, tested on one group; ff_3.0_gdepth
+  HDX topology; the repo's `martini_hdx_project.py`, as the cluster copy had drifted; dG on PS and PS_protein; `readout.py`).
+  The user asked for midway2; no midway2 environment has mdtraj, pymbar and matplotlib, so 60668572-60668573 run on
+  caslake from 01:59. Files modified: plan.md (Phase 16), remote_jobs.md (§1), progress.md.
+* **02:04-02:15 10-14: TM4 HDX readout, ff_3.0_gdepth block 2.** Both jobs COMPLETED in 5 min; every replica
+  joined with all block-2 frames (5,723 / 5,421, none dropped). TM4's core censored at every rung (above 5.85
+  kcal/mol at 298 K; 79ALA's 137 and 139 at the bound), 142-144 against the pre-fix 4.1-4.4; only 130-134 and
+  149-151 resolve. Figures (SciencePlots, censored amides at the bound) and readouts in
+  `~/Downloads/glpG_TM4_HDX_ff3.0_gdepth_block2/`. Files modified: findings.md (5.5), plan.md (Phase 16),
+  remote_jobs.md (§1, Finished runs), progress.md.
+* **02:10-02:20 10-14, user: "Do the analysis on ff3.1 as well".** ff_3.1_depth_data is in block 1 (equilibration)
+  until ~23:30 10-14, so the readout waits for its block 2 (~late morning 10-16); launcher and pre-check now take
+  the force field and block (pre-check verified identical on ff3.0's 79ALA). Owed in remote_jobs.md and
+  WATCH_STATUS. Files modified: plan.md (Phase 16), remote_jobs.md, progress.md.
+* **02:46-15:52 10-14, hourly watch passes (Mac Studio), every log clean.** ff_3.1_depth_data's 32 arms ran
+  their first two 10.5 h chunks and resubmitted themselves (third chunks 49400794-49400941); BBA native COMPLETE
+  11:17 at its target (KE/1.5kT 0.999-1.007). ff_3.0_gdepth cspA de novo COMPLETE 06:32 (KE/1.5kT 1.001-1.006),
+  ubiquitin de novo in its next chunk 49401175; its 79HIS and 79ALA_S115T chains finished block 3 whole 15:35 and
+  15:44 and run block 4. Files modified: remote_jobs.md (§1 snapshot and rows).
+* **16:00-16:10 10-14, handoff (user: "record everything in md file so another session can take over with
+  \"continue jobs\", and it may be on another computer. I want to close this session").** Owner set to none in
+  remote_jobs.md and the cluster's WATCH_STATUS.md; the next "continue jobs" session takes the jobs without waiting
+  for "take over". Tools moved off this session's scratchpad to the cluster: `~/watch_probe/logs.sh` (log scan),
+  `~/watch_probe/final_frames.py` (a finished arm's final frames), `checks/hdx_ff30_20261014/plot_tm4.py`. The ff3.1
+  HDX recipe written out in remote_jobs.md §1, with the block-to-group mapping measured on ff_3.0_gdepth 79HIS
+  (output_previous_0 the seed's; blocks 1-3 = groups 1-17, 18-35, 36-54) and the exact sbatch line; plan.md's
+  claim that `extract_block.py` checks the calibration group corrected. Watch cron `c618e779` deleted.
+  Files modified: remote_jobs.md, plan.md (Phase 16), progress.md.
