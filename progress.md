@@ -784,3 +784,17 @@ to 10-07 12:00 is in git history.
   P6b, `WATCH_STATUS.md` "Not watched here" and "Owed checks", each backed up `.bak_pre_score_20261015`) and in
   remote_jobs.md (nobp row, snapshot, owed checks, the HDX recipe's block-2 ids). Files modified: remote_jobs.md,
   progress.md.
+* **14:30-14:45 10-15, ff3.1 glycine Ramachandran figures (user).** ff_3.1_depth_data's rama.dat copied from the
+  cluster to `scratchpad/ff_3.1_depth_data/` (md5 4b6a9aaf, equal in both trees and to `rama_round_04.dat`). New
+  `scratchpad/plot_gly_rama_ff31.py` -> `~/Downloads/gly_rama_ff31.png`, the ff3.0 figure's format: GLY|right|ALL
+  (untrained) plus the mean change of the 37 GLY|X maps, each checked to be a sum of basin offsets (residual
+  1e-6). `plot_gly_rama_nonhelix_zero.py` now draws four maps, ff3.1 lower left and BioEmu lower right, and writes
+  `gly_rama_ff31_nonhelix_zero.png`; the other figures it and `plot_gly_rama_ff30.py` rewrote are unchanged in
+  content. Files modified: findings.md (1.35), progress.md.
+* **15:00-15:20 10-15, TM4 by DSSP (user: "I suspect you are not measuring it correctly").** Rebuilt
+  `glpg_tm4_dssp_ff21_vs_ff30.png` from its own runs (runs_cov old-table seed 1, energies match) beside their
+  fixed-table twins, and DSSP timelines of the three 79HIS REMD chains at T 0.80 (`~/Downloads/
+  glpg_tm4_dssp_old_vs_fixed_table.png`, `glpg_tm4_dssp_remd_ff21_ff30_ff31.png`). ff2.1's unfolding in the
+  user's figure is the old table (last quarter 0.644 -> 0.994 on the fixed table); in the REMD, DSSP puts ff3.1
+  lowest (0.892 against 0.937 and 0.931), not the dihedral box's 0.97-0.98. Files modified: findings.md (1.35,
+  10.27), remote_jobs.md (owed checks), progress.md; WATCH_STATUS.md on the cluster.

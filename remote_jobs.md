@@ -72,7 +72,11 @@ findings.md (pulled from git) and on the cluster.
      the same groups; 79HIS's GLY136 flipped at T 0.70, user told). Next at block 2's end, with
      `~/watch_probe/gly_flip_rungs.py` (glycine phi > 0 on every rung) beside it. Notify the user if TM4
      134-151 falls below this read's range (0.93 per group; the old 0.97 was block 1's first chunks) or
-     a glycine flip reaches new chains or rungs.
+     a glycine flip reaches new chains or rungs. **Both scripts score a phi/psi box only; report DSSP
+     alpha beside them** (findings 10.20, 10.27): `~/watch_probe/extract_bb_dssp.py` on midway2 (stdout
+     npz of backbones; set its run list and group range first), then `plot_tm4_dssp_fixed_table.py` (copy
+     in `~/watch_probe/`) on a computer with mdtraj. At block 1's end DSSP read TM4 0.892 (ff3.1), 0.937
+     (ff3.0), 0.931 (ff2.1) on the 79HIS T 0.80 rung (findings 1.35).
    - **TM4 HDX on ff_3.1_depth_data's block 2** (user 10-14 02:10, "Do the analysis on ff3.1 as well"),
      79ALA then 79HIS, when each chain's block 2 closes (at 13:47 10-15 they had 80,000-86,000 s of
      their 129,600 s wall left, so ~12:00-14:00 10-16): §1 "TM4 HDX on ff_3.1_depth_data: the recipe".

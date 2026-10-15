@@ -2398,6 +2398,54 @@ differing only in the force-field datasets. Glycine phi > 0 on every rung: `~/wa
   equilibrium populations. Whether GLY136's flip at T 0.70 is a property of ff3.1 or one walker's
   history is not established from one chain.
 - The least helical residue is otherwise 134 or 149 at TM4's ends (0.84-0.95 pooled at T 0.70).
+- **Matched three-way REMD (79HIS, fixed table, same protocol, groups 1-26 of each chain;
+  `~/watch_probe/tm4_three_ff.py`):** TM4 134-151 per group at T 0.70 / 0.80: ff2.1 (the cancelled
+  ff2.1_sc chain) 0.97-1.00 / 0.94-0.99, mean 0.984 / 0.981; ff3.0 0.96-1.00 / 0.94-1.00, 0.993 / 0.984;
+  ff3.1 0.94-1.00 / 0.93-1.00, 0.974 / 0.972. All three hold TM4 (pass > 0.8). Pooled over groups
+  14-26 at T 0.70 every TM4 residue is at least 0.90 helical except ff2.1's 138 (0.76) and ff3.1's
+  GLY136 (0.34, the flip). These are dihedral-box numbers, which 10.20 says not to report alone.
+- **The same frames by DSSP alpha (TM4 135-151; 10-15, the user's check), T 0.80 rung, groups 1-26:**
+  ff2.1 0.931 (first / last quarter 0.965 / 0.861; 150-151 fray, 0.49 / 0.40), ff3.0 0.937 (0.958 /
+  0.966; no residue below 0.8), ff3.1 0.892 (0.956 / 0.877; 135-136 at 0.70 / 0.75 and 150-151 at
+  0.30 / 0.49 in the last quarter). The core 137-149 holds under all three; ff3.1 frays most at both
+  ends. Figure `~/Downloads/glpg_tm4_dssp_remd_ff21_ff30_ff31.png` (MacBook Pro), from
+  `scratchpad/glpg_ff21_vs_ff30/plot_tm4_dssp_fixed_table.py` on `~/watch_probe/extract_bb_dssp.py`'s
+  backbones; copies of both in midway2's `~/watch_probe/`.
+- **The table, not the force field, removed ff2.1's unfolding.** The seed-1 runs behind
+  `glpg_tm4_dssp_ff21_vs_ff30.png` (10-09) are runs_cov's old-table ff21_released and d9_03 (initial
+  energy -25017.30 and -24992.61, as the MacBook Pro's logs). Redrawn from those files the figure
+  reproduces; their fixed-table twins, which differ only in the table, read DSSP alpha 135-151 last
+  quarter ff2.1 0.644 -> 0.994 (old table: 142-147 at 0.00-0.24) and ff3.0 0.989 -> 0.984
+  (`~/Downloads/glpg_tm4_dssp_old_vs_fixed_table.png`). Over 12 seeds that is 4.15's ff2.1 0.610 ->
+  0.944, unwound 9 -> 0 (p 0.002). No local ff3.1 set exists; its TM4 evidence is the REMD above.
+- **ff3.1's glycine map alone does not make 79HIS's GLY136 flip** (tested 10-15, read only).
+  - ff3.1 does not carry ff3.0's glycine alpha_L penalty: it trains from ff2.1, and the mean of its 37
+    GLY|X maps puts alpha_L - alpha_R at +0.079 E_up against ff3.0's +0.624 (per map -0.12 to +0.32;
+    figures `~/Downloads/gly_rama_ff31.png`, `gly_rama_nonhelix_zero_page.pdf`, MacBook Pro).
+  - The potential each glycine actually gets, from the 79HIS seeds' `rama_pot` (`~/watch_probe/gly_rama_seeds.py`;
+    F(alpha_L) - F(alpha_R) at T 1 with the trainer's basin weights): GLY136 -1.32 (ff2.1), -0.70 (ff3.0),
+    -1.36 (ff3.1); GLY143 -1.15, -0.53, -1.10; GLY149 -1.37, -0.76, -1.31. At 136 ff3.1 is ff2.1's map
+    to 0.04 E_up.
+  - ff2.1 on the same fixed table and REMD protocol (the cancelled `glpG-RKRK-79HIS.ff_2.1_sc` chain,
+    29 groups, 8,653 frames per rung; `~/watch_probe/gly_flip_ff21sc.py`) never puts GLY136 at phi > 0 on
+    rungs 0-1, and flips GLY149 (up to 0.20) and GLY136 (up to 0.07) at the warm rungs 17-26, as ff3.0's
+    and ff3.1's other chains do. Warm-rung glycine flips belong to all three force fields, ff3.0's
+    penalty included; the cold-rung GLY136 flip appears with ff2.1's glycine map only under ff3.1's other
+    parameters, or is one walker's history. Which is not established.
+  - ff3.1's other parameters are ff3.0's, not ff2.1's: the same 76-step retraining changed every other
+    file (hbond.h5, sidechain.h5, environment.h5, bb_env.dat, sheet) about equally, e.g. the H-bond
+    energies -1.961 / -1.946 / -1.769 (ff2.1), -1.815 / -1.829 / -1.734 (ff3.0), -1.822 / -1.840 / -1.681
+    (ff3.1). So ff2.1 has neither the retrained terms nor the penalty, ff3.0 both, ff3.1 the retrained
+    terms without the penalty, and only ff3.1 flips GLY136 at T 0.70: consistent with the penalty
+    offsetting what the retraining loosened at TM4's N-terminal end, in one chain each.
+  - ff3.1's whole coil library is ff2.1's to within 0.23 E_up in any populated cell (659 of 840 maps
+    moved, median largest change 0.033); basin populations per map within 0.92-1.23 (alpha_R), 0.84-1.09
+    (alpha_L), 0.91-1.16 (beta), 0.79-1.10 (pPII); the sheet group unchanged. As 1.28-1.29 predicted,
+    the per-map depths the data resolve stay near the prior.
+  - The training is not short of epochs: the GLY|X alpha_L mean rose +0.034, +0.050, +0.054, +0.062 over
+    rounds 1-4 and held-out transfer fell to 0.06%. The per-map priors centred on ff2.1 hold glycine
+    there; the same data pooled per central residue push alpha_L up +0.35 to +0.40 (1.29), and ff3.0's
+    pair was set at its start from BioEmu's weights (dL - dR +0.554, 1.19) and only kept by training.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -5796,6 +5844,15 @@ jobs. **When a request rests on a premise the records contradict, state the cont
 numbers before offering options, and put it in the question itself.** A decision about another
 session's jobs is confirmed by the user in that session, so relay it with its evidence and record it
 only once that session confirms.
+
+### 10.27 An inherited check is not exempt from 10.20 (2026-10-15)
+
+I reported "TM4 holds, ff3.1 0.97 against ff2.1 0.98" from `tm4_ff31.py` and a three-way script of my
+own, both scoring a phi/psi box only. The user doubted the measurement; DSSP alpha on the same REMD
+frames read 0.89-0.94 and put ff3.1 last, fraying at both TM4 ends (1.35). **Before quoting a helix
+result, read which criterion the script scores; a TM4 readout carries DSSP alpha, and a check that
+lacks it gets it added before it is reported.** And when the user points at a figure that disagrees,
+first rebuild that figure from its own files: here that showed the disagreement was the old table.
 
 ---
 
