@@ -798,3 +798,10 @@ to 10-07 12:00 is in git history.
   user's figure is the old table (last quarter 0.644 -> 0.994 on the fixed table); in the REMD, DSSP puts ff3.1
   lowest (0.892 against 0.937 and 0.931), not the dihedral box's 0.97-0.98. Files modified: findings.md (1.35,
   10.27), remote_jobs.md (owed checks), progress.md; WATCH_STATUS.md on the cluster.
+* **15:50-16:10 10-15, ff3.2 submitted (user: "same as ff3.1, except that it starts with ff3.0 instead of
+  ff2.1"; Mac Studio, not the owner).** `$P/training/ff32_depth_data`: ff31_depth_data's trainer byte for
+  byte, ff_3.0_gdepth's released files as `init_param` and as the depths' base library (plan.md Phase 17).
+  Initialised and checked against ff31_depth_data's start and ff3.0's release (`checks/ff32_deploy_20261015/`),
+  `--test-only`, then midway2 49406711, R from 16:02 (successor 49406726). `submit_new.sh` and `stock.sh` know its `f32_` tag (backups
+  `.bak_pre_ff32_20261015`). Files modified: plan.md (Phase 17), remote_jobs.md, progress.md; on the cluster
+  `submit_new.sh`, `~/watch_probe/stock.sh`, WATCH_STATUS.md.

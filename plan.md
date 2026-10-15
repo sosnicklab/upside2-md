@@ -28,6 +28,8 @@ are not TM4 evidence (findings 10.19).
 Ramachandran map, not only glycine's pair, as offsets from NDRD under an explicit L2 prior, with no
 new input simulations (route 1 of findings 1.28; Phase 14).
 
+**ff3.2** (user, 10-15). ff3.1's `data` training started from ff3.0 instead of ff2.1 (Phase 17).
+
 **The basin-depth path, not the BioEmu map** (user, 10-11 23:50: "we decided to go with basin depth
 training path (as it is expandable to all residues)"). The BioEmu-map line (ff30_bio, ff30_bio_dt009,
 ff30_bio_si; released ff_3.0_bio, ff_3.0_bio_si) is dropped and its validation cancelled. **ff3.0 is
@@ -546,6 +548,33 @@ ahead and run this session's job first", ahead of the TM4 queue.
     block as arguments (the ff3.0 run's copies kept as `*.ff30_run_20261014`; the refactored pre-check
     reproduces its output exactly). The 10-14 session moved this phase's tools off its scratchpad onto
     the cluster (`plot_tm4.py` beside the launcher).
+
+### Phase 17 - ff3.2: ff3.1's depth training started from ff3.0 (SUBMITTED 2026-10-15, user)
+The user's word (10-15): "same as ff3.1, except that it starts with ff3.0 instead of ff2.1". It is
+ff31_depth_data's run with one input changed, the start: ff_3.0_gdepth's six released files in place
+of ff2.1's. Decisions, each the plainest reading of that:
+- **Mode `data`** (1,442 depths with >= 20 native sites, prior 0.2), the ff3.1 variant released as
+  ff_3.1_depth_data; `all` lost to ff3.0 on the panel (findings 1.34).
+- **The trainer is ff31_depth_data's, byte-identical** (ConDiv.py `df3e2497...`, rama_basin.py
+  `235a1bf7...`). It takes its base library from `upside_input/rama.dat` and its Adam groups from
+  `init_param/`, so the start is changed by those files alone. The offsets start at zero on ff3.0's
+  library and each depth's prior is centred there, as ff3.1's were on its start (NDRD), so ff3.0's
+  glycine depths are the prior's centre and are not pulled back to NDRD. The trainer's printed
+  "NDRD" and the steric check's "against NDRD" mean the base library, here ff3.0's.
+- Same 456 proteins, held-out set (seeded), dt 0.009, target 76, no gate; its own minibatch shuffle,
+  as every run had. Epoch ends tagged `f32_EE` for the panel.
+- ff_3.0_gdepth ended training at margin +0.082, below the watch's +0.10 hold line, so ff3.2 starts
+  under it. Whether that line applies to a run that starts below it is the user's.
+1. [x] Run directory `$P/training/ff32_depth_data` (10-15 15:57): ff31_depth_data's trainer, env.sh and
+   pdb_list; `init_param` = ff_3.0_gdepth's five Adam-group files; `upside_input` = ff31's protein files
+   (hard links) with ff_3.0_gdepth's `rama.dat`; every file cmp-checked (`checks/ff32_deploy_20261015/`).
+2. [x] Initialised: 456 proteins, 1,442 trainable, 46 held out; held-out set and trainable mask equal
+   to ff31_depth_data's; `rama_round_00.dat` array-identical to ff3.0's library; printed start equal
+   to ff30_gdepth_dt009's step 75 (dhb -0.5513, sheet mean 0.2283, margin +0.082).
+3. [x] Submitted 16:01 after `--test-only`: midway2 49406711 (remote_jobs.md §1); `ff32_depth_data:f32_`
+   registered in `submit_new.sh` and `~/watch_probe/stock.sh`.
+4. [ ] Judged as ff3.1 was: every step's check and steric check, the panel at each epoch end
+   against d9_03 (its start) and fd_03, then the user's call on validation.
 
 ## Known Errors / Blockers
 
