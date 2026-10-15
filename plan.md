@@ -425,8 +425,11 @@ coordinates at its full rate).
    `params/fd_03`; 32 Peng arms with ff_3.0_gdepth's targets; 4 glpG REMD chains whose seeds differ from
    ff_3.0_gdepth's only in the five force-field datasets, so they carry the fixed side-chain/lipid
    table (remote_jobs.md §1). Judged against ff_3.0_gdepth's arms and chains, TM4 above all. The name
-   avoids the retired `ff_3.1_trained`. **TM4 stays helical** over block 1's first 6-7 chunks of all four
-   chains (user, 10-14 01:00; findings 1.35), as under ff_3.0_gdepth on the same chunks; the benchmark runs.
+   avoids the retired `ff_3.1_trained`. **TM4 stays helical** through block 1 and block 2's first
+   chunks of all four chains (0.93-1.00 per group; user, 10-14 01:00; findings 1.35), as under
+   ff_3.0_gdepth on the same chunks; GLY136 and GLY149 flip at some rungs under both, and only 79HIS's
+   GLY136 under ff3.1 does so at T 0.70 (0.66 of frames). Peng arms: 14 of 32 complete by 10-15 13:50,
+   all healthy; 18 run.
 
 Risks recorded before the probe (findings 1.28): the depths can learn native placement and absorb
 H-bond and side-chain physics, which a prior does not prevent; 46 held-out proteins sit at the

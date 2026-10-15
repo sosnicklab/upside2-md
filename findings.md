@@ -2368,21 +2368,36 @@ sampling, not how two trainings of one design differ.
   and the Peng benchmark (32 arms) is the larger test. The user ordered it with glpG TM4 (10-13 12:00):
   fd_03 is validated as `ff_3.1_depth_data` (plan.md Phase 14 step 6).
 
-### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical through block 1's first chunks (2026-10-14)
+### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; its glycines flip as often as ff3.0's (2026-10-14/15)
 
-Asked by the user 10-14 01:00. `checks/tm4_ff31_20261014/tm4_ff31.py` (output `tm4_ff31_20261014.txt`),
-remote_jobs.md §5's criterion (phi in [-130,-20], psi in [-90,15]) on rotated groups only, T 0.70
-(run.0) and 0.80 (run.14), against ff_3.0_gdepth on the same group indices, its seeds differing only
-in the force-field datasets (6-7 groups, ~1,800-2,100 frames per variant at T 0.70, ~13 h of block 1).
-- TM4 134-151: 0.97-1.00 per group at T 0.70 and 0.98-1.00 at 0.80 in all four variants, no downward
-  trend; ff_3.0_gdepth on the same groups 0.95-1.00. TM1 30-48: 0.96-1.00. Pass is > 0.8 at T 0.70.
-- TM4's glycines 136, 143 and 149 are never at phi > 0 under either force field, so the depth
-  training did not reopen the glycine flip that ff3.0 closed (1.25, 4.15).
-- The least helical residue is 134, TM4's N-terminal end next to the non-helical 131-133 (0.81-0.94
-  pooled; ff_3.0_gdepth 0.72-0.95); 150-151 at the C end 0.96-1.00.
-- Limit: these are block 1's first chunks only. ff_3.0_gdepth's own TM4 at T 0.70 is still 0.94-1.00
-  in its latest groups (44-47, block 3), but 79ALA_S115T's T 0.80 rung reads 0.83-0.89 there, so the
-  ff3.1 chains are to be read again at each block end.
+Asked by the user 10-14 01:00. `checks/tm4_ff31_20261014/tm4_ff31.py` (outputs `tm4_ff31_20261014.txt`,
+`_20261015.txt`), remote_jobs.md §5's criterion (phi in [-130,-20], psi in [-90,15]) on rotated groups
+only, T 0.70 (run.0) and 0.80 (run.14), against ff_3.0_gdepth on the same group indices, its seeds
+differing only in the force-field datasets. Glycine phi > 0 on every rung: `~/watch_probe/gly_flip_rungs.py`
+(midway2), groups 14-26 pooled, ~3,900 frames per rung.
+- TM4 134-151 per group, 26 groups (all of block 1 and block 2's first chunks, read 10-15 13:50):
+  ff3.1 0.94-1.00 at T 0.70 and 0.93-1.00 at 0.80; ff_3.0_gdepth on the same groups 0.93-1.00 and
+  0.84-1.00 (79ALA_S115T's T 0.80). TM1 30-48 0.93-1.00 under ff3.1, 0.89-1.00 under ff3.0. Pass is
+  > 0.8 at T 0.70. Groups 1-7
+  (10-14) read 0.97-1.00, so TM4 eased over block 1 under both force fields.
+- **GLY136 of 79HIS under ff3.1 flips at the coldest rungs:** phi > 0 in 0-1% of frames to group 13,
+  then 43-91% per group from group 14 (late block 1) to 26 at T 0.70, 10-32% at T 0.80 from group 19,
+  none at T 0.75; pooled over groups 14-26, rung 0 0.66, rung 1 0.29, rungs 13-19 0.11-0.16. ff_3.0_gdepth's
+  79HIS has no glycine at phi > 0 on any rung. That one residue is what lowers 79HIS's TM4 to 0.94-0.97.
+- **Elsewhere the flips are ff3.0's own, at the same level** (largest per-rung phi > 0, groups 14-26):
+  | variant | ff3.1 GLY136 | ff3.1 GLY149 | ff3.0 GLY136 | ff3.0 GLY149 |
+  |---|---|---|---|---|
+  | 79ALA | 0.00 | 0.22 (rungs 13-19) | 0.19 (rungs 22-27) | 0.20 (21-27) |
+  | 79HIS | 0.66 (rungs 0-1, 13-19) | 0.13 (24-27) | 0.00 | 0.00 |
+  | 79ALA_S115T | 0.30 (rungs 7-17) | 0.30 (22-26) | 0.18 (8-21) | 0.15 (24-27) |
+  | 79HIS_S115T | 0.00 | 0.03 | 0.00 | 0.33 (15-27) |
+  GLY143 never flips. ff3.0's flips sit at the middle and hot rungs, which the local T 0.80 runs
+  (1.25, 4.15) did not sample; only 79HIS's ff3.1 flip reaches T 0.70.
+- The walkers do not cross the ladder (5.5), so a flipped configuration stays near the rungs where it
+  formed: a flip on rungs 0-1 and one on 13-19 are two walkers, and these fractions are not
+  equilibrium populations. Whether GLY136's flip at T 0.70 is a property of ff3.1 or one walker's
+  history is not established from one chain.
+- The least helical residue is otherwise 134 or 149 at TM4's ends (0.84-0.95 pooled at T 0.70).
 
 ## 2. The hybrid model: what each side supplies
 

@@ -763,3 +763,24 @@ to 10-07 12:00 is in git history.
   (output_previous_0 the seed's; blocks 1-3 = groups 1-17, 18-35, 36-54) and the exact sbatch line; plan.md's
   claim that `extract_block.py` checks the calibration group corrected. Watch cron `c618e779` deleted.
   Files modified: remote_jobs.md, plan.md (Phase 16), progress.md.
+* **13:47-14:40 10-15, status check (MacBook Pro; user: "check job status").** Read only: 37 jobs R, every log
+  clean; 13 more ff_3.1_depth_data arms COMPLETE and healthy (14 of 32); its chains in block 2, ff_3.0_gdepth's in
+  block 4; ff_2.1_nobp's arms all complete, ff_2.1_ctrl38's 23 of 32. TM4 at ff3.1's block-1 end
+  (`tm4_ff31_20261015.txt`) and a new all-rung glycine scan (`~/watch_probe/gly_flip_rungs.py`): TM4 0.93-1.00 per
+  group; GLY136/149 flip at some rungs under both force fields, 79HIS's GLY136 under ff3.1 at T 0.70. No watch
+  started; WATCH_STATUS.md left at "Owner: none". Files modified: findings.md (1.35), plan.md (Phase 14 step 6),
+  remote_jobs.md (header, owed checks, §1), progress.md.
+* **14:00-14:30 10-15, scratchpad cleanup (user: "do a cleanup on the scratchpads, both in project root and
+  examples").** By the findings 10.25 rule: 1,054 files deleted (224 GB; 219 GB of `.up` trajectories, the rest
+  bulk npy/npz, build objects, logs and stale loose files), every script, input, README and small result kept,
+  `polygly/` kept whole (resumable); `example/16.MARTINI/scratchpad/` (CLC-ec1 prep outputs) removed. Manifest
+  `scratchpad/CLEANUP_20261015_manifest.txt`. Scratchpad 210 G -> 1.2 G. Files modified: remote_jobs.md
+  ("Where things are"), progress.md.
+* **14:05-14:20 10-15, ff2.1 deterministic-side-chain scoring (user: "submit the score now and keep record so
+  another computer do not need to resubmit finished jobs").** New `setup/score/submit_unscored.sh` in
+  `$P/training/ff21_nobp_dt009`: submits `score.sbatch` only for arms with `COMPLETE`, no json and no queued score
+  job, logging to `submitted.log`. It submitted the 19 unscored complete arms (49406327-49406359, broadwl, the
+  law); a rerun at once submitted nothing. Records on the cluster (the run's README "Scoring", `setup/notes/plan.md`
+  P6b, `WATCH_STATUS.md` "Not watched here" and "Owed checks", each backed up `.bak_pre_score_20261015`) and in
+  remote_jobs.md (nobp row, snapshot, owed checks, the HDX recipe's block-2 ids). Files modified: remote_jobs.md,
+  progress.md.
