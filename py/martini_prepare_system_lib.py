@@ -3288,16 +3288,17 @@ def load_sidechain_rotamer_payload(sidechain_lib: Path, sequence, restype_to_ind
     if not layer_index:
         raise ValueError("No production rotamer rows could be generated from the sidechain library")
 
-    layer_index_arr = np.asarray(layer_index, dtype=np.int32)
+    # layer_index holds absolute library rows, so the placement tables are the whole library, as
+    # upside_config writes them; the engine reads placement_data[layer_index[row]].
     return {
         "pair_interaction": pair_interaction,
         "affine_residue": np.asarray(affine_residue, dtype=np.int32),
-        "layer_index": layer_index_arr,
+        "layer_index": np.asarray(layer_index, dtype=np.int32),
         "beadtype_seq": np.asarray([np.bytes_(x) for x in beadtype_seq], dtype="S16"),
         "bead_type_index": np.asarray(bead_type_index, dtype=np.int32),
         "id_seq": np.asarray(id_seq, dtype=np.int32),
-        "placement_data": rot_center_fixed[layer_index_arr].astype(np.float32),
-        "placement_scalar_data": rot_energy_fixed[layer_index_arr][:, None].astype(np.float32),
+        "placement_data": rot_center_fixed,
+        "placement_scalar_data": rot_energy_fixed[:, None],
         "row_rotamer_index": np.asarray(row_rotamer_index, dtype=np.int32),
         "row_residue_table_index": np.asarray(row_residue_table_index, dtype=np.int32),
         "skipped": skipped,

@@ -1326,6 +1326,45 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   -0.024 against -0.030, gly_helix -0.062 against -0.100. At the target neither run improves on its
   start (gdepth_start 0.603, -0.018): both stop losing folding in the last epoch, and `data` ends
   ahead of `all` in folding and helix.
+- **`f32_00`, `f32_01`, `f32_02`** (ff32_depth_data steps 18, 37 and 56, margin +0.057, +0.076 and +0.084,
+  depth rounds 1-3; 49410081 and 49410117 COMPLETED 00:59 and 01:22 10-17, 49412628 21:23 10-17;
+  `select_last_f32_02_login1_20261017.txt`, 35 domains, with its start d9_03 and fd_03): folded 0.486, 0.465
+  and 0.432, helix -0.025, -0.027 and -0.022, beta -0.013, -0.014 and -0.015, gly_helix -0.055, -0.094 and
+  -0.056, gly_left -0.012, +0.008 and +0.001; d9_03 0.464, -0.029, fd_03 0.452, -0.023 on the same domains.
+  gdepth_start dominates f32_01 and f32_02 in helix. ff3.2's first epoch folds above its start d9_03 (0.486
+  against 0.464); the second gives most of that back and the third falls below both d9_03 and fd_03, while
+  its helix error is the smallest of the three. Its glycine maps stay ff3.0's
+  (`checks/ff32_deploy_20261015/gly_maps_ff30_31_32.py`, the trainer's 40 glycine-centred coil maps, basin
+  F = -ln P): mean F_L - F_R -0.608 at round 2 against ff3.0's -0.611, ff3.1's -1.108 and NDRD's -1.185; rms
+  0.026 nats from ff3.0 against 0.19 from ff3.1 (0.020 at round 1); per map median 0.00 of the way from ff3.0
+  to ff3.1, and 0.13-0.17 on the maps where the two differ most (GLY-PHE, GLY-ILE, 0.5 nats apart).
+- **`nb_01` and `ctrl38`** (10-17, user: ff_2.1_nobp against its control ff_2.1_ctrl38 on held-out proteins; the
+  released files; jobs 49411614, 49411661; detail in `$P/training/ff21_nobp_dt009/setup/notes/findings.md`): `ctrl38`
+  reproduces `c9_01` (10-07, the same parameters) bitwise in all 176 runs, so the panel is deterministic and its code
+  path unchanged since. On 44 domains no-BP folds 0.389 against 0.405 (-0.016 [-0.098, +0.065], p 0.62); mean Q,
+  CA-RMSD (+0.04 [-0.19, +0.28] A) and the local classes resolve nothing either. The panel runs every tag at time step
+  0.015 (`--time-step 0.015` in each run's log), written before training moved to 0.009 on 10-06.
+- **`mdc_nobp` and `mdc_ctrl38`** (10-17, plan.md Phase 19: 89 new mdCATH domains, time step 0.009 as trained, the
+  same released files; 49412017, 49412018; `ff3_selection/panel_compare_49412845.out`): **the deterministic side chain
+  loses folding on held-out proteins.** Folded 0.264 against 0.365, -0.101 [-0.155, -0.051], Wilcoxon p 7e-5, lower in
+  59 domains and higher in 19 (sign test p 6e-6); mean Q -0.035 [-0.046, -0.024] (p 2e-7); CA-RMSD +0.21
+  [+0.03, +0.38] A (p 0.004). Folded and Q fall in every length bin (50-100: -0.081, 101-150: -0.110, 151-250: -0.113)
+  and every fold class (helix -0.089, beta -0.076, mixed -0.132); the largest losses are whole folds, e.g. 1krrA00
+  0.05 against 0.93. This agrees with the training set's +0.67 A; the 44-domain panel's -0.016 sat inside this
+  interval. Whether that panel missed it through its proteins or its time step 0.015 is not separated.
+- **Audit of the no-BP comparison** (10-18, plan.md Phase 20; `checks/nobp_audit_20261018/`): the two runs differ
+  only in the intended side chain. Every no-BP config (training step 0, 32 benchmark arms, 356 panel runs) is
+  single-state with 1-body 0 and burial weight 1, every control config multi-state; the engine at n_rot 1 is a plain
+  sum and its parameter derivatives match central differences to float precision; solver, initial vector,
+  minibatches, invocation (dt 0.009, ladder 0.8-1.1, 8000 tu), code and binary are identical; no protein-step above
+  KE/1.5kT 1.05; releases equal their step-37 files; the mdCATH numbers recompute exactly from the per-run files.
+  **But no-BP did not reach a fixed point.** `convergence_gate.py` over the last epoch fails its `rot` group (pair
+  table, coverage and hydrophobe; p < 4e-6, the test's floor) where the control's passes (p 1.000); `dhb` is pulled in
+  both (p 1e-4, 0.003). No-BP's `rot` gradient points the same way in both epochs (cosine of the epoch means +0.81)
+  and its size falls only from 19.6 to 13.8; the training-set gap goes +0.78 to +0.70 A. So the verdict holds at the
+  matched 38 steps, not at no-BP's own fixed point. The bead geometry is not trained, and at the 1aba native the kept
+  states cost +91.9 (MET0 +23.6, LEU23-PHE30 +8.3) against BP's -75.4, which fits a pull to soften clashes the
+  fixed geometry makes; that the pull is this is not shown. The audit also found the shared angular-gradient defect (3.12), the same in both runs.
 - **`ds_02`** (ff30_gdepth_si step 56, margin +0.096; 49223609 COMPLETED 17:33 10-11; 40 domains):
   folded 0.406, helix -0.030; gdepth_start dominates it in helix. With its twin d9_02 on 39 domains:
   0.406 against 0.439, helix -0.031 against -0.029. ds_00 to ds_02 fold 0.412, 0.420, 0.406.
@@ -2368,7 +2407,9 @@ sampling, not how two trainings of one design differ.
   and the Peng benchmark (32 arms) is the larger test. The user ordered it with glpG TM4 (10-13 12:00):
   fd_03 is validated as `ff_3.1_depth_data` (plan.md Phase 14 step 6).
 
-### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; its glycines flip as often as ff3.0's (2026-10-14/15)
+### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; by block 2's end its glycine flips reach the cold rungs in two chains (2026-10-14/17)
+
+Every chain read here ran with the misplaced side-chain beads (4.17); the corrected chains of 10-17 replace them.
 
 Asked by the user 10-14 01:00. `checks/tm4_ff31_20261014/tm4_ff31.py` (outputs `tm4_ff31_20261014.txt`,
 `_20261015.txt`), remote_jobs.md §5's criterion (phi in [-130,-20], psi in [-90,15]) on rotated groups
@@ -2392,7 +2433,7 @@ differing only in the force-field datasets. Glycine phi > 0 on every rung: `~/wa
   | 79ALA_S115T | 0.30 (rungs 7-17) | 0.30 (22-26) | 0.18 (8-21) | 0.15 (24-27) |
   | 79HIS_S115T | 0.00 | 0.03 | 0.00 | 0.33 (15-27) |
   GLY143 never flips. ff3.0's flips sit at the middle and hot rungs, which the local T 0.80 runs
-  (1.25, 4.15) did not sample; only 79HIS's ff3.1 flip reaches T 0.70.
+  (1.25, 4.15) did not sample; at block 1's end only 79HIS's ff3.1 flip reached T 0.70.
 - The walkers do not cross the ladder (5.5), so a flipped configuration stays near the rungs where it
   formed: a flip on rungs 0-1 and one on 13-19 are two walkers, and these fractions are not
   equilibrium populations. Whether GLY136's flip at T 0.70 is a property of ff3.1 or one walker's
@@ -2411,6 +2452,20 @@ differing only in the force-field datasets. Glycine phi > 0 on every rung: `~/wa
   ends. Figure `~/Downloads/glpg_tm4_dssp_remd_ff21_ff30_ff31.png` (MacBook Pro), from
   `scratchpad/glpg_ff21_vs_ff30/plot_tm4_dssp_fixed_table.py` on `~/watch_probe/extract_bb_dssp.py`'s
   backbones; copies of both in midway2's `~/watch_probe/`.
+- **At block 2's end (read 10-17 00:20, Mac Studio; `tm4_ff31_20261017.txt`, `gly_flip_rungs_20261017.txt`;
+  groups 1-45, block 2 is 19-37 and 38-45 are block 3's first):** TM4 134-151 per group under ff3.1 0.85-1.00
+  at T 0.70 and 0.87-1.00 at 0.80, under ff3.0 on the same groups 0.93-1.00 and 0.84-1.00. The T 0.70 low is
+  79ALA's block 3 (groups 40-45 0.85-0.94), where **GLY149 of 79ALA now flips at the cold rungs**: phi > 0 0.05-0.13
+  on rungs 0-18 (pooled over groups 14-45; at block 1's end 0.002 at T 0.70 and none below rung 13), 0.32 at rung 27;
+  ff3.0's 79ALA flips only at rungs 21-27 (GLY136 0.31, GLY149 0.13). 79HIS's GLY136 holds at rung 0 (0.52) and
+  spreads down the ladder (rung 1 0.31, rung 2 0.10, rungs 7-18 0.06-0.19), with GLY149 0.08-0.26 on rungs 19-27;
+  ff3.0's 79HIS has only GLY149 at 0.06-0.09 on rungs 2-4. The S115T chains flip at middle and hot rungs under
+  both force fields, as before. Pooled T 0.70 TM4: ff3.1 0.974 / 0.967 / 0.987 / 0.994 (79ALA, 79HIS, 79ALA_S115T,
+  79HIS_S115T), ff3.0 0.979 / 0.994 / 0.984 / 0.994. DSSP alpha 135-151 on 79HIS's T 0.80 rung over block 2 (groups
+  19-37; the same groups for ff3.0, 19-29 for the cancelled ff2.1_sc): ff3.1 0.863 (first / second half 0.879 / 0.846;
+  135-136 at 0.67 / 0.76, 150-151 at 0.25 / 0.35), ff3.0 0.945 (0.966 / 0.924; 150-151 at 0.68 / 0.64), ff2.1 0.887.
+  The core 137-149 holds under all three. ff3.1 lost 0.03 from block 1 while ff3.0 held, and the walkers still
+  make no round trip, so whether the cold-rung flips are ff3.1's or two walkers' histories is still open.
 - **The table, not the force field, removed ff2.1's unfolding.** The seed-1 runs behind
   `glpg_tm4_dssp_ff21_vs_ff30.png` (10-09) are runs_cov's old-table ff21_released and d9_03 (initial
   energy -25017.30 and -24992.61, as the MacBook Pro's logs). Redrawn from those files the figure
@@ -3356,6 +3411,48 @@ nodes, and its round trip checks them. md5 `70589119...`, in the Mac test, `$P/t
   the cluster). Each rerun differs from its pre-fix twin only in the coverage tables, so the pair
   measures what those tables do to TM4.
 
+### 3.12 The side-chain pair term's angular parameter gradient mixes the two residues (2026-10-18; FIXED)
+
+**Defect (master's engine).** `PosQuadSplineInteraction` (`src/bead_interaction.h`) stores, for types (a,b), the
+angular spline of bead 1 in slots 0-14 and of bead 2 in 15-29 (`quadspline_param_deriv`, :125-130), and
+`is_compatible` (:211-214) requires p[b,a] to hold the same two splines swapped. `propagate_derivatives`
+(`src/interaction_graph.h:546-548`) adds each edge's derivative unchanged to both [t1,t2] and [t2,t1], without the
+swap. Whenever a-b pairs occur in both sequence orders, entry [a,b] collects b's angular derivative in a's slots.
+`rotamer_parameter_estimation.py:60-72` builds p[a,b] = [sig(L[a,b]), sig(L[b,a]), radial], so the trainer's
+gradient on L[a,b] is sig' (D_a + D_b) where it should be proportional to D_a: a's and b's angular preferences in
+the pair cannot be told apart. `interaction_graph.h` and `bead_interaction.h` are master's, unchanged.
+
+**Measured** (1aba, central differences on the engine; `checks/nobp_audit_20261018/B/stage2.log`): the slot sum
+c[a,b,s] + c[a,b,15+s] equals FD(a's spline) + FD(b's) to 1.9e-5 (single-state) and 4.6e-4 (multi-state), while
+c[a,b,s] against FD(a's spline) alone ranges from -66 to +65, and is 1 only where every a-b pair comes in one
+order. In the trainer's own coordinates, trainer gradient over the true one on off-diagonal angular logits: median 5.1
+(single-state), 1.11 (multi-state, range -4046 to +894, so some signs flip). Diagonal angular and every radial
+coefficient come out at exactly 2x the true gradient (2.000 +/- 5e-4), which under Adam only halves the regulariser's
+relative weight; coverage and hydrophobe are 1.000.
+
+**Scope.** 5,700 of the 31,420 coefficients of the `rot` group (rate 0.0125) in every ConDiv run of this campaign,
+ff3.0, ff3.1, ff3.2, the control and no-BP alike, and probably ff2.1's original training (same engine code; not
+checked). Simulation energies and forces do not use this path. Under Adam the misdirected angular logits moved as far
+as the radial coefficients (`checks/angfix_20261018/ang_drift.txt`, `ang_drift_sigmoid.txt`; rms change off-diagonal
+logit against radial: control 38 steps 0.083 / 0.092, no-BP 0.150 / 0.180, ff3.0 76 steps 0.137 / 0.142, ff3.1 0.134 /
+0.143, ff3.2 69 steps 0.113 / 0.107). In spline value that is rms 0.007-0.012 (max 0.06-0.11) against a median value of
+0.016, 78% of the values sitting below 0.05 or above 0.95. Its effect on any force field is not measured. (The audit's
+first reading, "barely moved", set the spline-value change against the radial coefficients' change, unlike units; and
+under Adam the step size of a coordinate says nothing about whether its gradient is right.)
+
+**Fix (user 10-18: "fix the issue"; plan.md Phase 21).** `interaction_graph.h` now adds to [t2,t1] the edge's
+parameter derivative evaluated at p[t2,t1] with the two elements exchanged (`ExchangedParamDeriv`, symmetric
+interactions only), which is what `is_compatible` defines p[t2,t1] to be. For fully symmetric parameter sets it is
+bitwise the old value. Measured on midway2 (`checks/angfix_20261018/`: `parity.log`, `parity_glpg.log`, `fd.log`),
+new build against the installed one: energy, forces and every derivative ConDiv reads bitwise equal on single- and
+multi-state 1aba at two frames, except the pair term's angular slots; radial slots bitwise; the angular sum the trainer
+reads on diagonal pairs changed by at most 5e-8 relative; 200 tu binary runs bitwise; the hybrid glpG seeds' energy and
+forces bitwise. With the fix every angular entry matches its tied central difference (ratio 1.000; median error 5.8e-6
+single-state, 9.6e-4 multi-state), and the trainer's angular-logit gradient is 2.000x the true one, as every radial
+coefficient is. That uniform 2x stays: it sets the regulariser's relative weight on pair coefficients, as in ff2.1's own
+training (master's `rotamer_parameter_estimation.py` builds the same layout). Installed in `$P/obj` 08:35 10-18; ff3.0,
+ff3.1, ff3.2 and both ff2.1 retrainings before that date carry the defect.
+
 ## 4. What the hybrid gets wrong, and what is still open
 
 ### 4.1 Fold fidelity: a ~4.5 A helical-core deviation, cause unidentified (findings 100, 103)
@@ -4080,6 +4177,43 @@ Scripts, `contacts.json`, maps and figures: `scratchpad/tm5_tm6/` and midway2
   core CA-RMSD 1 -> 4-5 A within ~300 tu; implicit 4.1). TM5's move onto TM2 comes with it, so neither
   model shows that H145A's TM5 undocks from TM6 in the real protein.
 
+### 4.17 Every hybrid seed places its side-chain beads at the wrong rotamer geometry (2026-10-17)
+
+Found by a read-only code survey for a deterministic-side-chain seed (Mac Studio, 10-17), then measured.
+`load_sidechain_rotamer_payload` (`py/martini_prepare_system_lib.py:3299`) writes `placement_data` already
+gathered per row, `rotamer_center_fixed[layer_index]` (one row per (residue, state), 747 for 79HIS), but
+stores `layer_index` as the absolute library row (`lid = start + rel`, :3275; written :3717, :3727). The
+fixed placement node reads `data[layer_idx]` (`src/placement.cpp:139-141`), so row r is placed at
+`rotamer_center_fixed[layer_index[layer_index[r]]]`: a geometry taken from another row, and in 740 of 747
+rows from another residue. upside_config writes the full 86-row library with absolute indices
+(`py/upside_config.py:1185`, :1195, as master's), which is correct; the hybrid preparation since 7d332c5
+(2026-04-03) is not.
+- Measured: on every seed the running chains use (`seeds/glpG-RKRK-<V>.<ff>.up`, ff_2.1_sc, ff_3.0_gdepth,
+  ff_3.1_depth_data, 79HIS and 79ALA) `placement_data == rcf[layer_index]` and all rows have `li[li] != li`;
+  bead offsets in the residue frame differ by up to 5.59 A. In the engine on the local live 79HIS seed
+  (`scratchpad/ff3_local_test/seeds/glpG-RKRK-79HIS.live.up`) the placement output equals the double-indexed
+  geometry to 4.4e-6 A and misses the intended one by up to 7.7 A, 2.4 A on average.
+- `placement_fixed_scalar` (the 1-body placement energy) is indexed the same way.
+- What it reaches: the side-chain bead positions that the rotamer pair term and the side-chain/backbone
+  H-bond coverage terms read. The side-chain/lipid table (`martini_sc_table_1body`) evaluates at the
+  separate CB node, which is per residue and correct. Protein-only configs (ConDiv training, the Peng
+  benchmark) come from upside_config and are not affected.
+- Every hybrid glpG result before 10-17 (TM1/TM4 helicity, glycine flips, HDX, under every force field) ran
+  with it. Comparisons between force fields shared the defect, but it acts through each force field's own
+  pair and coverage tables, so it does not cancel.
+- **Fixed 10-17 (user: "fix the bug and rerun the affected simulations"; plan.md Phase 18).** The preparation
+  now writes the whole library table (`load_sidechain_rotamer_payload`; repo, and the hunk applied to the
+  `$P` and `/beagle3` copies with `.bak_pre_placefix_20261017`; those Python 3.9 trees cannot run the
+  preparation anyway). Called on glpG's sequence, the fixed function reproduces the repaired seeds' side-chain
+  datasets exactly. Seeds repaired by `checks/placefix_20261017/fix_placement.py`, which recomputes the
+  library tables and refuses unless the seed's gathered rows equal them exactly: the four base seeds and the
+  eight ff3.0/ff3.1 seeds; rebuilt the pipeline's way (`patch_glpg.py` on a repaired base) each equals its old
+  seed repaired, dataset for dataset. Only the two `placement_data` datasets differ from the old seeds. On the
+  production engine every repaired seed places its beads at the intended rotamer to 3.6e-6 A (the old: up to
+  7.9 A, 2.4 A mean) and its 1-body output equals the library table (the old: off by up to 22 E_up); frame-0
+  potential drops by 18-71 E_up. The old chains are kept as `<V>.<ff>.placedefect_20261017`; their HDX outputs
+  (5.5) moved with them.
+
 ---
 
 ## 5. HDX: what the estimator measures and how to read it
@@ -4616,10 +4750,11 @@ protein with no bilayer contact.
     | pre-fix ff2.1 79HIS (09-01, log 48890657) | 201 -> 116 by chunk 10 | |
     At T < 0.80 block 2 reads 191-196 for ff2.1 against 175-187 for ff_3.0_gdepth. This agrees with
     4.15's local TM4 (ff2.1 0.944, ff_3.0_gdepth 0.884, not resolved).
-* **REMD readout, ff_3.0_gdepth block 2 (2026-10-14, user; plan.md Phase 16).** 79ALA and 79HIS, block 1
+* **REMD readout, ff_3.0_gdepth block 2 (2026-10-14, user; plan.md Phase 16).** Ran with the misplaced side-chain
+  beads (4.17), as did the ff_3.1_depth_data readout below; the reruns' block 2 replaces both. 79ALA and 79HIS, block 1
   dropped, 5,723 and 5,421 frames per rung on 28 rungs T 0.70-0.90; the repo's HDX steps with the
   ff_3.0_gdepth HDX topology (`checks/hdx_ff30_20261014/`; outputs
-  `popepopg_REMD_mdw2/<V>.ff_3.0_gdepth/hdx_sc600x12_ff_3.0_gdepth/`, `results/<V>_tm4_readout.txt`;
+  `popepopg_REMD_mdw2/<V>.ff_3.0_gdepth.placedefect_20261017/hdx_sc600x12_ff_3.0_gdepth/` since 10-17 (4.17), `results/<V>_tm4_readout.txt`;
   figures `~/Downloads/glpG_TM4_HDX_ff3.0_gdepth_block2/`).
   - Mixing: KE/1.5kT 0.998-1.002 and swap acceptance 0.36-0.53, but no walker crosses the ladder (each
     spans 8-23 of 28 slots and drifts ~1.7 slots per chunk against ~21 accepted swaps per frame
@@ -4642,6 +4777,27 @@ protein with no bilayer contact.
     finite, as experiment says, is beyond this sampling (kT ln ESS = 7.4 needs ~3e5 independent frames
     per rung). On upside2-md-87's criterion (137-147 censored above ~5.1 at 298 K, 148-151 no more
     frayed than locally) 79HIS passes, and 79ALA passes on 137-147 with 150 slightly more frayed.
+* **REMD readout, ff_3.1_depth_data block 2 (2026-10-17, user 10-14 02:10; plan.md Phase 16).** The same
+  scripts, groups 19-37, 5,687 (79ALA) and 5,651 (79HIS) frames per rung, the ff_3.1_depth_data HDX topology
+  (midway3 60979543, 60979545; `popepopg_REMD_mdw2/<V>.ff_3.1_depth_data.placedefect_20261017/hdx_sc600x12_ff_3.1_depth_data/`; figures
+  beside ff3.0's in `~/Downloads/glpG_TM4_HDX_ff3.1_depth_data_block2/` on the Mac Studio).
+  - Mixing as ff3.0's: KE/1.5kT per slot 0.998-1.001, swap acceptance 0.30-0.52, no round trip.
+  - PS, T 0.85 (bound 5.84 / 5.87): the core 140-147 censored in both variants, as under ff3.0. TM4's N-terminal
+    turn resolves where ff3.0's is censored: 79ALA 136 4.36, 138 4.47, 139 4.89 (135, 137 censored; ff3.0 censored
+    or at the bound, 5.69-5.83); 79HIS 135 4.96, 136 4.03, 139 5.58 (ff3.0 136 5.55, the rest censored). At the
+    C-terminal end 79HIS's 148 drops to 2.72 (ff3.0 censored) and 79ALA's 148 is censored (ff3.0 4.99). 130-134
+    and 149-151 read 0.6-3.4, as ff3.0's.
+  - PS_protein: 79ALA resolves most of TM4 at 1.0-3.6 (135-139, 141-142, 147-148), against ff3.0's 3.6-5.85; 79HIS
+    as ff3.0's except 137 (3.53, ff3.0 censored) and 148 (1.01, censored).
+  - Unweighted at the 0.853 rung, 137-148 lose protein protection in up to 4.6% of frames in 79ALA (137 4.6%, 148
+    4.2%, 147 3.2%, 138 3.1%, 139 2.7%, 142 1.4%; 140-146 at most 0.3%), against ff3.0's 0.37% and the pre-fix set's
+    10-25%. It moves between halves of block 2 (138 0.2% to 6.0%, 139 0.0% to 5.3%, 147-148 6-8% to 0), so 79ALA
+    is not stationary over block 2, and block 3 follows with its TM4 lowest (1.35). In 79HIS 137-147 are at most
+    0.27%; 148 reaches 17.7% (12.3% and 23.1% by half; ff3.0 0.06%).
+  - Read: under ff3.1 TM4's core 140-147 still sits at the estimator's limit, so the HXMS comparison is no more
+    resolved than under ff3.0. ff3.1 frays TM4 more at both ends, by HDX as by DSSP (1.35): the 135-139 turn in
+    both variants and 148 in 79HIS. On upside2-md-87's criterion 79HIS passes on 137-147 (139 at 5.58) with 148
+    frayed; 79ALA fails it at 138-139 (4.47, 4.89, below ~5.1), with the core 140-147 holding.
 * **If that test shows a residual, the core's trained parameters alone cannot explain it:** the implicit run uses
   the same core and keeps TM4 closed. What differs is how each model embeds the core: the implicit
   membrane's backbone H-bond cost at the midplane, where TM4a sits (|z| 1.47 A, 3.10c; the term raised

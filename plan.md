@@ -462,7 +462,7 @@ average and grids, at 600 target directions x 12 side-chain bead frames instead 
    alike, and none of the three released candidates is resolved from its start (findings 4.15).
    Each later epoch end is patched with the new tool and compared with its `_sc` start and twin.
 
-### Phase 16 - glpG TM4 HDX on the fixed table (local readout done; ff2.1 REMD cancelled; ff3.0 REMD readout done 2026-10-14; ff3.1 owed; owner: the next "continue jobs" session)
+### Phase 16 - glpG TM4 HDX on the fixed table (local readout done; ff2.1 REMD cancelled; ff3.0 REMD readout done 2026-10-14; ff3.1 REMD readout done 2026-10-17)
 
 The only hybrid HDX set (ff2.1, 09-04) gives TM4 3.5-4.9 kcal/mol against the H145A peptide
 140-144's 6.1-7.4, through protein protection failing (`pp_fail` 0.032 on 135-151 at the T 0.85
@@ -537,9 +537,13 @@ ahead and run this session's job first", ahead of the TM4 queue.
     passes the closing criterion; 79ALA passes on 137-147, its 150 slightly more frayed than locally.
     Whether TM4's dG is finite, as HXMS says, needs ~3e5 independent frames per rung, and block 2's
     walkers do not cross the ladder.
-  - [ ] **The same readout on ff_3.1_depth_data** (user 10-14 02:10: "Do the analysis on ff3.1 as well"), 79ALA
-    then 79HIS, when each chain's block 2 closes (block 1 ~23:30 10-14 to ~01:00 10-15, block 2 ~36 h later
-    plus queue). Step by step in remote_jobs.md §1 "TM4 HDX on ff_3.1_depth_data: the recipe": block 2's
+  - [x] **The same readout on ff_3.1_depth_data** (user 10-14 02:10: "Do the analysis on ff3.1 as well"), 79ALA
+    then 79HIS, block 2 = groups 19-37, caslake 60979543 and 60979545 00:19-00:25 10-17 (findings 5.5): the
+    core 140-147 censored at 298 K in both, as under ff3.0; the 135-139 turn resolves at 4.0-5.6 and 79HIS's 148
+    at 2.72, where ff3.0's are censored; 79ALA's 137-148 lose protein protection in up to 4.6% of frames at the
+    0.853 rung (ff3.0 0.37%), unevenly between halves. 79HIS passes the closing criterion on 137-147; 79ALA fails
+    it at 138-139. Figures `~/Downloads/glpG_TM4_HDX_ff3.1_depth_data_block2/` (Mac Studio). The recipe as run:
+    remote_jobs.md §1 "TM4 HDX on ff_3.1_depth_data: the recipe": block 2's
     groups from the logs' run counts (output_previous_0 is the seed's; each block's first group is its
     calibration, 287 frames to t 18.0; `prechecks.py` asserts the log's run count matches); `prechecks.py
     ff_3.1_depth_data <V> FIRST LAST JOBID` on midway2; then `hdx_block2.sbatch` with `FF=ff_3.1_depth_data`
@@ -549,7 +553,7 @@ ahead and run this session's job first", ahead of the TM4 queue.
     reproduces its output exactly). The 10-14 session moved this phase's tools off its scratchpad onto
     the cluster (`plot_tm4.py` beside the launcher).
 
-### Phase 17 - ff3.2: ff3.1's depth training started from ff3.0 (SUBMITTED 2026-10-15, user)
+### Phase 17 - ff3.2: ff3.1's depth training started from ff3.0 (STOPPED 2026-10-18 in step 69; rerun in Phase 21)
 The user's word (10-15): "same as ff3.1, except that it starts with ff3.0 instead of ff2.1". It is
 ff31_depth_data's run with one input changed, the start: ff_3.0_gdepth's six released files in place
 of ff2.1's. Decisions, each the plainest reading of that:
@@ -573,10 +577,147 @@ of ff2.1's. Decisions, each the plainest reading of that:
    to ff30_gdepth_dt009's step 75 (dhb -0.5513, sheet mean 0.2283, margin +0.082).
 3. [x] Submitted 16:01 after `--test-only`: midway2 49406711 (remote_jobs.md §1); `ff32_depth_data:f32_`
    registered in `submit_new.sh` and `~/watch_probe/stock.sh`.
-4. [ ] Judged as ff3.1 was: every step's check and steric check, the panel at each epoch end
-   against d9_03 (its start) and fd_03, then the user's call on validation.
+4. [x] Stopped by the user 08:33 10-18 in step 69 (steps 0-68 complete) for the angular-gradient defect; rerun on the fixed engine as
+   `ff32_depth_data_angfix` (Phase 21). Its readouts to step 68 and panels f32_00-02 are the defect side.
+
+### Phase 18 - the hybrid side-chain placement defect: fix and rerun glpG (STARTED 2026-10-17, user)
+Findings 4.17: the hybrid preparation stores `placement_data` gathered per row but `layer_index` as the
+absolute library row, so the engine places every side-chain bead at `rcf[li[li]]`. User 10-17: "fix the
+bug and rerun the affected simulations"; cancel the 8 running chains; rerun all 10 (ff3.0 and ff3.1 in
+the 4 variants, and 79HIS under ff_2.1_nobp and its matched control ff_2.1_ctrl38). Decisions:
+- **The layout is upside_config's (and master's):** `placement_data` is the full library table (86 rows;
+  the 1-body scalar likewise) and `layer_index` the absolute row. The preparation writes that; the
+  seeds are repaired to it. The engine is correct and does not change.
+- **Repair, do not rebuild:** only the two `placement_data` datasets change, so membrane, packing, ions,
+  coordinates and every other dataset stay bit-identical (patch_glpg.py's reason). The repair recomputes
+  the full tables from the build-time `ff_2.1/sidechain.h5` by the preparation's own rule and refuses
+  unless the seed's gathered rows equal them exactly.
+- **The base seeds are repaired too** (`popepopg_REMD_mdw2/seeds/glpG-RKRK-<V>.up`, backups
+  `.bak_pre_placefix_20261017`), so `validate_ff.sh` patches correct seeds from now on. The per-force-field
+  seeds are made the pipeline's way, `patch_glpg.py` on the repaired base, and must equal the repaired old
+  per-force-field seeds.
+- **The deterministic seed** (79HIS, ff_2.1_nobp) is `patch_glpg.py` on the repaired base, then one row per
+  side-chain residue at the kept state: placement, 1-body scalar, pair `index/type/id`, both coverage
+  nodes' side-chain rows, and `martini_sc_table_1body`'s rows with `row_rotamer_index` = the kept state's
+  index in its type. The side-chain/lipid and backbone/lipid couplings stay on, unchanged in form.
+- **The old chains are kept**, renamed `<V>.<ff>.placedefect_20261017` with their STOP files, so the reruns
+  take the canonical names the HDX scripts expect.
+1. [x] Cancel the 8 chains (09:40 10-17, STOP files first; none resubmitted).
+2. [x] Fix `py/martini_prepare_system_lib.py` (`load_sidechain_rotamer_payload`); the same hunk in the `$P`
+   and `/beagle3` copies (`checks/placefix_20261017/patch_prep_lib.py`). The fixed function reproduces the
+   repaired 79HIS and 79ALA seeds' side-chain datasets exactly (`test_prep_payload.py`, run locally: the
+   preparation needs Python 3.10+).
+3. [x] Seed tools in `checks/placefix_20261017/`: `fix_placement.py`, `single_state.py`, `verify_seed.py`,
+   `build.sh` (`build.log`), `verify_all.sh` (`verify.log`). single_state compares the libraries' geometry at the
+   float32 the seed stores: the trained files carry ff2.1's float64 geometry to 1 ulp (2.2e-16).
+4. [x] Built: 4 base seeds, 8 ff3.0/ff3.1 seeds (each equal, dataset for dataset, to its old seed repaired),
+   ctrl38 79HIS, nobp 79HIS (747 rows -> 168, 1-body 0 at every kept state).
+5. [x] Verified (`verify.log`): only the intended datasets differ; placement at `rcf[li]` to 3.6e-6 A (old: up
+   to 7.9 A); 1-body exact (old: up to 22 E_up off); side-chain/lipid rows active; nobp's 168 rows equal the
+   multi-state seed's at the same (residue, state). Every multi-state force field keeps ff2.1's
+   `rotamer_prob` exactly, so `patch_glpg.py` leaving the 1-body table is right for them.
+6. [x] Old chains renamed `.placedefect_20261017`; 12 live seeds kept as `.bak_pre_placefix_20261017` and the
+   14 new ones installed (md5 checked); 10 chains `--test-only`, then submitted 49411315-49411324 (all R
+   at once).
+7. [ ] Records: findings 4.17 (done), remote_jobs.md, WATCH_STATUS.md; the watch reads the new chains' first
+   blocks (calibration, replicas 0, 13, 27), and the TM4 checks and HDX are redone on them.
+
+### Phase 19 - a second native-state panel from mdCATH (DONE 2026-10-17, user)
+The Peng benchmark's 16 natives and the 44-domain panel (60 proteins) do not resolve ff_2.1_nobp from its control;
+~75-100 native-start proteins are needed (nobp run's `setup/notes/findings.md`). User 10-17: "find something new
+into the validation set"; time step 0.009, as trained; ff_2.1_nobp and ff_2.1_ctrl38. Decisions:
+- **The 90 domains** of `ff3_selection/mdcath_candidates/` (README there): mdCATH whole-chain CATH 4.2.0 S20 domains,
+  30 per length bin 50-100 / 101-150 / 151-250, helical / beta / mixed balanced; not in the training or panel PDB ids
+  and under 30% identity to them; X-ray at 2.5 A or better with one protein entity; fewer than 4 cysteines; folded at
+  320 K in all 5 all-atom replicas.
+- **The all-atom reference is mdCATH's 320 K** (CHARMM22*, TIP3P; 5 replicas x ~500 frames at 1 ns), not Charron's
+  amber99sb-ildn at 300 K: paired comparisons between Upside force fields hold; absolute folded fractions are not
+  compared with the 44-domain panel's.
+- **A separate panel** in `ff3_selection/{domains,aa,runs}_mdcath/`, so the 44-domain panel and its history are
+  untouched. `panel.py` gains an optional time step on `run` (default 0.015, so every existing and automatic panel runs
+  as before) and an `aa_mdcath` builder beside `aa`; a `panel_mdcath.sbatch` beside `panel.sbatch`.
+- **Fetch only what is used:** each domain's starting structure and its 320 K coordinates read from the Hub by range
+  requests, backbone kept; nothing else of the 0.2-2.5 GB files.
+1. [x] Fetched (Mac, 10-17): `mdcath_fetch.py` (in `mdcath_candidates/`, log `fetch.log`), 90 domains, 980 MB kept
+   (`pdb/`, `backbone/`); 320 K frames 420-500 per replica.
+2. [x] `panel.py prepare` into `domains_mdcath/` (`prepare.log`): 89 domains. 1gqoB00 excluded (`excluded/README.txt`):
+   mdCATH's stored starting structure has C-N 3.1 and 4.8 A at its C-terminus, its trajectory at most 1.49 A.
+3. [x] `panel.py aa_mdcath` into `aa_mdcath/` (`aa.log`): every sequence equal; Q median per domain 0.891 (10th
+   percentile 0.796, lowest 0.636) against Charron's 0.910 (0.824, 0.675); 17 of 445 replicas under Q 0.7.
+4. [x] `panel.py` (backup `.bak_pre_mdcath_20261017`): `run` takes an optional time step (default 0.015, so every
+   existing and automatic panel runs as before), `aa_mdcath` beside `aa`; `panel_mdcath.sbatch` beside `panel.sbatch`.
+5. [x] `mdc_nobp` 49412017 and `mdc_ctrl38` 49412018 (released files copied, md5 equal) at 0.009, 356 runs each, into
+   `runs_mdcath/`, COMPLETED 17:15 and 22:28 10-17; read by `panel_compare.sbatch` (49412845,
+   `panel_compare_49412845.out`) and `panel.py select` (`select_mdcath_ctrl38_nobp_login1_20261017.txt`).
+
+**Result (findings 1.21):** the deterministic side chain loses folding on held-out proteins. Over the 89 domains
+no-BP folds 0.264 against 0.365 (-0.101 [-0.155, -0.051], Wilcoxon p 7e-5; lower in 59 domains, higher in 19), mean Q
+-0.035 (p 2e-7), CA-RMSD +0.21 A (p 0.004), in the same direction in every length bin and fold class. ff_2.1 keeps the
+probabilistic side chain. Open: whether the 44-domain panel's -0.016 differs from this because of its proteins or its
+time step 0.015; not needed for the decision.
+
+### Phase 20 - audit the no-BP training protocol, then close the branch (STARTED 2026-10-18, user)
+User 10-18: no-BP performs below ff2.1; check that the training protocol was correct and that its training
+has ended. Read only: nothing is resubmitted or cancelled without the user's word.
+1. [x] The single-state library, configs and releases: correct (findings 1.21 "Audit").
+2. [x] The engine and trainer at n_rot 1: correct, derivatives to float precision. Found the shared angular-gradient
+   defect (findings 3.12), the same in both runs and in master; not fixed.
+3. [x] Matching to ff21_ctrl_dt009: identical but for the side chain.
+4. [x] The mdCATH verdict recomputes exactly.
+5. [x] No no-BP training job is queued or can start (target 38 met; a resubmission exits). Still running from the
+   comparison: glpG 79HIS ff_2.1_nobp 49411324 and ff_2.1_ctrl38 49411323, ctrl38's ubiquitin de novo 49413536.
+6. [ ] **The gate fails no-BP's `rot` group at step 38** (findings 1.21 "Audit"): the verdict holds at matched
+   length, not at no-BP's fixed point. Close as is, or train on to the gate: the user's call, with the three
+   running jobs and whether 3.12 is fixed. Answered by Phase 21.
+
+### Phase 21 - fix the angular-gradient defect and retrain what it touches (STARTED 2026-10-18, user)
+User 10-18: "fix the issue and continue training if needed. also check if other on-going training also have the
+defect, resolve them as well. re-run the validations if necessary." Then, on ff3.2: "In addition to this, check ff3.1
+as well"; stop the step-37 glpG chains. Decisions:
+- **The fix is in the engine** (`src/interaction_graph.h`). For a symmetric interaction, p[t2,t1] is p[t1,t2] with
+  the two elements' roles exchanged (`is_compatible`), so the derivative added to [t2,t1] is the edge's parameter
+  derivative evaluated at p[t2,t1] with the elements exchanged, in place of the [t1,t2] derivative copied unchanged.
+  Fully symmetric parameter sets (radial splines; the pair term's radial entries) get bit-identical derivatives.
+  The pair term's angular entries change: off-diagonal to the right values, diagonal redistributed between the two
+  slots with the sum the trainer reads unchanged to rounding. Energies and forces do not use this path.
+- **The trainer's uniform 2x on pair coefficients stays.** It sets the regulariser's relative weight and has since
+  ff2.1's own training (master's `rotamer_parameter_estimation.py` builds the same layout).
+- **Install only when no training is mid-step on the old library:** after ff3.2's last step, ~14:30 10-18.
+- **No-BP and its control continue from step 38 on the fixed engine, each to its own fixed point:** at step 76
+  the gate; not converged, one more epoch, up to 6 epochs (step 114), then stop for review. At the converged epoch
+  end, the mdCATH panel (dt 0.009). No new release names in `parameters/`.
+- **ff3.2 was the only training running: stopped in step 69 and rerun from step 0; ff3.1 (`ff31_depth_data`, the
+  released one) rerun too.** Each rerun keeps its source's trainer, start, inputs, minibatch order and held-out set, so
+  it differs from the source only by the fix; target 76, no gate, as the sources; epoch-end panels (`a31_EE`, `a32_EE`)
+  and steric checks as theirs. ff3.0 and ff2.1 were trained with the defect and are not retrained unless the user asks;
+  ff3.2's rerun starts from ff3.0 as ff3.2 did.
+1. [x] Fix in the repo (`src/interaction_graph.h`, 32 lines); compiles locally.
+2. [x] Built on midway2 from `$P/src` plus the fix (`checks/angfix_20261018/obj`, md5 libupside.so `3d9c6366...`, upside
+   `7136d99a...`). Against the installed build (`parity.log`, `parity_glpg.log`): energy, forces and every other
+   derivative ConDiv reads bitwise equal on single- and multi-state 1aba at two frames; radial pair slots bitwise;
+   200 tu binary runs bitwise; hybrid glpG seeds' energy and forces bitwise. With the fix (`fd.log`): each angular
+   entry against tied central differences ratio 1.000 (5.8e-6 median error single-state, 9.6e-4 multi-state); the
+   trainer's angular-logit gradient 2.000x, the same as every radial coefficient (before: median 5.1 and 1.11).
+3. [x] Checked in (10-18): ff3.2 stopped and rerun, ff3.1 rerun as well, the step-37 glpG chains stopped.
+4. [x] Stopped 08:33 10-18: ff3.2 49406726 and successor 49410635 (steps 0-68 kept, step 69 partial), glpG 79HIS ff_2.1_nobp 49411324 and
+   ff_2.1_ctrl38 49411323 (STOP files first). Installed 08:35 (backups `.bak_pre_angfix_20261018`); the installed
+   files cmp-equal to the tested build.
+5. [x] No-BP 49415222 and control 49415223, 38 -> 76; `after_training.sbatch` (no-BP's old one backed up) runs
+   `ff21_nobp_dt009/setup/after_gate.sh`: the gate, then the mdCATH panel `mdc_<nobp|ctrl>_EE` or one more epoch.
+6. [x] Reruns `ff31_depth_data_angfix` 49415231 and `ff32_depth_data_angfix` 49415233 (`checks/angfix_20261018/
+   build_rerun.sh`; initial checkpoints equal to their sources' in every field but `native_sites`, summation order
+   2e-15, which sets only the identical trainable mask); `a31_`/`a32_` in `submit_new.sh`, all four runs in `stock.sh`.
+7. [ ] Validations as each run ends: the gates and mdCATH panels (no-BP, control); `a31_EE`/`a32_EE` panels against
+   `fd_EE`/`f32_EE`. Records done (findings 3.12, remote_jobs.md); the watch session told (WATCH_STATUS.md is its).
 
 ## Known Errors / Blockers
+
+* **Every ConDiv run before 2026-10-18 08:35 trained the side-chain pair term's off-diagonal angular coefficients on
+  a mixed gradient** (findings 3.12; fixed in the engine then): ff2.1's retrainings to step 37, ff3.0, ff3.1, ff3.2.
+  The fix's effect is measured by the reruns (Phase 21); ff3.0 and ff2.1 are not retrained.
+
+* **Every hybrid glpG result before 2026-10-17 ran with misplaced side-chain beads** (findings 4.17; Phase 18):
+  TM1/TM4 helicity, glycine flips and HDX, under every force field, on the cluster and locally.
 
 * **Every glpG TM4 count before 2026-10-07 11:22 is invalid** (findings 3.11). That covers:
   - every local 3- and 12-seed set (Phase 10, Phase 11);

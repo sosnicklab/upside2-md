@@ -805,3 +805,49 @@ to 10-07 12:00 is in git history.
   `--test-only`, then midway2 49406711, R from 16:02 (successor 49406726). `submit_new.sh` and `stock.sh` know its `f32_` tag (backups
   `.bak_pre_ff32_20261015`). Files modified: plan.md (Phase 17), remote_jobs.md, progress.md; on the cluster
   `submit_new.sh`, `~/watch_probe/stock.sh`, WATCH_STATUS.md.
+* **00:13-01:45 10-17, the Mac Studio takes the jobs (user: "check remote job status, and start monitoring").**
+  Watch cron `82dc7422`; caught up two unwatched days: ff3.2 steps 4-38 (steric catch-up job 49410086, no flag),
+  panels f32_00 and f32_01, ff3.1 TM4 at block 2's end (findings 1.35), the ff3.1 TM4 HDX (midway3 60979543,
+  60979545; findings 5.5), the nobp/ctrl38 scoring to 31 of 32 pairs and the training-set RMSD comparison (the
+  run's `setup/notes/findings.md`), ff3.2's glycine maps (findings 1.21). Files modified: findings.md, plan.md
+  (Phase 16), remote_jobs.md, progress.md; on the cluster WATCH_STATUS.md and the nobp run's notes.
+* **01:50-10:10 10-17, the hybrid side-chain placement defect (findings 4.17; plan.md Phase 18).** Found by an
+  agent's code survey for a deterministic-side-chain seed, then measured in the engine: every hybrid seed placed
+  its side-chain beads at `rcf[li[li]]`. User: "fix the bug and rerun the affected simulations"; cancel all 8
+  running chains, rerun all 10. Cancelled (STOP files first) and kept the old chains; fixed
+  `py/martini_prepare_system_lib.py` (and the cluster copies); repaired 4 base and 8 per-force-field seeds and
+  built ctrl38 and nobp 79HIS seeds (`checks/placefix_20261017/`); verified on the production engine (placement
+  to 3.6e-6 A, 1-body exact, only the intended datasets changed; the fixed preparation reproduces the repaired
+  seeds); submitted 49411315-49411324 after `--test-only`. single_state.py compares the libraries' geometry
+  at the float32 the seed stores: the trained files differ from ff2.1's at float64 by 1 ulp (2.2e-16). Files modified:
+  py/martini_prepare_system_lib.py, findings.md (4.17, 1.35, 5.5), plan.md (Phase 18, Known Errors),
+  remote_jobs.md, progress.md; on the cluster the seeds, the two preparation copies, WATCH_STATUS.md.
+* **10:30-23:00 10-17, held-out panels for ff_2.1_nobp against ff_2.1_ctrl38 (plan.md Phase 19; findings 1.21).**
+  User: "Proceed" (the 44-domain panel), then "find something new into the validation set" (dt 0.009, nobp and
+  ctrl38). The 44 domains (`nb_01`, `ctrl38`, which reproduces `c9_01` bitwise) resolve nothing. Built a second panel
+  of 89 mdCATH domains (selection, range-request fetch, `panel.py prepare`, mdCATH 320 K references; `panel.py`
+  gains an optional time step and `aa_mdcath`, backup `.bak_pre_mdcath_20261017`); 1gqoB00 excluded for its broken
+  stored start. Result: no-BP folds 0.264 against 0.365 (-0.101 [-0.155, -0.051], p 7e-5; lower in 59 of 89), mean
+  Q and CA-RMSD worse too, in every length bin and fold class. Files modified: plan.md (Phase 19), findings.md
+  (1.21), remote_jobs.md, progress.md; on the cluster `ff3_selection/` (panel.py, `panel_mdcath.sbatch`,
+  `panel_compare.py`, `mdcath_candidates/`, `{domains,aa,runs}_mdcath/`) and the nobp run's `setup/notes/`.
+* **10-18, audit of the no-BP training protocol (user: check the protocol and that no-BP's training has ended;
+  plan.md Phase 20).** Three read-only agents and the convergence tools, scripts and logs in
+  `/project/trsosnic/yinhan/checks/nobp_audit_20261018/{A,B,C,main}/`. The comparison is clean: single-state library,
+  configs, engine derivatives at n_rot 1, matching to the control, releases and the mdCATH numbers all check out; no
+  no-BP training job can start. Two findings: `convergence_gate.py` fails no-BP's `rot` group at step 38 (control
+  passes), so the verdict is at matched length, not at no-BP's fixed point (findings 1.21 "Audit"); and the angular
+  gradient of the side-chain pair term is misattributed in master's engine, in every ConDiv run (findings 3.12). No
+  job submitted or cancelled. Files modified: findings.md (1.21, 3.12), plan.md (Phase 20, Known Errors), progress.md.
+* **08:00-08:50 10-18, the angular-gradient fix (user: "fix the issue and continue training if needed ... resolve
+  them as well ... check ff3.1 as well"; plan.md Phase 21; findings 3.12).** Fixed `src/interaction_graph.h` (the
+  [t2,t1] derivative of a symmetric interaction is the edge's derivative with the elements exchanged); built on
+  midway2 from `$P/src` plus the fix and tested against the installed build (`checks/angfix_20261018/`): simulation,
+  energies, forces and every other derivative bitwise equal, the angular entries now equal to central differences.
+  Stopped ff3.2 in step 69 and the two step-37 glpG chains (STOP files); installed the build; continued no-BP and its
+  control from step 38 with a gate-driven end (`ff21_nobp_dt009/setup/after_gate.sh`: gate, then the mdCATH panel or
+  one more epoch to 114); reran ff3.1 and ff3.2 from step 0 as `_angfix` copies of their sources. Queued 49415222,
+  49415223, 49415231, 49415233. The watch session (`upside2-md-f1`) told and took them. Files modified:
+  src/interaction_graph.h, findings.md (3.12), plan.md (Phases 17, 21, Known Errors), remote_jobs.md, progress.md; on
+  the cluster `$P/obj`, `$P/src/interaction_graph.h`, the two runs' `after_training.sbatch`, `submit_new.sh`,
+  `~/watch_probe/stock.sh`, two new run directories, two STOP files.
