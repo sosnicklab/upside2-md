@@ -712,6 +712,7 @@ as well"; stop the step-37 glpG chains. Decisions:
 7. [ ] Validations as each run ends: the gates and mdCATH panels (no-BP, control); `a31_EE`/`a32_EE` panels against
    `fd_EE`/`f32_EE` on folded fraction and Q (the old panels' `.up` files were deleted 10-18, so CA-RMSD cannot be
    compared against them; the same holds for the step-38 `mdc_nobp`/`mdc_ctrl38`). Records done (findings 3.12, remote_jobs.md); the watch session told (WATCH_STATUS.md is its).
+   No-BP's part done 10-19: converged at step 76, `mdc_nobp_03` folds 0.241 (findings 1.21); the control's waits.
 
 ### Phase 22 - why de novo folding fails on large proteins (STARTED 2026-10-19, user)
 User 10-19: Upside folds large proteins de novo poorly; investigate, read the literature and other force fields'

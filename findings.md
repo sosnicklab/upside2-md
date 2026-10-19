@@ -1365,11 +1365,16 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   matched 38 steps, not at no-BP's own fixed point. The bead geometry is not trained, and at the 1aba native the kept
   states cost +91.9 (MET0 +23.6, LEU23-PHE30 +8.3) against BP's -75.4, which fits a pull to soften clashes the
   fixed geometry makes; that the pull is this is not shown. The audit also found the shared angular-gradient defect (3.12), the same in both runs.
+  **Continued from step 38 on the fixed engine, no-BP reaches a fixed point at step 76** (10-19,
+  `ff21_nobp_dt009/gate_step76.txt`: steps 58-76, every group p > 0.005, `rot` 0.44, lowest `dhb` 0.021). There its
+  89-domain mdCATH panel `mdc_nobp_03` folds 0.241, against 0.264 at step 37 and the step-37 control's 0.365
+  (`ff3_selection/select_mdcath_ctrl38_nobp_nobp03_login1_20261019.txt`). The matched comparison, against the
+  control at its own fixed point (`mdc_ctrl_03`, paired by `panel_compare`), is not yet run.
 - **The side-chain model moves the shared H-bond margin, in opposite directions** (`check_step.py`, read 10-18):
   E_other - E_alpha at steps 18 / 37 is no-BP +0.296 / +0.354 and the control +0.135 / +0.157 (start +0.192), a gap of
   ~0.2 against run-to-run variation of ~0.04. No-BP's rise is E_other weakening (-1.769 -> -1.620), so an H-bond made
   at phi > 0 costs ~0.15 E_up more, E_alpha nearly fixed; the control's fall is E_alpha weakening (-1.961 -> -1.854).
-  On the fixed engine no-BP read +0.357 at step 38, +0.321 at 48, +0.345 at 56 and +0.289 at 65. The +0.10 hold
+  On the fixed engine no-BP read +0.357 at step 38, +0.321 at 48, +0.345 at 56, +0.289 at 65 and +0.302 at 75. The +0.10 hold
   watches only a fall. Whether the high margin (left-handed natives, glycine alpha_L and some Asn/Asp, pay more per
   H-bond) is part of no-BP's mdCATH loss is not tested; the margin has not predicted helix populations or panel folding before (1.15, the panels above, 1.24).
 - **`ds_02`** (ff30_gdepth_si step 56, margin +0.096; 49223609 COMPLETED 17:33 10-11; 40 domains):
