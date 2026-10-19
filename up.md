@@ -144,8 +144,8 @@ pos
 | `hbond_energy` | `parameters`, `donor_resid`, `acceptor_resid`, `rama_resid`, optional `residue_class (n_res,)` int32, `@integrator_level=1` | From `hbond.h5` (2.2): 12 values, or 12 + 3 per residue class with `residue_class` |
 | `hbond_coverage` | `index_pos`, `index_weight` | HN-atom coverage accumulator |
 | `hbond_coverage_hydrophobe` | `index_pos`, `index_weight` | OC-atom hydrophobe coverage |
-| `environment_coverage_sc` | `@num_aa_types=20` | SC environment coverage |
-| `environment_coverage_hb` | same | HB environment coverage |
+| `environment_coverage_sc` | `@num_aa_types=20`, `aa_types (n_res,)` | Side-chain coverage of each CB, split by the covering residue's type `aa_types[id2]` |
+| `environment_coverage_hb` | same | The same for each backbone H and O. Files written before 2026-10-19 hold one type per H/O site, read as master reads them (findings 3.13) |
 | `sigmoid_coupling_environment` | `@integrator_level=1`, `@number_independent_weights` | SC-environment coupling (ff_2.1) |
 | `bb_sigmoid_coupling_environment` | `@center`, `@scale`, `@sharpness`, `@hbond_weight` | BB-environment coupling |
 
@@ -336,9 +336,9 @@ of this table had the first two swapped. These parameterize `bb_sigmoid_coupling
 FF2 backbone desolvation term, which also stores a copy of `environment.h5`'s per-type `weights`.
 With `scale` negative (ff_2.1 -0.30) and `compact_sigmoid` equal to 1 at low burial, the term rewards **solvent-exposed** backbone NH/CO and is zero when they are buried: it stabilises the unfolded state. Measured on ubiquitin, -16.8 native against -43.8 expanded.
 
-**The ConDiv trainer never builds this node** (no `bb_environment_potential` in its config
-kwargs), so none of the trained force fields saw it during training even though every deployment
-uses it. See findings.md 9t.
+The FF2 trainer (`training/ConDiv.py` `main_worker`) builds this node and trains `scale`; the engine
+returns no derivative for center, sharpness and hbond weight, which stay at ff_2.1's values. The
+retired FF1-form port never built it (findings.md 9t).
 
 ### 2.5 `membrane.h5`
 

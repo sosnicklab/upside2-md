@@ -3474,6 +3474,33 @@ coefficient is. That uniform 2x stays: it sets the regulariser's relative weight
 training (master's `rotamer_parameter_estimation.py` builds the same layout). Installed in `$P/obj` 08:35 10-18; ff3.0,
 ff3.1, ff3.2 and both ff2.1 retrainings before that date carry the defect.
 
+### 3.13 `environment_coverage_hb` typed each covering side chain with another residue's type (2026-10-19; FIXED)
+
+**Defect (master's code).** `write_bb_environment` (`py/upside_config.py`) stored `aa_types` as one type per H/O
+site (`n_donor + n_acceptor` entries), while `EnvironmentCoverage` (`src/environment.cpp:325, 336`) reads
+`aa_types[id2]` with `id2` the covering side chain's residue. Side chain j took the type of site j: donor residue
+j+1, shifted one more per preceding proline, or for the last 1 + n_PRO residues an acceptor near the N-terminus.
+Only 7-9% of covering side chains got their own type (2LZM, 2RN2, 1YOB, 1ENH). The backbone-desolvation burial
+`bl = sum_a w[a] cov[a] + 2 hbcov` therefore summed scrambled weights (ff_2.1's w runs 0.56-2.12). Not size
+dependent. The side-chain burial node already stored per-residue types.
+
+**Fix (user 10-19: "Fix the bug"; plan.md Phase 22 item 8).** Both coverage writers store one type per residue; the
+engine sizes `aa_types` from its dataset and requires every `id2` to index it. A file written before the fix keeps
+its per-site array and runs as master; an engine without the fix refuses a new file at load ("dimensions of
+'aa_types', expected (105) but got (54)"). Measured (`scratchpad/large_protein_20261019/envfix/`):
+* Pre-fix files, pre-fix against fixed build: energy, every term, both coverages and the derivative bitwise equal
+  (8 configs x 3 frames, 208 arrays). New and old configs differ in `environment_coverage_hb/aa_types` only.
+* Both builds match a numpy rebuild of the coverage to 5e-7, each with the types it should use.
+* Finite differences of the energy change against the change in force: ratio 1.0001 at h 0.005 (40 coordinates,
+  2LZM and 1YOB globules).
+* ff_2.1's energy changes only in backbone desolvation: -0.1 to +0.2 E_up at natives, +0.05 to +1.3 at globules.
+* 5,000 tu native starts on the fixed engine: KE/(1.5 kT) 1.007-1.010, C-N 1.33-1.34 A, Q and Rg within single-run
+  noise of the pre-fix runs.
+
+Installed in the repo's `obj/` only (backups `*.bak_pre_envfix_20261019`). `$P` and `/beagle3` keep the old writer
+and engine while trainings run; ff_2.1 and every training so far carry the defect. Upside 3 trains with the fix
+(`upside3.md` section 4).
+
 ## 4. What the hybrid gets wrong, and what is still open
 
 ### 4.1 Fold fidelity: a ~4.5 A helical-core deviation, cause unidentified (findings 100, 103)
@@ -6275,6 +6302,21 @@ crossing 70-90 deg, native-like >= 105 deg; errors from 8 time blocks;
 * So there is no table entry with a physical target to correct: lambda's packing is recorded as a
   known limitation, re-tested after ff3.0 (crossing angle; Q33-F51 dock; helix 1-helix 2 retention;
   L50-L64), with more native-like frames than the 196 and 102 here.
+
+## 11e. Large proteins de novo: compact non-native globules; N-to-C growth does not help (2026-10-19)
+
+The full record, its tables and the Upside 3 plan are in `upside3.md` (sections 2-3; plan.md Phase 22; data in
+`scratchpad/large_protein_20261019/`).
+* The mdCATH native-start panel's drop at 151-250 residues is the folded-fraction cutoff, which tightens with N;
+  Upside's Q offset from all-atom and its Rg do not change with size.
+* T4 lysozyme, RNase HI and flavodoxin II (in-vitro refolders, 155-179 residues) and the homeodomain control under
+  ff_2.1: native starts hold. At T 0.80 every coil, collapsed in bulk or grown N to C, ends in a compact, helix-poor
+  globule without native tertiary contacts, 150-180 E_up above the quenched native on average, mostly in missing
+  H-bonds. Its side chains recover 87-93% of the native's side-chain energy; Rama and backbone desolvation favour it.
+  At 0.88 RNase HI's native holds and its coils still do not fold; at 0.95 all melt. N-to-C growth equals bulk.
+* Reading: a search failure into states ConDiv never contrasts with the native. Not measured: free energies, and a
+  size contrast under one protocol (the control does not fold at constant T either).
+* The coverage-typing defect found on the way: 3.13.
 
 ## 12. Claims that turned out to be wrong
 

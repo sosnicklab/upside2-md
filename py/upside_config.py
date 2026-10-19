@@ -1401,7 +1401,7 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
     create_array(cgrp, 'type2',  0*np.arange(n_sc))   # for now coverage is very simple, so no types on SC
     create_array(cgrp, 'id2',    sc_node.affine_residue[:])
     create_array(cgrp, 'interaction_param', coverage_param)
-    create_array(cgrp, 'aa_types', np.array([restype_order[s] for resid, s in enumerate(fasta) if resid not in excluded_residues]))
+    create_array(cgrp, 'aa_types', np.array([restype_order[s] for s in fasta]))   # type of each residue, indexed by id2
 
     # Couple an energy to the coverage coordinates
     assert (potential_type == 0 or potential_type == 1)
@@ -1465,7 +1465,7 @@ def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, us
 
     coverage_param = np.array([[[6.0, 1.0, -0.1, 1.0]]])
     create_array(cgrp, 'interaction_param', coverage_param)
-    create_array(cgrp, 'aa_types', [restype_order[fasta[i]] for i in res_id])
+    create_array(cgrp, 'aa_types', np.array([restype_order[s] for s in fasta]))   # type of each residue, indexed by id2
     # group1 is the H or O
     create_array(cgrp, 'index1', np.arange(n_donor+n_acceptor))
     create_array(cgrp, 'type1',  np.arange(n_donor+n_acceptor)*0)

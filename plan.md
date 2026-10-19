@@ -713,6 +713,42 @@ as well"; stop the step-37 glpG chains. Decisions:
    `fd_EE`/`f32_EE` on folded fraction and Q (the old panels' `.up` files were deleted 10-18, so CA-RMSD cannot be
    compared against them; the same holds for the step-38 `mdc_nobp`/`mdc_ctrl38`). Records done (findings 3.12, remote_jobs.md); the watch session told (WATCH_STATUS.md is its).
 
+### Phase 22 - why de novo folding fails on large proteins (STARTED 2026-10-19, user)
+User 10-19: Upside folds large proteins de novo poorly; investigate, read the literature and other force fields'
+designs, propose, run any test needed. The user's hypothesis: folding is co-translational (S. Fried, JHU: about a
+third of E. coli proteins do not refold in vitro, more often the multi-domain ones), so a thermodynamic force field
+cannot fold them from a denatured chain. Facts so far: the 456 training proteins are 50-150 residues (max 150), the
+44-domain panel 50-75, the Peng de novo set at most 92; on the mdCATH native-start panel ff_2.1_ctrl38 folds 0.42,
+0.44 and 0.24 of frames in the 50-100, 101-150 and 151-250 bins.
+**Design.** De novo failure is thermodynamic (the native basin is not Upside's free-energy minimum, so no route reaches
+it) or kinetic (it is the minimum but bulk search, or a missing co-translational route, does not find it). Each test
+separates the two; the co-translational test is run only on proteins whose native basin Upside holds.
+1. [x] Size artifacts in the panel metrics: the 151-250 drop is the cutoff, not drift (findings 11e).
+2. [x] Native basin stability against size: answered by item 1 and item 4's native starts; the 89-domain rerun dropped.
+3. [x] Native energy gap: quenched native against the de novo globules, by term (findings 11e).
+4. [x] 2LZM, 2RN2, 1YOB and the 1ENH control at T 0.80: native x3, bulk x6, vectorial x6. Compact non-native globules
+   150-180 E_up above native; vectorial equals bulk (findings 11e).
+5. [x] Literature and other force fields; code audit (findings 11e).
+6. [x] Coil and native starts at T 0.88 and 0.95 (2LZM, 2RN2, 1ENH): no coil folds; RNase HI's native holds at 0.88,
+   the control's melts (findings 11e).
+7. [x] Proposal to the user (10-19 06:50).
+8. [x] Fix `environment_coverage_hb`'s covering-residue types (user 10-19: "Fix the bug"). The writer stores one type
+   per residue, `aa_types[r]` the type of residue r, as `environment_coverage_sc` already does; the engine sizes
+   `aa_types` from its dataset and requires every `id2` to index it. A file written before the fix holds per-site
+   types and runs bitwise as master; a newly written file gets the right types, so new configs depart from master
+   by intent. Tests: old files bitwise before and after; the new output against a numpy coverage reference; finite
+   differences; ff_2.1's energy change on natives and globules. Repo and local `obj/` only: the cluster trees are not
+   touched while trainings run, and ff_2.1 and every training so far ran with the defect.
+   Done 10-19 09:20: old files bitwise, numpy reference 5e-7, finite differences 1.0001, energy change at most
+   1.3 E_up, dynamics normal (findings 3.13).
+9. [x] `upside3.md`: the findings and the proposal; Upside 3 starts after the side-chain verdict (Phase 21 item 7).
+
+**Review.** For these in-vitro refolders Upside's de novo failure is search into compact non-native globules that
+it ranks well above the native; N-to-C growth does not help. Proposed, for the user's decision: compact misfolds as
+negative examples in ConDiv, training past 150 residues, and replica exchange for large-protein benchmarks. Not
+measured: the globules' free energy against the native's, and a size contrast under one protocol (the 1ENH control
+does not fold at constant T in 60,000 tu); both need replica exchange.
+
 ## Known Errors / Blockers
 
 * **Every ConDiv run before 2026-10-18 08:35 trained the side-chain pair term's off-diagonal angular coefficients on

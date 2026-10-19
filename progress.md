@@ -873,3 +873,26 @@ to 10-07 12:00 is in git history.
   rewritten for the running jobs. findings.md: 1.21 (the side-chain model moves the H-bond margin, opposite ways in
   no-BP and its control), 10.28 (name runs by what they are). WATCH_STATUS.md on the cluster carries the planned
   move. The Mac Studio's watch keeps running until the user closes its session.
+- 00:20 10-19 on, large-protein de novo investigation (plan.md Phase 22; user: "de novo folding on large proteins ...
+  performs poorly"; hypothesis: co-translational folding, S. Fried). Read-only on the cluster. Training set 50-150
+  residues (456), 44-domain panel 50-75. On the mdCATH native-start panel (ctrl38) the folded-fraction drop at 151-250
+  is a metric artifact: Upside's mean Q sits 0.13 below all-atom in every bin and the all-atom Q spread narrows with N;
+  with a fixed-offset cutoff there is no trend, Rg stays at 1.01 of native. Local test (Mac Studio, 00:38-05:00):
+  T4 lysozyme, RNase HI, apoflavodoxin (in-vitro refoldable, 155-179 residues) and the homeodomain control under
+  ff_2.1 at T 0.80, native x3, bulk x6, vectorial growth x6, 60,000 tu each, with quenches. Native starts hold; every
+  de novo run, the control included, ends in a compact globule without native tertiary contacts, 150-180 E_up above
+  native after quench (mostly missing H-bonds); vectorial equals bulk. A midway2 move was staged but not submitted
+  (our own pending trainings put any new job at 10-20 09:45). Follow-up 05:20-06:37 at T 0.88 and 0.95 (2LZM, 2RN2,
+  1ENH): no coil folds; RNase HI's native holds at 0.88, the control's melts. Proposal sent. Study directory moved to
+  `scratchpad/large_protein_20261019/` (76 G, gitignored). Files modified: plan.md (Phase 22), findings.md (11e),
+  up.md (§2.4, stale bb_env claim).
+- 08:40 10-19 on, the `environment_coverage_hb` typing defect fixed (user: "Fix the bug, and write your findings in
+  upside3.md"). The writer stores per-residue types; the engine sizes `aa_types` from its dataset and requires every
+  id2 to index it. Pre-fix and fixed builds from one source (`envfix/`): old configs bitwise equal (8 configs x 3
+  frames, 208 arrays); both builds match a numpy coverage reference to 5e-7; finite differences ratio 1.0001; energy
+  change only in backbone desolvation, -0.1 to +1.3 E_up; the pre-fix engine rejects new configs. Installed in local
+  `obj/` (backups `.bak_pre_envfix_20261019`), not on the clusters. A first dynamics check died: its Pool lacked a
+  `__main__` guard under macOS spawn; the rerun (5,000 tu native starts) shows KE/(1.5 kT) 1.007-1.010 and Q, Rg
+  within run noise of the pre-fix runs. upside3.md written (findings and the Upside 3 plan, gated on the
+  side-chain verdict); findings 11e shortened to a pointer. Files modified: src/environment.cpp, py/upside_config.py,
+  up.md, upside3.md (new), findings.md, plan.md, progress.md.
