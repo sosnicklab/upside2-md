@@ -1,8 +1,8 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-19 10:45). Owner: the Mac Studio, since 10-17 00:13, but no watch runs: session
-`upside2-md-f1` (cron `82dc7422`) closed after its 21:50 10-18 pass; session `upside2-md-ef` read the jobs 10:24-10:45
-10-19 at the user's "check remote job status" and started no watch. The user moves the watch to another computer on
+**Current state (2026-10-19 13:05). Owner: the Mac Studio, since 10-17 00:13, but no watch runs: session
+`upside2-md-f1` (cron `82dc7422`) closed after its 21:50 10-18 pass; two read-only passes at the user's "check remote
+job status" since (Mac Studio session `upside2-md-ef` 10:24-10:45, MacBook Pro 13:02 10-19) started no watch. The user moves the watch to another computer on
 10-19 ("Resume here" step 5).** **The side-chain pair term's angular parameter gradient
 was misattributed in every ConDiv run (findings 3.12).** At the user's word (10-18: "fix the issue and continue
 training if needed ... check if other on-going training also have the defect, resolve them as well ... check ff3.1 as
@@ -651,9 +651,9 @@ keeps the link; plain `cp` copies the text, which then drifts).
 
 ## 1. Current jobs
 
-Snapshot **2026-10-19 10:24 CDT, verified live against `squeue` on midway2** (session upside2-md-ef on the Mac
-Studio, read only; no watch ran 21:50 10-18 to 10:24 10-19; the engine fix was made by session upside2-md-d5 08:35
-10-18). 13 jobs; socket on midway2-login1; nothing on midway3. `WATCH_STATUS.md` on the cluster is newer than this whenever a pass ran after it.
+Snapshot **2026-10-19 13:02 CDT, verified live against `squeue` on midway2** (MacBook Pro, read only, the same 13
+jobs as the Mac Studio's 10:24 read; no watch has run since 21:50 10-18; the engine fix was made by session
+upside2-md-d5 08:35 10-18). 13 jobs; socket on midway2-login1; nothing on midway3. `WATCH_STATUS.md` on the cluster is newer than this whenever a pass ran after it.
 - **The engine fix** (findings 3.12; plan.md Phase 21): `$P/obj/upside` and `libupside.so` from
   `checks/angfix_20261018/obj` (md5 `7136d99a...`, `3d9c6366...`), installed 08:35 10-18 with backups
   `*.bak_pre_angfix_20261018`; `$P/src/interaction_graph.h` patched (backup alongside). `/beagle3`'s build is not
@@ -665,15 +665,15 @@ Studio, read only; no watch ran 21:50 10-18 to 10:24 10-19; the engine fix was m
   (`ff21_nobp_dt009/gate_step76.txt`: steps 58-76, every group p > 0.005, lowest dhb 0.021, then rot 0.44); its
   `mdc_nobp_03` panel 49419028 COMPLETED 05:45, 356 runs, **folded 0.241** against the step-37 `mdc_nobp` 0.264 and
   `mdc_ctrl38` 0.365 (`ff3_selection/select_mdcath_ctrl38_nobp_nobp03_login1_20261019.txt`; the paired test waits
-  for `mdc_ctrl_03`). Still PD at 10:24 10-19, the law carried: the probabilistic control (`ff21_ctrl_dt009`)
-  49415223 (38 -> 76, then the gate; Slurm start 11:41 10-19), the ff3.1 rerun (`ff31_depth_data_angfix`) 49415231
-  (17:26 10-19) and the ff3.2 rerun (`ff32_depth_data_angfix`) 49415233 (20:50 10-19), 0 -> 76, no gate. Rows below.
+  for `mdc_ctrl_03`). Still PD (Priority) at 13:02 10-19, the law carried: the probabilistic control (`ff21_ctrl_dt009`)
+  49415223 (38 -> 76, then the gate; Slurm start 23:03 10-19), the ff3.1 rerun (`ff31_depth_data_angfix`) 49415231
+  (07:18 10-20) and the ff3.2 rerun (`ff32_depth_data_angfix`) 49415233 (07:18 10-20), 0 -> 76, no gate. Rows below.
 - **The 8 corrected glpG chains** (plan.md Phase 18, findings 4.17): R from 09:58 10-17 in block 1/5, each on its
   own node. ff_3.0_gdepth: 79HIS 49411315, 79HIS_S115T 49411316, 79ALA 49411317, 79ALA_S115T 49411318.
   ff_3.1_depth_data: 79HIS 49411319, 79HIS_S115T 49411320, 79ALA 49411321, 79ALA_S115T 49411322. Logs
   `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out`, run dirs `popepopg_REMD_mdw2/<V>.<ff>/`, seeds
   `seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Block 1 ends ~19:30-22:00 10-18;
-  all eight closed it 18:52-20:39 (KE/1.5kT 0.989-1.008). Block 2, all R, logs clean at 10:24 10-19: ff3.0
+  all eight closed it 18:52-20:39 (KE/1.5kT 0.989-1.008). Block 2, all R, logs clean at 13:02 10-19 (last KE/1.5kT 0.990-1.013 over 28 replicas each): ff3.0
   79HIS_S115T 49417749 from 21:10 and 79ALA 49418069 from 21:40 10-18; from 04:10 10-19 ff3.0 79ALA_S115T 49418122,
   79HIS 49418152, ff3.1 79HIS 49418123, 79HIS_S115T 49418140, 79ALA 49418145, 79ALA_S115T 49418078. Block 1's TM4
   read done 21:40 (findings 1.35). Owed:
