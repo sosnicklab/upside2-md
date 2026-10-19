@@ -851,3 +851,12 @@ to 10-07 12:00 is in git history.
   src/interaction_graph.h, findings.md (3.12), plan.md (Phases 17, 21, Known Errors), remote_jobs.md, progress.md; on
   the cluster `$P/obj`, `$P/src/interaction_graph.h`, the two runs' `after_training.sbatch`, `submit_new.sh`,
   `~/watch_probe/stock.sh`, two new run directories, two STOP files.
+* **11:00-12:10 10-18, `/project` disk reclaim (user: "cleanup the disk a little bit ... unused training
+  trajectories, trajectories from wrong ff").** Surveyed `/project/trsosnic` (591 G free against ~0.75 T of growth due
+  within a week) and proposed three groups; the user chose all three. Deleted 1.1 T on midway2 from manifests
+  (`checks/disk_reclaim_20261018/`): half-written steps of stopped trainings (86 G), replica and HDX-copy trajectories
+  of the defective glpG runs (821 G), 14 finished panels' `.up` (228 G); 1.7 T free after. Verified: every manifest
+  file gone and nothing else; `panel.py select` reproduces the f32_02 table byte for byte from the kept npz; live logs
+  clean; HDX readouts intact. The delete script stopped after group 1 on its first run (a `while` count under
+  `pipefail` returned 1); fixed and rerun. Files modified: remote_jobs.md (§1 "Disk" and the affected records),
+  findings.md (4.17), plan.md (Phase 18), progress.md.

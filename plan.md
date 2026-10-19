@@ -601,7 +601,7 @@ the 4 variants, and 79HIS under ff_2.1_nobp and its matched control ff_2.1_ctrl3
   nodes' side-chain rows, and `martini_sc_table_1body`'s rows with `row_rotamer_index` = the kept state's
   index in its type. The side-chain/lipid and backbone/lipid couplings stay on, unchanged in form.
 - **The old chains are kept**, renamed `<V>.<ff>.placedefect_20261017` with their STOP files, so the reruns
-  take the canonical names the HDX scripts expect.
+  take the canonical names the HDX scripts expect. Their trajectories were deleted 10-18 (user; HDX results kept).
 1. [x] Cancel the 8 chains (09:40 10-17, STOP files first; none resubmitted).
 2. [x] Fix `py/martini_prepare_system_lib.py` (`load_sidechain_rotamer_payload`); the same hunk in the `$P`
    and `/beagle3` copies (`checks/placefix_20261017/patch_prep_lib.py`). The fixed function reproduces the
@@ -708,7 +708,8 @@ as well"; stop the step-37 glpG chains. Decisions:
    build_rerun.sh`; initial checkpoints equal to their sources' in every field but `native_sites`, summation order
    2e-15, which sets only the identical trainable mask); `a31_`/`a32_` in `submit_new.sh`, all four runs in `stock.sh`.
 7. [ ] Validations as each run ends: the gates and mdCATH panels (no-BP, control); `a31_EE`/`a32_EE` panels against
-   `fd_EE`/`f32_EE`. Records done (findings 3.12, remote_jobs.md); the watch session told (WATCH_STATUS.md is its).
+   `fd_EE`/`f32_EE` on folded fraction and Q (the old panels' `.up` files were deleted 10-18, so CA-RMSD cannot be
+   compared against them; the same holds for the step-38 `mdc_nobp`/`mdc_ctrl38`). Records done (findings 3.12, remote_jobs.md); the watch session told (WATCH_STATUS.md is its).
 
 ## Known Errors / Blockers
 

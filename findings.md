@@ -4212,7 +4212,8 @@ rows from another residue. upside_config writes the full 86-row library with abs
   production engine every repaired seed places its beads at the intended rotamer to 3.6e-6 A (the old: up to
   7.9 A, 2.4 A mean) and its 1-body output equals the library table (the old: off by up to 22 E_up); frame-0
   potential drops by 18-71 E_up. The old chains are kept as `<V>.<ff>.placedefect_20261017`; their HDX outputs
-  (5.5) moved with them.
+  (5.5) moved with them. Their replica files and HDX trajectory copies were deleted 10-18 (user); logs, STOP
+  files and the HDX `results/`, `outputs/` and `inputs/` remain.
 
 ---
 
