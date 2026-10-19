@@ -860,3 +860,16 @@ to 10-07 12:00 is in git history.
   clean; HDX readouts intact. The delete script stopped after group 1 on its first run (a `while` count under
   `pipefail` returned 1); fixed and rerun. Files modified: remote_jobs.md (§1 "Disk" and the affected records),
   findings.md (4.17), plan.md (Phase 18), progress.md.
+- 21:40 10-18, the corrected glpG chains' block 1 TM4 read (Mac Studio, watch): all eight chains closed block 1
+  18:52-20:39 with KE/1.5kT 0.989-1.008; `tm4_ff31.py`, `gly_flip_rungs.py` on midway2 login1 (40 s, 150 s) and DSSP
+  through block-1 copies of the block-2 scripts (ff_2.1_sc dropped, its files deleted 10-18), mdtraj locally. TM4
+  holds under both force fields; no TM4 glycine at phi > 0 at T 0.70. Files modified: findings.md (1.35), plan.md
+  (Phase 18 item 7), remote_jobs.md (§1, resume checklist), progress.md.
+- 21:55 10-18, handoff written for a cold start on another computer (user: "write everything on md files and expect
+  me to run the monitoring on another computer tomorrow"). remote_jobs.md: header and §1 snapshot to 21:45 (21 jobs),
+  "What happens next" (the no-BP gate ~00:00 10-19, the arms' chunks, the three PD trainings, glpG block 2), "Resume
+  here" rewritten (reading list, owed checks with commands, the planned move and how to stop the Mac Studio's watch
+  first, open questions), watch step 4 now covers the two ff2.1 gates and the mdCATH comparison, and the watch prompt
+  rewritten for the running jobs. findings.md: 1.21 (the side-chain model moves the H-bond margin, opposite ways in
+  no-BP and its control), 10.28 (name runs by what they are). WATCH_STATUS.md on the cluster carries the planned
+  move. The Mac Studio's watch keeps running until the user closes its session.

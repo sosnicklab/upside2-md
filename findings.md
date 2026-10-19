@@ -1365,6 +1365,13 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   matched 38 steps, not at no-BP's own fixed point. The bead geometry is not trained, and at the 1aba native the kept
   states cost +91.9 (MET0 +23.6, LEU23-PHE30 +8.3) against BP's -75.4, which fits a pull to soften clashes the
   fixed geometry makes; that the pull is this is not shown. The audit also found the shared angular-gradient defect (3.12), the same in both runs.
+- **The side-chain model moves the shared H-bond margin, in opposite directions** (`check_step.py`, read 10-18):
+  E_other - E_alpha at steps 18 / 37 is no-BP +0.296 / +0.354 and the control +0.135 / +0.157 (start +0.192), a gap of
+  ~0.2 against run-to-run variation of ~0.04. No-BP's rise is E_other weakening (-1.769 -> -1.620), so an H-bond made
+  at phi > 0 costs ~0.15 E_up more, E_alpha nearly fixed; the control's fall is E_alpha weakening (-1.961 -> -1.854).
+  On the fixed engine no-BP read +0.357 at step 38, +0.321 at 48, +0.345 at 56 and +0.289 at 65. The +0.10 hold
+  watches only a fall. Whether the high margin (left-handed natives, glycine alpha_L and some Asn/Asp, pay more per
+  H-bond) is part of no-BP's mdCATH loss is not tested; the margin has not predicted helix populations or panel folding before (1.15, the panels above, 1.24).
 - **`ds_02`** (ff30_gdepth_si step 56, margin +0.096; 49223609 COMPLETED 17:33 10-11; 40 domains):
   folded 0.406, helix -0.030; gdepth_start dominates it in helix. With its twin d9_02 on 39 domains:
   0.406 against 0.439, helix -0.031 against -0.029. ds_00 to ds_02 fold 0.412, 0.420, 0.406.
@@ -2407,7 +2414,7 @@ sampling, not how two trainings of one design differ.
   and the Peng benchmark (32 arms) is the larger test. The user ordered it with glpG TM4 (10-13 12:00):
   fd_03 is validated as `ff_3.1_depth_data` (plan.md Phase 14 step 6).
 
-### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; by block 2's end its glycine flips reach the cold rungs in two chains (2026-10-14/17)
+### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; the defective chains' cold-rung glycine flips are absent from the corrected chains' block 1 (2026-10-14/18)
 
 Every chain read here ran with the misplaced side-chain beads (4.17); the corrected chains of 10-17 replace them.
 
@@ -2466,6 +2473,20 @@ differing only in the force-field datasets. Glycine phi > 0 on every rung: `~/wa
   135-136 at 0.67 / 0.76, 150-151 at 0.25 / 0.35), ff3.0 0.945 (0.966 / 0.924; 150-151 at 0.68 / 0.64), ff2.1 0.887.
   The core 137-149 holds under all three. ff3.1 lost 0.03 from block 1 while ff3.0 held, and the walkers still
   make no round trip, so whether the cold-rung flips are ff3.1's or two walkers' histories is still open.
+- **The corrected chains' block 1** (4.17; 09:58 10-17 to 20:39 10-18, groups 1-17, ~5,100 frames per rung; read
+  21:40 10-18, Mac Studio; `tm4_ff31_20261018.txt`, `gly_flip_rungs_20261018.txt`, `tm4_dssp_block1_20261018.txt`, the
+  DSSP from `extract_bb_dssp_block1.py` and `tm4_dssp_block1.py`, the block-2 scripts without ff_2.1_sc). The numbers
+  above are no baseline for these. Pooled T 0.70 TM4 134-151: ff3.1 0.994 / 0.961 / 0.991 / 0.977 (79ALA, 79HIS,
+  79ALA_S115T, 79HIS_S115T), ff3.0 0.990 / 0.997 / 0.993 / 0.982. The weakest residue is 134, TM4's first, in all eight
+  (ff3.1 79HIS 0.52 with 135 at 0.81; ff3.1 79HIS_S115T 0.67; ff3.0 79HIS_S115T 0.70). **No TM4 glycine is at phi > 0
+  at T 0.70 in any chain.** Over groups 14-17 the flips sit on the middle and hot rungs: ff3.1 79ALA_S115T GLY136
+  0.05-0.37 (rungs 15-27) and GLY149 0.07-0.25 (22-27), ff3.1 79HIS_S115T GLY136 0.10-0.13 (20-25), ff3.0 79HIS GLY136
+  0.07-0.26 (21-27), ff3.0 79ALA_S115T GLY149 0.05-0.26 (22-27), ff3.0 79HIS_S115T GLY136 up to 0.16 and GLY149 up to
+  0.14 (22-27); ff3.1 79HIS 0.05 at rung 25 only, both 79ALA chains none above 0.05. GLY143 never flips. DSSP alpha
+  135-151 on 79HIS's T 0.80 rung: ff3.1 0.909 (first / second half 0.929 / 0.889; 135 0.72, 150-151 0.65 / 0.62), ff3.0
+  0.941 (0.944 / 0.938; 135 0.73, 151 0.79); the core 137-149 holds under both. The defective 79HIS ff3.1 chain had
+  GLY136 at phi > 0 in 43-91% of T 0.70 frames from group 14; this one has none there. With one chain each, whether
+  the placement fix removed that flip or the defective chain's walker history made it is not established.
 - **The table, not the force field, removed ff2.1's unfolding.** The seed-1 runs behind
   `glpg_tm4_dssp_ff21_vs_ff30.png` (10-09) are runs_cov's old-table ff21_released and d9_03 (initial
   energy -25017.30 and -24992.61, as the MacBook Pro's logs). Redrawn from those files the figure
@@ -6010,6 +6031,14 @@ frames read 0.89-0.94 and put ff3.1 last, fraying at both TM4 ends (1.35). **Bef
 result, read which criterion the script scores; a TM4 readout carries DSSP alpha, and a check that
 lacks it gets it added before it is reported.** And when the user points at a figure that disagrees,
 first rebuild that figure from its own files: here that showed the disagreement was the old table.
+
+### 10.28 Name runs by what they are, the tag in parentheses (2026-10-18)
+
+A status table labelled only "no-BP" made the user think the deterministic side-chain training was missing. The
+user's names: `ff21_nobp_dt009` (release `ff_2.1_nobp`) is "the deterministic side-chain ff2.1", `ff21_ctrl_dt009`
+(`ff_2.1_ctrl38`) "the probabilistic side-chain ff2.1" (its control). **In every report or table lead with the plain
+description and put the tag in parentheses**: "deterministic side-chain ff2.1 (`ff21_nobp_dt009`)", "ff3.1 rerun on
+the fixed engine (`ff31_depth_data_angfix`)". Internal tags (no-BP, ctrl38, a31_, a32_) alone read as unknown jobs.
 
 ---
 
