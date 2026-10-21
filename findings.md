@@ -1379,6 +1379,16 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   (-0.135) folds; beta is not resolved (-0.034 [-0.097, +0.038], p 0.13). So the step-37 verdict holds at the fixed
   points: the deterministic side chain loses folding on held-out proteins. Neither run's 38 fixed-engine steps
   changed its own folding, and no-BP is not at a fixed point in ~110 angular pair coefficients (1.36).
+  **On TM-score** (user 10-21: one metric for every test; plan.md Phase 24; `checks/converge_20261020/`,
+  `tm_panel.py` with the Peng scorer's `tmscore.py`, every 10th frame after 2,000 tu, 4 seeds pooled): mdCATH, the
+  fixed points, mean TM 0.667 against 0.702, -0.034 [-0.045, -0.024], p 7e-8, lower on 65 of 89, every length bin and
+  class (beta -0.013, p 0.05); the 44 Charron domains, both fixed points rerun at dt 0.009 (`p44_nobp_03`,
+  `p44_ctrl_03`; KE/1.5kT 1.00-1.01, all finite), 0.623 against 0.650, -0.026 [-0.043, -0.010], p 0.007, lower on 29
+  of 44 (their Q folded fraction 0.363 against 0.430, p 0.06); Peng's benchmark at step 37, all 16 pairs now scored,
+  natives 0.457 against 0.486 (-0.029 [-0.070, +0.015], p 0.18), de novo 0.309 against 0.299 (p 0.49). The share of
+  frames at TM > 0.5 does not differ (0.920 against 0.946, p 0.24; 0.824 against 0.832, p 0.74): without BP the
+  native fold is kept as often but sits further from the native, which the Q-based folded fraction, a stricter
+  cutoff, reads as a larger loss.
 - **The side-chain model moves the shared H-bond margin, in opposite directions** (`check_step.py`, read 10-18):
   E_other - E_alpha at steps 18 / 37 is no-BP +0.296 / +0.354 and the control +0.135 / +0.157 (start +0.192), a gap of
   ~0.2 against run-to-run variation of ~0.04. No-BP's rise is E_other weakening (-1.769 -> -1.620), so an H-bond made
@@ -5961,6 +5971,16 @@ is ff30_glyhb. Two corrections from the user on the same day:
   Use `frame_interval` near 100 (~2000 frames), no `--record-momentum`, and one `--duration`.
 * **SciencePlots' `science` style sets `savefig.bbox: tight`, which crops a fixed page size
   (2026-10-09).** Set `'savefig.bbox': 'standard'` for a print page.
+* **Build Python environments on `/beagle3`, not `/project` (2026-10-21, from midway3-login5).** 200
+  `touch` plus `rm` took 26.7 s on `/project/trsosnic` against 0.45 s on `/beagle3/trsosnic`, 0.38 s on
+  midway3 scratch and 0.41 s in home; a torch venv is tens of thousands of files (7.3 G), and `ensurepip`
+  alone had not finished after 5 min on `/project`. Large sequential writes are fast on both.
+* **`pip install torch` from PyPI now gives a CUDA 13 build (2026-10-21).** `torch 2.14.1+cu130` carries
+  sm_75 to sm_120 only, so it cannot run on midway3's V100s (sm_70), and its CUDA 13 runtime needs a newer
+  driver than CUDA 12 builds. Install from `https://download.pytorch.org/whl/cu126` for these GPUs
+  (`/beagle3/trsosnic/yinhan/boltz_hdx/install.sh`).
+* **`pkill -f <pattern>` over ssh kills the ssh command's own shell** when the pattern is in the command
+  line, ending the call with exit 255 before it reaches the target. Kill by PID.
 
 ### 10.15 A results slide states the comparison, not the bookkeeping (2026-10-05)
 
@@ -6124,6 +6144,16 @@ gradient bug in full, the convergence probes. The user: much shorter; no list of
 AI did; say what was tested and on what, with the sizes of the test sets. **For a results email: what was compared
 and why (one or two sentences), each test set with its size and what it is, the numbers, and what we conclude.**
 Leave out bugs found along the way, gradient checks, job mechanics and file paths unless asked.
+
+### 10.30 The diffusion sampler is built on Boltz, never BioEmu (2026-10-21)
+
+`diffusion_dynamics.md` had been drafted as "BioEmu2 first, Boltz-2 only if needed", and I read it back to the user
+on that basis. The user: we are building it on Boltz, not BioEmu; Jumper does not accept BioEmu because its data are
+selected. **No BioEmu weights, samples, training data or benchmarks enter the diffusion work, as baseline or as
+comparator.** BioEmu2's code may be used (user, 2026-10-21): it is MIT-licensed and itself adapted from Boltz, so
+Phase 3 ports its lag conditioning (`diffusion_dynamics.md`). The objection is to BioEmu's data, which the code does
+not carry. When a plan document names a base model, check it against the user's stated goal before evaluating or
+running it.
 
 ---
 

@@ -908,3 +908,32 @@ to 10-07 12:00 is in git history.
   every epoch (under the cut over the last); no-BP's ~110 angular coefficients are still pulled at step 76; at the
   fixed points no-BP folds -0.111 [-0.160, -0.065] (p 1e-5). Files modified: findings.md (1.21, 1.36), plan.md
   (Phases 21, 23, Known Errors), upside3.md (status), remote_jobs.md; WATCH_STATUS.md on the cluster.
+- 10-21 00:30-03:10, the side-chain comparison on one metric (user: email drafts to Tobin and John; "I prefer to use a
+  single metric (TM score?) for all tests"; plan.md Phase 24). Jobs: `tm_mdcath` 49436371 (TM of the converged mdCATH
+  runs), the 44-domain panel rerun at dt 0.009 for both converged force fields (49436374, 49436375; all runs finite,
+  KE/1.5kT 1.00-1.01), `tm_panel` 49436485, and the last Peng pair's score (49436488). Mean TM: mdCATH -0.034 (p 7e-8),
+  44 domains -0.026 (p 0.007), Peng natives -0.029 (p 0.18), de novo +0.010; the TM > 0.5 shares do not differ.
+  References checked on the web (Peng JCTC 2022, Charron Nat Chem 2025, CATH 4.2 NAR 2019, mdCATH Sci Data 2024).
+  Lesson recorded: findings 10.29 (short results emails). Files modified: findings.md (1.21, 10.29), plan.md
+  (Phase 24), remote_jobs.md, progress.md; new `tm_panel.py`, `tm_panel.sbatch`, `panel44_dt009.sbatch` in
+  `checks/converge_20261020/`.
+- 10-21 03:00-03:35, the Boltz-2 HDX sampler, Phase 0 (user: "develop a modified Boltz to replace upside (for HDX
+  sampling)"; "we are building it on Boltz, not BioEmu"; "run on midway3 if it is the only one available").
+  `diffusion_dynamics.md` rewritten around Boltz-2 with HDX as the goal: what the equilibrium HDX estimator needs from
+  a sampler (findings 5.1-5.2), Boltz-2's conditioning at `b1ebfc4` (an `md` tag, no temperature input, mdCATH in its
+  MD training data). midway2 cannot host it (K80s only for the group; its one V100 node down since 2024-06). Set up
+  on `/beagle3` (`/project` metadata 60x slower): Boltz at `b1ebfc4`, venv with torch 2.14.1+cu126 (PyPI's CUDA 13
+  build lacks sm_70), weights, MSAs and references. First test queued on the midway3 `gpu` partition: 61216915-17,
+  one each on A100, V100, RTX 6000 (ubiquitin and EHEE_rd2_0005; 5 default and 100 `md` samples). Lessons: findings
+  10.30 (Boltz, never BioEmu) and 10.14 (venvs on `/beagle3`, the CUDA 13 torch wheel, `pkill -f` over ssh). Files
+  modified: diffusion_dynamics.md, findings.md, remote_jobs.md, progress.md; cluster scripts in `$B` with copies in
+  `scratchpad/boltz_hdx/`.
+- 10-21 08:30-08:45, the Boltz-2 HDX sampler: first test read, BioEmu2 code allowed (user: "Yes it can use code
+  from bioemu2"). The three jobs ran early (04:37-07:44), about 7 min each. All three GPU types run bf16 with the
+  cuEquivariance kernels; about 1 s per ubiquitin sample. Default samples are near-native with clean geometry;
+  `md` samples at `step_scale` 1.0 are wider (ubiquitin pairwise CA-RMSD 2.0 A) but have bond-length scatter 4x
+  crystal spread and clashes in 86-97% of samples; tag and step scale were changed together, so the cause is open.
+  The 2x2 separating test (user: "Yes.") is queued on a V100, `tag_stepscale_test.sbatch`. Phase 3's lag conditioning now ports BioEmu2 `f99e0d8` code,
+  paths verified in a local read-only clone. Files modified: diffusion_dynamics.md (status, sections 1 and 3, Phase
+  0 readout, Phases 1 and 3, risks, references), findings.md 10.30, remote_jobs.md, progress.md, memory
+  `feedback_boltz_not_bioemu.md`.
