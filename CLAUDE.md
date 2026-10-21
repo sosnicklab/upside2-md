@@ -165,6 +165,10 @@ bash "$UPSIDE_HOME/example/16.MARTINI/<workflow>.sh"
 **"continue jobs":** a session asked to continue the jobs starts at `remote_jobs.md` "Resume here,
 from any computer" and follows its checklist in order.
 
+**"continue upside3 progress":** a session asked to continue the Upside 3 work starts at `plan.md` Phase 24
+"Resume here" and follows its checklist in order; the method is `upside3.md` 2.2, the defect ledger
+`findings.md` 3.14.
+
 **All remote job recording goes into `remote_jobs.md`, and nowhere else.** It is the single source of
 truth for what is running on midway2 and midway3: job ids, what each job is, its submit script, its
 log path, its data directory, and the next action each one is waiting on. Do not record jobs in `plan.md`,

@@ -1,13 +1,13 @@
 # Upside 3
 
-**Status: proposal, not started.** The user set five goals on 2026-10-19 (section 1). The protein-model work starts
+**Status: the engine audit (goal 1) is under way, plan.md Phase 24, ledger A1-A102 fixed and verified (`findings.md` 3.14); the other goals are proposals.** The user set five goals on 2026-10-19 (section 1). The protein-model work starts
 after the side-chain verdict, deterministic (no-BP) against probabilistic (BP) side chains at their converged epochs
 (plan.md Phase 21 item 7, findings 1.21), and is built on the model that wins. The measurement is in (10-20, findings
 1.21): at both fixed points BP folds 0.353 against no-BP's 0.241 on 89 held-out mdCATH domains (p 1e-5); the choice
 is the user's. The engine audit and the units work do not depend on that verdict. Everything measured below is
 ff_2.1, the probabilistic side chain, unless named.
 
-Records: plan.md Phases 22-23. The planning reports for goals 1, 2 and 5, with their scripts and logs, are in
+Records: plan.md Phases 22-24. The planning reports for goals 1, 2 and 5, with their scripts and logs, are in
 `scratchpad/upside3_planning_20261019/` (`audit_report.md`, `units_report.md`, `gpu_report.md`; gitignored). The
 large-protein investigation is in `scratchpad/large_protein_20261019/` on the Mac Studio (76 G with trajectories).
 

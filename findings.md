@@ -2485,6 +2485,19 @@ sampling, not how two trainings of one design differ.
   that is clear only pooled. 1.29's probe found pooled offsets (one set per central residue) transferring better
   than per-map ones at every width.
 
+- **The pooled prior, mode `pooled` of `training/ff31/rama_basin.py`** (10-21, plan.md Phase 29; checks in
+  `checks/ff311_20261021/`). Each map's offset is its central residue's shared offset plus its own deviation
+  (`data`'s 1,442 at 0.2); 75 of 126 shared offsets reach 20 pooled native sites (alpha_R 21, alpha_L 12, beta 19,
+  pPII 21, beta' 1, pPII' 1); pre-proline maps keep only their deviations. `check_pooled.py` on
+  `ff31_depth_data_angfix`'s epoch 0: mode `data` of the new file gives the old file's step to 1.4e-17 and the
+  recorded round 1 to 7e-17; `pooled` with no shared offset trainable gives `data`'s step exactly; spread and
+  collect are adjoint to 4e-16. Cross-validated width of the shared offsets (`cv_pool.py`, 10 folds over the 456
+  proteins, the trainer's own round-1 step): held-out map-level gap left, ff2.1 start 0.9942 (width 0, = `data`),
+  0.9802, 0.9758, 0.9747, 0.9740, 0.9738, 0.9737 at 0.1, 0.2, 0.3, 0.5, 1, 2; ff3.0 start 0.9938, then 0.9822,
+  0.9791, 0.9786, 0.9783, 0.9783, 0.9784. Width 0.5: the ff3.0 start's minimum and within 3e-4 of the ff2.1 start's,
+  the curve flat beyond it. One round then moves glycine's shared alpha_L +0.185 from ff2.1 and +0.035 from ff3.0's
+  map, the second consistent with 1.34's finding that the data have little left to pull there.
+
 ### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; the defective chains' cold-rung glycine flips are absent from the corrected chains' block 1 (2026-10-14/18)
 
 Every chain read here ran with the misplaced side-chain beads (4.17); the corrected chains of 10-17 replace them.
@@ -2646,12 +2659,14 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
 
 | run (tag) | start | epoch 0 | 1 | 2 | 3 (step 76) |
 |---|---|---|---|---|---|
-| control, probabilistic side chain (`c9`) | 0.615 | 0.390 | 0.405 | | |
+| control, probabilistic side chain (`c9`) | 0.615 | 0.390 | 0.405 | 0.375 | 0.430 |
 | no-BP (`nb`) | 0.615 | | 0.389 | | |
 | ff3.0, glycine depth (`d9`) | 0.603 | 0.477 | 0.457 | 0.439 | 0.464 (released) |
 | ff3.1, data depths (`fd`) | | 0.479 | 0.472 | 0.449 | 0.452 (released) |
 | ff3.1, all depths (`fa`) | | 0.471 | 0.444 | 0.404 | 0.406 |
 | ff3.2 (`f32`, stopped in step 69) | | 0.486 | 0.465 | 0.432 | |
+| ff3.1 rerun, fixed engine (`a31`) | | 0.436 | 0.449 | 0.462 | 0.420 |
+| ff3.2 rerun, fixed engine (`a32`) | | 0.452 | 0.481 | 0.435 | 0.432 |
 
 * **Every epoch of every run folds less than ff2.1** (p < 1e-6 each): ff_3.0_gdepth -0.152 [-0.196, -0.110], lower on
   37 of 44; ff_3.1_depth_data -0.164 [-0.202, -0.126], lower on 43. The starts are at ff2.1's level (`gdepth_start`
@@ -2665,7 +2680,9 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
 * **It holds at the training time step.** Released ff2.1 at 0.009 (`p44_ff21_released`, all 44 domains,
   `paired_npz.py`) folds 0.603, as at 0.015 (0.615, +0.013 [-0.025, +0.048], p 0.35); the control at its fixed point
   (`p44_ctrl_03`) 0.430, -0.173 [-0.227, -0.124], p 2e-7, lower on 40 of 44; no-BP (`p44_nobp_03`) 0.363, -0.240
-  [-0.314, -0.171], p 3e-7. mdCATH and the angular-fix reruns' panels are running.
+  [-0.314, -0.171], p 3e-7. On TM-score (`tm_p44_*.txt`) released ff2.1 0.681 against the control's 0.650 (+0.031
+  [+0.020, +0.044], p 4e-7, higher on 37 of 44) and no-BP's 0.623 (+0.057); TM > 0.5 0.886 against 0.832 and 0.824.
+  The angular-fix reruns lose as their sources did (table; `panel44_trajectory_final.txt`). mdCATH is running.
 * **Peng's benchmark agrees** (`checks/ff21_released_20261021/peng_trained.txt`): released ff3.0 0.480 native / 0.305
   de novo, ff3.1 0.464 / 0.326, the control 0.486 / 0.299, against FF2's 0.55 / 0.42; alpha3d native 0.15-0.35 and
   homeodomain 0.19-0.31 in all four trained force fields. The retired ff3.0 (FF1-form trainer, which trained no `hb` or
@@ -2678,6 +2695,13 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
 * **The training proteins do not fold better either**: free-replica CA-RMSD over all 456, per epoch, 2.85 2.86 2.86
   2.89 A (control) and 2.86 2.81 2.84 2.83 (ff3.1 rerun), epoch 3 against 0 p 0.37 in both. Not overfitting: the
   objective buys nothing on its own proteins while held-out folding falls.
+* **Which files carry it** (`c9_00` with one file put back to ff2.1's, 44-domain panel at 0.015, all 44 domains,
+  `checks/ff21_released_20261021/resets_c9_00.txt`): the side-chain table +0.089 [+0.049, +0.135], the backbone
+  burial +0.081 [+0.044, +0.123], the H-bond +0.068 [+0.027, +0.111]; environment +0.028 and sheet +0.035 not resolved.
+  Each reset stays 0.14-0.20 below ff2.1, and the three resolved ones add to about the whole loss (0.238 against
+  0.225), so it is spread over the co-trained files, not one. Holding some files while the rest train does not
+  remove it: the 10-07 runs with H-bond and sheet frozen folded less than their twins (1.21, `bz_00` 0.450 against
+  0.478, `dz_00` 0.432 against 0.477), the trained terms compensating.
 * **No port defect found.** Where `ConDiv.py` departs from the SI's wording (the NSE mixes the three coldest replicas
   0.6/0.3/0.1; the DSE takes the two replicas bracketing the Rg midpoint with Rg above 0.67 Rg(coldest) + 0.33
   Rg(hottest)), Kleinmann's port of Peng's code does the same (`condiv2.py` 690-735); its other drifts were corrected
@@ -3782,6 +3806,7 @@ Effects on ff2.1 are not measured (upside3.md section 1).
 | A99 | `bead_interaction.h` `quadspline_param_deriv` | yes | the four coefficient blocks were written with `=`, so at a cosine of +1 the angular block's last bin (weight 0) overwrote the wide radial spline's coefficient 0 | the training gradient of radial coefficient 0 of the pair, coverage and hydrophobe tables read 0 for pairs closer than 1.4 A with a bead pointing at the other (exact 3.1e-2 at 1.0 A, 1/6 at 0.5 A); energies and forces unaffected | every block adds into the zeroed derivative: the harness gives 0 wrong of 54 slots in the targeted cases and of 20,000 random pairs (reproduced with the fix reversed) |
 | A100 | `interaction_graph.h` constructor, `set_param` | yes | a refused `set_param` had already copied its parameters in; index and type values were not range-checked; a symmetric graph was not required to have a square table | after a refused call later energies used the refused table (8.669 for 5.942); `type1` 11 of 8, -1, or `index1` 22 of 17 were accepted and read outside the arrays | compatibility is checked on the candidate before it is copied; indices, types and the square table are validated preconditions: the refused call changes nothing, the four bad configs are refused; regression unchanged by this part |
 | A101 | `hbond.cpp` `ProteinHBondInteraction::compute_edge` | yes | the 90-degree angular cutoff was tested per SIMD group of four edges, so an out-of-cone pair was evaluated whenever another pair of its group passed | the H-bond energy depended on edge order (the same config with rows reversed: 6.2e-3 E_up on chig_hbond, 4.6e-2 on 1ubq with `--loose-hbond-criteria`; below float32 at the default geometry) | every edge is evaluated, the sigmoid product being the potential and the cutoff only a shortcut: row order no longer matters (0 difference), the engine equals the float64 no-cutoff oracle; node_fd on chig_hbond 0 bad of 42; regression w35 to w36: forces up to 5.3e-5 E_up/A, the 1qhj 1 A noise frame's downstream nodes up to 7.6e-6, the seeded runs |
+| A102 | `martini_prepare_system.py` `assert_environment_solvation`, `run_stage70_burnin`, `--eq-66-nsteps`; `example/16.MARTINI/run_sim_hybrid.sh`, `run.py`, readme | branch | the stage-7.0 gate failed any belt BB site with no environment bead within 6 A, on one frame, counting the inside of a helix bundle; stage 6.6 ran 500 NPT steps | the gate failed every healthy state (38% of 1rkl's sites beyond 6 A) and could not tell glpG's real lipid-face gap from its interior; the box and the lipid face entered production unrelaxed (findings 8b) | the gate averages the lipid-facing sites (fewer than 60 backbone atoms within 10 A) over the burn-in's last quarter and fails above 10% beyond 8 A, warning at the same fraction for acyl tails; 6.6 runs 60,000 steps (user 10-21). On recorded states: rejected glpG 17.9% fails, relaxed glpG 3.6-5.5% and 1rkl 0.4% pass. The first full glpG prep with it passed at 9.9% with a tail warning (20.6%): not yet validated (plan Phase 24, Resume here) |
 
 Deliberately not changed: the H-bond radial cutoff of 3.5 A truncates the factor at 3.4e-4, which is below the
 1e-4-scale energy noise BP already carries. Moving it to 4.0 A would cut the jump to 6e-6, at about 1.5x the
@@ -5547,6 +5572,7 @@ gate_calibration.py`, `burial_split.py`):
   slow annulus filling of 8a. The protein stayed intact (peptide C-N max 1.84 A, KE/1.5kT 1.003). The backbone
   H-bond count fell from 97 to about 84 over the same run, on a config that predates A83.
 * The prep's NPT is 5 x 500 = 2,500 steps, so the box and the lipid face entered production unrelaxed.
+* After the gate change (A102), the first full glpG prep with 6.6 at 60,000 steps (`scratchpad/glpg_gate_20261021/`, seeds 11/22, the first prep with A83's ALA/GLY rows) passed at 9.9% against the 10% limit, warned on tail reach (20.6%), and started production with 36-42% of all belt sites beyond 8 A (protein intact, C-N max 1.85 A). That is worse than the 6.6 continuation of the earlier prep (lipid face 4.9%), cause not yet measured.
 
 ## 9. The nanoparticle campaign (1AO6 + MPA-AuNP)
 

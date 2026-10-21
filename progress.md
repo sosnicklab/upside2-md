@@ -1121,3 +1121,43 @@ to 10-07 12:00 is in git history.
   (findings 1.37); the owed panels and the Peng scores of ff3.0 / ff3.1 were queued with jobs that write the final
   tables. Files modified: findings.md 1.21 and 1.37, plan.md Phase 27, remote_jobs.md; new
   `scratchpad/ff21_released_20261021/` (cluster copy `checks/ff21_released_20261021/`).
+- 08:40-10:55 10-21, Upside 3 audit continued (plan.md Phase 24; user: "git pull it and merge", "proceed with your
+  suggestions", "record progress"). Pulled 9a88a139 (other machine: Boltz HDX sampler, TM-score phase): HEAD moved,
+  local edits unstaged, its lesson 10.30 renumbered 10.34 and its "Phase 24" kept as 26 (backup
+  `scratchpad/pre_pull_20261021c/`).
+  * Index oracle (`tests/index_oracle.py`) clean but for D9; found A94; up.md corrected in 16 rows.
+  * Pass 2 reported for BP, environment, interaction graph and H-bond. Applied and verified:
+    * A95, the BP stop test;
+    * A96, environment input checks;
+    * A97, dead radial, contact and linear-coupling nodes and the exclude-residue options;
+    * A98-A100, interaction-graph sens, slot-30 derivative and input validation;
+    * A101, the H-bond cutoff per pair.
+  * Placement and writers were stopped by the session limit.
+  * Equipartition passes with the SE from pymbar's g (lesson 10.33).
+  * glpG: the bundle interior inflated the old gate; the lipid face was really bare at 18% and production heals it
+    (findings 8b). Gate and 6.6 length changed (A102). The first prep with them passed only at 9.9%, so it is not yet
+    validated.
+  * obj/ holds A97; the A101 build is in `scratchpad/upside3_audit/bp_home`, baseline `w36_hb.npz`.
+  * A pause of local compute is armed for 14:05-14:15 (user).
+  * Files modified: src/{rotamer,environment,sigmoid_energy,sidechain_radial,hbond}.cpp,
+    src/{interaction_graph,bead_interaction}.h, py/{upside_config,run_upside,martini_prepare_system}.py,
+    example/16.MARTINI/{run_sim_hybrid.sh,run.py,readme.md}, tests/invariance.py, up.md, findings.md (3.14 A94-A102,
+    8b, 10.30, 10.33), plan.md (Phase 24 Resume here), upside3.md, CLAUDE.md.
+- 10-21 12:30-13:40, ff3.1.1 and ff3.2.1 (plan.md Phases 28-29). Single-file resets of the control's epoch 0: the
+  loss is spread over side-chain table, backbone burial and H-bond (findings 1.37). Released ff2.1 at dt 0.009 folds
+  as at 0.015, so the loss holds at the training time step. Peng and Jumper stopped on a fixed budget on purpose
+  (findings 1.23). ff3.2 rerun converged; its glycine map plotted (`scratchpad/plot_gly_rama_ff32_nonhelix_zero.py`).
+  The depth maps stay at their starts because per-map priors hold a pull that is consistent only pooled (findings
+  1.34). Mode `pooled` added to `training/ff31/rama_basin.py` (one shared offset per central residue and basin plus
+  per-map deviations), checked against `data` to 1e-17, width 0.5 by 10-fold cross-validation; ff3.1.1 and ff3.2.1
+  built from the angular-fix reruns with only that file changed and submitted (user: everything else trains).
+  Files modified: training/ff31/rama_basin.py, findings.md 1.23/1.34/1.36/1.37, plan.md Phases 27-29,
+  remote_jobs.md; new `scratchpad/ff311_20261021/`, `scratchpad/ff_3.2_angfix/` (cluster `checks/ff311_20261021/`).
+- 10-21 13:38-14:10, ff3.1.1 / ff3.2.1 revised (user: "resolve the accuracy lost bug as well in this run"): the
+  every-term chains cancelled 3 min in; rebuilt as `ff311_depths_only` / `ff321_depths_only`, ff2.1's files with every
+  Adam rate zero (`freeze_groups.py`) and only the pooled depths training, from NDRD's and ff3.0's map; submitted
+  13:42 with their collector. The full 44-domain table and released ff2.1's TM there (0.681 against 0.650 and 0.623)
+  recorded. remote_jobs.md regrouped by the user's four lines of work (header, §1, the watch prompt; finished rows to
+  "Finished runs"; the obsolete HDX spec removed). Files modified: findings.md 1.37, plan.md Phases 27-29,
+  remote_jobs.md; new `scratchpad/ff311_20261021/{freeze_groups.py,build_depths_only.sh}`.
+

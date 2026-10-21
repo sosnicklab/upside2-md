@@ -774,6 +774,38 @@ User 10-19: "the fix only goes into upside 3. You can modify on current branch (
 'upside 3'. Later in the stage we should make it refuse to run ff2.1 (not yet ...). You can start the debug progress
 now, on this branch." Code concise, simple and logical, in master's style (never example 00's).
 
+**Resume here ("continue upside3 progress"; state at 2026-10-21 10:55, Mac with the scratchpad).** No local job or
+agent is running, except a pause script (pid 19348, `scratchpad/pause_20261021/`) that stops this repo's local compute
+14:05-14:15 on 10-21 at the user's request and ends by itself. The working files (fixtures, baselines, build
+trees, reviewer outputs) are under the gitignored `scratchpad/upside3_audit/` on this Mac.
+1. [ ] Install the current engine: `src/` holds A1-A101, `obj/` only A97 (`bp_home` holds A101). From the repo root in
+   bash: `source .venv/bin/activate && source source.sh && cd obj && make -j8`. Then run `regress.py dump` on
+   `scratchpad/upside3_audit/fixtures_w6/*.up` with `UPSIDE_HOME` set to the repo, and `compare` against
+   `scratchpad/upside3_audit/w36_hb.npz`: it must give 0 of 4073 (driver to copy:
+   `scratchpad/upside3_audit/bp_home/regress_hb.sh`).
+2. [ ] Pass 2, the two units left. Placement and config writers were stopped by the session limit at about 10:40;
+   their partial work is in `scratchpad/upside3_audit/pass2/{placement,writers}/`.
+   * Start fresh reviewers from `pass2/brief.md`, each told to read its directory first.
+   * Run at most two or three heavy agents at once (findings 10.30).
+   * Their tools refuse to write report.md: have them return the text and save it.
+   * Then the P2 units, the closing criteria (upside3.md 2.2 item 5), and later refusing ff2.1.
+3. [ ] The glpG protocol validation (`scratchpad/glpg_gate_20261021/results.txt`, findings 8b). The first prep with the
+   60,000-step 6.6 and the new gate passed only at 9.9% against the 10% limit, warned on tail reach (20.6%), and its
+   production start has 36-42% of all belt sites beyond 8 A. The 6.6 continuation of the earlier prep gave 4.9% on
+   the lipid face. So the protocol is not yet shown to work.
+   * Next: `scratchpad/glpg_belt_20261021/burial_split.py` on this run.
+   * Then find what differs: this is the first prep with A83's ALA/GLY rows, it uses seeds 11/22, and its 6.6 starts
+     after 4 x 500 steps.
+4. [ ] Open fixes (the remaining queue under item 4 below):
+   * the MARTINI pair spline's end slope (pass 2 igraph D5, against the spline-table rule);
+   * D9 (design in `pass2/igraph/report.md`);
+   * BP D4 (rotamer log attribution);
+   * `HBondEnergy` input checks;
+   * the dead-code batch (C++, and `run_upside` `read_hb`/`read_constant_hb`/`compute_topology`);
+   * the hybrid fixtures, regenerated after A83.
+5. Waiting on the user: `membranelateral_potential` as an energy or as an external force (item 4); `upside3.md` 7.
+6. Git is the user's. The commit should include `tests/` and `example/15.SpatialTransformation/calc_rmsd.py`.
+
 **Revised decisions** (CLAUDE.md Development Rules reworded to match, 10-19):
 * martini-dev is Upside 3. Fixes go only here; master is not changed.
 * ff2.1 keeps running on this branch for development. Refusing it comes later.
@@ -870,8 +902,11 @@ Method in `upside3.md` 2.2.
      Measured 10-21 (findings 8b): the 6 A rule fails every healthy state and counts glpG's bundle interior as
      vacuum; on lipid-facing sites (burial 40-60) healthy states have 1-4% beyond 8 A, the rejected 7.0 state 18%,
      the 6.6 NPT plateau 5% (box converged by 30,000 steps, lipid face by 60,000), production at 200,000 steps 4%.
-     For the user [ ]: the gate on lipid-facing sites only (e.g. fail above 10% beyond 8 A, which passes every
-     healthy state and the NPT plateau and fails the rejected state), and the prep NPT at about 60,000 steps.
+     Applied 10-21 (user: "proceed with your suggestions"; ledger A102): the gate takes the lipid-facing belt sites
+     over the rigid burn-in's last quarter and fails above 10% beyond 8 A (single frames are too noisy, about 30
+     sites); 6.6 runs 60,000 steps. On the recorded states it fails the rejected one (17.9%) and passes the relaxed
+     glpG states (3.6-5.5%) and 1rkl (0.4%). The first full prep with it passed at 9.9%: not yet validated (Resume
+     here, item 3).
      [ ] a longer POPE/POPG run to settle the 1.3%; [ ] equilibrated membranes as the prep input.
    * applied 10-20: the MARTINI angle term as a spline table, and the side-chain table's CB direction normalised in
      the energy as in its gradient (node_fd now passes); regression w22: 0 of 545.
@@ -976,6 +1011,7 @@ stay. Decisions:
   the three-way table and stops. Files in `/project/trsosnic/yinhan/checks/ff21_released_20261021/`.
 1. [ ] mdCATH panel `mdc_ff21_released` (89 domains x 4 seeds) and the 44-domain panel `p44_ff21_released`.
 2. [ ] TM against the fixed points `mdc_ctrl_03` / `mdc_nobp_03` and `p44_ctrl_03` / `p44_nobp_03` (`tm_panel.py`).
+   44 domains done: released ff2.1 0.681, control 0.650, no-BP 0.623 (findings 1.37); mdCATH running.
 3. [ ] Peng's 30 remaining arms; scored and compared against the step-37 `ff_2.1_ctrl38` and `ff_2.1_nobp` and
    against Peng's published FF2 (0.55 native, 0.42 de novo).
 4. [x] User 10-21: does the loss reach the other trained force fields? 44-domain panel at 0.015, every epoch end
@@ -997,9 +1033,10 @@ hb/env/sheet/dhb rates) lost as much (`ds_02` 0.406), so the rates set speed, no
 - **No workflow change without the user.** Every candidate fix (rates, a prior toward ff2.1, freezing groups, early
   stopping on a validation panel) departs from the FF2 workflow the project fixes (findings 10.17, memory
   `condiv-must-be-ff21-workflow`); a port defect against the SI is fixed directly.
-1. [ ] Panels `c9_00_hb21`, `c9_00_rot21`, `c9_00_env21`, `c9_00_bb21`, `c9_00_sheet21` (49438975-49438978,
-   49438983); job 49438986 writes `checks/ff21_released_20261021/resets_c9_00.txt` and, for released ff2.1 at 0.009
-   on the 44 domains, `p44_dt009_folded.txt`.
+1. [x] Panels `c9_00_hb21`, `c9_00_rot21`, `c9_00_env21`, `c9_00_bb21`, `c9_00_sheet21` (`resets_c9_00.txt` in
+   `checks/ff21_released_20261021/`): no single file restores ff2.1's folding; the side-chain table (+0.089), the
+   backbone burial (+0.081) and the H-bond (+0.068) each give back part and together about all of the 0.225 lost;
+   environment (+0.028) and sheet (+0.035) are not resolved.
 2. [x] Each group's course over the control's epoch 0: hb and env pulled one way from step 0, rot spreads as noise;
    training proteins' RMSD flat over four epochs (findings 1.37).
 3. [x] The ensemble definitions against the SI: ours are Kleinmann's (Peng's code), so no port defect found
@@ -1016,6 +1053,48 @@ hb/env/sheet/dhb rates) lost as much (`ds_02` 0.406), so the rates set speed, no
    the data pull glycine alpha_L shallower (t +5.6), from ff3.0's map not at all (findings 1.34). A retraining
    that should move the maps needs a pooled prior (one offset per central residue and basin, maps as deviations),
    which 1.29 found to transfer best; the user's decision.
+
+### Phase 29 - ff3.1.1 and ff3.2.1: the depth training with a pooled prior (STARTED 2026-10-21, user)
+User 10-21: "apply the fix and train ff3.1.1 and ff3.2.1", after Phase 28 step 6 found each depth held at its start by
+its own 0.2-nat prior while the data's pull is clear only pooled. The user chose (10-21, asked): everything else trains
+as in ff3.1, so the pooled prior is the only change. Decisions:
+- **The model** (`training/ff31/rama_basin.py`, mode `pooled`): a map's offset on a basin is its central residue's
+  shared offset plus the map's own deviation, c_mb = q_X(m),b + d_mb. The deviations are `data` mode's, at its width
+  0.2 and on its 1,442 depths. The shared offsets pool the maps of one central residue only (rule 1.8: central GLY
+  says nothing about central ALA; the coupling is estimation, as NDRD's hierarchical prior), each under its own
+  Gaussian prior, trainable where the residue's pooled native sites reach `data`'s threshold of 20. Pre-proline maps
+  (X|right|PRO) keep only their own deviations, as ff3.0's glycine pair left them out (findings 1.14). Same damped
+  Newton step per epoch, solved jointly over shared offsets and deviations.
+- **The shared offsets' width is cross-validated**, as the per-map widths were (findings 1.29): 10 folds over the
+  proteins of each source run's epoch 0, the trainer's own step and held-out map-level gap, widths 0 (= `data`) to 2.
+- **Each run is its source with one change**: ff3.1.1 = `ff31_depth_data_angfix` (start ff2.1), ff3.2.1 =
+  `ff32_depth_data_angfix` (start ff3.0), built as `build_rerun.sh` builds (same `ConDiv.py` md5 `df3e2497...`,
+  inputs, minibatch order, held-out set, fixed engine), only `rama_basin.py` replaced. Target 76, no gate, stop for
+  the user; epoch-end panels and per-step steric checks as for the reruns.
+- **Verification before launch, no test jobs** (findings 10.16): with the shared offsets off, mode `pooled` gives
+  `data`'s step exactly, on recorded epoch-0 data and against the source run's own round 1; P and its transpose are
+  adjoint; the initial checkpoints equal the sources' but for the new depth fields.
+1. [x] `rama_basin.py` mode `pooled` (findings 1.34).
+2. [x] Equivalence and adjointness checks: `data` reproduced to 1e-17, adjoint to 4e-16.
+3. [x] Cross-validated width of the shared offsets: 0.5 (findings 1.34).
+4. [x] Built and initialised `ff311_depth_pooled` and `ff321_depth_pooled`: equal to their sources in every field
+   but the pooled depth state; submitted 13:34 10-21 (remote_jobs.md §1).
+5. [ ] At step 76: maps against their sources (`plot_gly_rama_*_nonhelix_zero.py`), `depth_data_vs_prior.py`, panels.
+
+**Revised decision (10-21 13:40, user: "besides rama map not moving bug, try to resolve the accuracy lost bug as well
+in this run").** The first chains (`ff311_depth_pooled`, `ff321_depth_pooled`, every group trained) were cancelled 3
+minutes into step 0 and kept as `<run>.cancelled_20261021`. Reasons, from Phase 28: the loss is spread over the
+co-trained side-chain table, backbone burial and H-bond (findings 1.37); holding some groups while the rest train
+lost more folding before (the 10-07 frozen arms, findings 1.21); and Peng and Jumper stopped those terms on a fixed
+budget that ff2.1 has already had (findings 1.23). So:
+- **Every Adam group is held at ff2.1** (rate 0, `checks/ff311_20261021/freeze_groups.py` on the initial checkpoint;
+  the trainer is unchanged). Only the depths train, under the pooled prior: ff3.1.1 = ff2.1 plus depths from NDRD's
+  map, ff3.2.1 = ff2.1 plus depths from ff3.0's map. ff3.0's other files carry the loss (folded 0.464), so ff3.2.1
+  takes ff2.1's; the two runs differ only in the starting map, and share ff3.1's rerun's minibatch order and
+  held-out set.
+- **Runs** `ff311_depths_only` and `ff321_depths_only` (`build_depths_only.sh`), tags `p311_EE`, `p321_EE`.
+- **The test of the fix** is the epoch-0 panel (`p311_00`, `p321_00`) against `ff21_released` on the 44 domains.
+6. [ ] Epoch-0 panels: folding at ff2.1's level means the loss is resolved.
 
 ## Known Errors / Blockers
 
