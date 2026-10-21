@@ -2151,13 +2151,31 @@ def published_pair_potential(r, eps, sig, qq, coulomb_k, r_cut):
     return energy
 
 
+def soft_core_radius(r, sig, soft_core_lambda):
+    # written as r (1 + ...)^(1/6), so lambda = 0 gives r_sc = r exactly
+    return r * (1.0 + SOFT_CORE_ALPHA * soft_core_lambda ** SOFT_CORE_POWER * (sig / r) ** 6) ** (1.0 / 6.0)
+
+
 def soft_core_pair_potential(r, eps, sig, qq, coulomb_k, r_cut, soft_core_lambda):
     """GROMACS soft core (sc-power 2, sc-coul yes) of the published potential at coupling lambda:
     (1 - lambda) V(r_sc), r_sc = (sc_alpha sigma^6 lambda^2 + r^6)^(1/6). lambda = 0 is V itself."""
-    r = np.asarray(r, dtype=np.float64)
-    # r_sc written as r (1 + ...)^(1/6), so lambda = 0 gives r_sc = r exactly
-    r_sc = r * (1.0 + SOFT_CORE_ALPHA * soft_core_lambda ** SOFT_CORE_POWER * (sig / r) ** 6) ** (1.0 / 6.0)
+    r_sc = soft_core_radius(np.asarray(r, dtype=np.float64), sig, soft_core_lambda)
     return (1.0 - soft_core_lambda) * published_pair_potential(r_sc, eps, sig, qq, coulomb_k, r_cut)
+
+
+def pair_table_end_slopes(r_ends, eps, sig, qq, coulomb_k, r_cut, soft_core_lambda):
+    """dV/dr at the table ends, where its spline is clamped: (1 - lambda) V'(r_sc) (r / r_sc)^5, V' the derivative
+    of the published expression without its cutoff. At r_max that is the limit from inside, where the
+    potential-shifted LJ keeps a force; the soft core's r_sc passes the cutoff a few 1e-6 A short of r_max, so its
+    table ends on the slope of its last smooth piece."""
+    r = np.asarray(r_ends, dtype=np.float64)
+    r_sc = soft_core_radius(r, sig, soft_core_lambda)
+    deriv = np.zeros_like(r)
+    if eps != 0.0 and sig != 0.0:
+        deriv += 4.0 * eps * (-12.0 * (sig / r_sc) ** 12 + 6.0 * (sig / r_sc) ** 6) / r_sc
+    if qq != 0.0:
+        deriv += coulomb_k * qq * (-1.0 / (r_sc * r_sc) + r_sc / r_cut ** 3)
+    return (1.0 - soft_core_lambda) * deriv * (r / r_sc) ** 5
 
 
 def inject_particles_table(up_file: Path, martini_h5: Path, energy_conversion: float, length_conversion: float):
@@ -2216,11 +2234,14 @@ def inject_particles_table(up_file: Path, martini_h5: Path, energy_conversion: f
                                                     soft_core_lambda)
             if grids[i, -1] != 0.0 and abs(grids[i, -1]) > 1e-9 * max(abs(eps_arr[i]), 1.0):
                 raise ValueError(f"{up_file}: pair table row {i} is {grids[i, -1]:.3e} E_up at the {r_max:g} A cutoff")
+        end_slopes = np.array([pair_table_end_slopes([r_min, r_max], eps_arr[i], sig_arr[i], qq_arr[i], coulomb_k,
+                                                     r_max, soft_core_lambda) for i in range(len(rows))])
 
         g.create_dataset("unique_eps_eup", data=eps_arr, dtype=np.float64)
         g.create_dataset("unique_sig_ang", data=sig_arr, dtype=np.float64)
         g.create_dataset("unique_charge_product", data=qq_arr, dtype=np.float64)
         g.create_dataset("combined_energy_grids", data=grids, dtype=np.float64)
+        g.create_dataset("combined_energy_end_slopes", data=end_slopes, dtype=np.float64)
         g.attrs["coefficient_indices_reference"] = "coefficients"
         g.attrs["n_combined_triples"] = np.int32(len(rows))
         g.attrs["r_min_ang"] = np.float32(r_min)

@@ -372,6 +372,14 @@ struct MartiniPotential : public PotentialNode
                 all_grids[row * size_t(n_grid) + col] = x;
             });
 
+            // dV/dr at r_min and r_max, where each spline is clamped: the potential-shifted LJ keeps a force at the cutoff
+            check_size(grp, "combined_energy_end_slopes", n_triples, 2);
+            std::vector<double> all_end_slopes(n_triples * 2);
+            double knot_spacing = double(r_max - r_min) / double(n_grid - 1);
+            traverse_dset<2,double>(grp, "combined_energy_end_slopes", [&](size_t row, size_t col, double x) {
+                all_end_slopes[row * 2 + col] = x * knot_spacing;
+            });
+
             std::map<std::tuple<float,float,float>, size_t> h5_index;
             for (size_t i = 0; i < n_triples; ++i)
                 h5_index[{h5_eps[i], h5_sig[i], h5_qq[i]}] = i;
@@ -398,7 +406,8 @@ struct MartiniPotential : public PotentialNode
                     throw string("Combined params (" + to_string(eps) + ", " + to_string(sig) + ", " + to_string(qq) + ") not found in martini table");
 
                 combined_splines.emplace_back(1, n_grid);
-                combined_splines.back().fit_spline(all_grids.data() + it->second * size_t(n_grid));
+                combined_splines.back().fit_spline(all_grids.data() + it->second * size_t(n_grid),
+                                                   all_end_slopes.data() + it->second * 2);
             }
         }
 

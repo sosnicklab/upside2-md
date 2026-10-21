@@ -6529,6 +6529,15 @@ Phase 3 ports its lag conditioning (`diffusion_dynamics.md`). The objection is t
 not carry. When a plan document names a base model, check it against the user's stated goal before evaluating or
 running it.
 
+### 10.35 Read the fix's diff as master's author would before verifying it (2026-10-21)
+
+User, during the D5 fix: keep code edits concise, logical and in master's style, no layers on layers. My first
+draft rewrote Jumper's whole comment in `solve_clamped_1d_spline` where two lines had changed, passed slopes
+through a pointer and two ternaries, carried two derivative functions where one does the job, and stripped a
+trailing space it never meant to touch. **After every fix, read `git diff` before any verification run and cut it to
+the smallest change that reads as written in one pass: keep the original author's words where they still hold,
+one function per quantity, no incidental whitespace.** Verify the trimmed code, not the draft.
+
 ---
 
 ## 11. Reference: the two glpG PDBs disagree about TM4

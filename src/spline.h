@@ -25,11 +25,13 @@ void solve_periodic_1d_spline(
 //! Computes data in polynomial representation, where
 //! each segment of the spline is represented by coefficients
 //! for ax^3+bx^2+cx+d.  Clamped spline means that the derivative
-//! of the spline is zero on both ends.
+//! of the spline is given on both ends, per grid spacing.
 void solve_clamped_1d_spline(
         int n, 
         double* coefficients, // length 4*(n-1)
         const double* data,   // length n
+        double left_slope,    // derivative at x = 0
+        double right_slope,   // derivative at x = n-1
         double* temp_storage);// length 4*n
 
 //! \brief Compute bspline coefficients from data for clamped spline
@@ -514,7 +516,8 @@ struct LayeredClampedSpline1D {
         right_clamped_value(n_layer*NDIM_VALUE)
     {}
 
-    void fit_spline(const double* data)  // size (n_layer, nx, NDIM_VALUE)
+    void fit_spline(const double* data,                 // size (n_layer, nx, NDIM_VALUE)
+                    const double* end_slope = nullptr)  // size (n_layer, NDIM_VALUE, 2), derivative at x = 0 and nx-1; zero if null
     {
         // store values in float, but solve system in double
         std::vector<double> coeff_tmp((nx-1)*4);
@@ -530,7 +533,9 @@ struct LayeredClampedSpline1D {
                 for(int ix=0; ix<nx; ++ix) 
                     data_tmp[ix] = data[(il*nx + ix)*NDIM_VALUE + id];
 
-                solve_clamped_1d_spline(nx, coeff_tmp.data(), data_tmp.data(), temp_storage.data());
+                double left_slope  = end_slope ? end_slope[(il*NDIM_VALUE + id)*2 + 0] : 0.;
+                double right_slope = end_slope ? end_slope[(il*NDIM_VALUE + id)*2 + 1] : 0.;
+                solve_clamped_1d_spline(nx, coeff_tmp.data(), data_tmp.data(), left_slope, right_slope, temp_storage.data());
 
                 // copy spline coefficients to coefficient array
                 for(int ix=0; ix<nx-1; ++ix)   // nx-1 splines in clamped spline

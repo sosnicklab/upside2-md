@@ -1161,3 +1161,13 @@ to 10-07 12:00 is in git history.
   "Finished runs"; the obsolete HDX spec removed). Files modified: findings.md 1.37, plan.md Phases 27-29,
   remote_jobs.md; new `scratchpad/ff311_20261021/{freeze_groups.py,build_depths_only.sh}`.
 
+- 10-21 14:23-14:50, Upside 3 audit continued (plan.md Phase 24 Resume here). obj/ rebuilt with A1-A101, regression
+  equals w36_hb (w37_obj, 0 of 4073). Pass-2 reviewers for placement and config writers restarted from the updated
+  brief. glpG gate run analysed by the gate's own fractions: the lipid face heals to 0.7% within 20,000 production
+  steps; the first prep's 6.6 ended at 13% against the earlier prep's 6%, the two diverging from the first
+  minimisation through A83's 42 ALA/GLY rows; seed replicates launched. D5 applied (the MARTINI pair spline clamped to
+  the analytic end slopes; `solve_clamped_1d_spline` takes the slopes, the stage writer stores
+  `combined_energy_end_slopes`): reproducer 2.7e-2 to 1.5e-7 E_up/A at the cutoff, fixtures_w6 unchanged; hybrid
+  fixtures regenerating on the D5 build for its node_fd and hybrid regression. Lesson 10.35 (user: concise edits in
+  master's style). Files modified: src/{spline.cpp,spline.h,martini_potential.cpp}, py/martini_prepare_system_lib.py,
+  up.md, findings.md 10.35, plan.md Phase 24.

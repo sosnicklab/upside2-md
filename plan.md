@@ -774,35 +774,51 @@ User 10-19: "the fix only goes into upside 3. You can modify on current branch (
 'upside 3'. Later in the stage we should make it refuse to run ff2.1 (not yet ...). You can start the debug progress
 now, on this branch." Code concise, simple and logical, in master's style (never example 00's).
 
-**Resume here ("continue upside3 progress"; state at 2026-10-21 10:55, Mac with the scratchpad).** No local job or
-agent is running, except a pause script (pid 19348, `scratchpad/pause_20261021/`) that stops this repo's local compute
-14:05-14:15 on 10-21 at the user's request and ends by itself. The working files (fixtures, baselines, build
-trees, reviewer outputs) are under the gitignored `scratchpad/upside3_audit/` on this Mac.
-1. [ ] Install the current engine: `src/` holds A1-A101, `obj/` only A97 (`bp_home` holds A101). From the repo root in
-   bash: `source .venv/bin/activate && source source.sh && cd obj && make -j8`. Then run `regress.py dump` on
-   `scratchpad/upside3_audit/fixtures_w6/*.up` with `UPSIDE_HOME` set to the repo, and `compare` against
-   `scratchpad/upside3_audit/w36_hb.npz`: it must give 0 of 4073 (driver to copy:
-   `scratchpad/upside3_audit/bp_home/regress_hb.sh`).
-2. [ ] Pass 2, the two units left. Placement and config writers were stopped by the session limit at about 10:40;
-   their partial work is in `scratchpad/upside3_audit/pass2/{placement,writers}/`.
-   * Start fresh reviewers from `pass2/brief.md`, each told to read its directory first.
-   * Run at most two or three heavy agents at once (findings 10.30).
-   * Their tools refuse to write report.md: have them return the text and save it.
-   * Then the P2 units, the closing criteria (upside3.md 2.2 item 5), and later refusing ff2.1.
-3. [ ] The glpG protocol validation (`scratchpad/glpg_gate_20261021/results.txt`, findings 8b). The first prep with the
-   60,000-step 6.6 and the new gate passed only at 9.9% against the 10% limit, warned on tail reach (20.6%), and its
-   production start has 36-42% of all belt sites beyond 8 A. The 6.6 continuation of the earlier prep gave 4.9% on
-   the lipid face. So the protocol is not yet shown to work.
-   * Next: `scratchpad/glpg_belt_20261021/burial_split.py` on this run.
-   * Then find what differs: this is the first prep with A83's ALA/GLY rows, it uses seeds 11/22, and its 6.6 starts
-     after 4 x 500 steps.
-4. [ ] Open fixes (the remaining queue under item 4 below):
-   * the MARTINI pair spline's end slope (pass 2 igraph D5, against the spline-table rule);
+**Resume here ("continue upside3 progress"; state at 2026-10-21 14:45, Mac with the scratchpad).** Working files
+(fixtures, baselines, build trees, reviewer outputs) are under the gitignored `scratchpad/upside3_audit/`.
+Running locally (detached, each ends by writing `DONE` to its results file; do not poll):
+* glpG seed replicates (item 3): `scratchpad/glpg_gate_20261021/replicates/` (`run.sh`, `results.txt`), on `obj/`.
+* 1rkl hybrid fixtures and D5's checks (item 4): `scratchpad/upside3_audit/fixtures_hybrid_w2/` (`run.sh`,
+  `results.txt`), on `d5_home`.
+* Two pass-2 reviewers (item 2), placement and config writers, in-session agents.
+1. [x] `obj/` holds A1-A101 (built 14:24; old binaries `obj/*.bak_20261021`); its regression equals `w36_hb` bitwise
+   (`w37_obj.npz`, 0 of 4073), the baseline now.
+2. [ ] Pass 2, placement and config writers, restarted 14:27 from `pass2/brief.md` (updated: ledger A1-A102,
+   baseline `w37_obj`, the report returned in the final message). Save each report as `pass2/<unit>/report.md`.
+   * Placement reported 15:10 (`pass2/placement/report.md`): D1 `house()`'s 1e-20 floor turns an exactly zero
+     column into a projection (frame wrong by pi at an exact 180-degree turn; `eig_house_reduced.patch`), D2
+     placement and alignment indices unchecked (`placement_bounds.patch`), D3 an uncentred `ref_geom` gives wrong
+     forces (`affine_ref_centred.patch`). To reproduce and apply one at a time after D5. D4, the rotamer-library
+     generators that do not build: delete or repair, the user's call.
+   * Config writers reported 15:40 (`pass2/writers/report.md`, 10 patches in `pass2/writers/patches/`), 15 defects,
+     14 in master. Engine-visible: 1 nail and group-nail anchors re-taken from `/input/pos` at every continuation
+     (2.0 A, 12.7 E_up off the continuous run); 2 the curvature changer's centre lost at continuation and unlogged
+     (needs an engine log and a restart write); 4 group numbers and 5 `--surface-included-residues` unchecked (ASan
+     heap overflows); 10 the random start chain's bonds shifted one atom (18.6 E_up strain). Writers: 3
+     `--fix-rotamer` chi2 period for ASP/PHE/TYR (53 of 68 states flip under equivalent names); 6 unrecorded chain
+     breaks bond chains silently (a 17.7 A C-N bond; the patch forces re-converting single-chain directories); 7
+     `--trans-cis` drops two options; 8 wall_type; 9 four advanced_config options dropped at exit 0; 11 MSE chi2; 12
+     `rotate_to_axis`; 13 `.chi` loses insertion codes (carry or refuse, the user's call); 14-15 dead or silent
+     restart helpers. Each to be reproduced before it is applied.
+   Every trained-node unit now has its second review. Then the P2 units, the closing criteria (upside3.md 2.2 item 5), and later refusing ff2.1.
+3. [ ] The glpG protocol validation (findings 8b). Measured 14:30 (`scratchpad/glpg_gate_20261021/compare/`,
+   `face_series.py`, the gate's own fractions per block): the first prep's lipid face reached 13% by 6.6's end
+   against 6% for the earlier prep's 6.6 continuation at the same step; production then heals it to 0.7% within
+   20,000 steps (1rkl healthy 0.4%), so the "36-42% of all belt sites" was the bundle interior. The two preps
+   share seeds 11/22 and step counts, but differ from the first minimisation (lipids up to 8.3 A) because A83
+   added 42 ALA/GLY rows to the side-chain node, so one run of each cannot separate seed noise from A83.
+   Replicates with seeds 12/23 and 13/24 running; then decide whether 60,000 steps of 6.6 is enough.
+4. [ ] Open fixes:
+   * D5, the MARTINI pair spline's end slope: applied in `src/` (not in `obj/`) and the stage writer, built in
+     `d5_home`. Reproducer `scratchpad/upside3_audit/d5_pair_ends/` passes (last 10 spacings 2.7e-2 to 1.5e-7
+     E_up/A; soft core 3.6e-5); fixtures_w6 regression unchanged (w38_d5, 0 of 4073). Waiting on the hybrid checks
+     above; then ledger A103 and install into `obj/` once the replicates are done. Hybrid configs prepared before
+     it lack `combined_energy_end_slopes` and are refused.
    * D9 (design in `pass2/igraph/report.md`);
    * BP D4 (rotamer log attribution);
    * `HBondEnergy` input checks;
    * the dead-code batch (C++, and `run_upside` `read_hb`/`read_constant_hb`/`compute_topology`);
-   * the hybrid fixtures, regenerated after A83.
+   * the hybrid fixtures, regenerated after A83 (running, with D5).
 5. Waiting on the user: `membranelateral_potential` as an energy or as an external force (item 4); `upside3.md` 7.
 6. Git is the user's. The commit should include `tests/` and `example/15.SpatialTransformation/calc_rmsd.py`.
 

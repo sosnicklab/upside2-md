@@ -193,6 +193,8 @@ void solve_clamped_1d_spline(
         int n, 
         double* coefficients, // length 4*(n-1)
         const double* data,   // length n
+        double left_slope,    // derivative at x = 0
+        double right_slope,   // derivative at x = n-1
         double* temp_storage) // length 4*n
 {
     double* a = temp_storage+0*n;
@@ -208,17 +210,19 @@ void solve_clamped_1d_spline(
     for(int i=0; i<n; ++i) c[i] = 1./6.;
     for(int i=0; i<n; ++i) solution[i] = data[i];
 
-    // FIXME also implement zero-derivative clamped splines
-    // this is a homogenous boundary condition and quite convenient for cartesian potentials
-    // for a zero-clamped spline, we must have coeff[-1] == coeff[1] and coeff[N-2] == coeff[N]
+    // the derivative at knot i is (coeff[i+1]-coeff[i-1])/2, so for end slopes s0 and s1
+    // we must have coeff[-1] == coeff[1]-2*s0 and coeff[N] == coeff[N-2]+2*s1
     // this conditions break the tridiagonal condition if added naively.
     // Instead, I can fold the condition into the matrix by doubling the (0,1) and (N-2,N-1)
-    // elements of the tridiagonal matrix.  These would be elements c[0] and a[n-1].
+    // elements of the tridiagonal matrix.  These would be elements c[0] and a[n-1], and the
+    // slopes move to the right-hand side.
     // Then, I need to remember to add the special basis functions that I absorbed
     // when computing the coefficients below.
 
     a[n-1] *= 2.;
     c[0]   *= 2.;
+    solution[0]   += left_slope  / 3.;
+    solution[n-1] -= right_slope / 3.;
     solve_tridiagonal_system(n, solution, a+1, b, c);
 
     // now we need to convert the b-spline coefficients to coefficients for {1,x,x^2,x^3}
@@ -240,7 +244,7 @@ void solve_clamped_1d_spline(
     
     {
         // left wing B-spline
-        double my_val = solution[1];
+        double my_val = solution[1] - 2.*left_slope;
         int increment = 3;
         int idx = 0;
 
@@ -249,7 +253,7 @@ void solve_clamped_1d_spline(
     }
     {
         // right wing B-spline
-        double my_val = solution[n-2];
+        double my_val = solution[n-2] + 2.*right_slope;
         int increment = 0;
         int idx = n-2;
 
