@@ -1,5 +1,7 @@
 #include "engine_c_library.h"
 #include "deriv_engine.h"
+#include "martini_internal.h"
+#include "martini_brownian.h"
 #include <algorithm>
 #include "spline.h"
 
@@ -11,6 +13,16 @@ DerivEngine* construct_deriv_engine(int n_atom, const char* potential_file, bool
     auto potential_group = open_group(config.get(), "/input/potential");
     
     auto engine = new DerivEngine(initialize_engine_from_hdf5(n_atom, potential_group.get() ));
+
+    // Register the same per-engine metadata main.cpp does. Without this the library silently evaluated a
+    // different model than the simulator for a hybrid system: the BB proxy state was never registered, so
+    // martini_hybrid_position fell through to a plain passthrough and the derived BB and O slots behaved
+    // as free particles carrying environment force directly.
+    martini_masses::load_masses_for_engine(engine, config.get());
+    martini_fix_rigid::register_fix_rigid_for_engine(config.get(), *engine);
+    martini_stage_params::register_stage_params_for_engine(engine, config.get());
+    martini_hybrid::register_hybrid_for_engine(config.get(), *engine);
+
     engine->build_exec_levels();
     return engine;
 } catch(const string& e) {

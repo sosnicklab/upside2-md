@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 import argparse
 import os
@@ -13,6 +13,31 @@ REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 OUTPUT_PREVIOUS_RE = re.compile(r"^output_previous_(\d+)$")
 
+ATOMIC_NUMBERS = {
+    "H": 1,
+    "C": 6,
+    "N": 7,
+    "O": 8,
+    "P": 15,
+    "S": 16,
+    "CL": 17,
+    "NA": 11,
+}
+
+
+def infer_atomic_number(atom_name, atom_type=None):
+    for raw in (atom_name, atom_type):
+        token = str(raw).strip().upper()
+        if not token:
+            continue
+        if token in ATOMIC_NUMBERS:
+            return ATOMIC_NUMBERS[token]
+        if len(token) >= 2 and token[:2] in ATOMIC_NUMBERS:
+            return ATOMIC_NUMBERS[token[:2]]
+        if token[0] in ATOMIC_NUMBERS:
+            return ATOMIC_NUMBERS[token[0]]
+    return 6
+
 
 def decode_str_array(dset):
     arr = dset[:]
@@ -26,12 +51,43 @@ def decode_str_array(dset):
 
 
 def infer_pdb_id(input_file, user_pdb_id):
+    """Select the optional pdb/<id>.MARTINI.pdb that supplies residue and chain labels.
+
+    Never guess a specific protein here: falling back to one silently relabels every other system's
+    residues with that protein's metadata. Return None when no id is given and none can be derived,
+    and let the caller skip the metadata rather than attach the wrong protein's."""
     if user_pdb_id:
         return user_pdb_id
     base = os.path.basename(input_file).lower()
     if "bilayer" in base:
         return "bilayer"
-    return "1rkl"
+    return None
+
+
+def find_martini_metadata_pdb(pdb_id, *up_files):
+    """Locate <pdb_id>.MARTINI.pdb, which supplies lipid and ion residue labels for the VTF.
+
+    The workflow writes it to <run_dir>/hybrid_prep/, not to the example's pdb/ directory, so looking only
+    in pdb/ silently drops every environment resname to UNK and makes the trajectory unselectable by lipid
+    in a viewer. Search the run directories implied by the .up files actually passed in, then pdb/. Every
+    candidate is derived from an explicit argument, so no system's metadata can be attached to another's.
+    """
+    if not pdb_id:
+        return ""
+    name = f"{pdb_id}.MARTINI.pdb"
+    candidates = []
+    for up in up_files:
+        if not up:
+            continue
+        up_dir = Path(up).expanduser().resolve().parent
+        candidates.append(up_dir.parent / "hybrid_prep" / name)
+        candidates.append(up_dir / "hybrid_prep" / name)
+        candidates.append(up_dir / name)
+    candidates.append(WORKFLOW_DIR / "pdb" / name)
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate)
+    return ""
 
 
 def normalize_frame(pos, n_particles):
@@ -194,10 +250,61 @@ def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file, output_group="ou
     return x_len, y_len, z_len
 
 
-def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
+def build_molecule_topology(n_output, bonds):
+    """Bond-walk order and connected-component labels for the output particles.
+
+    The walk is (child, parent) pairs with every parent placed before its children, so applying a
+    minimum-image displacement in that order rebuilds a whole molecule from a single anchor atom.
+    The labels group the particles into molecules; an unbonded particle is a molecule of one."""
+    adjacency = [[] for _ in range(n_output)]
+    for i, j in bonds:
+        if 0 <= i < n_output and 0 <= j < n_output:
+            adjacency[i].append(j)
+            adjacency[j].append(i)
+
+    walk = []
+    molecule_id = np.full(n_output, -1, dtype=np.int64)
+    n_molecules = 0
+    for root in range(n_output):
+        if molecule_id[root] >= 0:
+            continue
+        molecule_id[root] = n_molecules
+        stack = [root]
+        while stack:
+            parent = stack.pop()
+            for child in adjacency[parent]:
+                if molecule_id[child] < 0:
+                    molecule_id[child] = n_molecules
+                    walk.append((child, parent))
+                    stack.append(child)
+        n_molecules += 1
+    return walk, molecule_id, n_molecules
+
+
+def unwrap_molecules(frame_pos, walk, x_len, y_len, z_len):
+    """Make every bonded molecule whole again.
+
+    The integrator stores each particle wrapped into the cell, so a molecule straddling a periodic
+    face comes out torn and its bonds span most of the box when rendered. Walking the bond topology
+    with a minimum-image displacement reassembles each molecule around its anchor atom."""
+    box = np.array([x_len, y_len, z_len], dtype=float)
     out = np.array(frame_pos, copy=True)
-    box = np.array([x_len, y_len, z_len], dtype=np.float32)
-    half_box = 0.5 * box
+    for child, parent in walk:
+        out[child] -= box * np.round((out[child] - out[parent]) / box)
+    return out
+
+
+def centralize_system(frame_pos, residue_names, molecule_id, n_molecules, x_len, y_len, z_len):
+    """Put the protein at the origin and bring every molecule back into the central cell.
+
+    The molecules must already be whole (`unwrap_molecules`). Wrapping is then applied per molecule
+    through its centroid, never per particle. Wrapping particles individually tears every molecule
+    that crosses a face, and rebuilding them afterwards with the bond walk re-seats each one on
+    whichever anchor atom happened to land inside: for glpG that anchor is the floppy N-terminal
+    amide, which threw the entire protein a full box length out of the bilayer in 159 of 1822
+    frames and left a protein-shaped hole behind."""
+    out = np.array(frame_pos, copy=True)
+    box = np.array([x_len, y_len, z_len], dtype=np.float64)
 
     protein_mask = None
     if residue_names is not None:
@@ -209,38 +316,37 @@ def centralize_system(frame_pos, residue_names, x_len, y_len, z_len):
         }
         protein_mask = np.array([str(name).upper() in protein_residues for name in residue_names], dtype=bool)
 
-    # Mode 2 output includes backmapped protein backbone residues by their
-    # sequence-derived residue names. Centering by periodic protein COM avoids
-    # boundary-split rendering artifacts.
     if protein_mask is not None and np.any(protein_mask):
-        prot = np.mod(out[protein_mask], box[None, :])
-        protein_center = np.zeros(3, dtype=np.float64)
-        for ax in range(3):
-            angles = 2.0 * np.pi * prot[:, ax] / float(box[ax])
-            s = np.mean(np.sin(angles))
-            c = np.mean(np.cos(angles))
-            if abs(s) < 1e-12 and abs(c) < 1e-12:
-                protein_center[ax] = float(np.mean(prot[:, ax]))
-            else:
-                a = np.arctan2(s, c)
-                if a < 0.0:
-                    a += 2.0 * np.pi
-                protein_center[ax] = float(box[ax]) * a / (2.0 * np.pi)
-        out -= protein_center[None, :]
-    else:
-        if residue_names is not None:
-            lipid_mask = np.array([name == "DOPC" for name in residue_names], dtype=bool)
-            if np.any(lipid_mask):
-                out[:, 2] -= np.mean(out[lipid_mask, 2])
+        out -= out[protein_mask].mean(axis=0)[None, :]
+    elif residue_names is not None:
+        lipid_mask = np.array([name == "DOPC" for name in residue_names], dtype=bool)
+        if np.any(lipid_mask):
+            out[:, 2] -= np.mean(out[lipid_mask, 2])
 
-    out = (out + half_box) % box - half_box
-    return out
+    counts = np.bincount(molecule_id, minlength=n_molecules).astype(np.float64)
+    centroid = np.stack(
+        [np.bincount(molecule_id, weights=out[:, ax], minlength=n_molecules) / counts for ax in range(3)],
+        axis=1,
+    )
+    return out - box * np.round(centroid[molecule_id] / box)
 
 
 def write_vtf_frame(fh, pos):
     fh.write("\ntimestep ordered\n")
     for x, y, z in pos:
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
+
+
+def copy_output_mapping(mapping):
+    out = {}
+    for key, value in mapping.items():
+        if isinstance(value, np.ndarray):
+            out[key] = value.copy()
+        elif isinstance(value, dict):
+            out[key] = value.copy()
+        else:
+            out[key] = value
+    return out
 
 
 def list_output_groups(traj_h5):
@@ -287,18 +393,15 @@ def build_backbone_projection_map(struct_h5, input_pos):
         return None
 
     bb = struct_h5["input/hybrid_bb_map"]
-    if "bb_atom_index" not in bb or "bb_residue_index" not in bb or "reference_atom_coords" not in bb:
+    if "bb_atom_index" not in bb or "bb_residue_index" not in bb:
         return None
 
     bb_atom_index_raw = np.asarray(bb["bb_atom_index"][:], dtype=int)
     bb_residue_index = np.asarray(bb["bb_residue_index"][:], dtype=int)
-    ref_coords = np.asarray(bb["reference_atom_coords"][:], dtype=np.float32)
-    if ref_coords.ndim != 3 or ref_coords.shape[1:] != (4, 3):
-        return None
     if bb_atom_index_raw.ndim != 1:
         return None
     n_bb = bb_atom_index_raw.shape[0]
-    if bb_residue_index.shape[0] != n_bb or ref_coords.shape[0] != n_bb:
+    if bb_residue_index.shape[0] != n_bb:
         return None
 
     if "reference_atom_names" in bb:
@@ -335,7 +438,6 @@ def build_backbone_projection_map(struct_h5, input_pos):
     bb_atom_index = np.where(valid_proxy, bb_atom_index_raw, fallback_ca)
     bb_atom_index = bb_atom_index[valid]
     bb_residue_index = bb_residue_index[valid]
-    ref_coords = ref_coords[valid]
     bb_chain_ids = bb_chain_ids[valid]
 
     bb_residue_names = np.array(["UNK"] * bb_residue_index.shape[0], dtype=object)
@@ -356,46 +458,48 @@ def build_backbone_projection_map(struct_h5, input_pos):
                 dtype=object,
             )
 
-    if "weights" in bb:
-        weights = np.asarray(bb["weights"][:], dtype=np.float32)
-        if weights.ndim != 2 or weights.shape != (n_bb, 4):
-            weights = np.full((bb_atom_index.shape[0], 4), 0.25, dtype=np.float32)
-        else:
-            weights = weights[valid]
-    else:
-        weights = np.full((bb_atom_index.shape[0], 4), 0.25, dtype=np.float32)
 
-    wsum = np.sum(weights, axis=1, keepdims=True)
-    safe_wsum = np.where(wsum > 1.0e-8, wsum, 1.0)
-    weights = weights / safe_wsum
-    ref_anchor = np.sum(ref_coords * weights[:, :, None], axis=1)
+    if atom_indices_full is None:
+        return None
+    runtime_carrier_index = atom_indices_full[valid]
+    if not np.all((runtime_carrier_index >= 0) & (runtime_carrier_index < n_particles)):
+        return None
+    if "input/atom_roles" in struct_h5:
+        atom_roles = decode_str_array(struct_h5["input/atom_roles"])
+        ref_role_row = np.asarray(ref_atom_names, dtype=object).reshape(1, 4)
+        if not np.all(atom_roles[runtime_carrier_index] == ref_role_row):
+            raise ValueError(
+                "hybrid_bb_map/atom_indices do not point at %s for every residue" % list(ref_atom_names))
 
-    runtime_carrier_index = None
-    use_runtime_carriers = False
-    if atom_indices_full is not None:
-        atom_indices = atom_indices_full[valid]
-        if np.all((atom_indices >= 0) & (atom_indices < n_particles)):
-            runtime_carrier_index = atom_indices
-            if "input/atom_roles" in struct_h5:
-                atom_roles = decode_str_array(struct_h5["input/atom_roles"])
-                runtime_roles = atom_roles[runtime_carrier_index]
-                ref_role_row = np.asarray(ref_atom_names, dtype=object).reshape(1, 4)
-                use_runtime_carriers = bool(np.all(runtime_roles == ref_role_row))
-            else:
-                use_runtime_carriers = True
+    # The engine writes a residue's O slot only where infer_H_O has an acceptor on that residue's
+    # carbonyl C (martini_hybrid.cpp, resolve_bb_o_hbond_elements). The C-terminal residue has none, so
+    # its O slot keeps the input coordinate for the whole run and is not part of the trajectory.
+    if "input/potential/infer_H_O/acceptors/id" not in struct_h5:
+        raise ValueError("hybrid_bb_map requires /input/potential/infer_H_O/acceptors, which supplies the O slots")
+    carbonyl_c = np.asarray(struct_h5["input/potential/infer_H_O/acceptors/id"][:, 1], dtype=int)
+    carrier_present = np.ones(runtime_carrier_index.shape, dtype=bool)
+    carrier_present[:, 3] = np.isin(runtime_carrier_index[:, 2], carbonyl_c)
 
     return {
         "bb_atom_index": bb_atom_index,
         "bb_residue_index": bb_residue_index,
         "bb_residue_names": bb_residue_names,
         "bb_chain_ids": bb_chain_ids,
-        "ref_coords": ref_coords,
         "ref_atom_names": np.array(ref_atom_names, dtype=object),
-        "weights": weights,
-        "ref_anchor": ref_anchor,
         "runtime_carrier_index": runtime_carrier_index,
-        "use_runtime_carriers": use_runtime_carriers,
+        "carrier_present": carrier_present,
     }
+
+
+def backbone_output_atoms(bb_map):
+    """(atom name, residue name, residue id, chain id) of every backbone carrier the trajectory updates,
+    in the order reconstruct_backbone_aa writes their coordinates."""
+    for row, (resid, rname, chain_id) in enumerate(
+        zip(bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"])
+    ):
+        for k, aname in enumerate(bb_map["ref_atom_names"]):
+            if bb_map["carrier_present"][row, k]:
+                yield str(aname), str(rname), int(resid), str(chain_id).strip() or "A"
 
 
 def build_mode1_mapping(
@@ -432,29 +536,36 @@ def build_mode1_mapping(
     bb_map = build_backbone_projection_map(struct_h5, input_pos)
 
     out_atom_names = list(mart_atom_names)
+    out_atom_types = [str(name).strip() or "X" for name in mart_atom_names]
     out_res_names = list(mart_res_names)
     out_res_ids = [int(x) for x in np.asarray(mart_res_ids, dtype=int)]
     out_chain_ids = [str(x).strip() or "X" for x in np.asarray(mart_chain_ids, dtype=object)]
+    out_atomic_numbers = [
+        infer_atomic_number(aname, atype)
+        for aname, atype in zip(out_atom_names, out_atom_types)
+    ]
     include_aa_backbone = bb_map is not None
     if include_aa_backbone:
-        for resid, rname, chain_id in zip(
-            bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"]
-        ):
-            for aname in bb_map["ref_atom_names"]:
-                out_atom_names.append(str(aname))
-                out_res_names.append(str(rname))
-                out_res_ids.append(int(resid))
-                out_chain_ids.append(str(chain_id).strip() or "A")
+        for aname, rname, resid, chain_id in backbone_output_atoms(bb_map):
+            out_atom_names.append(aname)
+            out_atom_types.append(aname)
+            out_res_names.append(rname)
+            out_res_ids.append(resid)
+            out_chain_ids.append(chain_id)
+            out_atomic_numbers.append(infer_atomic_number(aname))
 
     return {
         "mode": 1,
         "martini_indices": martini_indices,
+        "orig_to_output": {int(orig): int(out) for out, orig in enumerate(martini_indices)},
         "include_aa_backbone": include_aa_backbone,
         "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
+        "output_atom_types": np.array(out_atom_types, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
         "output_chain_ids": np.array(out_chain_ids, dtype=object),
+        "output_atomic_numbers": np.array(out_atomic_numbers, dtype=int),
     }
 
 
@@ -496,77 +607,80 @@ def build_mode2_mapping(
         )
 
     out_atom_names = list(env_atom_names)
+    out_atom_types = [str(name).strip() or "X" for name in env_atom_names]
     out_res_names = list(env_res_names)
     out_res_ids = [int(x) for x in env_res_ids]
     out_chain_ids = [str(x).strip() or "X" for x in np.asarray(env_chain_ids, dtype=object)]
+    out_atomic_numbers = [
+        infer_atomic_number(aname, atype)
+        for aname, atype in zip(out_atom_names, out_atom_types)
+    ]
 
-    for resid, rname, chain_id in zip(
-        bb_map["bb_residue_index"], bb_map["bb_residue_names"], bb_map["bb_chain_ids"]
-    ):
-        for aname in bb_map["ref_atom_names"]:
-            out_atom_names.append(str(aname))
-            out_res_names.append(str(rname))
-            out_res_ids.append(int(resid))
-            out_chain_ids.append(str(chain_id).strip() or "A")
+    for aname, rname, resid, chain_id in backbone_output_atoms(bb_map):
+        out_atom_names.append(aname)
+        out_atom_types.append(aname)
+        out_res_names.append(rname)
+        out_res_ids.append(resid)
+        out_chain_ids.append(chain_id)
+        out_atomic_numbers.append(infer_atomic_number(aname))
 
     return {
         "mode": 2,
         "non_protein_idx": non_protein_idx,
+        "orig_to_output": {int(orig): int(out) for out, orig in enumerate(non_protein_idx)},
         "bb_map": bb_map,
         "output_atom_names": np.array(out_atom_names, dtype=object),
+        "output_atom_types": np.array(out_atom_types, dtype=object),
         "output_residue_names": np.array(out_res_names, dtype=object),
         "output_residue_ids": np.array(out_res_ids, dtype=int),
         "output_chain_ids": np.array(out_chain_ids, dtype=object),
+        "output_atomic_numbers": np.array(out_atomic_numbers, dtype=int),
     }
 
 
-def mode2_backbone_bonds(start_idx, n_bb, bb_chain_ids=None):
+def backbone_bonds(start_idx, bb_map):
+    """N-CA, CA-C and C-O within each residue and C-N to the next residue of the same chain, indexed
+    over the carriers backbone_output_atoms writes (a residue without an O slot has no C-O bond)."""
+    present = bb_map["carrier_present"]
+    out_index = np.full(present.shape, -1, dtype=int)
+    out_index[present] = start_idx + np.arange(int(present.sum()))
+    chain_ids = [str(c).strip() or " " for c in bb_map["bb_chain_ids"]]
     bonds = []
-    for r in range(n_bb):
-        b = start_idx + 4 * r
-        bonds.append((b + 0, b + 1))
-        bonds.append((b + 1, b + 2))
-        bonds.append((b + 2, b + 3))
-    for r in range(n_bb - 1):
-        if bb_chain_ids is not None:
-            chain_left = str(bb_chain_ids[r]).strip() or " "
-            chain_right = str(bb_chain_ids[r + 1]).strip() or " "
-            if chain_left != chain_right:
-                continue
-        b0 = start_idx + 4 * r
-        b1 = start_idx + 4 * (r + 1)
-        bonds.append((b0 + 2, b1 + 0))
+    for r in range(present.shape[0]):
+        n, ca, c, o = out_index[r]
+        bonds.append((n, ca))
+        bonds.append((ca, c))
+        if o >= 0:
+            bonds.append((c, o))
+        if r + 1 < present.shape[0] and chain_ids[r] == chain_ids[r + 1]:
+            bonds.append((c, out_index[r + 1, 0]))
     return bonds
 
 
-def reconstruct_backbone_aa(frame_pos, bb_map, box_lengths=None):
-    runtime_carrier_index = bb_map.get("runtime_carrier_index")
-    if bb_map.get("use_runtime_carriers", False) and runtime_carrier_index is not None:
-        aa_pos = frame_pos[runtime_carrier_index.reshape(-1)]
-        return np.asarray(aa_pos, dtype=np.float32).reshape(-1, 3)
+def reconstruct_backbone_aa(frame_pos, bb_map):
+    """Backbone N/CA/C/O for the VTF, read straight out of the frame.
 
-    bb_cur = frame_pos[bb_map["bb_atom_index"]]
-    delta = bb_cur - bb_map["ref_anchor"]
-    if box_lengths is not None:
-        box = np.asarray(box_lengths, dtype=np.float32).reshape(1, 3)
-        safe_box = np.where(box > 0.0, box, 1.0)
-        delta = delta - safe_box * np.round(delta / safe_box)
-    aa_pos = bb_map["ref_coords"] + delta[:, None, :]
-    aa_pos = aa_pos.reshape(-1, 3)
-    return aa_pos
+    These are real entries in the trajectory, so there is nothing to reconstruct. The previous fallback
+    rigidly translated a stored reference geometry by the BB proxy's displacement, which could not
+    represent any backbone rotation and only existed because the proxy predated the carriers being
+    addressable. A build whose BB map does not resolve all four carriers is a broken build, not a case to
+    approximate around. Only the carriers the trajectory updates are written (carrier_present).
+    """
+    carriers = bb_map["runtime_carrier_index"][bb_map["carrier_present"]]
+    return np.asarray(frame_pos[carriers], dtype=np.float32).reshape(-1, 3)
 
 
 def assemble_mode1_frame(frame_pos, mapping, box_lengths=None):
     martini_pos = frame_pos[mapping["martini_indices"]]
     if not mapping.get("include_aa_backbone", False):
         return martini_pos
-    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
+    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"])
     return np.vstack((martini_pos, aa_pos))
 
 
 def assemble_mode2_frame(frame_pos, mapping, box_lengths=None):
     env_pos = frame_pos[mapping["non_protein_idx"]]
-    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"], box_lengths=box_lengths)
+    aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"])
     return np.vstack((env_pos, aa_pos))
 
 
@@ -582,7 +696,18 @@ def parse_args():
     parser.add_argument("output_file", help="output .vtf file")
     parser.add_argument("structure_up", nargs="?", default=None, help="structure source .up (default: input_up)")
     parser.add_argument("pdb_id", nargs="?", default=None, help="PDB id for pdb/<id>.MARTINI.pdb metadata")
-    parser.add_argument("--mode", type=int, choices=(1, 2), default=1, help="output mode (default: 1)")
+    parser.add_argument(
+        "--mode",
+        type=int,
+        choices=(1, 2),
+        default=None,
+        help=(
+            "output mode (default: auto). "
+            "Auto selects mode 2 when the structure file contains "
+            "input/hybrid_env_topology/protein_membership (hybrid systems), "
+            "and mode 1 otherwise."
+        ),
+    )
     parser.add_argument(
         "--split-segments",
         action="store_true",
@@ -609,12 +734,14 @@ def extract_trajectory(
     fmt = output_file.split(".")[-1].lower()
     if fmt != "vtf":
         raise ValueError("Output file must be .vtf")
+    mapping = copy_output_mapping(mapping)
+    out_bonds = list(out_bonds)
 
     print(f"Extracting trajectory from: {input_file}")
     print(f"Structure source: {structure_file}")
     print(f"Output: {output_file}")
     print(f"Mode: {mode}")
-    print(f"PDB ID: {pdb_id}")
+    print(f"PDB ID: {pdb_id if pdb_id else '(none - no PDB metadata)'}")
     print(f"Trajectory group: {output_group}")
 
     if output_group == "input":
@@ -638,27 +765,34 @@ def extract_trajectory(
     )
 
     print(f"Particles (input): {n_particles}")
-    print(f"Particles (output): {mapping['output_atom_names'].shape[0]}")
+    n_output_particles = mapping['output_atom_names'].shape[0]
+    print(f"Particles (output): {n_output_particles}")
+
     print(f"Frames: {n_frame_total}")
     print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
+
+    bond_walk, molecule_id, n_molecules = build_molecule_topology(n_output_particles, out_bonds)
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
         f.write(f"# mode {mode}\n")
         f.write(f"# group {output_group}\n")
-        for i, (aname, rname, resid, chain_id) in enumerate(
+        for i, (aname, atype, rname, resid, chain_id, atomic_number) in enumerate(
             zip(
                 mapping["output_atom_names"],
+                mapping["output_atom_types"],
                 mapping["output_residue_names"],
                 mapping["output_residue_ids"],
                 mapping["output_chain_ids"],
+                mapping["output_atomic_numbers"],
             )
         ):
             chain = (str(chain_id).strip() or "X")[0]
             segid = f"s{chain}"
             f.write(
-                f"atom {i} name {aname} resid {int(resid)} "
-                f"resname {str(rname)} segid {segid} chain {chain}\n"
+                f"atom {i} name {aname} type {atype} resid {int(resid)} "
+                f"resname {str(rname)} segid {segid} chain {chain} "
+                f"atomicnumber {int(atomic_number)}\n"
             )
         for i, j in out_bonds:
             f.write(f"bond {i}:{j}\n")
@@ -675,9 +809,12 @@ def extract_trajectory(
             else:
                 out_frame = assemble_mode2_frame(frame, mapping, box_lengths=(x_len, y_len, z_len))
 
+            out_frame = unwrap_molecules(out_frame, bond_walk, x_len, y_len, z_len)
             out_frame = centralize_system(
                 out_frame,
-                mapping["output_residue_names"],
+                mapping["output_residue_names"][:n_output_particles],
+                molecule_id,
+                n_molecules,
                 x_len,
                 y_len,
                 z_len,
@@ -698,7 +835,7 @@ def main():
     pdb_id = infer_pdb_id(input_file, args.pdb_id)
     mode = args.mode
 
-    pdb_file = str(WORKFLOW_DIR / "pdb" / f"{pdb_id}.MARTINI.pdb")
+    pdb_file = find_martini_metadata_pdb(pdb_id, input_file, structure_file)
 
     with h5py.File(input_file, "r") as t, h5py.File(structure_file, "r") as s:
         input_pos = normalize_input_positions(s["input/pos"][:])
@@ -730,6 +867,13 @@ def main():
         pdb_atom_names, pdb_res_names, pdb_res_ids, pdb_chain_ids = read_martini_pdb_metadata(pdb_file)
         pdb_metadata = (pdb_atom_names, pdb_res_names, pdb_res_ids, pdb_chain_ids)
 
+        is_hybrid = "input/hybrid_env_topology/protein_membership" in s
+        if args.mode is None:
+            mode = 2 if is_hybrid else 1
+            print(f"Mode: auto-detected {'2 (hybrid)' if is_hybrid else '1 (pure MARTINI)'}")
+        else:
+            mode = args.mode
+
         if mode == 1:
             mapping = build_mode1_mapping(
                 s,
@@ -757,26 +901,12 @@ def main():
             idx_map = {int(old): int(new) for new, old in enumerate(mart_idx)}
             out_bonds = remap_bonds(dist_bonds, idx_map)
             if mapping.get("include_aa_backbone", False):
-                bb_start = len(mart_idx)
-                out_bonds.extend(
-                    mode2_backbone_bonds(
-                        bb_start,
-                        mapping["bb_map"]["bb_atom_index"].shape[0],
-                        mapping["bb_map"].get("bb_chain_ids"),
-                    )
-                )
+                out_bonds.extend(backbone_bonds(len(mart_idx), mapping["bb_map"]))
         else:
             non_idx = mapping["non_protein_idx"]
             idx_map = {int(old): int(new) for new, old in enumerate(non_idx)}
             out_bonds = remap_bonds(dist_bonds, idx_map)
-            bb_start = len(non_idx)
-            out_bonds.extend(
-                mode2_backbone_bonds(
-                    bb_start,
-                    mapping["bb_map"]["bb_atom_index"].shape[0],
-                    mapping["bb_map"].get("bb_chain_ids"),
-                )
-            )
+            out_bonds.extend(backbone_bonds(len(non_idx), mapping["bb_map"]))
 
         if args.split_segments:
             output_groups = list_output_groups(t)

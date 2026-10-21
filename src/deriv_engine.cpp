@@ -1,6 +1,6 @@
 #include "deriv_engine.h"
+#include "martini.h"
 #include "timing.h"
-#include "main.h"
 #include <map>
 #include <algorithm>
 #include <memory>
@@ -10,11 +10,6 @@
 using namespace h5;
 
 using namespace std;
-
-namespace martini_fix_rigid {
-std::vector<int> get_fixed_atoms(const DerivEngine& engine);
-std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
-}
 
 static std::vector<unsigned char> build_fixed_mask(const DerivEngine& engine, int n_atom) {
     std::vector<unsigned char> mask(static_cast<size_t>(std::max(0, n_atom)), 0);
@@ -399,6 +394,13 @@ void DerivEngine::integration_cycle(VecArray mom, float dt, float max_force, Int
 }
 
 void DerivEngine::integration_cycle(VecArray mom, float dt) {
+    // MARTINI configurations list every dynamic particle in the single-step g-JF integrator.
+    if(martini_brownian::has_brownian(this)) {
+        compute(DerivMode);
+        martini_brownian::apply_langevin_step(this, mom, dt);
+        return;
+    }
+
     auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
     bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
@@ -459,13 +461,19 @@ void DerivEngine::integration_cycle(VecArray mom, float dt) {
 }
 
 void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
+    // Brownian systems use g-JF Langevin; the VV-RESPA path below is not appropriate for them.
+    if(martini_brownian::has_brownian(this)) {
+        compute(DerivMode);
+        martini_brownian::apply_langevin_step(this, mom, dt);
+        return;
+    }
     auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
     bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
     bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
-    compute(DerivMode, 1); 
-    
+    compute(DerivMode, 1);
+
     // Check if MARTINI masses are available and use mass-aware integrator
     if(martini_masses::has_masses(this)) {
         // Use MARTINI mass-aware integrator for slow level

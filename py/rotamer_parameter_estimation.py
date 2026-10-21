@@ -1,442 +1,361 @@
-import tables as tb
-import numpy as np
-import tempfile
-import subprocess as sp
-import os
-import theano
-import theano.tensor as T
-import cPickle as cp
-import scipy.optimize as opt
 import collections
+import os
+import pickle
 
-# theano.config.compute_test_value = 'ignore'
+import numpy as np
+import scipy.optimize as opt
+import torch
 
-n_fix = 3
-n_rotpos = 86
+# ---------------------------------------------------------------------------
+# Dimensionality constants
+# ---------------------------------------------------------------------------
+n_fix        = 3
+n_rotpos     = 86
+n_restype    = 20
+n_cov        = 8    # coverage interaction types (backbone-group × donor/acceptor)
+n_hyd        = 12   # hydrophobe interaction types (n_fix × 4)
 
 n_knot_angular = 15
-n_angular = 2*n_knot_angular
-# n_restype = 24
-n_restype = 20
-n_knot_sc = 12
-n_knot_hb = 10
-hb_dr = 0.625
-sc_dr = 0.7
-
-param_shapes = collections.OrderedDict()
-param_shapes['rotamer']=(n_restype,n_restype,2*n_knot_angular+2*n_knot_sc)
-param_shapes['hbond_coverage']=(2,n_restype,2*n_knot_angular+2*n_knot_hb)
-param_shapes['hbond_coverage_hydrophobe']=(n_fix,n_restype,2*n_knot_angular+2*n_knot_hb)
-param_shapes['placement_fixed_point_vector_scalar']=(n_fix,7)
-param_shapes['placement_fixed_point_vector_only']=(n_rotpos,6)
-# param_shapes['placement_fixed_scalar']=(n_rotpos,1)
-
-lparam = T.dvector('lparam')
-lparam.tag.test_value = np.random.randn(n_restype**2 * (n_angular+2*(n_knot_sc-3))+20*n_restype*(n_angular+2*(n_knot_hb-3)) + n_fix*6)
-
-func = lambda expr: (theano.function([lparam],expr, 
-    ),expr)
+n_knot_sc      = 12
+n_knot_hb      = 10
+hb_dr          = 0.625
+sc_dr          = 0.7
 
 
-def unpack_param_maker():
+# ---------------------------------------------------------------------------
+# Core unpacking: latent vector → structured parameter tensors
+# ---------------------------------------------------------------------------
+
+def unpack_param_maker(lparam):
+    """Unpack a flat latent float64 tensor into structured force-field tensors.
+
+    Returns (rot_param, cov_param, hyd_param, hydpl_param, rotpos_param,
+             rotscalar_param, n_param).  All outputs are PyTorch tensors so
+    that autograd can compute gradients through them.
+    """
     i = [0]
+
     def read_param(shape):
-        size = np.prod(shape)
-        ret = lparam[i[0]:i[0]+size].reshape(shape)
+        size = int(np.prod(shape))
+        ret  = lparam[i[0] : i[0] + size].reshape(shape)
         i[0] += size
         return ret
 
     def read_symm(n):
-        x = read_param((n_restype,n_restype,n))
-        return 0.5*(x + x.transpose((1,0,2)))
+        """Read (n_restype, n_restype, n) and enforce E(A,B)=E(B,A)."""
+        x = read_param((n_restype, n_restype, n))
+        return 0.5 * (x + x.permute(1, 0, 2))
 
-    def read_cov(n):
-        return read_param((8,n_restype,n))
+    def clamp_spline(middle):
+        """Apply boundary conditions: left-clamp from middle[:,1], right-clamp to zero."""
+        c0  = middle[..., 1:2]
+        cn3 = middle[..., -1:]
+        cn2 = -0.5 * cn3
+        cn1 = cn3
+        return torch.cat([c0, middle, cn2, cn1], dim=-1)
 
-    def read_hyd(n):
-        # return read_param((1,n_restype,n))
-        return read_param((n_fix*4,n_restype,n))
+    # -----------------------------------------------------------------------
+    # rot_param  (pair_interaction): shape (20, 20, 54)
+    # -----------------------------------------------------------------------
+    angular_logits = read_param((n_restype, n_restype, n_knot_angular))
 
-    def read_angular_spline(read_func):
-        return T.nnet.sigmoid(read_func(n_knot_angular))  # bound on (0,1)
+    angular_spline_sc = torch.sigmoid(angular_logits)                 # (20, 20, 15)
 
-    def read_clamped_spline(read_func,n_knot):
-        middle = read_func(n_knot-3)
+    clamped_1 = clamp_spline(read_symm(n_knot_sc - 3))              # (20, 20, 12)
+    clamped_2 = clamp_spline(read_symm(n_knot_sc - 3))              # (20, 20, 12)
 
-        c0 = middle[:,:,1:2]   # left clamping condition
+    rot_param = torch.cat([
+        angular_spline_sc,
+        angular_spline_sc.permute(1, 0, 2),   # dp2 — transpose of dp1
+        clamped_1,
+        clamped_2,
+    ], dim=-1)                                                       # (20, 20, 54)
 
-        cn3 = middle[:,:,-1:]
-        cn2 = -0.5*cn3
-        cn1 = cn3         # these two lines ensure right clamp is at 0
-        return T.concatenate([c0,middle,cn2,cn1],axis=2)
-    
-    angular_spline_sc = read_angular_spline(lambda n: read_param((n_restype,n_restype,n)))
+    # -----------------------------------------------------------------------
+    # cov_param  (coverage_interaction): shape (8, 20, 50)
+    # -----------------------------------------------------------------------
+    cov_dp1  = torch.sigmoid(read_param((n_cov, n_restype, n_knot_angular)))
+    cov_dp2  = torch.sigmoid(read_param((n_cov, n_restype, n_knot_angular)))
+    cov_uni  = clamp_spline(read_param((n_cov, n_restype, n_knot_hb - 3)))
+    cov_dir  = clamp_spline(read_param((n_cov, n_restype, n_knot_hb - 3)))
 
-    rot_param = T.concatenate([
-        angular_spline_sc, angular_spline_sc.transpose((1,0,2)),
-        read_clamped_spline(read_symm,n_knot_sc), read_clamped_spline(read_symm,n_knot_sc)],
-        axis=2)
+    cov_param = torch.cat([cov_dp1, cov_dp2, cov_uni, cov_dir], dim=-1)  # (8, 20, 50)
 
-    cov_param = T.concatenate([
-        read_angular_spline(read_cov), read_angular_spline(read_cov),
-        read_clamped_spline(read_cov,n_knot_hb), read_clamped_spline(read_cov,n_knot_hb)],
-        axis=2)
+    # -----------------------------------------------------------------------
+    # hyd_param  (hydrophobe_interaction): shape (12, 20, 50)
+    # -----------------------------------------------------------------------
+    hyd_dp1  = torch.sigmoid(read_param((n_hyd, n_restype, n_knot_angular)))
+    hyd_dp2  = torch.sigmoid(read_param((n_hyd, n_restype, n_knot_angular)))
+    hyd_uni  = clamp_spline(read_param((n_hyd, n_restype, n_knot_hb - 3)))
+    hyd_dir  = clamp_spline(read_param((n_hyd, n_restype, n_knot_hb - 3)))
 
-    hyd_param = T.concatenate([
-        read_angular_spline(read_hyd), read_angular_spline(read_hyd),
-        read_clamped_spline(read_hyd,n_knot_hb), read_clamped_spline(read_hyd,n_knot_hb)],
-        axis=2)
+    hyd_param = torch.cat([hyd_dp1, hyd_dp2, hyd_uni, hyd_dir], dim=-1)  # (12, 20, 50)
 
-    hydpl_com = read_param((n_fix,3))
-    hydpl_dir_unnorm = read_param((n_fix,3))
-    hydpl_dir = hydpl_dir_unnorm / T.sqrt((hydpl_dir_unnorm**2).sum(axis=-1,keepdims=True))
-    hydpl_param = T.concatenate([hydpl_com, hydpl_dir, T.zeros((n_fix,1))], axis=-1)
+    # -----------------------------------------------------------------------
+    # hydpl_param  (hydrophobe_placement): shape (3, 7)
+    # -----------------------------------------------------------------------
+    hydpl_com         = read_param((n_fix, 3))
+    hydpl_dir_unnorm  = read_param((n_fix, 3))
+    hydpl_dir_norm    = hydpl_dir_unnorm / torch.sqrt(
+        (hydpl_dir_unnorm ** 2).sum(dim=-1, keepdim=True)
+    )
+    hydpl_param = torch.cat(
+        [hydpl_com, hydpl_dir_norm, torch.zeros((n_fix, 1), dtype=lparam.dtype)],
+        dim=-1,
+    )                                                                # (3, 7)
 
-    rotpos_com = read_param((n_rotpos,3))
-    rotpos_dir_unnorm = read_param((n_rotpos,3))
-    rotpos_dir = rotpos_dir_unnorm / T.sqrt((rotpos_dir_unnorm**2).sum(axis=-1,keepdims=True))
-    rotpos_param = T.concatenate([rotpos_com, rotpos_dir], axis=-1)
+    # -----------------------------------------------------------------------
+    # rotpos_param  (rotamer_center_fixed): shape (86, 6)
+    # -----------------------------------------------------------------------
+    rotpos_com        = read_param((n_rotpos, 3))
+    rotpos_dir_unnorm = read_param((n_rotpos, 3))
+    rotpos_dir_norm   = rotpos_dir_unnorm / torch.sqrt(
+        (rotpos_dir_unnorm ** 2).sum(dim=-1, keepdim=True)
+    )
+    rotpos_param = torch.cat([rotpos_com, rotpos_dir_norm], dim=-1)  # (86, 6)
 
-    rotscalar_param = read_param((n_rotpos,1))
+    # -----------------------------------------------------------------------
+    # rotscalar_param: shape (86, 1)
+    # -----------------------------------------------------------------------
+    rotscalar_param = read_param((n_rotpos, 1))
 
-    n_param = int(i[0])
+    return (rot_param, cov_param, hyd_param, hydpl_param,
+            rotpos_param, rotscalar_param, int(i[0]))
 
-    return func(rot_param), func(cov_param), func(hyd_param), func(hydpl_param), func(rotpos_param), func(rotscalar_param), n_param
 
-(unpack_rot,unpack_rot_expr), (unpack_cov,unpack_cov_expr), \
-        (unpack_hyd,unpack_hyd_expr), (unpack_hydpl, unpack_hydpl_expr), \
-        (unpack_rotpos, unpack_rotpos_expr), \
-        (unpack_rotscalar, unpack_rotscalar_expr), \
-        n_param = unpack_param_maker()
-unpack_params_expr = unpack_rot_expr, unpack_cov_expr, unpack_hyd_expr, unpack_hydpl_expr, unpack_rotpos_expr, unpack_rotscalar_expr
+def _compute_n_param():
+    dummy = torch.zeros(40000, dtype=torch.float64)
+    with torch.no_grad():
+        *_, n = unpack_param_maker(dummy)
+    return n
 
-def unpack_params(state):
-    return unpack_rot(state), unpack_cov(state), unpack_hyd(state), unpack_hydpl(state), unpack_rotpos(state), unpack_rotscalar(state)
 
-def pack_param_helper_maker():
-    loose_cov_var   = T.dtensor3('loose_cov')
-    loose_rot_var   = T.dtensor3('loose_rot')
-    loose_hyd_var   = T.dtensor3('loose_hyd')
-    loose_hydpl_var = T.dmatrix('loose_hydpl')
-    loose_rotpos_var = T.dmatrix('loose_rotpos')
-    loose_rotscalar_var = T.dmatrix('loose_rotscalar')
+n_param = _compute_n_param()
 
-    discrep_expr = (
-            T.sum((unpack_rot_expr - loose_rot_var)**2) + 
-            T.sum((unpack_cov_expr - loose_cov_var)**2) +
-            T.sum((unpack_hyd_expr - loose_hyd_var)**2) +
-            T.sum((unpack_hydpl_expr - loose_hydpl_var)**2) +
-            T.sum((unpack_rotpos_expr - loose_rotpos_var)**2) +
-            T.sum((unpack_rotscalar_expr - loose_rotscalar_var)**2))
-    v = [lparam,loose_rot_var,loose_cov_var,loose_hyd_var,loose_hydpl_var, loose_rotpos_var, loose_rotscalar_var]
-    discrep   = theano.function(v, discrep_expr)
-    d_discrep = theano.function(v, T.grad(discrep_expr,lparam))
-    return discrep, d_discrep
 
-discrep, d_discrep = pack_param_helper_maker()
+# ---------------------------------------------------------------------------
+# Evaluate without gradient tracking (numpy in, numpy out)
+# ---------------------------------------------------------------------------
 
-def pack_param(*args):
-    # solve the resulting equations so I don't have to work out the formula
-    results = opt.minimize(
-            (lambda x: discrep(x, *args)),
-            0.5+np.zeros(n_param),
-            method = 'L-BFGS-B', options=dict(maxiter=10000),
-            jac = (lambda x: d_discrep(x, *args)))
-    # print 'required %i evaluations' % (results.nfev, )
+def unpack_params(lparam_numpy):
+    """Evaluate unpack_param_maker on a numpy array; return numpy arrays."""
+    lparam = torch.tensor(lparam_numpy, dtype=torch.float64)
+    with torch.no_grad():
+        rot, cov, hyd, hydpl, rotpos, rotscalar, _ = unpack_param_maker(lparam)
+    return (rot.numpy(), cov.numpy(), hyd.numpy(),
+            hydpl.numpy(), rotpos.numpy(), rotscalar.numpy())
 
-    print discrep(results.x, *args)
-    if not (discrep(results.x, *args) < 1.6e-4):
-        raise ValueError('Failed to converge')
 
-    return results.x
+# ---------------------------------------------------------------------------
+# pack_param: find latent vector that reproduces given parameter arrays
+# ---------------------------------------------------------------------------
 
+def _logit(p, eps=1e-6):
+    """Inverse sigmoid, clamped to avoid inf."""
+    p = np.clip(p, eps, 1. - eps)
+    return np.log(p / (1. - p))
+
+
+def _clamp_middle(full_spline):
+    """Extract the interior middle knots from a clamp_spline output.
+
+    clamp_spline(middle) produces:
+        [middle[1], middle[0..n-1], -0.5*middle[-1], middle[-1]]
+    so middle[0..n-1] = full_spline[1:n+1].
+    """
+    return full_spline[..., 1:-2]
+
+
+def _init_x0(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
+    """Construct a warm-start latent vector from structured parameter arrays.
+
+    This is an approximate inversion of unpack_param_maker.  It only sets the
+    starting point for pack_param's solve; the residual check there is what
+    establishes that the result is right.  The Theano original started from a
+    flat 0.5 vector instead.
+    """
+    parts = []
+
+    # 1. angular_logits (20, 20, 15): logit of dp1 angular slice of rot
+    parts.append(_logit(rotp[:, :, :n_knot_angular]).ravel())
+
+    # 2. clamped_symm_1 middle (20, 20, 9): interior knots of radial block 1
+    parts.append(_clamp_middle(rotp[:, :, n_knot_angular*2:n_knot_angular*2 + n_knot_sc]).ravel())
+
+    # 3. clamped_symm_2 middle (20, 20, 9)
+    parts.append(_clamp_middle(rotp[:, :, n_knot_angular*2 + n_knot_sc:]).ravel())
+
+    # 4. cov_dp1_logits (8, 20, 15)
+    parts.append(_logit(covp[:, :, :n_knot_angular]).ravel())
+
+    # 5. cov_dp2_logits (8, 20, 15)
+    parts.append(_logit(covp[:, :, n_knot_angular:n_knot_angular*2]).ravel())
+
+    # 6. cov_uni_middle (8, 20, 7)
+    parts.append(_clamp_middle(covp[:, :, n_knot_angular*2:n_knot_angular*2 + n_knot_hb]).ravel())
+
+    # 7. cov_dir_middle (8, 20, 7)
+    parts.append(_clamp_middle(covp[:, :, n_knot_angular*2 + n_knot_hb:]).ravel())
+
+    # 8. hyd_dp1_logits (12, 20, 15)
+    parts.append(_logit(hydp[:, :, :n_knot_angular]).ravel())
+
+    # 9. hyd_dp2_logits (12, 20, 15)
+    parts.append(_logit(hydp[:, :, n_knot_angular:n_knot_angular*2]).ravel())
+
+    # 10. hyd_uni_middle (12, 20, 7)
+    parts.append(_clamp_middle(hydp[:, :, n_knot_angular*2:n_knot_angular*2 + n_knot_hb]).ravel())
+
+    # 11. hyd_dir_middle (12, 20, 7)
+    parts.append(_clamp_middle(hydp[:, :, n_knot_angular*2 + n_knot_hb:]).ravel())
+
+    # 12. hydpl_com (3, 3)
+    parts.append(np.asarray(hydplp)[:, :3].ravel())
+
+    # 13. hydpl_dir_unnorm (3, 3): target directions are unit vectors; set equal
+    parts.append(np.asarray(hydplp)[:, 3:6].ravel())
+
+    # 14. rotpos_com (86, 3)
+    parts.append(np.asarray(rotposp)[:, :3].ravel())
+
+    # 15. rotpos_dir_unnorm (86, 3): target directions are unit vectors; set equal
+    parts.append(np.asarray(rotposp)[:, 3:6].ravel())
+
+    # 16. rotscalar (86, 1)
+    parts.append(np.asarray(rotscalarp).ravel())
+
+    x0 = np.concatenate(parts)
+    assert len(x0) == n_param, f'x0 length {len(x0)} != n_param {n_param}'
+    return x0
+
+
+def pack_param(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
+    """Inverse of unpack_params: find latent vector x s.t. unpack_params(x) ≈ inputs."""
+    targets = [
+        torch.tensor(np.asarray(t), dtype=torch.float64)
+        for t in [rotp, covp, hydp, hydplp, rotposp, rotscalarp]
+    ]
+
+    def obj_and_grad(x_np):
+        x = torch.tensor(x_np, dtype=torch.float64, requires_grad=True)
+        with torch.enable_grad():
+            out  = unpack_param_maker(x)
+            loss = sum(((a - b) ** 2).sum() for a, b in zip(out[:6], targets))
+            loss.backward()
+        return loss.item(), x.grad.numpy().copy()
+
+    x0     = _init_x0(rotp, covp, hydp, hydplp, rotposp, rotscalarp)
+    result = opt.minimize(
+        obj_and_grad, x0, jac=True, method='L-BFGS-B',
+        options={'maxiter': 20000, 'ftol': 1e-15, 'gtol': 1e-10},
+    )
+    # Gate on the residual, as the Theano original does: the unpacking must
+    # reproduce the input arrays, and a stationary point that does not is a
+    # failure, not a convergence.
+    if not (result.fun < 1.6e-4):
+        raise ValueError(
+            f'Failed to converge: residual {result.fun:.4g} >= 1.6e-4 '
+            f'({result.message})'
+        )
+    print(f'pack_param residual = {result.fun:.6g}')
+    return result.x
+
+
+# ---------------------------------------------------------------------------
+# Quadratic spline energy (used for regularization in ConDiv d_obj)
+# ---------------------------------------------------------------------------
 
 def quadspline_energy(params, n_knots):
-    # assert sum(n_knots) == params.shape[-1]
-    dp1   = params[:,:,                :sum(n_knots[:1])]
-    dp2   = params[:,:,sum(n_knots[:1]):sum(n_knots[:2])]
-    uni   = params[:,:,sum(n_knots[:2]):sum(n_knots[:3])]
-    direc = params[:,:,sum(n_knots[:3]):                ]
+    """Evaluate the quadratic spline potential on its grid.
 
-    ev = lambda sp: (1./6.)*sp[:,:,:-2] + (2./3.)*sp[:,:,1:-1] + (1./6.)*sp[:,:,2:]
+    Args:
+        params:  tensor of shape (..., sum(n_knots))
+        n_knots: tuple (n1, n2, n3, n4) giving knot counts for (dp1, dp2, uni, direc)
 
-    return ev(uni)[:,:,:,None,None] + ev(dp1)[:,:,None,:,None]*ev(dp2)[:,:,None,None,:]*ev(direc)[:,:,:,None,None]
+    Returns:
+        tensor of shape (..., n3-2, n1-2, n2-2)
+    """
+    dp1   = params[..., :sum(n_knots[:1])]
+    dp2   = params[..., sum(n_knots[:1]):sum(n_knots[:2])]
+    uni   = params[..., sum(n_knots[:2]):sum(n_knots[:3])]
+    direc = params[..., sum(n_knots[:3]):]
 
-def direc_energy(params, n_knots):
-    direc = params[:,:,sum(n_knots[:3]):                ]
-    ev = lambda sp: (1./6.)*sp[:,:,:-2] + (2./3.)*sp[:,:,1:-1] + (1./6.)*sp[:,:,2:]
-    return ev(direc)
+    ev = lambda sp: (1. / 6.) * sp[..., :-2] + (2. / 3.) * sp[..., 1:-1] + (1. / 6.) * sp[..., 2:]
 
-def multimin(a,axes):
-    for ax in axes:
-        a = a.min(axis=ax,keepdims=1)
-    return a
-
-def quadspline_prob(energies):
-    # assert len(energies.shape) == 5
-    r_weights = T.arange(1,energies.shape[2]+1)**2
-    prob_unnorm = T.exp(multimin(energies,(-3,-2,-1)) - energies) * r_weights[None,None,:,None,None]
-    return prob_unnorm*(1./prob_unnorm.sum(axis=(-3,-2,-1), keepdims=1))
-
-def quadspline_neglognorm(energies):
-    # assert len(energies.shape) == 5
-    energies_with_vol = energies - 2.*T.log(1+T.arange(energies.shape[2]))[None,None,:,None,None]
-    emin = multimin(energies_with_vol,(-3,-2,-1))  # numerical stability
-    # note that I use a mean instead of sum to make it easier to compare different grid sizes
-    return -T.log(T.exp(emin - energies).mean(axis=(-3,-2,-1))) + emin[:,:,0,0,0]
-
-def quadspline_expectation(prob_norm, observable):
-    return (prob_norm*observable).sum(axis=(-3,-2,-1))
+    return (
+        ev(uni)  [..., :, None, None] +
+        ev(dp1)  [..., None, :, None] *
+        ev(dp2)  [..., None, None, :] *
+        ev(direc)[..., :, None, None]
+    )
 
 
-def bind_param_and_evaluate(pos_fix_free, node_names, param_matrices):
-    energy = np.zeros(2)
-    deriv = [np.zeros((2,)+pm.shape) for pm in param_matrices]
+# ---------------------------------------------------------------------------
+# Adam optimizer (pure Python / numpy — no framework dependency)
+# ---------------------------------------------------------------------------
 
-    for pos,fix,free in pos_fix_free:
-        for nm, pm in zip(node_names, param_matrices):
-            fix .set_param(pm, nm) 
-            free.set_param(pm, nm) 
-
-        energy[0] += fix .energy(pos)
-        energy[1] += free.energy(pos)
-
-        if np.isnan(energy[0]): raise RuntimeError('NaN energy for %s %s'%(fix,
-            [np.any(np.isnan(x)) for x in param_matrices]))
-        if np.isnan(energy[1]): raise RuntimeError('NaN energy for %s %s'%(free,
-            [x for x in param_matrices]))
-
-        this_deriv = [(fix .get_param_deriv(d[0].shape, nm),
-                       free.get_param_deriv(d[0].shape, nm)) for d,nm in zip(deriv,node_names)]
-
-        for d,(d0,d1) in zip(deriv, this_deriv):
-            d[0] += d0
-            d[1] += d1
-
-    return energy, deriv
-
-
-class UpsideEnergyGap(theano.Op):
-    def __init__(self, protein_data, node_names):
-        self.protein_data = [None,None]
-        self.change_protein_data(protein_data)   # (total_n_res, pos_fix_free)
-        self.node_names   = node_names  # should be OrderedDict
-
-    def make_node(self, *param):
-        assert len(param) == len(self.node_names)
-        return theano.Apply(self, [T.as_tensor_variable(x) for x in param],
-                                  [T.dvector()])
-
-    def perform(self, node, inputs_storage, output_storage):
-        total_n_res, pos_fix_free = self.protein_data
-        energy, deriv = bind_param_and_evaluate(pos_fix_free, list(self.node_names), inputs_storage)
-        output_storage[0][0] = (energy/total_n_res).astype('f8')
-
-    def grad(self, inputs, output_gradients):
-        grad_func = UpsideEnergyGapGrad(self.protein_data, self.node_names)  # grad will have linked data
-        gf = grad_func(*inputs)
-        if len(inputs) == 1: gf = [gf]  # single inputs cause problems
-        return [T.tensordot(output_gradients[0], x, axes=(0,0)) for x in gf]
-
-    def change_protein_data(self, new_protein_data):
-        self.protein_data[0] = 1*new_protein_data[0]
-        self.protein_data[1] = list(new_protein_data[1])
-
-
-class UpsideEnergyGapGrad(theano.Op):
-    def __init__(self, protein_data, node_names):
-        self.protein_data = protein_data
-        self.node_names   = node_names
-
-    def make_node(self, *param):
-        assert len(param) == len(self.node_names)
-        size_conv = {1:T.dmatrix, 2:T.dtensor3, 3:T.dtensor4}
-        return theano.Apply(self, 
-                [T.as_tensor_variable(p) for p in param], 
-                [size_conv[len(sz)]() for nn,sz in self.node_names.items()])
-
-    def perform(self, node, inputs_storage, output_storage):
-        total_n_res, pos_fix_free = self.protein_data
-        energy, deriv = bind_param_and_evaluate(pos_fix_free, list(self.node_names), inputs_storage)
-        if np.isnan(np.sum([x.sum() for x in deriv])): 
-            print [x.sum() for x in inputs_storage]
-            print [x[0,0] for x in inputs_storage]
-            print [np.isnan(x.sum()) for x in deriv]
-            print energy
-            raise RuntimeError()
-
-        for i in range(len(output_storage)):
-            output_storage[i][0] = (deriv[i]*(1./total_n_res)).astype('f8')
-
-
-def sgd_sweep(state, mom, mu, eps, minibatches, change_batch_function, d_obj, nesterov=True):
-    for mb in minibatches:
-        change_batch_function(mb)
-        # note that the momentum update happens *before* the state update
-        mom = mu*mom - eps*d_obj(state+mu*mom if nesterov else state)
-        state = state + mom
-    return state, mom
-
-
-def rmsprop_sweep(state, mom, minibatches, change_batch_function, d_obj, lr=0.001, rho=0.9, epsilon=1e-6):
-    for mb in minibatches:
-        change_batch_function(mb)
-        grad = d_obj(state)
-        mom = rho*mom + (1-rho) * grad**2
-        state = state - lr*grad/np.sqrt(mom+epsilon)
-    return state, mom
-
-
-# handle a mix of scalars and lists
-def read_comp(x,i):
+def _read_comp(x, i):
     try:
         return x[i]
-    except:
-        return x  # scalar case
+    except (TypeError, IndexError):
+        return x   # scalar
 
-class AdamSolver(object):
-    ''' See Adam optimization paper (Kingma and Ba, 2015) for details. Beta2 is reduced by 
-    default to handle the shorter training expected on protein problems.  alpha is roughly 
-    the largest possible step size.'''
+
+class AdamSolver:
+    """Adam optimizer for a fixed number of independent parameter components.
+
+    Each component may be a scalar or an array; arithmetic is element-wise.
+    alpha is roughly the maximum step size.
+    """
+
     def __init__(self, n_comp, alpha=1e-2, beta1=0.8, beta2=0.96, epsilon=1e-6):
-        self.n_comp  = n_comp
-
-        self.alpha   = alpha
-        self.beta1   = beta1
-        self.beta2   = beta2
-        self.epsilon = epsilon
-
+        self.n_comp   = n_comp
+        self.alpha    = alpha
+        self.beta1    = beta1
+        self.beta2    = beta2
+        self.epsilon  = epsilon
         self.step_num = 0
-        self.grad1    = [0. for i in range(n_comp)]  # accumulator of gradient
-        self.grad2    = [0. for i in range(n_comp)]  # accumulator of gradient**2
+        self.grad1    = [0. for _ in range(n_comp)]
+        self.grad2    = [0. for _ in range(n_comp)]
 
-    def update_for_d_obj(self,):
-        return [0. for x in self.grad1]  # This method is used in Nesterov SGD, not Adam
+    def update_for_d_obj(self):
+        """Return zero corrections (used for Nesterov look-ahead; not needed in Adam)."""
+        return [0. for _ in self.grad1]
 
     def update_step(self, grad):
-        r = read_comp
+        """Consume gradient list, return list of parameter updates."""
+        r = _read_comp
         self.step_num += 1
         t = self.step_num
+        updates = [None] * self.n_comp
 
-        u = [None]*len(self.grad1)
-        for i,g in enumerate(grad):
-            b=r(self.beta1,i) 
-            self.grad1[i] = b*self.grad1[i] + (1.-b)*g
-            grad1corr = self.grad1[i]/(1-b**t)
+        for i, g in enumerate(grad):
+            b1 = r(self.beta1, i)
+            self.grad1[i] = b1 * self.grad1[i] + (1. - b1) * g
+            m_hat = self.grad1[i] / (1. - b1 ** t)
 
-            b=r(self.beta2,i)
-            self.grad2[i] = b*self.grad2[i] + (1.-b)*g**2 
-            grad2corr = self.grad2[i]/(1-b**t)
+            b2 = r(self.beta2, i)
+            self.grad2[i] = b2 * self.grad2[i] + (1. - b2) * g ** 2
+            v_hat = self.grad2[i] / (1. - b2 ** t)
 
-            u[i] = -r(self.alpha,i) * grad1corr / (np.sqrt(grad2corr) + r(self.epsilon,i))
+            updates[i] = -r(self.alpha, i) * m_hat / (np.sqrt(v_hat) + r(self.epsilon, i))
 
-        return u
+        return updates
 
     def log_state(self, direc):
-        with open(os.path.join(direc, 'solver_state.pkl'),'w') as f: 
-            cp.dump(dict(step_num=self.step_num, grad1=self.grad1, grad2=self.grad2, solver=str(self)), f, -1)
+        with open(os.path.join(direc, 'solver_state.pkl'), 'wb') as f:
+            pickle.dump(
+                dict(step_num=self.step_num, grad1=self.grad1,
+                     grad2=self.grad2, solver=str(self)),
+                f, -1,
+            )
 
     def __repr__(self):
-        return 'AdamSolver(%i, alpha=%r, beta1=%r, beta2=%r, epsilon=%r)'%(
-                self.n_comp,self.alpha,self.beta1,self.beta2,self.epsilon)
+        return (f'AdamSolver({self.n_comp}, alpha={self.alpha!r}, '
+                f'beta1={self.beta1!r}, beta2={self.beta2!r}, '
+                f'epsilon={self.epsilon!r})')
 
     def __str__(self):
-        return 'AdamSolver(%i, alpha=%s, beta1=%s, beta2=%s, epsilon=%s)'%(
-                self.n_comp,self.alpha,self.beta1,self.beta2,self.epsilon)
-
-
-class SGD_Solver(object):
-    def __init__(self, n_comp, mu=0.9, learning_rate = 0.1, nesterov=True):
-        self.n_comp = n_comp
-
-        self.mu = mu
-        self.learning_rate = learning_rate
-        self.nesterov = nesterov
-
-        self.momentum = [0. for i in range(n_comp)]
-
-    def update_for_d_obj(self,):
-        if self.nesterov:
-            return [read_comp(self.mu,i)*self.momentum[i] for i in range(self.n_comp)]
-        else:
-            return [0. for i in range(n_comp)]
-
-    def update_step(self, grad):
-        self.momentum = [read_comp(self.mu,i)*self.momentum[i] - read_comp(self.learning_rate,i)*grad[i] 
-                for i in range(self.n_comp)]
-        return [1.*x for x in self.momentum]  # make sure the user doesn't smash the momentum
-
-
-class UpsideTrajEnergy(theano.Op):
-    def __init__(self, param_shapes_dict):
-        self.engine_traj = [None,None]
-        self.param_shapes_dict = collections.OrderedDict(param_shapes_dict)
-
-    def make_node(self, *param):
-        assert len(param) == len(self.param_shapes_dict)
-        return theano.Apply(self, [T.as_tensor_variable(x) for x in param], [T.dvector()])
-
-    def perform(self, node, inputs_storage, output_storage):
-        engine,traj = self.engine_traj
-
-        energy = np.zeros(traj.shape[0])
-        for nm, pm in zip(self.param_shapes_dict, inputs_storage):
-            engine.set_param(pm, nm) 
-
-        for nf,x in enumerate(traj):
-            energy[nf] = engine.energy(x)
-
-        output_storage[0][0] = energy
-
-    def grad(self, inputs, output_gradients):
-        grad_func = UpsideTrajEnergyGrad(self.engine_traj, self.param_shapes_dict)  # grad will have linked data
-        return grad_func(output_gradients[0], *inputs)
-
-    def change_protein_data(self, engine, traj):
-        self.engine_traj[0] = engine
-        self.engine_traj[1] = traj
-
-
-class UpsideTrajEnergyGrad(theano.Op):
-    def __init__(self, engine_traj, param_shapes_dict):
-        self.engine_traj = engine_traj
-        self.param_shapes_dict = param_shapes_dict
-
-    def make_node(self, output_sens, *param):
-        assert len(param) == len(self.param_shapes_dict)
-        size_conv = {0:T.dscalar, 1:T.dvector, 2:T.dmatrix, 3:T.dtensor3}
-        return theano.Apply(self, 
-                [T.as_tensor_variable(p) for p in (output_sens,)+param], 
-                [size_conv[len(sz)]() for nn,sz in self.param_shapes_dict.items()])
-
-    def perform(self, node, inputs_storage, output_storage):
-        engine,traj = self.engine_traj
-
-        for i,(nm,sp) in enumerate(self.param_shapes_dict.items()):
-            assert inputs_storage[1+i].shape == sp
-
-        for nm, pm in zip(self.param_shapes_dict, inputs_storage[1:]):
-            engine.set_param(pm, nm) 
-
-        deriv = [np.zeros(shape) for nm,shape in self.param_shapes_dict.items()]
-        sens = inputs_storage[0]
-        for nf,x in enumerate(traj):
-            engine.energy(x)  # ensure derivatives are correct
-            s = sens[nf]
-
-            for nm,d in zip(self.param_shapes_dict,deriv):
-                d[slice(None,None,None) if len(d.shape) else ()] += s*engine.get_param_deriv(d.shape, nm) 
-
-        for i in range(len(output_storage)):
-            output_storage[i][0] = deriv[i]
-
-def low_rank_approximation(m, rank):
-    m = m.astype('f8')
-    u,s,vh = np.linalg.svd(m, full_matrices=True)
-    u [:,rank:] = 0.
-    s [rank:]   = 0.
-    vh[rank:,:] = 0.
-    m_approx = np.dot(u,s[:,None]*vh)
-    return m_approx
-
-
+        return (f'AdamSolver({self.n_comp}, alpha={self.alpha}, '
+                f'beta1={self.beta1}, beta2={self.beta2}, '
+                f'epsilon={self.epsilon})')

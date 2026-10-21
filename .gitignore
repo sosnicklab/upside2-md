@@ -26,3 +26,18 @@ source.sh
 **outputs/
 .vscode/*
 .venv/
+.claude/scheduled_tasks.lock
+parameters/dryMARTINI/*.h5
+*.pdf
+*scratchpad*
+backup/*
+training/*
+# ...but keep the training infrastructure itself; run directories and data stay ignored.
+!training/README.md
+!training/*.py
+!training/*.sh
+!training/*.sbatch
+!training/pdb_list
+!training/ff31/
+
+*.bak_*

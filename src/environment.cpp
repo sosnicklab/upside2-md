@@ -296,11 +296,12 @@ struct EnvironmentCoverage : public CoordNode {
         CoordNode(get_dset_size(1,grp,"index1")[0]*read_attribute<int>(grp,".","num_aa_types") , 1),
         n_aa(read_attribute<int>(grp,".","num_aa_types")), 
         n_res(get_dset_size(1,grp,"index1")[0]),
-        aa_types(n_res), // FIXME: aa_types should be initialized from (non bead rotamer redundant) n_res of SC beads. index2 is multiplied by rotamers, so can't use that directly
+        aa_types(get_dset_size(1,grp,"aa_types")[0]), // residue type of each covering side chain, indexed by id2
         igraph(grp, &cb_pos_, &weighted_sidechains_)
     {
-        check_size(grp, "aa_types", n_res);
         traverse_dset<1,int>  (grp,"aa_types",[&](size_t ne, int x){aa_types[ne]=x;});
+        for(int ne: range(igraph.n_elem2))
+            if(igraph.id2[ne]<0 || igraph.id2[ne]>=int(aa_types.size())) throw string("aa_types has no entry for id2");
 
         if(logging(LOG_EXTENSIVE)) {
             default_logger->add_logger<float>("environment_coverage", {n_elem}, [&](float* buffer) {

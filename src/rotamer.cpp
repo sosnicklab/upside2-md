@@ -276,7 +276,7 @@ struct NodeHolder {
         float dev = 0.f;
         for(int d: range(n_rot)) 
             for(int nn: range(n_elem)) 
-                dev = max(cur_belief(d,nn)-old_belief(d,nn), dev);
+                dev = max(fabsf(cur_belief(d,nn)-old_belief(d,nn)), dev);
         return dev;
     }
 
@@ -755,34 +755,6 @@ struct RotamerSidechain: public PotentialNode {
         } else if(!strcmp(log_name, "n_node")) {
             vector<float> ret(1, float(n_node));
             return ret;
-        } else if(!strcmp(log_name, "node_lookup")) {
-            // Per-row metadata for node_marginal rows:
-            // [n_rotamer, node_id] with node_id in the same encoding family as id_seq>>8.
-            vector<float> lookup(n_node*2, 0.f);
-            int nn = 0;
-            for(int ne=0; ne<nodes1.n_elem; ++ne, ++nn) {
-                lookup[nn*2 + 0] = 1.f;
-                lookup[nn*2 + 1] = float(ne);
-            }
-            for(int ne=0; ne<nodes3.n_elem; ++ne, ++nn) {
-                lookup[nn*2 + 0] = 3.f;
-                lookup[nn*2 + 1] = float(ne);
-            }
-            for(int ne=0; ne<nodes6.n_elem; ++ne, ++nn) {
-                lookup[nn*2 + 0] = 6.f;
-                lookup[nn*2 + 1] = float(ne);
-            }
-            return lookup;
-        } else if(!strcmp(log_name, "node_marginal")) {
-            vector<float> node_marginal(n_node*6, 0.f);
-            int nn = 0;
-            for(const NodeHolder& nodes: {cref(nodes1), cref(nodes3), cref(nodes6)}) {
-                int n_rot = nodes.n_rot;
-                for(int ne=0; ne<nodes.n_elem; ++ne, ++nn)
-                    for(int nr=0; nr<6; ++nr)
-                        node_marginal[nn*6 + nr] = (nr < n_rot) ? nodes.cur_belief(nr, ne) : 0.f;
-            }
-            return node_marginal;
         } else if(!strcmp(log_name, "node_energy")) {
             vector<float> node_energy(n_node*6);
 

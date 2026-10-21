@@ -918,7 +918,7 @@ def write_plumed(fasta, plumedFile, T=0.9, stepsize=0.009, just_print=False ):
     create_array(g, 'plumedFile', obj=np.array([plumedFile]))
 
 #=========================================================================
-#                               contact 
+#                               contact
 #=========================================================================
 
 

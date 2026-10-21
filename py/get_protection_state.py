@@ -28,6 +28,10 @@ def main():
     parser.add_argument('--criterion4',      type=float, default=0.50, help='(default 0.50) to judge whether NH is exposed to the lipid. bigger than the criterion means exposed to the lipid')
     args = parser.parse_args()
 
+    for path, desc in [(args.top_h5, 'topology'), (args.input_h5, 'trajectory')]:
+        if not os.path.isfile(path):
+            raise FileNotFoundError('cannot read %s file: %s' % (desc, path))
+
     engine = ue.Upside(args.top_h5)
 
     with tb.open_file(args.top_h5, 'r') as t:

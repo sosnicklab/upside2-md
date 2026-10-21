@@ -1,4 +1,5 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
+
 from __future__ import annotations
 
 import _pickle as cPickle
@@ -17,6 +18,12 @@ import h5py
 import numpy as np
 import tables as tb
 
+from martini_itp_reader import parse_dry_forcefield, parse_itp_atomtype_masses, parse_itp_file
+
+# NumPy moved VisibleDeprecationWarning under np.exceptions in 1.25 and dropped the
+# top-level alias in 2.0. The clusters run 1.23, this machine runs 2.x.
+VISIBLE_DEPRECATION_WARNING = getattr(np, "exceptions", np).VisibleDeprecationWarning
+
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
 WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
@@ -24,6 +31,13 @@ WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 NA_AVOGADRO = 6.02214076e23
 BB_COMPONENT_NAMES = ("N", "CA", "C", "O")
 BB_COMPONENT_MASSES = (14.0, 12.0, 12.0, 16.0)
+MARTINIZE_BB_SS_ORDER = ("F", "E", "H", "1", "2", "3", "T", "S", "C")
+MARTINIZE_BB_DEFAULT = ("N0", "Nda", "N0", "Nd", "Na", "Nda", "Nda", "P5", "P5")
+MARTINIZE_BB_RESIDUE_OVERRIDE = {
+    "ALA": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "P4", "P4"),
+    "PRO": ("C5", "N0", "C5", "N0", "Na", "N0", "N0", "Na", "Na"),
+    "HYP": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "Na", "Na"),
+}
 BB_TYPE_CHARGE = {
     "Qd": 1.0,
     "Qa": -1.0,
@@ -33,6 +47,8 @@ BB_TYPE_CHARGE = {
     "AQa": -1.0,
 }
 TWOPI = 2.0 * np.pi
+
+
 CANONICAL_AFFINE_REF = np.array(
     [
         [-1.19280531, -0.83127186, 0.0],
@@ -42,8 +58,51 @@ CANONICAL_AFFINE_REF = np.array(
     dtype=np.float32,
 )
 CANONICAL_AFFINE_REF -= CANONICAL_AFFINE_REF.mean(axis=0, keepdims=True)
-CB_PLACEMENT = np.array([[0.0, 0.94375626, 1.2068012]], dtype=np.float32)
-CB_VECTOR = CB_PLACEMENT / np.linalg.norm(CB_PLACEMENT, axis=1, keepdims=True)
+STAGE_PARAMS = {
+    "minimization": {
+        "lj_soften": 1,
+        "lj_alpha": 0.2,
+        "coulomb_soften": 1,
+        "slater_alpha": 2.0,
+    },
+    "npt_equil": {
+        "lj_soften": 1,
+        "lj_alpha": 0.2,
+        "coulomb_soften": 1,
+        "slater_alpha": 2.0,
+    },
+    "npt_equil_reduced": {
+        "lj_soften": 1,
+        "lj_alpha": 0.05,
+        "coulomb_soften": 1,
+        "slater_alpha": 0.5,
+    },
+    "npt_prod": {
+        "lj_soften": 0,
+        "lj_alpha": 0.0,
+        "coulomb_soften": 0,
+        "slater_alpha": 0.0,
+    },
+}
+
+
+# CB placement in the affine_alignment frame. That frame's origin is the CENTROID of N/CA/C
+# (src/eig.cpp centres the three atoms before the Kabsch fit, and the stored ref_geom is centred to
+# match), so a point placed in it must be given relative to the centroid -- which is what
+# upside_config.write_environment does. Storing the raw CB instead displaces every sidechain site by the
+# centroid, 0.568 A, and CB is the anchor of the whole SC-env term (martini_sc_table_1body takes
+# placement_fixed_point_vector_only_CB as its sidechain input). The direction vector is CB-CA, a
+# difference, so the centroid cancels there and it is unchanged.
+CB_REFERENCE_GEOMETRY = np.array([
+    [-1.19280531, -0.83127186, 0.0],        # N
+    [ 0.0,         0.0,        0.0],        # CA
+    [ 1.25222632, -0.87268266, 0.0],        # C
+    [ 0.0,         0.94375626, 1.2068012],  # CB
+])
+_cb_frame_origin = CB_REFERENCE_GEOMETRY[:3].mean(axis=0)
+CB_PLACEMENT = (CB_REFERENCE_GEOMETRY[3] - _cb_frame_origin)[None, :].astype(np.float32)
+_cb_direction = CB_REFERENCE_GEOMETRY[3] - CB_REFERENCE_GEOMETRY[1]
+CB_VECTOR = (_cb_direction / np.linalg.norm(_cb_direction))[None, :].astype(np.float32)
 N_BIT_ROTAMER = 4
 LEGACY_STAGE7_NODES = [
     "rotamer",
@@ -128,6 +187,16 @@ def write_pdb(path: Path, atoms, box_lengths):
         f.write("END\n")
 
 
+def _minimum_image_delta(delta, box_lengths):
+    delta = np.asarray(delta, dtype=np.float64).copy()
+    if box_lengths is None:
+        return delta
+    box = np.asarray(box_lengths, dtype=np.float64)
+    valid = box > 0.0
+    delta[..., valid] -= box[valid] * np.round(delta[..., valid] / box[valid])
+    return delta
+
+
 def coords(atoms):
     return np.array([[a["x"], a["y"], a["z"]] for a in atoms], dtype=float)
 
@@ -141,14 +210,36 @@ def center_of_mass(xyz):
     return np.mean(xyz, axis=0)
 
 
+# Membrane molecule selection. The lipid identity is supplied by the caller
+# (--lipid-name, comma-separated for a mixed bilayer); each type's topology is read
+# from the input ITP files. No lipid type, ITP filename, or residue name is hardcoded
+# here. Names are stored uppercased so residue-name comparisons are case-insensitive.
+_ACTIVE_LIPID_NAMES = ()
+
+
+def set_active_lipid_name(name) -> None:
+    global _ACTIVE_LIPID_NAMES
+    if name is None:
+        raise ValueError("Lipid name must be provided (--lipid-name)")
+    parts = str(name).split(",") if isinstance(name, str) else [str(p) for p in name]
+    names = tuple(dict.fromkeys(p.strip().upper() for p in parts if p.strip()))
+    if not names:
+        raise ValueError("Lipid name must be provided (--lipid-name)")
+    _ACTIVE_LIPID_NAMES = names
+
+
+def active_lipid_names() -> tuple:
+    if not _ACTIVE_LIPID_NAMES:
+        raise ValueError("Active lipid name is not set; call set_active_lipid_name() (--lipid-name)")
+    return _ACTIVE_LIPID_NAMES
+
+
+def active_lipid_name() -> str:
+    return "/".join(active_lipid_names())
+
+
 def lipid_resname(resname: str) -> bool:
-    return resname.upper() in {"DOP", "DOPC"}
-
-
-def canonical_lipid_resname(resname: str) -> str:
-    if lipid_resname(resname):
-        return "DOPC"
-    return resname
+    return resname.strip().upper() in active_lipid_names()
 
 
 def infer_protein_charge_from_residues(protein_atoms):
@@ -229,7 +320,7 @@ def extract_protein_backbone_atoms_from_aa(aa_atoms):
     return out, np.asarray(residue_index, dtype=np.int32)
 
 
-def _collect_complete_backbone_residue_order(backbone_atoms):
+def _complete_backbone_residue_groups(backbone_atoms):
     residue_groups = defaultdict(dict)
     residue_order = []
     for atom in backbone_atoms:
@@ -237,50 +328,188 @@ def _collect_complete_backbone_residue_order(backbone_atoms):
         role = atom["name"].strip().upper()
         if key not in residue_groups:
             residue_order.append(key)
-        residue_groups[key][role] = 1
+        residue_groups[key][role] = atom
 
     valid_order = []
+    valid_groups = {}
     for key in residue_order:
         group = residue_groups[key]
         if not all(role in group for role in BB_COMPONENT_NAMES):
             continue
         valid_order.append(key)
+        valid_groups[key] = group
     if not valid_order:
         raise ValueError("Cannot map BB types: no complete N/CA/C/O residue rows.")
-    return valid_order
+    return valid_order, valid_groups
 
 
-def map_backbone_types_from_martinize_fallback(backbone_atoms):
-    # Use martinize fallback behavior with secondary structure fixed to coil ("C"):
-    # default/backbone override table + charged termini/chain-break endpoints.
-    residue_order = _collect_complete_backbone_residue_order(backbone_atoms)
-    coil_column = 8
-    bb_default = ("N0", "Nda", "N0", "Nd", "Na", "Nda", "Nda", "P5", "P5")
-    bb_residue_override = {
-        "ALA": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "P4", "P4"),
-        "PRO": ("C5", "N0", "C5", "N0", "Na", "N0", "N0", "Na", "Na"),
-        "HYP": ("C5", "N0", "C5", "N0", "N0", "N0", "N0", "Na", "Na"),
-    }
-    out = {}
+def _atom_xyz(atom):
+    return np.array([float(atom["x"]), float(atom["y"]), float(atom["z"])], dtype=np.float64)
+
+
+def _dihedral_degrees(p0, p1, p2, p3):
+    b0 = p0 - p1
+    b1 = p2 - p1
+    b2 = p3 - p2
+    norm_b1 = np.linalg.norm(b1)
+    if norm_b1 < 1.0e-8:
+        return None
+    b1 = b1 / norm_b1
+    v = b0 - np.dot(b0, b1) * b1
+    w = b2 - np.dot(b2, b1) * b1
+    norm_v = np.linalg.norm(v)
+    norm_w = np.linalg.norm(w)
+    if norm_v < 1.0e-8 or norm_w < 1.0e-8:
+        return None
+    x = np.dot(v, w)
+    y = np.dot(np.cross(b1, v), w)
+    return float(np.degrees(np.arctan2(y, x)))
+
+
+def _same_chain_adjacent(prev_key, curr_key):
+    return curr_key[0] == prev_key[0] and curr_key[1] == prev_key[1] + 1
+
+
+def _raw_secondary_from_geometry(residue_order, residue_groups):
+    raw = {key: "C" for key in residue_order}
+    ca_pos = {key: _atom_xyz(residue_groups[key]["CA"]) for key in residue_order}
+    raw_list = ["C"] * len(residue_order)
+
+    for i, key in enumerate(residue_order):
+        helix_like = False
+        if 0 < i < len(residue_order) - 1:
+            prev_key = residue_order[i - 1]
+            next_key = residue_order[i + 1]
+            if _same_chain_adjacent(prev_key, key) and _same_chain_adjacent(key, next_key):
+                prev_group = residue_groups[prev_key]
+                curr_group = residue_groups[key]
+                next_group = residue_groups[next_key]
+                phi = _dihedral_degrees(
+                    _atom_xyz(prev_group["C"]),
+                    _atom_xyz(curr_group["N"]),
+                    _atom_xyz(curr_group["CA"]),
+                    _atom_xyz(curr_group["C"]),
+                )
+                psi = _dihedral_degrees(
+                    _atom_xyz(curr_group["N"]),
+                    _atom_xyz(curr_group["CA"]),
+                    _atom_xyz(curr_group["C"]),
+                    _atom_xyz(next_group["N"]),
+                )
+                if phi is not None and psi is not None and -100.0 <= phi <= -30.0 and -85.0 <= psi <= 15.0:
+                    helix_like = True
+
+        for offset in (-4, 4):
+            j = i + offset
+            if helix_like or j < 0 or j >= len(residue_order):
+                continue
+            other_key = residue_order[j]
+            if other_key[0] != key[0]:
+                continue
+            dist = float(np.linalg.norm(ca_pos[key] - ca_pos[other_key]))
+            if 4.8 <= dist <= 6.8:
+                helix_like = True
+
+        if helix_like:
+            raw_list[i] = "H"
+
+    for i in range(1, len(raw_list) - 1):
+        if (
+            raw_list[i] == "C"
+            and raw_list[i - 1] == "H"
+            and raw_list[i + 1] == "H"
+            and residue_order[i - 1][0] == residue_order[i][0] == residue_order[i + 1][0]
+        ):
+            raw_list[i] = "H"
+
+    i = 0
+    while i < len(raw_list):
+        if raw_list[i] != "H":
+            i += 1
+            continue
+        j = i + 1
+        while j < len(raw_list) and raw_list[j] == "H" and residue_order[j][0] == residue_order[i][0]:
+            j += 1
+        if j - i < 4:
+            for k in range(i, j):
+                raw_list[k] = "C"
+        i = j
+
+    for key, ss in zip(residue_order, raw_list):
+        raw[key] = ss
+    return raw
+
+
+def _apply_martinize_helix_labels(residue_order, raw_secondary):
+    labels = {key: raw_secondary.get(key, "C") for key in residue_order}
+    i = 0
+    while i < len(residue_order):
+        key = residue_order[i]
+        if raw_secondary.get(key, "C") != "H":
+            i += 1
+            continue
+        j = i + 1
+        while (
+            j < len(residue_order)
+            and residue_order[j][0] == residue_order[i][0]
+            and raw_secondary.get(residue_order[j], "C") == "H"
+        ):
+            j += 1
+        run_len = j - i
+        if run_len < 4:
+            for k in range(i, j):
+                labels[residue_order[k]] = "C"
+        else:
+            for offset, k in enumerate(range(i, j)):
+                if offset < min(4, run_len):
+                    labels[residue_order[k]] = "1"
+                elif run_len - offset <= 4:
+                    labels[residue_order[k]] = "2"
+                else:
+                    labels[residue_order[k]] = "H"
+        i = j
+    return labels
+
+
+def _martinize_bb_type_for_residue(resname, secondary_structure):
+    table = MARTINIZE_BB_RESIDUE_OVERRIDE.get(resname.upper(), MARTINIZE_BB_DEFAULT)
+    try:
+        return table[MARTINIZE_BB_SS_ORDER.index(str(secondary_structure).upper())]
+    except ValueError:
+        return table[MARTINIZE_BB_SS_ORDER.index("C")]
+
+
+def map_backbone_types_from_structure(backbone_atoms):
+    residue_order, residue_groups = _complete_backbone_residue_groups(backbone_atoms)
+    raw_secondary = _raw_secondary_from_geometry(residue_order, residue_groups)
+    secondary_by_residue = _apply_martinize_helix_labels(residue_order, raw_secondary)
+    type_by_residue = {}
+    source_by_residue = {}
     for key in residue_order:
-        resname = key[3].upper()
-        table = bb_residue_override.get(resname, bb_default)
-        out[key] = table[coil_column]
+        ss = secondary_by_residue[key]
+        type_by_residue[key] = _martinize_bb_type_for_residue(key[3], ss)
+        source_by_residue[key] = "structure_geometry" if ss in {"H", "1", "2", "3"} else "coil_geometry_fallback"
 
-    # Match martinize charged-termini behavior: each fragment endpoint is
-    # assigned charged backbone bead types (Qd/Qa) in residue order.
     if residue_order:
-        out[residue_order[0]] = "Qd"
-        out[residue_order[-1]] = "Qa"
+        terminal_overrides = [(residue_order[0], "Qd"), (residue_order[-1], "Qa")]
         for i in range(1, len(residue_order)):
             prev = residue_order[i - 1]
             curr = residue_order[i]
             chain_break = curr[0] != prev[0]
             seq_break = curr[1] != (prev[1] + 1)
             if chain_break or seq_break:
-                out[curr] = "Qd"
-                out[prev] = "Qa"
-    return out
+                terminal_overrides.append((curr, "Qd"))
+                terminal_overrides.append((prev, "Qa"))
+        for key, bb_type in terminal_overrides:
+            type_by_residue[key] = bb_type
+            source_by_residue[key] = "terminal_charge_override"
+
+    return type_by_residue, secondary_by_residue, source_by_residue
+
+
+def map_backbone_types_from_martinize_fallback(backbone_atoms):
+    type_by_residue, _, _ = map_backbone_types_from_structure(backbone_atoms)
+    return type_by_residue
 
 
 def compute_lipid_residue_indices(bilayer_atoms):
@@ -301,6 +530,82 @@ def residue_group_atoms(atoms):
         key = (atom["chain"], atom["resseq"], atom["icode"], atom["resname"].upper())
         groups[key].append(atom)
     return groups
+
+
+CHARMM_GUI_WATER_RESNAMES = {"W", "WF"}
+CHARMM_GUI_ION_RESNAMES = {"NA", "CL", "SOD", "CLA", "ION"}
+
+
+def _parse_top_molecule_counts(top_path: Path):
+    """Return {RESNAME: count} from the [ molecules ] section of a GROMACS system.top."""
+    counts = {}
+    in_molecules = False
+    with Path(top_path).open("r", encoding="utf-8") as f:
+        for line in f:
+            text = line.split(";", 1)[0].strip()
+            if not text:
+                continue
+            if text.startswith("["):
+                in_molecules = text.replace(" ", "").lower() == "[molecules]"
+                continue
+            if in_molecules:
+                parts = text.split()
+                if len(parts) >= 2:
+                    counts[parts[0].upper()] = counts.get(parts[0].upper(), 0) + int(parts[1])
+    return counts
+
+
+def read_charmm_gui_membrane(membrane_pdb, membrane_top=None):
+    """Read a CHARMM-GUI Martini membrane as the bilayer input for the hybrid system.
+
+    Keeps only the active-lipid residues; water (implicit solvent in dry-MARTINI) is stripped and
+    CHARMM-GUI ions are dropped (ions are regenerated from concentration during packing). A CRYST1
+    box is required (the gromacs/step5_charmm2gmx.pdb carries it; step5_assembly.pdb does not).
+    When a system.top is given, the per-lipid molecule counts are cross-checked against its
+    [ molecules ] section. Returns (lipid_atoms, box).
+    """
+    atoms, box = parse_pdb(Path(membrane_pdb))
+    if box is None:
+        raise ValueError(
+            f"CHARMM-GUI membrane PDB has no CRYST1 box: {membrane_pdb}. "
+            "Use the gromacs/step5_charmm2gmx.pdb (it carries the box), not step5_assembly.pdb."
+        )
+    lipid_atoms = []
+    unexpected = set()
+    for atom in atoms:
+        resname = atom["resname"].strip().upper()
+        if lipid_resname(resname):
+            lipid_atoms.append(atom)
+        elif resname in CHARMM_GUI_WATER_RESNAMES or resname in CHARMM_GUI_ION_RESNAMES:
+            continue
+        else:
+            unexpected.add(resname)
+    if unexpected:
+        raise ValueError(
+            f"Unexpected residues {sorted(unexpected)} in CHARMM-GUI membrane {membrane_pdb}. "
+            f"Only active lipids {list(active_lipid_names())}, water, and ions are supported."
+        )
+    if not lipid_atoms:
+        raise ValueError(
+            f"No active-lipid residues {list(active_lipid_names())} found in {membrane_pdb}."
+        )
+    if membrane_top is not None:
+        expected = _parse_top_molecule_counts(membrane_top)
+        got = {}
+        prev_key = None
+        for atom in lipid_atoms:
+            key = (atom["chain"], atom["resseq"], atom["icode"])
+            if key != prev_key:
+                resname = atom["resname"].strip().upper()
+                got[resname] = got.get(resname, 0) + 1
+                prev_key = key
+        for name in active_lipid_names():
+            if name in expected and expected[name] != got.get(name, 0):
+                raise ValueError(
+                    f"Lipid count mismatch for {name}: {membrane_pdb} has {got.get(name, 0)} "
+                    f"molecules but {membrane_top} [ molecules ] declares {expected[name]}."
+                )
+    return lipid_atoms, box
 
 
 def tile_and_crop_bilayer_lipids(
@@ -346,7 +651,6 @@ def tile_and_crop_bilayer_lipids(
                 gcopy = []
                 for atom in group:
                     a = deepcopy(atom)
-                    a["resname"] = canonical_lipid_resname(a["resname"])
                     a["x"] = float(a["x"] + shift[0])
                     a["y"] = float(a["y"] + shift[1])
                     gcopy.append(a)
@@ -388,11 +692,383 @@ def tile_and_crop_bilayer_lipids(
             atom["chain"] = chain
             atom["icode"] = icode
             atom["resseq"] = next_resseq
-            atom["resname"] = canonical_lipid_resname(atom["resname"])
             atom["segid"] = "MEMB"
             out_atoms.append(atom)
         next_resseq += 1
     return out_atoms
+
+
+def _rotation_between(a, b):
+    """Minimal rotation taking unit vector `a` onto unit vector `b`."""
+    a = a / np.linalg.norm(a)
+    b = b / np.linalg.norm(b)
+    v = np.cross(a, b)
+    c = float(np.dot(a, b))
+    s = float(np.linalg.norm(v))
+    if s < 1e-12:
+        if c > 0.0:
+            return np.eye(3)
+        # Antiparallel: rotate by pi about any axis orthogonal to a.
+        axis = np.array([1.0, 0.0, 0.0])
+        if abs(a[0]) > 0.9:
+            axis = np.array([0.0, 1.0, 0.0])
+        axis = np.cross(a, axis)
+        axis /= np.linalg.norm(axis)
+        K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+        return np.eye(3) + 2.0 * (K @ K)
+    K = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+    return np.eye(3) + K + K @ K * ((1.0 - c) / (s * s))
+
+
+def _axis_spin(axis, angle):
+    axis = axis / np.linalg.norm(axis)
+    K = np.array([[0, -axis[2], axis[1]], [axis[2], 0, -axis[0]], [-axis[1], axis[0], 0]])
+    return np.eye(3) + np.sin(angle) * K + (1.0 - np.cos(angle)) * (K @ K)
+
+
+def detergent_template_geometry(template_atoms, template_box, apolar_bead_indices):
+    """Per-molecule geometry of an amphiphile, measured from its own lamellar template.
+
+    Returns the monomer conformer, its head->tail axis and length, and the interfacial area per
+    molecule. Nothing about the detergent is hardcoded or fitted here.
+
+    Note that the CHARMM-GUI step5 assembly is PRE-minimization and does contain hard clashes (bead
+    pairs as close as 0.24 A), so it is not a usable packing-density reference. The builder spaces
+    molecules by the force field's own contact distance instead, and the equilibration ladder condenses
+    the aggregate to its true density.
+    """
+    groups = list(residue_group_atoms(template_atoms).values())
+    if not groups:
+        raise ValueError("Detergent template contains no residues.")
+    n_molecules = len(groups)
+    conformer = groups[0]
+    xyz = coords(conformer)
+    apolar = np.zeros(len(conformer), dtype=bool)
+    for i in apolar_bead_indices:
+        if 0 <= i < len(conformer):
+            apolar[i] = True
+    if not apolar.any() or apolar.all():
+        raise ValueError(
+            "Detergent template conformer has no head/tail split; check the ITP apolar bead types."
+        )
+    head_centroid = xyz[~apolar].mean(axis=0)
+    tail_tip = xyz[apolar][int(np.argmax(np.linalg.norm(xyz[apolar] - head_centroid, axis=1)))]
+    axis_vec = tail_tip - head_centroid
+    axis_len = float(np.linalg.norm(axis_vec))
+    if axis_len <= 0.0:
+        raise ValueError("Detergent template conformer has zero head-to-tail length.")
+
+    lateral_area = float(template_box[0]) * float(template_box[1])
+    return {
+        "axis": axis_vec / axis_len,
+        "axis_length": axis_len,
+        # A lamellar template has two leaflets, so the interfacial area per molecule is the lateral
+        # area over half the molecules.
+        "area_per_molecule": lateral_area / (0.5 * n_molecules),
+        "conformer": conformer,
+        "apolar_mask": apolar,
+    }
+
+
+def build_detergent_micelle(
+    template_atoms,
+    template_box,
+    protein_cg_atoms,
+    belt_half_thickness,
+    contact_clearance,
+    apolar_bead_indices,
+    rng,
+    grid_spacing=2.0,
+):
+    """Wrap a detergent monolayer around the protein's hydrophobic belt: tails in, heads out.
+
+    A single-tailed amphiphile with a bulky head cannot solvate a transmembrane domain as a bilayer:
+    its lamellar hydrophobic core is 2*V_tail/APL (~14 A for DDM) against a ~28 A protein belt, and a
+    maltose head cannot reach the ~23 A^2 area per molecule that 28 A would require. The physical
+    aggregate is a protein-detergent complex, so monomers are placed ONTO the protein's hydrophobic
+    surface rather than by carving a hole in a slab -- which also removes the first-shell void that
+    whole-molecule deletion leaves behind.
+
+    The DENSITY reference is the equilibrated lamellar template: the monomer conformer, the interfacial
+    area per molecule and the molecular volume are all measured from it, so the local packing matches a
+    relaxed dry-MARTINI DDM phase instead of a geometric guess.
+
+    Coverage is then completed and verified, because the failure mode of a hand-built micelle is a
+    correct-looking shell with a bald patch that leaves part of the protein in vacuum:
+      1. seed from support points of the belt along equidistant directions (conformal to the protein,
+         never forced into an interhelical groove), keeping the template's interfacial head spacing;
+      2. audit every solvent-EXPOSED belt bead -- the beads that are outermost along some direction, so
+         buried core beads like glpG TM4 are correctly exempt;
+      3. refill toward each uncovered exposed bead, ignoring the spacing preference but never the
+         clash tests, until coverage closes or no placement is geometrically possible.
+    A bead counts as covered when a tail bead sits within 2x the contact clearance: one contact
+    distance is touching, twice leaves room for exactly one more bead, and beyond that the gap is a
+    vacuum pocket. Residual uncovered beads are returned so the caller can fail the build.
+    """
+    from scipy.spatial import cKDTree
+    from scipy.ndimage import label
+
+    geom = detergent_template_geometry(template_atoms, template_box, apolar_bead_indices)
+    conformer_xyz = coords(geom["conformer"])
+    apolar = geom["apolar_mask"]
+    head_local = conformer_xyz[~apolar].mean(axis=0)
+    monomer_length = float(geom["axis_length"])
+
+    protein_xyz = coords(protein_cg_atoms)
+    belt = protein_xyz[np.abs(protein_xyz[:, 2]) <= float(belt_half_thickness)]
+    if belt.shape[0] < 3:
+        raise ValueError(
+            f"Protein has fewer than 3 CG beads inside the hydrophobic belt "
+            f"(|z| <= {belt_half_thickness:.2f} A); check the OPM orientation."
+        )
+    # Both the protein-detergent and detergent-detergent spacings are the force field's own contact
+    # distance (2^(1/6) * sigma_max, the LJ minimum), so the start structure is dense but clash-free.
+    clearance = float(contact_clearance)
+    packing_contact = clearance
+    coverage_radius = 2.0 * clearance
+
+    # Grid the region a monolayer can occupy, then keep only cells that are OUTSIDE the protein:
+    # the largest connected run of free cells reaching the region boundary. Interior cavities are a
+    # separate component and are dropped, so detergent can never be seeded into the protein core.
+    spacing = float(grid_spacing)
+    reach = clearance + monomer_length + spacing
+    lo = belt.min(axis=0) - reach
+    hi = belt.max(axis=0) + reach
+    axes = [np.arange(lo[k], hi[k] + spacing, spacing) for k in range(3)]
+    grid = np.stack(np.meshgrid(*axes, indexing="ij"), axis=-1)
+    shape = grid.shape[:3]
+    flat = grid.reshape(-1, 3)
+
+    protein_tree = cKDTree(protein_xyz)
+    d_all, nearest_all = protein_tree.query(flat)
+    belt_tree = cKDTree(belt)
+    d_belt, nearest_belt = belt_tree.query(flat)
+    # Tail tips may only sit within one acyl-chain reach of the protein; beyond that a tail bead would
+    # leave a hydrophobic gap behind it. Heads then project further out on their own.
+    conformer_apolar = conformer_xyz[apolar]
+    apolar_extent = float(
+        np.max(np.linalg.norm(conformer_apolar[:, None, :] - conformer_apolar[None, :, :], axis=2))
+    )
+
+    free = (d_all >= clearance).reshape(shape)
+    components, _ = label(free)
+    boundary = set(np.unique(np.concatenate([
+        components[0, :, :].ravel(), components[-1, :, :].ravel(),
+        components[:, 0, :].ravel(), components[:, -1, :].ravel(),
+        components[:, :, 0].ravel(), components[:, :, -1].ravel(),
+    ])))
+    boundary.discard(0)
+    outside = np.isin(components, sorted(boundary)).reshape(-1)
+
+    shell = outside & (d_belt <= clearance + monomer_length)
+    seeds = np.where(outside & (d_belt <= clearance + apolar_extent))[0]
+    if seeds.size == 0:
+        raise RuntimeError("Detergent micelle construction found no shell volume around the belt.")
+
+    accepted_groups = []
+    accepted_centres = []
+
+    def try_place(tail_tip_target, u, packing=None):
+        """Seat one monomer with its tail tip at `tail_tip_target`, head pointing outward along u.
+
+        `packing` overrides the detergent-detergent spacing. Clearing the PROTEIN is a hard geometric
+        constraint; detergent-detergent spacing is only a packing preference that minimization relaxes,
+        so the refill stage is allowed to crowd neighbours rather than leave the protein against vacuum.
+        """
+        packing = packing_contact if packing is None else float(packing)
+        R = _axis_spin(u, float(rng.uniform(0.0, TWOPI))) @ _rotation_between(geom["axis"], -u)
+        placed = (conformer_xyz - head_local) @ R.T
+        tail_tip_now = placed[apolar][int(np.argmax(np.linalg.norm(placed[apolar], axis=1)))]
+        placed = placed + (tail_tip_target - tail_tip_now)
+
+        if float(protein_tree.query(placed)[0].min()) < clearance:
+            return False
+        if accepted_centres:
+            centres = np.array(accepted_centres)
+            centre = placed.mean(axis=0)
+            near = np.where(np.linalg.norm(centres - centre, axis=1) < 2.5 * monomer_length)[0]
+            if near.size:
+                neighbours = np.concatenate([accepted_groups[i] for i in near])
+                gap = float(np.min(np.linalg.norm(placed[:, None, :] - neighbours[None, :, :], axis=2)))
+                if gap < packing:
+                    return False
+        accepted_centres.append(placed.mean(axis=0))
+        accepted_groups.append(placed)
+        return True
+
+    # Sequential adsorption over the whole shell VOLUME, tail tips first, working INNERMOST OUTWARD.
+    # Seeding tips anywhere in the shell lets tails reach into surface grooves instead of leaving a
+    # sparse single layer with bald patches, but the order matters: filling the contact layer first
+    # packs tails against the protein and pushes heads outward, which is the physical organization of a
+    # protein-detergent complex. Filling in random order instead lets molecules seeded far out block the
+    # contact layer, which both smears the tails and leaves the belt bare. Density is capped only by the
+    # force field's contact distance, so the shell fills as densely as it can.
+    order = seeds[np.argsort(d_belt[seeds] + rng.uniform(0.0, spacing, size=seeds.size))]
+    for idx in order:
+        u = flat[idx] - belt[nearest_belt[idx]]
+        norm = float(np.linalg.norm(u))
+        if norm < 1e-9:
+            continue
+        try_place(flat[idx], u / norm)
+    if not accepted_groups:
+        raise RuntimeError("Detergent micelle construction accepted no monomers.")
+
+    # A protein bead is solvent-exposed exactly when some free outside cell at contact range has THAT
+    # bead as its own nearest protein bead: anything shielded by another bead never wins the nearest
+    # lookup, so buried core beads (glpG TM4 among them) are correctly exempt from needing detergent.
+    contact_cells = outside & (d_all <= clearance + spacing)
+    exposed_protein = np.unique(nearest_all[contact_cells])
+    belt_index = np.where(np.abs(protein_xyz[:, 2]) <= float(belt_half_thickness))[0]
+    exposed = protein_xyz[np.intersect1d(exposed_protein, belt_index)]
+    if exposed.shape[0] == 0:
+        raise RuntimeError("No solvent-exposed hydrophobic-belt beads found; check the OPM orientation.")
+    outside_tree = cKDTree(flat[outside])
+
+    def uncovered_exposed():
+        """Exposed belt beads with no acyl tail within reach (quality metric driving the refill)."""
+        tails = np.concatenate([g[apolar] for g in accepted_groups])
+        return np.where(cKDTree(tails).query(exposed)[0] > coverage_radius)[0]
+
+    def vacuum_exposed():
+        """Exposed belt beads with NO environment bead at all within reach: protein facing vacuum."""
+        allbeads = np.concatenate(accepted_groups)
+        return np.where(cKDTree(allbeads).query(exposed)[0] > coverage_radius)[0]
+
+    # Close the remaining gaps, crowding neighbours progressively harder rather than leaving a bald
+    # patch. Several orientations are tried per candidate cell because a rigid monomer often only fits
+    # a surface crevice one way.
+    refills = 0
+    outside_xyz = flat[outside]
+    for packing in (packing_contact, 0.9 * packing_contact, 0.8 * packing_contact):
+        for _ in range(4):
+            gaps = uncovered_exposed()
+            if gaps.size == 0:
+                break
+            progress = False
+            for idx in gaps:
+                target = exposed[idx]
+                cells = outside_tree.query_ball_point(target, clearance + 3.0 * spacing)
+                placed_one = False
+                for c in cells:
+                    u = outside_xyz[c] - target
+                    norm = float(np.linalg.norm(u))
+                    if norm < 1e-9:
+                        continue
+                    for _spin in range(6):
+                        if try_place(outside_xyz[c], u / norm, packing=packing):
+                            refills += 1
+                            progress = placed_one = True
+                            break
+                    if placed_one:
+                        break
+            if not progress:
+                break
+        if uncovered_exposed().size == 0:
+            break
+
+    out_atoms = []
+    for resseq, placed in enumerate(accepted_groups, start=1):
+        for atom, xyz in zip(geom["conformer"], placed):
+            a = deepcopy(atom)
+            a["x"], a["y"], a["z"] = float(xyz[0]), float(xyz[1]), float(xyz[2])
+            a["chain"] = "M"
+            a["icode"] = ""
+            a["resseq"] = resseq
+            a["segid"] = "MEMB"
+            out_atoms.append(a)
+
+    micelle_xyz = coords(out_atoms)
+    residual = uncovered_exposed()
+    built_nn = _nearest_intermolecular_distances(micelle_xyz, out_atoms)
+    n_mol = len(accepted_groups)
+    diagnostics = {
+        "n_detergent": int(n_mol),
+        "n_refilled": int(refills),
+        "template_area_per_molecule_a2": float(geom["area_per_molecule"]),
+        "packing_contact_a": packing_contact,
+        "min_intermolecular_a": float(built_nn.min()),
+        "median_intermolecular_a": float(np.median(built_nn)),
+        # Monolayer volume: the shell cells it occupies, from the same grid used to build it.
+        "aggregate_volume_a3": float(np.count_nonzero(shell) * spacing ** 3),
+        "belt_half_thickness_a": float(belt_half_thickness),
+        "belt_cg_beads": int(belt.shape[0]),
+        "exposed_belt_beads": int(exposed.shape[0]),
+        "uncovered_exposed_belt_beads": int(residual.size),
+        "vacuum_exposed_belt_beads": int(vacuum_exposed().size),
+        "coverage_radius_a": float(coverage_radius),
+        "min_protein_detergent_distance_a": float(cKDTree(protein_xyz).query(micelle_xyz)[0].min()),
+    }
+    return out_atoms, diagnostics
+
+
+def _nearest_intermolecular_distances(xyz, atoms):
+    """Per-molecule distance to the closest bead of a DIFFERENT molecule (exact)."""
+    from scipy.spatial import cKDTree
+
+    molecule_id = np.zeros(len(atoms), dtype=int)
+    prev_key = None
+    current = -1
+    for i, atom in enumerate(atoms):
+        key = (atom["chain"], atom["resseq"], atom["icode"])
+        if key != prev_key:
+            current += 1
+            prev_key = key
+        molecule_id[i] = current
+    out = []
+    for m in range(current + 1):
+        mine = molecule_id == m
+        if not mine.any() or mine.all():
+            continue
+        out.append(float(cKDTree(xyz[~mine]).query(xyz[mine])[0].min()))
+    return np.array(out, dtype=float)
+
+
+def set_box_for_micelle(all_atoms, pad):
+    """Centre a finite aggregate in a cubic box with `pad` of vacuum on every side.
+
+    Cubic so the aggregate can reorient without its periodic image changing shape, and large enough
+    that it never contacts that image. There is no lateral tension to relax, so the box is fixed and
+    the barostat stays off for every stage.
+    """
+    xyz = coords(all_atoms)
+    span = float(np.max(xyz.max(axis=0) - xyz.min(axis=0)))
+    side = span + 2.0 * float(pad)
+    centre = 0.5 * (xyz.max(axis=0) + xyz.min(axis=0))
+    set_coords(all_atoms, xyz + (0.5 * side - centre))
+    return np.array([side, side, side], dtype=float)
+
+
+def measure_belt_hydrophobic_coverage(protein_backbone_atoms, env_atoms, apolar_bead_names, belt_half_thickness):
+    """Gate G1: is the protein's hydrophobic belt actually against acyl tails?
+
+    Returns the belt-residue fraction whose nearest environment bead is a polar head bead, and the
+    tail-bead hydrophobic span. A lamellar DDM slab fails this badly (~14 A span, half the belt facing
+    maltose), which is what unfolded glpG TM4.
+    """
+    env_xyz = coords(env_atoms)
+    is_tail = np.array([a["name"].strip() in apolar_bead_names for a in env_atoms], dtype=bool)
+    if not is_tail.any():
+        raise ValueError("No apolar environment beads found while measuring belt coverage.")
+
+    belt_ca = np.array(
+        [
+            [a["x"], a["y"], a["z"]]
+            for a in protein_backbone_atoms
+            if a["name"].strip() == "CA" and abs(float(a["z"])) <= float(belt_half_thickness)
+        ],
+        dtype=float,
+    )
+    if belt_ca.shape[0] == 0:
+        raise ValueError("No backbone CA inside the hydrophobic belt while measuring coverage.")
+
+    nearest = np.argmin(np.linalg.norm(belt_ca[:, None, :] - env_xyz[None, :, :], axis=2), axis=1)
+    tail_z = env_xyz[is_tail][:, 2]
+    return {
+        "belt_residues": int(belt_ca.shape[0]),
+        "belt_polar_contact_fraction": float(np.mean(~is_tail[nearest])),
+        "tail_hydrophobic_span_a": float(np.percentile(tail_z, 95) - np.percentile(tail_z, 5)),
+        "belt_span_a": 2.0 * float(belt_half_thickness),
+    }
 
 
 def remove_overlapping_lipids(
@@ -422,21 +1098,6 @@ def remove_overlapping_lipids(
     return kept, removed_residues
 
 
-def resize_and_shift(all_atoms, pad_xy, pad_z):
-    xyz = coords(all_atoms)
-    min_c = xyz.min(axis=0)
-    max_c = xyz.max(axis=0)
-    spans = max_c - min_c
-    box = np.array(
-        [spans[0] + 2.0 * pad_xy, spans[1] + 2.0 * pad_xy, spans[2] + 2.0 * pad_z],
-        dtype=float,
-    )
-    shift = np.array([pad_xy, pad_xy, pad_z], dtype=float) - min_c
-    shifted = xyz + shift
-    set_coords(all_atoms, shifted)
-    return box
-
-
 def set_box_from_lipid_xy(
     all_atoms,
     lipid_atoms,
@@ -444,6 +1105,7 @@ def set_box_from_lipid_xy(
     force_square_xy=True,
     min_box_z=None,
     center_lipid_in_z=True,
+    force_xy_box=None,
 ):
     all_xyz = coords(all_atoms)
     lip_xyz = coords(lipid_atoms)
@@ -461,6 +1123,13 @@ def set_box_from_lipid_xy(
         box_y = square_side
     if span_x <= 0.0 or span_y <= 0.0:
         raise ValueError("Invalid lipid XY span while defining box edges.")
+    # When an explicit XY box is given (a whole-tile fill window), the box equals that window
+    # (the lipid molecule COMs fill it; molecule tails wrap under PBC) rather than the molecule
+    # extent, so the membrane fills the box laterally with no sparse-tail ring / contraction.
+    # It may be a single edge (square) or an (x, y) pair: a periodic tile need not be square, and
+    # squaring a rectangular one up to its longer edge opens a vacuum stripe along the shorter one.
+    if force_xy_box is not None:
+        box_x, box_y = (float(v) for v in np.broadcast_to(np.asarray(force_xy_box, dtype=float), (2,)))
 
     min_z = float(all_xyz[:, 2].min())
     max_z = float(all_xyz[:, 2].max())
@@ -475,8 +1144,15 @@ def set_box_from_lipid_xy(
         box_z = float(max(box_z, needed_z))
 
     shift = np.array([0.0, 0.0, 0.0], dtype=float)
-    shift[0] = -lip_min[0]
-    shift[1] = -lip_min[1]
+    if force_xy_box is not None:
+        # Center the lipid COM in the forced box so the periodic slab is symmetric; molecule
+        # tails past the box edge are the periodic images (the tiling repeats at box/n_tiles).
+        lip_com = lip_xyz.mean(axis=0)
+        shift[0] = 0.5 * box_x - float(lip_com[0])
+        shift[1] = 0.5 * box_y - float(lip_com[1])
+    else:
+        shift[0] = -lip_min[0]
+        shift[1] = -lip_min[1]
     if center_lipid_in_z:
         shift[2] = 0.5 * box_z - lip_mid_z
     else:
@@ -487,55 +1163,68 @@ def set_box_from_lipid_xy(
     return np.array([box_x, box_y, box_z], dtype=float)
 
 
-def estimate_salt_pairs(box_lengths, salt_molar, effective_volume_fraction=1.0):
-    volume_a3 = float(box_lengths[0] * box_lengths[1] * box_lengths[2])
-    volume_a3 *= float(max(0.0, min(1.0, effective_volume_fraction)))
-    volume_l = volume_a3 * 1e-27
-    pairs = int(round(salt_molar * NA_AVOGADRO * volume_l))
+def estimate_salt_pairs(box_lengths, salt_molar, excluded_volume_a3):
+    # dry-MARTINI is implicit-solvent, so ions occupy only the solvent-accessible volume: the box
+    # minus whatever the amphiphile aggregate and the protein exclude. Using the full box would
+    # massively overcount (the box is mostly aggregate + the protein's soluble-domain space).
+    box_volume_a3 = float(box_lengths[0]) * float(box_lengths[1]) * float(box_lengths[2])
+    volume_a3 = max(0.0, box_volume_a3 - float(excluded_volume_a3))
+    pairs = int(round(salt_molar * NA_AVOGADRO * volume_a3 * 1e-27))
     return max(0, pairs)
 
 
-def infer_effective_ion_volume_fraction_from_template(
-    bilayer_atoms,
-    bilayer_box,
-    salt_molar,
-):
-    # Calibrate effective ion-accessible volume from the template system ions.
-    # This avoids overestimating ion count by using full geometric box volume.
-    if bilayer_box is None or salt_molar <= 0.0:
-        return 1.0
-
-    n_na = sum(1 for a in bilayer_atoms if a["resname"].upper() == "NA")
-    n_cl = sum(1 for a in bilayer_atoms if a["resname"].upper() == "CL")
-    base_pairs = min(n_na, n_cl)
-    if base_pairs <= 0:
-        return 1.0
-
-    base_volume_l = float(bilayer_box[0] * bilayer_box[1] * bilayer_box[2]) * 1e-27
-    expected_pairs = salt_molar * NA_AVOGADRO * base_volume_l
-    if expected_pairs <= 0.0:
-        return 1.0
-
-    frac = float(base_pairs) / float(expected_pairs)
-    return float(max(0.0, min(1.0, frac)))
+def membrane_slab_excluded_volume(box_lengths, membrane_thickness_z, protein_volume_a3):
+    """Volume ions cannot occupy in a lamellar system: the slab (A_xy * thickness) plus the protein."""
+    area_xy = float(box_lengths[0]) * float(box_lengths[1])
+    return area_xy * float(membrane_thickness_z) + float(protein_volume_a3)
 
 
-def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
+def reject_inside_slab(z_lo, z_hi):
+    """Ion veto for a lamellar membrane: no ion between the two headgroup planes."""
+    def reject(trial):
+        return float(z_lo) <= float(trial[2]) <= float(z_hi)
+    return reject
+
+
+def reject_inside_aggregate(tail_xyz, head_xyz, box_lengths):
+    """Ion veto for a finite aggregate, which has no z band to exclude.
+
+    An ion is inside the hydrophobic interior exactly when it is closer to a tail bead than to any
+    interfacial head bead, so that comparison replaces the slab's z window and needs no shape model.
+    """
+    tail_xyz = np.asarray(tail_xyz, dtype=float)
+    head_xyz = np.asarray(head_xyz, dtype=float)
+    box = np.asarray(box_lengths, dtype=float)
+
+    def reject(trial):
+        d_tail = np.min(np.sum(_minimum_image_delta(tail_xyz - trial, box) ** 2, axis=1))
+        d_head = np.min(np.sum(_minimum_image_delta(head_xyz - trial, box) ** 2, axis=1))
+        return d_tail < d_head
+
+    return reject
+
+
+def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng, reject=None):
+    # reject(trial_xyz) -> bool vetoes a trial that lands in the amphiphile's hydrophobic interior;
+    # dry-MARTINI has no explicit water, so nothing else keeps ions out of it.
     existing = coords(atoms)
     placed = []
     cutoff2 = cutoff * cutoff
+    box = np.asarray(box_lengths, dtype=float)
     types = [("NA", "NA", 1.0, "IONS")] * n_na + [("CL", "CL", -1.0, "IONS")] * n_cl
     for name, resname, _charge, segid in types:
         accepted = False
         for _ in range(20000):
-            trial = rng.uniform([0, 0, 0], box_lengths)
+            trial = rng.uniform([0, 0, 0], box)
+            if reject is not None and reject(trial):
+                continue
             if existing.size:
-                d2 = np.sum((existing - trial) ** 2, axis=1)
+                d2 = np.sum(_minimum_image_delta(existing - trial, box) ** 2, axis=1)
                 if np.min(d2) < cutoff2:
                     continue
             if placed:
                 placed_xyz = np.array([[a["x"], a["y"], a["z"]] for a in placed], dtype=float)
-                d2_placed = np.sum((placed_xyz - trial) ** 2, axis=1)
+                d2_placed = np.sum(_minimum_image_delta(placed_xyz - trial, box) ** 2, axis=1)
                 if np.min(d2_placed) < cutoff2:
                     continue
             placed.append(
@@ -564,52 +1253,12 @@ def place_ions(atoms, box_lengths, n_na, n_cl, cutoff, rng):
     return placed
 
 
-def collect_backbone_only_bb_map(backbone_atoms, bb_type_by_residue):
-    residue_groups = defaultdict(dict)
-    for atom_idx, atom in enumerate(backbone_atoms):
-        key = residue_key(atom)
-        role = atom["name"].strip().upper()
-        residue_groups[key][role] = atom_idx
-
-    ordered_keys = sorted(residue_groups.keys(), key=lambda x: (x[0], x[1], x[2], x[3]))
-    bb_entries = []
-    for seq_idx, key in enumerate(ordered_keys, start=1):
-        role_map = residue_groups[key]
-        if not all(role in role_map for role in BB_COMPONENT_NAMES):
-            continue
-        idxs = [int(role_map[role]) for role in BB_COMPONENT_NAMES]
-        masses = np.asarray(BB_COMPONENT_MASSES, dtype=np.float32)
-        weights = (masses / masses.sum()).tolist()
-        coords_row = []
-        for role in BB_COMPONENT_NAMES:
-            atom = backbone_atoms[role_map[role]]
-            coords_row.append([float(atom["x"]), float(atom["y"]), float(atom["z"])])
-        bb_type = str(bb_type_by_residue.get(key, "P5")).strip()
-        bb_entries.append(
-            {
-                "bb_residue_index": seq_idx,
-                "bb_resseq": int(key[1]),
-                "bb_chain": str(key[0]),
-                "bb_icode": str(key[2]),
-                "bb_atom_index": -1,
-                "bb_type": bb_type,
-                "atom_indices": idxs,
-                "atom_mask": [1, 1, 1, 1],
-                "weights": weights,
-                "reference_atom_indices": idxs,
-                "reference_atom_coords": coords_row,
-                "bb_comment": (
-                    f"Backbone-only BB map resid={seq_idx} resseq={key[1]} chain={key[0]} "
-                    f"type={bb_type} atom_indices={idxs}"
-                ),
-            }
-        )
-    if not bb_entries:
-        raise ValueError("No complete backbone mapping entries could be generated.")
-    return bb_entries
-
-
-def build_backbone_with_virtual_bb(backbone_atoms, bb_type_by_residue):
+def build_backbone_with_virtual_bb(
+    backbone_atoms,
+    bb_type_by_residue,
+    bb_secondary_by_residue=None,
+    bb_type_source_by_residue=None,
+):
     residue_groups = defaultdict(dict)
     for atom_idx, atom in enumerate(backbone_atoms):
         key = residue_key(atom)
@@ -641,6 +1290,8 @@ def build_backbone_with_virtual_bb(backbone_atoms, bb_type_by_residue):
             com /= wsum
 
         bb_type = str(bb_type_by_residue.get(key, "P5")).strip()
+        bb_secondary = str((bb_secondary_by_residue or {}).get(key, "C")).strip() or "C"
+        bb_type_source = str((bb_type_source_by_residue or {}).get(key, "structure_default")).strip()
         proxy = deepcopy(backbone_atoms[role_map["CA"]])
         proxy["name"] = "BB"
         proxy["x"] = float(com[0])
@@ -659,6 +1310,8 @@ def build_backbone_with_virtual_bb(backbone_atoms, bb_type_by_residue):
                 "bb_icode": str(key[2]),
                 "bb_atom_index": bb_atom_index,
                 "bb_type": bb_type,
+                "bb_secondary_structure": bb_secondary,
+                "bb_type_source": bb_type_source,
                 "atom_indices": idxs,
                 "atom_mask": [1, 1, 1, 1],
                 "weights": weights,
@@ -666,7 +1319,8 @@ def build_backbone_with_virtual_bb(backbone_atoms, bb_type_by_residue):
                 "reference_atom_coords": coords_row,
                 "bb_comment": (
                     f"Backbone virtual BB map resid={seq_idx} resseq={key[1]} chain={key[0]} "
-                    f"type={bb_type} bb_atom_index={bb_atom_index} atom_indices={idxs}"
+                    f"type={bb_type} ss={bb_secondary} source={bb_type_source} "
+                    f"bb_atom_index={bb_atom_index} atom_indices={idxs}"
                 ),
             }
         )
@@ -679,14 +1333,24 @@ def derive_chain_break_metadata(bb_entries):
     if not bb_entries:
         return np.array([], dtype=np.int32), np.array([], dtype=np.int32)
 
-    chain_ids = [str(entry.get("bb_chain", "")).strip() or " " for entry in bb_entries]
-    chain_first_residue = [
-        residue_index
-        for residue_index in range(1, len(chain_ids))
-        if chain_ids[residue_index] != chain_ids[residue_index - 1]
-    ]
-    n_chains = len(chain_first_residue) + 1
-    return np.asarray(chain_first_residue, dtype=np.int32), np.ones(n_chains, dtype=np.int32)
+    chain_first_residue = []
+    chain_counts = [1]
+    prev_chain = str(bb_entries[0].get("bb_chain", "")).strip() or " "
+    prev_resseq = int(bb_entries[0].get("bb_resseq", 0))
+    for residue_index, entry in enumerate(bb_entries[1:], start=1):
+        chain = str(entry.get("bb_chain", "")).strip() or " "
+        resseq = int(entry.get("bb_resseq", residue_index))
+        chain_break = chain != prev_chain
+        seq_break = (not chain_break) and resseq != prev_resseq + 1
+        if chain_break or seq_break:
+            chain_first_residue.append(residue_index)
+            if chain_break:
+                chain_counts.append(1)
+            else:
+                chain_counts[-1] += 1
+        prev_chain = chain
+        prev_resseq = resseq
+    return np.asarray(chain_first_residue, dtype=np.int32), np.asarray(chain_counts, dtype=np.int32)
 
 
 def write_hybrid_mapping_h5(
@@ -700,15 +1364,11 @@ def write_hybrid_mapping_h5(
         inp = h5.create_group("input")
 
         ctrl = inp.create_group("hybrid_control")
-        ctrl.attrs["enable"] = np.int8(1)
         ctrl.attrs["activation_stage"] = b"minimization"
         ctrl.attrs["preprod_protein_mode"] = b"rigid_body"
         ctrl.attrs["preprod_lipid_headgroup_roles"] = b"PO4"
         ctrl.attrs["exclude_intra_protein_martini"] = np.int8(1)
-        ctrl.attrs["production_nonprotein_hard_sphere"] = np.int8(0)
-        ctrl.attrs["protein_env_interface_scale"] = np.float32(1.0)
         ctrl.attrs["virtual_backbone_com_mode"] = np.int8(1)
-        ctrl.attrs["schema_version"] = np.int32(1)
 
         bb_grp = inp.create_group("hybrid_bb_map")
         bb_grp.attrs["atom_index_space"] = b"protein_aa_pdb_0based"
@@ -743,6 +1403,20 @@ def write_hybrid_mapping_h5(
             "bb_type",
             data=np.array(
                 [str(b.get("bb_type", "P5")).strip() for b in bb_entries],
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            ),
+        )
+        bb_grp.create_dataset(
+            "bb_secondary_structure",
+            data=np.array(
+                [str(b.get("bb_secondary_structure", "C")).strip() or "C" for b in bb_entries],
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            ),
+        )
+        bb_grp.create_dataset(
+            "bb_type_source",
+            data=np.array(
+                [str(b.get("bb_type_source", "structure_default")).strip() for b in bb_entries],
                 dtype=h5py.string_dtype(encoding="utf-8"),
             ),
         )
@@ -804,9 +1478,6 @@ def write_hybrid_mapping_h5(
             break_grp.create_dataset("chain_counts", data=chain_counts, dtype=np.int32)
 
 
-# -----------------------------------------------------------------------------
-# Stage Conversion Helpers
-# -----------------------------------------------------------------------------
 def runtime_input_pdb_path(script_dir, pdb_id):
     """Resolve runtime protein+bilayer PDB path with optional override."""
     override = os.environ.get("UPSIDE_RUNTIME_PDB_FILE", "").strip()
@@ -816,379 +1487,16 @@ def runtime_input_pdb_path(script_dir, pdb_id):
 
 
 def read_martini3_nonbond_params(itp_file):
-    """
-    Read MARTINI nonbonded parameters from the main .itp file
-    Returns a dictionary mapping (type1, type2) tuples to (sigma, epsilon) values
-    """
-    martini_table = {}
-    
-    if not os.path.exists(itp_file):
-        print(f"Error: MARTINI parameter file '{itp_file}' not found!")
-        return martini_table
-    
-    with open(itp_file, 'r') as f:
-        lines = f.readlines()
-    
-    # Parse #define macros for dry MARTINI style nonbond_params entries
-    macro_params = {}
-    for raw in lines:
-        line = raw.split(';', 1)[0].strip()
-        if not line.startswith('#define'):
-            continue
-        parts = line.split()
-        # Format: #define m_VI 0.47 2.700
-        if len(parts) >= 4:
-            macro_name = parts[1]
-            try:
-                sigma = float(parts[2])
-                epsilon = float(parts[3])
-                macro_params[macro_name] = (sigma, epsilon)
-            except ValueError:
-                continue
-
-    # Find the nonbond_params section
-    in_nonbond_params = False
-    param_count = 0
-    
-    for i, line in enumerate(lines):
-        line = line.split(';', 1)[0].strip()
-        
-        # Check for nonbond_params section start
-        if line == '[ nonbond_params ]' or line == '[nonbond_params]':
-            in_nonbond_params = True
-            continue
-        elif line.startswith('[') and line.endswith(']') and line != '[ nonbond_params ]' and line != '[nonbond_params]':
-            if in_nonbond_params:
-                break
-            in_nonbond_params = False
-            continue
-        
-        # Parse nonbond_params lines
-        if in_nonbond_params and line and not line.startswith(';'):
-            parts = line.split()
-            if len(parts) >= 5:
-                type1 = parts[0]
-                type2 = parts[1]
-                try:
-                    _func = int(parts[2])
-                except ValueError:
-                    continue
-                try:
-                    sigma = float(parts[3])  # nm
-                    epsilon = float(parts[4])  # kJ/mol
-                except ValueError:
-                    # Dry MARTINI often uses a macro token in column 4
-                    macro = parts[3]
-                    if macro not in macro_params:
-                        continue
-                    sigma, epsilon = macro_params[macro]
-
-                # Store both orientations for easy lookup
-                martini_table[(type1, type2)] = (sigma, epsilon)
-                martini_table[(type2, type1)] = (sigma, epsilon)
-                param_count += 1
-            elif len(parts) >= 4:
-                # Alternative dry MARTINI format: type1 type2 func macro
-                type1 = parts[0]
-                type2 = parts[1]
-                try:
-                    _func = int(parts[2])
-                except ValueError:
-                    continue
-                macro = parts[3]
-                if macro not in macro_params:
-                    continue
-                sigma, epsilon = macro_params[macro]
-                martini_table[(type1, type2)] = (sigma, epsilon)
-                martini_table[(type2, type1)] = (sigma, epsilon)
-                param_count += 1
-    
+    _, pair_params = parse_dry_forcefield(itp_file)
+    martini_table = {
+        key: (value["sigma_nm"], value["epsilon_kj_mol"])
+        for key, value in pair_params.items()
+    }
     print(f"Read {len(martini_table)//2} unique nonbonded parameter pairs")
     return martini_table
 
-# --- Helpers: read MARTINI protein topology (ITP) for protein bead typing and connectivity ---
-def parse_itp_file(itp_file, target_molecule=None, preprocessor_defines=None):
-    """
-    Universal ITP parser to read MARTINI topology files.
-    Returns a dictionary with parsed sections: atoms, bonds, angles, dihedrals, etc.
-    If target_molecule is specified, only returns data for that specific molecule type.
-    """
-    topology = {
-        'atoms': [],
-        'bonds': [], 
-        'angles': [],
-        'dihedrals': [],
-        'position_restraints': [],
-        'exclusions': [],
-        'moleculetype': None,
-        'molecules': {}  # Store multiple molecule types
-    }
-    
-    if not os.path.exists(itp_file):
-        print(f"Warning: ITP file {itp_file} not found")
-        return topology
-    
-    current_section = None
-    current_molecule = None
-    current_mol_data = None
-    macro_defs = {}
-    if preprocessor_defines:
-        for macro_name, macro_value in preprocessor_defines.items():
-            if isinstance(macro_value, (list, tuple)):
-                macro_defs[macro_name] = [float(x) for x in macro_value]
-            else:
-                macro_defs[macro_name] = [float(macro_value)]
-    pp_stack = []
-    current_active = True
-
-    def parse_macro_value(tok, macro_index=None):
-        # Try direct float
-        try:
-            return float(tok)
-        except ValueError:
-            pass
-        # Try macro lookup
-        values = macro_defs.get(tok)
-        if values is None:
-            raise ValueError(f"Unknown macro '{tok}'")
-        if macro_index is None:
-            if not values:
-                raise ValueError(f"Macro '{tok}' has no values")
-            return values[0]
-        if macro_index < len(values):
-            return values[macro_index]
-        if values:
-            return values[-1]
-        raise ValueError(f"Macro '{tok}' has no values")
-    
-    with open(itp_file, 'r') as f:
-        for line in f:
-            line = line.split(';', 1)[0].strip()
-            
-            # Skip empty lines and comments
-            if not line:
-                continue
-
-            # Handle a minimal preprocessor subset so dry MARTINI #ifndef/#else blocks
-            # resolve to a single active topology branch.
-            if line.startswith('#ifdef') or line.startswith('#ifndef'):
-                parts = line.split()
-                macro_name = parts[1] if len(parts) >= 2 else ""
-                is_defined = macro_name in macro_defs
-                cond = is_defined if line.startswith('#ifdef') else (not is_defined)
-                pp_stack.append((current_active, cond))
-                current_active = current_active and cond
-                continue
-            if line.startswith('#else'):
-                if pp_stack:
-                    parent_active, cond = pp_stack[-1]
-                    cond = not cond
-                    pp_stack[-1] = (parent_active, cond)
-                    current_active = parent_active and cond
-                continue
-            if line.startswith('#endif'):
-                if pp_stack:
-                    parent_active, _cond = pp_stack.pop()
-                    current_active = parent_active
-                continue
-            if not current_active:
-                continue
-
-            # Parse and store macro definitions used in dry MARTINI lipids
-            if line.startswith('#define'):
-                parts = line.split()
-                if len(parts) >= 3:
-                    macro_name = parts[1]
-                    macro_vals = []
-                    for tok in parts[2:]:
-                        try:
-                            macro_vals.append(float(tok))
-                        except ValueError:
-                            break
-                    if macro_vals:
-                        macro_defs[macro_name] = macro_vals
-                continue
-
-            # Ignore preprocessor directives like #ifdef/#ifndef/#endif/#include
-            if line.startswith('#'):
-                continue
-            
-            # Check for section headers
-            if line.startswith('[') and line.endswith(']'):
-                section_name = line[1:-1].strip().lower()
-                current_section = section_name
-                continue
-            
-            # Parse based on current section
-            if current_section == 'moleculetype':
-                parts = line.split()
-                if len(parts) >= 1:
-                    current_molecule = parts[0]
-                    if topology['moleculetype'] is None:
-                        topology['moleculetype'] = current_molecule
-                    
-                    # Initialize data structure for this molecule
-                    current_mol_data = {
-                        'atoms': [],
-                        'bonds': [],
-                        'angles': [],
-                        'dihedrals': [],
-                        'position_restraints': [],
-                        'exclusions': []
-                    }
-                    topology['molecules'][current_molecule] = current_mol_data
-            
-            elif current_section == 'atoms' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 6:
-                    try:
-                        atom_data = {
-                            'id': int(parts[0]),
-                            'type': parts[1],
-                            'resnr': int(parts[2]),
-                            'residue': parts[3],
-                            'atom': parts[4],
-                            'cgnr': int(parts[5]),
-                            'charge': 0.0,
-                            'mass': 0.0
-                        }
-                        # Parse charge and mass more carefully
-                        # Charge is typically in column 6 (0-indexed), mass in column 7
-                        if len(parts) >= 7:
-                            try:
-                                atom_data['charge'] = float(parts[6])
-                            except ValueError:
-                                pass
-                        if len(parts) >= 8:
-                            try:
-                                atom_data['mass'] = float(parts[7])
-                            except ValueError:
-                                pass
-                        current_mol_data['atoms'].append(atom_data)
-                        topology['atoms'].append(atom_data)
-                    except (ValueError, IndexError):
-                        continue
-            
-            elif current_section == 'bonds' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 3:
-                    try:
-                        bond_data = {
-                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
-                            'j': int(parts[1]) - 1,
-                            'func': int(parts[2]),
-                            'r0': 0.0,
-                            'k': 0.0
-                        }
-                        if len(parts) >= 5:
-                            bond_data['r0'] = parse_macro_value(parts[3], macro_index=0)  # nm
-                            bond_data['k'] = parse_macro_value(parts[4], macro_index=1)   # kJ/mol/nm²
-                        elif len(parts) >= 4:
-                            # Dry MARTINI alias form: i j func macro
-                            bond_data['r0'] = parse_macro_value(parts[3], macro_index=0)
-                            bond_data['k'] = parse_macro_value(parts[3], macro_index=1)
-                        current_mol_data['bonds'].append(bond_data)
-                        topology['bonds'].append(bond_data)
-                    except (ValueError, IndexError):
-                        continue
-            
-            elif current_section == 'angles' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 5:
-                    try:
-                        angle_data = {
-                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
-                            'j': int(parts[1]) - 1,
-                            'k': int(parts[2]) - 1,
-                            'func': int(parts[3]),
-                            'theta0': 0.0,  # degrees
-                            'force_k': 0.0  # kJ/mol/rad²
-                        }
-                        if len(parts) >= 6:
-                            angle_data['theta0'] = parse_macro_value(parts[4], macro_index=0)
-                            angle_data['force_k'] = parse_macro_value(parts[5], macro_index=1)
-                        else:
-                            # Dry MARTINI alias form: i j k func macro
-                            angle_data['theta0'] = parse_macro_value(parts[4], macro_index=0)
-                            angle_data['force_k'] = parse_macro_value(parts[4], macro_index=1)
-                        current_mol_data['angles'].append(angle_data)
-                        topology['angles'].append(angle_data)
-                    except (ValueError, IndexError):
-                        continue
-            
-            elif current_section == 'dihedrals' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 5:
-                    try:
-                        dihedral_data = {
-                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
-                            'j': int(parts[1]) - 1,
-                            'k': int(parts[2]) - 1,
-                            'l': int(parts[3]) - 1,
-                            'func': int(parts[4]),
-                            'phi0': 0.0,
-                            'k': 0.0,
-                            'mult': 1
-                        }
-                        if len(parts) >= 7:
-                            dihedral_data['phi0'] = float(parts[5])  # degrees
-                            dihedral_data['k'] = float(parts[6])     # kJ/mol
-                        if len(parts) >= 8:
-                            dihedral_data['mult'] = int(parts[7])
-                        current_mol_data['dihedrals'].append(dihedral_data)
-                        topology['dihedrals'].append(dihedral_data)
-                    except (ValueError, IndexError):
-                        continue
-
-            elif current_section == 'position_restraints' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 5:
-                    try:
-                        restraint_data = {
-                            'i': int(parts[0]) - 1,  # Convert to 0-indexed
-                            'func': int(parts[1]),
-                            'fx': parse_macro_value(parts[2]),
-                            'fy': parse_macro_value(parts[3]),
-                            'fz': parse_macro_value(parts[4]),
-                        }
-                        current_mol_data['position_restraints'].append(restraint_data)
-                        topology['position_restraints'].append(restraint_data)
-                    except (ValueError, IndexError):
-                        continue
-            
-            elif current_section == 'exclusions' and current_mol_data is not None:
-                parts = line.split()
-                if len(parts) >= 2:
-                    try:
-                        # Convert to 0-indexed and add all pairs
-                        atoms = [int(part)-1 for part in parts]
-                        for i in range(len(atoms)):
-                            for j in range(i+1, len(atoms)):
-                                exclusion = (atoms[i], atoms[j])
-                                current_mol_data['exclusions'].append(exclusion)
-                                topology['exclusions'].append(exclusion)
-                    except ValueError:
-                        continue
-    
-    # If target_molecule is specified, return only that molecule's data
-    if target_molecule and target_molecule in topology['molecules']:
-        mol_data = topology['molecules'][target_molecule]
-        return {
-            'atoms': mol_data['atoms'],
-            'bonds': mol_data['bonds'],
-            'angles': mol_data['angles'],
-            'dihedrals': mol_data['dihedrals'],
-            'position_restraints': mol_data['position_restraints'],
-            'exclusions': mol_data['exclusions'],
-            'moleculetype': target_molecule,
-            'molecules': {target_molecule: mol_data}
-        }
-    
-    return topology
 
 def read_martini_masses(ff_file):
-    """Read atom type masses from MARTINI force field file"""
-    masses = {}
     ff_file_path = Path(ff_file).expanduser()
     if not ff_file_path.is_absolute():
         ff_file_path = (WORKFLOW_DIR / ff_file_path).resolve()
@@ -1196,209 +1504,133 @@ def read_martini_masses(ff_file):
         ff_file_path = ff_file_path.resolve()
     
     if not ff_file_path.exists():
-        raise ValueError(f"FATAL ERROR: Force field file '{ff_file}' not found.\n"
-                        f"  Full path: {ff_file_path}\n"
-                        f"  This file is required for atom type masses.\n"
-                        f"  Please ensure the MARTINI force field file exists and is readable.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
+        raise ValueError(
+            f"Force-field file '{ff_file}' not found; expected {ff_file_path}"
+        )
     
-    in_atomtypes = False
-    with ff_file_path.open('r') as f:
-        for line in f:
-            line = line.strip()
-            if line.startswith('[ atomtypes ]'):
-                in_atomtypes = True
-                continue
-            elif line.startswith('['):
-                in_atomtypes = False
-                continue
-            
-            if in_atomtypes and line and not line.startswith(';'):
-                parts = line.split()
-                if len(parts) >= 2:
-                    atom_type = parts[0]
-                    try:
-                        mass = float(parts[1])
-                        masses[atom_type] = mass
-                    except ValueError:
-                        continue
-    
-    return masses
-
-def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
-    """
-    Main preparation function with stage-specific parameterization
-    
-    Args:
-        stage: Simulation stage ('minimization', 'npt_equil', 'npt_equil_reduced', 'npt_prod')
-        run_dir: Optional run directory (default: outputs/martini_test)
-    """
-
-    # Get UPSIDE home directory
-    upside_path = os.environ['UPSIDE_HOME']
-
-    # Resolve PDB ID from explicit argument first, then legacy CLI fallback.
-    if pdb_id is None:
-        if len(sys.argv) > 1:
-            pdb_id = sys.argv[1]
-        else:
-            raise ValueError("FATAL ERROR: No PDB ID provided.\n"
-                            f"  Usage: python {sys.argv[0]} <pdb_id>\n"
-                            f"  Example: python {sys.argv[0]} 1rkl\n"
-                            f"  Aborting to prevent incorrect simulation results.")
-
-    # Get run directory from function parameter or use default
-    if run_dir is None:
-        if len(sys.argv) > 2 and sys.argv[2] != '--stage':
-            run_dir = sys.argv[2]
-        else:
-            run_dir = "outputs/martini_test"
-    os.makedirs(run_dir, exist_ok=True)
-
-    # Get stage from environment variable or use default
-    stage = os.environ.get('UPSIDE_SIMULATION_STAGE', stage)
-    print(f"Preparing for stage: {stage}")
-
-    # Stage-specific parameterization
-    stage_params = {
-        'minimization': {
-            'lj_soften': 1,
-            'lj_alpha': 0.2,
-            'coulomb_soften': 1,
-            'slater_alpha': 2.0,
-            'barostat_type': 0  # Berendsen
-        },
-        'npt_equil': {
-            'lj_soften': 1,
-            'lj_alpha': 0.2,
-            'coulomb_soften': 1,
-            'slater_alpha': 2.0,
-            'barostat_type': 0  # Berendsen
-        },
-        'npt_equil_reduced': {
-            'lj_soften': 1,
-            'lj_alpha': 0.05,
-            'coulomb_soften': 1,
-            'slater_alpha': 0.5,
-            'barostat_type': 0  # Berendsen
-        },
-        'npt_prod': {
-            'lj_soften': 0,
-            'lj_alpha': 0.0,
-            'coulomb_soften': 0,
-            'slater_alpha': 0.0,
-            'barostat_type': 1  # Parrinello-Rahman
-        }
-    }
-
-    # Get parameters for current stage
-    params = stage_params.get(stage, stage_params['npt_prod'])
-    stage_lipidhead_fc = float(os.environ.get('UPSIDE_BILAYER_LIPIDHEAD_FC', '0'))
+    return parse_itp_atomtype_masses(ff_file_path)
 
 
-    # Configuration
-    strict_from_martini_pdb = True
-    include_protein = True
-    
-    print("=== Dry MARTINI Protein-Lipid System Preparation ===")
-    print(f"PDB ID: {pdb_id}")
-    print(f"Output directory: {run_dir}")
-    
-    workflow_dir = str(WORKFLOW_DIR)
-    # Read dry MARTINI parameter files
-    print("\n=== Reading Dry MARTINI Parameters ===")
-    ff_dir = Path(
-        os.environ.get('UPSIDE_MARTINI_FF_DIR', str(REPO_ROOT / "parameters" / "dryMARTINI"))
-    ).expanduser()
-    if not ff_dir.is_absolute():
-        ff_dir = (REPO_ROOT / ff_dir).resolve()
-    else:
-        ff_dir = ff_dir.resolve()
-    ff_path = str(ff_dir)
+def build_hybrid_mass_array_up(atom_types, particle_class, martini_masses):
+    mass = np.empty(len(atom_types), dtype=np.float32)
+    for index, (atom_type, class_value) in enumerate(
+        zip(atom_types, particle_class)
+    ):
+        class_name = (
+            class_value.decode("ascii")
+            if isinstance(class_value, (bytes, np.bytes_))
+            else str(class_value)
+        ).strip().upper()
+        if class_name == "PROTEIN":
+            mass[index] = 1.0
+            continue
+        if atom_type not in martini_masses:
+            raise ValueError(
+                f"Mass not found for atom type '{atom_type}' (atom index {index}); "
+                f"available atom types: {sorted(martini_masses.keys())}"
+            )
+        mass[index] = martini_masses[atom_type] / 12.0
+    return mass
 
-    if not os.path.isdir(ff_path):
-        raise ValueError(f"FATAL ERROR: Force-field directory '{ff_path}' not found.\n"
-                        "  Set UPSIDE_MARTINI_FF_DIR to a valid dry-MARTINI force-field directory.")
 
-    ff_files = sorted(os.listdir(ff_path))
-    print(f"Using force-field directory: {ff_path}")
-
+def _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc):
+    """Read the dry MARTINI force field, lipid/ion/water topologies and masses."""
     def pick_ff_file(name, required=True):
         path = os.path.join(ff_path, name)
         if os.path.exists(path):
             return path
         if required:
-            raise ValueError(f"FATAL ERROR: Required dry MARTINI file '{name}' not found in '{ff_path}'.\n"
-                            f"  Available: {ff_files}")
+            raise ValueError(
+                f"Required dry MARTINI file '{name}' not found in '{ff_path}'. Available: {ff_files}"
+            )
         return None
 
-    # Read nonbonded parameters
     martini_param_file = pick_ff_file("dry_martini_v2.1.itp")
     martini_table = read_martini3_nonbond_params(martini_param_file)
-    
+
     if not martini_table:
-        raise ValueError(f"FATAL ERROR: Could not read MARTINI parameters from '{martini_param_file}'\n"
-                        f"  This file is required for proper force field parameterization.\n"
-                        f"  Please ensure the dry MARTINI parameter file exists and is readable.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
-    
-    print("=== Mixed Protein-Lipid System Detected ===")
-    print("Protein runtime representation: AA backbone carriers only (N/CA/C/O)")
-    
-    # For both protein and lipid systems, we need DOPC parameters
-    # Parse DOPC topology from ITP file
-    dopc_param_file = pick_ff_file("dry_martini_v2.1_lipids.itp")
+        raise ValueError(f"Could not read MARTINI parameters from '{martini_param_file}'")
+
+    print("Protein runtime representation: N/CA/C carriers; regenerated O/BB virtual sites")
+
     lipid_preproc_defs = {}
     if stage_lipidhead_fc > 0.0:
         lipid_preproc_defs['BILAYER_LIPIDHEAD_FC'] = stage_lipidhead_fc
-    full_topology = parse_itp_file(dopc_param_file, preprocessor_defines=lipid_preproc_defs)
-    
-    # Try to find DOPC or similar molecule
-    dopc_molecule = None
-    for mol_name in full_topology['molecules'].keys():
-        if 'DOPC' in mol_name.upper() or 'DOP' in mol_name.upper():
-            dopc_molecule = mol_name
-            break
-    
-    if dopc_molecule:
-        dopc_topology = parse_itp_file(
-            dopc_param_file, dopc_molecule, preprocessor_defines=lipid_preproc_defs
+
+    # Parse every ITP once, then resolve each requested lipid moleculetype (single lipid or a
+    # comma-separated mix) against them. Each type's bead types, charges and bonded connectivity
+    # are stored keyed by residue name so a mixed bilayer maps and bonds every molecule correctly.
+    parsed_itps = []
+    for ff_name in ff_files:
+        if not ff_name.lower().endswith(".itp"):
+            continue
+        candidate = pick_ff_file(ff_name)
+        try:
+            parsed_itps.append((candidate, parse_itp_file(candidate, preprocessor_defines=lipid_preproc_defs)))
+        except Exception:
+            continue
+
+    lipids = {}
+    for lipid_name in active_lipid_names():
+        lipid_param_file = None
+        lipid_molecule = None
+        for candidate, candidate_topology in parsed_itps:
+            match = next((mol for mol in candidate_topology.get('molecules', {})
+                          if mol.upper() == lipid_name.upper()), None)
+            if match is not None:
+                lipid_param_file = candidate
+                lipid_molecule = match
+                break
+        if lipid_param_file is None:
+            available_itps = [f for f in ff_files if f.lower().endswith(".itp")]
+            raise ValueError(
+                f"Lipid molecule '{lipid_name}' not found in any ITP under '{ff_path}'. "
+                f"Available ITP files: {available_itps}"
+            )
+
+        lipid_topology = parse_itp_file(
+            lipid_param_file, lipid_molecule, preprocessor_defines=lipid_preproc_defs
         )
-    else:
-        available_molecules = list(full_topology['molecules'].keys())
-        raise ValueError(f"FATAL ERROR: DOPC molecule not found in '{dopc_param_file}'.\n"
-                        f"  Available molecules: {available_molecules}\n"
-                        f"  Please ensure DOPC is defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
-    
-    dopc_bead_types = [atom['type'] for atom in dopc_topology['atoms']]
-    dopc_charges = [atom['charge'] for atom in dopc_topology['atoms']]
-    # Create mapping from atom names to bead types and charges
-    dopc_atom_to_type = {atom['atom']: atom['type'] for atom in dopc_topology['atoms']}
-    dopc_atom_to_charge = {atom['atom']: atom['charge'] for atom in dopc_topology['atoms']}
-    print(f"Read DOPC topology: {len(dopc_bead_types)} bead types from {dopc_param_file}")
-    
-    # Parse ion topologies from ITP file
+        lipid_bonds = [(bond['i'], bond['j']) for bond in lipid_topology['bonds']]
+        lipid_angles = [(angle['i'], angle['j'], angle['k']) for angle in lipid_topology['angles']]
+        if not lipid_bonds:
+            raise ValueError(f"No {lipid_name} bonds found in topology from '{lipid_param_file}'")
+        if not lipid_angles:
+            raise ValueError(f"No {lipid_name} angles found in topology from '{lipid_param_file}'")
+
+        bead_types = [atom['type'] for atom in lipid_topology['atoms']]
+        lipids[lipid_molecule.upper()] = {
+            'bead_types': bead_types,
+            'charges': [atom['charge'] for atom in lipid_topology['atoms']],
+            'atom_to_type': {atom['atom']: atom['type'] for atom in lipid_topology['atoms']},
+            'atom_to_charge': {atom['atom']: atom['charge'] for atom in lipid_topology['atoms']},
+            'bonds': lipid_bonds,
+            'bond_lengths': [bond['r0'] for bond in lipid_topology['bonds']],
+            'bond_force_constants': [bond['k'] for bond in lipid_topology['bonds']],
+            'angles': lipid_angles,
+            'angle_equil_deg': [angle['theta0'] for angle in lipid_topology['angles']],
+            'angle_force_constants': [angle['force_k'] for angle in lipid_topology['angles']],
+            'position_restraints': lipid_topology.get('position_restraints', []),
+        }
+        print(f"Read {lipid_molecule} topology: {len(bead_types)} bead types from {lipid_param_file}")
+        print(f"Read {lipid_molecule} connectivity: {len(lipid_bonds)} bonds, {len(lipid_angles)} angles")
+
     ion_param_file = pick_ff_file("dry_martini_v2.1_ions.itp", required=False)
     if ion_param_file:
         ion_topology = parse_itp_file(ion_param_file)
-        # Extract NA and CL atoms specifically
-        # In MARTINI ion ITP files, residue name is "ION" and atom name is "NA" or "CL"
         na_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'NA']
         cl_atoms = [atom for atom in ion_topology['atoms'] if atom['atom'].upper() == 'CL']
-        
-        # For standard ions, use the first occurrence (standard chloride is TQ5, not SQ5n which is for acetate)
+
         na_bead_types = [na_atoms[0]['type']] if na_atoms else []
         na_charges = [na_atoms[0]['charge']] if na_atoms else []
-        cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []  # Use first CL (TQ5), not acetate CL (SQ5n)
+        cl_bead_types = [cl_atoms[0]['type']] if cl_atoms else []
         cl_charges = [cl_atoms[0]['charge']] if cl_atoms else []
         print(f"Ion topology loaded: NA={len(na_bead_types)} type(s), CL={len(cl_bead_types)} type(s)")
     else:
         na_bead_types, na_charges = [], []
         cl_bead_types, cl_charges = [], []
         print("Ion topology file not found in selected FF")
-    
-    # Parse water topology from ITP file
+
     water_param_file = pick_ff_file("dry_martini_v2.1_solvents.itp", required=False)
     if water_param_file:
         water_topology = parse_itp_file(water_param_file)
@@ -1409,95 +1641,34 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     else:
         water_bead_types, water_charges = [], []
         print("Water topology file not found in selected FF")
-    
-    # Read bead masses from force field file
-    mass_file = martini_param_file
-    martini_masses = read_martini_masses(mass_file)
+
+    martini_masses = read_martini_masses(martini_param_file)
     print(f"Read {len(martini_masses)} atom type masses from force field file")
-    
-    # Read DOPC bonds and angles from parsed topology (for both lipid and mixed systems)
-    dopc_bonds = [(bond['i'], bond['j']) for bond in dopc_topology['bonds']]
-    dopc_bond_lengths = [bond['r0'] for bond in dopc_topology['bonds']]  # nm
-    dopc_bond_force_constants = [bond['k'] for bond in dopc_topology['bonds']]  # kJ/mol/nm²
-    
-    dopc_angles = [(angle['i'], angle['j'], angle['k']) for angle in dopc_topology['angles']]
-    dopc_angle_equil_deg = [angle['theta0'] for angle in dopc_topology['angles']]  # degrees
-    dopc_angle_force_constants = [angle['force_k'] for angle in dopc_topology['angles']]  # kJ/mol/rad²
-    dopc_position_restraints = dopc_topology.get('position_restraints', [])
-    
-    print(f"Read DOPC connectivity: {len(dopc_bonds)} bonds, {len(dopc_angles)} angles")
-    
-    # Validate that required topology data was found
-    if not dopc_bonds:
-        raise ValueError(f"FATAL ERROR: No DOPC bonds found in topology from '{dopc_param_file}'.\n"
-                        f"  This indicates incomplete molecule definition.\n"
-                        f"  Please ensure DOPC bonds are properly defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
-    
-    if not dopc_angles:
-        raise ValueError(f"FATAL ERROR: No DOPC angles found in topology from '{dopc_param_file}'.\n"
-                        f"  This indicates incomplete molecule definition.\n"
-                        f"  Please ensure DOPC angles are properly defined in the phospholipid parameter file.\n"
-                        f"  Aborting to prevent incorrect simulation results.")
-    
-    # Unit conversions for mapping native MARTINI units into the active
-    # simulation unit system. These must be provided explicitly rather than
-    # baked into the generator.
-    energy_conversion_raw = os.environ.get('UPSIDE_MARTINI_ENERGY_CONVERSION', '').strip()
-    length_conversion_raw = os.environ.get('UPSIDE_MARTINI_LENGTH_CONVERSION', '').strip()
-    if not energy_conversion_raw:
-        raise ValueError("Missing required environment variable UPSIDE_MARTINI_ENERGY_CONVERSION")
-    if not length_conversion_raw:
-        raise ValueError("Missing required environment variable UPSIDE_MARTINI_LENGTH_CONVERSION")
-    energy_conversion = float(energy_conversion_raw)
-    length_conversion = float(length_conversion_raw)
-    coulomb_constant_native = float(os.environ.get('UPSIDE_MARTINI_COULOMB_CONSTANT_NATIVE', str(138.935458 / 15.0)))
-    if energy_conversion <= 0.0:
-        raise ValueError("UPSIDE_MARTINI_ENERGY_CONVERSION must be positive")
-    if length_conversion <= 0.0:
-        raise ValueError("UPSIDE_MARTINI_LENGTH_CONVERSION must be positive")
 
-    # Pressure conversion (for NPT simulations):
-    # 1 atm = 101325 Pa = 101.325 kJ/m³
-    # 1 atm = 1.01325e-28 kJ/Å³
-    # 1 atm = (1.01325e-28 kJ/Å³) × (6.02214e23 mol⁻¹) / (2.914952774272 kJ/mol)
-    # 1 atm = 0.000020933 E_up/Å³
-    # 1 bar = 0.986923 atm = 0.000020659 E_up/Å³
-    # For LAMMPS real units compatibility, use 1 bar = 0.000020659 E_up/Å³
-    pressure_conversion_bar_to_eup = 0.000020659  # bar → E_up/Å³
+    return {
+        'martini_table': martini_table,
+        'martini_masses': martini_masses,
+        'lipids': lipids,
+        'na_bead_types': na_bead_types,
+        'na_charges': na_charges,
+        'cl_bead_types': cl_bead_types,
+        'cl_charges': cl_charges,
+        'water_bead_types': water_bead_types,
+        'water_charges': water_charges,
+    }
 
-    # Bonds: kJ/mol/nm² → E_up/Å²
-    # = (kJ/mol → E_up) / (nm² → Å²)
-    # = (1/energy_conversion) / (length_conversion²)
-    bond_conversion = 1.0 / (energy_conversion * length_conversion ** 2)  # ≈ 0.003406
 
-    # Angles: kJ/mol/deg² → E_up/deg²
-    # = (kJ/mol → E_up) (degrees stay the same)
-    angle_conversion = 1.0 / energy_conversion  # ≈ 0.343
+def _parse_runtime_pdb_atoms(input_pdb_file, topo):
+    """Parse the runtime PDB, map each atom to its MARTINI bead type, read the box."""
+    lipids = topo['lipids']
+    water_bead_types = topo['water_bead_types']
+    water_charges = topo['water_charges']
+    na_bead_types = topo['na_bead_types']
+    na_charges = topo['na_charges']
+    cl_bead_types = topo['cl_bead_types']
+    cl_charges = topo['cl_charges']
 
-    # Dihedrals: kJ/mol → E_up
-    dihedral_conversion = 1.0 / energy_conversion  # ≈ 0.343
-
-    print("\n=== MARTINI Unit Conversions ===")
-    print(f"Bond lengths (nm -> Å): 0.40 nm -> 4.0 Å")
-    print(f"Bond force constants (kJ/mol/nm² -> E_up/Å²): 7000.0 -> {7000.0 * bond_conversion:.3f}")
-    print(f"Angle equilibrium (degrees): 108.0°")
-    print(f"Angle force constants (kJ/mol/deg² -> E_up/deg²): 21.5 -> {21.5 * angle_conversion:.6f}")
-    print(f"Dihedral force constants (kJ/mol -> E_up): 400.0 -> {400.0 * dihedral_conversion:.6f}")
-    print(f"Pressure (bar -> E_up/Å³): 1 bar -> {pressure_conversion_bar_to_eup:.9f}")
-    print(f"Energy conversion factor: {energy_conversion} (kJ/mol -> E_up)")
-    print(f"Length conversion: 1 nm = {length_conversion} Å, so 1 nm² = {length_conversion**2} Å²")
-    print(f"Bond conversion factor: {bond_conversion:.6f} (divide by energy_conv × length_conv²)")
-    print(f"Angle conversion factor: {angle_conversion:.6f} (divide by energy_conv)")
-    print(f"Dihedral conversion factor: {dihedral_conversion:.6f} (divide by energy_conv)")
-    
-    # Read PDB file
-    if strict_from_martini_pdb or include_protein:
-        input_pdb_file = runtime_input_pdb_path(workflow_dir, pdb_id)
-        print(f"\nUsing MARTINI PDB as base structure: {input_pdb_file}")
-    
-    # Read PDB and populate arrays
-    print(f"\n=== Reading PDB Structure ===")
+    print("Reading PDB structure")
     initial_positions = []
     atom_types = []
     charges = []
@@ -1506,18 +1677,26 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     residue_names = []
     chain_ids = []
     seg_ids = []
-    
-    protein_bonds, protein_angles, protein_dihedrals, protein_constraints = [], [], [], []
-    protein_exclusions = []
-    protein_position_restraints = []
 
     protein_atoms_for_mapping, _ = parse_pdb(Path(input_pdb_file))
-    protein_backbone_atoms_for_mapping, _ = extract_protein_backbone_atoms_from_aa(protein_atoms_for_mapping)
-    bb_type_by_residue = map_backbone_types_from_martinize_fallback(
-        protein_backbone_atoms_for_mapping
-    )
-    
-    
+    protein_like_atoms = [
+        atom for atom in protein_atoms_for_mapping
+        if atom["resname"].upper() in {
+            'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS',
+            'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP',
+            'TYR', 'VAL', 'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX',
+        }
+    ]
+    if protein_like_atoms:
+        protein_backbone_atoms_for_mapping, _ = extract_protein_backbone_atoms_from_aa(
+            protein_atoms_for_mapping
+        )
+        bb_type_by_residue = map_backbone_types_from_martinize_fallback(
+            protein_backbone_atoms_for_mapping
+        )
+    else:
+        bb_type_by_residue = {}
+
     protein_residue_names = {
         'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS',
         'ILE', 'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP',
@@ -1527,14 +1706,13 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         for line in f:
             if not line.startswith(('ATOM', 'HETATM')):
                 continue
-                
-            # Parse PDB line
+
             atom_name_raw = line[12:16].strip()
             atom_name = atom_name_raw.upper()
             atom_names.append(atom_name)
             residue_id = int(line[22:26])
             residue_ids.append(residue_id)
-            # Read 4-character residue field to support DOPC while preserving
+            # Read 4-character residue field to support 4-char lipid resnames while preserving
             # standard 3-letter protein residues (e.g., " ASN" -> "ASN").
             residue_name = line[17:21].strip().upper()
             residue_names.append(residue_name)
@@ -1542,70 +1720,60 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             chain_ids.append(chain_id)
             seg_id = line[72:76].strip()
             seg_ids.append(seg_id)
-            
-            
-            
-            # Extract coordinates
+
             x = float(line[30:38])
             y = float(line[38:46])
             z = float(line[46:54])
             initial_positions.append([x, y, z])
-            
+
             is_protein = (residue_name in protein_residue_names)
-            
+
             # Map to MARTINI type based on context
             if is_protein:
                 if atom_name not in {"N", "CA", "C", "O", "BB"}:
                     raise ValueError(
-                        f"FATAL ERROR: Protein atom '{atom_name}' in residue '{residue_name}' is not one of N/CA/C/O/BB.\n"
-                        "Runtime AA protein representation must be backbone-only."
+                        f"Protein atom '{atom_name}' in residue '{residue_name}' is not one of N/CA/C/O/BB"
                     )
                 icode = line[26:27].strip()
                 res_key = (chain_id, residue_id, icode, residue_name)
                 martini_type = bb_type_by_residue.get(res_key, "P5")
                 charge = float(BB_TYPE_CHARGE.get(martini_type, 0.0))
-            elif residue_name == 'DOPC' or residue_name == 'DOP':
-                # For DOPC, use the topology from parameter file (for both lipid and mixed systems)
-                if atom_name in dopc_atom_to_type:
-                    martini_type = dopc_atom_to_type[atom_name]
-                    charge = dopc_atom_to_charge[atom_name]
+            elif lipid_resname(residue_name):
+                # Membrane molecule: use the per-residue topology parsed from the input ITP.
+                lipid_rec = lipids[residue_name]
+                if atom_name in lipid_rec['atom_to_type']:
+                    martini_type = lipid_rec['atom_to_type'][atom_name]
+                    charge = lipid_rec['atom_to_charge'][atom_name]
                 else:
-                    available_atom_names = sorted(dopc_atom_to_type.keys())
-                    raise ValueError(f"FATAL ERROR: Unknown DOPC atom '{atom_name}' in residue '{residue_name}'.\n"
-                                   f"  Available DOPC atom names: {available_atom_names}\n"
-                                   f"  This indicates incomplete DOPC topology mapping.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    available_atom_names = sorted(lipid_rec['atom_to_type'].keys())
+                    raise ValueError(
+                        f"Unknown {residue_name} atom '{atom_name}' in residue '{residue_name}'. "
+                        f"Available {residue_name} atom names: {available_atom_names}"
+                    )
             elif residue_name == 'W':
                 if not water_bead_types:
-                    raise ValueError(f"FATAL ERROR: No water bead types found in topology.\n"
-                                   f"  This indicates incomplete water parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError("No water bead types found in topology")
                 martini_type = water_bead_types[0]
                 charge = water_charges[0]
             elif residue_name == 'NA':
                 if not na_bead_types:
-                    raise ValueError(f"FATAL ERROR: No sodium bead types found in topology.\n"
-                                   f"  This indicates incomplete ion parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError("No sodium bead types found in topology")
                 martini_type = na_bead_types[0]
                 charge = na_charges[0]
             elif residue_name == 'CL':
                 if not cl_bead_types:
-                    raise ValueError(f"FATAL ERROR: No chloride bead types found in topology.\n"
-                                   f"  This indicates incomplete ion parameter file.\n"
-                                   f"  Aborting to prevent incorrect simulation results.")
+                    raise ValueError("No chloride bead types found in topology")
                 martini_type = cl_bead_types[0]
                 charge = cl_charges[0]
             else:
-                raise ValueError(f"FATAL ERROR: Unknown residue type '{residue_name}' for atom '{atom_name}'.\n"
-                               f"  Supported residue types: PROTEIN, DOPC, W, NA, CL\n"
-                               f"  This indicates incomplete system definition.\n"
-                               f"  Aborting to prevent incorrect simulation results.")
-            
+                raise ValueError(
+                    f"Unknown residue type '{residue_name}' for atom '{atom_name}'. "
+                    f"Supported residue types: PROTEIN, {active_lipid_name()}, W, NA, CL"
+                )
+
             atom_types.append(martini_type)
             charges.append(charge)
-    
-    # Convert to numpy arrays
+
     initial_positions = np.array(initial_positions, dtype=float)
     atom_types = np.array(atom_types)
     charges = np.array(charges, dtype=float)
@@ -1615,8 +1783,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     chain_ids = np.array(chain_ids)
     seg_ids = np.array(seg_ids)
     n_atoms = len(initial_positions)
-    
-    # Read box dimensions from CRYST1 record
+
+    n_lipid_atoms = int(np.sum([lipid_resname(r) for r in residue_names]))
+    n_lipid_mols = 0
+    for name, rec in lipids.items():
+        beads = len(rec['bead_types'])
+        if beads:
+            n_lipid_mols += int(np.sum(residue_names == name)) // beads
+    print(f"Full-resolution mode: keeping all {n_lipid_mols} {active_lipid_name()} molecules "
+          f"({n_lipid_atoms} beads) as individual particles")
+
     print(f"Reading box dimensions from {input_pdb_file}...")
     with open(input_pdb_file, 'r') as f:
         for line in f:
@@ -1629,32 +1805,31 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     print(f"Found CRYST1 record: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
                     break
         else:
-            raise ValueError(f"FATAL ERROR: No CRYST1 record found in PDB file '{input_pdb_file}'.\n"
-                           f"  Box dimensions are required for proper simulation setup.\n"
-                           f"  Please ensure the PDB file contains a CRYST1 record with box dimensions.\n"
-                           f"  Aborting to prevent incorrect simulation results.")
-    
-    # Print system parameters
+            raise ValueError(f"No CRYST1 record found in PDB file '{input_pdb_file}'")
+
     print(f"Box dimensions: X={x_len:.3f}, Y={y_len:.3f}, Z={z_len:.3f} Angstroms")
-    print(f"Box volume: {x_len * y_len * z_len:.1f} Å³")
+    print(f"Box volume: {x_len * y_len * z_len:.1f} A^3")
     print(f"Total atoms: {n_atoms}")
-    
-    # Group atoms into molecules by chain (for proteins) or residue ID (for other molecules)
+
+    return (initial_positions, atom_types, charges, residue_ids, atom_names,
+            residue_names, chain_ids, seg_ids, n_atoms, x_len, y_len, z_len)
+
+
+def _group_atoms_into_molecules(residue_ids, residue_names, atom_names, chain_ids, seg_ids, n_atoms):
+    """Group atoms into molecules by protein chain or by residue for everything else."""
     molecules = []
     current_mol_atoms = []
-    current_mol_names = []
     current_mol_indices = []
     current_resid = None
     current_resname = None
     current_chain = None
-    
-    # Define protein residue names
+
     protein_residues = {
         'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
         'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL',
         'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX',
     }
-    
+
     def pick_chain_id(idx):
         # Prefer PDB chain ID to preserve distinct protein chains in multi-chain
         # systems where segid may be shared (e.g., "PROA" for all protein atoms).
@@ -1663,13 +1838,11 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         return seg_ids[idx]
 
     for i, (resid, resname, atom_name) in enumerate(zip(residue_ids, residue_names, atom_names)):
-        # Determine molecule type
         if resname in protein_residues:
             mol_type = 'PROTEIN'
         else:
-            # Normalize DOP (resname in PDB) to DOPC for reporting and selection
-            mol_type = 'DOPC' if resname == 'DOP' else resname
-            
+            mol_type = resname
+
         # Start new molecule if protein chain changes or residue ID/name changes for non-proteins
         chain_id = pick_chain_id(i) if mol_type == 'PROTEIN' else ""
         start_new = False
@@ -1684,7 +1857,6 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             if current_mol_atoms:
                 molecules.append((current_mol_type, current_mol_atoms, current_mol_indices))
             current_mol_atoms = [atom_name]
-            current_mol_names = [atom_name]
             current_mol_indices = [i]
             current_resid = resid
             current_resname = resname
@@ -1693,7 +1865,7 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         else:
             current_mol_atoms.append(atom_name)
             current_mol_indices.append(i)
-    
+
     if current_mol_atoms:
         molecules.append((current_mol_type, current_mol_atoms, current_mol_indices))
 
@@ -1702,24 +1874,19 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     for mol_idx, (_, _, atom_indices) in enumerate(molecules):
         for atom_idx in atom_indices:
             molecule_ids[atom_idx] = mol_idx
-
     # Validate that each non-protein molecule contains only atoms of the same residue type
     for i, (mol_type, atoms, indices) in enumerate(molecules):
         residue_names_in_mol = [residue_names[idx] for idx in indices]
         unique_resnames = set(residue_names_in_mol)
         if mol_type != 'PROTEIN':
             if len(unique_resnames) > 1:
-                raise ValueError(f"FATAL ERROR: Molecule {i} contains mixed residue types: {unique_resnames}\n"
-                               f"  This indicates incorrect molecule grouping.\n"
-                               f"  Molecule atoms: {atoms}\n"
-                               f"  Residue names: {residue_names_in_mol}\n"
-                               f"  Aborting to prevent incorrect simulation results.")
-        else:
-            pass
-    
+                raise ValueError(
+                    f"Molecule {i} contains mixed residue types: {unique_resnames}; "
+                    f"atoms={atoms}, residue_names={residue_names_in_mol}"
+                )
+
     # Count molecules by type, but group all protein residues together
     mol_counts = Counter()
-    protein_residue_count = 0
     protein_sequence = []
     protein_sequence_seen = set()
     for idx, (resid, resname) in enumerate(zip(residue_ids, residue_names)):
@@ -1737,27 +1904,32 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             protein_residue_keys.add((pick_chain_id(idx), resid))
 
     for mol_type, _, _ in molecules:
-        if mol_type == 'PROTEIN':
-            mol_counts[mol_type] += 1
-        else:
-            mol_counts[mol_type] += 1
-    
+        mol_counts[mol_type] += 1
+
     protein_residue_count = len(protein_residue_keys)
     if protein_residue_count > 0:
         protein_chains = mol_counts.get('PROTEIN', 0)
         mol_counts['PROTEIN'] = f"{protein_chains} chain(s) ({protein_residue_count} residues)"
-    
-    dopc_count = mol_counts.get('DOPC', 0)
+
+    lipid_count = sum(mol_counts.get(name, 0) for name in active_lipid_names())
     water_count = mol_counts.get('W', 0)
-    
-    print(f"\n=== Molecule Summary ===")
+
+    print("\nMolecule summary")
     for moltype, count in mol_counts.items():
         print(f"{moltype}: {count} molecules")
-    
-    # Create bonds and angles
-    print(f"\n=== Creating Connectivity ===")
-    
-    # Initialize lists for bonds and angles
+
+    return molecules, molecule_ids, protein_sequence, lipid_count, water_count
+
+
+def _build_bonded_terms(molecules, topo, initial_positions,
+                        bond_conversion, angle_conversion, dihedral_conversion,
+                        protein_bonds, protein_angles, protein_dihedrals,
+                        protein_constraints, protein_position_restraints):
+    """Build lipid and protein bonds/angles/dihedrals plus lipid position restraints."""
+    lipids = topo['lipids']
+
+    print("\nCreating connectivity")
+
     bonds_list = []
     bond_lengths_list = []
     bond_force_constants_list = []
@@ -1771,28 +1943,36 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
     lipid_restraint_indices = []
     lipid_restraint_ref_pos = []
     lipid_restraint_spring_xyz = []
-    
-    # Create DOPC bonds and angles (for both lipid and mixed systems)
-    dopc_molecules = [mol for mol in molecules if mol[0] == 'DOPC']  # unified label
-    
-    for mol_idx, (_, atom_names_mol, atom_indices) in enumerate(dopc_molecules):
+
+    active_lipids = set(active_lipid_names())
+    lipid_molecules = [mol for mol in molecules if mol[0] in active_lipids]
+    for mol_idx, (mol_type, atom_names_mol, atom_indices) in enumerate(lipid_molecules):
+        lipid_rec = lipids[mol_type]
+        lipid_bead_types = lipid_rec['bead_types']
+        lipid_bonds = lipid_rec['bonds']
+        lipid_bond_lengths = lipid_rec['bond_lengths']
+        lipid_bond_force_constants = lipid_rec['bond_force_constants']
+        lipid_angles = lipid_rec['angles']
+        lipid_angle_equil_deg = lipid_rec['angle_equil_deg']
+        lipid_angle_force_constants = lipid_rec['angle_force_constants']
+        lipid_position_restraints = lipid_rec['position_restraints']
         name_to_idx = {name: idx for name, idx in zip(atom_names_mol, atom_indices)}
-        
-        # Create bonds for this lipid
-        for i, (bond_idx1, bond_idx2) in enumerate(dopc_bonds):
-            if bond_idx1 < len(dopc_bead_types) and bond_idx2 < len(dopc_bead_types):
+
+        for i, (bond_idx1, bond_idx2) in enumerate(lipid_bonds):
+            if bond_idx1 < len(lipid_bead_types) and bond_idx2 < len(lipid_bead_types):
                 atom1_name = atom_names_mol[bond_idx1]
                 atom2_name = atom_names_mol[bond_idx2]
                 atom1 = name_to_idx[atom1_name]
                 atom2 = name_to_idx[atom2_name]
                 bonds_list.append([atom1, atom2])
-                bond_lengths_list.append(dopc_bond_lengths[i] * 10.0)  # nm to Å
-                bond_force_constants_list.append(dopc_bond_force_constants[i] * bond_conversion)  # kJ/mol/nm² to E_up/Å²
-        
-        # Create angles for this lipid
-        for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(dopc_angles):
-            if (angle_idx1 < len(dopc_bead_types) and angle_idx2 < len(dopc_bead_types) and 
-                angle_idx3 < len(dopc_bead_types)):
+                bond_lengths_list.append(lipid_bond_lengths[i] * 10.0)
+                bond_force_constants_list.append(
+                    lipid_bond_force_constants[i] * bond_conversion
+                )
+
+        for i, (angle_idx1, angle_idx2, angle_idx3) in enumerate(lipid_angles):
+            if (angle_idx1 < len(lipid_bead_types) and angle_idx2 < len(lipid_bead_types) and
+                angle_idx3 < len(lipid_bead_types)):
                 atom1_name = atom_names_mol[angle_idx1]
                 atom2_name = atom_names_mol[angle_idx2]
                 atom3_name = atom_names_mol[angle_idx3]
@@ -1800,12 +1980,12 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                 atom2 = name_to_idx[atom2_name]
                 atom3 = name_to_idx[atom3_name]
                 angles_list.append([atom1, atom2, atom3])
-                angle_equil_deg_list.append(dopc_angle_equil_deg[i])
-                angle_force_constants_list.append(dopc_angle_force_constants[i] * angle_conversion)  # kJ/mol/deg² to E_up/deg²
+                angle_equil_deg_list.append(lipid_angle_equil_deg[i])
+                angle_force_constants_list.append(
+                    lipid_angle_force_constants[i] * angle_conversion
+                )
 
-        # Apply stage-specific lipid head-group restraints from dry MARTINI topology
-        # (e.g., BILAYER_LIPIDHEAD_FC=200/100/50/20/10 for stages 6.2-6.6).
-        for restraint in dopc_position_restraints:
+        for restraint in lipid_position_restraints:
             local_idx = restraint['i']
             if 0 <= local_idx < len(atom_indices):
                 atom_idx = atom_indices[local_idx]
@@ -1816,92 +1996,371 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
                     restraint['fy'] * bond_conversion,
                     restraint['fz'] * bond_conversion,
                 ])
-    
-    print(f"Created {len(bonds_list)} bonds for {dopc_count} DOPC lipids")
-    print(f"Created {len(angles_list)} angles for {dopc_count} DOPC lipids")
-    print(f"Created {len(lipid_restraint_indices)} lipid position restraints (BILAYER_LIPIDHEAD_FC={stage_lipidhead_fc:g})")
-    
-    # Create protein connectivity if available
+
+    n_lipid_bonds = len(bonds_list)
+    n_lipid_angles = len(angles_list)
+    print(f"Full-resolution mode: created {n_lipid_bonds} {active_lipid_name()} bonds, "
+          f"{n_lipid_angles} angles, {len(lipid_restraint_indices)} restraints "
+          f"across {len(lipid_molecules)} lipids")
+
     protein_bond_count = 0
     protein_angle_count = 0
     protein_dihedral_count = 0
     protein_constraint_count = 0
-    
+
     if protein_bonds or protein_constraints:
-        print("\n=== Protein Connectivity ===")
+        print("\nProtein connectivity")
         print(f"Found {len(protein_bonds)} bonds, {len(protein_angles)} angles, {len(protein_dihedrals)} dihedrals")
         print(f"Found {len(protein_constraints)} constraints, {len(protein_position_restraints)} position restraints")
-        
-        # Add protein bonds to the bond list
+
         for i, j, r0_nm, k_kj in protein_bonds:
-            # Convert MARTINI units to UPSIDE units
-            r0_angstrom = r0_nm * 10.0  # nm to Å
-            k_upside = k_kj * bond_conversion  # kJ/mol/nm² to E_up/Å²
-            
-            # Add to bond list (assuming protein atoms come first in the system)
+            r0_angstrom = r0_nm * 10.0
+            k_upside = k_kj * bond_conversion
+
             bonds_list.append([i, j])
             bond_lengths_list.append(r0_angstrom)
             bond_force_constants_list.append(k_upside)
             protein_bond_count += 1
-        
-        # Add protein constraints as bonds with large spring constants
+
         for i, j, r0_nm, k_kj in protein_constraints:
-            # Convert MARTINI units to UPSIDE units
-            r0_angstrom = r0_nm * 10.0  # nm to Å
-            k_upside = k_kj * bond_conversion  # kJ/mol/nm² to E_up/Å²
-            
-            # Add to bond list
+            r0_angstrom = r0_nm * 10.0
+            k_upside = k_kj * bond_conversion
+
             bonds_list.append([i, j])
             bond_lengths_list.append(r0_angstrom)
             bond_force_constants_list.append(k_upside)
             protein_constraint_count += 1
-        
-        # Add protein angles to the angle list
+
         for i, j, k, theta0_deg, k_kj in protein_angles:
-            # Convert MARTINI units to UPSIDE units
-            theta0_upside = theta0_deg  # degrees (same unit)
-            k_upside = k_kj * angle_conversion  # kJ/mol/deg² to E_up/deg²
-            
-            # Add to angle list
+            theta0_upside = theta0_deg
+            k_upside = k_kj * angle_conversion
+
             angles_list.append([i, j, k])
             angle_equil_deg_list.append(theta0_upside)
             angle_force_constants_list.append(k_upside)
             protein_angle_count += 1
-        
-        # Add protein dihedrals to the dihedral list
+
         for i, j, k, l, phi0_deg, k_kj, func_type in protein_dihedrals:
-            # Convert MARTINI units to UPSIDE units
-            phi0_upside = phi0_deg  # degrees (same unit)
+            phi0_upside = phi0_deg
             k_upside = k_kj * dihedral_conversion  # kJ/mol to E_up
-            
-            # Add to dihedral list
+
             dihedrals_list.append([i, j, k, l])
             dihedral_equil_deg_list.append(phi0_upside)
             dihedral_force_constants_list.append(k_upside)
             dihedral_type_list.append(func_type)
             protein_dihedral_count += 1
-        
+
         print(f"Added {protein_bond_count} protein bonds")
         print(f"Added {protein_constraint_count} protein constraints (as bonds with large spring constants)")
         print(f"Added {protein_angle_count} protein angles")
         print(f"Added {protein_dihedral_count} protein dihedrals")
     else:
         print("\nNo explicit protein MARTINI connectivity is used for AA backbone runtime mode")
-    
+
     print(f"Total system bonds: {len(bonds_list)}")
     print(f"Total system angles: {len(angles_list)}")
     print(f"Total system dihedrals: {len(dihedrals_list)}")
+
+    return (bonds_list, bond_lengths_list, bond_force_constants_list,
+            angles_list, angle_equil_deg_list, angle_force_constants_list,
+            dihedrals_list, dihedral_equil_deg_list, dihedral_force_constants_list,
+            dihedral_type_list, lipid_restraint_indices, lipid_restraint_ref_pos,
+            lipid_restraint_spring_xyz, protein_bond_count, protein_constraint_count,
+            protein_angle_count, protein_dihedral_count)
+
+
+def _write_nonbonded_pairs(t, martini_potential, n_atoms, atom_types, charges,
+                           bonds_list, protein_exclusions, martini_table,
+                           energy_conversion, length_conversion, martini_site_mask):
+    """Write the optimized non-bonded pair table (pairs + coefficient indices).
+
+    Only the sites in martini_site_mask carry MARTINI non-bonded interactions. On the protein that is the
+    BB bead alone: dry-MARTINI represents a residue backbone as one bead, BB is built as the mass-weighted
+    centre of N/CA/C/O and carries the secondary-structure-dependent BB type, so giving N, CA, C and O
+    their own full-strength bead interactions as well would count the backbone against the environment
+    five times over. Intra-protein physics belongs to the Upside force field and is excluded separately.
+    """
+    # Create atom indices and charges arrays for the potential
+    t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))
+    t.create_array(martini_potential, 'charges', obj=charges)
+
+    # Create pairs and optimized coefficient indices for non-bonded interactions.
+    # The full coefficient table is O(N^2) and can OOM for large membrane boxes;
+    # store unique coefficient rows plus one int index per pair instead.
+    # Create sets for exclusions (MARTINI uses nrexcl=1, so only 1-2 exclusions)
+    bonded_pairs_12 = set()  # Directly bonded (1-2) - full exclusion
+    additional_exclusions = set()  # Additional exclusions from ITP file
+
+    # Add 1-2 exclusions from bond list
+    for bond in bonds_list:
+        sorted_bond = (min(bond[0], bond[1]), max(bond[0], bond[1]))
+        bonded_pairs_12.add(sorted_bond)
+
+    # Add additional exclusions from protein ITP file
+    if protein_exclusions:
+        for exclusion in protein_exclusions:
+            sorted_exclusion = (min(exclusion[0], exclusion[1]), max(exclusion[0], exclusion[1]))
+            additional_exclusions.add(sorted_exclusion)
+
+    # Generate all unique pairs (i < j) over the interacting sites, with nrexcl=1 exclusions
+    active_sites = np.where(np.asarray(martini_site_mask, dtype=bool))[0].astype(np.int32)
+    excluded_12_count = 0
+    excluded_additional_count = 0
+    n_active = active_sites.size
+    total_candidate_pairs = n_active * (n_active - 1) // 2
+    total_pairs_written = 0
+    unique_coeffs = []
+    coeff_to_index = {}
+    atom_type_strings = [
+        atom_type.decode('utf-8') if isinstance(atom_type, bytes) else str(atom_type)
+        for atom_type in atom_types
+    ]
+    atom_classes = [(atom_type_strings[i], float(charges[i])) for i in range(n_atoms)]
+    class_to_id = {}
+    atom_class_ids = np.empty(n_atoms, dtype=np.int32)
+    class_values = []
+    for i, cls in enumerate(atom_classes):
+        class_id = class_to_id.get(cls)
+        if class_id is None:
+            class_id = len(class_values)
+            class_to_id[cls] = class_id
+            class_values.append(cls)
+        atom_class_ids[i] = class_id
+
+    def coefficient_index_for_classes(class_i, class_j, atom_i):
+        type1, q1_raw = class_values[class_i]
+        type2, q2_raw = class_values[class_j]
+        if (type1, type2) in martini_table:
+            sigma_nm, epsilon_kj = martini_table[(type1, type2)]
+        elif (type2, type1) in martini_table:
+            sigma_nm, epsilon_kj = martini_table[(type2, type1)]
+        else:
+            available_types = sorted(set([t[0] for t in martini_table.keys()] + [t[1] for t in martini_table.keys()]))
+            raise ValueError(
+                f"Missing interaction parameters for bead type pair ({type1}, {type2}) "
+                f"at atom index {atom_i}; available bead types: {available_types}"
+            )
+
+        epsilon = np.float32(epsilon_kj / energy_conversion)
+        sigma = np.float32(sigma_nm * length_conversion)
+        q1 = np.float32(q1_raw)
+        q2 = np.float32(q2_raw)
+        coeff_key = (float(epsilon), float(sigma), float(q1), float(q2))
+        coeff_index = coeff_to_index.get(coeff_key)
+        if coeff_index is None:
+            coeff_index = len(unique_coeffs)
+            coeff_to_index[coeff_key] = coeff_index
+            unique_coeffs.append((float(epsilon), float(sigma), float(q1), float(q2)))
+        return coeff_index
+
+    pairs_array = t.create_earray(
+        martini_potential,
+        'pairs',
+        atom=tb.Int32Atom(),
+        shape=(0, 2),
+        expectedrows=total_candidate_pairs,
+    )
+    coeff_index_array = t.create_earray(
+        martini_potential,
+        'coefficient_indices',
+        atom=tb.Int64Atom(),
+        shape=(0,),
+        expectedrows=total_candidate_pairs,
+    )
+
+    bonded_by_i = defaultdict(set)
+    for i, j in bonded_pairs_12:
+        bonded_by_i[i].add(j)
+    additional_by_i = defaultdict(set)
+    for i, j in additional_exclusions:
+        additional_by_i[i].add(j)
+
+    for position in range(n_active):
+        i = int(active_sites[position])
+        js = active_sites[position + 1:]
+        if js.size == 0:
+            continue
+        bonded_js = bonded_by_i.get(i)
+        additional_js = additional_by_i.get(i)
+        if bonded_js:
+            bonded_mask = np.isin(js, np.fromiter(bonded_js, dtype=np.int32), assume_unique=True)
+            excluded_12_count += int(np.count_nonzero(bonded_mask))
+            js = js[~bonded_mask]
+        if additional_js and js.size:
+            additional_candidates = np.fromiter(
+                (j for j in additional_js if not bonded_js or j not in bonded_js),
+                dtype=np.int32,
+            )
+            if additional_candidates.size:
+                additional_mask = np.isin(js, additional_candidates, assume_unique=True)
+                excluded_additional_count += int(np.count_nonzero(additional_mask))
+                js = js[~additional_mask]
+        if js.size == 0:
+            continue
+
+        pairs_chunk = np.empty((js.size, 2), dtype=np.int32)
+        pairs_chunk[:, 0] = i
+        pairs_chunk[:, 1] = js
+
+        coeff_indices = np.empty(js.size, dtype=np.int64)
+        class_i = int(atom_class_ids[i])
+        js_class_ids = atom_class_ids[js]
+        for class_j in np.unique(js_class_ids):
+            class_mask = js_class_ids == class_j
+            count = int(np.count_nonzero(class_mask))
+            coeff_index = coefficient_index_for_classes(class_i, int(class_j), i)
+            coeff_indices[class_mask] = coeff_index
+
+        pairs_array.append(pairs_chunk)
+        coeff_index_array.append(coeff_indices)
+        total_pairs_written += int(js.size)
+
+    print(f"MARTINI non-bonded sites: {n_active} of {n_atoms} "
+          f"({n_atoms - n_active} excluded; protein carries BB only)")
+    print(f"Excluded {excluded_12_count} 1-2 bonded pairs from non-bonded interactions (nrexcl=1)")
+    print(f"Excluded {excluded_additional_count} additional pairs from ITP exclusions")
+    print(f"Wrote {total_pairs_written} non-bonded pairs with {len(unique_coeffs)} unique coefficient rows")
+    martini_potential._v_attrs.optimized_format = 1
+    coeff_array = np.array(unique_coeffs, dtype='f4')
+    if coeff_array.size == 0:
+        coeff_array = np.zeros((0, 4), dtype='f4')
+    t.create_array(martini_potential, 'coefficients', obj=coeff_array)
+
+    return excluded_12_count, excluded_additional_count
+
+
+def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
+    """Build the HDF5 input for one MARTINI workflow stage."""
+    if 'UPSIDE_HOME' not in os.environ:
+        raise ValueError("UPSIDE_HOME is required")
+
+    if pdb_id is None:
+        if len(sys.argv) > 1:
+            pdb_id = sys.argv[1]
+        else:
+            raise ValueError(f"No PDB ID provided; usage: python {sys.argv[0]} <pdb_id>")
+
+    if run_dir is None:
+        if len(sys.argv) > 2 and sys.argv[2] != '--stage':
+            run_dir = sys.argv[2]
+        else:
+            run_dir = "outputs/martini_test"
+    os.makedirs(run_dir, exist_ok=True)
+
+    stage = os.environ.get('UPSIDE_SIMULATION_STAGE', stage)
+
+    if stage not in STAGE_PARAMS:
+        valid = ", ".join(sorted(STAGE_PARAMS))
+        raise ValueError(f"Unknown MARTINI preparation stage {stage!r}; expected one of: {valid}")
+    params = STAGE_PARAMS[stage]
+    stage_lipidhead_fc = float(os.environ.get('UPSIDE_BILAYER_LIPIDHEAD_FC', '0'))
+
+    print(f"Preparing MARTINI stage {stage} for {pdb_id}")
+    print(f"Output directory: {run_dir}")
     
-    # Center and wrap positions
-    print(f"\n=== Preparing Final Structure ===")
-    center = np.mean(initial_positions, axis=0)
+    workflow_dir = str(WORKFLOW_DIR)
+    print("Reading dry MARTINI parameters")
+    ff_dir = Path(
+        os.environ.get('UPSIDE_MARTINI_FF_DIR', str(REPO_ROOT / "parameters" / "dryMARTINI"))
+    ).expanduser()
+    if not ff_dir.is_absolute():
+        ff_dir = (REPO_ROOT / ff_dir).resolve()
+    else:
+        ff_dir = ff_dir.resolve()
+    ff_path = str(ff_dir)
+
+    if not os.path.isdir(ff_path):
+        raise ValueError(
+            f"Force-field directory '{ff_path}' not found; set UPSIDE_MARTINI_FF_DIR"
+        )
+
+    ff_files = sorted(os.listdir(ff_path))
+    print(f"Using force-field directory: {ff_path}")
+
+    topo = _load_martini_topology(ff_path, ff_files, stage_lipidhead_fc)
+    martini_masses = topo['martini_masses']
+    
+    energy_conversion_raw = os.environ.get('UPSIDE_MARTINI_ENERGY_CONVERSION', '').strip()
+    length_conversion_raw = os.environ.get('UPSIDE_MARTINI_LENGTH_CONVERSION', '').strip()
+    if not energy_conversion_raw:
+        raise ValueError("Missing required environment variable UPSIDE_MARTINI_ENERGY_CONVERSION")
+    if not length_conversion_raw:
+        raise ValueError("Missing required environment variable UPSIDE_MARTINI_LENGTH_CONVERSION")
+    energy_conversion = float(energy_conversion_raw)
+    length_conversion = float(length_conversion_raw)
+    coulomb_constant_native = float(os.environ.get('UPSIDE_MARTINI_COULOMB_CONSTANT_NATIVE', str(138.935458 / 15.0)))
+    if energy_conversion <= 0.0:
+        raise ValueError("UPSIDE_MARTINI_ENERGY_CONVERSION must be positive")
+    if length_conversion <= 0.0:
+        raise ValueError("UPSIDE_MARTINI_LENGTH_CONVERSION must be positive")
+
+    pressure_conversion_bar_to_eup = 0.000020659
+    bond_conversion = 1.0 / (energy_conversion * length_conversion ** 2)
+    angle_conversion = 1.0 / energy_conversion
+    dihedral_conversion = 1.0 / energy_conversion
+
+    print(
+        "Unit conversions: "
+        f"energy={energy_conversion:g} kJ/mol per E_up, "
+        f"length={length_conversion:g} A/nm, "
+        f"pressure={pressure_conversion_bar_to_eup:.9f} E_up/A^3 per bar"
+    )
+    
+    input_pdb_file = runtime_input_pdb_path(workflow_dir, pdb_id)
+    print(f"Using MARTINI PDB as base structure: {input_pdb_file}")
+    
+    protein_bonds, protein_angles, protein_dihedrals, protein_constraints = [], [], [], []
+    protein_exclusions = []
+    protein_position_restraints = []
+
+    (initial_positions, atom_types, charges, residue_ids, atom_names,
+     residue_names, chain_ids, seg_ids, n_atoms, x_len, y_len, z_len) = \
+        _parse_runtime_pdb_atoms(input_pdb_file, topo)
+    
+    molecules, molecule_ids, protein_sequence, lipid_count, water_count = \
+        _group_atoms_into_molecules(
+            residue_ids, residue_names, atom_names, chain_ids, seg_ids, n_atoms
+        )
+    
+    (bonds_list, bond_lengths_list, bond_force_constants_list,
+     angles_list, angle_equil_deg_list, angle_force_constants_list,
+     dihedrals_list, dihedral_equil_deg_list, dihedral_force_constants_list,
+     dihedral_type_list, lipid_restraint_indices, lipid_restraint_ref_pos,
+     lipid_restraint_spring_xyz, protein_bond_count, protein_constraint_count,
+     protein_angle_count, protein_dihedral_count) = _build_bonded_terms(
+        molecules, topo, initial_positions,
+        bond_conversion, angle_conversion, dihedral_conversion,
+        protein_bonds, protein_angles, protein_dihedrals,
+        protein_constraints, protein_position_restraints,
+    )
+    
+    print("\nPreparing final structure")
+    center_mask = np.ones(n_atoms, dtype=bool)
+    center = np.mean(initial_positions[center_mask], axis=0)
     centered_positions = initial_positions - center
     half_box = np.array([x_len/2, y_len/2, z_len/2])
     centered_positions = (centered_positions + half_box) % (2*half_box) - half_box
     final_positions = centered_positions
-    
-    # Create UPSIDE input file
-    print(f"\n=== Creating UPSIDE Input File ===")
+
+    protein_residues = {
+        'ALA', 'ARG', 'ASN', 'ASP', 'CYS', 'GLN', 'GLU', 'GLY', 'HIS', 'ILE',
+        'LEU', 'LYS', 'MET', 'PHE', 'PRO', 'SER', 'THR', 'TRP', 'TYR', 'VAL',
+        'HID', 'HIE', 'HIP', 'HSD', 'HSE', 'HSP', 'CYX',
+    }
+    particle_class = np.empty(n_atoms, dtype='S10')
+    for i, resname in enumerate(residue_names):
+        if resname in protein_residues:
+            particle_class[i] = b"PROTEIN"
+        elif lipid_resname(resname):
+            particle_class[i] = b"LIPID"
+        elif resname == 'W':
+            particle_class[i] = b"WATER"
+        elif resname in ('NA', 'CL'):
+            particle_class[i] = b"ION"
+        else:
+            particle_class[i] = b"OTHER"
+
+    print("\nCreating UPSIDE input file")
     input_file = f"{run_dir}/test.input.up"
     
     with tb.open_file(input_file, 'w') as t:
@@ -1938,28 +2397,25 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         mom_array._v_attrs.initialized = True
         
         # Create mass array (required by UPSIDE)
-        mass = np.zeros(n_atoms, dtype='f4')
-        for i, atom_type in enumerate(atom_types):
-            # Get mass from force field file, raise error if not found
-            if atom_type not in martini_masses:
-                raise ValueError(f"FATAL ERROR: Mass not found for atom type '{atom_type}' (atom index {i}).\n"
-                                f"  Available atom types with masses: {sorted(martini_masses.keys())}\n"
-                                f"  This indicates incomplete force field parameters.\n"
-                                f"  Aborting to prevent incorrect simulation results.")
-            # Divide by 12.0 for reduced mass units (1 unit = 12 g/mol)
-            mass[i] = martini_masses[atom_type] / 12.0
+        mass = build_hybrid_mass_array_up(
+            atom_types,
+            particle_class,
+            martini_masses,
+        )
         
         mass_array = t.create_array(input_grp, 'mass', obj=mass)
         mass_array._v_attrs.arguments = np.array([b'mass'])
         mass_array._v_attrs.shape = mass.shape
         mass_array._v_attrs.n_atoms = n_atoms
         mass_array._v_attrs.initialized = True
-        
-        print("Hybrid stage files use AA backbone carriers (N/CA/C/O) for protein runtime representation")
+        mass_array._v_attrs.protein_mass_up = np.float32(1.0)
+        mass_array._v_attrs.protein_mass_source = b"upside_core_unit_mass"
+        mass_array._v_attrs.environment_mass_source = b"native_dry_martini_mass_div_12"
+
+        print("Hybrid stage files use N/CA/C protein carriers with regenerated O/BB virtual sites")
         
         # Create stage-specific parameters group (always create this)
         stage_grp = t.create_group(input_grp, 'stage_parameters')
-        stage_grp._v_attrs.enable = 1
         stage_grp._v_attrs.current_stage = b'minimization'
         
         # Store minimization stage bond parameters (large spring constants)
@@ -1977,53 +2433,43 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         min_angle_fc = np.array([angle[4] for angle in protein_angles], dtype='f4')
         t.create_array(min_angles_grp, 'force_constants', obj=min_angle_fc)
         
-        # Store production stage angle parameters (regular angles)
         prod_angles_grp = t.create_group(stage_grp, 'production_angles')
-        # For production, we'd use different angle parameters (not NORMANG)
-        # For now, use the same as minimization but this could be different
         prod_angle_fc = np.array([angle[4] for angle in protein_angles], dtype='f4')
         t.create_array(prod_angles_grp, 'force_constants', obj=prod_angle_fc)
         
         print(f"Stage-specific parameters: minimization bonds={len(min_bond_fc)}, production bonds={len(prod_bond_fc)}")
         print(f"Stage-specific parameters: minimization angles={len(min_angle_fc)}, production angles={len(prod_angle_fc)}")
         
-        # ===================== NPT BAROSTAT CONFIGURATION =====================
-        # Create barostat configuration group for NPT simulations
-        # Settings are read from environment variables (set by run_sim_bilayer.sh)
         barostat_enable = int(os.environ.get('UPSIDE_NPT_ENABLE', '0'))
         if barostat_enable:
-            print(f"\n=== Creating NPT Barostat Configuration ===")
+            print("\nCreating NPT barostat configuration")
+            # Semi-isotropic Monte-Carlo barostat for the waterless (implicit-solvent) membrane:
+            # xy is coupled to zero lateral tension; z is frozen (mc_dmax_z=0) because there is no
+            # solvent to set the box normal. COM-based moves preserve the rigid protein.
             barostat_grp = t.create_group(input_grp, 'barostat')
-            barostat_grp._v_attrs.enable = barostat_enable
-            # Default: 1 bar = 0.000020659 E_up/Angstrom^3 (from 1 atm = 0.000020933215)
-            barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.000020659'))
-            barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.000020659'))
+            barostat_grp._v_attrs.target_p_xy = float(os.environ.get('UPSIDE_NPT_TARGET_PXY', '0.0'))
+            barostat_grp._v_attrs.target_p_z = float(os.environ.get('UPSIDE_NPT_TARGET_PZ', '0.0'))
             barostat_grp._v_attrs.tau_p = float(os.environ.get('UPSIDE_NPT_TAU', '1.0'))
-            # Legacy isotropic compressibility (kept for compatibility)
-            legacy_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
-            barostat_grp._v_attrs.compressibility = legacy_compressibility
-            # Axis-specific compressibility for semi-isotropic membrane coupling
+            base_compressibility = float(os.environ.get('UPSIDE_NPT_COMPRESSIBILITY', '14.521180763676'))
+            barostat_grp._v_attrs.compressibility = base_compressibility
             barostat_grp._v_attrs.compressibility_xy = float(
-                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(legacy_compressibility))
+                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_XY', str(base_compressibility))
             )
             barostat_grp._v_attrs.compressibility_z = float(
-                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_Z', str(legacy_compressibility))
+                os.environ.get('UPSIDE_NPT_COMPRESSIBILITY_Z', '0.0')
             )
             barostat_grp._v_attrs.interval = int(os.environ.get('UPSIDE_NPT_INTERVAL', '10'))
             barostat_grp._v_attrs.semi_isotropic = int(os.environ.get('UPSIDE_NPT_SEMI', '1'))
-            barostat_grp._v_attrs.debug = int(os.environ.get('UPSIDE_NPT_DEBUG', '1'))
-            # Barostat type: 0 = Berendsen (default), 1 = Parrinello-Rahman
-            barostat_grp._v_attrs.type = params['barostat_type']
-            print(f"  Enabled: {barostat_enable}")
-            print(f"  Type: {'Parrinello-Rahman' if barostat_grp._v_attrs.type == 1 else 'Berendsen'}")
-            print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy} E_up/Angstrom^3 (~1 bar)")
-            print(f"  Target Pz: {barostat_grp._v_attrs.target_p_z} E_up/Angstrom^3 (~1 bar)")
+            barostat_grp._v_attrs.mc_dmax_xy = float(os.environ.get('UPSIDE_NPT_MC_DMAX_XY', '0.01'))
+            barostat_grp._v_attrs.mc_dmax_z = float(os.environ.get('UPSIDE_NPT_MC_DMAX_Z', '0.0'))
+            barostat_grp._v_attrs.mc_seed = int(os.environ.get('UPSIDE_NPT_MC_SEED', '2026'))
+            print("\nSemi-isotropic Monte-Carlo barostat (xy coupled to zero tension, z frozen)")
+            print(f"  Target Pxy: {barostat_grp._v_attrs.target_p_xy} E_up/Angstrom^3 (tensionless)")
             print(f"  Compressibility XY: {barostat_grp._v_attrs.compressibility_xy} Angstrom^3/E_up")
-            print(f"  Compressibility Z: {barostat_grp._v_attrs.compressibility_z} Angstrom^3/E_up")
-            print(f"  Tau_p: {barostat_grp._v_attrs.tau_p}")
+            print(f"  MC dmax xy/z: {barostat_grp._v_attrs.mc_dmax_xy} / {barostat_grp._v_attrs.mc_dmax_z}")
             print(f"  Interval: {barostat_grp._v_attrs.interval} steps")
         else:
-            print(f"\n=== NPT Barostat Disabled (NVT mode) ===")
+            print("\nNPT barostat disabled (NVT mode)")
         
         # Create type array
         type_array = t.create_array(input_grp, 'type', obj=atom_types.astype('S4'))
@@ -2033,26 +2479,121 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         type_array._v_attrs.initialized = True
         type_array._v_attrs.description = b"Interaction matrix type names (e.g., C1, C2, Qa, Qd)"
 
-        # Store particle class per atom (protein/lipid/water/ion/other)
-        particle_class = np.empty(n_atoms, dtype='S10')
-        for i, resname in enumerate(residue_names):
-            if resname in protein_residues:
-                particle_class[i] = b"PROTEIN"
-            elif resname == 'DOP':
-                particle_class[i] = b"LIPID"
-            elif resname == 'W':
-                particle_class[i] = b"WATER"
-            elif resname in ('NA', 'CL'):
-                particle_class[i] = b"ION"
-            else:
-                particle_class[i] = b"OTHER"
         particle_class_array = t.create_array(input_grp, 'particle_class', obj=particle_class)
         particle_class_array._v_attrs.arguments = np.array([b'particle_class'])
         particle_class_array._v_attrs.shape = particle_class.shape
         particle_class_array._v_attrs.n_atoms = n_atoms
         particle_class_array._v_attrs.initialized = True
         particle_class_array._v_attrs.description = b"Per-atom class: PROTEIN, LIPID, WATER, ION, OTHER"
-        
+
+        # Every physical degree of freedom uses one g-JF step. Regenerated O and BB sites are excluded:
+        # their positions and BB-env derivatives are projected through N/CA/C. Production uses the requested
+        # bare-particle mobility clock. Protein drag is the sum of the bead frictions inside the existing
+        # protein--environment spline range.
+        lipid_beads = np.where(particle_class == b"LIPID")[0].astype('i4')
+        if lipid_beads.size:
+            protein_carrier = (
+                (particle_class == b"PROTEIN")
+                & np.isin(atom_names, np.array(["N", "CA", "C"], dtype=atom_names.dtype))
+            )
+            dynamic_atom = (particle_class != b"PROTEIN") | protein_carrier
+            brownian_atom_index = np.where(dynamic_atom)[0].astype('i4')
+            numerical_time_step = float(os.environ.get("UPSIDE_MARTINI_TIME_STEP_UP", "0.009"))
+            protein_time_ps = float(os.environ.get("UPSIDE_PROTEIN_TIME_PS_PER_STEP", "40.0"))
+            martini_time_factor = float(os.environ.get("UPSIDE_MARTINI_TIME_FACTOR", "4.0"))
+            target_diffusion = float(os.environ.get("UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S", "11.5"))
+            reference_temperature = float(os.environ.get("UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP", "0.8647"))
+            raw_relaxation_ps = float(os.environ.get("UPSIDE_DRY_MARTINI_RELAXATION_PS", "4.0"))
+            dynamics_phase = os.environ.get("UPSIDE_MARTINI_DYNAMICS_PHASE", "production")
+            # Substeps of numerical_time_step/inner_steps inside each outer step. The outer step is
+            # what the friction and the ps-per-step clock are calibrated against and stays 0.009;
+            # this only integrates the same Langevin equation more accurately. Required because
+            # mass-1 protein carriers at dt = 0.009 pick up a kinetic-temperature excess against the
+            # steep MARTINI core: measured on glpG-RKRK-79ALA at T = 0.7215, the backbone runs
+            # +10.1% above its set point at inner_steps = 1, +3.5% at 2 and +1.1% at 4, while the
+            # lipids go 1.024 -> 1.009, for 1.27x and 2.05x the wall time (findings 3.10).
+            inner_steps = int(os.environ.get("UPSIDE_MARTINI_INNER_STEPS", "4"))
+            if inner_steps < 1:
+                raise ValueError("UPSIDE_MARTINI_INNER_STEPS must be >= 1")
+            if numerical_time_step <= 0.0 or protein_time_ps <= 0.0 or martini_time_factor <= 0.0:
+                raise ValueError("MARTINI clock parameters must be positive")
+            if target_diffusion <= 0.0 or reference_temperature <= 0.0 or raw_relaxation_ps <= 0.0:
+                raise ValueError("DOPC transport target and reference temperature must be positive")
+            if dynamics_phase not in {"early_equilibration", "overlap_settling", "production"}:
+                raise ValueError(f"Unknown MARTINI dynamics phase '{dynamics_phase}'")
+            raw_martini_time_ps = protein_time_ps / martini_time_factor
+            raw_target_diffusion = target_diffusion * martini_time_factor
+            time_unit_ps = 1.0e12 * math.sqrt(
+                (0.012 * 1.0e-20) / (energy_conversion * 1000.0))
+            if dynamics_phase == "production":
+                raw_target_diffusion_A2_ps = raw_target_diffusion * 1.0e-4
+                particle_diffusion_up = (
+                    raw_target_diffusion_A2_ps * raw_martini_time_ps / numerical_time_step
+                )
+                particle_friction = reference_temperature / particle_diffusion_up
+                friction = np.full(brownian_atom_index.size, particle_friction, dtype=np.float64)
+            else:
+                if dynamics_phase == "overlap_settling":
+                    relaxation_up = numerical_time_step * raw_relaxation_ps / raw_martini_time_ps
+                else:
+                    relaxation_up = raw_relaxation_ps / time_unit_ps
+                friction = mass[brownian_atom_index] / relaxation_up
+
+            interface_cutoff = 12.0
+            contact_count = np.zeros(n_atoms, dtype=np.int32)
+            if dynamics_phase == "production" and np.any(protein_carrier):
+                box = np.array([x_len, y_len, z_len], dtype=np.float64)
+                carrier_index = np.where(protein_carrier)[0]
+                for start in range(0, lipid_beads.size, 512):
+                    delta = (
+                        final_positions[carrier_index, None, :]
+                        - final_positions[lipid_beads[start:start + 512]][None, :, :]
+                    )
+                    delta -= box * np.rint(delta / box)
+                    contact_count[carrier_index] += np.sum(
+                        np.sum(delta * delta, axis=2) < interface_cutoff * interface_cutoff,
+                        axis=1,
+                    )
+            protein_friction = protein_carrier[brownian_atom_index]
+            if dynamics_phase == "production":
+                friction[protein_friction] = (
+                    particle_friction * contact_count[brownian_atom_index[protein_friction]]
+                )
+            else:
+                friction[protein_friction] = 0.0
+            brownian_grp = t.create_group(input_grp, 'brownian')
+            t.create_array(brownian_grp, 'atom_index', obj=brownian_atom_index)
+            t.create_array(brownian_grp, 'friction', obj=friction.astype(np.float32))
+            brownian_grp._v_attrs.numerical_time_step = np.float64(numerical_time_step)
+            brownian_grp._v_attrs.inner_steps = np.int32(inner_steps)
+            brownian_grp._v_attrs.protein_time_ps_per_step = np.float64(protein_time_ps)
+            brownian_grp._v_attrs.martini_time_factor = np.float64(martini_time_factor)
+            brownian_grp._v_attrs.raw_martini_time_ps_per_step = np.float64(raw_martini_time_ps)
+            brownian_grp._v_attrs.target_lipid_diffusion_um2_s = np.float64(target_diffusion)
+            brownian_grp._v_attrs.raw_target_diffusion_um2_s = np.float64(raw_target_diffusion)
+            brownian_grp._v_attrs.reference_temperature_up = np.float64(reference_temperature)
+            brownian_grp._v_attrs.dynamics_phase = dynamics_phase.encode()
+            if dynamics_phase == "production":
+                contact_atom_index = np.where(contact_count > 0)[0].astype('i4')
+                t.create_array(brownian_grp, 'protein_contact_atom_index', obj=contact_atom_index)
+                t.create_array(
+                    brownian_grp,
+                    'protein_lipid_contact_count',
+                    obj=contact_count[contact_atom_index],
+                )
+                brownian_grp._v_attrs.bare_particle_diffusion_up = np.float64(particle_diffusion_up)
+                brownian_grp._v_attrs.bare_particle_friction_up = np.float64(particle_friction)
+                brownian_grp._v_attrs.interface_friction_cutoff_A = np.float64(interface_cutoff)
+                brownian_grp._v_attrs.transport_observable = b"bare_martini_particle_lateral_diffusion"
+            else:
+                brownian_grp._v_attrs.raw_langevin_relaxation_ps = np.float64(raw_relaxation_ps)
+                brownian_grp._v_attrs.relaxation_time_up = np.float64(relaxation_up)
+                brownian_grp._v_attrs.time_unit_ps = np.float64(time_unit_ps)
+                if dynamics_phase == "overlap_settling":
+                    brownian_grp._v_attrs.transport_observable = b"overlap_settling_damping"
+                else:
+                    brownian_grp._v_attrs.transport_observable = b"native_dry_martini_relaxation"
+
         # Create charges array
         charge_array = t.create_array(input_grp, 'charges', obj=charges)
         charge_array._v_attrs.arguments = np.array([b'charges'])
@@ -2097,40 +2638,30 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         
         # Create potential group (required by UPSIDE)
         potential_grp = t.create_group(input_grp, 'potential')
+
+        # The BB proxy is the mass-weighted centre of N/CA/C/O, and O is Upside's own derived site, so the
+        # node consumes infer_H_O rather than rebuilding O from a local frame. That makes the proxy a plain
+        # linear combination of nodes the engine differentiates: the O share of any environment force on BB
+        # is handed back to infer_H_O, which carries it to CA, C and the next residue's N exactly.
+        hybrid_position = t.create_group(potential_grp, 'martini_hybrid_position')
+        hybrid_position._v_attrs.arguments = np.array([b'pos', b'infer_H_O'])
         
         # Create MARTINI potential with proper parameters
         martini_potential = t.create_group(potential_grp, 'martini_potential')
-        martini_potential._v_attrs.arguments = np.array([b'pos'])
+        martini_potential._v_attrs.arguments = np.array([b'martini_hybrid_position'])
         martini_potential._v_attrs.potential_type = b'lj_coulomb'
-        # Note: epsilon and sigma attributes are required by C++ interface but not used in computation
-        # They will be calculated from the coefficients array after it's created
-        martini_potential._v_attrs.lj_cutoff = 12.0
-        martini_potential._v_attrs.coul_cutoff = 12.0
-        martini_potential._v_attrs.energy_conversion_kj_per_eup = energy_conversion
-        martini_potential._v_attrs.length_conversion_angstrom_per_nm = length_conversion
-        martini_potential._v_attrs.coulomb_constant_native_kj_mol_nm_e2 = coulomb_constant_native
+        # coulomb_constant feeds the Python soft-core builder for the equilibration
+        # stages; the runtime spline table already has Coulomb baked in.
+        martini_potential._v_attrs.coulomb_constant = coulomb_constant_native * (length_conversion / energy_conversion)
         martini_potential._v_attrs.n_types = 1
         martini_potential._v_attrs.n_params = 4
         martini_potential._v_attrs.cutoff = 12.0
-        martini_potential._v_attrs.cache_buffer = 1.0
+        martini_potential._v_attrs.cache_buffer = 2.0   # Verlet-list skin; rebuild is O(N) cell list, so keep the active list lean
         martini_potential._v_attrs.initialized = True
-        force_cap = float(os.environ.get('UPSIDE_FORCE_CAP', '0'))
-        martini_potential._v_attrs.force_cap = force_cap
-        
+
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
-        # Optional softening controls via environment variables
-        # UPSIDE_SOFTEN_COULOMB: 1 to enable Slater softening for Coulomb
-        # UPSIDE_SLATER_ALPHA: float value for Slater alpha (1/Angstrom)
-        # UPSIDE_SOFTEN_LJ: 1 to enable soft-core LJ
-        # UPSIDE_LJ_ALPHA: float value for LJ softening alpha (dimensionless)
-        soften_coul = int(os.environ.get('UPSIDE_SOFTEN_COULOMB', '0'))
-        slater_alpha = float(os.environ.get('UPSIDE_SLATER_ALPHA', '1.0'))
-        soften_lj = int(os.environ.get('UPSIDE_SOFTEN_LJ', '0'))
-        lj_alpha = float(os.environ.get('UPSIDE_LJ_ALPHA', '1.0'))
-        
-        # Set stage-specific softening parameters
         martini_potential._v_attrs.coulomb_soften = params['coulomb_soften']
         if params['coulomb_soften']:
             martini_potential._v_attrs.slater_alpha = params['slater_alpha']
@@ -2141,171 +2672,15 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         # Periodic boundary potential removed - using NVT ensemble without boundaries
 
 
-        # Create atom indices and charges arrays for the potential
-        t.create_array(martini_potential, 'atom_indices', obj=np.arange(n_atoms))
-        t.create_array(martini_potential, 'charges', obj=charges)
-        
-        # Create pairs and optimized coefficient indices for non-bonded interactions.
-        # The full coefficient table is O(N^2) and can OOM for large membrane boxes;
-        # store unique coefficient rows plus one int index per pair instead.
-        # Create sets for exclusions (MARTINI uses nrexcl=1, so only 1-2 exclusions)
-        bonded_pairs_12 = set()  # Directly bonded (1-2) - full exclusion
-        additional_exclusions = set()  # Additional exclusions from ITP file
-        
-        # Add 1-2 exclusions from bond list
-        for bond in bonds_list:
-            sorted_bond = (min(bond[0], bond[1]), max(bond[0], bond[1]))
-            bonded_pairs_12.add(sorted_bond)
-        
-        # Add additional exclusions from protein ITP file
-        if protein_exclusions:
-            for exclusion in protein_exclusions:
-                sorted_exclusion = (min(exclusion[0], exclusion[1]), max(exclusion[0], exclusion[1]))
-                additional_exclusions.add(sorted_exclusion)
-        
-        # Generate all unique pairs (i < j) with proper exclusions (nrexcl=1)
-        excluded_12_count = 0
-        excluded_additional_count = 0
-        total_candidate_pairs = n_atoms * (n_atoms - 1) // 2
-        total_pairs_written = 0
-        unique_coeffs = []
-        coeff_to_index = {}
-        coeff_counts = []
-        atom_type_strings = [
-            atom_type.decode('utf-8') if isinstance(atom_type, bytes) else str(atom_type)
-            for atom_type in atom_types
-        ]
-        atom_classes = [(atom_type_strings[i], float(charges[i])) for i in range(n_atoms)]
-        class_to_id = {}
-        atom_class_ids = np.empty(n_atoms, dtype=np.int32)
-        class_values = []
-        for i, cls in enumerate(atom_classes):
-            class_id = class_to_id.get(cls)
-            if class_id is None:
-                class_id = len(class_values)
-                class_to_id[cls] = class_id
-                class_values.append(cls)
-            atom_class_ids[i] = class_id
-
-        def coefficient_index_for_classes(class_i, class_j, atom_i):
-            type1, q1_raw = class_values[class_i]
-            type2, q2_raw = class_values[class_j]
-            if (type1, type2) in martini_table:
-                sigma_nm, epsilon_kj = martini_table[(type1, type2)]
-            elif (type2, type1) in martini_table:
-                sigma_nm, epsilon_kj = martini_table[(type2, type1)]
-            else:
-                available_types = sorted(set([t[0] for t in martini_table.keys()] + [t[1] for t in martini_table.keys()]))
-                raise ValueError(f"FATAL ERROR: Missing interaction parameters for bead type pair ({type1}, {type2})\n"
-                               f"  Atom index: {atom_i} ({type1})\n"
-                               f"  This indicates incomplete MARTINI force field parameters.\n"
-                               f"  Available bead types in parameter table: {available_types}\n"
-                               f"  Aborting to prevent incorrect simulation results.")
-
-            epsilon = np.float32(epsilon_kj / energy_conversion)
-            sigma = np.float32(sigma_nm * length_conversion)
-            q1 = np.float32(q1_raw)
-            q2 = np.float32(q2_raw)
-            coeff_key = (float(epsilon), float(sigma), float(q1), float(q2))
-            coeff_index = coeff_to_index.get(coeff_key)
-            if coeff_index is None:
-                coeff_index = len(unique_coeffs)
-                coeff_to_index[coeff_key] = coeff_index
-                unique_coeffs.append(coeff_key)
-                coeff_counts.append(0)
-            return coeff_index
-
-        def weighted_median(values_and_counts, total_count):
-            midpoint = total_count // 2
-            running = 0
-            for value, count in sorted(values_and_counts):
-                running += count
-                if running > midpoint:
-                    return value
-            return values_and_counts[-1][0]
-
-        pairs_array = t.create_earray(
-            martini_potential,
-            'pairs',
-            atom=tb.Int32Atom(),
-            shape=(0, 2),
-            expectedrows=total_candidate_pairs,
+        # The protein presents one MARTINI site per residue, the BB bead. N, CA, C and O are the atoms BB
+        # is built from, so they carry no bead interaction of their own with the environment.
+        martini_site_mask = (particle_class != b"PROTEIN") | np.isin(
+            atom_names, np.array(["BB"], dtype=atom_names.dtype))
+        excluded_12_count, excluded_additional_count = _write_nonbonded_pairs(
+            t, martini_potential, n_atoms, atom_types, charges,
+            bonds_list, protein_exclusions, topo['martini_table'],
+            energy_conversion, length_conversion, martini_site_mask,
         )
-        coeff_index_array = t.create_earray(
-            martini_potential,
-            'coefficient_indices',
-            atom=tb.Int64Atom(),
-            shape=(0,),
-            expectedrows=total_candidate_pairs,
-        )
-
-        bonded_by_i = defaultdict(set)
-        for i, j in bonded_pairs_12:
-            bonded_by_i[i].add(j)
-        additional_by_i = defaultdict(set)
-        for i, j in additional_exclusions:
-            additional_by_i[i].add(j)
-
-        for i in range(n_atoms):
-            if i + 1 >= n_atoms:
-                continue
-            js = np.arange(i + 1, n_atoms, dtype=np.int32)
-            bonded_js = bonded_by_i.get(i)
-            additional_js = additional_by_i.get(i)
-            if bonded_js:
-                bonded_mask = np.isin(js, np.fromiter(bonded_js, dtype=np.int32), assume_unique=True)
-                excluded_12_count += int(np.count_nonzero(bonded_mask))
-                js = js[~bonded_mask]
-            if additional_js and js.size:
-                additional_candidates = np.fromiter(
-                    (j for j in additional_js if not bonded_js or j not in bonded_js),
-                    dtype=np.int32,
-                )
-                if additional_candidates.size:
-                    additional_mask = np.isin(js, additional_candidates, assume_unique=True)
-                    excluded_additional_count += int(np.count_nonzero(additional_mask))
-                    js = js[~additional_mask]
-            if js.size == 0:
-                continue
-
-            pairs_chunk = np.empty((js.size, 2), dtype=np.int32)
-            pairs_chunk[:, 0] = i
-            pairs_chunk[:, 1] = js
-
-            coeff_indices = np.empty(js.size, dtype=np.int64)
-            class_i = int(atom_class_ids[i])
-            js_class_ids = atom_class_ids[js]
-            for class_j in np.unique(js_class_ids):
-                mask = js_class_ids == class_j
-                coeff_index = coefficient_index_for_classes(class_i, int(class_j), i)
-                count = int(np.count_nonzero(mask))
-                coeff_indices[mask] = coeff_index
-                coeff_counts[coeff_index] += count
-
-            pairs_array.append(pairs_chunk)
-            coeff_index_array.append(coeff_indices)
-            total_pairs_written += int(js.size)
-        
-        print(f"Excluded {excluded_12_count} 1-2 bonded pairs from non-bonded interactions (nrexcl=1)")
-        print(f"Excluded {excluded_additional_count} additional pairs from ITP exclusions")
-        print(f"Wrote {total_pairs_written} non-bonded pairs with {len(unique_coeffs)} unique coefficient rows")
-        martini_potential._v_attrs.optimized_format = 1
-        t.create_array(martini_potential, 'coefficients', obj=np.array(unique_coeffs, dtype='f4'))
-        
-        # Calculate representative epsilon and sigma from the coefficients array
-        # These are required by the C++ interface but not used in computation
-        if total_pairs_written > 0:
-            epsilon_counts = [(coeff[0], coeff_counts[idx]) for idx, coeff in enumerate(unique_coeffs)]
-            sigma_counts = [(coeff[1], coeff_counts[idx]) for idx, coeff in enumerate(unique_coeffs)]
-            median_epsilon = weighted_median(epsilon_counts, total_pairs_written)
-            median_sigma = weighted_median(sigma_counts, total_pairs_written)
-            
-            martini_potential._v_attrs.epsilon = median_epsilon
-            martini_potential._v_attrs.sigma = median_sigma
-        else:
-            raise ValueError("FATAL ERROR: No interaction coefficients found.\n"
-                           f"  This indicates no non-bonded interactions were defined.\n"
-                           f"  Aborting to prevent incorrect simulation results.")
 
         # Add bonded potentials mirroring original run_martini.py
         # Bonds: dist_spring
@@ -2346,12 +2721,9 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             dihedral_group._v_attrs.y_len = y_len
             dihedral_group._v_attrs.z_len = z_len
             t.create_array(dihedral_group, 'id', obj=np.array(dihedrals_list, dtype=int))
-            # Some builds of UPSIDE expect 'equil_dist' for this potential; write both names for compatibility
             eq_deg = np.array(dihedral_equil_deg_list, dtype='f4')
             t.create_array(dihedral_group, 'equil_angle_deg', obj=eq_deg)
-            t.create_array(dihedral_group, 'equil_dist', obj=eq_deg)
             t.create_array(dihedral_group, 'spring_const', obj=np.array(dihedral_force_constants_list, dtype='f4'))
-            # Store dihedral type information (1=periodic, 2=harmonic)
             t.create_array(dihedral_group, 'dihedral_type', obj=np.array(dihedral_type_list, dtype=int))
 
         # Position restraints (dry MARTINI lipid-head ramp before production)
@@ -2367,19 +2739,16 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
             )
             spring_xyz = np.array(lipid_restraint_spring_xyz, dtype='f4')
             t.create_array(restraint_group, 'spring_const_xyz', obj=spring_xyz)
-            # Backward-compatible scalar spring constant for older readers.
-            t.create_array(restraint_group, 'spring_const', obj=np.max(spring_xyz, axis=1).astype('f4'))
-    
+
     print(f"Created UPSIDE input file: {input_file}")
-    print(f"Preparation complete!")
+    print("Preparation complete")
     
-    # Save preparation summary
     summary_file = f"{run_dir}/preparation_summary.txt"
     with open(summary_file, 'w') as f:
-        f.write("=== MARTINI 3.0 Preparation Summary ===\n")
+        f.write("MARTINI preparation summary\n")
         f.write(f"PDB ID: {pdb_id}\n")
         f.write(f"Total atoms: {n_atoms}\n")
-        f.write(f"Box dimensions: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} Å\n")
+        f.write(f"Box dimensions: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} A\n")
         f.write(f"Total bonds: {len(bonds_list)}\n")
         f.write(f"Total angles: {len(angles_list)}\n")
         f.write(f"Total dihedrals: {len(dihedrals_list)}\n")
@@ -2387,11 +2756,11 @@ def convert_stage(pdb_id=None, stage='minimization', run_dir=None):
         f.write(f"Protein constraints: {protein_constraint_count}\n")
         f.write(f"Protein angles: {protein_angle_count}\n")
         f.write(f"Protein dihedrals: {protein_dihedral_count}\n")
-        f.write(f"DOPC lipids: {dopc_count}\n")
+        f.write(f"{active_lipid_name()} molecules: {lipid_count}\n")
         f.write(f"Water molecules: {water_count}\n")
         f.write(f"1-2 exclusions (nrexcl=1): {excluded_12_count}\n")
         f.write(f"Additional exclusions: {excluded_additional_count}\n")
-    
+
     print(f"Preparation summary saved to: {summary_file}")
 
 
@@ -2428,21 +2797,12 @@ def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
         env = require_group(inp, "hybrid_env_topology")
 
         for attr in [
-            "enable",
             "activation_stage",
             "preprod_protein_mode",
             "exclude_intra_protein_martini",
-            "schema_version",
         ]:
             if attr not in ctrl.attrs:
                 raise ValueError(f"Missing hybrid_control attr: {attr}")
-
-        if "protein_env_interface_scale" in ctrl.attrs:
-            interface_scale = float(ctrl.attrs["protein_env_interface_scale"])
-            if not np.isfinite(interface_scale) or interface_scale <= 0.0:
-                raise ValueError(
-                    "hybrid_control/protein_env_interface_scale must be finite and > 0"
-                )
 
         bb_atom_idx = require_dataset(bb, "bb_atom_index")[:]
         bb_atom_map = require_dataset(bb, "atom_indices")[:]
@@ -2550,6 +2910,16 @@ def env_bool(name, default=False):
         return default
     value = str(raw).strip().lower()
     return value not in ("0", "false", "no", "off", "")
+
+
+def env_float(name, default):
+    raw = os.getenv(name)
+    if raw is None:
+        return float(default)
+    value = str(raw).strip()
+    if not value:
+        return float(default)
+    return float(value)
 
 
 def recenter_protein_for_production(h5f, pos, box_lengths):
@@ -2685,19 +3055,20 @@ def set_initial_position(input_file, output_file):
             del f["/input/pos"]
         f.create_dataset("/input/pos", data=last_pos)
 
-        if last_mom is not None:
+        if release_from_preprod:
+            if "/input/mom" in f:
+                del f["/input/mom"]
+            mom_dtype = last_mom.dtype if last_mom is not None else target_pos.dtype
+            mom_ds = f.create_dataset(
+                "/input/mom",
+                data=np.zeros((target_n, 3, 1), dtype=mom_dtype),
+            )
+            mom_ds.attrs["restart_valid"] = np.int8(0)
+        elif last_mom is not None:
             if last_mom.shape[0] != target_n:
                 merged_mom = f["/input/mom"][:] if "/input/mom" in f else np.zeros((target_n, 3, 1), dtype=last_mom.dtype)
                 merged_mom[: min(last_mom.shape[0], target_n), :, :] = last_mom[: min(last_mom.shape[0], target_n), :, :]
                 last_mom = merged_mom
-            if release_from_preprod and "/input/hybrid_env_topology/protein_membership" in f:
-                protein_membership = np.asarray(
-                    f["/input/hybrid_env_topology/protein_membership"][:], dtype=np.int32
-                )
-                if protein_membership.shape[0] == last_mom.shape[0]:
-                    protein_mask = protein_membership >= 0
-                    if np.any(protein_mask):
-                        last_mom[protein_mask, :, :] = 0.0
             if "/input/mom" in f:
                 del f["/input/mom"]
             mom_ds = f.create_dataset("/input/mom", data=last_mom)
@@ -2709,13 +3080,19 @@ def set_initial_position(input_file, output_file):
             transition_step = source_transition_start + source_elapsed_steps
             f["/input/hybrid_control"].attrs["sc_env_transition_step_start"] = np.int32(transition_step)
 
-        if last_box is not None and "/input/potential/martini_potential" in f:
-            pot_grp = f["/input/potential/martini_potential"]
-            pot_grp.attrs["x_len"] = float(last_box[0])
-            pot_grp.attrs["y_len"] = float(last_box[1])
-            pot_grp.attrs["z_len"] = float(last_box[2])
+        if last_box is not None and "/input/potential" in f:
+            n_updated = 0
+            for pot_grp in f["/input/potential"].values():
+                if not isinstance(pot_grp, h5py.Group):
+                    continue
+                if all(k in pot_grp.attrs for k in ("x_len", "y_len", "z_len")):
+                    pot_grp.attrs["x_len"] = float(last_box[0])
+                    pot_grp.attrs["y_len"] = float(last_box[1])
+                    pot_grp.attrs["z_len"] = float(last_box[2])
+                    n_updated += 1
             print(
-                f"Updated box dimensions: x={last_box[0]:.3f}, y={last_box[1]:.3f}, z={last_box[2]:.3f}"
+                f"Updated box dimensions for {n_updated} potential nodes: "
+                f"x={last_box[0]:.3f}, y={last_box[1]:.3f}, z={last_box[2]:.3f}"
             )
 
 
@@ -2911,16 +3288,17 @@ def load_sidechain_rotamer_payload(sidechain_lib: Path, sequence, restype_to_ind
     if not layer_index:
         raise ValueError("No production rotamer rows could be generated from the sidechain library")
 
-    layer_index_arr = np.asarray(layer_index, dtype=np.int32)
+    # layer_index holds absolute library rows, so the placement tables are the whole library, as
+    # upside_config writes them; the engine reads placement_data[layer_index[row]].
     return {
         "pair_interaction": pair_interaction,
         "affine_residue": np.asarray(affine_residue, dtype=np.int32),
-        "layer_index": layer_index_arr,
+        "layer_index": np.asarray(layer_index, dtype=np.int32),
         "beadtype_seq": np.asarray([np.bytes_(x) for x in beadtype_seq], dtype="S16"),
         "bead_type_index": np.asarray(bead_type_index, dtype=np.int32),
         "id_seq": np.asarray(id_seq, dtype=np.int32),
-        "placement_data": rot_center_fixed[layer_index_arr].astype(np.float32),
-        "placement_scalar_data": rot_energy_fixed[layer_index_arr][:, None].astype(np.float32),
+        "placement_data": rot_center_fixed,
+        "placement_scalar_data": rot_energy_fixed[:, None],
         "row_rotamer_index": np.asarray(row_rotamer_index, dtype=np.int32),
         "row_residue_table_index": np.asarray(row_residue_table_index, dtype=np.int32),
         "skipped": skipped,
@@ -2947,9 +3325,6 @@ def build_env_rows(inp, target_to_index):
             continue
         env_atom_index.append(atom_idx)
         env_target_index.append(target_idx)
-
-    if not env_atom_index:
-        raise ValueError("No non-protein dry-MARTINI particles matched martini.h5 sc_table target_order")
 
     return np.asarray(env_atom_index, dtype=np.int32), np.asarray(env_target_index, dtype=np.int32)
 
@@ -3057,7 +3432,7 @@ def inject_backbone_nodes(
                 warnings.filterwarnings(
                     "ignore",
                     message=r"dtype\(\): align should be passed as Python or NumPy boolean.*",
-                    category=np.exceptions.VisibleDeprecationWarning,
+                    category=VISIBLE_DEPRECATION_WARNING,
                 )
                 ref_state_raw = cPickle.load(fh, encoding="latin1")
         ref_state_cor = np.log(np.asarray(ref_state_raw, dtype=np.float64))
@@ -3115,10 +3490,33 @@ def inject_particles_table(up_file: Path, martini_h5: Path):
         qq_arr = pg["unique_charge_product"][:].astype(np.float64)
         combined_grids = pg["combined_energy_grids"][:].astype(np.float64)
         n_triples = len(eps_arr)
+        # Carry the radial domain over from the table that supplied the grids instead of restating it.
+        # It used to be hardcoded to [0, 12] below, so the .up advertised a domain its grids did not have:
+        # once the builder moved its inner edge off zero (findings 92) every prepared system still claimed
+        # r_min = 0 and the engine mapped every distance onto the wrong knot.
+        GRID_N = int(pg.attrs["n_points"])
+        R_MIN = float(pg.attrs["r_min_ang"])
+        R_MAX = float(pg.attrs["r_max_ang"])
 
-    GRID_N = 1000
-    R_MIN = 0.0
-    R_MAX = 12.0
+    has_zero_triple = np.any(
+        (np.abs(eps_arr) < 1e-12)
+        & (np.abs(sig_arr) < 1e-12)
+        & (np.abs(qq_arr) < 1e-12)
+    )
+    if not has_zero_triple:
+        eps_arr = np.concatenate([eps_arr, np.array([0.0], dtype=np.float64)])
+        sig_arr = np.concatenate([sig_arr, np.array([0.0], dtype=np.float64)])
+        qq_arr = np.concatenate([qq_arr, np.array([0.0], dtype=np.float64)])
+        combined_grids = np.vstack([
+            combined_grids,
+            np.zeros((1, combined_grids.shape[1]), dtype=np.float64),
+        ])
+        n_triples = len(eps_arr)
+
+    if combined_grids.shape[1] != GRID_N:
+        raise SystemExit(
+            "ERROR: %s declares n_points=%d but its grids have %d columns"
+            % (martini_h5, GRID_N, combined_grids.shape[1]))
 
     with h5py.File(up_file, "r+") as up:
         g = up["/input/potential/martini_potential"]
@@ -3130,10 +3528,7 @@ def inject_particles_table(up_file: Path, martini_h5: Path):
         has_softening = (lj_soften and lj_soften_alpha > 0.0) or coulomb_soften
 
         if has_softening:
-            coulomb_k_native = float(g.attrs["coulomb_constant_native_kj_mol_nm_e2"])
-            energy_conv = float(g.attrs["energy_conversion_kj_per_eup"])
-            length_conv = float(g.attrs["length_conversion_angstrom_per_nm"])
-            coulomb_k = coulomb_k_native * (length_conv / energy_conv)
+            coulomb_k = float(g.attrs["coulomb_constant"])
             lj_alpha = float(lj_soften_alpha) if lj_soften else 0.0
             slater = float(slater_alpha) if coulomb_soften else 0.0
 
@@ -3171,6 +3566,49 @@ def inject_particles_table(up_file: Path, martini_h5: Path):
 
                     combined_grids[idx, i] = lj + coul
 
+        if "coefficients" in g:
+            coeffs = g["coefficients"][:].astype(np.float64)
+            if coeffs.size:
+                if coeffs.ndim != 2 or coeffs.shape[1] < 4:
+                    raise ValueError(
+                        f"{up_file}: martini_potential/coefficients must have shape (n,4)"
+                    )
+                local_eps = np.empty(coeffs.shape[0], dtype=np.float64)
+                local_sig = np.empty(coeffs.shape[0], dtype=np.float64)
+                local_qq = np.empty(coeffs.shape[0], dtype=np.float64)
+                local_grids = np.empty((coeffs.shape[0], combined_grids.shape[1]), dtype=np.float64)
+                for coeff_i, (eps, sig, q1, q2) in enumerate(coeffs[:, :4]):
+                    qq = float(q1) * float(q2)
+                    match = np.where(
+                        np.isclose(eps_arr, eps, rtol=1e-5, atol=1e-7)
+                        & np.isclose(sig_arr, sig, rtol=1e-5, atol=1e-6)
+                        & np.isclose(qq_arr, qq, rtol=1e-5, atol=1e-7)
+                    )[0]
+                    if match.size == 0:
+                        raise ValueError(
+                            f"{up_file}: no particle spline row for local coefficient "
+                            f"{coeff_i}: eps={eps:g}, sig={sig:g}, q1*q2={qq:g}"
+                        )
+                    src_i = int(match[0])
+                    local_eps[coeff_i] = eps_arr[src_i]
+                    local_sig[coeff_i] = sig_arr[src_i]
+                    local_qq[coeff_i] = qq_arr[src_i]
+                    local_grids[coeff_i, :] = combined_grids[src_i, :]
+                eps_arr = local_eps
+                sig_arr = local_sig
+                qq_arr = local_qq
+                combined_grids = local_grids
+                n_triples = len(eps_arr)
+                g.attrs["coefficient_indices_reference"] = "coefficients"
+
+        for name in (
+            "unique_eps_eup",
+            "unique_sig_ang",
+            "unique_charge_product",
+            "combined_energy_grids",
+        ):
+            if name in g:
+                del g[name]
         g.create_dataset("unique_eps_eup", data=eps_arr, dtype=np.float64)
         g.create_dataset("unique_sig_ang", data=sig_arr, dtype=np.float64)
         g.create_dataset("unique_charge_product", data=qq_arr, dtype=np.float64)
@@ -3214,30 +3652,32 @@ def inject_stage7_sc_table_nodes(
         required_sc_datasets = [
             "restype_order",
             "target_order",
-            "grid_nm",
+            "grid_ang",
             "cos_theta_grid",
             "rotamer_count",
             "rotamer_probability_fixed",
-            "rotamer_radial_energy_kj_mol",
-            "rotamer_angular_energy_kj_mol",
+            "rotamer_radial_energy_eup",
+            "rotamer_angular_energy_eup",
             "rotamer_angular_profile",
+            "rotamer_full_energy_eup",
         ]
         missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_grp]
         if missing_sc_datasets:
             missing_text = ", ".join(missing_sc_datasets)
             raise SystemExit(
                 f"ERROR: {martini_h5} is missing required rotamer-resolved SC datasets: {missing_text}. "
-                "Regenerate martini.h5 via build_martini_tables()."
+                "Regenerate martini.h5 via build_martini_h5()."
             )
         restype_order = decode_string_array(sc_grp["restype_order"])
         target_order = decode_string_array(sc_grp["target_order"])
-        grid_nm = sc_grp["grid_nm"][:].astype(np.float32)
+        grid_ang = sc_grp["grid_ang"][:].astype(np.float32)
         cos_theta_grid = sc_grp["cos_theta_grid"][:].astype(np.float32)
         rotamer_count = sc_grp["rotamer_count"][:].astype(np.int32)
         rotamer_probability_fixed = sc_grp["rotamer_probability_fixed"][:].astype(np.float32)
-        rotamer_radial_energy_kj_mol = sc_grp["rotamer_radial_energy_kj_mol"][:].astype(np.float32)
-        rotamer_angular_energy_kj_mol = sc_grp["rotamer_angular_energy_kj_mol"][:].astype(np.float32)
+        rotamer_radial_energy_eup = sc_grp["rotamer_radial_energy_eup"][:].astype(np.float32)
+        rotamer_angular_energy_eup = sc_grp["rotamer_angular_energy_eup"][:].astype(np.float32)
         rotamer_angular_profile = sc_grp["rotamer_angular_profile"][:].astype(np.float32)
+        rotamer_full_energy_eup = sc_grp["rotamer_full_energy_eup"][:].astype(np.float32)
 
     restype_to_index = {name: i for i, name in enumerate(restype_order)}
     target_to_index = {name: i for i, name in enumerate(target_order)}
@@ -3335,10 +3775,6 @@ def inject_stage7_sc_table_nodes(
         martini_potential = pot["martini_potential"]
         g_sc = recreate_group(pot, "martini_sc_table_1body")
         g_sc.attrs["arguments"] = np.asarray([np.bytes_("pos"), np.bytes_("placement_fixed_point_vector_only_CB")])
-        g_sc.attrs["energy_conversion_kj_per_eup"] = np.float32(martini_potential.attrs["energy_conversion_kj_per_eup"])
-        g_sc.attrs["length_conversion_angstrom_per_nm"] = np.float32(
-            martini_potential.attrs["length_conversion_angstrom_per_nm"]
-        )
         g_sc.attrs["x_len"] = np.float32(martini_potential.attrs["x_len"])
         g_sc.attrs["y_len"] = np.float32(martini_potential.attrs["y_len"])
         g_sc.attrs["z_len"] = np.float32(martini_potential.attrs["z_len"])
@@ -3349,13 +3785,14 @@ def inject_stage7_sc_table_nodes(
         )
         g_sc.create_dataset("env_atom_index", data=env_atom_index, dtype=np.int32)
         g_sc.create_dataset("env_target_index", data=env_target_index, dtype=np.int32)
-        g_sc.create_dataset("grid_nm", data=grid_nm, dtype=np.float32)
+        g_sc.create_dataset("grid_ang", data=grid_ang, dtype=np.float32)
         g_sc.create_dataset("cos_theta_grid", data=cos_theta_grid, dtype=np.float32)
         g_sc.create_dataset("rotamer_count", data=rotamer_count.astype(np.int32), dtype=np.int32)
         g_sc.create_dataset("rotamer_probability_fixed", data=rotamer_probability_fixed, dtype=np.float32)
-        g_sc.create_dataset("rotamer_radial_energy_kj_mol", data=rotamer_radial_energy_kj_mol, dtype=np.float32)
-        g_sc.create_dataset("rotamer_angular_energy_kj_mol", data=rotamer_angular_energy_kj_mol, dtype=np.float32)
+        g_sc.create_dataset("rotamer_radial_energy_eup", data=rotamer_radial_energy_eup, dtype=np.float32)
+        g_sc.create_dataset("rotamer_angular_energy_eup", data=rotamer_angular_energy_eup, dtype=np.float32)
         g_sc.create_dataset("rotamer_angular_profile", data=rotamer_angular_profile, dtype=np.float32)
+        g_sc.create_dataset("rotamer_full_energy_eup", data=rotamer_full_energy_eup, dtype=np.float32)
         g_sc.create_dataset("restype_order", data=np.asarray([np.bytes_(x) for x in restype_order], dtype="S4"))
         g_sc.create_dataset("target_order", data=np.asarray([np.bytes_(x) for x in target_order], dtype="S8"))
 

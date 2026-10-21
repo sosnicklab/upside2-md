@@ -259,6 +259,24 @@ struct PairlistComputation {
 };
 
 
+// The parameters of a symmetric interaction for type pair (t2,t1) are those of (t1,t2) with the
+// roles of the two elements exchanged (IType::is_compatible), so an edge's derivative with respect
+// to them is its parameter derivative evaluated with the two elements exchanged.
+template<typename IType, bool symmetric=IType::symmetric>
+struct ExchangedParamDeriv {
+    static void compute(Vec<IType::n_param> &d_param, const float* p,
+            const Vec<IType::n_dim1> &x1, const Vec<IType::n_dim2> &x2) {}
+};
+
+template<typename IType>
+struct ExchangedParamDeriv<IType,true> {
+    static void compute(Vec<IType::n_param> &d_param, const float* p,
+            const Vec<IType::n_dim1> &x1, const Vec<IType::n_dim2> &x2) {
+        IType::param_deriv(d_param, p, x2, x1);
+    }
+};
+
+
 template<typename IType>
 struct InteractionGraph{
     constexpr static const bool symmetric  = IType::symmetric;
@@ -303,6 +321,7 @@ struct InteractionGraph{
     std::unique_ptr<float[]> pos1_deriv, pos2_deriv;
 
     std::vector<Vec<n_param>> edge_param_deriv;
+    std::vector<Vec<n_param>> edge_param_deriv_exchanged; // symmetric only, for type pair (t2,t1)
     VecArrayStorage           interaction_param_deriv;
 
     InteractionGraph(hid_t grp, CoordNode* pos_node1_, CoordNode* pos_node2_ = nullptr) try :
@@ -466,8 +485,10 @@ struct InteractionGraph{
         // printf("n_edge for n_dim1 %i n_dim2 %i n_elem1 %i n_elem2 %i is %i\n", n_dim1, n_dim2, n_elem1, n_elem2, n_edge);
 
         // Compute edge values
-        if(param_deriv)
+        if(param_deriv) {
             edge_param_deriv.clear();
+            edge_param_deriv_exchanged.clear();
+        }
 
         for(int ne=0; ne<n_edge; ne+=4) {
             auto i1 = Int4(edge_indices1+ne);
@@ -502,6 +523,14 @@ struct InteractionGraph{
 
                     edge_param_deriv.push_back(make_zero<n_param>());
                     IType::param_deriv(edge_param_deriv.back(), interaction_ptr[i], c1,c2);
+
+                    if(symmetric) {
+                        int nt1 = types1[edge_indices1[ne+i]];
+                        int nt2 = types2[edge_indices2[ne+i]];
+                        edge_param_deriv_exchanged.push_back(make_zero<n_param>());
+                        ExchangedParamDeriv<IType>::compute(edge_param_deriv_exchanged.back(),
+                                interaction_param.get()+(nt2*n_type2+nt1)*n_param, c1,c2);
+                    }
                 }
             }
         }
@@ -545,7 +574,7 @@ struct InteractionGraph{
                     int t2 = types2[edge_indices2[ne+i]];
                     update_vec(interaction_param_deriv, t1*n_type2+t2, extract_float(sens,i)*edge_param_deriv[ne+i]);
                     if(symmetric) 
-                        update_vec(interaction_param_deriv, t2*n_type1+t1, extract_float(sens,i)*edge_param_deriv[ne+i]);
+                        update_vec(interaction_param_deriv, t2*n_type1+t1, extract_float(sens,i)*edge_param_deriv_exchanged[ne+i]);
                 }
             }
         }

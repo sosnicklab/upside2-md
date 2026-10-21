@@ -1,0 +1,48 @@
+; n-Dodecyl-beta-D-Maltoside (DDM) detergent, MARTINI 2 topology.
+; Bonded parameters from the official cgmartini MARTINI 2 lipidome surfactant entry
+; (martini_v2.0_DDM_01.itp, Bjorling & Westenhoff). Bead TYPES are standard MARTINI 2
+; and are covered by the dry-MARTINI v2.1 nonbonded matrix (P1/P2/P4/Na/C1), so this
+; molecule reuses dry-MARTINI pair interactions for the environment.
+;
+; The five head bonds carry kb=30000 (rigid constraints in the wet model); here they
+; are authored as stiff harmonic bonds, which is the -DFLEXIBLE form and the correct
+; representation for the Upside spline/harmonic engine. The three head dihedrals of the
+; wet model are omitted (Upside lipid connectivity supports bonds+angles); the maltose
+; head geometry is instead maintained by the stiff head bonds and angles.
+
+[ moleculetype ]
+; molname  nrexcl
+  DDM      1
+
+[ atoms ]
+; id  type  resnr  residue  atom  cgnr  charge   mass
+  1   P1    1      DDM      B1    1     0        60.0528
+  2   P2    1      DDM      B2    2     0        59.0448
+  3   P4    1      DDM      B3    3     0        60.0528
+  4   Na    1      DDM      B4    4     0        43.0454
+  5   P1    1      DDM      B5    5     0        60.0528
+  6   P4    1      DDM      B6    6     0        60.0528
+  7   C1    1      DDM      C1    7     0        56.108
+  8   C1    1      DDM      C2    8     0        56.108
+  9   C1    1      DDM      C3    9     0        57.116
+
+[ bonds ]
+; i  j  funct  length(nm)  force(kJ/mol/nm^2)
+  1  2  1      0.222       30000
+  2  3  1      0.246       30000
+  2  4  1      0.561       30000
+  4  5  1      0.239       30000
+  4  6  1      0.281       30000
+  4  7  1      0.404       10000
+  7  8  1      0.470       1250
+  8  9  1      0.470       1250
+
+[ angles ]
+; i  j  k  funct  angle(deg)  force(kJ/mol)
+  1  2  4  2      150.0       50
+  3  2  4  2      140.0       50
+  5  4  2  2      70.0        100
+  6  4  2  2      50.0        25
+  4  7  8  2      180.0       11
+  7  8  9  2      180.0       76.6
+  2  4  7  2      149.7       169.2

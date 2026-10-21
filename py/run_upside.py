@@ -102,10 +102,7 @@ def upside_config(fasta,
                   memb_scale=1.,
                   ):
     
-    # Get the Python interpreter path
-    python_path = sys.executable
-    
-    args = [python_path, os.path.join(py_source_dir, 'upside_config.py'), '--fasta=%s'%fasta, '--output=%s'%output]
+    args = [os.path.join(py_source_dir, 'upside_config.py'), '--fasta=%s'%fasta, '--output=%s'%output]
 
     if initial_structure:
         args.append('--initial-structure=%s'%initial_structure)
@@ -153,7 +150,7 @@ def upside_config(fasta,
 
     if environment_potential:
         args.append('--environment-potential=%s'%environment_potential)
-    if environment_potential_type:
+    if environment_potential_type is not None:
         args.append('--environment-potential-type=%s'%environment_potential_type)
     if environment_weights_number:
         args.append('--environment-weights-number=%s'%environment_weights_number)

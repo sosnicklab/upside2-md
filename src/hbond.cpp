@@ -484,6 +484,9 @@ struct HBondCoverage : public CoordNode {
 static RegisterNodeType<HBondCoverage,2> coverage_node("hbond_coverage");
 
 
+// parameters holds the 12 shared values, then optionally 3 per extra residue class: offsets on
+// E_alpha, E_beta and E_other for the residues that residue_class assigns to it (class 0 uses the
+// shared energies alone, so a 12-value config has no residue_class and behaves as before).
 struct HBondEnergy : public HBondCounter
 {
     CoordNode& protein_hbond;
@@ -494,6 +497,7 @@ struct HBondEnergy : public HBondCounter
     int n_acceptor;
     int n_param;
     std::vector<float> params;
+    std::vector<int>   res_class;
     std::vector<float> hb_number1; // in one residue
     std::vector<float> hb_number2; // in one peptide
     std::vector<int>   donor_resid;
@@ -527,6 +531,7 @@ struct HBondEnergy : public HBondCounter
         n_acceptor(get_dset_size(1, grp, "acceptor_resid")[0]),
         n_param(get_dset_size(1, grp, "parameters")[0]),
         params(n_param),
+        res_class(n_res, 0),
         hb_number1(n_res),
         hb_number2(n_res-1),
         donor_resid(n_donor),
@@ -536,7 +541,16 @@ struct HBondEnergy : public HBondCounter
         dPsi(n_res)
     {
         assert(n_donor+n_acceptor==n_virtual);
+        if(n_param < 12 || (n_param-12)%3)
+            throw string("hbond_energy parameters must hold 12 values plus 3 per residue class");
         traverse_dset<1, float> (grp, "parameters",     [&](size_t i, float x) {params[i] = x;});
+        if(n_param > 12) {
+            int n_class = 1 + (n_param-12)/3;
+            check_size(grp, "residue_class", n_res);
+            traverse_dset<1, int>(grp, "residue_class", [&](size_t i, int x) {
+                    if(x<0 || x>=n_class) throw string("hbond_energy residue_class out of range");
+                    res_class[i] = x;});
+        }
         traverse_dset<1, int>   (grp, "donor_resid",    [&](size_t i, int x)   {donor_resid[i] = x;    resid_donor.insert(pair<int, int>(x, (int)i));  });
         traverse_dset<1, int>   (grp, "acceptor_resid", [&](size_t i, int x)   {acceptor_resid[i] = x; resid_acceptor.insert(pair<int, int>(x, (int)i));});
         E_alpha         = params[0];
@@ -551,6 +565,12 @@ struct HBondEnergy : public HBondCounter
         sharpness_helix1 = params[9];
         boundary_helix2  = params[10];
         sharpness_helix2 = params[11];
+    }
+
+    // offset of residue i's class on basin energy k (0 alpha, 1 beta, 2 other)
+    float class_offset(int i, int k) const {
+        int c = res_class[i];
+        return c ? params[12 + 3*(c-1) + k] : 0.f;
     }
 
     virtual void compute_value(ComputeMode mode) override {
@@ -582,9 +602,13 @@ struct HBondEnergy : public HBondCounter
             float dhelix_dpsi = n_turn_score *  dpsis_dpsi;
             float dsheet_dpsi = n_turn_score * -dpsis_dpsi;
 
-            Ehbond[i] = E_alpha * helix_score + E_beta * sheet_score + E_other * turn_score;
-            dPhi[i]   = E_alpha * dhelix_dphi + E_beta * dsheet_dphi + E_other * dturn_dphi;
-            dPsi[i]   = E_alpha * dhelix_dpsi + E_beta * dsheet_dpsi;
+            float e_alpha = E_alpha + class_offset(i,0);
+            float e_beta  = E_beta  + class_offset(i,1);
+            float e_other = E_other + class_offset(i,2);
+
+            Ehbond[i] = e_alpha * helix_score + e_beta * sheet_score + e_other * turn_score;
+            dPhi[i]   = e_alpha * dhelix_dphi + e_beta * dsheet_dphi + e_other * dturn_dphi;
+            dPsi[i]   = e_alpha * dhelix_dpsi + e_beta * dsheet_dpsi;
 
         }
 
@@ -716,11 +740,22 @@ struct HBondEnergy : public HBondCounter
             dparams[3] += dE.x();
         }
 
+        // each residue class's offsets, after the shared values
+        dparams.resize(n_param, 0.f);
+        for( int i =0; i<n_res; i++ ) {
+            if(!res_class[i]) continue;
+            int o = 12 + 3*(res_class[i]-1);
+            dparams[o+0] += hb_number1[i]*dE_alpha[i];
+            dparams[o+1] += hb_number1[i]*dE_beta[i];
+            dparams[o+2] += hb_number1[i]*dE_other[i];
+        }
+
         return dparams;
     }
 #endif
     virtual void set_param(const std::vector<float>& new_param) override {
-        // FIXME add a check to the size of parameters
+        if(int(new_param.size()) != n_param)
+            throw string("hbond_energy set_param: wrong number of parameters");
         params = new_param;
         E_alpha          = params[0];
         E_beta           = params[1];

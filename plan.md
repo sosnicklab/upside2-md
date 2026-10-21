@@ -1,987 +1,795 @@
-
-## 2026-04-30 Hybrid AA-Direct Forensic Regression Fix
-
-### Project Goal
-- Restore the pre-regression hybrid physics while keeping the AA-direct architecture (no martinize runtime path), with stable stage-6 rigid behavior and valid stage-7 mode-2 extraction.
-
-### Architecture & Key Decisions
-- Keep `hybrid_bb_map/bb_atom_index=-1` as a valid AA-direct mapping sentinel; drive BB sites from mapped N/CA/C/O carriers instead of aliasing CA coordinates.
-- Keep SC-env and BB-env interactions active; fix force projection and site construction rather than damping/disable workarounds.
-- Enforce pre-production rigidity by geometric rigid projection (best-fit rigid transform each step), not only force/momentum filtering.
-- Restore martinize-equivalent charged termini BB typing (`Qd`/`Qa`) in extracted backbone mapping and preserve explicit dry-MARTINI-to-Upside unit conversion contract.
-
-### Execution Phases
-- [x] Phase 1: Audit and remove CA-alias/fallback regressions in C++ hybrid runtime.
-- [x] Phase 2: Rewire BB virtual-site position/force projection for AA carriers without proxy-coordinate overwrite.
-- [x] Phase 3: Restore BB mapping parity details (termini typing and BB charge assignment) in Python prep.
-- [x] Phase 4: Verify compile, mode-2 extraction, rigid stage-6 geometry behavior, and stage-7 release behavior.
-
-### Known Errors / Blockers
-- Reduced-horizon workflow smoke runs can still show large MARTINI energies because minimization/equilibration are intentionally truncated; use full schedule for physical stability assessment.
-
-### Review
-- Fixed C++ regression points:
-  - removed runtime `bb<-ca` aliasing path and preserved sentinel semantics for missing BB proxy indices;
-  - prevented carrier CA atoms from being treated as fixed proxies in production constraint routing;
-  - enabled COM-mapped BB site evaluation for AA carriers and conservative BB force projection back to N/CA/C/O carriers (including CA contribution);
-  - stopped proxy refresh paths from overwriting physical AA carrier coordinates in AA-direct mode.
-- Fixed rigid-body enforcement:
-  - rigid groups now apply a weighted best-fit rigid transform each step and project atom coordinates onto that rigid manifold, while preserving net translation/rotation.
-- Fixed Python mapping parity:
-  - BB mapping now applies charged termini fragment overrides (`Qd`/`Qa`);
-  - AA-backbone MARTINI BB charges are assigned from BB type (`Qd/Qa/...`) instead of hardcoded zero.
-- Verification summary:
-  - `cmake --build obj --target upside` passed;
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed;
-  - mode-2 extraction from stage-7 artifact now succeeds with valid AA-direct carrier fallback;
-  - short stage-6 run keeps protein pair distances rigid (mean pair-distance drift ~`3e-05 Å` on sampled set);
-  - short stage-7 run shows rigidity released (pair-distance drift becomes non-zero);
-  - reduced full workflow run completes through stage `7.0` and mode-2 VTF extraction without backbone-map errors.
-
-## 2026-04-28 Hybrid MARTINI Workflow Refactor
-
-### Project Goal
-- Decouple `example/16.MARTINI/run_sim_1rkl.sh` orchestration from low-level MARTINI constants, stabilization heuristics, and HDF5 mutation details.
-- Make `py/martini_prepare_system.py` own the typed workflow defaults and stage metadata writes through argparse.
-- Preserve the current hybrid MARTINI physics: SC-env and BB-env interface interactions must remain active in production.
-
-### Architecture & Key Decisions
-- Rewrite `run_sim_1rkl.sh` as a thin launcher that only bootstraps the environment and forwards high-level workflow controls.
-- Add a `run-hybrid-workflow` Python command that owns stage prep, stage execution, continuation naming, HDF5 stage mutation, SC library validation/build, and VTF extraction dispatch.
-- Move the named force caps, relaxation ramps, backbone-frame heuristics, NPT internals, Ewald alpha, and unit constants into Python argparse defaults.
-- Remove dead shell-only low-level variables rather than preserving inert compatibility surfaces.
-- Keep production non-protein hard-sphere replacement disabled by default and do not add any switch that disables SC-env or BB-env hybrid interface interactions.
-
-### Execution Phases
-- [x] Phase 1: Add Python workflow config/orchestration and argparse defaults.
-- [x] Phase 2: Replace the base bash workflow with a high-level launcher.
-- [x] Phase 3: Update associated wrappers to expose only high-level defaults.
-- [x] Phase 4: Verify syntax, parser surface, code search, and reduced workflow behavior where feasible.
-- [x] Phase 5: Record review results and remaining blockers.
-
-### Known Errors / Blockers
-- None identified at task start.
-
-### Review
-- Implemented:
-  - `py/martini_prepare_system.py run-hybrid-workflow` now owns hybrid packing, stage-file conversion, HDF5 metadata injection, continuation naming, stage execution, SC-library validation/build, and VTF extraction.
-  - `run_sim_1rkl.sh` is now a high-level launcher with orchestration controls only; low-level force caps, ramps, NPT/Ewald internals, and unit constants are argparse defaults in Python.
-  - `run_sim_1rkl_outlipid.sh`, `run_sim_1afo.sh`, and `run_sim_1afo_outlipid.sh` are thin wrappers that set high-level system/placement/run defaults.
-  - production stage files now write migrated hybrid-control attrs from Python and explicitly keep `production_nonprotein_hard_sphere=0`.
-- Physics integrity audit:
-  - reduced full workflow generated a production stage containing both `martini_potential` and `martini_sc_table_1body`;
-  - production `hybrid_control` had `activation_stage=production`, `sc_env_lj_force_cap=25`, `sc_env_coul_force_cap=25`, `sc_env_relax_steps=150`, `sc_env_backbone_hold_steps=200`, `sc_env_po4_z_hold_steps=150`, `sc_env_po4_z_clamp_enabled=1`, and `nonprotein_hs_force_cap=100`;
-  - production environment membership retained `4025` non-protein targets.
-- Verification:
-  - `bash -n` passed for all four workflow shell entrypoints.
-  - `.venv/bin/python -m py_compile py/martini_prepare_system.py` passed.
-  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --help` exposed the migrated argparse surface.
-  - Search found no migrated low-level variable names in the bash wrappers or `run.py`.
-  - Reduced continuation smoke wrote `/tmp/hybrid_refactor_continue/checkpoints/1rkl.stage_7.1.up` and VTF.
-  - Reduced fresh workflow wrote `/tmp/hybrid_refactor_full/checkpoints/1rkl.stage_7.0.up` and VTF after completing stages `6.0` through `7.0`.
-
-## 2026-04-28 Hybrid MARTINI First-Frame Geometry Regression
-
-### Project Goal
-- Restore stable 1RKL initial geometry after the workflow refactor; the first VTF frame must retain the proper helical backbone while preserving all active SC-env and BB-env hybrid interface interactions.
-
-### Architecture & Key Decisions
-- Treat the regression as a stage-file geometry/mapping issue unless runtime evidence proves otherwise.
-- Keep the fix in `py/martini_prepare_system.py`; do not reintroduce low-level shell controls or wrapper compatibility paths.
-- Preserve direct stage-runtime BB mapping and production SC/BB environment potentials.
-- Compact appended AA reference atoms to the actual referenced N/CA/C/O atoms instead of preserving sparse raw AA PDB index gaps as runtime particles.
-- Stage-7 CB placement must consume `hybrid_bb_map/atom_indices` after runtime remapping, not recompute runtime indices from raw `reference_atom_indices`.
-
-### Execution Phases
-- [x] Phase 1: Inspect generated stage-7 mapping metadata and identify the sparse-reference atom expansion.
-- [x] Phase 2: Patch hybrid mapping injection to append only compact referenced AA atoms.
-- [x] Phase 3: Verify reduced 1RKL workflow output and first-frame mapping integrity.
-- [x] Phase 4: Record results and remaining risk.
-
-### Known Errors / Blockers
-- Reduced one-step workflows remain invalid as stability benchmarks because intentionally collapsed 6.x relaxation can leave enormous MARTINI energies before stage 7. Use them only for wiring and geometry checks.
-
-### Review
-- Fixed:
-  - `py/martini_prepare_system.py` now appends only the compact set of referenced AA backbone atoms and remaps runtime BB carriers through that compact lookup.
-  - `py/martini_prepare_system_lib.py` stage-7 CB placement now consumes the already-remapped `hybrid_bb_map/atom_indices` directly.
-- Verification:
-  - reduced fresh run completed through `/tmp/hybrid_refactor_fix_full2/checkpoints/1rkl.stage_7.0.up` and `/tmp/hybrid_refactor_fix_full2/1rkl.stage_7.0.vtf`;
-  - production stage has `n_atom=4214`, `reference_index_count=124`, runtime BB indices `4090..4213`, and all runtime BB indices in bounds;
-  - appended AA role counts are exactly `31` each for `N`, `CA`, `C`, and `O`;
-  - production HDF5 still contains both `martini_potential` and `martini_sc_table_1body`, with `activation_stage=production` and `production_nonprotein_hard_sphere=0`;
-  - stage-7 input backbone distances are normal before dynamics: N-CA mean `1.471 A`, CA-C mean `1.539 A`, C-O mean `1.234 A`, CA-CA next mean `3.906 A`.
-
-## 2026-04-28 Hybrid MARTINI Stage-7 Explosion Regression
-
-### Project Goal
-- Stop the current stage-7 1RKL production blow-up while keeping SC-env and BB-env interface potentials active.
-
-### Architecture & Key Decisions
-- Treat the user-reported trajectory as authoritative: the workflow is still wrong if Rg jumps from `12.6 A` to `17862.9 A` by step `50`.
-- Compare the runtime force carrier model against the last stable direct-Upside hybrid semantics before making more cleanup edits.
-- Do not disable `martini_potential`, `martini_sc_table_1body`, SC-env, or BB-env interactions.
-- Do not add debug bypass flags.
-
-### Execution Phases
-- [x] Phase 1: Re-open regression notes and capture the user correction.
-- [x] Phase 2: Inspect stage-7 force carrier and pair semantics against a known stable artifact.
-- [x] Phase 3: Patch the wrong carrier/integration path directly.
-- [x] Phase 4: Replay a short production window and verify Rg and energies do not explode.
-
-### Known Errors / Blockers
-- User-reported production run explodes by step `50` after the compact mapping fix:
-  - step `0`: `Rg 12.6 A`, total `-12776.13`;
-  - step `50`: `Rg 17862.9 A`, total `1.111e+12`;
-  - step `100`: `Rg 34374319.3 A`, total `2.324e+20`.
-
-### Review
-- Fixed two runtime issues:
-  - `src/martini.cpp` now uses the remapped `hybrid_bb_map/atom_indices` as the runtime N/CA/C/O carrier indices for backbone O refresh instead of recomputing `reference_index_offset + raw_reference_index`;
-  - `martini_sc_table_1body` and the legacy SC-table node now apply the configured SC-env force cap to table point/vector gradients whenever the cap is positive, keeping SC-env active but preventing launch-force startup events.
-- Verification:
-  - rebuilt `obj/upside` successfully;
-  - replayed the saved failing handoff for `1000` steps from `/tmp/hybrid_stage7_replay_cap1000.up`;
-  - replay stayed finite with CA Rg `12.5-12.7 A` through the full replay;
-  - output HDF5 is all finite, with CA Rg `12.759 A` at frame `0` and `12.723 A` at the last saved frame;
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
-  - `bash -n` passed for all four MARTINI workflow entrypoint scripts.
-
-## 2026-04-28 Hybrid MARTINI Production Restart Parity
-
-### Project Goal
-- Fix stage-7 production restart behavior so split runs (`7.0 -> 7.1 -> ...`) preserve the same protein stability as an uninterrupted production run.
-
-### Architecture & Key Decisions
-- Restart must preserve physical state, not just positions: momenta/velocities, box, hybrid startup counters, and dynamic hold/ramp state must be equivalent.
-- Continue using active SC-env and BB-env interactions; do not add restart-only debug bypasses.
-- Compare split-vs-continuous production using the saved stage-7 handoff before declaring the bug fixed.
-
-### Execution Phases
-- [x] Phase 1: Document the restart regression and inspect continuation workflow.
-- [x] Phase 2: Identify missing restart state by comparing uninterrupted and split runs.
-- [x] Phase 3: Patch continuation state transfer.
-- [x] Phase 4: Verify split-vs-continuous stability and log results.
-
-### Known Errors / Blockers
-- No active blocker remains for production restart state transfer.
-
-### Review
-- Fixed:
-  - production MD runs now record momentum so stage files contain restartable `output/mom`;
-  - handoff now copies the last saved `output/mom` to `input/mom` and marks it restart-valid;
-  - continuation now passes `--restart-using-momentum` only when copied momentum is valid;
-  - production continuation now preserves the hybrid SC-env transition counter with `hybrid_control.sc_env_transition_step_start`;
-  - `src/martini.cpp` initializes `sc_env_transition_step` from that restart attr instead of always restarting the ramp/hold from zero.
-- Verification:
-  - direct continuous `1000`-step replay from the saved stage-7 handoff stayed stable with Rg around `12.7-12.9 A`;
-  - split replay (`500 + 500`) stayed stable after restart with Rg around `12.8-13.0 A`;
-  - actual workflow continuation wrote `/tmp/restart_workflow_check/checkpoints/1rkl.stage_7.1.up`, invoked `--record-momentum --restart-using-momentum`, and kept Rg finite around `12.9 A`;
-  - generated continuation file has `input/mom.restart_valid=1`, `output/mom`, and `sc_env_transition_step_start=450`;
-  - `cmake --build obj --target upside`, Python compile checks, and shell syntax checks passed.
-
-## 2026-04-29 Hybrid MARTINI Restart Instability Still Reproduces
-
-### Project Goal
-- Resolve the still-observed production restart instability when starting from a previous production stage.
-
-### Architecture & Key Decisions
-- Treat the prior restart fix as incomplete.
-- Audit whether continuation is using the true final integrator state or merely the last logged frame.
-- If exact restart state is unavailable, fail clearly instead of silently rethermalizing or restarting from stale logged state.
-- Production-to-production continuation must preserve saved coordinates and momenta exactly; hybrid reference carriers must not be rebuilt during restart handoff.
-- MD output must include the true final state so a later continuation does not restart from the last pre-final logging interval.
-- Preserve active SC-env and BB-env interactions.
-
-### Execution Phases
-- [x] Phase 1: Record unresolved restart instability correction.
-- [x] Phase 2: Audit restart source state actually available in current production files.
-- [x] Phase 3: Fix continuation to use true final state or fail loudly when unavailable.
-- [x] Phase 4: Verify restart from a real production stage generated by the workflow.
-
-### Known Errors / Blockers
-- Existing production files created without `--record-momentum` cannot be exact restart sources; continuation now fails before MD and tells the user to regenerate the previous production stage with the current workflow.
-- Existing production files created before the validated final-state marker also cannot be accepted as exact restart sources, even if they contain `output/mom`.
-
-### Review
-- Fixed:
-  - production `7.x -> 7.x` continuation now uses `production_restart` handoff, which copies saved final coordinates and momentum exactly and does not refresh hybrid carriers;
-  - continuation now requires both a validated final-state marker on `output/mom` and `input/mom.restart_valid=1` after handoff;
-  - `upside` now appends a final MD output sample after the integration loop so the next stage restarts from the true final state;
-  - workflow MD stages mark `output/mom.restart_final_state_valid=1` only after verifying the final output time matches the requested duration;
-  - hybrid transition carry-forward now advances by the full final output time instead of the last periodic pre-final frame.
-- Verification:
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed;
-  - `bash -n` passed for all four MARTINI workflow shell entrypoints;
-  - `cmake --build obj --target upside` passed with only existing warnings;
-  - a patched 500-step production source wrote final `output/time=1.0` and matching `output/mom`;
-  - workflow continuation from that source used `--restart-using-momentum`, kept Rg finite from `12.6 A` to `12.3 A`, and produced finite positions/momenta;
-  - continuation input exactly matched source final state: position max diff `0.0`, momentum max diff `0.0`, `input/mom.restart_valid=1`, `sc_env_transition_step_start=500`;
-  - workflow-generated `stage_7.1` was restarted into `stage_7.2`, used `--restart-using-momentum`, stayed stable from `Rg 12.2 A` to `12.1 A`, and produced `sc_env_transition_step_start=1000`;
-  - `stage_7.2` input exactly matched `stage_7.1` final state: position max diff `0.0`, momentum max diff `0.0`;
-  - continuation from a source with `output/mom` but no validated final-state marker failed before MD with the expected final restart-state error;
-  - continuation from an older source without `output/mom` failed before MD with the expected restart-valid momentum error.
-
-## 2026-04-24 dry-MARTINI Runtime Acceleration Import
-
-### Project Goal
-- Import the dry-MARTINI runtime acceleration logic from `/Users/yinhan/Documents/upside2-md_temp/src/martini.cpp` into this repo's `src/martini.cpp`.
-- Keep the scope limited to performance paths used by the active dry-MARTINI runtime, not unrelated feature changes from the temp checkout.
-
-### Architecture & Key Decisions
-- Only transplant acceleration mechanisms that directly reduce hot-loop work in the current runtime:
-  - cached Verlet-style pairlists for `MartiniPotential`,
-  - cached per-pair parameter metadata so the main nonbonded loop avoids repeated coefficient unpacking / spline-map lookup,
-  - cached active contact lists for `martini_sc_table_1body`, which is the active production SC/environment node in this checkout.
-- Do not import unrelated temp-file changes such as fix-rigid extensions, stage-parameter cleanup, or removal of legacy compatibility nodes unless they are required for the acceleration paths to compile.
-- Preserve backward compatibility in `src/martini.cpp`:
-  - keep existing node names and interfaces intact,
-  - keep legacy `martini_sc_table_potential` available.
-
-### Execution Phases
-- [x] Confirm the exact acceleration deltas in the temp file and map them onto the active runtime surfaces in this checkout.
-- [x] Patch `src/martini.cpp` with the selected acceleration paths only.
-- [x] Build and verify the modified MARTINI runtime.
-- [x] Document the imported optimizations and verification results.
-
-### Known Errors / Blockers
-- The checked-in `obj/` build cache is stale from the old moved repo path (`/Users/yinhan/Documents/upside2-md-martini`), so verification in this pass used a fresh out-of-tree build directory under `/tmp` instead of the existing `obj/`.
-
-### Review
-- Confirmed the temp checkout acceleration scope:
-  - `MartiniPotential` adds a cached Verlet-style pairlist plus cached per-pair parameter metadata/pointer indirection;
-  - the active SC/environment runtime in this checkout is `martini_sc_table_1body`, and the temp checkout accelerates that path with a cached active-contact list.
-- Implemented in `src/martini.cpp`:
-  - `MartiniPotential` now compacts pair coefficients into a unique parameter table, caches direct spline pointers per unique parameter row, and rebuilds an active pairlist only when atoms move beyond half the configured skin or the box changes;
-  - `MartiniScTableOneBody` now caches row/environment contacts within `cutoff + cache_buffer` and reuses them across both value and derivative passes until the cache is invalidated by motion or box changes;
-  - the NPT box updater now also updates `martini_sc_table_1body`, so the active-contact cache remains valid under box scaling for the live production node.
-- Verification:
-  - configured a fresh build tree with `cmake -S src -B /tmp/upside2-md-build-20260424`;
-  - built `upside`, `upside_calculation`, and `upside_engine` successfully with `cmake --build /tmp/upside2-md-build-20260424 --target upside upside_calculation upside_engine`.
-- Residual warnings:
-  - build still reports a pre-existing `%p` formatting warning in `martini_masses::get_mass(...)` and unrelated existing warnings in other translation units; no new build errors remain from the acceleration import.
-
-## 2026-04-14 MARTINI Workflow Python Runtime Repair
-
-### Project Goal
-- Make `example/16.MARTINI/run_sim_1rkl.sh` use the repository `.venv` reliably so `py/martini_prepare_system_lib.py` can import `h5py`.
-- Repair `install_python_env.sh` so a repo-local `.venv` still works after the repository has been moved on disk.
-
-### Architecture & Key Decisions
-- Treat the reported `ModuleNotFoundError: h5py` as an interpreter-selection bug, not a missing dependency bug:
-  - the current `.venv/bin/python` imports `h5py` successfully;
-  - the failure comes from `run_sim_1rkl.sh` resolving `python3` from Homebrew `python3.14` after sourcing a stale `.venv/bin/activate`.
-- Fix the workflow wrapper directly by prepending the repo-local `.venv/bin` to `PATH` instead of depending on `activate` side effects.
-- Fix the installer in place by repairing stale `.venv/bin/activate*` files and stale console-script shebangs under `.venv/bin` to the current repo path, avoiding an unnecessary full environment rebuild.
-
-### Execution Phases
-- [x] Confirm the interpreter/path mismatch and inspect the current `.venv` metadata.
-- [x] Patch `example/16.MARTINI/run_sim_1rkl.sh` and `install_python_env.sh` with the minimal robust fix.
-- [x] Verify the repaired runtime path and document the result.
-
-### Known Errors / Blockers
-- None so far. The local `.venv` already contains `h5py`, so verification does not depend on a fresh network install.
-
-### Review
-- Root cause verified:
-  - `.venv/bin/python` imports `h5py`;
-  - Homebrew `python3.14` does not;
-  - the old `.venv/bin/activate` still pointed at `/Users/yinhan/Documents/upside2-md-martini/.venv`, so `run_sim_1rkl.sh` was picking the wrong interpreter.
-- Implemented:
-  - `example/16.MARTINI/run_sim_1rkl.sh` now prepends the repo-local `.venv/bin` to `PATH` instead of sourcing `activate`;
-  - `install_python_env.sh` now repairs stale `activate*` files and stale `.venv/bin` Python-script shebangs in place.
-- Verification:
-  - `bash -n install_python_env.sh`
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -lc 'PROJECT_ROOT="$PWD"; source "$PROJECT_ROOT/source.sh"; export PATH="$PROJECT_ROOT/.venv/bin:$PATH"; python3 -c "import sys, h5py; print(sys.executable); print(h5py.__version__)"'`
-  - `env PIP_NO_INDEX=1 bash install_python_env.sh`
-  - `bash -lc 'source .venv/bin/activate && python3 -c "import sys, h5py; print(sys.executable); print(h5py.__version__)"'`
-  - `bash -lc 'source .venv/bin/activate && pip --version'`
-
-## 2026-04-14 Python Environment Installer Portability
-
-### Project Goal
-- Make `install_python_env.sh` succeed on both Linux and local macOS hosts while preserving the existing Python-package intent for UPSIDE2.
-
-### Architecture & Key Decisions
-- Keep Python `3.11` as the required interpreter version for the repository environment.
-- Interpreter selection will stay configuration-driven:
-  - honor `PYTHON_BIN` when provided;
-  - otherwise discover a compatible Python `3.11` interpreter from common Linux/macOS locations instead of assuming a single command name.
-- macOS setup will export Homebrew-backed dependency hints for packages that may need native HDF5 / compression libraries during pip installation.
-- Core scientific packages remain required.
-- Optional analysis packages remain best-effort so a platform-specific failure in `pyhdx`-related extras does not abort the whole environment bootstrap.
-
-### Execution Phases
-- [x] Audit the current installer and local Darwin environment.
-- [x] Patch `install_python_env.sh` for cross-platform interpreter and package installation behavior.
-- [x] Verify shell syntax and installer logic, then document the result.
-
-### Known Errors / Blockers
-- No active code blocker remains for this installer task.
-- Verification completed in the current Darwin arm64 shell with `PIP_NO_INDEX=1`, which exercised interpreter discovery, macOS build-hint setup, venv reuse, and the post-install import checks without requiring fresh downloads.
-
-## 2026-04-01 Stage-7 SC Table Integration
-
-### Project Goal
-- Consume the completed external `/Users/yinhan/Documents/SC-training` training results by building a native-unit `martini.h5`.
-- Replace the legacy stage-7 sidechain back-mapping / rotamer production path in `example/16.MARTINI/run_sim_1rkl.sh` with a direct dry-MARTINI sidechain table interaction.
-- Keep the new sidechain force field inactive for stages `6.0` through `6.6` and active only in production stage `7.0`.
-
-### Architecture & Key Decisions
-- `martini.h5` will be built from the assembled `sc_table.json` output and stored as a native-unit library (`nm`, `kJ/mol`) with a simple table schema:
-  - residue order,
-  - target dry-MARTINI type order,
-  - uniform radial grid,
-  - radial energy table.
-- Simulation-side conversion into Upside units remains parameterized:
-  - the stage-7 runtime node will read explicit `energy_conversion_kj_per_eup` and `length_conversion_angstrom_per_nm` attrs;
-  - no numeric unit conversion will be baked into training outputs.
-- Revised decision after user correction on 2026-04-02:
-  - restore the reduced simulation-mass path (`ff_mass / 12`) in preparation and stage-file augmentation;
-  - keep the weighted BB mapping revert in place;
-  - retain the scientific-notation logging improvement only as a readability fix.
-- Revised decision after user correction:
-  - the stage-7 dry-MARTINI coupling must be integrated directly with Upside carriers, not evaluated on parallel protein MARTINI proxy coordinates and projected afterward.
-- Sidechain/environment coupling will remain a separate stage-7 potential node, but it must be directly Upside-carried:
-  - use deterministic Upside sidechain-bead coordinates from `affine_alignment -> placement_fixed_point_only_CB`;
-  - act only between selected protein residues and non-protein dry-MARTINI particles;
-  - add equal-and-opposite force to the dry particle and the Upside sidechain-bead coordinate so the backbone receives the feedback through the coord-node derivative chain;
-  - all legacy protein MARTINI `SC` proxy nonbonded interactions in `martini_potential` must be disabled in stage 7.
-- Backbone/environment coupling must also be directly Upside-carried:
-  - treat the Upside `CA` carrier as the dry-MARTINI protein `BB` interaction site;
-  - keep dry-MARTINI `BB` to surrounding non-protein dry particles active, but apply the resulting force directly to `CA` and the dry particle rather than to a proxy `BB` bead followed by projection;
-  - revised after regression report: the old weighted `BB -> N/CA/C/O` active map has been restored for now; the attempted CA-only active BB remap has been reverted pending a deeper force-path audit;
-  - revised after the 2026-04-02 production-drift audit:
-    - direct `BB -> CA` and direct `CB` stage-7 forces must still honor the existing startup protein-feedback ramp (`sc_env_backbone_hold_steps`) instead of feeding full force back onto the protein from step `0`;
-    - stage-7 must not evaluate any protein-internal MARTINI proxy-proxy terms, because those legacy bonded/nonbonded terms only add bookkeeping energy once the protein is carried directly by Upside;
-  - do not evaluate protein internal SC-backbone dry-MARTINI interactions, because those are already handled on the Upside side.
-- The workflow must remove the legacy production SC path together with its dead control surface:
-  - no stage-7 `rotamer`, `placement_fixed_scalar`, or `placement_fixed_point_vector_only`;
-  - no stage-7 `hybrid_sc_map` requirement;
-  - no stage-7 SC-relaxation / proxy-control attributes that only served the old probabilistic proxy path.
-- Revised decision after the 2026-04-02 cleanup pass:
-  - remove the dead prep-only `hybrid_sc_map` export/validation path as well; the active workflow only needs `hybrid_control`, `hybrid_bb_map`, and `hybrid_env_topology`;
-  - `src/box.cpp` and `src/box.h` were audited during this pass and left unchanged because they no longer contain the retired stage-7 proxy/rotamer subsystem, only active box/NPT infrastructure.
-- `ALA` and `GLY` remain excluded from the new SC table because the trained library covers the current `18` non-empty canonical sidechain types; those residues still participate through the existing backbone/environment MARTINI path only.
-
-### Execution Phases
-- [x] Phase A: Build `parameters/ff_2.1/martini.h5` from the completed external `SC-training` results.
-- [x] Phase B: Implement a new stage-7 SC table runtime node and wire its box-scaling behavior.
-- [x] Phase C: Replace the production-side script injection in `run_sim_1rkl.sh` with stage-7 CB + SC-table setup and remove the legacy SC rotamer path.
-- [x] Phase D: Update the production helper workflow to match the new stage-7 path.
-- [x] Phase E: Remove the remaining parallel protein-MARTINI force path so stage 7 uses direct Upside-carried BB/SC interactions only.
-- [x] Phase F: Verify `martini.h5` generation, build integrity, stage-7 HDF5 injection structure, and workflow/runtime behavior for the direct-Upside design.
-
-### Known Errors / Blockers
-- No code-path blocker remains for stage-7 SC-table injection in this environment:
-  - the repaired repository `.venv` provides both `h5py` and `tables`;
-  - the stage-7 injector now falls back to the protein ITP when fresh prepared files omit `/input/sequence`.
-- Reduced-step full-workflow runs are still not a stability benchmark for the hybrid physics:
-  - the intentionally shortened `6.4-6.6` relaxation settings used for fast verification can drive the pre-production MARTINI state to enormous energies before stage 7;
-  - that does not block the stage-7 integration itself, but any physical assessment still needs the intended relaxation horizon / benchmark settings.
-
-### Review
-- 2026-04-02 legacy-code removal verification:
-  - physically removed the dead probabilistic SC / rotamer / placement subsystem from `src/martini.cpp` instead of leaving it compiled behind runtime gates;
-  - removed the dead prep-only `hybrid_sc_map` generation and validation path from `example/16.MARTINI/prepare_system_lib.py`, `example/16.MARTINI/prepare_system.py`, and `example/16.MARTINI/validate_hybrid_mapping.py`;
-  - audited `src/box.cpp` and `src/box.h` and left them intact because the remaining code there is still-active barostat/box plumbing rather than disabled hybrid legacy logic;
-  - verification:
-    - `cmake --build obj` passed,
-    - `python -m py_compile example/16.MARTINI/prepare_system_lib.py example/16.MARTINI/prepare_system.py example/16.MARTINI/validate_hybrid_mapping.py` passed under `.venv`,
-    - `bash -n example/16.MARTINI/run_sim_1rkl.sh` and `bash -n example/16.MARTINI/test_prod_run_sim_1rkl.sh` passed,
-    - a fresh prep run in `/tmp/hybrid_mapping_bb_only` produced a mapping file whose `/input` group contains only `hybrid_bb_map`, `hybrid_control`, and `hybrid_env_topology`,
-    - a shortened active-workflow run in `/tmp/legacy_cleanup_short` accepted that mapping schema and completed the full current `run_sim_1rkl.sh` ladder through stage `7.0`.
-- 2026-04-02 production-drift fix verification:
-  - restored the startup protein-feedback ramp on the direct stage-7 force paths in `src/martini.cpp`:
-    - direct `BB`/environment MARTINI forces now scale only the protein-side feedback by `compute_sc_backbone_feedback_mix(...)`,
-    - `martini_sc_table_potential` now does the same for `CB` feedback while leaving the environment-side force unchanged;
-  - removed the remaining active protein-internal MARTINI proxy-proxy path during stage 7 by making `allow_protein_pair_by_rule(...)` reject all protein-proxy pairs in the active hybrid runtime;
-  - targeted replay verification from the same saved production handoff (`example/16.MARTINI/outputs/martini_test_1rkl_hybrid/checkpoints/1rkl.stage_7.0.up`) now stays negative through the user’s failure window:
-    - archived current run at step `2050`: `martini_potential 26387.78`, `total 26216.96`;
-    - patched replay at step `2050`: `martini_potential -25985.45`, `total -26147.28`.
-- Implemented `example/16.MARTINI/build_sc_martini_h5.py` and generated `parameters/ff_2.1/martini.h5` from the completed external `SC-training` results.
-- Implemented `example/16.MARTINI/inject_sc_table_stage7.py` so stage 7 now:
-  - preserves the existing Upside backbone-node augmentation,
-  - deletes the legacy SC production path,
-  - injects deterministic CB coordinates and the new `martini_sc_table_potential`.
-- Updated both `example/16.MARTINI/run_sim_1rkl.sh` and `example/16.MARTINI/test_prod_run_sim_1rkl.sh` to use the new stage-7-only SC table path and auto-build the library if only the assembled training JSON is available.
-- Implemented the new `martini_sc_table_potential` runtime in `src/martini.cpp`:
-  - CB-to-env radial table evaluation,
-  - equal-and-opposite force accumulation,
-  - additive backbone feedback through the CB coord node,
-  - participation in NPT box scaling.
-- Removed the remaining parallel protein proxy path from the active stage-7 runtime/workflow:
-  - `martini_potential` now skips protein `SC` proxy MARTINI pairs entirely during active hybrid production;
-  - protein `BB` proxy MARTINI pairs now use the Upside `CA` carrier coordinate as the interaction site and accumulate force directly onto `CA` plus the dry-MARTINI partner;
-  - the active `hybrid_bb_map` is now CA-only in both exported mapping files and injected runtime stage files (`atom_mask=[0,1,0,0]`, `weights=[0,1,0,0]`), and runtime parsing now rejects any remaining active `N/C/O` carrier rows;
-  - stage-file injection no longer copies `hybrid_sc_map` into runtime stages, the old shell-level SC control helper is gone from the active workflow path, and the legacy stage-7 rotamer augmenter now hard-fails if called.
-- Verification completed in this environment:
-  - `python3 -m py_compile` passed for the new Python scripts;
-  - `bash -n` passed for both workflow shell scripts;
-  - `cmake --build obj` passed;
-  - `h5ls -r parameters/ff_2.1/martini.h5` confirmed the generated library shape.
-- Regression revert verification completed after the user reported a broken minimization stage:
-  - reverted the attempted native-mass switch and the CA-only active BB remap;
-  - a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run again reaches stage `6.0` with a normal minimization startup:
-    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`
-  - this replaces the broken regression signature reported by the user:
-    - `Initial potential energy (Upside/MARTINI/Total): 0.00/30400945802214465601536.00/...`
-- Native-mass-only restoration verification completed on 2026-04-02:
-  - restored the native mass path while leaving the weighted 4-carrier BB map in place;
-  - a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run still starts stage `6.0` at:
-    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`
-  - fresh `1rkl.stage_6.0.up` in `/tmp/martini_mass_restore` again shows native dry-MARTINI mass values in `/input/mass` (`72.0` and `45.0` for the physical dry particles).
-- Reduced-mass restoration verification completed after the user reported box blow-up with original masses:
-  - restored reduced simulation masses (`ff_mass / 12`) in preparation and stage-file augmentation while leaving the scientific-notation logging change in place;
-  - a fresh shortened `example/16.MARTINI/run_sim_1rkl.sh` run in `/tmp/martini_mass_reduced` again starts stage `6.0` at:
-    - `Initial potential energy (Upside/MARTINI/Total): 0.00/140510.94/140510.94`
-  - direct HDF5 inspection of `1rkl.stage_6.0.up` confirms the reduced mass values are back in `/input/mass`:
-    - `4082` particles at `6.0`,
-    - `8` particles at `3.75`.
-- Logging/readability follow-up on 2026-04-02:
-  - the huge `martini_potential` / `total` values seen in current stage-7 logs are real runtime values, not a `printf` type mismatch or summation bug;
-  - `src/main.cpp` now formats large-magnitude energies in scientific notation for readability only.
-- Additional end-to-end verification completed after the `.venv` repair:
-  - the focused production helper `example/16.MARTINI/test_prod_run_sim_1rkl.sh` now runs end to end from a real `6.6 -> 7.0` handoff, injects the new SC table successfully, and completes a short stage-7 production replay;
-  - direct HDF5 inspection confirmed stage gating:
-    - `6.6` contains no `martini_sc_table_potential`, no `placement_fixed_point_only_CB`, no `hybrid_sc_map`, and keeps hybrid activation disabled;
-    - `7.0.prepared` contains `martini_sc_table_potential` and `placement_fixed_point_only_CB`, remains free of legacy `rotamer` nodes, and activates the hybrid path only for production;
-  - the real top-level workflow `example/16.MARTINI/run_sim_1rkl.sh` completes end to end under shortened verification settings with the direct-Upside stage-7 path.
-
-## 2026-03-31 SC-training Workflow Addendum
-
-### Project Goal
-- Establish a new `SC-training/` workflow that derives dry-MARTINI sidechain-type to dry-MARTINI particle-type training data and assembled tables independently of the legacy SC back-mapping runtime path.
-- Make the workflow runnable both locally and on Slurm.
-- Use `example/16.MARTINI/run_sim_1rkl.sh` as the canonical benchmark workflow target once the trained tables are consumed by the hybrid runtime.
-
-### Architecture & Key Decisions
-- The new workflow will live under a dedicated top-level folder `SC-training/`.
-- The workflow will treat the current SC back-mapping / rotamer-placement production path as legacy design context rather than a dependency.
-- The replacement SC/dry-MARTINI interaction must be a two-way force term: each SC/dry pair contributes equal-and-opposite force to the dry particle and to the effective protein-side SC site, and the protein-side contribution must be projected back onto the Upside carriers and added to the existing backbone/sidechain forces before integration.
-- Existing backbone/environment MARTINI coupling remains in scope and separate from the new SC table:
-  - the effective protein backbone dry-MARTINI `BB`/`CA` anchor should still interact with surrounding non-protein dry-MARTINI particles;
-  - the new SC table should not reintroduce generic protein SC-backbone MARTINI interactions, because protein internal SC-backbone coupling is already handled on the Upside side.
-- Residue-sidechain dry-MARTINI bead definitions will be sourced from `example/16.MARTINI/martinize.py` using the `martini22` forcefield definitions already used by the example workflow.
-- Dry-MARTINI pair parameters will be sourced from `example/16.MARTINI/ff_dry/dry_martini_v2.1*.itp`.
-- The unit contract must be explicit and parameterized:
-  - `SC-training/` artifacts remain in native dry-MARTINI units (`nm`, `kJ/mol`, `e`, dielectric `15`);
-  - simulation-side conversion into Upside units must come from explicit parameters / attrs, not baked conversion numbers in training outputs or MARTINI runtime code;
-  - the current MARTINI workflow expects `UPSIDE_MARTINI_ENERGY_CONVERSION` and `UPSIDE_MARTINI_LENGTH_CONVERSION` to be provided explicitly when generating simulation inputs.
-- The initial training workflow will emphasize reproducible task generation, batch execution, and result assembly; any simplifying assumptions used for the first pass must be explicit in workflow outputs and README docs.
-- Slurm support should follow the proven ConDiv workflow shape: explicit path resolution, environment setup, generated manifests/specs, array-friendly execution, and a submission wrapper rather than an ad hoc one-off `sbatch` command.
-
-### Execution Phases
-- [x] Phase A: Inspect and reuse the relevant MARTINI residue/type definitions and Slurm workflow patterns.
-- [x] Phase B: Create `SC-training/` scripts for manifest generation, per-task training execution, and final result assembly.
-- [x] Phase C: Add local and Slurm entrypoints that stage and run training jobs from the new folder.
-- [x] Phase D: Add minimal documentation describing assumptions, outputs, and benchmark expectations.
-- [x] Phase E: Verify script integrity and basic dry-run behavior.
-
-### Known Errors / Blockers
-- Runtime consumption of the new SC training table is not yet implemented in `src/martini.cpp`, so benchmark orchestration may need to stop at workflow staging/logging until that integration exists.
-- That runtime integration still needs to enforce the new mechanical requirements explicitly:
-  - SC/dry interactions must remain equal-and-opposite;
-  - SC feedback must be added to existing Upside carrier gradients rather than replacing them;
-  - backbone dry-`BB`/`CA` to environment dry-particle coupling must remain active while protein internal SC-backbone coupling stays excluded from the new table.
-- The first-pass training workflow may need an explicit simplifying geometry assumption for residue-level sidechain reduction; that assumption must be documented, not hidden.
-- `SC-training/` is now self-contained for training and Slurm staging, but the optional benchmark hook still targets `example/16.MARTINI/run_sim_1rkl.sh` and therefore still requires the full repository when benchmark execution is requested.
-
-### Review
-- Implemented a new `SC-training/` workflow with:
-  - manifest generation from `example/16.MARTINI/martinize.py` (`martini22`) and `example/16.MARTINI/ff_dry/dry_martini_v2.1.itp`,
-  - per-task residue/target training jobs,
-  - assembled output tables,
-  - local runner,
-  - Slurm staging/submission wrappers,
-  - benchmark staging against `example/16.MARTINI/run_sim_1rkl.sh`.
-- Smoke verification succeeded in `/tmp/sc_training_smoke`:
-  - manifest generation completed,
-  - full local run completed,
-  - assembled summary reported `684` tasks across `18` residues and `38` target particle types,
-  - Slurm array, collector, and benchmark scripts were generated successfully with `--no-submit`.
-- Follow-up workflow correction restored the default target set to the full dry-MARTINI atomtype list from the bundled forcefield after a temporary over-narrowing to non-ring types:
-  - default table cardinality is `18 x 38 = 684` residue-target tasks;
-  - manifest/task outputs now keep the full target set while retaining the explicit spherical surrounding-position samples around the sidechain center.
-- Follow-up architecture review confirmed additional force-path requirements for the future runtime hookup:
-  - the new SC/dry term must remain a two-way force and its protein-side feedback must be added on top of existing Upside forces;
-  - backbone dry-`BB`/`CA` to environment dry-particle coupling remains required and should stay distinct from the new SC table;
-  - dry-MARTINI unit handling is now defined as native-unit training plus parameterized simulation-side conversion, not a baked training/runtime numeric contract.
-- Portability follow-up verification succeeded from a standalone folder copy under `/private/tmp`:
-  - `SC-training/data/` now bundles the required dry-MARTINI nonbond parameter file and martini22 sidechain residue definitions;
-  - `workflow.py init-run`, `workflow.py run-local`, `run_local.sh`, and stage-only `submit_remote_round.sh` all work from the copied folder without the parent repository;
-  - generated Slurm array/collector scripts now reference the copied `SC-training/` folder directly instead of requiring `source.sh` or repo-root paths for training.
-- Slurm-array verification succeeded from a fresh staged run:
-  - `submit_remote_round.sh` now reaches `workflow.py submit-slurm` reliably even when repo-root `source.sh` would otherwise trip over an unset `MY_PYTHON`;
-  - generated training script uses `#SBATCH --array=0-683` for the current manifest and dispatches one residue-target task per array index via `run-array-task --task-id "$SLURM_ARRAY_TASK_ID"`;
-  - staged round manifest count and training manifest count matched exactly (`684` / `684`), with a separate collector script for post-array assembly.
-- Batch-spooled launcher verification succeeded after the user-reported Midway failure:
-  - `submit_remote_round.sh` and `run_local.sh` no longer trust `dirname "$0"` as the workflow root when executed from a Slurm spool copy;
-  - the wrappers now locate the real `SC-training` directory by checking candidate directories for `workflow.py`, including `SLURM_SUBMIT_DIR` and `SLURM_SUBMIT_DIR/SC-training`;
-  - simulated `sbatch submit_remote_round.sh` from inside `SC-training/` and simulated `sbatch SC-training/submit_remote_round.sh` from the repo root both staged cleanly and produced matching `684`-task manifests.
-- Unit-contract follow-up verification succeeded:
-  - training manifests now record native-unit policy only and no longer emit baked Upside conversion numbers;
-  - `prepare_system_lib.py` now requires explicit conversion env vars and writes those MARTINI unit-conversion attrs into the simulation input;
-  - `src/martini.cpp` now derives Coulomb scaling from those attrs instead of a literal hardcoded runtime constant.
-
-### Phase 1: Geometric Mapping (Defining the Training Ground)
-Before you can train the splines, you must define the physical relationship between the two models.
-1. **Define the Upside Virtual Bead:** For each of the 20 standard amino acids, identify the Upside definition for the virtual side-chain bead position ($\vec{r}_{SC}$) and its normal vector ($\vec{n}$) relative to the backbone.
-2. **Define the MARTINI Target:** For each amino acid, map the corresponding multi-bead Dry-MARTINI representation (e.g., mapping a Tryptophan side chain to its 4 constituent MARTINI beads). 
-
-### Phase 2: Generating the 2D Energy Landscapes
-You need to calculate the "ground truth" thermodynamic interactions using the Dry-MARTINI force field. Because Dry-MARTINI is an implicit solvent model, this can be done in a vacuum.
-1. **Set Up the Grid:** Place your multi-bead MARTINI side chain at the origin. Place a single target Dry-MARTINI particle (e.g., a standard $C1$ lipid bead or $P4$ polar bead) in the space around it.
-2. **Scan the Space:** Systematically move the single target bead across a 2D grid defined by:
-   * **Distance ($r_{12}$):** The distance from the target bead to the Upside virtual center ($\vec{r}_{SC}$).
-   * **Angle ($\theta_1$):** The angle between the Upside normal vector ($\vec{n}$) and the vector connecting the two beads ($\vec{n}_{12}$).
-3. **Calculate Energy:** At every grid point, calculate the sum of the standard Dry-MARTINI Lennard-Jones and Coulomb interactions between the single target bead and the multi-bead side chain.
-4. **Repeat:** Do this for all 20 amino acids against all relevant Dry-MARTINI particle types.
-
-### Phase 3: Mathematical Spline Fitting
-You must compress those 2D energy landscapes into the modified, factorized Upside equation.
-1. **Set Up the Equation:** Use the simplified hybrid Hamiltonian that drops the second angle term:
-   $$V_{hybrid} = V_{radial}(r_{12}) + ang_1(-n_1 \cdot n_{12}) \cdot V_{angular}(r_{12})$$
-2. **Initialize Splines:** Set up $V_{radial}$, $ang_1$, and $V_{angular}$ as 1D natural cubic splines with adjustable control points (knots).
-3. **Optimize:** Use a least-squares fitting algorithm or gradient descent to adjust the spline knots until the output of the $V_{hybrid}$ equation closely matches the 2D energy grid you generated in Phase 2.
-
-### Phase 4: Engine Integration (C++ Implementation)
-Append the new physics into the Upside MD engine's core loop.
-1. **Introduce Real Particles:** Modify the Upside state to accept independent, mass-bearing Dry-MARTINI particles with standard $x, y, z$ coordinates and momenta.
-2. **Calculate the Force:** In the force-evaluation loop, evaluate $V_{hybrid}$ and calculate its spatial gradient (force) and angular derivative (torque).
-3. **Push the Real Bead:** Apply the negative spatial gradient directly to the Dry-MARTINI particle's momentum.
-4. **Push the Ghost Bead:** Apply the exact inverse spatial vector to the Upside virtual side chain ($\vec{r}_{SC}$). Apply the angular derivative as a torque to the virtual normal vector ($\vec{n}$).
-5. **Distribute to the Backbone:** Feed the virtual force and torque into Upside's existing chain-rule matrices to distribute the physical forces onto the $N$, $C\alpha$, and $C$ backbone atoms.
-
-### Phase 5: Validation and Thermodynamic Tuning
-Run test simulations to ensure the hybrid physics do not break the model.
-1. **Check Momentum Conservation:** Monitor the total momentum of the simulation box. If the sum of forces on the MARTINI beads and the Upside backbone atoms does not equal exactly zero at every time step, there is a bug in your chain-rule implementation.
-2. **Tune the Scaling Factor ($\kappa$):** Introduce a global scaling multiplier to the hybrid potential: $V_{total} = \kappa(V_{hybrid})$. Run a folded protein in a box of your Dry-MARTINI particles. If the protein denatures because the MARTINI interactions are overwhelmingly strong compared to Upside's internal folding potentials, lower $\kappa$ until the thermodynamic balance is restored.
-
-What specific biological system or environment are you aiming to simulate first once this hybrid engine is built?
-
-## 2026-04-13 Interface-Only Hybrid Scaling Calibration
-
-### Project Goal
-- Calibrate one shared dry-MARTINI interaction scale from bilayer-only DOPC diffusion runs.
-- Apply that scale only to Upside/dry-MARTINI interface interactions in active hybrid production.
-- Leave bilayer-bilayer interactions unchanged in the hybrid workflow.
-
-### Architecture & Key Decisions
-- Use one shared scalar `protein_env_interface_scale` rather than separate LJ and Coulomb knobs.
-- In active hybrid stage `7.0`, apply the scale only to cross-interface protein/environment interactions:
-  - direct `martini_potential` protein-environment pairs,
-  - `martini_sc_table_1body`,
-  - legacy `martini_sc_table_potential` for backward compatibility.
-- Preserve current hybrid startup logic such as the protein-feedback ramp; the new factor is an additional interface-strength control, not a replacement for startup stabilization.
-- Calibrate the scalar in the bilayer-only workflow by rewriting dry-MARTINI pair coefficients before simulation:
-  - `epsilon *= pair_scale`
-  - `q_i *= sqrt(pair_scale)`
-  - `q_j *= sqrt(pair_scale)`
-- Keep bilayer calibration separate from hybrid runtime application:
-  - bilayer-only runs may scale all MARTINI pairs to match target fluidity,
-  - hybrid production must apply the chosen factor only to protein-environment interface terms.
-- Correct the active-stage assumption from earlier notes:
-  - the current production SC path in this checkout is `martini_sc_table_1body`,
-  - `martini_sc_table_potential` remains only as a compatibility surface.
-
-### Execution Phases
-- [x] Phase A: Extend hybrid-control schema and runtime state with `protein_env_interface_scale`.
-- [x] Phase B: Apply interface-only scaling in `src/martini.cpp` for direct pair terms and both SC-table paths.
-- [x] Phase C: Expose the production control in `example/16.MARTINI/run_sim_1rkl.sh`.
-- [x] Phase D: Add bilayer-only pair-scale calibration support plus a fixed sweep wrapper and cross-run report.
-- [x] Phase E: Verify build/script integrity and record review notes, progress, and lessons.
-
-### Known Errors / Blockers
-- No blocker is known yet, but the implementation must respect two different semantics:
-  - bilayer calibration runs scale all MARTINI interactions inside the bilayer-only workflow,
-  - hybrid production must scale only protein-environment interface terms.
-
-### Review
-- Implemented the new hybrid control attr `protein_env_interface_scale` in:
-  - `src/martini.cpp`
-  - `py/martini_prepare_system_lib.py`
-  - `example/16.MARTINI/run_sim_1rkl.sh`
-- Runtime behavior now matches the intended split:
-  - active direct protein-environment `martini_potential` pairs scale only the cross-interface LJ+Coulomb interaction,
-  - bilayer-bilayer and other non-interface pairs remain unchanged in the hybrid workflow,
-  - `martini_sc_table_1body` and legacy `martini_sc_table_potential` both respond to the same scale.
-- Added bilayer calibration support in:
-  - `bilayer-lateral-diffusion/workflow.py`
-  - `bilayer-lateral-diffusion/submit_interface_scale_calibration_round.sh`
-  - `bilayer-lateral-diffusion/report_interface_scale_calibration.py`
-- Verification completed:
-  - `python3 -m py_compile py/martini_prepare_system_lib.py bilayer-lateral-diffusion/workflow.py bilayer-lateral-diffusion/report_interface_scale_calibration.py`
-  - `bash -n example/16.MARTINI/run_sim_1rkl.sh`
-  - `bash -n bilayer-lateral-diffusion/submit_remote_round.sh`
-  - `bash -n bilayer-lateral-diffusion/run_local.sh`
-  - `bash -n bilayer-lateral-diffusion/submit_interface_scale_calibration_round.sh`
-  - `cmake --build obj --target upside`
-  - no-submit wrapper staging for `/tmp/bilayer_interface_scale_calibration/pair_scale_0p85`
-  - reduced local bilayer smoke runs at `pair_scale=1.0` and `0.85`
-  - direct HDF5 inspection of staged `stage_6.0.prepared.up` files confirmed:
-    - `epsilon` ratio = `0.85`
-    - charge ratios = `sqrt(0.85) = 0.921954`
-  - `report_interface_scale_calibration.py` executed successfully on a temporary two-run smoke tree.
-
-## 2026-04-13 Root-Level Hybrid Interface Sweep Workflow
-
-### Project Goal
-- Add a new project-root workflow folder that sweeps `PROTEIN_ENV_INTERFACE_SCALE` over the real hybrid `1RKL` production path.
-- Reuse `example/16.MARTINI/run_sim_1rkl.sh` as the single simulation entrypoint.
-- Submit the sweep to Slurm using the same array/collector pattern already proven in `bilayer-lateral-diffusion/`.
-
-### Architecture & Key Decisions
-- Create a dedicated root-level folder `hybrid-interface-sweep/`.
-- Keep the sweep workflow thin:
-  - generate a manifest of `(interface_scale, replicate)` tasks,
-  - run one full `run_sim_1rkl.sh` instance per task in its own task-local `RUN_DIR`,
-  - collect only execution/status metadata rather than adding a new scientific analyzer in v1.
-- Do not duplicate hybrid simulation logic in Python; invoke `example/16.MARTINI/run_sim_1rkl.sh` directly with environment overrides.
-- Follow the `bilayer-lateral-diffusion` Slurm submission shape:
-  - `workflow.py`
-  - `run_local.sh`
-  - `submit_remote_round.sh`
-  - generated array and collector `.sbatch` scripts
-- Preserve reproducibility by capturing a whitelist of relevant `run_sim_1rkl.sh` environment overrides into the manifest at `init-run` time.
-
-### Execution Phases
-- [x] Phase F: Add root and local tracker entries for the new hybrid sweep workflow.
-- [x] Phase G: Create `hybrid-interface-sweep/workflow.py` with manifest, task runner, assembly, and Slurm submission.
-- [x] Phase H: Add `run_local.sh`, `submit_remote_round.sh`, `README.md`, and local tracker files.
-- [x] Phase I: Run static checks plus a reduced smoke run and no-submit Slurm staging.
-- [x] Phase J: Record review notes and lessons.
-
-### Known Errors / Blockers
-- No blocker is known yet, but the new workflow must reuse the real hybrid shell entrypoint rather than silently diverging from `example/16.MARTINI/run_sim_1rkl.sh`.
-
-### Review
-- Added a new root-level workflow folder:
-  - `hybrid-interface-sweep/workflow.py`
-  - `hybrid-interface-sweep/run_local.sh`
-  - `hybrid-interface-sweep/submit_remote_round.sh`
-  - `hybrid-interface-sweep/README.md`
-  - local `plan.md`, `progress.md`, and `findings.md`
-- The new workflow:
-  - generates a manifest of `(interface_scale, replicate)` tasks,
-  - runs the real `example/16.MARTINI/run_sim_1rkl.sh` entrypoint per task,
-  - assigns each task its own task-local `RUN_DIR`,
-  - captures a whitelist of relevant hybrid env overrides into the manifest,
-  - stages Slurm array and collector scripts using the same pattern as `bilayer-lateral-diffusion`.
-- Verification completed:
-  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
-  - `bash -n hybrid-interface-sweep/run_local.sh`
-  - `bash -n hybrid-interface-sweep/submit_remote_round.sh`
-  - no-submit Slurm staging under `/tmp/hybrid_interface_sweep_smoke`
-  - reduced local smoke run with:
-    - `interface_scale = 0.85`
-    - `replicates = 1`
-    - `MIN_60_MAX_ITER=1`
-    - `MIN_61_MAX_ITER=1`
-    - `EQ_62_NSTEPS ... EQ_66_NSTEPS = 1`
-    - `PROD_70_NSTEPS = 1`
-    - `EQ_FRAME_STEPS = 1`
-    - `PROD_FRAME_STEPS = 1`
-  - smoke result verification:
-    - task result JSON recorded `success = true`
-    - task-local `stage_7.0.up` exists at `/tmp/hybrid_interface_sweep_smoke/tasks/scale0p85_r01/run/checkpoints/1rkl.stage_7.0.up`
-    - assembled summary recorded `1` successful task and `1` completed scale.
-
-## 2026-04-13 Hybrid Sweep Post-Run Analysis
-
-### Project Goal
-- Add a post-run analysis path for `hybrid-interface-sweep/` that measures hybrid diffusion/fluidity signals from completed `stage_7.0.up` files.
-- Make that analysis runnable locally and on Slurm.
-- Produce downloadable per-task and assembled analysis artifacts for later offline review.
-
-### Architecture & Key Decisions
-- Reuse the sweep manifest/task tree and analyze existing `stage_7.0.up` outputs post hoc rather than mixing analysis into the simulation task runner.
-- Measure two signals per completed sweep task:
-  - protein lateral COM MSD relative to bilayer COM, using protein `CA` carrier atoms from `hybrid_bb_map`,
-  - lipid `PO4` lateral MSD as a bilayer fluidity guardrail.
-- Use the same basic MSD treatment as the bilayer workflow:
-  - XY unwrapping,
-  - bilayer COM drift removal,
-  - burn-in removal,
-  - linear `MSD = 4Dt + b` fit over a fixed lag window.
-- Add the analysis as workflow subcommands plus a thin Slurm wrapper under `hybrid-interface-sweep/`, following the same array/collector pattern as the existing run workflow.
-
-### Execution Phases
-- [x] Phase K: Add root and local tracker entries for the analysis extension.
-- [x] Phase L: Extend `hybrid-interface-sweep/workflow.py` with manifest discovery, per-task analysis, assembly, and Slurm submission for analysis.
-- [x] Phase M: Add analysis wrapper/docs in `hybrid-interface-sweep/`.
-- [x] Phase N: Run static checks plus reduced analysis smoke verification.
-- [x] Phase O: Record review notes and lessons.
-
-### Known Errors / Blockers
-- No blocker is known yet, but the analysis must select protein carriers and lipid molecules from the actual stage-file schema used by `run_sim_1rkl.sh`, not from assumptions copied from other workflows.
-
-### Review
-- Extended `hybrid-interface-sweep/workflow.py` with a full post-run analysis path:
-  - `init-analysis`
-  - `run-analysis-local`
-  - `run-analysis-task`
-  - `assemble-analysis`
-  - `submit-analysis-slurm`
-- Added analysis wrappers and docs:
-  - `hybrid-interface-sweep/run_analysis_local.sh`
-  - `hybrid-interface-sweep/submit_analysis.sh`
-  - updated `hybrid-interface-sweep/README.md`
-- Analysis outputs now measure:
-  - protein lateral COM diffusion relative to the bilayer COM,
-  - lipid `PO4` lateral diffusion as a bilayer guardrail,
-  - per-task MSD and linear-diffusion fit metadata in `analysis/results/tasks/*.json`,
-  - assembled CSV and summary JSON outputs under `analysis/assembled/`.
-- Verification completed:
-  - `python3 -m py_compile hybrid-interface-sweep/workflow.py`
-  - `bash -n hybrid-interface-sweep/run_analysis_local.sh`
-  - `bash -n hybrid-interface-sweep/submit_analysis.sh`
-  - reduced real sweep run in `/tmp/hybrid_interface_sweep_analysis_smoke` with `PROD_70_NSTEPS=40`
-  - local analysis run on that smoke output
-  - no-submit analysis Slurm staging under `/tmp/hybrid_interface_sweep_analysis_smoke/analysis/slurm`
-  - generated artifacts verified:
-    - `analysis/analysis_manifest.json`
-    - `analysis/results/tasks/scale0p85_r01.json`
-    - `analysis/assembled/task_results.csv`
-    - `analysis/assembled/condition_summary.csv`
-    - `analysis/assembled/summary.json`
-
-## 2026-04-29 C++ Core Cleanup For 1RKL Default Path
-
-### Project Goal
-- Refactor and clean `src/main.cpp`, `src/box.h`, `src/box.cpp`, and `src/martini.cpp` so only logic required by the default `example/16.MARTINI/run_sim_1rkl.sh` pipeline remains.
-
-### Architecture & Key Decisions
-- Scope is strict default-path execution only; optional workflow/debug branches are removed.
-- Keep SC-env and BB-env interaction potentials active; do not disable or zero these force paths.
-- Keep barostat/Ewald and hybrid runtime features only where needed by the active 1RKL pipeline.
-- Use `/Users/yinhan/Documents/upside2-md-master/src/main.cpp` as reference for removing temporary CLI/debug deviations in `src/main.cpp`.
-
-### Execution Phases
-- [x] Phase 1: Clean `src/main.cpp` against master and keep only required workflow deltas.
-- [x] Phase 2: Remove dead/debug scaffolding from `src/box.h` and `src/box.cpp`.
-- [x] Phase 3: Remove dead wrappers/placeholders/debug branches from `src/martini.cpp` while preserving active physics.
-- [x] Phase 4: Build and run reduced workflow verification for default 1RKL path.
-- [x] Phase 5: Document results in `progress.md` and review section.
-
-### Known Errors / Blockers
-- None at start.
-
-### Review
-- Implemented cleanup in the four requested files:
-  - `src/main.cpp`: removed split-potential/Rg logging scaffolding, removed temporary CLI branches (`nvtc`, `max-force`, `martini-hold-backbone`), kept only default-path flags required by `run_sim_1rkl.sh` (`duration-steps`, minimization controls, momentum restart controls).
-  - `src/box.h` and `src/box.cpp`: removed barostat debug toggles/prints and equilibrium-freeze scaffolding; preserved active NPT scaling and Ewald reciprocal computation paths.
-  - `src/martini.cpp`: removed dead placeholder and compatibility scaffolding (`martini_masses::martini_integration_cycle`, `ConjugateGradientMinimizer` node, `minimize_structure_with_regular_potential` stub), removed SC-energy-dump plumbing and nonprotein hard-sphere experimental branch, and removed debug/status prints.
-- Physics integrity preserved:
-  - SC-env and BB-env force paths remain active.
-  - `martini_potential` and `martini_sc_table_1body` both remain present in generated production stage files.
-- Verification:
-  - `cmake --build obj --target upside` succeeded.
-  - Reduced default-workflow run succeeded end-to-end:
-    - `RUN_DIR=/tmp/cpp_cleanup_smoke` with minimized stage step counts.
-    - Stage outputs through `1rkl.stage_7.0.up` and VTF extraction completed.
-  - Stage-7 production file check confirmed:
-    - `/input/potential/martini_potential` exists;
-    - `/input/potential/martini_sc_table_1body` exists.
-
-## 2026-04-29 Python Workflow Cleanup (Baseline + Explicit 7.x Continuation)
-
-### Project Goal
-- Refactor and clean `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.py`, and `py/martini_extract_vtf.py` to remove dead/legacy/debug-hoarded logic.
-- Keep only functionality required by `example/16.MARTINI/run_sim_1rkl.sh` fresh execution and explicit production continuation (`--continue-stage-70-from` -> `7.1`, `7.2`, ...).
-- Preserve SC-env and BB-env interface interactions fully active.
-
-### Architecture & Key Decisions
-- Keep `run-hybrid-workflow` as the only intended high-level entrypoint in `martini_prepare_system.py`.
-- Remove legacy command surfaces and wrapper flows not needed by the active pipeline.
-- Keep continuation path only for explicit source file input; remove auto-discovery branches.
-- Flatten defensive/legacy branching in VTF extraction to a direct path used by workflow outputs.
-
-### Execution Phases
-- [x] Phase 1: Prune `martini_prepare_system.py` CLI/command surfaces and continuation discovery branches.
-- [x] Phase 2: Remove dead standalone/legacy conversion layers from `martini_prepare_system_lib.py` while preserving required functions.
-- [x] Phase 3: Simplify `martini_extract_vtf.py` to workflow-required VTF behavior.
-- [x] Phase 4: Run compile/syntax checks and validate retained continuation + physics-critical attrs remain intact.
-- [x] Phase 5: Record review results and residual risks.
-
-### Known Errors / Blockers
-- None at task start.
-
-### Review
-- Implemented:
-  - `py/martini_prepare_system.py` now supports only the `run-hybrid-workflow` command surface; legacy subcommands and fallback execution paths were removed.
-  - `run-hybrid-workflow` parser now matches flags passed by `run_sim_1rkl.sh`; internal physics and stage defaults moved to explicit in-code constants.
-  - Continuation now requires explicit `--continue-stage-70-from`; auto-discovery (`previous-run`/`auto-continue`) code paths were removed and now fail fast if used.
-  - `py/martini_prepare_system_lib.py` removed dead standalone prep CLI/`main` orchestration and unused wrapper functions (`create_production_input`, `main_always_fixed`, martinize wrapper path).
-  - `py/martini_extract_vtf.py` was simplified to VTF-only extraction and direct trajectory-group handling; defensive NaN frame substitution and unused PDB/output-group branches were removed.
-- Physics integrity preserved:
-  - production hybrid-control writes still enforce active SC-env configuration (`sc_env_*` attrs plus positive interface scale) and keep `production_nonprotein_hard_sphere=0`;
-  - production stage injection still requires and validates active `martini_sc_table_1body` and `martini_potential`.
-- Verification:
-  - `.venv/bin/python -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py`
-  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --help`
-  - `.venv/bin/python py/martini_extract_vtf.py --help`
-  - `.venv/bin/python py/martini_prepare_system.py run-hybrid-workflow --previous-run-dir foo` (verified explicit-source continuation enforcement with clear error).
-
-## 2026-04-29 Hybrid MARTINI Architecture Simplification (AA->Backbone-Only, No CG Protein)
-
-### Project Goal
-- Refactor the hybrid MARTINI workflow to remove the AA->CG martinize pipeline entirely and run hybrid staging from direct AA input while keeping only protein backbone carriers (`N/CA/C/O`) in runtime stage files.
-- Enforce protein rigid-body behavior (free translation/rotation, fixed internal geometry) during stage 6.x and release that constraint for stage 7.x production.
-- Keep SC-env and BB-env interface interactions active in both stages.
-
-### Architecture & Key Decisions
-- Delete `py/martini_martinize.py` and remove all martinize execution/config from workflow scripts.
-- Runtime protein representation in both 6.x and 7.x is backbone-only (`N/CA/C/O`), with no CG protein particles.
-- BB-env is evaluated from per-residue virtual BB COM built from `N/CA/C/O` carriers and force-distributed back to those carriers.
-- Stage 6.x hybrid activation must be on; stage 7.x remains hybrid-active with rigid constraint released.
-- Use `pydssp` for residue secondary-structure assignment and inline the MARTINI backbone type mapping logic needed for BB typing.
-
-### Execution Phases
-- [ ] Phase 1: Remove martinize surfaces and add DSSP dependency.
-- [ ] Phase 2: Refactor Python prep to AA-backbone-only runtime packing/mapping and stage artifact generation.
-- [ ] Phase 3: Implement C++ virtual-BB interface force path and rigid-body stage-6 constraint path.
-- [ ] Phase 4: Clean dead code paths and remove deleted script references.
-- [ ] Phase 5: Run build/syntax/workflow verification and document review/results.
-
-### Known Errors / Blockers
-- None at start.
-
-## 2026-04-29 AA-Direct Hybrid MARTINI Simplification
-
-### Project Goal
-- Remove the AA->CG martinize conversion path from the 1RKL hybrid workflow.
-- Use AA backbone atoms directly for stage 6.x/7.x hybrid interaction with dry-MARTINI bilayer.
-- Keep stage 6.x protein rigid as a free rigid body (translation/rotation allowed), then release that constraint in stage 7.x.
-
-### Architecture & Key Decisions
-- Delete `py/martini_martinize.py`; keep only DSSP-driven AA-backbone -> dry-MARTINI BB type mapping inside `py/martini_prepare_system_lib.py`.
-- Make `run_sim_1rkl.sh` call `run-hybrid-workflow` with AA input only (`--protein-aa-pdb`) and no martinize/ITP path.
-- Keep hybrid stage control as `activation_stage=minimization` with `preprod_protein_mode=rigid_body` for stage 6.x and switch to `activation_stage=production` at stage 7.x.
-- Implement runtime rigid-body group projection in `src/martini.cpp` through `martini_fix_rigid::set_dynamic_rigid_groups(...)` instead of absolute position pinning.
-
-### Execution Phases
-- [x] Phase 1: Remove martinize CLI and file dependencies from workflow scripts.
-- [x] Phase 2: Keep only AA backbone BB mapping path in prep code and remove dead CG mapper helpers.
-- [x] Phase 3: Ensure stage 6.x rigid-body hold and stage 7.x release in C++ hybrid transitions.
-- [x] Phase 4: Validate syntax/build and check for stale references.
-
-### Known Errors / Blockers
-- End-to-end smoke run is blocked in current local `.venv` by missing optional dependency `tables` (`ModuleNotFoundError`).
-
-### Review
-- Deleted `py/martini_martinize.py`.
-- Refactored prep/workflow to AA-only input and backbone-only mapping.
-- C++ rigid-body dynamic group path compiles and is wired into stage transition control.
-- Static verification passed (`py_compile`, `cmake --build obj --target upside`).
-
-## 2026-04-30 Rigid Invariance and Handoff Geometry Integrity
-
-### Project Goal
-- Enforce mathematically rigid protein backbone geometry during minimization and stage 6.x preproduction.
-- Guarantee stage 6.6 -> 7.0 handoff copies AA backbone coordinates exactly (no per-residue coordinate rewrites).
-
-### Architecture & Key Decisions
-- Keep stage-6 rigid behavior as true rigid-body projection in C++ minimization path, including trial line-search states.
-- Remove coordinate refresh paths that can overwrite AA backbone carriers during handoff/runtime.
-- Keep BB-env and SC-env interface forces active; only remove coordinate mutation paths.
-
-### Execution Phases
-- [x] Phase 1: Patch minimization to rigid-project trial/accepted/final states.
-- [x] Phase 2: Remove Python handoff hybrid-carrier refresh from active path.
-- [x] Phase 3: Remove runtime hybrid coordinate overwrite call before MARTINI pair force evaluation.
-- [x] Phase 4: Build and run geometry invariance checks.
-
-### Known Errors / Blockers
-- None in this patch round.
-
-### Review
-- `src/martini.cpp`: minimization now rigid-projects before first compute, each line-search trial, and final state flush.
-- `py/martini_prepare_system.py` / `py/martini_prepare_system_lib.py`: removed `UPSIDE_SET_INITIAL_REFRESH_HYBRID_CARRIERS` path and `refresh_hybrid_reference_carriers`.
-- `src/martini.cpp`: removed hybrid pre-force coordinate refresh call, eliminating runtime coordinate overwrites.
-- Verification:
-  - `cmake --build obj --target upside` passed.
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py py/martini_extract_vtf.py` passed.
-  - Stage 6.0 minimization invariance check: pair-distance drift mean `1.2e-07 A`, max `1.9e-06 A`.
-  - Stage 6.6 -> 7.0 handoff check: protein atom coordinate diff mean/max `0.0 A`.
-
-## 2026-04-30 Stage-7 Helix Start Forensics
-
-### Project Goal
-- Identify where AA-backbone helix geometry is lost before stage `7.0` and align workflow defaults with the last known-good no-preprod-minimization behavior.
-
-### Architecture & Key Decisions
-- Validate geometry from checkpoint files directly (not only VMD rendering).
-- Keep stage `6.0/6.1` minimization opt-in rather than default, matching the user’s last-working expectation.
-
-### Execution Phases
-- [x] Phase 1: Compare AA backbone vs stage `6.0/6.6/7.0` checkpoint geometry.
-- [x] Phase 2: Validate stage-7 VTF first-frame helix assignment independently.
-- [x] Phase 3: Disable stage `6.0/6.1` minimization by default and keep explicit opt-in.
-- [x] Phase 4: Re-run reduced fresh workflow and verify stage-7 start helix.
-
-### Known Errors / Blockers
-- None in this patch round.
-
-### Review
-- Forensic result on current artifacts: stage `7.0` start backbone is still helix-consistent with AA reference; no structural corruption observed in checkpoint geometry.
-- Changed defaults so stage `6.0/6.1` minimization is skipped unless user sets positive iteration counts.
-- Fresh reduced run with new defaults confirmed stage-7 input and VTF first frame both retain helix signature (`23` helical residues by DSSP on 31-residue backbone).
-- Added strict stage-7-start vs PDB comparison on a fresh longer run:
-  - `/tmp/helix_longer_check/checkpoints/1rkl.stage_7.0.up` matches PDB backbone geometry up to rigid transform within micro-Angstrom numerical noise.
-  - Existing older run artifacts under `example/16.MARTINI/outputs/martini_test_1rkl_hybrid` still show millangstrom-level drift and should not be used as baseline for patched behavior.
-
-## 2026-04-30 BB Type + Interface Logic Parity (AA Runtime)
-
-### Project Goal
-- Keep AA-backbone runtime mode while restoring last-working BB typing policy and BB-env/SC-env interaction semantics.
-
-### Architecture & Key Decisions
-- Remove DSSP dependency from BB type assignment; use martinize fallback with fixed coil mapping plus termini/chain-break `Qd/Qa` overrides.
-- Preserve AA virtual-BB COM position evaluation from `hybrid_bb_map` carriers (`N/CA/C/O`) and keep gradient projection back to carriers.
-- Align interaction control flow with last-working behavior by removing the newly-added cross-interface role filter in `martini_potential`.
-
-### Execution Phases
-- [x] Phase 1: Replace DSSP-based BB typing with martinize fallback typing.
-- [x] Phase 2: Wire fallback BB typing into both hybrid mapping export and stage conversion.
-- [x] Phase 3: Restore BB-env/SC-env interaction control flow parity in C++ while keeping AA COM projection.
-- [x] Phase 4: Verify Python syntax and C++ build.
-
-### Known Errors / Blockers
-- None in this patch round.
-
-### Review
-- `py/martini_prepare_system_lib.py` now computes BB types with martinize fallback (`ss="C"` table behavior) and applies termini/chain-break charged BB rules; DSSP usage removed from this path.
-- `py/martini_prepare_system.py` now consumes the fallback mapper and reports `bb_fallback_typed_residues` in prep summaries.
-- `src/martini.cpp` now uses last-working BB-env/SC-env pair-routing flow (removed added cross-interface role gate) while retaining AA virtual-BB COM site projection for carrier atoms.
-- Verification:
-  - `python3 -m py_compile py/martini_prepare_system.py py/martini_prepare_system_lib.py` passed.
-  - `cmake --build obj --target upside` passed.
-
-## 2026-04-30 BB Proxy COM + Force Distributor Restoration
-
-### Project Goal
-- Keep current AA-runtime framework while restoring last-working BB semantics:
-  - BB is a dedicated virtual proxy (not CA);
-  - BB position is COM of N/CA/C/O;
-  - BB-env force is distributed back to N/CA/C/O carriers.
-
-### Architecture & Key Decisions
-- Preserve explicit virtual `BB` atoms in runtime protein coordinates and keep `ROLE_BB` assignment only for `BB` atom names.
-- Keep mapped carrier atoms (`N/CA/C/O`) excluded from direct protein-env MARTINI pair coupling to avoid double-counting alongside BB-env projection.
-- Ensure BB gradient projection is not startup-only; projection must stay active through production stage interaction flow whenever a BB map row exists.
-
-### Execution Phases
-- [x] Phase 1: Confirm last-committed BB semantics in `src/martini.cpp` and runtime mapping schema.
-- [x] Phase 2: Restore virtual-BB export path in Python prep and allow BB particle types in stage conversion.
-- [x] Phase 3: Patch C++ pair loop so BB gradients are always projected to carriers in active hybrid stages.
-- [x] Phase 4: Rebuild and run syntax checks.
-
-### Known Errors / Blockers
-- No long-horizon stage-7 replay run executed in this patch round yet.
-
-### Review
-- `src/martini.cpp` now routes mapped BB gradients to carrier atoms (`N/CA/C/O`) independent of startup ramp state.
-- Runtime keeps BB role separate from CA role and refreshes BB coordinates from mapped COM in active hybrid.
-- Build and syntax checks passed (`cmake --build obj --target upside`, `python -m py_compile`).
+# ff3.0: repair glpG TM4 by fixing glycine's Ramachandran map within ff2.1's own training workflow
+
+## Project Goal
+
+Train ff3.0 from ff2.1 with ff2.1's own training workflow (Peng et al. 2022 SI), modernised only.
+The one design change is glycine's. The test is whether glpG's TM4 stays helical in the hybrid
+dry-MARTINI glpG system, under the in-training force field (findings 10.19).
+
+**Why glycine.** TM4 (residues 134-151) holds three helical glycines: GLY136, 143 and 149. Upside
+applies NDRD's glycine Ramachandran map as a local energy at every glycine. That map is a
+statistic over loop sites in folded proteins, so its alpha_L excess is fold selection (glycine is
+placed wherever a fold needs alpha_L), not local physics: ln(aR/aL) is -1.19 in NDRD against -0.58
+over all residues of the 456 training natives (findings 1.9). Data from folded proteins cannot
+separate the energy from the selection (findings 1.15-1.16). So glycine's map comes from a source
+where no fold selects anything, and its placement in folds has to come from the non-local terms.
+
+**Fixed by the user.** ff2.1's training data and workflow are kept, so the old and the new force
+field compare directly (findings 10.17). A drift is attributed against a control trained the same
+way without the glycine change, never fixed by retuning the workflow. TM4 is judged only by the
+hybrid glpG test; the soluble selection panel, the H-bond margin and the training set's composition
+are not TM4 evidence (findings 10.19).
+
+**TM1** (user, 10-09). glpG's TM1 loses structure under every force field, ff2.1 included
+(findings 4.6). It is addressed in the hybrid itself, by correct physics and without retraining
+(Phase 13).
+
+**ff3.1** (user, 10-09, after talking with Jumper). Train the relative depth of every basin of every
+Ramachandran map, not only glycine's pair, as offsets from NDRD under an explicit L2 prior, with no
+new input simulations (route 1 of findings 1.28; Phase 14).
+
+**ff3.2** (user, 10-15). ff3.1's `data` training started from ff3.0 instead of ff2.1 (Phase 17).
+
+**The basin-depth path, not the BioEmu map** (user, 10-11 23:50: "we decided to go with basin depth
+training path (as it is expandable to all residues)"). The BioEmu-map line (ff30_bio, ff30_bio_dt009,
+ff30_bio_si; released ff_3.0_bio, ff_3.0_bio_si) is dropped and its validation cancelled. **ff3.0 is
+ff_3.0_gdepth** (user, 10-12 00:25: "since ff3.0 is working, it is the only branch we need (and its
+expansion to all residues)"): its SI-rate twin ff30_gdepth_si was stopped at step 72 before its gate
+and deleted, and ff3.1 (Phase 14) extends the depth training to every residue. The
+H-bond-frozen arms, polygly (stopped) and the local TM4 glycine-flip test (retired) went the same
+day, and the BioEmu line and the frozen arms were deleted with their inputs and derived products
+(10-11 23:45, user; remote_jobs.md §1 "Finished runs"): on the fixed side-chain/lipid table ff2.1 holds TM4 (findings
+4.15). TM4 HDX has the local readout only; its REMD test was cancelled 10-14 (Phase 16).
+
+## Architecture and Key Decisions
+
+**Trainer.** `training/ConDiv.py` is O. Kleinmann's Python 3 port of Peng's FF2 dual-target trainer,
+restored to the SI (findings 9v). Per protein and step it runs:
+- one native-restrained replica, 12 free replicas at T 0.8 to 1.1 and one SARW replica;
+- 8000 time units, with the second half analysed;
+- contrast NSE + 0.3 * DSE;
+- 456 proteins in 19 minibatches of 24.
+
+Every difference from the port is justified in the file's docstring.
+- **dt 0.009** (user, 10-06): Upside's standard step, as in master, the FF1 trainer and the Peng
+  benchmark. The port's 0.015 destroyed free replicas, and dt 0.009 has destroyed none in
+  2,136 protein-steps (findings 1.21).
+- **Side-chain learning rate 10x smaller** (user, 10-02): the 31,420-coefficient pair table
+  random-walks under Adam's normalised step (findings 1.17).
+- **Learning rates otherwise the port's** (`alpha_scale` 0.5). This makes `hb`, `dhb`, `sheet` and
+  the burial groups twice the rate the SI implies (fine-tuning x 0.25; findings 1.23). The SI-rate
+  arm below tests it.
+
+**ff2.1's parameter set** (user, 09-24):
+- rot: pair, coverage, hydrophobe;
+- burial: 20 x 3 sigmoid parameters and 400 weights;
+- the backbone-desolvation scale;
+- the three H-bond energies and the second-H-bond term;
+- the 20 sheet values.
+
+Left untrained, as in ff2.1, because the engine returns no derivative for them: the backbone term's
+center, sharpness and hbond weight, and `hbond.h5` entries 4-11.
+
+**Round 4's glycine designs** (user, 10-04/05; findings 1.19):
+* **bio:** glycine's maps are fitted bottom-up to BioEmu's plain-MD octapeptides (ff99sb-ildn,
+  300 K; no fold present) by iterative Boltzmann inversion in Upside, with ff2.1's other terms, at
+  T_up = 1 (up.md 2.8).
+  - Fitted entries: pooled GLY|X, GLY|left|GLY, GLY|right|GLY, GLY|right|PRO.
+  - Cells with fewer than 10 all-atom frames keep NDRD's coil top and barrier.
+  - Stored as `parameters/common/rama31.dat` and frozen in ConDiv. Every other map stays NDRD.
+* **gdepth:** ff2.1's own NDRD library with one pooled glycine alpha_R / alpha_L depth pair on the
+  37 GLY|X maps.
+  - It starts where the maps hold BioEmu's alpha_R / alpha_L weights; that start is the only place
+    BioEmu enters.
+  - It is trained per epoch by a damped Newton step on free against restrained populations, with a
+    Gaussian prior of 1 nat on NDRD.
+  - The claim to test: training on the original data alone keeps TM4 stable.
+
+**H-bond and sheet frozen, as a second arm** (user, 10-07). `ff30_bio_fz` runs with `hb`, `dhb`,
+`hbg` and `sheet` at learning rate 0, so `hbond.h5` and `sheet` stay ff2.1's. So does its control
+`ff21_ctrl_fz` (ff2.1's library; against `ff21_ctrl_dt009` it tests the H-bond drift with no glycine
+change). The gdepth twin was cancelled before it started (10-07 13:12, user left it to judgement);
+its queue start was a day away, and the SI-rate arm takes the gdepth rate question. Why the freeze:
+* Round 1 kept TM4 stable while its FF1-form port trained neither term (findings 9e). That round
+  also had a symmetric glycine map, no DSE term and FF1's burial, so it cannot credit the freeze.
+* The DSE term pulls every H-bond energy weaker: SARW has no H-bonds (findings 1.17, 1.23).
+* In the hybrid, glpG has no burial or backbone-desolvation node, so a weaker E_alpha reaches TM4
+  with nothing to offset it.
+
+Neither Jumper's nor Peng's soluble training froze `hb` (findings 1.23). The frozen values are
+Peng's ConDiv-trained ones, and ff2.0 to ff2.1 kept `hbond.h5` and `sheet` byte-identical.
+Frozen means frozen for the whole run. Releasing them later would return to the joint fixed point,
+because ConDiv's step depends only on the current parameters.
+
+**SI-rate arm** (user, 10-07). `ff30_bio_si` and `ff30_gdepth_si` are the two designs with every
+group but rot at the SI's learning rate (hb 0.005, as FF2 was trained; findings 1.23), otherwise
+their port-rate twins. With the full-rate and frozen runs, bio has three H-bond rates on one
+design: full, half and zero.
+
+**Control** (user, 10-06): `ff21_ctrl_dt009` has ff2.1's own `rama.dat`, the same trainer, and
+target 38 (the half-trained point), with no gate. It separates the workflow's own drift from the
+glycine change.
+
+**The TM4 test** (user, 10-04/06; findings 1.22, 3.11):
+- Setup: glpG 79HIS in the POPE/POPG dry-MARTINI hybrid seed. `patch_glpg.py` writes the
+  checkpoint's Rama map, H-bond energies, pair table and both coverage tables into it. The membrane,
+  ions and coordinates stay bit-identical.
+- Run: T 0.80, 4000 tu, Verlet dt 0.009, 12 seeds.
+- Counts: a seed is unwound if its last-block TM4 helix fraction is below 0.90. It is flipped if a
+  TM4 glycine has phi > 0 in more than 0.25 of the last block.
+- Each checkpoint is compared with its own start by Fisher's exact test. A frozen run is also
+  compared with its unfrozen twin.
+- Recipe: remote_jobs.md "Round-4 watch" step 4.
+
+**Release by checkpoint selection** (user, 10-01/05).
+- At convergence the gate validates its final epoch-end checkpoint automatically:
+  - `validate_ff.sh` runs Peng's 32 arms and glpG's 4 REMD variants;
+  - the candidates are `ff_3.0_bio`, `ff_3.0_gdepth`, `ff_3.0_bio_fz`, `ff_3.0_bio_si` and
+    `ff_3.0_gdepth_si`.
+- A run that reaches 13 epochs unconverged stops for review.
+- The selection panel (44 all-L CATH domains against all-atom) chooses. Peng and glpG judge.
+- Which candidate becomes ff_3.0 is the user's.
+
+**Retired designs** (one line each; detail in findings):
+* Full-map glycine row (Phase 2): failed the convergence gate at every checkpoint.
+* Per-pair basin offsets on the NDRD maps, the ff_3.0 released 09-30: favoured alpha_L at every
+  glycine; noise-limited per pair (1.12, 1.14-1.15).
+* Physics glycine map (AWH dipeptides) plus glycine H-bond offsets, round 3 (`ff30_glyhb`): panels
+  lost helix; the offsets went left-handed (1.17).
+* Ting et al.'s product combining rule: breaks GLY|GLY symmetry (1.13).
+* A design through H-bond terms for glycine (user, 10-04): a map defect is fixed on the map.
+* Pre-proline correction: parked; no simulation failure behind it (1.16).
+
+## Execution Phases
+
+### Done or closed (detail in findings and progress.md)
+- Phase 1: the trainer validated on ff2.1 (09-24; 9v).
+- Phase 2: the full-map glycine row, cancelled 09-28 (9w).
+- Phases 3-5: the basin-offset ff_3.0, released 09-30 and withdrawn the same day (1.14-1.15).
+  - Its glpG validation ran on live seeds that kept the FF1-form ff_3.0's coverage tables (3.11),
+    so its "TM4 glycines flipped" result is of a mixed force field.
+- Phase 6: pre-proline, parked.
+- Phase 7: the glycine handedness probe. From equal depth the data pull glycine back toward alpha_L
+  (1.15).
+- Phase 8: round 3, `ff30_glyhb`, stopped 10-04 (1.17).
+- Phase 9: repo cleanup for redistribution, 10-01/02. `training/` has five files; the cluster keeps
+  the old layout (remote_jobs.md "Where things are").
+- Phase 10: the local glpG test of round 3. Its TM4 counts used pre-fix inputs and are invalid
+  (3.11).
+
+### Phase 11 - round 4 (TRAINING on midway2 broadwl since 2026-10-06; BioEmu and frozen arms dropped 10-11, user)
+
+Done:
+- [x] BioEmu-fitted library in `rama31.dat`. Its own pass matches BioEmu's X-G-Y glycine within
+  0.01 per basin (scripts and data in `checks/gly_bioemu_map/`).
+- [x] Push probe from the library (72 proteins): d -0.014 [-0.041, +0.012]. The training data come
+  to rest near BioEmu's L-R difference.
+- [x] Non-glycine maps kept NDRD (findings 1.19).
+- [x] gdepth trainer and its start, with tests (round 2's offset hooks ported).
+- [x] dt 0.015 runs stopped 10-06 09:40 and restarted at dt 0.009, otherwise identical (initial
+  force fields byte-identical).
+- [x] Control `ff21_ctrl_dt009` submitted.
+- [x] Frozen arm submitted. ff30_bio_fz's step 0 keeps `hbond.h5` and `sheet` md5-identical to
+  ff2.1's. ff30_gdepth_fz was cancelled unstarted (10-07 13:12) and resubmitted unchanged at 21:50
+  (user: run every frozen arm, though it departs from the group's workflow); ff21_ctrl_fz was
+  cancelled with it and resubmitted (user). **All three frozen arms stopped 10-09 23:09 (user):**
+  the dt 0.009 training already gives a force field that keeps TM4 stable, so the frozen
+  comparison no longer decides anything (ff30_bio_fz at step 58, ff30_gdepth_fz at 45, ff21_ctrl_fz
+  at 10; remote_jobs.md §1). Their TM4 and panel results stand (findings 1.21-1.25).
+- [x] SI-rate arm `ff30_bio_si` and `ff30_gdepth_si` built, initialised and submitted (10-07
+  13:15). Initial force fields and gdepth's round-0 library are byte-identical to their twins'.
+  The trainers differ only in the rate lines (`checks/si_init_20261007`).
+- [x] Automatic validation deployed (gate, `validate_ff.sh`, `after_training.sbatch` with
+  candidate names).
+- [x] `patch_glpg.py` coverage fix (findings 3.11), local and on midway2.
+- [x] Pre-fix TM4 runs moved aside; local inputs re-patched.
+
+- [x] midway2 node exclusions as one law (user, 10-08 09:40; built and tested by 09:40): `/project/trsosnic/yinhan/slurm/
+  midway2.args`, read by every submission path (slurm.args symlinks, `submit_remd.sh`,
+  `bench.sbatch`), a `~/bin/sbatch` wrapper for the rest, `update_pending.sh` for queued jobs;
+  midway2-0027 added (remote_jobs.md §0d).
+- [x] **ff30_gdepth_dt009 converged and is the local ff_3.0** (gate 10-09 08:54, findings 1.26; user,
+  10-09 10:40: "pull ff30_gdepth_dt009 down locally as ff3.0", to show). `parameters/ff_3.0/` holds
+  the six released files, md5-identical to `$P/parameters/ff_3.0_gdepth` and to `d9_03`. Its glycine
+  library is its own `rama.dat`: the example scripts read `parameters/common/rama.dat`, and
+  `py/martini_prepare_system.py:1922-1924` takes rama, sheet and hbond from ff_2.1, so a run on
+  ff_3.0 passes its files explicitly or is patched with `patch_glpg.py --ff parameters/ff_3.0`.
+  `martini.h5` and `membrane.h5` are not trained and stay ff_2.1's. Its validation runs on.
+- [x] **ff30_bio_si converged** (gate 10-10 02:25, steps 58-76, lowest dhb p 0.0125) and was
+  released as `ff_3.0_bio_si` (= bs_03; the frozen BioEmu library, SI rates); its 32 benchmark arms
+  and 4 glpG chains are queued (remote_jobs.md §1). Its TM4 is level with ff_3.0_gdepth's (0.739
+  against 0.726, p 1.00; findings 1.31). Choosing between them stays the user's.
+
+Next:
+- [ ] **TM4 on fixed inputs, 12 seeds; the frozen comparisons at 24** (user, 10-08 09:10).
+  bz_00 against b9_00 and cz_00 against c9_00 run seeds 13-24 as well. A 24-seed set runs as two
+  12-seed halves (queue line `<tag> 13 24`), and `tm4_compare.py` reads seeds 1-24 from
+  `runs_cov/` and `runs/` together, with each set's own n in the Fisher table.
+  - Done: bio_start 5 of 12 unwound, b9_00 7 of 24, b9_01 6, b9_02 8, bs_00 6, bs_01 5, bz_00 8 of 24, bz_01 6, bz_02 4, ds_00 9, d9_02 4, dz_00 4, ff21_released 9,
+    c9_00 16 of 24, c9_01 10, fp_e00 5, gdepth_start 7, d9_00 5, d9_01 6 (findings 1.24). No pair is
+    resolved. bz_00's first half flipped none of 12 (one-sided p 0.047); its seeds 13-24 flipped 4,
+    bio_start's count, and against b9_00 at 24 seeds each it is 8 against 7 unwound and 4 against 5
+    flipped, so freezing H-bond and sheet shows no TM4 change at epoch 0. All three trainings tested
+    at two epoch ends lean better or even at epoch 0 and worse at epoch 1, the control included.
+    bs_00 leans worse than its twin b9_00; bs_01 leans better than b9_01 (2 flipped against 5,
+    p 0.37), the first half-trained end not leaning worse than its epoch 0. bz_01 leans as b9_01
+    does (6 unwound each, TM4 0.846 against 0.833): freezing H-bond and sheet does not stop the
+    epoch-1 lean, and in the glpG test bz differs from bio_start only in the side-chain tables.
+    b9_02 keeps b9_01's lean at epoch 2 (TM4 0.830 against 0.833, 8 unwound against 6, p 0.68).
+    ds_00 leans worse than its twin d9_00 (9 unwound against 5, p 0.21; TM4 0.775, the lowest mean).
+    c9_00's seeds 13-24 flipped 8 of 12 against seeds 1-12's 1 (same input, p 0.009 between
+    halves), so its 12-seed lean was chance; at 24 seeds it is even with ff2.1 (16 and 9 against 9
+    and 5 of 12, TM4 0.843 against 0.827). A lean in one 12-seed set is a reason for 24 seeds.
+  - [x] **TM4 secondary structure by DSSP** (user, 10-09 02:15: "make sure you are testing the
+    stability of the secondary structure of TM4"; findings 1.25). The count scores helix from
+    phi/psi boxes alone; `tm4_local.py` and `tm4_compare.py` now also give DSSP alpha-helix and
+    any-helix fractions of 135-151 per block, alpha per residue, and a Mann-Whitney on each, with
+    the model's own carbonyl O and mdtraj's DSSP. All 28 tables regenerated, earlier lines
+    unchanged. DSSP alpha is 0.10-0.22 below the box in every set, the order of the sets is nearly
+    the same, and nothing resolves.
+  - [x] **DSSP alpha-helix is the primary TM4 test** (user, 10-09 03:20): each seed's last-block
+    alpha of 135-151, two-sided Mann-Whitney, resolved at p < 0.05, with a bootstrap interval;
+    the dihedral counts are secondary. All tables carry it. No in-training checkpoint is resolved
+    from its start; d9_02 leans highest (0.765 against gdepth_start's 0.657, p 0.58), and the
+    released d9_03 is 0.726 (p 0.64; against d9_02 p 1.00; findings 1.26). bz_02 against
+    its twin b9_02 is the first resolved primary test, only just: 0.856 against 0.694, p 0.046, with
+    the bootstrap interval reaching -0.010, one of 32 tables read; against bio_start p 0.30. At 12
+    seeds a true 0.10-0.15 difference is detected 18-31% of the time (findings 1.25).
+  - Locally, on the Mac Studio, which keeps the jobs (user, 10-08 09:15; another computer stands
+    by until told to take over, remote_jobs.md "Handoff"), every new epoch end as it comes (dz_01 done 20:45; the queue is empty), half-trained (step 37) first;
+    cz_00 at 24 seeds. Its engine and inputs reproduce the MacBook Pro's runs.
+- [ ] **Answer the user's question: which run moves TM4 toward stable.** Compare each checkpoint
+  with its own start, each frozen run with its unfrozen twin at the same step, and read the direction
+  across epoch ends. With 12 seeds only large changes resolve (findings 1.22); run 24 seeds where a
+  difference falls between. On the fixed side-chain/lipid table (10-10) ff2.1 itself holds TM4
+  (0.944 against 0.610 on the old table, p 0.002), every start reads alike and no released
+  candidate improves on it (findings 4.15); what follows from that is the user's.
+- [ ] Every step: `check_step.py`, the KE scan, the margin and glycine readouts. A trained-H-bond run
+  whose margin falls below +0.10 holds for the user; ff30_bio_dt009 was on hold from step 14 to its
+  end.
+- [ ] Each epoch end: selection panel (`submit_new.sh`).
+- [ ] At a converged gate: automatic validation. The user chooses ff_3.0. Converged: ff_3.0_gdepth
+  (10-09 08:54), ff_3.0_bio_si (10-10 02:25), ff_3.0_bio (10-10 16:46; findings 1.26, 1.31, 1.32);
+  ff30_gdepth_si still trains.
+
+### Phase 12 - poly-Gly: all-atom Ac-(Gly)20-NHMe as Upside's reference (STOPPED 2026-10-11, user; started 10-05, PI's suggestion)
+With neutral caps the chain is achiral, so alpha_R = alpha_L exactly at equilibrium. It shows the
+glycine map's own handedness with nothing else present.
+- Setup: amber99sb-ildn / TIP3P at 300 K on midway2. Files and README in
+  `/project/trsosnic/yinhan/polygly/`; Upside runs and analysis in the Mac's `scratchpad/polygly/`.
+- Steps: collapse (4 replicas, discarded), then a production box sized from the measured diameter,
+  then 4 x 1 us production (~12k core-hours). It is converged when the blank is zero within its
+  error and the replicas agree on Rg.
+
+Status:
+- [x] Collapse: job 49186415 COMPLETED 10-07 12:48 at 19.79-20.00 ns of the 30 ns cap, at 14 ns/day
+  per replica. Every replica was compact (Rg < 0.75 nm) within 0.4-3.7 ns. Second-half Rg was
+  0.67-0.73 nm, with reopenings up to 19% of frames. The minimum periodic-image distance was
+  5.2 nm (`polygly/collapse_analysis/`).
+- [x] Production boxes (user, 10-07; `scripts/build_prod.sh`): each replica's last frame in a 7.5 nm
+  dodecahedron. 7.5 nm is the largest diameter after the first ns, 5.14 nm, plus 2.4 nm; the
+  plan's second-half rule gives 6.9 nm. About 28,950 atoms and 9,600 waters each, against 64,976
+  before. grompp is clean.
+- [x] Production chain `prod.sbatch` (minimise, 500 ps NPT with seeds 20261021-24, then 1 us,
+  chained 36 h links, frames every 10 ps). Submitted 10-07 14:10. Expected ~30 ns/day per replica,
+  about a month to 1 us; the first link measures it.
+- [x] Upside G20 under ff21_released and bio_start, 8 x 200,000 tu: both chiral, ln(aR/aL) -0.72 and
+  -0.45 (findings 1.20).
+- [x] Links 1 and 2: 33.8-34.0, then 32.4-32.6 ns/day; `gmx mindist -pi` 2.31-3.57 nm, above 1.0 nm.
+- **Stopped by the user at ~97 ns per replica (10-11 23:05):** the question it served, the glycine map
+  behind TM4's glycine flips, was settled by the side-chain/lipid table fix (findings 4.15: ff2.1 holds
+  TM4 on the fixed table, 0 of 12 flipped). The blank, the analysis script and the round-4 epochs are
+  not pursued. The data are kept (`polygly/`, 213 MB), and the chain resumes from `prod.cpt` if the
+  glycine map's own handedness (Upside G20 ln(aR/aL) -0.72, findings 1.20) is ever taken up.
+
+### Phase 13 - glpG TM1: hold it in the hybrid by correct physics (STARTED 2026-10-09, user)
+Hold glpG's TM1 in the hybrid without retraining the force field (user, 10-09): no scaling or
+disabling of BB-env or SC-env, no tuned parameters, no guards.
+
+**Diagnosis** (done; findings 4.6-4.7). TM1's middle (32-38) sits at the bilayer centre and loses
+structure in every force field, ff2.1 included. Lipid gain is not the driver. Opening it costs only
+Upside's soluble-calibrated H-bond energy: the hybrid has no cost for an unpaired backbone NH or CO
+in the acyl core, and its MARTINI backbone typing is fixed at the starting secondary structure.
+Upside's own implicit-membrane model has that cost (`hb_membrane_potential`), and on the stored
+frames it would add +7 to +10 E_up to the opening.
+
+**Approach** (user chose A, 2026-10-09 13:45):
+* **A. Add Upside's membrane backbone H-bond term, its H-bond-state-dependent part only.**
+  - E = sum over backbone donors and acceptors of (1-p)^2 [f_unpaired(z) - f_paired(z)], p from the
+    hybrid's existing `protein_hbond`, f from `parameters/ff_2.1/membrane.h5` hb_energy unchanged.
+    The paired baseline is left out because MARTINI's helix-typed BB already describes a paired
+    backbone against lipid.
+  - First test is config-only: the engine's existing `hb_membrane_potential` node, written into a
+    copy of the patched glpG input with coeff = [hb_energy[t,0] - hb_energy[t,1], 0], use_curvature
+    0, the bilayer centred at z = 0 (it stays within 1-2 A over 4000 tu). No C++ change, master
+    parity untouched.
+  - Half-thickness from our own bilayer, not borrowed: the glycerol-ester (GL1/GL2) mid-plane, the
+    hydrocarbon-core boundary Upside's membrane thickness denotes; the C1 plane (12.4 A) would give a
+    smaller penalty (`tm1_hbmem.txt` has the sensitivity).
+  - Production would need the reference to follow the bilayer's centre (a node reading the lipid
+    mid-plane) and a builder option in `py/martini_prepare_system*.py`; decided after the test.
+* **B. Make each BB bead's MARTINI type follow its H-bond state** (N0 paired, P5 unpaired). MARTINI's
+  own endpoints, but a new C++ coupling in `martini_potential` with derivatives through
+  `protein_hbond`; on the stored frames it would charge about +38 E_up for the opening, far more
+  than A.
+
+Status (A):
+- [x] Half-thickness 15.9 A: mid-plane of GL1 (16.42 A) and GL2 (15.40 A) over the second half of the
+  local ff2.1 run; the first acyl beads sit at 12.1-12.7 A (seed: GL1 17.6, GL2 16.3).
+- [x] Term built into copies of both inputs (`scratchpad/glpg_tm1_hbmem/add_hbmem.py`). Verified on
+  stored frames (`verify_hbmem.txt`): E_new - E_old equals the node value and an independent
+  evaluation to 1e-3 E_up; node forces match finite differences to ~1e-3. +86.5 E_up at t 0.
+- [x] Test, ff2.1 + term, seeds 1-12 (finished 15:39; findings 4.8): every TM helix more helical
+  (TM1 +0.11, TM4 primary +0.18), but TM4's backbone tears in 2 seeds and the protein potential
+  jumps > 3000 E_up in 5. Not acceptable as it stands.
+Second lead, transient backbone excursions (findings 4.9):
+- [x] Dense-frame replay of ff2.1 seed 1 to t 420 (`kick/replay.sh`): bitwise reproduction; onset
+  between t 407.70 and 407.97 at MET34's backbone; no MARTINI pair spike before it; no term's force
+  on 33-35 abnormal at the stored frames (`kick/force_by_node.txt`). The impulse lies inside 10
+  steps that no stored frame shows.
+
+**Local plan on the Mac Studio** (user, 10-09 21:40: resolve TM1 in the local ff3.0, d9_03 =
+ff_3.0_gdepth, by local simulation). The excursions come first: TM1's middle opens at one (findings
+4.9), the unexplained TM4-test jumps may share their cause (Known Errors), and so may option A's
+tears. Option A on ff3.0 is the second line, and runs the same night on the idle cores (user, 10-09
+21:55): step 5's set with `obj/upside` while step 2 runs; any tear in it is replayed exactly with
+the probe later, and the set is rerun if step 3 changes the engine.
+* **Readout, fixed before any new run.** TM1 primary: each seed's last-block DSSP alpha of 29-48,
+  two-sided Mann-Whitney against the 12 local d9_03 seeds (`ff3_local_test/runs/`, not rerun),
+  resolved at p < 0.05, with a bootstrap 95% interval. Also TM1 32-38 i->i+4 H-bonds, TM4's primary,
+  and health: frames with a C-N above 2 A, total-potential jumps above 3000, KE/1.5kT, Rg and the
+  protein's depth. TM4-test flags unchanged (`run_glpg.sh`: T 0.80, 4000 tu, dt 0.009).
+* **Cores.** The TM4 queue comes first (12 cores a set; bs_03 expected ~02:00 10-10). TM1 work uses
+  at most 16 cores minus the running TM4 seeds, and never replaces `obj/`, the TM4 driver's binary.
+1. [x] Set up `scratchpad/glpg_tm1/` from midway2's `checks/tm1_hbmem_20261009/` (script paths
+   fixed); TM1 baseline table for d9_03 and ff21_released from the local runs.
+2. [x] Localise the impulse in ff3.0 (findings 4.10): the side-chain/lipid table
+   (`martini.h5` `sc_table`) is sampled on 24 directions and one bead frame, and its one-node ridges
+   give single-evaluation spikes up to 33,260 E_up/A on CA34/CA35. Method: a temporary probe build: a copy of `src/` in
+   `scratchpad/glpg_tm1/src_probe`, built into its own `obj_probe/` (the tracked `src/` is not
+   touched). An environment-gated ring buffer keeps the last ~40 steps' positions and momenta and
+   writes them out when a protein backbone atom moves more than a set distance in one step; it only
+   reads. First check that it reproduces a stored d9_03 log frame for frame. Then run d9_03 s10 (TM1
+   excursion by t 140), s7 (t 250), s8 (t 260) and s11 (t 440) to just past their events, and
+   evaluate every potential node's force on 33-36 at each written step, with the rotamer's
+   side-chain/lipid 1-body table split out and the integrator stage that carries the spike named.
+3. [x] Fix at the root, tested locally: the table built with converged azimuthal sampling (600 directions x 12
+   frames, `kick_ff30/sc_table_vectorized.py`, the builder's own computation vectorised), tested in
+   a copy of `patched/79HIS_d9_03.up` with only `rotamer_full_energy_eup` replaced.
+   `parameters/ff_2.1/martini.h5`, `py/martini_build_tables.py` and the cluster stay unchanged until
+   the user decides: the round-4 TM4 sets all ran on the old table.
+4. [x] Fixed ff3.0, 12 seeds (findings 4.13): TM1 0.931 against 0.685, p 0.002, resolved; TM4
+   0.924 against 0.726, p 0.10; no evaluation above 1000 E_up/A; one C-N excursion frame against 33.
+5. [x] Option A on ff3.0, 12 seeds each. On the old table (findings 4.11): TM1 0.818 against
+   0.685, p 0.073, not resolved. On the fixed table (findings 4.14, `runs_sc600x12_hbmem/`, probe
+   on): TM1 0.964 (p < 0.001) and TM4 0.959 against 0.726 (p 0.009), both resolved; against the
+   table alone TM1 +0.033 (p 0.049) and TM4 p 0.21; no C-N excursion, no jump; three evaluations
+   above 1000 E_up/A, protein side-chain contacts outside TM1 and TM4. ff2.1 + term's tears are the
+   table's kicks on MET142 (findings 4.8). The literature (findings 4.12) supports the term's
+   magnitude and forbids combining it with option B (double counting).
+6. [ ] Delete the probe build and its source. The report is done (10-10): the table fix is in
+   production (Phase 15); the term is not adopted (user, 10-10 11:20; findings 4.14).
+
+### Phase 14 - ff3.1: every basin depth of every map, under an L2 prior (STARTED 2026-10-09, user)
+Route 1 of findings 1.28 (user, 10-09: no new simulations for input data). Each coil map (central,
+direction, neighbour) gets one offset per basin of `rama_basin.py`'s six (alpha_R, alpha_L, beta,
+pPII and the two phi > 0 extended regions; five free per map after renormalisation), trained on that
+map's own reads with its own Gaussian prior centred on NDRD. No pooling across maps (rule 1.8);
+the sheet group stays as in ff3.0. The update is the depth rounds' damped Newton step with the
+prior, which is the MAP (ridge) estimate, not Adam (findings 1.28: Adam moves noise-only
+coordinates at its full rate).
+1. [x] **Probe on recorded data, no job** (findings 1.29): cross-validation finds a finite width
+   (0.3 nat), but per-map depths transfer less well than pooled ones and what transfers is a global
+   alpha_R deepening. Go or no-go is with the user. Method: ff21_ctrl_dt009 (c9: ff2.1's NDRD maps unchanged, 38
+   steps, each protein twice) saved every residue's native-restrained and free basin populations in
+   its `divergence.pkl`. For every (map, basin): the free-native gap over the reads the map serves,
+   with each residue's left/right share; its protein-bootstrap error; split-half reliability (protein
+   halves, and epoch 0 against epoch 1); the MAP step for a range of prior widths, with the width
+   chosen by cross-validation over protein folds of the linear response. Report how many depths carry
+   signal at that width, which, and whether the push points to the native placement of the map's
+   class (1.15). Go or no-go to the user.
+2. [x] Trainer (`training/ff31/`, findings 1.30): `rama_basin.py` generalised to per-(map, basin)
+   offsets with a trainable mask; its reads reproduce round 4's round-1 glycine statistics exactly
+   on recorded data, and its first step was simulated on c9's epoch 0 in both modes.
+3. [x] Both variants (user, 10-09 23:05) from ff2.1 with every offset at 0 (user): `ff31_depth_all`
+   (5,040 depths, prior 0.3) and `ff31_depth_data` (1,442, prior 0.2), midway2 49218340 and
+   49218341, submitted 23:40, target 76, same 456 proteins and workflow, no gate. The push at the
+   first epoch end (`rama_rounds.txt`, held-out gap left) is read before the user lets more epochs
+   count.
+4. [x] Judged by the selection panels and the steric check; **reviewed 10-13 (user; findings 1.34):
+   ff31_depth_all is worse than ff_3.0_gdepth (folded -0.058, paired) and keeps losing; ff31_depth_data
+   ties it (folded -0.012, not resolved; helix and beta lean better by about one SE). Neither earns
+   replacing ff_3.0_gdepth on the panel; whether fd_03 is released for the Peng benchmark is the
+   user's.** Both runs reached target 76 on 10-13 (ff31_depth_data 03:37, ff31_depth_all 03:53). Four depth
+   rounds closed 1.6% (`all`) and 1.3% (`data`) of the held-out gap, `all`'s last round none
+   (findings 1.30); folding fell over the first three epochs and held in the last, `all` 0.471, 0.444,
+   0.404, 0.406 (fa_00-03) and `data` 0.479, 0.472, 0.449, 0.452 (fd_00-03), against ff2.1's 0.615 and
+   gdepth_start's 0.603, which dominates every end in helix; at the target `data` leads `all`, 0.452
+   against 0.406, helix -0.024 against -0.030 (findings 1.21); no steric flag except
+   `data`'s step 39, shown to be scatter (findings 1.33). The choice is the user's. The local glpG TM4 glycine-flip test was
+   retired by the user 10-11 23:10 (ff2.1 holds TM4 on the fixed table, findings 4.15; "we have a
+   working ff and we are trying to expand it"), after fa_00_sc and fd_00_sc. Whether TM4's HDX dG
+   should be effectively infinite is unresolved (user, 23:15); its REMD test was cancelled 10-14
+   (Phase 16).
+5. [x] **Steric watch** (user, 10-10 21:10, after Jumper: a moving map may open conformations where
+   the side chain and backbone clash; findings 1.33). Upside has no excluded volume between a
+   residue's CB and its neighbours' backbone, so the map is what keeps them apart.
+   `training/ff31/steric_check.py` (deployed `checks/ff31_steric/`) measures the step's library
+   against a hard-sphere Ramachandran map (outer-limit contacts, ideal geometry, CB, amide H, a
+   following proline's CD; glycine without CB), as side-chain and backbone clash probability of
+   every coil map and of every training residue's engine map against NDRD, and the free ensembles'
+   non-glycine phi > 0 populations per step. The watch runs it at every ff3.1 step (cron
+   `c618e779`) and notifies on a `STERIC FLAG`; the jobs change only with the user. Step 8: no flag.
+6. [ ] **Validate ff31_depth_data's step 75 (fd_03) as `ff_3.1_depth_data`** (user, 10-13 12:00: "Use
+   Peng validation set and glpG TM4 to validate ff3.1"; ff31_depth_all is not validated, findings
+   1.34). Launched 12:10 10-13: the established `validate_ff.sh` on `epoch_03_minibatch_18` from a
+   2-CPU launcher job, as the gates run it. Released to both trees, every file equal to the panel's
+   `params/fd_03`; 32 Peng arms with ff_3.0_gdepth's targets; 4 glpG REMD chains whose seeds differ from
+   ff_3.0_gdepth's only in the five force-field datasets, so they carry the fixed side-chain/lipid
+   table (remote_jobs.md §1). Judged against ff_3.0_gdepth's arms and chains, TM4 above all. The name
+   avoids the retired `ff_3.1_trained`. **TM4 stays helical** through block 1 and block 2's first
+   chunks of all four chains (0.93-1.00 per group; user, 10-14 01:00; findings 1.35), as under
+   ff_3.0_gdepth on the same chunks; GLY136 and GLY149 flip at some rungs under both, and only 79HIS's
+   GLY136 under ff3.1 does so at T 0.70 (0.66 of frames). Peng arms: 14 of 32 complete by 10-15 13:50,
+   all healthy; 18 run.
+
+Risks recorded before the probe (findings 1.28): the depths can learn native placement and absorb
+H-bond and side-chain physics, which a prior does not prevent; 46 held-out proteins sit at the
+sample-size floor (1.12), so the width needs cross-validation over many folds.
+
+### Phase 15 - the side-chain/lipid table at converged sampling, in production (DONE 2026-10-10, user)
+The user's word (10-10 08:30): apply Phase 13's table fix to the force-field files so future
+simulations run with it. The fix is a sampling density, not a parameter: the same potential, Boltzmann
+average and grids, at 600 target directions x 12 side-chain bead frames instead of 24 x 1
+(findings 4.10, 4.13). Not part of it: the membrane H-bond term (option A, not adopted; findings 4.14).
+1. [x] Builder `py/martini_build_tables.py`: the per-sample loop computed as arrays, sampling
+   600 x 12 by default (explicit arguments; the env overrides removed). At 24 x 1 it reproduces the
+   old table (9 of 5.1 M cells one float32 step off); at 600 x 12 it equals the tested table to
+   float32 rounding (findings 4.15).
+2. [x] `parameters/ff_2.1/martini.h5` rebuilt (md5 `2e612261...`; old kept as
+   `.bak_pre_sc600x12_20261010`): `particles` identical, `sc_table` converged. Every new hybrid
+   preparation reads it.
+3. [x] `up.md` 2.6 documents the sampling; findings 4.15 the build and its checks.
+4. [x] Seed-patched runs (user 10-10 08:45: everywhere). `patch_glpg.py` (md5 `97ca3294...`) copies
+   martini.h5's table into the seed. The 8 queued glpG chains (ff_3.0_gdepth, ff_3.0_bio_si) were
+   re-patched and checked. TM4 sets run as `<tag>_sc` from now on.
+5. [x] Cluster: martini.h5 in `$P` and `/beagle3/.../upside2-md`, the builder in `/beagle3` and
+   `patch_glpg.py` in `$P/training/` and `tm4_local/scripts/`, md5 checked
+   (`checks/sc_table_20261010/`). `$P/py/martini_build_tables.py` stays old (campaign rule).
+6. [x] TM4 references on the fixed table, run locally 08:50-22:18 10-10: d9_03_sc, bs_03_sc,
+   ff21_bioT1_6_sc, gdepth_start_sc, ff21_released_sc, d9_01_sc and b9_03_sc. d9_03_sc reproduces
+   Phase 13's table-only set within noise; ff2.1 holds TM4 on the fixed table, every start reads
+   alike, and none of the three released candidates is resolved from its start (findings 4.15).
+   Each later epoch end is patched with the new tool and compared with its `_sc` start and twin.
+
+### Phase 16 - glpG TM4 HDX on the fixed table (local readout done; ff2.1 REMD cancelled; ff3.0 REMD readout done 2026-10-14; ff3.1 REMD readout done 2026-10-17)
+
+The only hybrid HDX set (ff2.1, 09-04) gives TM4 3.5-4.9 kcal/mol against the H145A peptide
+140-144's 6.1-7.4, through protein protection failing (`pp_fail` 0.032 on 135-151 at the T 0.85
+rung, findings 5.3). It predates the 09-10 temperature fix and the 10-10 table (findings 5.5). The
+test repeats its force field and temperature with both fixes: if TM4's `pp_fail` falls, the gap
+was the stale inputs; if not, the residual candidates of findings 5.5 stand. User, 10-11: "go
+ahead and run this session's job first", ahead of the TM4 queue.
+
+* Inputs: `ff3_local_test/patched/79HIS_ff21_released_sc.up` (ff2.1, fixed table, the 10-10
+  `ff21_released_sc` set's input), 12 seeds, T 0.85 (298 K), 4000 tu, frame interval 2, the
+  `run_glpg.sh` integrator. Runs and analysis in `scratchpad/tm4_hdx_local/`.
+* Analysis: the repo's HDX steps unchanged (projection, `get_protection_state.py`,
+  `martini_hdx_membrane_accessibility.py`) on the ff2.1 HDX topology; no MBAR, no uptake curves.
+  Readout per TM4 amide 135-151: `pp_fail`, `acc`, exchanged fraction, dG at 298 K with the
+  censored bound; 142-144 against the peptide. The 10-10 T 0.80 `ff21_released_sc` and
+  `d9_03_sc` runs are read the same way at no cost.
+* Limits: 4000 tu from the crystal is not the REMD's equilibrium, and 79HIS is not the
+  experiment's 79ALA; the midway3 REMD analysis (remote_jobs.md §1) stays the matched readout.
+
+- [x] 12 seeds run 07:09-09:04 10-11: KE/1.5kT 0.999-1.004; TM4 DSSP alpha 0.94-0.95 per block,
+  0 unwound, 0 flipped (`results/tm4_local_T085.txt`).
+- [x] HDX topology (the stale set's, md5 166c9d12) and per-seed arrays; tail-contact radius 7.00 A
+  on every T 0.85 seed.
+- [x] Readout (findings 5.5): ff2.1's TM4 137-148 lose protein protection in at most 0.06% of frames
+  at 298 K, against 10-25% in the surviving pre-fix set; 142-144 never exchange (dG > 5.8, the
+  frame-count bound). The pre-fix lability does not reproduce on current inputs. No REMD readout is
+  pending: the ff2.1_sc chain below was cancelled by the user 10-14 01:11. HDX on the ff3.0 chains
+  stays declined (user 10-13 10:20, "Do not do hdx on ff3.0"; a 20:25 "ff3.0 only" was withdrawn ~21:00, when the user
+  told upside2-md-98 directly to keep this plan), so no 79ALA readout is planned. If it is ever
+  approved: ff_3.0_gdepth block 2, 79ALA then 79HIS, skip S115T.
+- [-] ff2.1 REMD on the fixed table, cancelled (user, 10-11 17:20: "just run REMD on remote to see if the
+  problem still exist", in place of a local control while the Mac Studio is busy). The ff3.0 chains
+  cannot make this test: the pre-fix lability was measured under ff2.1, 79HIS, and ff3.0 changes
+  TM4's three glycines. One 79HIS chain from the pristine ff_2.1 seed with the fixed table, the
+  ff3.0 chains' protocol, HDX after block 2 as in remote_jobs.md §1; readout against the pre-fix
+  set's 0.851 rung (138-148 `pp_fail` 0.10-0.25, 142-144 dG 4.1-4.4) and the HXMS 6.1-7.4.
+  Requested of upside2-md-98, which submits and records it in remote_jobs.md. **Cancelled by the user
+  10-14 01:11** ("you can cancel ff2.1 job"): `glpG-RKRK-79HIS.ff_2.1_sc` ran from 17:41 10-11, block 1
+  whole and block 2 to chunk step 6,930 of 10,494; its files are kept and read back, and its HDX
+  (with the pre-HDX checks: KE/1.5kT, mixing, TM4 by half of block 2) was not run (remote_jobs.md §1
+  "Finished runs"). Its seed differs from the pristine ff2.1 seed only in the four table arrays,
+  and from the local T 0.85 input only in rama_pot (at most 2.6e-6), so the REMD and local runs
+  share inputs. 28 replicas over T 0.70-0.90, not the pre-fix set's 48, so rungs are compared by
+  temperature. One block resolves the pre-fix 4.1-4.4 (censored bound ~5.0 kcal/mol at one 298 K
+  rung) but not the HXMS 6.1-7.4.
+- [ ] ff3.0 REMD readout (user 10-14 01:19: "check if you have enough data from ff3.0 or ff3.1 ...
+  Check if the TM4 still stretched down from infinity now"). ff_3.0_gdepth block 2 is whole in all
+  four chains (17-18 chunks, ~5,100-5,400 frames per replica, bound ~5.1 kcal/mol at one 298 K
+  rung); ff_3.1_depth_data has block 1 only until ~10-16. 79ALA then 79HIS, the spec of the ff2.1
+  item above. It reverses the 10-13 decline; the user confirmed it to upside2-md-98 ("Yes, 79ALA
+  then 79HIS"), which runs it (pre-checks: `checks/hdx_ff30_20261014/`). Resolved if 137-147 stay censored above ~5.1 at 298 K and 148-151 fray no more
+  than locally (ff3.0 T 0.80: 148-151 at 1.6-2.4, mostly one seed); HXMS stays a sampling limit.
+  **This phase, the request and the deferred fixes of findings 5.5 moved to upside2-md-98 10-14
+  01:35 (user: "append jobs of this session to another session"); upside2-md-87 closed.**
+  - [x] Pre-checks on block 2 (`prechecks.py`, `prechecks_20261014.txt`): KE/1.5kT 0.998-1.002 per
+    slot; swap acceptance 0.36-0.53 per pair; no 0 -> 27 -> 0 round trip in either variant (walkers
+    span 8-23 slots; net ~1.7 slots per chunk against ~21 accepted swaps per frame interval: each
+    configuration stays near the temperature its energy fits). Each rung is still canonical, but its
+    frames come from the few walkers near it, so the readout says so.
+  - [x] One caslake job per variant (60668572, 60668573, 01:59-02:04 10-14; the user asked for midway2, where no
+    environment has mdtraj, pymbar and matplotlib), `checks/hdx_ff30_20261014/hdx_block2.sbatch`: hdx_cluster.sbatch's
+    pipeline with block 2 copied out of the live file first (`extract_block.py`: rotated groups
+    only, every dataset compared; /input from the seed, pos = the block's first frame), concat
+    discard 0, the HDX topology from ff_3.0_gdepth (rama from `common/rama.dat`, as 1.config.py
+    always does), the repo's `martini_hdx_project.py` (coupled potential; the cluster copy re-scores
+    a protein-only one), the stability dG on PS and on PS_protein, the reference-style plot, and
+    `readout.py` (dG or "> bound" at 0.80/0.85/0.90 for TM4 130-151, pp_fail/acc/exchanged at the
+    nearest replica, 135-151 by half at 0.85). Output `<chain>/hdx_sc600x12_ff_3.0_gdepth/`
+    (~40 GB per variant). 79ALA groups 20-38, 79HIS 18-35.
+  - [x] Readout (findings 5.5): TM4's core is censored at every rung, above 5.85 at 298 K (79ALA's 137 and
+    139 at the bound), 142-144 against the pre-fix 4.1-4.4; only 130-134 and 149-151 resolve. 79HIS
+    passes the closing criterion; 79ALA passes on 137-147, its 150 slightly more frayed than locally.
+    Whether TM4's dG is finite, as HXMS says, needs ~3e5 independent frames per rung, and block 2's
+    walkers do not cross the ladder.
+  - [x] **The same readout on ff_3.1_depth_data** (user 10-14 02:10: "Do the analysis on ff3.1 as well"), 79ALA
+    then 79HIS, block 2 = groups 19-37, caslake 60979543 and 60979545 00:19-00:25 10-17 (findings 5.5): the
+    core 140-147 censored at 298 K in both, as under ff3.0; the 135-139 turn resolves at 4.0-5.6 and 79HIS's 148
+    at 2.72, where ff3.0's are censored; 79ALA's 137-148 lose protein protection in up to 4.6% of frames at the
+    0.853 rung (ff3.0 0.37%), unevenly between halves. 79HIS passes the closing criterion on 137-147; 79ALA fails
+    it at 138-139. Figures `~/Downloads/glpG_TM4_HDX_ff3.1_depth_data_block2/` (Mac Studio). The recipe as run:
+    remote_jobs.md §1 "TM4 HDX on ff_3.1_depth_data: the recipe": block 2's
+    groups from the logs' run counts (output_previous_0 is the seed's; each block's first group is its
+    calibration, 287 frames to t 18.0; `prechecks.py` asserts the log's run count matches); `prechecks.py
+    ff_3.1_depth_data <V> FIRST LAST JOBID` on midway2; then `hdx_block2.sbatch` with `FF=ff_3.1_depth_data`
+    on caslake (midway3 socket: a Duo push), the HDX topology from ff_3.1_depth_data; then TM4 at 298 K
+    against ff_3.0_gdepth's, one figure per variant. Launcher and pre-check take the force field and
+    block as arguments (the ff3.0 run's copies kept as `*.ff30_run_20261014`; the refactored pre-check
+    reproduces its output exactly). The 10-14 session moved this phase's tools off its scratchpad onto
+    the cluster (`plot_tm4.py` beside the launcher).
+
+### Phase 17 - ff3.2: ff3.1's depth training started from ff3.0 (STOPPED 2026-10-18 in step 69; rerun in Phase 21)
+The user's word (10-15): "same as ff3.1, except that it starts with ff3.0 instead of ff2.1". It is
+ff31_depth_data's run with one input changed, the start: ff_3.0_gdepth's six released files in place
+of ff2.1's. Decisions, each the plainest reading of that:
+- **Mode `data`** (1,442 depths with >= 20 native sites, prior 0.2), the ff3.1 variant released as
+  ff_3.1_depth_data; `all` lost to ff3.0 on the panel (findings 1.34).
+- **The trainer is ff31_depth_data's, byte-identical** (ConDiv.py `df3e2497...`, rama_basin.py
+  `235a1bf7...`). It takes its base library from `upside_input/rama.dat` and its Adam groups from
+  `init_param/`, so the start is changed by those files alone. The offsets start at zero on ff3.0's
+  library and each depth's prior is centred there, as ff3.1's were on its start (NDRD), so ff3.0's
+  glycine depths are the prior's centre and are not pulled back to NDRD. The trainer's printed
+  "NDRD" and the steric check's "against NDRD" mean the base library, here ff3.0's.
+- Same 456 proteins, held-out set (seeded), dt 0.009, target 76, no gate; its own minibatch shuffle,
+  as every run had. Epoch ends tagged `f32_EE` for the panel.
+- ff_3.0_gdepth ended training at margin +0.082, below the watch's +0.10 hold line, so ff3.2 starts
+  under it. Whether that line applies to a run that starts below it is the user's.
+1. [x] Run directory `$P/training/ff32_depth_data` (10-15 15:57): ff31_depth_data's trainer, env.sh and
+   pdb_list; `init_param` = ff_3.0_gdepth's five Adam-group files; `upside_input` = ff31's protein files
+   (hard links) with ff_3.0_gdepth's `rama.dat`; every file cmp-checked (`checks/ff32_deploy_20261015/`).
+2. [x] Initialised: 456 proteins, 1,442 trainable, 46 held out; held-out set and trainable mask equal
+   to ff31_depth_data's; `rama_round_00.dat` array-identical to ff3.0's library; printed start equal
+   to ff30_gdepth_dt009's step 75 (dhb -0.5513, sheet mean 0.2283, margin +0.082).
+3. [x] Submitted 16:01 after `--test-only`: midway2 49406711 (remote_jobs.md §1); `ff32_depth_data:f32_`
+   registered in `submit_new.sh` and `~/watch_probe/stock.sh`.
+4. [x] Stopped by the user 08:33 10-18 in step 69 (steps 0-68 complete) for the angular-gradient defect; rerun on the fixed engine as
+   `ff32_depth_data_angfix` (Phase 21). Its readouts to step 68 and panels f32_00-02 are the defect side.
+
+### Phase 18 - the hybrid side-chain placement defect: fix and rerun glpG (STARTED 2026-10-17, user)
+Findings 4.17: the hybrid preparation stores `placement_data` gathered per row but `layer_index` as the
+absolute library row, so the engine places every side-chain bead at `rcf[li[li]]`. User 10-17: "fix the
+bug and rerun the affected simulations"; cancel the 8 running chains; rerun all 10 (ff3.0 and ff3.1 in
+the 4 variants, and 79HIS under ff_2.1_nobp and its matched control ff_2.1_ctrl38). Decisions:
+- **The layout is upside_config's (and master's):** `placement_data` is the full library table (86 rows;
+  the 1-body scalar likewise) and `layer_index` the absolute row. The preparation writes that; the
+  seeds are repaired to it. The engine is correct and does not change.
+- **Repair, do not rebuild:** only the two `placement_data` datasets change, so membrane, packing, ions,
+  coordinates and every other dataset stay bit-identical (patch_glpg.py's reason). The repair recomputes
+  the full tables from the build-time `ff_2.1/sidechain.h5` by the preparation's own rule and refuses
+  unless the seed's gathered rows equal them exactly.
+- **The base seeds are repaired too** (`popepopg_REMD_mdw2/seeds/glpG-RKRK-<V>.up`, backups
+  `.bak_pre_placefix_20261017`), so `validate_ff.sh` patches correct seeds from now on. The per-force-field
+  seeds are made the pipeline's way, `patch_glpg.py` on the repaired base, and must equal the repaired old
+  per-force-field seeds.
+- **The deterministic seed** (79HIS, ff_2.1_nobp) is `patch_glpg.py` on the repaired base, then one row per
+  side-chain residue at the kept state: placement, 1-body scalar, pair `index/type/id`, both coverage
+  nodes' side-chain rows, and `martini_sc_table_1body`'s rows with `row_rotamer_index` = the kept state's
+  index in its type. The side-chain/lipid and backbone/lipid couplings stay on, unchanged in form.
+- **The old chains are kept**, renamed `<V>.<ff>.placedefect_20261017` with their STOP files, so the reruns
+  take the canonical names the HDX scripts expect. Their trajectories were deleted 10-18 (user; HDX results kept).
+1. [x] Cancel the 8 chains (09:40 10-17, STOP files first; none resubmitted).
+2. [x] Fix `py/martini_prepare_system_lib.py` (`load_sidechain_rotamer_payload`); the same hunk in the `$P`
+   and `/beagle3` copies (`checks/placefix_20261017/patch_prep_lib.py`). The fixed function reproduces the
+   repaired 79HIS and 79ALA seeds' side-chain datasets exactly (`test_prep_payload.py`, run locally: the
+   preparation needs Python 3.10+).
+3. [x] Seed tools in `checks/placefix_20261017/`: `fix_placement.py`, `single_state.py`, `verify_seed.py`,
+   `build.sh` (`build.log`), `verify_all.sh` (`verify.log`). single_state compares the libraries' geometry at the
+   float32 the seed stores: the trained files carry ff2.1's float64 geometry to 1 ulp (2.2e-16).
+4. [x] Built: 4 base seeds, 8 ff3.0/ff3.1 seeds (each equal, dataset for dataset, to its old seed repaired),
+   ctrl38 79HIS, nobp 79HIS (747 rows -> 168, 1-body 0 at every kept state).
+5. [x] Verified (`verify.log`): only the intended datasets differ; placement at `rcf[li]` to 3.6e-6 A (old: up
+   to 7.9 A); 1-body exact (old: up to 22 E_up off); side-chain/lipid rows active; nobp's 168 rows equal the
+   multi-state seed's at the same (residue, state). Every multi-state force field keeps ff2.1's
+   `rotamer_prob` exactly, so `patch_glpg.py` leaving the 1-body table is right for them.
+6. [x] Old chains renamed `.placedefect_20261017`; 12 live seeds kept as `.bak_pre_placefix_20261017` and the
+   14 new ones installed (md5 checked); 10 chains `--test-only`, then submitted 49411315-49411324 (all R
+   at once).
+7. [ ] Records: findings 4.17 (done), remote_jobs.md, WATCH_STATUS.md; the watch reads the new chains' first
+   blocks (calibration, replicas 0, 13, 27), and the TM4 checks and HDX are redone on them. Block 1 closed in all
+   eight 18:52-20:39 10-18 and its TM4 read is done (findings 1.35: TM4 holds, no glycine at phi > 0 at T 0.70);
+   owed: TM4 at each later block end, HDX on block 2.
+
+### Phase 19 - a second native-state panel from mdCATH (DONE 2026-10-17, user)
+The Peng benchmark's 16 natives and the 44-domain panel (60 proteins) do not resolve ff_2.1_nobp from its control;
+~75-100 native-start proteins are needed (nobp run's `setup/notes/findings.md`). User 10-17: "find something new
+into the validation set"; time step 0.009, as trained; ff_2.1_nobp and ff_2.1_ctrl38. Decisions:
+- **The 90 domains** of `ff3_selection/mdcath_candidates/` (README there): mdCATH whole-chain CATH 4.2.0 S20 domains,
+  30 per length bin 50-100 / 101-150 / 151-250, helical / beta / mixed balanced; not in the training or panel PDB ids
+  and under 30% identity to them; X-ray at 2.5 A or better with one protein entity; fewer than 4 cysteines; folded at
+  320 K in all 5 all-atom replicas.
+- **The all-atom reference is mdCATH's 320 K** (CHARMM22*, TIP3P; 5 replicas x ~500 frames at 1 ns), not Charron's
+  amber99sb-ildn at 300 K: paired comparisons between Upside force fields hold; absolute folded fractions are not
+  compared with the 44-domain panel's.
+- **A separate panel** in `ff3_selection/{domains,aa,runs}_mdcath/`, so the 44-domain panel and its history are
+  untouched. `panel.py` gains an optional time step on `run` (default 0.015, so every existing and automatic panel runs
+  as before) and an `aa_mdcath` builder beside `aa`; a `panel_mdcath.sbatch` beside `panel.sbatch`.
+- **Fetch only what is used:** each domain's starting structure and its 320 K coordinates read from the Hub by range
+  requests, backbone kept; nothing else of the 0.2-2.5 GB files.
+1. [x] Fetched (Mac, 10-17): `mdcath_fetch.py` (in `mdcath_candidates/`, log `fetch.log`), 90 domains, 980 MB kept
+   (`pdb/`, `backbone/`); 320 K frames 420-500 per replica.
+2. [x] `panel.py prepare` into `domains_mdcath/` (`prepare.log`): 89 domains. 1gqoB00 excluded (`excluded/README.txt`):
+   mdCATH's stored starting structure has C-N 3.1 and 4.8 A at its C-terminus, its trajectory at most 1.49 A.
+3. [x] `panel.py aa_mdcath` into `aa_mdcath/` (`aa.log`): every sequence equal; Q median per domain 0.891 (10th
+   percentile 0.796, lowest 0.636) against Charron's 0.910 (0.824, 0.675); 17 of 445 replicas under Q 0.7.
+4. [x] `panel.py` (backup `.bak_pre_mdcath_20261017`): `run` takes an optional time step (default 0.015, so every
+   existing and automatic panel runs as before), `aa_mdcath` beside `aa`; `panel_mdcath.sbatch` beside `panel.sbatch`.
+5. [x] `mdc_nobp` 49412017 and `mdc_ctrl38` 49412018 (released files copied, md5 equal) at 0.009, 356 runs each, into
+   `runs_mdcath/`, COMPLETED 17:15 and 22:28 10-17; read by `panel_compare.sbatch` (49412845,
+   `panel_compare_49412845.out`) and `panel.py select` (`select_mdcath_ctrl38_nobp_login1_20261017.txt`).
+
+**Result (findings 1.21):** the deterministic side chain loses folding on held-out proteins. Over the 89 domains
+no-BP folds 0.264 against 0.365 (-0.101 [-0.155, -0.051], Wilcoxon p 7e-5; lower in 59 domains, higher in 19), mean Q
+-0.035 (p 2e-7), CA-RMSD +0.21 A (p 0.004), in the same direction in every length bin and fold class. ff_2.1 keeps the
+probabilistic side chain. Open: whether the 44-domain panel's -0.016 differs from this because of its proteins or its
+time step 0.015; not needed for the decision.
+
+### Phase 20 - audit the no-BP training protocol, then close the branch (STARTED 2026-10-18, user)
+User 10-18: no-BP performs below ff2.1; check that the training protocol was correct and that its training
+has ended. Read only: nothing is resubmitted or cancelled without the user's word.
+1. [x] The single-state library, configs and releases: correct (findings 1.21 "Audit").
+2. [x] The engine and trainer at n_rot 1: correct, derivatives to float precision. Found the shared angular-gradient
+   defect (findings 3.12), the same in both runs and in master; not fixed.
+3. [x] Matching to ff21_ctrl_dt009: identical but for the side chain.
+4. [x] The mdCATH verdict recomputes exactly.
+5. [x] No no-BP training job is queued or can start (target 38 met; a resubmission exits). Still running from the
+   comparison: glpG 79HIS ff_2.1_nobp 49411324 and ff_2.1_ctrl38 49411323, ctrl38's ubiquitin de novo 49413536.
+6. [ ] **The gate fails no-BP's `rot` group at step 38** (findings 1.21 "Audit"): the verdict holds at matched
+   length, not at no-BP's fixed point. Close as is, or train on to the gate: the user's call, with the three
+   running jobs and whether 3.12 is fixed. Answered by Phase 21.
+
+### Phase 21 - fix the angular-gradient defect and retrain what it touches (STARTED 2026-10-18, user)
+User 10-18: "fix the issue and continue training if needed. also check if other on-going training also have the
+defect, resolve them as well. re-run the validations if necessary." Then, on ff3.2: "In addition to this, check ff3.1
+as well"; stop the step-37 glpG chains. Decisions:
+- **The fix is in the engine** (`src/interaction_graph.h`). For a symmetric interaction, p[t2,t1] is p[t1,t2] with
+  the two elements' roles exchanged (`is_compatible`), so the derivative added to [t2,t1] is the edge's parameter
+  derivative evaluated at p[t2,t1] with the elements exchanged, in place of the [t1,t2] derivative copied unchanged.
+  Fully symmetric parameter sets (radial splines; the pair term's radial entries) get bit-identical derivatives.
+  The pair term's angular entries change: off-diagonal to the right values, diagonal redistributed between the two
+  slots with the sum the trainer reads unchanged to rounding. Energies and forces do not use this path.
+- **The trainer's uniform 2x on pair coefficients stays.** It sets the regulariser's relative weight and has since
+  ff2.1's own training (master's `rotamer_parameter_estimation.py` builds the same layout).
+- **Install only when no training is mid-step on the old library:** after ff3.2's last step, ~14:30 10-18.
+- **No-BP and its control continue from step 38 on the fixed engine, each to its own fixed point:** at step 76
+  the gate; not converged, one more epoch, up to 6 epochs (step 114), then stop for review. At the converged epoch
+  end, the mdCATH panel (dt 0.009). No new release names in `parameters/`.
+- **ff3.2 was the only training running: stopped in step 69 and rerun from step 0; ff3.1 (`ff31_depth_data`, the
+  released one) rerun too.** Each rerun keeps its source's trainer, start, inputs, minibatch order and held-out set, so
+  it differs from the source only by the fix; target 76, no gate, as the sources; epoch-end panels (`a31_EE`, `a32_EE`)
+  and steric checks as theirs. ff3.0 and ff2.1 were trained with the defect and are not retrained unless the user asks;
+  ff3.2's rerun starts from ff3.0 as ff3.2 did.
+1. [x] Fix in the repo (`src/interaction_graph.h`, 32 lines); compiles locally.
+2. [x] Built on midway2 from `$P/src` plus the fix (`checks/angfix_20261018/obj`, md5 libupside.so `3d9c6366...`, upside
+   `7136d99a...`). Against the installed build (`parity.log`, `parity_glpg.log`): energy, forces and every other
+   derivative ConDiv reads bitwise equal on single- and multi-state 1aba at two frames; radial pair slots bitwise;
+   200 tu binary runs bitwise; hybrid glpG seeds' energy and forces bitwise. With the fix (`fd.log`): each angular
+   entry against tied central differences ratio 1.000 (5.8e-6 median error single-state, 9.6e-4 multi-state); the
+   trainer's angular-logit gradient 2.000x, the same as every radial coefficient (before: median 5.1 and 1.11).
+3. [x] Checked in (10-18): ff3.2 stopped and rerun, ff3.1 rerun as well, the step-37 glpG chains stopped.
+4. [x] Stopped 08:33 10-18: ff3.2 49406726 and successor 49410635 (steps 0-68 kept, step 69 partial), glpG 79HIS ff_2.1_nobp 49411324 and
+   ff_2.1_ctrl38 49411323 (STOP files first). Installed 08:35 (backups `.bak_pre_angfix_20261018`); the installed
+   files cmp-equal to the tested build.
+5. [x] No-BP 49415222 and control 49415223, 38 -> 76; `after_training.sbatch` (no-BP's old one backed up) runs
+   `ff21_nobp_dt009/setup/after_gate.sh`: the gate, then the mdCATH panel `mdc_<nobp|ctrl>_EE` or one more epoch.
+6. [x] Reruns `ff31_depth_data_angfix` 49415231 and `ff32_depth_data_angfix` 49415233 (`checks/angfix_20261018/
+   build_rerun.sh`; initial checkpoints equal to their sources' in every field but `native_sites`, summation order
+   2e-15, which sets only the identical trainable mask); `a31_`/`a32_` in `submit_new.sh`, all four runs in `stock.sh`.
+7. [ ] Validations as each run ends: the gates and mdCATH panels (no-BP, control); `a31_EE`/`a32_EE` panels against
+   `fd_EE`/`f32_EE` on folded fraction and Q (the old panels' `.up` files were deleted 10-18, so CA-RMSD cannot be
+   compared against them; the same holds for the step-38 `mdc_nobp`/`mdc_ctrl38`). Records done (findings 3.12, remote_jobs.md); the watch session told (WATCH_STATUS.md is its).
+   No-BP's part done 10-19: converged at step 76, `mdc_nobp_03` folds 0.241 (findings 1.21); the control's waits.
+
+### Phase 22 - why de novo folding fails on large proteins (STARTED 2026-10-19, user)
+User 10-19: Upside folds large proteins de novo poorly; investigate, read the literature and other force fields'
+designs, propose, run any test needed. The user's hypothesis: folding is co-translational (S. Fried, JHU: about a
+third of E. coli proteins do not refold in vitro, more often the multi-domain ones), so a thermodynamic force field
+cannot fold them from a denatured chain. Facts so far: the 456 training proteins are 50-150 residues (max 150), the
+44-domain panel 50-75, the Peng de novo set at most 92; on the mdCATH native-start panel ff_2.1_ctrl38 folds 0.42,
+0.44 and 0.24 of frames in the 50-100, 101-150 and 151-250 bins.
+**Design.** De novo failure is thermodynamic (the native basin is not Upside's free-energy minimum, so no route reaches
+it) or kinetic (it is the minimum but bulk search, or a missing co-translational route, does not find it). Each test
+separates the two; the co-translational test is run only on proteins whose native basin Upside holds.
+1. [x] Size artifacts in the panel metrics: the 151-250 drop is the cutoff, not drift (findings 11e).
+2. [x] Native basin stability against size: answered by item 1 and item 4's native starts; the 89-domain rerun dropped.
+3. [x] Native energy gap: quenched native against the de novo globules, by term (findings 11e).
+4. [x] 2LZM, 2RN2, 1YOB and the 1ENH control at T 0.80: native x3, bulk x6, vectorial x6. Compact non-native globules
+   150-180 E_up above native; vectorial equals bulk (findings 11e).
+5. [x] Literature and other force fields; code audit (findings 11e).
+6. [x] Coil and native starts at T 0.88 and 0.95 (2LZM, 2RN2, 1ENH): no coil folds; RNase HI's native holds at 0.88,
+   the control's melts (findings 11e).
+7. [x] Proposal to the user (10-19 06:50).
+8. [x] Fix `environment_coverage_hb`'s covering-residue types (user 10-19: "Fix the bug"). The writer stores one type
+   per residue, `aa_types[r]` the type of residue r, as `environment_coverage_sc` already does; the engine sizes
+   `aa_types` from its dataset and requires every `id2` to index it. A file written before the fix holds per-site
+   types and runs bitwise as master; a newly written file gets the right types, so new configs depart from master
+   by intent. Tests: old files bitwise before and after; the new output against a numpy coverage reference; finite
+   differences; ff_2.1's energy change on natives and globules. Repo and local `obj/` only: the cluster trees are not
+   touched while trainings run, and ff_2.1 and every training so far ran with the defect.
+   Done 10-19 09:20: old files bitwise, numpy reference 5e-7, finite differences 1.0001, energy change at most
+   1.3 E_up, dynamics normal (findings 3.13).
+9. [x] `upside3.md`: the findings and the proposal; Upside 3 starts after the side-chain verdict (Phase 21 item 7).
+
+**Review.** For these in-vitro refolders Upside's de novo failure is search into compact non-native globules that
+it ranks well above the native; N-to-C growth does not help. Proposed, for the user's decision: compact misfolds as
+negative examples in ConDiv, training past 150 residues, and replica exchange for large-protein benchmarks. Not
+measured: the globules' free energy against the native's, and a size contrast under one protocol (the 1ENH control
+does not fold at constant T in 60,000 tu); both need replica exchange.
+
+## Known Errors / Blockers
+
+* **Every ConDiv run before 2026-10-18 08:35 trained the side-chain pair term's off-diagonal angular coefficients on
+  a mixed gradient** (findings 3.12; fixed in the engine then): ff2.1's retrainings to step 37, ff3.0, ff3.1, ff3.2.
+  The fix's effect is measured by the reruns (Phase 21); ff3.0 and ff2.1 are not retrained.
+
+* **Every hybrid glpG result before 2026-10-17 ran with misplaced side-chain beads** (findings 4.17; Phase 18):
+  TM1/TM4 helicity, glycine flips and HDX, under every force field, on the cluster and locally.
+
+* **Every glpG TM4 count before 2026-10-07 11:22 is invalid** (findings 3.11). That covers:
+  - every local 3- and 12-seed set (Phase 10, Phase 11);
+  - the 09-30 ff_3.0 glpG validation (Phases 3-5);
+  - any other glpG run from the live seeds under a force field other than the FF1-form ff_3.0.
+
+  Each of these used the FF1-form ff_3.0's coverage tables. `patch_glpg.py` is fixed (local, `$P/training/`,
+  `tm4_local/scripts/`; md5 `97ca3294...` since 10-10, which also carries the side-chain/lipid table);
+  the automatic validation uses it. Another computer must update its local copy before use
+  (remote_jobs.md "Setting up the next computer").
+* **Every hybrid run before 2026-10-10 08:39 used the under-sampled side-chain/lipid table**
+  (findings 4.10, 4.15): every round-4 TM4 set and both candidates' first glpG patches. Their
+  comparisons with each other stand; their absolute TM1 and TM4 values do not, and they are not
+  compared with `_sc` sets.
+* **Total-potential jumps in local glpG runs** (findings 1.22): 13 of 105 pre-fix seeds, one blow-up.
+  The likely cause is the old table's kicks (findings 4.10; none in the 24 fixed-table seeds of 4.13
+  and 4.14), unproven for the jumps themselves. Check the `_sc` sets for them; do not drop frames. One-frame backbone
+  excursions below the 3000 cut sit where the helices fail (findings 4.9, Phase 13's second lead).
+* **The TM1 term is not adopted** (user, 10-10 11:20; findings 4.14). Its f was trained in Upside's
+  implicit membrane and it is anchored at z = 0; any later test of it watches the protein's depth
+  against the explicit bilayer (`analyze_hbmem.py` health block).
+* **midway2-login2's `/project` hangs** (since 10-07 10:48). Route `/project` work through login1
+  (remote_jobs.md §8).
+* **The cluster's `training/` keeps the pre-10-02 layout** while round 4 trains. Do not sync the
+  repo's `training/` over it.
+* **`run_remd.py` rolls back NaN replicas and continues**, which the NO GUARDS rule forbids. It is
+  kept unchanged so glpG stays comparable across campaigns. Whether to remove it is the user's call.
+* **CPU work runs on midway2 broadwl** unless the user names midway3 caslake. No `amd`, `beagle3`
+  or GPU partitions, and not `broadwl-lc` (its nodes cannot see `/project`).
+* **HDX post-processing items await the user's decision** (user, 10-11; findings 5.5): the
+  `4.calc_D_uptake.py` PF = 1000 cap on never-exchanging amides (a master line), three docstring/README
+  statements that call TM helices non-exchanging, and the unmeasured interface boundary of the 7 A
+  tail-contact criterion. Nothing is changed until then; do not compare uptake with the HXMS data before.
+* **lambda's helix 2 / helix 4 misorientation** is a known ff2.1 limitation with no single
+  side-chain cause (findings 11d). It is re-tested after ff3.0, not trained against.

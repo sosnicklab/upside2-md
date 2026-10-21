@@ -1,4 +1,5 @@
 #include "main.h"
+#include "martini.h"
 #include "monte_carlo_sampler.h"
 #include "h5_support.h"
 #include <tclap/CmdLine.h>
@@ -19,37 +20,14 @@
 #include <cstdlib>
 #include <cmath>
 
+#if defined(_OPENMP)
+#include <omp.h>
+#endif
 
-#include "box.h"  // Simulation box PBC and NPT barostat
+#include "box.h"
 
 using namespace std;
 using namespace h5;
-
-// ---- NPT barostat hooks (implemented in box.cpp) ----
-namespace simulation_box {
-    namespace npt {
-        void register_barostat_for_engine(hid_t config_root, DerivEngine& engine);
-        void maybe_apply_barostat(DerivEngine& engine,
-                                  const VecArray& mom,
-                                  int n_atom,
-                                  uint64_t round_num,
-                                  float dt,
-                                  int inner_step,
-                                  int verbose,
-                                  bool print_now);
-        void get_current_box(const DerivEngine& engine, float& bx, float& by, float& bz);
-        void get_pressure(const DerivEngine& engine, float& pxy, float& pz);
-        float get_volume(const DerivEngine& engine);
-        bool is_enabled(const DerivEngine& engine);
-    }
-}
-
-// ---- Fix Rigid hooks (implemented in martini.cpp) ----
-namespace martini_fix_rigid {
-    void register_fix_rigid_for_engine(hid_t config_root, DerivEngine& engine);
-    void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv);
-    void apply_fix_rigid_md(DerivEngine& engine, VecArray pos, VecArray deriv, VecArray mom);
-}
 
 // If any stop signal is received (currently we trap sigterm and sigint)
 // we increment any_stop_signal_received.
@@ -137,6 +115,8 @@ struct System {
     uint64_t round_num;
     bool martini_hybrid_progress;
     vector<int> protein_rg_atom_indices;
+    vector<unsigned char> protein_atom_mask;
+    vector<unsigned char> lipid_atom_mask;
     System(): round_num(0), martini_hybrid_progress(false) {}
 
     void set_temperature(float new_temp) {
@@ -144,6 +124,22 @@ struct System {
         thermostat.set_temp(temperature);
     }
 };
+
+static vector<unsigned char> read_particle_class_mask(
+        hid_t config_root,
+        int n_atom,
+        const string& target_class) {
+    vector<unsigned char> out(static_cast<size_t>(n_atom), 0u);
+    if(!h5_exists(config_root, "/input/particle_class")) return out;
+    auto shape = get_dset_size(1, config_root, "/input/particle_class");
+    if(static_cast<int>(shape[0]) != n_atom)
+        throw string("/input/particle_class length must match n_atom");
+    traverse_string_dset<1>(config_root, "/input/particle_class",
+            [&](size_t i, const string& value) {
+                if(value.find(target_class) != string::npos) out[i] = 1u;
+            });
+    return out;
+}
 
 static vector<int> collect_hybrid_ca_indices(hid_t config_root, int n_atom) {
     vector<int> out;
@@ -202,6 +198,18 @@ static double compute_protein_rg(const System& sys) {
     return sqrt(rg2/n_backbone);
 }
 
+static double compute_all_atom_rg(const System& sys) {
+    float3 com = make_vec3(0.f, 0.f, 0.f);
+    for(int na=0; na<sys.n_atom; ++na)
+        com += load_vec<3>(sys.engine.pos->output, na);
+    com *= 1.f/sys.n_atom;
+
+    double rg2 = 0.0;
+    for(int na=0; na<sys.n_atom; ++na)
+        rg2 += mag2(load_vec<3>(sys.engine.pos->output, na)-com);
+    return sqrt(rg2/sys.n_atom);
+}
+
 static inline bool is_dry_martini_term_name(const std::string& name) {
     return is_prefix("martini_potential", name) ||
            is_prefix("dist_spring", name) ||
@@ -219,7 +227,7 @@ struct HybridProteinPotentialComponents {
     double upside_protein_potential = 0.0;
     double sc_env_interface_potential = 0.0;
     double bb_env_interface_potential = 0.0;
-    double total() const {
+    double protein_total() const {
         return upside_protein_potential + sc_env_interface_potential + bb_env_interface_potential;
     }
 };
@@ -243,19 +251,82 @@ static HybridProteinPotentialComponents compute_hybrid_protein_potential_compone
 
 static double compute_logged_kinetic_energy(System* sys) {
     double sum_kin = 0.0;
+    if(!sys->martini_hybrid_progress) {
+        VecArray mom_array = sys->mom;
+        if(martini_masses::has_masses(&sys->engine)) {
+            for(int na=0; na<sys->n_atom; ++na) {
+                float mass = martini_masses::get_mass(&sys->engine, na);
+                if(mass <= 0.f) mass = 1.f;
+                sum_kin += mag2(load_vec<3>(mom_array, na)) / mass;
+            }
+        } else {
+            for(int na=0; na<sys->n_atom; ++na) {
+                sum_kin += mag2(load_vec<3>(mom_array, na));
+            }
+        }
+        return (0.5/sys->n_atom) * sum_kin;
+    }
+    int n_dynamic = 0;
     VecArray mom_array = sys->mom;
+    vector<unsigned char> fixed_mask(static_cast<size_t>(sys->n_atom), 0u);
+    for(int atom : martini_fix_rigid::get_fixed_atoms(sys->engine)) {
+        if(atom >= 0 && atom < sys->n_atom) fixed_mask[static_cast<size_t>(atom)] = 1u;
+    }
     if(martini_masses::has_masses(&sys->engine)) {
         for(int na=0; na<sys->n_atom; ++na) {
+            if(fixed_mask[static_cast<size_t>(na)]) continue;
             float mass = martini_masses::get_mass(&sys->engine, na);
             if(mass <= 0.f) mass = 1.f;
             sum_kin += mag2(load_vec<3>(mom_array, na)) / mass;
+            n_dynamic += 1;
         }
     } else {
         for(int na=0; na<sys->n_atom; ++na) {
+            if(fixed_mask[static_cast<size_t>(na)]) continue;
             sum_kin += mag2(load_vec<3>(mom_array, na));
+            n_dynamic += 1;
         }
     }
-    return (0.5/sys->n_atom) * sum_kin;
+    return n_dynamic > 0 ? (0.5/n_dynamic) * sum_kin : 0.0;
+}
+
+static double compute_logged_subset_kinetic_energy(
+        System* sys,
+        const vector<unsigned char>& atom_mask) {
+    if(atom_mask.size() != static_cast<size_t>(sys->n_atom)) return 0.0;
+    vector<unsigned char> fixed_mask(static_cast<size_t>(sys->n_atom), 0u);
+    for(int atom : martini_fix_rigid::get_fixed_atoms(sys->engine)) {
+        if(atom >= 0 && atom < sys->n_atom) fixed_mask[static_cast<size_t>(atom)] = 1u;
+    }
+    double sum_kin = 0.0;
+    int n_dynamic = 0;
+    for(int na=0; na<sys->n_atom; ++na) {
+        if(!atom_mask[static_cast<size_t>(na)] || fixed_mask[static_cast<size_t>(na)]) continue;
+        float mass = martini_masses::has_masses(&sys->engine)
+            ? martini_masses::get_mass(&sys->engine, na) : 1.f;
+        if(mass <= 0.f) mass = 1.f;
+        sum_kin += mag2(load_vec<3>(sys->mom, na)) / mass;
+        n_dynamic += 1;
+    }
+    return n_dynamic > 0 ? (0.5/n_dynamic) * sum_kin : 0.0;
+}
+
+static vector<float> read_atom_thermostat_timescales(hid_t config_root, int n_atom) {
+    vector<float> out;
+    if(!h5_exists(config_root, "/input/thermostat_timescale")) return out;
+
+    auto shape = get_dset_size(1, config_root, "/input/thermostat_timescale");
+    if(shape.size() != 1u || shape[0] != static_cast<hsize_t>(n_atom)) {
+        throw string("/input/thermostat_timescale must have one positive value per atom");
+    }
+
+    out.assign(static_cast<size_t>(n_atom), 0.f);
+    traverse_dset<1,float>(config_root, "/input/thermostat_timescale",
+            [&](size_t i, float tau) {
+                if(!(tau > 0.f)) throw string("/input/thermostat_timescale values must be positive");
+                out[i] = tau;
+            });
+    return out;
 }
 
 double stod_strict(const std::string& s) {
@@ -396,9 +467,24 @@ struct ReplicaExchange {
             return result;
         };
 
-        // swap coordinates and the associated system indices
+        // Swap coordinates AND momenta, rescaling the momenta for the temperature each configuration is
+        // moving to. Swapping positions alone leaves every replica holding another configuration's
+        // coordinates with its own velocity field, so velocities become uncorrelated with positions --
+        // wrong for the canonical ensemble, and not washed out by the thermostat: at timescale 5.0 with
+        // dt 0.009 the Ornstein-Uhlenbeck refresh is ~0.998 per step, so the mismatch persists for
+        // hundreds of steps. The sqrt(T_dest/T_src) rescaling is the standard temperature-REMD treatment
+        // and keeps each replica's kinetic energy at its own target.
         auto coord_swap = [&](int ns1, int ns2) {
             swap(systems[ns1].engine.pos->output, systems[ns2].engine.pos->output);
+            swap(systems[ns1].mom, systems[ns2].mom);
+            const float scale1 = sqrtf(systems[ns1].temperature / systems[ns2].temperature);
+            const float scale2 = sqrtf(systems[ns2].temperature / systems[ns1].temperature);
+            for(int ns: {ns1, ns2}) {
+                const float scale = (ns == ns1) ? scale1 : scale2;
+                VecArray m = systems[ns].mom;
+                for(int na = 0; na < systems[ns].n_atom; ++na)
+                    for(int d = 0; d < 3; ++d) m(d, na) *= scale;
+            }
             swap(replica_indices[ns1], replica_indices[ns2]);
         };
 
@@ -427,8 +513,10 @@ struct ReplicaExchange {
                     swap_pair.n_attempt++;
 
                     float lboltz_diff = (new_lboltz[s1] + new_lboltz[s2]) - (old_lboltz[s1]+old_lboltz[s2]);
-                    // If we reject the swap, we must reverse it
-                    if(lboltz_diff < 0.f && expf(lboltz_diff) < random.uniform_open_closed().x()) {
+                    // Reject (reverse) the swap if lboltz_diff is non-finite: NaN < 0.f returns false
+                    // in IEEE 754, so without the isfinite check a NaN energy would cause every exchange
+                    // to be accepted, spreading a blown-up replica across the entire ladder.
+                    if(!isfinite(lboltz_diff) || (lboltz_diff < 0.f && expf(lboltz_diff) < random.uniform_open_closed().x())) {
                         coord_swap(s1,s2);
                     } else {
                         swap_pair.n_success++;
@@ -629,14 +717,16 @@ try {
     ValueArg<string> integrator_arg("", "integrator", 
             "Use this option to control which Integrator are used.  Available levels are v(verlet) or mv(multi-step verlet). "
             "Default is verlet.",
-            false, "", "v, mv", cmd);
+            false, "", "v, mv ", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
-    // Minimization controls (ported from prior branch)
     SwitchArg enable_min_arg("", "minimize", "Run an energy minimization before MD", cmd, false);
     ValueArg<int> min_max_iter_arg("", "min-max-iter", "Minimization max iterations", false, 1000, "int", cmd);
     ValueArg<double> min_energy_tol_arg("", "min-energy-tol", "Minimization energy tolerance", false, 1e-6, "float", cmd);
     ValueArg<double> min_force_tol_arg("", "min-force-tol", "Minimization force tolerance", false, 1e-6, "float", cmd);
     ValueArg<double> min_step_arg("", "min-step", "Minimization initial step size", false, 0.1, "float", cmd);
+    SwitchArg minimize_preserve_stage_arg("", "minimize-preserve-stage",
+            "Run minimization under the current stage Hamiltonian instead of switching to the minimization stage",
+            cmd, false);
 
     ValueArg<string> input_arg("i", "input", "h5df input file for position", false, "not_Defined_By_user", "string", cmd);
     ValueArg<string> input_base_arg("", "input-base", "h5df input files base for positions", false, "not_Defined_By_user", "string_list", cmd);
@@ -696,15 +786,18 @@ try {
 
 
         float dt = time_step_arg.getValue();
-        int inner_step = 1;
-        if  (integrator_arg.getValue() == "mv" )
-            inner_step = inner_step_arg.getValue();
-
         double duration = duration_arg.getValue();
         int duration_steps = duration_steps_arg.getValue();
         double time_lim = time_lim_arg.getValue();
         bool passed_time_lim = false;
         bool use_duration_steps = duration_steps >= 0;
+
+        int inner_step = 3;
+        if  (integrator_arg.getValue() == "mv" )
+            inner_step = inner_step_arg.getValue();
+        else if(use_duration_steps)
+            inner_step = 1;  // MARTINI advances one lipid (g-JF/Brownian) step per round
+
         uint64_t n_round = 0;
         if(use_duration_steps) {
             n_round = static_cast<uint64_t>(duration_steps);
@@ -729,7 +822,7 @@ try {
             ? max(1,int(mc_interval_arg.getValue()/(inner_step*dt))) 
             : 0;
 
-        double display_duration_total = use_duration_steps ? static_cast<double>(n_round) : duration;
+        double display_duration_total = duration;
         int duration_print_width = ceil(log(1+display_duration_total)/log(10));
 
         bool do_recenter = !disable_recenter_arg.getValue();
@@ -835,6 +928,7 @@ try {
         // all exceptions.  To avoid crashing callers, we simply record the presence of an exception
         // then exit immediately after the block.
         bool error_exit_omp = false;
+        #pragma omp critical
         for(int ns=0; ns<n_system; ++ns) try {
             System* sys = &systems[ns];  // a pointer here makes later lambda's more natural
             sys->random_seed = base_random_seed + ns;
@@ -914,7 +1008,14 @@ try {
             martini_stage_params::register_stage_params_for_engine(&sys->engine, sys->config.get());
             // Register hybrid MARTINI/Upside metadata for this engine (read from H5)
             martini_hybrid::register_hybrid_for_engine(sys->config.get(), sys->engine);
+            // Single-step g-JF integrator for every physical MARTINI particle
+            martini_brownian::register_brownian_for_engine(
+                    &sys->engine, sys->config.get(), sys->random_seed);
             sys->martini_hybrid_progress = martini_hybrid::is_hybrid_enabled(sys->engine);
+            sys->protein_atom_mask = read_particle_class_mask(
+                    sys->config.get(), sys->n_atom, "PROTEIN");
+            sys->lipid_atom_mask = read_particle_class_mask(
+                    sys->config.get(), sys->n_atom, "LIPID");
             if(sys->martini_hybrid_progress) {
                 sys->protein_rg_atom_indices = collect_hybrid_ca_indices(sys->config.get(), sys->n_atom);
             } else {
@@ -952,7 +1053,9 @@ try {
                     1.,
                     1e8);
             sys->set_temperature(sys->initial_temperature);
+            martini_brownian::set_brownian_temperature(&sys->engine, sys->temperature);
             sys->thermostat.set_delta_t(thermostat_interval*inner_step*dt);  // set true thermostat interval  //  FIXME inner_step
+            sys->thermostat.set_atom_timescale(read_atom_thermostat_timescales(sys->config.get(), sys->n_atom));
 
             sys->mom.reset(3, sys->n_atom);
             if (restart_using_momentum_arg.getValue()) { // initialize momentum using input.mom if requested
@@ -973,21 +1076,20 @@ try {
             }
             else {
                 for(int d: range(3)) for(int na: range(sys->n_atom)) sys->mom(d,na) = 0.f;
-                sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine); // initial thermalization if it's a fresh start
+                if(sys->martini_hybrid_progress)
+                    sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine, true, true);
+                else
+                    sys->thermostat.apply(sys->mom, sys->n_atom, &sys->engine);
             }
 
-            // Hybrid virtual BB proxy atoms are position-overwritten from the
-            // active carrier set, so they must not retain independently
-            // thermalized momentum before the first MD step.
+            // Hybrid O/BB virtual sites are derived from the carrier set and
+            // must not retain independently thermalized momentum.
             martini_fix_rigid::apply_fix_rigid_md(sys->engine, sys->engine.pos->output, sys->engine.pos->sens, sys->mom);
 
 
             // we must capture the sys pointer by value here so that it is available later
             sys->logger->add_logger<float>("pos", {1, sys->n_atom, 3}, [sys](float* pos_buffer) {
-                    VecArray pos_array = sys->engine.pos->output;
-                    for(int na=0; na<sys->n_atom; ++na) 
-                    for(int d=0; d<3; ++d) 
-                    pos_buffer[na*3 + d] = pos_array(d,na);
+                    martini_hybrid::copy_positions_for_output(sys->engine, pos_buffer);
                     });
             if (record_momentum_arg.getValue()) { // record the momentum if requested, with the same frequency as the position recording
                 sys->logger->add_logger<float>("mom", {1, sys->n_atom, 3}, [sys](float* mom_buffer) {
@@ -1001,6 +1103,14 @@ try {
             sys->logger->add_logger<double>("kinetic", {1}, [sys](double* kin_buffer) {
                     kin_buffer[0] = compute_logged_kinetic_energy(sys);
                     });
+            if(sys->martini_hybrid_progress) {
+                sys->logger->add_logger<double>("protein_kinetic", {1}, [sys](double* kin_buffer) {
+                        kin_buffer[0] = compute_logged_subset_kinetic_energy(sys, sys->protein_atom_mask);
+                        });
+                sys->logger->add_logger<double>("lipid_kinetic", {1}, [sys](double* kin_buffer) {
+                        kin_buffer[0] = compute_logged_subset_kinetic_energy(sys, sys->lipid_atom_mask);
+                        });
+            }
             sys->logger->add_logger<double>("potential", {1}, [sys](double* pot_buffer) {
                     sys->engine.compute(PotentialAndDerivMode);
                     pot_buffer[0] = sys->engine.potential;});
@@ -1099,37 +1209,35 @@ try {
         }
         if(verbose) printf("\n");
 
-            if(verbose) printf("Initial potential energy:");
+        if(verbose) printf("Initial potential energy:");
         for(System& sys: systems) {
             sys.engine.compute(PotentialAndDerivMode);
-            if(verbose) printf(" % .2f", sys.engine.potential);
+            if(verbose) printf(" %.2f", sys.engine.potential);
         }
         if(verbose) printf("\n");
 
-            // Optional pre-run minimization
-            if(enable_min_arg.getValue()) {
-                void martini_run_minimization(DerivEngine&, int, double, double, double, int);
-                int it = min_max_iter_arg.getValue();
-                double etol = min_energy_tol_arg.getValue();
-                double ftol = min_force_tol_arg.getValue();
-                double mstep = min_step_arg.getValue();
-                if(verbose) printf("\nMINIMIZATION: starting...\n");
-                for(System& sys: systems) {
-                    const std::string stage_before_min =
-                        martini_stage_params::get_current_stage(&sys.engine);
-                    // Switch to minimization stage before minimization
+        // Optional pre-run minimization
+        if(enable_min_arg.getValue()) {
+            int it = min_max_iter_arg.getValue();
+            double etol = min_energy_tol_arg.getValue();
+            double ftol = min_force_tol_arg.getValue();
+            double mstep = min_step_arg.getValue();
+            if(verbose) printf("\nMINIMIZATION: starting...\n");
+            for(System& sys: systems) {
+                const std::string stage_before_min =
+                    martini_stage_params::get_current_stage(&sys.engine);
+                if(!minimize_preserve_stage_arg.getValue())
                     martini_stage_params::switch_simulation_stage(&sys.engine, "minimization");
-                    martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
-                    // Restore the pre-minimization stage so production-only logic
-                    // is not spuriously activated for pre-production files.
+                martini_run_minimization(sys.engine, it, etol, ftol, mstep, verbose);
+                if(!minimize_preserve_stage_arg.getValue())
                     martini_stage_params::switch_simulation_stage(&sys.engine, stage_before_min);
-                    // Save a frame immediately after minimization so downstream stages can pick it up
-                    // This ensures /output/pos exists even if duration is 0
-                    sys.engine.compute(PotentialAndDerivMode);
-                    sys.logger->collect_samples();
-                }
-                if(verbose) printf("MINIMIZATION: done\n\n");
+                // Save a frame immediately after minimization so downstream stages can pick it up
+                // This ensures /output/pos exists even if duration is 0
+                sys.engine.compute(PotentialAndDerivMode);
+                sys.logger->collect_samples();
             }
+            if(verbose) printf("MINIMIZATION: done\n\n");
+        }
 
 
         // Install signal handlers to dump state only when the simulation has really started.  This is intended to prevent
@@ -1143,7 +1251,14 @@ try {
         auto tstart = chrono::high_resolution_clock::now();
         while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
             int last_start = systems[0].round_num;
-            for(int ns=0; ns<int(systems.size()); ++ns) {
+            // An exception must not escape an OpenMP structured block: doing so calls std::terminate
+            // and the message is destroyed, which is exactly how a mid-run failure reported nothing but
+            // "Abort trap: 6". Trap per system, keep the first message, and rethrow once serial so the
+            // top-level handler can print why the run died.
+            std::string omp_error;
+            bool omp_failed = false;
+            #pragma omp parallel for schedule(static,1)
+            for(int ns=0; ns<int(systems.size()); ++ns) try {
                 System& sys = systems[ns];
                 for(bool do_break=false; (!do_break) && (sys.round_num<n_round); ++sys.round_num) {
                     int nr = sys.round_num;
@@ -1178,30 +1293,31 @@ try {
                         sys.logger->collect_samples();
 
                         if(verbose) {
-                            double display_elapsed = use_duration_steps
-                                ? static_cast<double>(nr)
-                                : nr*double(dt*inner_step);
+                            double display_elapsed = nr*double(dt*inner_step);
                             if(sys.martini_hybrid_progress) {
                                 double rg = compute_protein_rg(sys);
                                 auto prot_components = compute_hybrid_protein_potential_components(sys.engine);
-                                double prot_potential = prot_components.total();
-                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds",
-                                       duration_print_width, display_elapsed,
-                                       duration_print_width, display_duration_total,
-                                       ns, sys.temperature,
+                                double protein_potential = prot_components.protein_total();
+                                printf("step %d / %llu time %.3g system %2i temperature %.2f hbonds %5.1f",
+                                       nr,
+                                       static_cast<unsigned long long>(n_round),
+                                       display_elapsed,
+                                       ns,
+                                       sys.temperature,
                                        get_n_hbond(sys.engine));
                                 if(rg >= 0.0) printf(" %5.1f Rg,", rg);
                                 else          printf("  N/A Rg,");
-                                printf(" prot_potential % .2f total_potential % .2f\n",
-                                       prot_potential,
+                                printf(" protein_potential % .2f total_potential % .2f\n",
+                                       protein_potential,
                                        sys.engine.potential);
                             } else {
-                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, potential % .2f\n",
+                                double rg = compute_all_atom_rg(sys);
+                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n",
                                        duration_print_width, display_elapsed,
                                        duration_print_width, display_duration_total,
                                        ns, sys.temperature,
                                        get_n_hbond(sys.engine),
-                                       sys.engine.potential);
+                                       rg, sys.engine.potential);
                             }
                         }
                         fflush(stdout);
@@ -1215,6 +1331,7 @@ try {
                         // Handle simulated annealing if applicable
                         if(anneal_factor != 1.)
                             sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
+                        martini_brownian::set_brownian_temperature(&sys.engine, sys.temperature);
                         sys.thermostat.apply(sys.mom, sys.n_atom, &sys.engine);
                     }
 
@@ -1230,7 +1347,7 @@ try {
 
                     // Apply fix rigid constraints after integration
                     martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.engine.pos->sens, sys.mom);
-                    
+
                     // Apply stage-specific parameters
                     martini_stage_params::apply_stage_bond_params(sys.engine);
                     martini_stage_params::apply_stage_angle_params(sys.engine);
@@ -1239,7 +1356,7 @@ try {
                     if(nr > 0) {
                         bool print_baro = do_print;  // Print barostat info at same frequency as frame output
                         simulation_box::npt::maybe_apply_barostat(sys.engine, sys.mom, sys.n_atom,
-                                                                   nr, dt, inner_step,
+                                                                   nr, dt, inner_step, sys.temperature,
                                                                    verbose, print_baro);
                     }
 
@@ -1252,8 +1369,20 @@ try {
 
                     do_break = nr>last_start && replica_interval && !((nr+1)%replica_interval);
                 }
+            } catch(const string &e) {
+                #pragma omp critical
+                if(!omp_failed) { omp_failed = true; omp_error = e; }
+            } catch(const std::exception &e) {
+                #pragma omp critical
+                if(!omp_failed) { omp_failed = true; omp_error = string("std::exception: ") + e.what(); }
+            } catch(...) {
+                #pragma omp critical
+                if(!omp_failed) { omp_failed = true; omp_error = "unknown exception"; }
             }
             // Here we are running in serial again
+            if(omp_failed)
+                throw string("integration failed at round ") + to_string(systems[0].round_num) +
+                      ": " + omp_error;
             if(received_signal!=NO_SIGNAL) break;
             if(passed_time_lim) break;
 
@@ -1262,8 +1391,8 @@ try {
 
         }
 
-
-        if(n_round > 0) {
+        if(use_duration_steps && n_round > 0) {
+            // MARTINI step-count runs may end off a frame boundary; capture the final frame.
             for(System& sys: systems) {
                 if(do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
                 sys.engine.compute(PotentialAndDerivMode);
