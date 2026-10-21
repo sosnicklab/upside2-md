@@ -1171,3 +1171,19 @@ to 10-07 12:00 is in git history.
   fixtures regenerating on the D5 build for its node_fd and hybrid regression. Lesson 10.35 (user: concise edits in
   master's style). Files modified: src/{spline.cpp,spline.h,martini_potential.cpp}, py/martini_prepare_system_lib.py,
   up.md, findings.md 10.35, plan.md Phase 24.
+- 10-21 16:10, the Boltz-2 HDX sampler: tag by step-scale test read (61231966, finished 09:03). `step_scale` 1.0
+  causes the bond-length scatter (C-N sd 0.031 to 0.036 A with no tag, 0.054 to 0.055 with `md`; 0.008 to 0.009
+  at 1.5 with either tag). The `md` tag widens the ensemble at both scales. Contacts under 2.5 A are mostly
+  over-short salt bridges and H-bonds; one ubiquitin sample has Arg42 and Arg72 superimposed. The Phase 1 setting
+  (sharpened 1.5 against the unscaled 1.0 with poor geometry) is open. Files modified: diffusion_dynamics.md
+  (status, Phase 0, risks), remote_jobs.md, progress.md.
+- 10-21 16:15-16:40, the Boltz-2 HDX sampler: protection flags on the tag by step-scale samples (user: "proceed
+  with your plan"). Local, no GPU: `example/04.HDX` configs (ff_2.1) for ubiquitin and EHEE, Boltz backbones written
+  as Upside trajectories, `py/get_protection_state.py` unchanged, from a scratch engine tree (the repo's `obj/` is
+  older than its `py/`). Noise matched to step scale 1.0's bond spread moves per-residue protected fractions by at
+  most 0.03; `md` 1.0 against 1.5 by at most 0.16, with fewer never-open amides at 1.0. Phase 1 will use `md` at
+  `step_scale` 1.0. Files: diffusion_dynamics.md (status, Phase 0, Phase 1, risks), findings.md 10.14, progress.md;
+  new `scratchpad/boltz_hdx/flags/`.
+- 10-21 16:23, the Boltz-2 HDX sampler: Phase 1's first job submitted (user: "submit phase 1"), 61254153 on one
+  midway3 V100, 1,000 `md` samples per protein at `step_scale` 1.0 (`phase1_hdx.sbatch`). Files: diffusion_dynamics.md,
+  remote_jobs.md, progress.md.

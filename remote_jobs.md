@@ -19,8 +19,8 @@ The user's four lines of work (10-21), and what each has on the clusters:
    ff2.1 with all terms free, fold 0.15-0.24 less than ff2.1. **Also running in this line:** the 8 glpG REMD chains
    on the released ff3.0 and ff3.1 (block 3 of 5), the TM4 and HDX validation.
 3. **Upside 3 design, debug stage** (upside3.md; plan.md Phase 24 and its "Resume here"). Local work, no cluster jobs.
-4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). The tag by step-scale test on midway3 finished 09:02 10-21; its
-   readout into Phase 0 is owed. Nothing running.
+4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phase 0 is done (its two tests in §1 "Finished runs"). Phase 1's
+   first job, 1,000 `md` samples per protein on one midway3 V100, was submitted 16:23 10-21 (§1 line 4).
 
 Open and not in the user's list:
 - The 8 glpG chains run force fields that carry the retraining loss; whether to stop them when block 3 closes
@@ -96,7 +96,6 @@ findings.md (pulled from git) and on the cluster.
    - **TM4 HDX on the corrected chains' block 2** (the user's 10-14 requests: ff_3.0_gdepth and
      ff_3.1_depth_data, 79ALA then 79HIS): §1 "TM4 HDX on ff_3.1_depth_data: the recipe" with each chain's
      own group counts. Block 2 has closed.
-   - **The Boltz-2 test's readout** into `diffusion_dynamics.md` Phase 0 (§1 line 4).
 5. **Find the owner** ("Handoff" below): `cat` the cluster's
    `checks/r4_epochs/tm4_local/WATCH_STATUS.md`. **Planned move (user, 21:55 10-18: "expect me to run the
    monitoring on another computer tomorrow"):** the user's opening the session on the next computer on 10-19 is
@@ -704,14 +703,16 @@ their successors and their collector; the 8 glpG chains. midway3: nothing known 
 
 **Line 3: Upside 3 design (debug stage).** No cluster jobs; local work (plan.md Phase 24 "Resume here", upside3.md).
 
-**Line 4: Boltz-2 HDX sampler (midway3)**
-- **Tag by step-scale test** (user 10-21, "Yes."; `diffusion_dynamics.md` Phase 0): **61231966**
-  `boltz_tag_stepscale_v100` (1 V100, `--partition=gpu --qos=gpu`), submitted 08:41 10-21; its log ends with the eight
-  cells' `check_samples.py` summaries and `[done]` at 09:02 (Slurm state not read). Script
-  `$B/tag_stepscale_test.sbatch` (`$B = /beagle3/trsosnic/yinhan/boltz_hdx`; local copy `scratchpad/boltz_hdx/`): ubiquitin
-  and EHEE_rd2_0005 at {no tag, `md`} x {`step_scale` 1.5, 1.0}, 100 samples each, seed 2. Log
-  `$B/logs/boltz_tag_stepscale_v100_61231966.out`, data `$B/runs/boltz_tag_stepscale_v100_61231966/`. **Owed:** the
-  readout (peptide bond scatter and clash counts across the four cells) in `diffusion_dynamics.md` Phase 0.
+**Line 4: Boltz-2 HDX sampler (midway3).** Phase 0's two tests are in "Finished runs".
+- **Phase 1, first ensembles** (user 10-21, "submit phase 1"; `diffusion_dynamics.md` Phase 1): **61254153**
+  `boltz_phase1_md_s10_v100`, submitted 16:23 10-21 from midway3-login5 with `--partition=gpu --qos=gpu
+  --account=pi-trsosnic --gres=gpu:1 --time=01:30:00 --constraint=v100`; PD at submission, `--test-only` estimate
+  10-23 04:03 (the Phase 0 jobs started hours before theirs). Script `$B/phase1_hdx.sbatch` (md5 `c2064cec...`,
+  local copy `scratchpad/boltz_hdx/`): ubiquitin and EHEE_rd2_0005, 1,000 `md` samples each at `step_scale` 1.0,
+  seed 3, tags `<name>_md_s10`; about 30 min on the GPU. Log `$B/logs/boltz_phase1_md_s10_v100_61254153.out`; data
+  `$B/runs/boltz_phase1_md_s10_v100_61254153/` (per run `<tag>.log`, predictions under `<tag>/`, `<tag>.npz` with
+  every sample's N/CA/C). **Next:** copy the two npz files to `scratchpad/boltz_hdx/flags/samples/`, run the
+  flags (`run_flags.sh` and `compare_flags.py` there, extended to the new sets), and compute dG per residue.
 
 **Shared**
 - **The engine fix** (findings 3.12; plan.md Phase 21): `$P/obj/upside` and `libupside.so` from
@@ -997,6 +998,10 @@ short `output_previous_N` groups (100-287 frames), all finite (`checks/glpg_frag
   `check_samples.py` (local copies in `scratchpad/boltz_hdx/`). Logs `$B/logs/boltz_t0_<gpu>_<id>.out`; data
   `$B/runs/boltz_t0_<gpu>_<id>/` (per run `<tag>.log`, `<tag>.gpu_mib`, predictions under `<tag>/`, `<tag>.npz`
   with every sample's N/CA/C). midway2's `squeue` does not see midway3 jobs; check from the midway3 socket.
+  The tag by step-scale test, 61231966 `boltz_tag_stepscale_v100` (V100, midway3-0280, 08:45-09:03 10-21,
+  COMPLETED; `$B/tag_stepscale_test.sbatch`), has the same layout: log
+  `$B/logs/boltz_tag_stepscale_v100_61231966.out`, data `$B/runs/boltz_tag_stepscale_v100_61231966/` (tags
+  `<name>_<notag|md>_<s15|s10>`).
 
 * **ff3.2 `ff32_depth_data` stopped by the user 08:33 10-18 in step 69** (link 49406726, successor 49410635; plan.md
   Phases 17 and 21): trained with the angular-gradient defect (findings 3.12). Steps 0-68 and panels f32_00-02 are the

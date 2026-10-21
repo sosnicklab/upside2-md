@@ -6292,6 +6292,12 @@ is ff30_glyhb. Two corrections from the user on the same day:
   (`/beagle3/trsosnic/yinhan/boltz_hdx/install.sh`).
 * **`pkill -f <pattern>` over ssh kills the ssh command's own shell** when the pattern is in the command
   line, ending the call with exit 255 before it reaches the target. Kill by PID.
+* **An isolated Upside engine without touching the repo's `obj/` (2026-10-21).** `py/upside_engine.py` loads
+  `<its own directory>/../obj/libupside.*`, so a copied `py/` beside a fresh `obj/` (cmake on the repo's `src/`,
+  with `install_M1.sh`'s flags) and a symlinked `parameters/`, with `UPSIDE_HOME` pointed there, is a complete
+  engine. A symlinked `py/` does not work, because `py/..` resolves to the link's target. Needed when the repo's
+  `obj/` is older than its `py/` (on 10-21 it lacked `get_param_size`) and other work may be using it; example
+  `scratchpad/boltz_hdx/flags/upside_tree/`.
 
 ### 10.15 A results slide states the comparison, not the bookkeeping (2026-10-05)
 

@@ -1,8 +1,8 @@
 # A modified Boltz-2 to replace Upside's sampling for HDX
 
-**Status: Phase 0 on midway3 (2026-10-21).** Setup and the first test are done. The `md`-tagged samples have
-widened bond lengths and frequent clashes, and the test changed two settings at once; a second test separating
-them is queued (Phase 0). midway2 has no GPU that can run Boltz-2 (Phase 0). Jobs are recorded in `remote_jobs.md` §1.
+**Status: Phase 0 done (2026-10-21); Phase 1's first job is queued.** `step_scale` 1.0, the unscaled sampler, gives
+bond-length scatter 2 to 4x the crystal spread, but the scatter leaves the HDX protection flags unchanged, so Phase 1
+uses `md` at 1.0 (Phase 0). midway2 has no GPU that can run Boltz-2 (Phase 0). Jobs are recorded in `remote_jobs.md` §1.
 Every number below comes from reading code, docs and papers on 2026-10-21, or from the dated measurements in
 Phase 0; numbers marked *estimate* are unmeasured.
 
@@ -145,24 +145,64 @@ Cluster rules are in `~/.claude/midway3.md`. Slurm flags go on the command line:
     is 0.054 to 0.059 A, against 0.008 in the default runs and 0.014 in crystal structures (Engh and Huber 1991).
     N-CA and CA-C sd is 0.035 A, against 0.004. About 7% of C-N bonds fall outside 1.25 to 1.45 A, spread along
     the whole chain. On the V100, 2 of 100 ubiquitin samples have a C-N bond outside 1.05 to 1.65 A.
-    86 to 97 of every 100 samples have a heavy-atom pair under 2.5 A, up to 10 pairs.
+    86 to 97 of every 100 samples have a heavy-atom pair under 2.5 A, up to 10 pairs; most are over-short polar
+    pairs (next test).
   * The `md` runs changed the tag and `step_scale` (1.5 to 1.0) together, so the cause of the scatter is unknown.
     Whether it changes protection flags is unmeasured.
-- [ ] Tag by step-scale test (queued 2026-10-21, `remote_jobs.md` §1; `$B/tag_stepscale_test.sbatch`): {no tag,
-      `md`} x {`step_scale` 1.5, 1.0}, 100 samples each at seed 2, both proteins, one V100 job of about 20 min. If `step_scale` 1.0 itself gives the scatter, the unscaled sampler
-      and clean geometry conflict. In that case the options are more sampling steps, or Boltz's steering
-      (`--use_potentials`, `main.py:1310`). Its FK resampling reweights samples by a potential, which shifts the
-      populations HDX reads, so it needs a decision before use.
+- [x] Tag by step-scale test, 2026-10-21 (61231966, V100 on midway3-0280, 18 min; `$B/tag_stepscale_test.sbatch`,
+      output `$B/runs/boltz_tag_stepscale_v100_61231966/`): {no tag, `md`} x {`step_scale` 1.5, 1.0}, 100 samples
+      each at seed 2, both proteins. Close contacts were classified by atom pair with a local script on the copied
+      samples.
+
+  | cell | C-N sd (A), ubq / EHEE | N-CA sd | pairwise CA-RMSD (A), ubq / EHEE | samples with a contact < 2.0 A, ubq / EHEE |
+  | --- | --- | --- | --- | --- |
+  | no tag, 1.5 | 0.008 / 0.009 | 0.004 | 1.28 / 0.26 | 3 / 2 |
+  | `md`, 1.5 | 0.008 / 0.009 | 0.004 | 1.57 / 0.45 | 1 / 5 |
+  | no tag, 1.0 | 0.031 / 0.036 | 0.018 | 1.61 / 0.52 | 15 / 17 |
+  | `md`, 1.0 | 0.055 / 0.054 | 0.035 | 1.99 / 0.88 | 25 / 27 |
+
+  * `step_scale` 1.0 causes the bond-length scatter. At 1.5 both tags give clean bonds; at 1.0 the `md` tag
+    nearly doubles it. The `md` cell at 1.0 reproduces the first test with a new seed.
+  * The `md` tag widens the ensemble at both step scales. `md` at 1.5 is almost as wide as no tag at 1.0, with
+    clean bonds.
+  * Most contacts under 2.5 A are polar pairs: Lys NZ or Arg NH with Asp/Glu carboxylate O, and backbone N-O.
+    These are salt bridges and H-bonds drawn 0.3 A or more too short (N-O is about 2.8 A or longer). Neither reference structure has a contact
+    under 2.5 A. One steric overlap stands out: in no-tag, 1.5 ubiquitin model 33 the Arg42 and Arg72
+    guanidinium groups sit on top of each other (CZ-CZ 0.69 A, 15 contacts); the same pair comes within 1.75 A
+    in no-tag, 1.0 model 41.
+  * This is the conflict the test was set up to find. The unscaled sampler (1.0) is the one whose samples follow
+    the model's distribution, and it has broken local geometry. `step_scale` 1.5 has clean geometry but
+    sharpens the distribution toward its main state, which biases the populations HDX reads toward protection.
+- [x] Phase 1 sampler setting: `md` at `step_scale` 1.0, because its bond-length scatter does not reach the
+      protection flags (2026-10-21, local, no GPU). Every set from the tag by step-scale test went through
+      `py/get_protection_state.py` unchanged, with configs from `example/04.HDX/1.config.py`'s recipe (ff_2.1,
+      heavy-atom coverage) built from the two reference structures. The engine had to come from a scratch tree
+      (py/ copied and obj/ built at repo `6d295b0`), because the repo's `obj/` is older than its `py/` and lacks
+      `get_param_size`. Files in `scratchpad/boltz_hdx/flags/` (`run_flags.sh`, `samples_to_traj.py`,
+      `compare_flags.py`). The estimator reads only N, CA and C: Upside places its own side-chain beads from the
+      backbone, so Boltz's side chains, with their short salt bridges and the Arg42/Arg72 overlap, do not enter.
+  * Geometry noise alone: the `md`, 1.5 samples plus isotropic noise per atom (0.038 A, which gives C-N sd
+    0.054 A, the 1.0 spread). On the same frames the noise flips 0.2% (ubiquitin) and 1.3% (EHEE) of the
+    combined flags; the H-bond flag alone flips 2.8% and 0.8%, mostly in amides that burial already protects.
+    Per-residue protected fractions move by at most 0.03, mean 0.002. That is below the binomial error of 100
+    samples, 0.02 to 0.05.
+  * `md` at 1.0 against `md` at 1.5, the whole difference: mean |dp| 0.019 (ubiquitin) and 0.016 (EHEE), max 0.16
+    and 0.12. At 1.0, fewer amides are never seen open (p = 1): 45 against 55 of 72 for ubiquitin and 24 against
+    29 of 39 for EHEE.
+  * Every set stays near the native flags: the reference structures protect 59 of 72 and 32 of 39 amides, and
+    96 to 98% of sample flags agree with them. With 100 samples, every amide protected in the native state is
+    censored at RT ln(100) = 2.7 kcal/mol.
 
 ### Phase 1: independent Boltz-2 ensembles, no training
 
 HDX:
 - [ ] `md`-tagged ensembles of 10^3 to 10^4 samples per protein (20 V100-minutes to 3.3 V100-hours for ubiquitin,
-      Phase 0), with the sampler setting the next Phase 0 test picks, for ubiquitin and EHEE_rd2_0005, then other
-      soluble proteins with HDX data and Upside results.
+      Phase 0), at `step_scale` 1.0 (Phase 0), for ubiquitin and EHEE_rd2_0005, then other soluble proteins with
+      HDX data and Upside results.
+  * First job queued 2026-10-21 (61254153, one V100, `$B/phase1_hdx.sbatch`; `remote_jobs.md` §1): 1,000 samples
+    per protein at seed 3.
 - [ ] Protection flags from every sample's N/CA/C through the repo's protection-state code, uniform weights; dG per
       residue against experiment and against Upside. An amide with p = 1 is censored at RT ln(N), not a value.
-- [ ] Separate the effects of `step_scale` and the method tag: `md` at 1.0 and 1.5, no tag at 1.0.
 
 mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibrium only:
 - [ ] Test set: 8 to 12 domains from the 89-domain panel (`ff3_selection/` on the cluster; `plan.md` Phase 19), over
@@ -241,8 +281,9 @@ Gate 1:
 * Boltz-2 trained on mdCATH: Phase 1 domains must come from its held-out clusters (Phase 1).
 * The 89-domain panel holds stable native states, which makes it a weak test of transitions (Phase 1 adds switching
   domains for this).
-* `md`-tagged samples at `step_scale` 1.0 have bond-length scatter 4x that of crystal structures and clashes in
-  nearly every sample (Phase 0); the cause is untested.
+* `step_scale` 1.0 gives bond-length scatter 2 to 4x the crystal spread. It does not change the protection flags
+  (Phase 0), but any use beyond the HDX estimator, such as Phase 2's chain or comparisons of local geometry with MD,
+  has to deal with it. Boltz-2 also draws salt bridges and H-bonds 0.3 A or more too short at every setting.
 * Compute nodes reach RCSB and Hugging Face; whether they can query ColabFold is untested, so MSAs are fetched on
   the login node.
 * Phase 3 is blocked on Boltz-2 training code, or on writing a diffusion-only training loop.
