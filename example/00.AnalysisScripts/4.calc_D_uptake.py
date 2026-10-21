@@ -13,12 +13,12 @@ import matplotlib.cm as cm
 import matplotlib.backends.backend_pdf as pdf
 from matplotlib.font_manager import FontProperties
 from matplotlib.ticker import LogLocator
+from helpers.advanced_analysis_utils import load_pdb_numbering
 from helpers.function import select_state_file
 from scipy.interpolate import interp1d
 from scipy.optimize import minimize_scalar
 
 import pymbar
-from pymbar import timeseries
 
 sans_serif_fonts = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
 
@@ -111,10 +111,6 @@ T_acid_K = 278.0
 # for calculation of protein HX in D2O
 pD_corr = float(os.environ.get('pD_corr', '6.70'))  # checkme pD_read+0.4
 D_plus = np.power(10, -pD_corr)
-if legacy_temperature_setting:
-    legacy_od_minus_map = {}
-else:
-    legacy_od_minus_map = {1.14: np.power(10, pD_corr - 14.96)}
 
 ka_poly = (np.power(10, 1.62)) / 60
 kb_poly = (np.power(10, 10.18)) / 60
@@ -177,8 +173,8 @@ res = np.loadtxt('{}/{}.resid'.format(result_dir, pdb_id), dtype=int)
 n_res = res.size
 res_to_idx = {int(residue): idx for idx, residue in enumerate(res)}
 
-fasta = np.loadtxt('{}/{}.fasta'.format(input_dir, pdb_id), skiprows=1, dtype=str)
-fasta_main = fasta
+# PDB_to_initial_structure.py marks a cis-proline with '*', which is not a residue
+fasta = np.char.replace(np.loadtxt('{}/{}.fasta'.format(input_dir, pdb_id), skiprows=1, dtype=str), '*', '')
 
 if np.size(fasta) == 1:
     sequence = fasta.tolist()
@@ -187,12 +183,29 @@ else:
     sequence = ''.join(fasta)
     seq = np.array(sequence).reshape(1)[0]
 
-if np.size(fasta_main) == 1:
-    main_sequence = fasta_main.tolist()
-    main_seq = fasta_main.reshape(1)[0]
-else:
-    main_sequence = ''.join(fasta_main)
-    main_seq = np.array(main_sequence).reshape(1)[0]
+# Peptide Start/End are PDB residue numbers; this is the Upside residue index of each.
+pdb_chain, pdb_resnum = load_pdb_numbering(input_dir, pdb_id)
+pdb_position = {int(number): index for index, number in enumerate(pdb_resnum)}
+
+
+def chain_first_residues(chain_breaks_path, n_residue):
+    """First residue of every chain. A break PDB_to_initial_structure.py records inside one chain (missing
+    residues; its second line counts the segments of each chain) is not a terminus."""
+    if not os.path.exists(chain_breaks_path):
+        return [0]
+    with open(chain_breaks_path) as handle:
+        lines = handle.read().splitlines()
+    segment_first = [0] + [int(x) for x in lines[0].split()]
+    segments_per_chain = [int(x) for x in lines[1].split()]
+    if sum(segments_per_chain) != len(segment_first) or segment_first[-1] >= n_residue:
+        raise SystemExit('{} does not describe a {}-residue sequence'.format(chain_breaks_path, n_residue))
+    return [segment_first[k] for k in np.cumsum([0] + segments_per_chain[:-1])]
+
+
+# Every chain has its own termini: its first residue has no amide H, its second carries the N-terminal (NH3+)
+# correction and its last the C-terminal (COO-) correction (Bai et al. 1993).
+chain_start = set(chain_first_residues('{}/{}.chain_breaks'.format(input_dir, pdb_id), len(sequence)))
+chain_end = set(i - 1 for i in chain_start if i > 0) | {len(sequence) - 1}
 
 
 def build_time_grid_from_log_times(log_times):
@@ -218,9 +231,13 @@ def build_default_time_grid(log_start=-1.0, log_stop=5.0, log_step=0.02):
 
 
 def sanitize_peptides(peptide_starts, peptide_ends, peptide_labels, sequence_str, source_name):
+    """Peptides by PDB residue number. A peptide with residues the structure lacks is skipped; one whose sequence
+    differs from the structure's at its numbers means the two numberings disagree, and stops the analysis."""
     starts = np.asarray(peptide_starts)
     ends = np.asarray(peptide_ends)
     labels = np.asarray(peptide_labels, dtype=str)
+    if len(pdb_position) != pdb_resnum.size:
+        raise SystemExit('{} repeats PDB residue numbers across chains; peptide Start/End cannot name a residue'.format(pdb_id))
 
     valid_starts = []
     valid_ends = []
@@ -234,14 +251,15 @@ def sanitize_peptides(peptide_starts, peptide_ends, peptide_labels, sequence_str
             print('skip peptide (bad bounds): %s %s' % (start, end))
             continue
 
-        if start < 1 or end < start or end > len(sequence_str):
-            print('skip peptide (out of bounds): %s %s-%s' % (source_name, start, end))
+        if end < start or any(number not in pdb_position for number in range(start, end + 1)):
+            print('skip peptide (residues not in the structure): %s %s-%s' % (source_name, start, end))
             continue
 
-        expected_label = sequence_str[start - 1:end]
+        expected_label = sequence_str[pdb_position[start]:pdb_position[end] + 1]
         label = label.strip()
         if label and label != expected_label:
-            print('seq mismatch %s %s-%s (%s != %s), using bounds' % (source_name, start, end, label, expected_label))
+            raise SystemExit('%s peptide %s-%s reads %s, the structure has %s at those PDB residue numbers'
+                             % (source_name, start, end, label, expected_label))
 
         valid_starts.append(start)
         valid_ends.append(end)
@@ -388,14 +406,11 @@ def export_peptide_ids(output_path, peptide_starts, peptide_ends, peptide_labels
 def calculate_temperature_parameters(T_target, mode):
     if mode == 'legacy':
         real_K = float((T_target / 0.85) * 298.0)
-        OD_minus = legacy_od_minus_map.get(float(T_target))
-        if OD_minus is None:
-            OD_minus = np.power(10, pD_corr - float(real_K_to_pKD2O(real_K)))
     elif mode == 'exp':
         real_K = float(sim_T_to_real_K(T_target))
-        OD_minus = np.power(10, pD_corr - float(real_K_to_pKD2O(real_K)))
     else:
         raise ValueError('Unknown temperature mode: {}'.format(mode))
+    OD_minus = np.power(10, pD_corr - float(real_K_to_pKD2O(real_K)))
 
     dT_R = ((1 / real_K) - (1 / T_ref_K)) / 0.001987
 
@@ -434,6 +449,9 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
     if len(times) == 0:
         print('T=%.3f skipped, no time grid' % T_target)
         return None
+    # MBAR reweights within the sampled temperatures only; the ladder is logged in float32
+    if not np.float32(T.min()) <= np.float32(T_target) <= np.float32(T.max()):
+        raise SystemExit('T=%.3f lies outside the replica ladder %.3f-%.3f' % (T_target, T.min(), T.max()))
 
     try:
         real_K, Ft_a, Ft_b, Ft_w, OD_minus, pKc_asp, pKc_glu, pKc_his = calculate_temperature_parameters(T_target, temperature_mode)
@@ -459,21 +477,20 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
     Fb_b = []
     Fb_w = []
     for i, s in enumerate(sequence):
-        if s == 'P':
+        if s == 'P' or i in chain_start:
             Fa = 0
             Fb = 0
-        elif i == 0:
-            Fa = 0
-            Fb = 0
-        elif i == 1:
-            Fa = np.power(10, p_df.loc[p_df['aa'] == sequence[i], 'lambda_ma'].iloc[0] + p_df.loc[p_df['aa'] == sequence[i - 1], 'rho_ma'].iloc[0] - 1.32)
-            Fb = np.power(10, p_df.loc[p_df['aa'] == sequence[i], 'lambda_mb'].iloc[0] + p_df.loc[p_df['aa'] == sequence[i - 1], 'rho_mb'].iloc[0] + 1.62)
-        elif i == len(sequence) - 1:
-            Fa = np.power(10, p_df.loc[p_df['aa'] == sequence[i], 'lambda_ma'].iloc[0] + p_df.loc[p_df['aa'] == sequence[i - 1], 'rho_ma'].iloc[0] + 0.95)
-            Fb = np.power(10, p_df.loc[p_df['aa'] == sequence[i], 'lambda_mb'].iloc[0] + p_df.loc[p_df['aa'] == sequence[i - 1], 'rho_mb'].iloc[0] - 1.80)
         else:
-            Fa = np.power(10, p_df.loc[p_df['aa'] == sequence[i], 'lambda_ma'].iloc[0] + p_df.loc[p_df['aa'] == sequence[i - 1], 'rho_ma'].iloc[0])
-            Fb = np.power(10, p_df.loc[p_df['aa'] == sequence[i], 'lambda_mb'].iloc[0] + p_df.loc[p_df['aa'] == sequence[i - 1], 'rho_mb'].iloc[0])
+            log_a = p_df.loc[p_df['aa'] == sequence[i], 'lambda_ma'].iloc[0] + p_df.loc[p_df['aa'] == sequence[i - 1], 'rho_ma'].iloc[0]
+            log_b = p_df.loc[p_df['aa'] == sequence[i], 'lambda_mb'].iloc[0] + p_df.loc[p_df['aa'] == sequence[i - 1], 'rho_mb'].iloc[0]
+            if i - 1 in chain_start:
+                log_a += -1.32
+                log_b += 1.62
+            if i in chain_end:
+                log_a += 0.95
+                log_b += -1.80
+            Fa = np.power(10, log_a)
+            Fb = np.power(10, log_b)
 
         Fa_a.append(Fa * D_plus * ka * Ft_a)
         Fb_b.append(Fb * OD_minus * kb * Ft_b)
@@ -491,15 +508,15 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
     w1 = np.exp(log_w1 - max_log)
     w1 /= np.sum(w1)
 
+    # With a binary protection state the smallest resolvable open fraction is one effective frame, so a
+    # residue at or beyond 1 - 1/ESS is right-censored and takes that bound, as helpers/calc_hdx_ht.py does.
+    ess = 1.0 / np.sum(w1 * w1)
     k_obs = np.zeros(n_res)
     mean_pf = np.zeros(n_res)
     for r in range(n_res):
         pf_i = PS[:, start_frame:, r].flatten()
         mean_pf[r] = np.average(pf_i, weights=w1)
-        if mean_pf[r] == 1:
-            k_obs[r] = k_chem_Up[r] / 1000.0
-        else:
-            k_obs[r] = k_chem_Up[r] * (1 - mean_pf[r])
+        k_obs[r] = k_chem_Up[r] * max(1 - mean_pf[r], 1.0 / ess)
 
     if np.min(np.subtract(k_chem_Up, k_obs)) < 0:
         print('T=%.3f skipped, k_obs > k_chem' % T_target)
@@ -526,8 +543,8 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
         D_norm_peps = []
         D_norm_peps_theors = []
         for start, end in zip(peptide_starts, peptide_ends):
-            start_idx = start - 1
-            end_idx = end
+            start_idx = pdb_position[start]
+            end_idx = pdb_position[end] + 1
 
             D_pep = np.sum(D[start_idx:end_idx], axis=0)
             D_pep_theor = np.sum(D_theor[start_idx:end_idx], axis=0)
@@ -589,6 +606,7 @@ def calculate_all_hdx_data(T_target, times, peptide_starts, peptide_ends, temper
         'k_chem': k_chem,
         'mean_pf_res': mean_pf,
         'k_obs_res': k_obs,
+        'ess': ess,
         'D_peps': D_peps,
         'D_peps_theors': D_peps_theors,
         'D_norm_peps': D_norm_peps,
@@ -636,8 +654,8 @@ def get_colors(n):
     return cm.viridis(np.linspace(0, 0.9, n))
 
 
-def expand_residue_values(values):
-    expanded = np.zeros(len(sequence), dtype=float)
+def expand_residue_values(values, fill=0.0):
+    expanded = np.full(len(sequence), fill, dtype=float)
     for residue_index, value in zip(res.astype(int), np.asarray(values, dtype=float)):
         if 0 <= residue_index < len(sequence):
             expanded[residue_index] = value
@@ -648,19 +666,24 @@ def export_percentd_feature_table(hdx_data):
     if hdx_data is None:
         return
 
-    mean_pf = expand_residue_values(hdx_data['mean_pf_res'])
+    # dG only where the reweighted ensemble resolves it. With a binary protection state the open fraction is
+    # resolved to one effective frame, so an amide within 1/ESS of either bound is censored, as in
+    # helpers/calc_hdx_ht.py; it is NaN here with its flag set, and a residue without an amide is NaN unflagged.
+    pf_res = np.asarray(hdx_data['mean_pf_res'], dtype=float)
+    censored_res = (pf_res >= 1.0 - 1.0 / hdx_data['ess']) | (pf_res <= 1.0 / hdx_data['ess'])
+    with np.errstate(divide='ignore', invalid='ignore'):
+        dg_res = np.where(censored_res, np.nan, 0.001987 * hdx_data['real_K'] * np.log(pf_res / (1.0 - pf_res)))
+    mean_pf = expand_residue_values(pf_res)
     k_obs = expand_residue_values(hdx_data['k_obs_res'])
-    dGhx_T = np.zeros(len(sequence), dtype=float)
-
-    unity_mask = mean_pf >= 1.0 - 1.0e-12
-    finite_mask = (mean_pf > 0.0) & (mean_pf < 1.0 - 1.0e-12)
-    dGhx_T[unity_mask] = 1000.0
-    dGhx_T[finite_mask] = 0.001987 * hdx_data['real_K'] * np.log(mean_pf[finite_mask] / (1.0 - mean_pf[finite_mask]))
+    dGhx_T = expand_residue_values(dg_res, fill=np.nan)
+    censored = expand_residue_values(censored_res).astype(bool)
 
     feature_df = pd.DataFrame(
         {
             'res': list(sequence),
             'res_idx': np.arange(len(sequence), dtype=int),
+            'pdb_chain': pdb_chain,
+            'pdb_resnum': pdb_resnum,
             'Fa_a': np.asarray(hdx_data['Fa_a'], dtype=float),
             'Fb_b': np.asarray(hdx_data['Fb_b'], dtype=float),
             'Fb_w': np.asarray(hdx_data['Fb_w'], dtype=float),
@@ -668,6 +691,7 @@ def export_percentd_feature_table(hdx_data):
             'mean_pf': mean_pf,
             'k_obs': k_obs,
             'dGhx_T': dGhx_T,
+            'censored': censored,
         }
     )
     feature_df.to_csv('{}/{}_percentD_feats.csv'.format(result_dir, pdb_id), index=False)
@@ -1085,7 +1109,7 @@ if not exp_df.empty and len(exp_pep_labels) > 0:
 
     opt_result = minimize_scalar(
         calculate_total_error,
-        bounds=T_search_range,
+        bounds=(max(T_search_range[0], T.min()), min(T_search_range[1], T.max())),
         method='bounded',
         options={'xatol': 1e-3},
     )

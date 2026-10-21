@@ -64,6 +64,11 @@ struct BackbonePairs : public PotentialNode
         check_size(grp, "ref_pos", n_residue, 4, 3);
 
         traverse_dset<1,int>(grp, "id",     [&](size_t nr, int x) {params[nr].residue = x; id[nr]=x;});
+        // residues adjacent across a chain break are not bonded; sequence_id spaces chains apart for the exclusion
+        if(h5_exists(grp, "sequence_id")) {
+            check_size(grp, "sequence_id", n_residue);
+            traverse_dset<1,int>(grp, "sequence_id", [&](size_t nr, int x) {id[nr]=x;});
+        }
         traverse_dset<1,int>(grp, "n_atom", [&](size_t nr, int x) {ref_pos[nr].n_atom = x;});
 
         traverse_dset<3,float>(grp, "ref_pos", [&](size_t nr, size_t na, size_t d, float x) {
@@ -98,7 +103,7 @@ struct BackbonePairs : public PotentialNode
                 ref_pos_coords[nr*4+na] = apply_affine(U,t, ref_pos[nr].pos[na]);
         }
 
-        // acceptable_backbone_pair checks that nr2>=nr1+2
+        // acceptable_backbone_pair checks that the sequence ids differ by at least 2
         pairlist.template find_edges<acceptable_backbone_pair>(dist_cutoff,
                 coords.x.get(), coords.row_width, id.get(),
                 coords.x.get(), coords.row_width, id.get());

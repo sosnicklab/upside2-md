@@ -18,20 +18,6 @@ inline void copy_vec_array_to_buffer(VecArray arr, int n_elem, int n_dim, float*
 
 typedef int index_t;  //!< Type of coordinate indices
 
-//! \brief Update position and momentum
-void
-integration_stage(
-        VecArray mom, //!< [inout] momentum
-        VecArray pos, //!< [inout] position
-        const VecArray deriv, //!< [in] derivative of potential with respect to position
-        float vel_factor, //!< [in] fraction of force to add to momentum (integration dependent)
-        float pos_factor,//!< [in] fraction of momentum to add to position (integration dependent)
-        float max_force, //!< [in] clip forces so that they do not exceed maxforce (increase stability)
-        int n_atom, //!<[in] number of atoms
-        const std::vector<unsigned char>* fixed_mask = nullptr,  //!< [in] optional per-atom fixed-in-space mask (nullptr = none)
-        const std::vector<unsigned char>* z_fixed_mask = nullptr //!< [in] optional per-atom z-only fixed mask (nullptr = none)
-        );
-
 //! \brief Recenter position array to origin
 void
 recenter(
@@ -109,13 +95,6 @@ struct PotentialNode : public DerivComputation
     //!
     //! The propagate_deriv function is never called for potential nodes
     virtual void propagate_deriv() {};
-    
-    //! \brief Update box dimensions for NPT barostat (anisotropic scaling)
-    //!
-    //! Default implementation does nothing - override in derived classes that use box dimensions
-    virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) {
-        (void)scale_xy; (void)scale_z; // Suppress unused parameter warnings
-    }
 };
 
 
@@ -254,13 +233,7 @@ struct DerivEngine
     void build_exec_levels();
     void build_integrator_levels(bool print_info, float dt, int inner_step);
 
-    //! \brief Integration scheme (i.e. position and velocity update weights) to use
-    enum IntegratorType {Verlet=0, Predescu=1};
-
     //! \brief Perform a full integration cycle (3 time steps)
-    //!
-    //! See integration_stage for details.
-    void integration_cycle(VecArray mom, float dt, float max_force, IntegratorType type = Verlet);
     void integration_cycle(VecArray mom, float dt);
     void integration_cycle(VecArray mom, float dt, int inner_step);
 };

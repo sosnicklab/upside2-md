@@ -354,7 +354,7 @@ struct AffineAlignment : public CoordNode
             Float4* restrict evals = evals_storage.get() + ng* 4;
             Float4* restrict evecs = evecs_storage.get() + ng*16;
 
-            symm_QR_4x4(evals, evecs, F, 1e-5f, 100);
+            symm_QR_4x4(evals, evecs, F, 2e-7f, 100);  // 1e-5 left frame errors that switched on and off: energy jumps of 1e-3
 
             // swap largest eigenvalue into location 0
             for(int i=1; i<4; ++i) {

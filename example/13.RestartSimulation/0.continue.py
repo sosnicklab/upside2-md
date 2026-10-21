@@ -34,11 +34,11 @@ continue_sim     = True  # when you run a new simulation, set it as "False"
 randomseed       =  np.random.randint(0,100000)
                          # Might want to change the fixed seed for the random number
 
-account          = "pi-depablo"    # FIXME change it 
-partition        = "depablo-tc"  # FIXME change it
+account          = "your_account"    # FIXME change it 
+partition        = "your_partition"  # FIXME change it
 job_name         = '{}_{}'.format(pdb_id, sim_id)
 run_time         = "24:00:00" # requested run time of job allocation in hh:mm:ss
-qos              = 'depablo-tc-sn'
+qos              = "your_qos"      # FIXME change it
 
 #----------------------------------------------------------------------
 ## Initialization
@@ -211,6 +211,7 @@ if continue_sim:
         t.create_earray(t.root.input, 'mom', obj=new_mom,
                         filters=tb.Filters(complib='zlib',
                                            complevel=5, fletcher32=True))
+        t.root.input.mom._v_attrs.round = n.round[-1]  # the round the momentum was recorded at
 
         if 'output' in t.root:
             t.root.output._f_rename(new_name)

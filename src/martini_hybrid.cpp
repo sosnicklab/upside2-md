@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cctype>
 #include <cstdint>
-#include <set>
 #include <array>
 #include <vector>
 #include <unordered_map>
@@ -179,43 +178,9 @@ static RegisterNodeType<HybridPositionNode, 2> hybrid_position_node("martini_hyb
 
 static std::string trim_h5_string(const std::string& in);
 
-static std::vector<std::string> split_csv_tokens(const std::string& s) {
-    auto trim_token = [](const std::string& in) {
-        size_t begin = 0;
-        while(begin < in.size() && (in[begin] == '\0' || std::isspace(static_cast<unsigned char>(in[begin])))) {
-            ++begin;
-        }
-        size_t end = in.size();
-        while(end > begin && (in[end - 1] == '\0' || std::isspace(static_cast<unsigned char>(in[end - 1])))) {
-            --end;
-        }
-        return in.substr(begin, end - begin);
-    };
-    std::vector<std::string> out;
-    std::string cur;
-    for(char c : s) {
-        if(c == ',') {
-            auto t = trim_token(cur);
-            if(!t.empty()) out.push_back(t);
-            cur.clear();
-        } else {
-            cur.push_back(c);
-        }
-    }
-    auto t = trim_token(cur);
-    if(!t.empty()) out.push_back(t);
-    return out;
-}
-
 static std::string normalize_role_token(const std::string& raw) {
     std::string out = trim_h5_string(raw);
     for(char& c : out) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-    return out;
-}
-
-static std::string normalize_mode_token(const std::string& raw) {
-    std::string out = trim_h5_string(raw);
-    for(char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return out;
 }
 
@@ -291,33 +256,16 @@ bool atom_is_bb_source_at(const HybridRuntimeState& st, int i) {
            st.atom_bb_source_mask[static_cast<size_t>(i)] != 0;
 }
 
-static inline bool allow_protein_pair_by_rule(const HybridRuntimeState& st, int i, int j) {
-    (void)st;
-    (void)i;
-    (void)j;
-    // In the direct-Upside active stage, protein internal MARTINI proxy terms
-    // are bookkeeping only. Keeping any proxy-proxy protein interaction live
-    // adds proxy bonded/nonbonded energy to the production bucket without
-    // feeding that force back through the Upside carrier path.
-    return false;
-}
-
+// With the interface on, the protein is Upside's alone: no MARTINI term acts within it.
 bool allow_intra_protein_pair_if_active(const HybridRuntimeState& st, int i, int j) {
-    if(!st.active) return true;
-    if(!same_protein_membership_pair(st, i, j)) return true;
-    return allow_protein_pair_by_rule(st, i, j);
+    return !st.active || !same_protein_membership_pair(st, i, j);
 }
 
 bool allow_multibody_term_if_active(const HybridRuntimeState& st, const index_t* atoms, int n_atom_dep) {
     if(!st.active) return true;
-    for(int a = 0; a < n_atom_dep; ++a) {
-        for(int b = a + 1; b < n_atom_dep; ++b) {
-            int ia = atoms[a];
-            int ib = atoms[b];
-            if(!same_protein_membership_pair(st, ia, ib)) continue;
-            if(!allow_protein_pair_by_rule(st, ia, ib)) return false;
-        }
-    }
+    for(int a = 0; a < n_atom_dep; ++a)
+        for(int b = a + 1; b < n_atom_dep; ++b)
+            if(same_protein_membership_pair(st, atoms[a], atoms[b])) return false;
     return true;
 }
 
@@ -381,8 +329,6 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     auto ctrl = open_group(root, "/input/hybrid_control");
     out.activation_stage = read_string_attribute_or_default(ctrl.get(), "activation_stage", "production");
     out.preprod_mode = read_string_attribute_or_default(ctrl.get(), "preprod_protein_mode", "rigid");
-    out.exclude_intra_protein_martini =
-        (read_attribute<int>(ctrl.get(), ".", "exclude_intra_protein_martini", 1) != 0);
     out.preprod_rigid = (out.preprod_mode == "rigid" || out.preprod_mode == "rigid_body");
     out.sc_env_po4_z_hold_steps =
         read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_hold_steps", out.sc_env_po4_z_hold_steps);
@@ -399,28 +345,20 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         auto atom_idx_shape = get_dset_size(2, bb.get(), "atom_indices");
         auto atom_mask_shape = get_dset_size(2, bb.get(), "atom_mask");
         auto weights_shape = get_dset_size(2, bb.get(), "weights");
-        auto res_shape = get_dset_size(1, bb.get(), "bb_residue_index");
-        auto pid_shape = get_dset_size(1, bb.get(), "protein_id");
         if(atom_idx_shape[1] != 4 || atom_mask_shape[1] != 4 || weights_shape[1] != 4) {
             throw string("Hybrid BB map must use (n_bb,4) layout for atom_indices/atom_mask/weights");
         }
         if(atom_idx_shape[0] != atom_mask_shape[0] ||
-           atom_idx_shape[0] != weights_shape[0] ||
-           atom_idx_shape[0] != res_shape[0] ||
-           atom_idx_shape[0] != pid_shape[0]) {
+           atom_idx_shape[0] != weights_shape[0]) {
             throw string("Hybrid BB map datasets have inconsistent n_bb sizes");
         }
         out.n_bb = atom_idx_shape[0];
-        out.bb_residue_index.assign(out.n_bb, -1);
         out.bb_atom_index.assign(out.n_bb, -1);
         out.atom_indices.assign(out.n_bb, std::array<int,4>{{-1,-1,-1,-1}});
         out.atom_mask.assign(out.n_bb, std::array<int,4>{{0,0,0,0}});
         out.weights.assign(out.n_bb, std::array<float,4>{{0.f,0.f,0.f,0.f}});
         out.bb_reference_runtime_atom_indices.assign(out.n_bb, std::array<int,4>{{-1,-1,-1,-1}});
 
-        traverse_dset<1,int>(bb.get(), "bb_residue_index", [&](size_t i, int v) {
-            out.bb_residue_index[i] = v;
-        });
         traverse_dset<2,int>(bb.get(), "atom_indices", [&](size_t i, size_t j, int v) {
             out.atom_indices[i][j] = v;
         });
@@ -431,22 +369,18 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             out.weights[i][j] = v;
         });
         out.bb_reference_runtime_atom_indices = out.atom_indices;
-        if(h5_exists(bb.get(), "bb_atom_index")) {
-            check_size(bb.get(), "bb_atom_index", out.n_bb);
-            traverse_dset<1,int>(bb.get(), "bb_atom_index", [&](size_t i, int v) {
-                out.bb_atom_index[i] = v;
-            });
-        }
+        check_size(bb.get(), "bb_atom_index", out.n_bb);
+        traverse_dset<1,int>(bb.get(), "bb_atom_index", [&](size_t i, int v) {
+            out.bb_atom_index[i] = v;
+        });
     }
 
     if(h5_exists(root, "/input/hybrid_env_topology")) {
         auto env = open_group(root, "/input/hybrid_env_topology");
-        auto env_idx_shape = get_dset_size(1, env.get(), "env_atom_indices");
         auto member_shape = get_dset_size(1, env.get(), "protein_membership");
         if(static_cast<int>(member_shape[0]) != n_atom) {
             throw string("Hybrid env topology protein_membership length must match n_atom");
         }
-        out.n_env = env_idx_shape[0];
         out.protein_membership.assign(member_shape[0], -1);
         traverse_dset<1,int>(env.get(), "protein_membership", [&](size_t i, int v) {
             out.protein_membership[i] = v;
@@ -472,61 +406,21 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         });
     }
 
-    std::vector<std::string> atom_roles(n_atom, "");
-    bool has_roles = false;
-    if(h5_exists(root, "/input/atom_roles")) {
-        has_roles = true;
-        traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
-            if(static_cast<int>(i) < n_atom) atom_roles[i] = normalize_role_token(v);
-        });
-    } else if(h5_exists(root, "/input/atom_names")) {
-        has_roles = true;
-        traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
-            if(static_cast<int>(i) < n_atom) atom_roles[i] = normalize_role_token(v);
-        });
-    }
-
+    // The roles name the protein carriers (N, CA, C) and the lipid phosphates (PO4).
     if(!out.protein_membership.empty()) {
+        const char* role_dset = h5_exists(root, "/input/atom_roles") ? "/input/atom_roles" : "/input/atom_names";
+        check_size(root, role_dset, n_atom);
+        std::vector<std::string> atom_roles;
+        traverse_string_dset<1>(root, role_dset, [&](size_t i, const std::string& v) {
+            atom_roles.push_back(normalize_role_token(v));});
+
         out.sc_env_po4_env_mask.assign(static_cast<size_t>(n_atom), 0u);
-        if(has_roles) {
-            for(int i = 0; i < n_atom; ++i) {
-                bool is_protein = (i < (int)out.protein_membership.size() && out.protein_membership[i] >= 0);
-                if(is_protein) continue;
-                if(i >= (int)atom_roles.size()) continue;
-                if(atom_roles[i] == "PO4") {
-                    out.sc_env_po4_env_mask[i] = 1u;
-                }
-            }
-        }
-    }
-
-    if(out.preprod_rigid && !out.protein_membership.empty()) {
-        std::set<std::string> lipid_head_roles{"PO4"};
-        std::string role_csv = read_string_attribute_or_default(
-            ctrl.get(), "preprod_lipid_headgroup_roles", "PO4");
-        auto role_tokens = split_csv_tokens(role_csv);
-        if(!role_tokens.empty()) {
-            lipid_head_roles.clear();
-            for(const auto& tok : role_tokens) lipid_head_roles.insert(normalize_role_token(tok));
-        }
-
-        out.preprod_fixed_atom_indices.reserve(static_cast<size_t>(n_atom));
-        out.preprod_z_fixed_atom_indices.reserve(static_cast<size_t>(n_atom));
         for(int i = 0; i < n_atom; ++i) {
-            bool is_protein = (i < (int)out.protein_membership.size() && out.protein_membership[i] >= 0);
-            bool is_head = false;
-            if(has_roles && i < (int)atom_roles.size()) {
-                is_head = (lipid_head_roles.count(atom_roles[i]) > 0);
-            }
-            bool is_carrier = false;
-            if(is_protein && has_roles && i < static_cast<int>(atom_roles.size())) {
-                const std::string& role = atom_roles[i];
-                is_carrier = role == "N" || role == "CA" || role == "C";
-            }
-            if(is_carrier) {
+            const std::string& role = atom_roles[i];
+            if(out.protein_membership[i] < 0) {
+                if(role == "PO4") out.sc_env_po4_env_mask[i] = 1u;
+            } else if(out.preprod_rigid && (role == "N" || role == "CA" || role == "C")) {
                 out.preprod_fixed_atom_indices.push_back(i);
-            } else if(is_head) {
-                out.preprod_z_fixed_atom_indices.push_back(i);
             }
         }
     }
@@ -540,56 +434,16 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
         }
     }
 
-    // Fallback BB atom inference if bb_atom_index is absent.
-    bool need_infer_bb = false;
-    for(int idx : out.bb_atom_index) if(idx < 0) { need_infer_bb = true; break; }
-    if(need_infer_bb && h5_exists(root, "/input/residue_ids")) {
-        auto residue_shape = get_dset_size(1, root, "/input/residue_ids");
-        if(static_cast<int>(residue_shape[0]) == n_atom) {
-            std::vector<int> residue_ids(n_atom, -1);
-            traverse_dset<1,int>(root, "/input/residue_ids", [&](size_t i, int v) { residue_ids[i] = v; });
-
-            std::vector<std::string> atom_names(n_atom, "");
-            bool has_names = false;
-            if(h5_exists(root, "/input/atom_names")) {
-                has_names = true;
-                traverse_string_dset<1>(root, "/input/atom_names", [&](size_t i, const std::string& v) {
-                    atom_names[i] = trim_h5_string(v);
-                });
-            } else if(h5_exists(root, "/input/atom_roles")) {
-                has_names = true;
-                traverse_string_dset<1>(root, "/input/atom_roles", [&](size_t i, const std::string& v) {
-                    atom_names[i] = trim_h5_string(v);
-                });
-            }
-
-            if(has_names) {
-                for(size_t k = 0; k < out.n_bb; ++k) {
-                    if(out.bb_atom_index[k] >= 0) continue;
-                    int resid = out.bb_residue_index[k];
-                    for(int i = 0; i < n_atom; ++i) {
-                        if(residue_ids[i] == resid && atom_names[i] == "BB") {
-                            out.bb_atom_index[k] = i;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // Final hybrid mapping sanity checks in runtime index space.
     if(!out.protein_membership.empty()) {
         for(size_t k = 0; k < out.n_bb; ++k) {
             int bb = out.bb_atom_index[k];
             int ca = (out.atom_mask[k][1] != 0) ? out.atom_indices[k][1] : -1;
-            if(bb >= 0) {
-                if(bb >= n_atom) {
-                    throw string("Hybrid BB proxy index out of bounds");
-                }
-                if(out.protein_membership[bb] < 0) {
-                    throw string("Hybrid BB proxy index must be protein atom");
-                }
+            if(bb < 0 || bb >= n_atom) {
+                throw string("Hybrid BB proxy index out of bounds");
+            }
+            if(out.protein_membership[bb] < 0) {
+                throw string("Hybrid BB proxy index must be protein atom");
             }
             if(ca < 0 || ca >= n_atom) {
                 throw string("Hybrid BB mapping requires a valid CA carrier index");
@@ -634,17 +488,27 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     return out;
 }
 
+// A hybrid configuration is built for preparation (activation_stage "minimization") or for production
+// (activation_stage "production") and runs only in the stages built for it, every one with the SC-env and
+// BB-env interface on:
+//   minimization        preparation (stages 6.x): protein N/CA/C move as one rigid body
+//   production_handoff  production minimization and burn-in (stage 7.0): protein rigid
+//   production          protein flexible; PO4 z held for the first sc_env_po4_z_hold_steps rounds
+// The lipids are free in the first two: the preparation restrains the phosphate heights with the harmonic
+// restraint_position node the stage file carries, as CHARMM-GUI does, never with a hard freeze.
+static void check_hybrid_stage(const HybridRuntimeState& st, const std::string& stage) {
+    bool preparation = st.activation_stage == "minimization" && stage == "minimization";
+    bool production  = st.activation_stage == "production" &&
+                       (stage == "production_handoff" || stage == "production");
+    if(!preparation && !production)
+        throw string("hybrid stage '") + stage + "' is not a stage of activation_stage '" + st.activation_stage +
+              "' (minimization runs in minimization; production in production_handoff and production)";
+}
+
 static inline bool enforce_preprod_rigid_stage(
         const HybridRuntimeState& st,
         const std::string& stage) {
     return st.preprod_rigid && (stage != "production");
-}
-
-static inline bool hybrid_interface_active_stage(
-        const HybridRuntimeState& st,
-        const std::string& stage) {
-    if(stage == st.activation_stage) return true;
-    return st.activation_stage == "production" && stage == "production_handoff";
 }
 
 static void apply_stage_fixing(
@@ -654,7 +518,7 @@ static void apply_stage_fixing(
     if(enforce_preprod_rigid_stage(st, stage)) {
         martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(st));
         martini_fix_rigid::set_dynamic_rigid_groups(engine, {st.preprod_fixed_atom_indices});
-        martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st.preprod_z_fixed_atom_indices);
+        martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
         return;
     }
 
@@ -665,34 +529,6 @@ static void apply_stage_fixing(
     } else {
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
     }
-}
-
-void update_stage_for_engine(DerivEngine* engine, const std::string& stage) {
-    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
-    auto it = g_hybrid_state.find(engine);
-    if(it == g_hybrid_state.end()) return;
-    auto st = it->second;
-    if(!st) return;
-    bool was_active = st->active;
-    if(!st->has_config) {
-        st->active = false;
-        st->sc_env_po4_z_reference.clear();
-        st->sc_env_po4_z_reference_initialized = false;
-        st->bb_env_interface_potential = 0.f;
-        st->sc_env_transition_step = 0;
-        martini_fix_rigid::clear_dynamic_fixed_atoms(*engine);
-        martini_fix_rigid::clear_dynamic_z_fixed_atoms(*engine);
-        martini_fix_rigid::clear_dynamic_rigid_groups(*engine);
-        return;
-    }
-    st->active = hybrid_interface_active_stage(*st, stage);
-    if(st->active != was_active) {
-        st->sc_env_po4_z_reference.clear();
-        st->sc_env_po4_z_reference_initialized = false;
-        st->bb_env_interface_potential = 0.f;
-        st->sc_env_transition_step = st->sc_env_transition_step_start;
-    }
-    apply_stage_fixing(*engine, *st, stage);
 }
 
 // Locate each residue's backbone O inside the infer_H_O node. That node emits donors first, then
@@ -722,11 +558,22 @@ static void resolve_bb_o_hbond_elements(hid_t root, HybridRuntimeState& st) {
     }
 }
 
+void unregister_hybrid_for_engine(DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_hybrid_mutex);
+    auto it = g_hybrid_state.find(&engine);
+    if(it == g_hybrid_state.end()) return;
+    for(auto c = g_hybrid_state_by_coord.begin(); c != g_hybrid_state_by_coord.end(); )
+        c = (c->second == it->second) ? g_hybrid_state_by_coord.erase(c) : next(c);
+    g_hybrid_state.erase(it);
+}
+
 void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
+    unregister_hybrid_for_engine(engine);
     auto parsed = read_hybrid_settings(config_root, engine.pos->n_elem);
     resolve_bb_o_hbond_elements(config_root, parsed);
     auto current_stage = martini_stage_params::get_current_stage(&engine);
-    parsed.active = parsed.has_config && hybrid_interface_active_stage(parsed, current_stage);
+    if(parsed.has_config) check_hybrid_stage(parsed, current_stage);
+    parsed.active = parsed.has_config;
 
     auto st = std::make_shared<HybridRuntimeState>(std::move(parsed));
 
@@ -787,7 +634,6 @@ std::shared_ptr<const HybridRuntimeState> get_state_for_coord(const CoordNode& c
 }
 
 bool skip_pair_if_intra_protein(const HybridRuntimeState& st, int i, int j) {
-    if(!st.active || !st.exclude_intra_protein_martini) return false;
     return !allow_intra_protein_pair_if_active(st, i, j);
 }
 

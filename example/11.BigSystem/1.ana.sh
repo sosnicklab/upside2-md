@@ -2,8 +2,8 @@
 
 source ../../source.sh
 
-pdb_id=chig
-sim_id=simple_test
+pdb_id=S10000
+sim_id=mem_test
 
 base_dir=./
 input_dir=$base_dir/inputs

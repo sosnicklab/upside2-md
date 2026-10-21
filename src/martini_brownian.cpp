@@ -89,6 +89,10 @@ void register_brownian_for_engine(DerivEngine* engine, hid_t config_root, uint32
     runtime_map()[engine] = std::move(rt);
 }
 
+void unregister_brownian_for_engine(DerivEngine* engine) {
+    runtime_map().erase(engine);
+}
+
 bool has_brownian(DerivEngine* engine) {
     return runtime_map().count(engine) > 0;
 }
@@ -102,6 +106,11 @@ const vector<unsigned char>& stochastic_mask(DerivEngine* engine) {
 void set_brownian_temperature(DerivEngine* engine, float temperature) {
     auto it = runtime_map().find(engine);
     if(it != runtime_map().end()) it->second->temperature = temperature;
+}
+
+void set_brownian_invocations(DerivEngine* engine, uint64_t n_invocations) {
+    auto it = runtime_map().find(engine);
+    if(it != runtime_map().end()) it->second->n_invocations = n_invocations;
 }
 
 void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {

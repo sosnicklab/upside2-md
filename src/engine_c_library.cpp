@@ -34,6 +34,8 @@ DerivEngine* construct_deriv_engine(int n_atom, const char* potential_file, bool
 
 
 void free_deriv_engine(DerivEngine* engine) {
+    // like delete, a no-op on the NULL that construct_deriv_engine returns for a refused config
+    if(engine) martini_unregister_engine(*engine);
     delete engine;
 }
 
@@ -78,8 +80,11 @@ int evaluate_deriv(float* deriv, DerivEngine* engine, const float* pos) try {
 
 
 int set_param(int n_param, const float* param, DerivEngine* engine, const char* node_name) try {
-    vector<float> param_v(param, param+n_param);
-    engine->get(string(node_name)).computation->set_param(param_v);
+    auto& computation = engine->get(string(node_name)).computation;
+    size_t n_expected = computation->get_param().size();
+    if(n_expected != size_t(n_param))
+        throw string("Wrong number of parameters, expected ") + to_string(n_expected) + " but got " + to_string(n_param);
+    computation->set_param(vector<float>(param, param+n_param));
     return 0;
 } catch(const string& s) {
     fprintf(stderr, "ERROR: %s\n", s.c_str());
@@ -95,6 +100,16 @@ int get_param(int n_param, float* param, DerivEngine* engine, const char* node_n
         throw string("Wrong number of parameters, expected ") + to_string(param_v.size()) + " but got " + 
             to_string(n_param);
     copy(begin(param_v), end(param_v), param);
+    return 0;
+} catch(const string& s) {
+    fprintf(stderr, "ERROR: %s\n", s.c_str());
+    return 1;
+} catch(...) {
+    return 1;
+}
+
+int get_param_size(int* n_param, DerivEngine* engine, const char* node_name) try {
+    *n_param = engine->get(string(node_name)).computation->get_param().size();
     return 0;
 } catch(const string& s) {
     fprintf(stderr, "ERROR: %s\n", s.c_str());
@@ -126,9 +141,8 @@ int get_sens(int n_output, float* sens, DerivEngine* engine, const char* node_na
     auto& dc = engine->get_computation<DerivComputation&>(string(node_name));
 
     if(dc.potential_term) {
-        auto& p = dynamic_cast<PotentialNode&>(dc);
         if(n_output!=1) throw string("wrong size for potential node");
-        *sens = p.potential;
+        *sens = 1.f;  // the total potential's sensitivity to one of its terms
     } else {
         auto& c = dynamic_cast<CoordNode&>(dc);
         if(n_output != c.n_elem*c.elem_width) throw string("wrong size for CoordNode");

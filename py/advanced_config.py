@@ -117,9 +117,6 @@ def add_to_const3D2(new_id, input_name):
 
     return index
 
-def append_const3D_to_pos():
-    ConcatCoord(t, 'pos_const', ['pos', 'Const3D'])
-
 def write_affine_alignment(n_res):
     grp = t.create_group(potential, 'affine_alignment')
     grp._v_attrs.arguments = np.array([b'pos'])
@@ -557,7 +554,7 @@ def make_restraint_group(group_num, residues, initial_pos, strength):
     random_pairing = lambda: np.column_stack((r_atoms, np.random.permutation(r_atoms)))
 
     pairs      = np.concatenate([random_pairing() for i in range(2)], axis=0)
-    pairs      = [((x,y) if x<y else (y,x)) for x,y in pairs if x/3!=y/3]   # avoid same-residue restraints
+    pairs      = [((x,y) if x<y else (y,x)) for x,y in pairs if x//3!=y//3]   # avoid same-residue restraints
     pairs      = np.array(sorted(set(pairs)))
     pair_dists = vmag(initial_pos[pairs[:,0]]-initial_pos[pairs[:,1]])
 
@@ -696,7 +693,7 @@ def write_group_const_spring(parser, fasta, spring_table):
     xyz          = []
     for i,f in enumerate(fields):
 
-        atom.append(float(f[0]))
+        atom.append(int(f[0]))
         radius.append(float(f[1]))
         spring_const.append(float(f[2]))
         xxx = [0., 0., 0.]
@@ -722,8 +719,6 @@ def write_group_const_spring(parser, fasta, spring_table):
         ids.append([atom[i], ndx])
     ids = np.array(ids)
 
-    #const3d_group_const = Const3DCoord(t, 'group_const', 'GroupCenter_xyz', 0, 1, 2, np.arange(n_spring), xyz)
-
     pot_group = t.root.input.potential
     if z_only:
         spring_dist = Distance1DCoord(t, 'group_const', 'GroupCenter_xyz', 'Const3D', dim, ids)
@@ -737,7 +732,7 @@ def write_group_const_spring(parser, fasta, spring_table):
     used_dim    = 0
     is_pbc      = 0
     box_len     = 0.0
-    spring_node = SpringPotential(t, 'spring', spring_dist, used_dim, is_pbc, box_len, ids, radius, spring_const )
+    spring_node = SpringPotential(t, 'group_const', spring_dist, used_dim, is_pbc, box_len, ids, radius, spring_const )
 
 def write_group_nail_spring(parser, fasta, spring_table):
 
@@ -776,7 +771,7 @@ def write_group_nail_spring(parser, fasta, spring_table):
     spring_const = []
     xyz          = []
     for i,f in enumerate(fields):
-        atom.append(float(f[0]))
+        atom.append(int(f[0]))
         radius.append(0.0)
         spring_const.append(float(f[1]))
     atom         = np.array(atom)
@@ -785,7 +780,7 @@ def write_group_nail_spring(parser, fasta, spring_table):
 
     n_spring     = atom.shape[0]
 
-    const3d_group_nail = Const3DCoord(t, 'GroupCenter_xyz', 0, 1, 2, np.arange(n_spring))
+    const3d_group_nail = Const3DCoord2(t, 'GroupCenter_xyz', 0, 1, 2, atom)
 
     ids = []
     for i in range(n_spring):
@@ -896,28 +891,6 @@ def write_tension(parser, fasta, tension_table):
     create_array(g, 'tension_coeff', obj=tension)
 
 #=========================================================================
-#                              plumed
-#=========================================================================
-
-def write_plumed(fasta, plumedFile, T=0.9, stepsize=0.009, just_print=False ):
-
-    n_res     = len(fasta)
-    n_atoms   = n_res*3
-
-    g = t.create_group(t.root.input.potential, 'plumedforce')
-    g._v_attrs.arguments = np.array([b'pos'])
-    g._v_attrs.n_atoms   = n_atoms
-    g._v_attrs.dt        = stepsize
-    g._v_attrs.kbT       = T
-
-    if just_print:
-        g._v_attrs.just_print = 1;
-    else:
-        g._v_attrs.just_print = 0;
-
-    create_array(g, 'plumedFile', obj=np.array([plumedFile]))
-
-#=========================================================================
 #                               contact
 #=========================================================================
 
@@ -964,102 +937,9 @@ def write_contact_energies(parser, fasta, contact_table):
     create_array(g, 'distance', obj=dist)
     create_array(g, 'width',    obj=width)
 
-def write_cooperation_contacts(parser, fasta, table_list):
-    table_list = table_list.split(',')
-    for j, contact_table in enumerate(table_list):
-        fields = [ln.split() for ln in open(contact_table,'r')]
-        header_fields = 'residue1 residue2 energy distance transition_width'.split()
-        if [x.lower() for x in fields[0]] != header_fields:
-            parser.error('First line of contact energy table must be "%s"'%(" ".join(header_fields)))
-        if not len(fields[0])==len(header_fields):
-            parser.error('Invalid format for contact file')
-        fields = fields[1:]
-        n_contact = len(fields)
-
-        g = t.create_group(t.root.input.potential, 'cooperation_contacts_%d'%j)
-        g._v_attrs.arguments = np.array(['placement_fixed_point_only_CB'])
-
-        id = np.zeros((n_contact,2), dtype='i')
-
-        for i,f in enumerate(fields):
-            id[i] = (int(f[0]), int(f[1]))
-            msg = 'Contact energy specified for residue %i (zero is first residue) but there are only %i residues in the FASTA'
-            if not (0 <= id[i,0] < len(fasta)): raise ValueError(msg % (id[i,0], len(fasta)))
-            if not (0 <= id[i,1] < len(fasta)): raise ValueError(msg % (id[i,1], len(fasta)))
-
-            if i == 0:
-                energy = float(f[2])
-                dist   = float(f[3])
-                width  = float(f[4])  # compact_sigmoid cuts off at distance +/- width
-
-                if width <= 0.: raise ValueError('Cannot have negative contact transition_width')
-
-        # 0-based indexing sometimes trips up users, so give them a quick check
-        highlight_residues('residues that participate in any --cooperation-contacts potential in uppercase', fasta, id.ravel())
-
-        create_array(g, 'id',       obj=id)
-        g._v_attrs.energy = energy
-        g._v_attrs.dist = dist
-        g._v_attrs.width = width
-
 #=========================================================================
 #                                other
 #=========================================================================
-
-def write_external_pairs_potential(pair_potential_file, use_atoms, used_percent ):
-    # create a linear chain
-
-    with tb.open_file(pair_potential_file) as epp:
-        pairs              = epp.root.pairs[:]
-        coefficients       = epp.root.coefficients[:]
-        atoms              = epp.root.atoms[:]
-        center             = epp.root.centers[:]
-        atoms[atoms=='CB'] = 0
-        atoms[atoms=='CA'] = 1
-        atoms              = np.array(atoms, dtype=int)
-
-    grp = t.create_group(t.root.input.potential, 'external_pairs_potential')
-    grp._v_attrs.arguments = np.array([b'placement_fixed_point_only_CB', b'pos'])
-   
-    scales = atoms*3
-    scales[atoms==0] = 1
-    pairs = pairs*scales+atoms
-
-    if use_atoms == "CA":
-        ndx = np.where((atoms[:,0] == 1) * (atoms[:,1] == 1))
-    elif use_atoms == "CB":
-        ndx = np.where((atoms[:,0] == 0) + (atoms[:,1] == 0))
-    elif use_atoms == "ALL":
-        ndx = np.where((atoms[:,0] != 2) + (atoms[:,1] != 2))
-
-    pair = pairs[ndx]
-    atom = atoms[ndx]
-    coefficient = coefficients[ndx]
-        
-    create_array(grp, 'pair',        obj=pair)
-    create_array(grp, 'atom',        obj=atom)
-    create_array(grp, 'coefficient', obj=coefficient)
-    create_array(grp, 'center',      obj=center)
-    create_array(grp, 'used',        obj=np.array([used_percent]))
-
-def write_sidechain_radial(fasta, library, excluded_residues, suffix=''):
-    g = t.create_group(t.root.input.potential, 'radial'+suffix)
-    g._v_attrs.arguments = np.array([b'placement_fixed_point_only_CB'])
-    for res_num in excluded_residues:
-        if not (0<=res_num<len(fasta)):
-            raise ValueError('Residue number %i is invalid'%res_num)
-
-    residues = sorted(set(np.arange(len(fasta))).difference(excluded_residues))
-
-    with tb.open_file(library) as params:
-        resname2restype = dict((x,i) for i,x in enumerate(params.root.names[:]))
-        n_type = len(resname2restype)
-
-        create_array(g, 'index', obj=np.array(residues))
-        create_array(g, 'type',  obj=np.array([resname2restype[x] for x in fasta[residues]]))
-        create_array(g, 'id',    obj=np.array(residues))  # FIXME update for chain breaks
-        create_array(g, 'interaction_param', obj=params.root.interaction_param[:])
-
 
 def parse_segments(s):
     ''' Parse segments of the form 10-30,50-60 '''
@@ -1256,7 +1136,7 @@ def main():
             '"residue spring_const tip_pos_x tip_pos_y tip_pos_z pulling_vel_x pulling_vel_y pulling_vel_z". ' +
             'The residue will be pulled in the direction (pulling_vel_x, pulling_vel_y, pulling_vel_z) by its CA atom, ' +
             'which is attached to the tip at (tip_pos_x, tip_pos_y, tip_pos_z). ' +
-            'The magnitude of the pulling velocity vector sets the pulling speed. The unit is: angstrom/time_step. ' +
+            'The magnitude of the pulling velocity vector sets the pulling speed. The unit is: angstrom per Upside time unit. ' +
             'The spring_const is in the unit of kT/angstrom^2. At T = 298.15 K, it equals 41.14 pN/angstrom. ' + 
             'Note: consult with the developer before using this AFM function. '
             'Notice that to use this option, you have to either disable '+
@@ -1288,25 +1168,6 @@ def main():
             '  This potential is approximately twice as sharp as a standard sigmoid with the same width as the '+
             'specified transition_width.  The location x_residue is approximately the CB position of the '+
             'residue.')
-    parser.add_argument('--cooperation-contacts', default='',
-            help='Path to text file that defines a cooperation contacts function. The first line of the file ' +
-            'should be a header containing "residue1 residue2 energy distance transition_width", and the remaining ' +
-            'lines should contain space separated values. Only the values for energy, distance, and ' +
-            'transition_width from the first entry are used. It is calculated as a product of approximate unit ' +
-            'sigmoidal functions, scaled by the energy param. See help for --contact-energies for details on the ' +
-            'form of the individual sigmoidal functions')
-
-    parser.add_argument('--plumed', default='', help='Path to text file that serves as a standard control file to configure plumed simulation.')
-    parser.add_argument('--plumed-time-step', default=0.009, type=float,
-            help='set time step to PLUMED. The default value is 0.009. ' +
-            'WARNING: this should be the same as the global time step, which is set to 0.009 by default. Change this value accordingly.')
-    parser.add_argument('--plumed-temperature', default=0.9, type=float,
-            help='set temperature to PLUMED. The default value is 0.9. ' +
-            'WARNING: this should be the same as the global temperature, which is set by --temperature.')
-
-    parser.add_argument('--external-pairs-table-potential', default='', help='User-defined table-type pair interactions. (pair and potential)')
-    parser.add_argument('--external-pairs-type',            default='', help='User-defined table-type pair interactions. (used atoms: CA, CB or ALL)')
-    parser.add_argument('--external-pairs-used-percent',    default=1.0, type=float, help='User-defined table-type pair interactions. (used percent)')
 
     args = parser.parse_args()
 
@@ -1318,8 +1179,6 @@ def main():
     pos       = t.root.input.pos[:]
     n_res     = len(fasta)
     n_atom    = 3*n_res
-
-    use_append_const3D_to_pos = False
 
     multi_chain = False
     has_rl_info = False
@@ -1342,6 +1201,7 @@ def main():
     args_group._v_attrs['invocation'] = ' '.join(sys.argv[:])
 
 
+    n_chains = 1
     if 'chain_break' in t.root.input:
         chain_first_residue = t.root.input.chain_break.chain_first_residue[:]
         multi_chain = True
@@ -1392,16 +1252,19 @@ def main():
             eprint('WARNING: Overwriting heuristic cavity with the one from --cavity-radius-from-config')
         else:
             t_cavity = tb.open_file(args.cavity_radius_from_config,'r')
-            args.cavity_radius = t_cavity.root.input.potential.cavity_radial.radius[0]
+            args.cavity_radius = t_cavity.root.input.potential.WallSpring_cavity_radial.equil_dist[0]
             t_cavity.close()
             print ()
             print ("cavity_radius")
             print (args.cavity_radius)
 
     if args.make_unbound:
-        if n_chains < 2 or n_chains > 8:
-            eprint('WARNING: --make-unbound requires at least 2 and no more than 8 chains. Skipping separating chains.\n'
+        if n_chains < 2:
+            eprint('WARNING: --make-unbound requires at least 2 chains. Skipping separating chains.\n'
                    'See --record-chain-breaks in PDB_to_initial_structure.py and --chain-break-from-file in upside_config.py')
+        elif n_chains > 6 and not has_rl_info:
+            parser.error('--make-unbound separates at most 6 chains, one per cavity axis direction, '
+                         'unless receptor and ligand chains are given (--rl-chains in PDB_to_initial_structure.py)')
         elif not args.cavity_radius:
             eprint('WARNING: --make-unbound requires setting a cavity radius. Skipping separating chains')
         else:
@@ -1414,10 +1277,10 @@ def main():
             if not has_rl_info: # separate all chains
                 for j in range(n_chains):
                     first_res, next_first_res = chain_endpts(n_res, chain_first_residue, j)
-                    #com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
                     pos[first_res*3:next_first_res*3,:,0] = (pos[first_res*3:next_first_res*3,:,0] +
-                            displacement[j]*0.5*args.cavity_radius) #- displacement[j]*com
+                            displacement[j]*0.5*args.cavity_radius)
             else: # keep receptor and ligand chains together
+                np.random.seed(314159)  # deterministic directions, as for the restraint groups
                 # move receptor chains
                 first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
                 next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
@@ -1462,15 +1325,14 @@ def main():
         write_group_const_spring(parser, fasta, args.group_const_spring)
 
     if args.apply_restraint_group_to_each_chain and n_chains > 1:
-        if has_rl_info:
-            # receptor chains
-            first_res      = chain_endpts(n_res, chain_first_residue, 0)[0]
-            next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
+        if has_rl_info: # receptor chains and ligand chains each form one group
+            chain_groups = [(0, rl_chains[0]-1), (rl_chains[0], n_chains-1)]
+        else:
+            chain_groups = [(i, i) for i in range(n_chains)]
+        for first_chain, last_chain in chain_groups:
+            first_res      = chain_endpts(n_res, chain_first_residue, first_chain)[0]
+            next_first_res = chain_endpts(n_res, chain_first_residue, last_chain)[1]
             args.restraint_group.append(np.arange(first_res, next_first_res))
-
-            # ligand chains
-            first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
-            next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
         print ("restraint_group")
         print (args.restraint_group)
 
@@ -1494,29 +1356,9 @@ def main():
     elif args.ask_before_using_AFM and not args.tension:
         write_pulling(parser, fasta, args.ask_before_using_AFM, args.AFM_time_initial, args.AFM_time_step)
 
-    if args.plumed:
-        write_plumed(fasta, args.plumed, args.plumed_temperature, args.plumed_time_step)
-
     if args.contact_energies:
         require_backbone_point = True
         write_contact_energies(parser, fasta, args.contact_energies)
-
-    if args.cooperation_contacts:
-        require_backbone_point = True
-        write_cooperation_contacts(parser, fasta, args.cooperation_contacts)
-
-    if args.external_pairs_table_potential:
-        require_backbone_point = True
-        if args.external_pairs_type is None:
-            parser.error('--external-pairs-table-potential requires --external-pairs-type')
-        else:
-            atom_type = args.external_pairs_type
-            if atom_type != 'CA' and atom_type != 'CB' and atom_type != 'ALL':
-                parser.error('--external-pairs-type must be CA, CB or ALL')
-            write_external_pairs_potential(args.external_pairs_table_potential, atom_type, args.external_pairs_used_percent)
-
-    if use_append_const3D_to_pos:
-        append_const3D_to_pos()
 
     if require_backbone_point:
         require_affine = True

@@ -713,7 +713,7 @@ as well"; stop the step-37 glpG chains. Decisions:
    `fd_EE`/`f32_EE` on folded fraction and Q (the old panels' `.up` files were deleted 10-18, so CA-RMSD cannot be
    compared against them; the same holds for the step-38 `mdc_nobp`/`mdc_ctrl38`). Records done (findings 3.12, remote_jobs.md); the watch session told (WATCH_STATUS.md is its).
    No-BP and the control both converged at step 76 (10-19, 10-20); `mdc_nobp_03` folds 0.241, `mdc_ctrl_03` 0.353,
-   paired -0.111, p 1e-5 (findings 1.21; Phase 23). Owed: the `a31_EE`/`a32_EE` panels (none submitted by 10-20).
+   paired -0.111, p 1e-5 (findings 1.21; Phase 25). Owed: the `a31_EE`/`a32_EE` panels (none submitted by 10-20).
 
 ### Phase 22 - why de novo folding fails on large proteins (STARTED 2026-10-19, user)
 User 10-19: Upside folds large proteins de novo poorly; investigate, read the literature and other force fields'
@@ -751,7 +751,177 @@ negative examples in ConDiv, training past 150 residues, and replica exchange fo
 measured: the globules' free energy against the native's, and a size contrast under one protocol (the 1ENH control
 does not fold at constant T in 60,000 tu); both need replica exchange.
 
-### Phase 23 - are the finished force fields done training; the side-chain verdict (DONE 2026-10-20, user)
+### Phase 23 - plan Upside 3 (STARTED 2026-10-19, user)
+User 10-19: Upside 3 starts after the side-chain verdict, with five goals:
+* a debug of the whole repo, all bugs found by us as Jumper did on master (this branch, master's code first);
+* unit alignment;
+* new parameters chosen after the verdict;
+* large proteins (Phase 22);
+* GPU support with one force field for both backends.
+
+The plan, the order and the decisions waiting on the user are in `upside3.md`. The research reports are in
+`scratchpad/upside3_planning_20261019/`.
+1. [x] Defect inventory, audit units and method; first-pass warnings, sanitizers and probes (`upside3.md` 2).
+2. [x] Unit map and options (`upside3.md` 3). E_up's kJ/mol value is FF2's temperature calibration (298 K / 0.85),
+   so A+ is recommended: reduced units inside the engine, standard units at every input and output.
+3. [x] GPU profile, routes, the CPU-GPU equivalence ladder and hardware (`upside3.md` 6).
+4. [ ] The user's decisions (`upside3.md` 7), then the audit.
+   * Decided 10-19: Upside 3 is a new release, so no list of fixes and their effects on ff2.1 is published. Each fix
+     is proven correct, but none is measured against ff2.1 or master. ff2.1 is not re-validated on the audited engine.
+
+### Phase 24 - Upside 3 audit: find and fix every bug (STARTED 2026-10-19, user)
+User 10-19: "the fix only goes into upside 3. You can modify on current branch (martini-dev) as this will be the
+'upside 3'. Later in the stage we should make it refuse to run ff2.1 (not yet ...). You can start the debug progress
+now, on this branch." Code concise, simple and logical, in master's style (never example 00's).
+
+**Revised decisions** (CLAUDE.md Development Rules reworded to match, 10-19):
+* martini-dev is Upside 3. Fixes go only here; master is not changed.
+* ff2.1 keeps running on this branch for development. Refusing it comes later.
+* The harness lives in `tests/` (new). Its generated fixtures and outputs go to the gitignored
+  `scratchpad/upside3_audit/`.
+
+Method in `upside3.md` 2.2.
+1. [x] Local `obj/` rebuilt from the branch (old binaries `obj/*.bak_20261002`).
+2. [x] `tests/`:
+   * `fixtures.py`: ff_2.1 configs for chig, 1dfn, 1ubq and membrane 1qhj, plus one config per writer option group
+     (10-21): every node writer of `upside_config`, `advanced_config` and `upside_nodes` that a shipped library can
+     build, 44 of 44, in 28 configs (`fixtures_w6`; report `scratchpad/upside3_audit/option_fixtures_20261021.md`);
+   * `node_fd.py`: each potential leaf alone; forces and every upstream parameter derivative against
+     fourth-order differences on the realized float32 steps; tie maps for the pair table and sigmoid weights;
+   * `regress.py`: node outputs, forces and parameter derivatives on 3 frames, plus a seeded 2-replica
+     REMD-and-pivot run; bitwise compare.
+   * `line_integral.py` (10-21): the line integral of a flagged parameter derivative at node_fd's own frames.
+   * `invariance.py` (10-21): pivot MC detailed balance (8 residues, T 0.7 and 1.3, smallest p 0.06; against the
+     wrong temperature X^2 15,700-56,000) and REMD on a harmonic ladder (per-replica moments within 2.5 SE, acceptance
+     0.5466/0.4374/0.3641 against 0.5449/0.4354/0.3619) pass. Equipartition: chig reads +0.4%, the leapfrog
+     half-step momentum's (dt^2/4)<F^2>/(m kT), which the test expects from the frames' forces; the SE now comes
+     from the pooled statistical inefficiency g (pymbar), since lipid kinetic energy stays correlated for about
+     55 frames under the diffusion-calibrated friction (findings 10.33). With the current build: chig N, CA, C
+     within 2.8 SE (g 2.5); the 1rkl production record and the 7.1 continuation (4 x 45,000 rounds) PROTEIN
+     0.9970 +- 0.0017, LIPID 0.9999 +- 0.0020 (g 68), ION 1.0097 +- 0.0090, all PASS
+     (`invariance/equi_g.log`). The earlier PROTEIN 0.995 was seed 2's noise draw sampled twice (same-seed runs
+     of two builds correlate at r 0.92-0.96 frame by frame; A82 is not involved, `ab82.py`, `pair_seed.log`);
+     8 x 90,000 rounds on seed 3 give 1.0005 +- 0.0006. Found on the way: A85.
+     Hybrid fixtures `scratchpad/upside3_audit/fixtures_hybrid/1rkl.stage_7.{0,1}.up`.
+   * Sanitizers (10-21): an ASan + UBSan build (`scratchpad/upside3_audit/build_asan`) driven by
+     `scratchpad/upside3_audit/sanitize_20261021/run.sh`: every node's static evaluation on `fixtures_w4` and both
+     A83 hybrids, the seeded REMD-and-pivot run on each fixture, 200 production steps of each hybrid. Clean.
+   * `index_oracle.py` (10-21): an independent numpy reconstruction of every writer's index arrays, compared slot
+     by slot with the meaning the C++ reader gives them; 69 of 69 injected single-index errors caught. Clean on
+     every fixture except D9's exclusions; found A94; up.md corrected in 16 rows (report
+     `scratchpad/upside3_audit/index_oracle_20261021.md`). The hybrid fixtures predate A83 (rows for residues 7,
+     11, 23 missing): regenerate them through the current prep before they serve as a baseline [ ].
+   * `registry.py` (10-21): each registered node's C++ reads against its Python writers, statically and from HDF5
+     traces of the engine; 69 node types, 40 matched, the rest benign or fixed (A83, A84; report
+     `scratchpad/upside3_audit/registry_20261021.md`).
+
+   `get_param_size` was added to the C API and `upside_engine.py`.
+3. [x] Regression baseline: the first baseline was not reproducible (2 of 6 dumps differed). That was ledger A2's
+   heap overflow. After A1 and A2 the record reproduces; the baseline is `scratchpad/upside3_audit/fix1_1.npz`.
+4. [ ] Review pass 1: one reviewer per P1 unit. Each claim comes with a reproducer.
+   * REMD reviewer running (user 10-19: Jumper's Claude found a REMD issue).
+   * Harness candidates, resolved 10-21 (`scratchpad/upside3_audit/fd_candidates_20261021.md`): the rotamer force
+     mismatches are float32 energy noise (about 60 ulp, node_fd assumes 30); the placement and coverage parameter
+     mismatches are stencils crossing a kink (a clamped cosine, a compact-support edge). One real defect behind
+     them, A82. node_fd now measures the energy noise along each direction (fourth differences at h/8, at least one
+     ulp) and adds a third step h/4; on the four `fixtures_w4` configs it flags 3 placement directions, each a kink
+     closer than h/4, and `tests/line_integral.py` settles them (residual at noise, 5-12 times below the claimed
+     error; `fd_w5.txt`).
+     obj/ rebuilt 10-21 07:23 from src with A82-A93 (old binaries `obj/*.bak_20261020`); its regression equals
+     the `o12_home` baseline w30 bitwise (w31_obj, 0 of 4073).
+   Reported: REMD, environment, interaction graph, BP, H-bond, writers, placement, membrane, hybrid coupling,
+   hybrid preparation, dry-MARTINI engine, examples, hybrid analysis: every pass-1 unit.
+   Fixed and verified: ledger A1-A101 (findings 3.14), plus the Python option batch (13 options repaired). The user's 10-19 approvals
+   are applied: exact derivatives or "not implemented" for every parameter, dead nodes and options deleted, and the
+   angular cosine held to [-1,1].
+
+   Remaining queue:
+   * applied 10-20: dry-MARTINI engine side and the `martini.h5` rebuild (A74-A76), examples (A78), the swap-set
+     restart (A77).
+   * the box test (fresh 1rkl prep, every patch, new table, seed 11; `scratchpad/.../fullstack_1rkl/`): exit 0;
+     KE/1.5kT 0.55-0.82 over 6.2-6.6 (recovering from minimisation), 0.982 burn-in, 0.991 production; peptide C-N
+     mean 1.334 A (sd 0.134 against 0.116-0.120 in pure-protein runs); lipid bond sd per bond 0.440 A against the
+     harmonic 0.449 (the old 8.5 A stretches gone with A75). The protein holds 2.2 H-bonds while rigid, as pure
+     ff2.1 scores the 1rkl NMR backbone, and relaxes to helix within 50 steps of release. Box expansion (100.2 to 110.5 A over 6.2-6.6):
+     explained, no engine defect. GROMACS running CHARMM-GUI's own protocol on the same step5 bilayers does the same
+     thing: DOPC area 69.7 to 88 A^2 within 50 ps, POPE/POPG 60.4 to 74, then recovery over about 12 ns (2 ns without
+     the PO4 restraint) as the overlapped leaflets separate. Upside's prep covers about 5 ps (2500 steps of 1.8 fs),
+     so it only sees the jump. GROMACS equilibria at the published 1.2 nm (second half of 50-100 ns; full table in
+     `scratchpad/bilayer_ref/results_20261020.txt`): DOPC 64.8 A^2 / P-P 43.8 A with 0.15 M salt, 62.8 / 44.9
+     without; POPE/POPG 61.8 / 41.8 with or without salt; CHARMM-GUI's 1.1 nm gives +1.9 to +2.4 A^2 and the
+     Arnarez force switch +3 A^2. This replaces findings 8's 65.6 A^2 / 43.3 A (old barostat).
+     Upside pure bilayers from leaflet-shifted starts (0.55 ns each) have not converged: DOPC 59.6-62.5, POPE/POPG
+     57.6-60.4 A^2 depending on the starting area, thicker and less overlapped than the GROMACS equilibrium.
+     Decision: the prep starts from a GROMACS-equilibrated membrane of the same potential (no geometric correction;
+     the leaflet-translation patch is dropped).
+     Validated 10-21 (`scratchpad/bilayer_ref/upside_from_gmx_eq/results.txt`, findings 8): started at the GROMACS
+     equilibrium, Upside holds it for DOPC (63.3 against 62.9 A^2, P-P 44.7 against 44.9); POPE/POPG ends 1.3%
+     smaller and 0.4 A thicker, still drifting at 0.73 ns. 1rkl from the equilibrated 2 x 2 DOPC template keeps its
+     membrane through prep and production (tail ends past the midplane 0.26-0.28, P-P 41.8-44.7, C-N max 1.89 A,
+     KE/1.5kT 1.001); from step5 it enters production interdigitated (0.77 past, P-P 31.7, box 110.5 A). glpG fails
+     the stage-7.0 solvation gate from either membrane (111 of 136 and 119 of 138 belt sites bare, nearest
+     environment bead 8.2 A on average), while the equilibrated membrane itself stays at P-P 41, 0.30 past: the gap
+     is at the protein-lipid interface, cause open.
+     glpG's bare belt, 10-21 (`scratchpad/glpg_belt_20261021/`): the gate measures from backbone sites, so the side
+     chains between them and the lipids count as gap (on 1rkl's lone helix in production 40% of sites read bare at
+     6 A); and the void the insertion leaves heals slowly: at fixed box, production closes the belt's nearest
+     bead from 8.23 to 7.14 A over 50,000 steps, still falling, protein intact (C-N max 1.95 A). The prep's NPT
+     totals 4.6 ps (5 x 500 steps) against CHARMM-GUI's 10 ns (5 x 2 ns, tau_p 4 ps), so the box cannot relax.
+     Measured 10-21 (findings 8b): the 6 A rule fails every healthy state and counts glpG's bundle interior as
+     vacuum; on lipid-facing sites (burial 40-60) healthy states have 1-4% beyond 8 A, the rejected 7.0 state 18%,
+     the 6.6 NPT plateau 5% (box converged by 30,000 steps, lipid face by 60,000), production at 200,000 steps 4%.
+     For the user [ ]: the gate on lipid-facing sites only (e.g. fail above 10% beyond 8 A, which passes every
+     healthy state and the NPT plateau and fails the rejected state), and the prep NPT at about 60,000 steps.
+     [ ] a longer POPE/POPG run to settle the 1.3%; [ ] equilibrated membranes as the prep input.
+   * applied 10-20: the MARTINI angle term as a spline table, and the side-chain table's CB direction normalised in
+     the energy as in its gradient (node_fd now passes); regression w22: 0 of 545.
+   * done 10-20: the unread fixed-atom force zeroing in `apply_fix_rigid_md` deleted (a 1e30-poisoned variant left
+     6.6 and 7.0 bitwise unchanged), fixed-atom indices validated where the lists are built; regression w23 0 of 545.
+   * hybrid preparation: applied (A70-A73) with its follow-up: the overdamped overlap_settling friction deleted
+     (every prep MD stage at dry-MARTINI's own Langevin friction, mass / 4 ps; lipids now move 1.1-1.3 A per stage
+     in 6.4-6.6, not 0.12); per-lipid diffusion targets (user 10-20: yes) in `LIPID_LATERAL_DIFFUSION_UM2_S`: DOPC 11.5, POPE 8.6,
+     POPG 11.5 um^2/s, from ratios to DOPC (findings 2.5; no same-method set exists). Ions keep the DOPC clock for
+     now. Before the dry-MARTINI patch the prep 1rkl box expanded 100.2 to 104.5 A (about 82 A^2 per lipid against
+     65.5); the 1rkl test above re-measures it, and a glpG prep through production is still to run.
+   * hybrid analysis: applied (A80); peptide numbering (A81, 10-21). The local drivers
+     `scratchpad/local_popg_79HIS/{hdx,acc}.sh` are retired, not repointed: they call the deleted
+     `write_hybrid_energy.py`, their trajectories are gone, and `run_hdx_analysis.sh` runs a ladder
+     (`HYBRID_SOURCE_PATTERN` with `{replica}`).
+   * D9: the sequence exclusions (|i-j| <= 1 or 2 by residue id) of `environment_coverage`, `protein_hbond`,
+     `hbond_coverage`, `hbond_coverage_hydrophobe` and the `hb_environment_coverage` nodes also exclude the last
+     residues of one chain against the first of the next (1dfn: 169 element pairs over 7 nodes, index oracle). On 1dfn's native dimer those pairs sit 14-16 A apart (CA), so the fixture is
+     unaffected; the effect needs chain ends in contact. A53's writer-only `sequence_id` does not carry over:
+     `EnvironmentCoverage` also indexes `aa_types` by `id2` (`environment.cpp:223`). Design open: the
+     interaction graph keeps the index id for edges and takes a separate sequence id for its exclusion test.
+   * From pass 2 (reports `scratchpad/upside3_audit/pass2/<unit>/report.md`), open [ ]:
+     * the dry-MARTINI pair spline (`LayeredClampedSpline1D`) fits zero end slopes, so the force is 0 at the 1.2 nm
+       cutoff where the potential-shifted LJ has up to 2.8e-2 E_up/A: against CLAUDE.md's spline-table rule; fit the
+       grids with the analytic end slope (igraph D5, P2 MARTINI unit);
+     * per-residue rotamer logs put a 1-rotamer/multi-rotamer pair's energy on one residue (BP D4; sums right,
+       nothing reads them);
+     * `HBondEnergy` input ranges unchecked (no writer produces bad values);
+     * dead code: `run_upside` `read_hb`, `read_constant_hb`, `compute_topology`; `ProteinHBondInteraction::param_deriv`
+       (returns -1); `write_infer_H_O`'s multichain check; `interaction_graph.h` `message()`,
+       `PosDistSplineInteraction`, the `PARAM_7A/10A_CUTOFF` branches, `spline.cpp` `evaluate_*`,
+       `deBoor2d_coeff_deriv`; `rotamer.cpp` `energy_cap*`, commented-out blocks, unread freshness flags, a doubled
+       `edges11.reset()`; `SigmoidEnergy`'s `dim1` assert and its writerless `use_cutoff` 0 branch.
+   Not changed on purpose: the H-bond 3.5 A cutoff (findings 3.14).
+   Regression baseline: `scratchpad/upside3_audit/w36_hb.npz` on `fixtures_w6` (after A101, built in
+   `scratchpad/upside3_audit/bp_home`; obj/ still holds A97 while the 10-21 glpG validation prep runs, install by
+   rename after it [ ]; `regress.py compare`
+   lists keys found in only one record apart from the arrays that differ).
+   For the user: `membranelateral_potential` (master too) applies an xy force on surface CBs and reports potential 0,
+   so the logged energy, pivot MC and replica exchange do not see it; make it the energy whose gradient it is, or
+   keep it as a documented external force.
+5. [ ] Confirm each claim by measurement, and record refuted claims.
+6. [ ] Fix confirmed bugs one at a time. Each fix needs its reproducer passing, its node passing finite differences,
+   and every other regression output bitwise unchanged.
+7. [ ] Review pass 2, independent, on the trained-node units; then the P2 units.
+   * Started 10-21 07:40: interaction graph, environment, BP, H-bond, placement, config writers, one reviewer each
+     from `scratchpad/upside3_audit/pass2/brief.md`; reports in `pass2/<unit>/report.md`, no fixes applied by them.
+8. [ ] Later, not now: refuse ff2.1.
+
+### Phase 25 - are the finished force fields done training; the side-chain verdict (DONE 2026-10-20, user)
 User 10-20: "check if the finished ffs needs no more trainings (converge, etc)"; "check if the deterministic /
 probabilistic side chain have a conclusion". Read only, but for one read-only `panel_compare` job (1 CPU, 4 min).
 Working files in `/project/trsosnic/yinhan/checks/converge_20261020/`.
@@ -772,7 +942,7 @@ ff_3.0_gdepth, ff_3.1_depth_data, ff31_depth_all and the control; the defect's d
 at both fixed points the deterministic side chain folds 0.241 against 0.353 on 89 held-out domains. Choosing the
 side-chain model for Upside 3 (upside3.md gate) is the user's.
 
-### Phase 24 - the side-chain comparison on one metric, TM-score (DONE 2026-10-21, user)
+### Phase 26 - the side-chain comparison on one metric, TM-score (DONE 2026-10-21, user)
 User 10-21: "I prefer to use a single metric (TM score?) for all tests". TM-score as the Peng benchmark is scored
 (`ff3_benchmark/scoring/tmscore.py`: fixed correspondence, superposition optimised, step 2, normalised by the full
 chain): per domain, 4 seeds pooled, frames after T_EQUIL, mean TM and the fraction of frames at TM > 0.5.
@@ -789,11 +959,111 @@ chain): per domain, 4 seeds pooled, frames after T_EQUIL, mean TM and the fracti
 **Review (findings 1.21).** Mean TM to the native: mdCATH -0.034 (p 7e-8), the 44 domains -0.026 (p 0.007), Peng
 natives -0.029 (p 0.18), de novo +0.010 (p 0.49); TM > 0.5 shares equal within error.
 
+### Phase 27 - released ff2.1 on the same three tests (STARTED 2026-10-21, user)
+User 10-21: "run validation with released ff2.1 so we know if we should keep ff2.1 or not". Both side-chain arms are
+ConDiv retrainings of ff2.1 (`ff_2.1_ctrl38` shares none of ff2.1's trained files, only its Ramachandran library), and
+both sit below Peng's published FF2 on his benchmark (findings 1.21), so neither answers whether ff2.1 itself should
+stay. Decisions:
+- **The released files** are `ff3_selection/params/ff21_released` (md5 equal to `/beagle3` `parameters/ff_2.1` and
+  `common/rama.dat`); every run uses each test's own protocol, tool and binary, unchanged, so ff2.1 pairs with the
+  retrained arms on the same domains, seeds and time step.
+- **Time step 0.009 everywhere**, as the retrained arms' panels and Peng's protocol ran; the 44-domain `ff21_released`
+  panel of 10-01 ran at 0.015 and kept no trajectories, so it is rerun.
+- **Peng benchmark:** the 30 arms not yet run with `bench.sbatch` as `validate_peng.sh` submits them; the two lambda
+  arms of 10-01 to 10-04 (11d) are the same protocol and binary (`/beagle3` `obj/` unchanged since 09-30) and complete.
+- **Analysis runs by itself** (no agent polls): the panels' TM jobs wait on their panels by dependency; a 1-CPU
+  collector job wakes every 6 h, scores each finished arm with `score_arms_ff.py`, and when all 32 are scored writes
+  the three-way table and stops. Files in `/project/trsosnic/yinhan/checks/ff21_released_20261021/`.
+1. [ ] mdCATH panel `mdc_ff21_released` (89 domains x 4 seeds) and the 44-domain panel `p44_ff21_released`.
+2. [ ] TM against the fixed points `mdc_ctrl_03` / `mdc_nobp_03` and `p44_ctrl_03` / `p44_nobp_03` (`tm_panel.py`).
+3. [ ] Peng's 30 remaining arms; scored and compared against the step-37 `ff_2.1_ctrl38` and `ff_2.1_nobp` and
+   against Peng's published FF2 (0.55 native, 0.42 de novo).
+4. [x] User 10-21: does the loss reach the other trained force fields? 44-domain panel at 0.015, every epoch end
+   against `ff21_released` (`panel44_trajectory.py`): every run of this workflow folds 0.13-0.23 less, most of it in
+   epoch 0 (findings 1.37).
+5. [ ] The same table with the owed panels (`c9_02`, `c9_03`, `a31_00`-`03`, `a32_00`-`03`; job `panel44_traj`
+   writes `panel44_trajectory_final.txt`), and Peng's arms of ff_3.0_gdepth and ff_3.1_depth_data scored
+   (`peng_trained.txt`; the collector's final table includes them).
+6. [ ] Review: keep ff2.1, or a retrained force field, by the three tests.
+
+### Phase 28 - is retraining's folding loss a workflow defect (STARTED 2026-10-21, user)
+User 10-21: "is this a defect in our training workflow? can you fix it?" Known: every run loses 0.13-0.23 folded in
+epoch 0 (findings 1.37); in round 3 ff2.1's side-chain table put back restored it (1.17 A), but round 4 trains that
+table at a tenth of the rate and loses more. Peng's FF2 ran 76 iterations with no convergence test and his trainer is
+lost (9v), so a deviation of our port cannot be read off his code; the SI-rate twin (`ff30_gdepth_si`, half our
+hb/env/sheet/dhb rates) lost as much (`ds_02` 0.406), so the rates set speed, not the loss. Decisions:
+- **Attribute before fixing**, by the round-3 method on the round-4 control's epoch 0 (`c9_00`, ff2.1's library, so
+  every difference from ff2.1 is training): one file at a time put back to ff2.1's, 44-domain panel at 0.015.
+- **No workflow change without the user.** Every candidate fix (rates, a prior toward ff2.1, freezing groups, early
+  stopping on a validation panel) departs from the FF2 workflow the project fixes (findings 10.17, memory
+  `condiv-must-be-ff21-workflow`); a port defect against the SI is fixed directly.
+1. [ ] Panels `c9_00_hb21`, `c9_00_rot21`, `c9_00_env21`, `c9_00_bb21`, `c9_00_sheet21` (49438975-49438978,
+   49438983); job 49438986 writes `checks/ff21_released_20261021/resets_c9_00.txt` and, for released ff2.1 at 0.009
+   on the 44 domains, `p44_dt009_folded.txt`.
+2. [x] Each group's course over the control's epoch 0: hb and env pulled one way from step 0, rot spreads as noise;
+   training proteins' RMSD flat over four epochs (findings 1.37).
+3. [x] The ensemble definitions against the SI: ours are Kleinmann's (Peng's code), so no port defect found
+   (findings 1.37). The loss holds at the training time step 0.009: released ff2.1 0.603 against the control's
+   fixed point 0.430 (all 44 domains, findings 1.37).
+4. [x] How Peng and Jumper chose where to stop (user 10-21): a fixed budget short of convergence on purpose, Jumper
+   having seen accuracy fall when training continued (findings 1.23). Our gate is our own addition, and every run
+   started from ff2.1, so each is a second budget on top of FF2's.
+5. [ ] Fix options to the user, with the file that carries the loss (user 10-21: "check if we should correct current
+   trained / training ffs"). Every force field trained from ff2.1 by this workflow is affected; nothing is training
+   now; the 8 glpG chains run ff3.0 and ff3.1.
+6. [x] Why ff3.1 and ff3.2 end at their starting maps (user 10-21): each depth sits where its 0.2-nat prior,
+   centred on the start, balances the data; the glycine pull is consistent only pooled over the 37 maps. From ff2.1
+   the data pull glycine alpha_L shallower (t +5.6), from ff3.0's map not at all (findings 1.34). A retraining
+   that should move the maps needs a pooled prior (one offset per central residue and basin, maps as deviations),
+   which 1.29 found to transfer best; the user's decision.
+
 ## Known Errors / Blockers
+
+* **Every hybrid dry-MARTINI result so far carries these defects** (audit 10-20; fixes in preparation, plan.md Phase 24).
+  * The side-chain/lipid interface table treats the choline bead NC3 (+1) as neutral: the builder takes charge from
+    the bead type (Q0 gives 0), not the topology. ASP-NC3 misses -2.15, -1.46, -0.91 E_up at 5, 6, 7 A; LYS-NC3 at
+    6 A has the wrong sign (-0.38 for +0.84).
+  * The prep stages' NPT barostat never scaled a lipid: z-fixed phosphates were treated as fully fixed. So the box
+    was never relaxed from CHARMM-GUI's.
+  * The hybrid rotamer 1-body is not ff2.1's: no library has `rotamer_prob_fixed`, so the prep silently writes
+    -log of the unweighted phi/psi-grid average instead of the phi/psi-dependent term. Relative rotamer energies in
+    a helix move by up to 9.1 (LEU), 7.8 (ILE), 7.4 (PHE) E_up. The live glpG REMD seeds
+    (`popepopg_REMD_mdw2/seeds/`, checked 10-20) carry `placement_fixed_scalar` and no `placement_scalar`, while
+    master's ff2.1 workflows use `--dynamic-rotamer-1body`: the running chains have the fixed 1-body.
+  * The prep never removes CHARMM-GUI's bead overlaps (its hard minimisation is off by default), and the PO4
+    restraint's reference sits 53 A off in z, so only the hard z freeze holds the heads. Local preps of 1rkl (4)
+    and glpG (1) heat to KE/1.5kT 26-33 in stage 6.3 and the box jumps by 6-7 A; in 1rkl's production the area per
+    lipid is 91-100 A^2 against this force field's 65.5. P-P stays at the template's 36.4 A (force field: 43.3).
+    The cluster glpG preps (`popepopg_glpG/<V>/logs`, 08-14, read 10-20) did not overheat: KE/1.5kT 0.83-0.87 in
+    every stage. They carry the restraint offset (logged potential +326k E_up at 6.2, +153k at 6.3, scaling with
+    the force constant) with the heads frozen, so their thickness and box defects apply.
+    `scratchpad/relax_popepopg.sh` calls the deleted `prepare --mode bilayer`.
+  * The ion count neutralises residue charges the protein does not carry: net +3 e (1rkl), -6 e (glpG).
+  * The same table read its angle mirrored in the engine and placed the CB 0.57 A off (A76): a bead 4.5 A from a
+    LEU CB on the side-chain side got the backbone side's energy.
+  * Every ALA and GLY side chain was missing from the protein's side-chain node, its placement and the H-bond
+    coverage (A83, found 10-21): glpG 42 of 210 residues, 1rkl 3 of 31. Their pair energies with every other side
+    chain were absent, under every force field, on the cluster and locally.
+  * The prep's NPT stages total 4.6 ps against CHARMM-GUI's 10 ns, so production starts at an unrelaxed box: 1rkl's
+    lipids 10% over their equilibrium area, glpG with an unhealed gap at its belt (Phase 24).
+  * Fixed in the repo 10-20 (A70-A76): `parameters/ff_2.1/martini.h5` rebuilt (md5 `cc90a933...`; the old
+    `2e612261...` kept as `martini.h5.bak_20261020`; ff_3.0 configs use it too). Every prepared hybrid `.up` must be
+    re-prepared; the patched engine refuses the old table. The cluster trees running the campaign are unchanged.
+* **Hybrid HDX lipid accessibility made before 2026-10-20 is shifted by one residue** (findings 3.14 A61, fixed 10-20).
+  glpG, numbered from 1, gave each amide its N-terminal neighbour's accessibility. To regenerate (on the cluster, by
+  the campaign's drivers):
+  * `/project/trsosnic/yinhan/popepopg_REMD/<V>/hdx*/results/<V>_popg_remd_<i>_ACC.npy`;
+  * the combined `_PS.npy` (`_PS_protein.npy` stays valid);
+  * every calc_hdx_ht output in those directories (`_dG_profiles.npz`, `.csv`, `_ranked.csv`, `_<T>.csv`, PNGs);
+  * anything `scratchpad/local_popg_79HIS/acc.sh` produced; findings 5.3's `acc` values.
+  Local drivers that call the deleted `example/00` helpers need repointing: `scratchpad/local_popg_79HIS/hdx.sh`,
+  `hdx_cluster.sbatch`, three `scratchpad/np_slurm/*.sh` (`get_info` is now `py/get_info_from_upside_traj.py`; the
+  `write_hybrid_energy` step is dropped, since the projection copies the coupled potential and the MBAR consumers
+  subtract the mean).
 
 * **Every ConDiv run before 2026-10-18 08:35 trained the side-chain pair term's off-diagonal angular coefficients on
   a mixed gradient** (findings 3.12; fixed in the engine then): ff2.1's retrainings to step 37, ff3.0, ff3.1, ff3.2.
-  The corrected gradient shows no pull at ff3.0's or the control's fixed point (Phase 23); ff3.1's rerun is the
+  The corrected gradient shows no pull at ff3.0's or the control's fixed point (Phase 25); ff3.1's rerun is the
   direct test for ff3.1 (Phase 21); ff3.0 and ff2.1 are not retrained.
 
 * **Every hybrid glpG result before 2026-10-17 ran with misplaced side-chain beads** (findings 4.17; Phase 18):
@@ -827,9 +1097,10 @@ natives -0.029 (p 0.18), de novo +0.010 (p 0.49); TM > 0.5 shares equal within e
   kept unchanged so glpG stays comparable across campaigns. Whether to remove it is the user's call.
 * **CPU work runs on midway2 broadwl** unless the user names midway3 caslake. No `amd`, `beagle3`
   or GPU partitions, and not `broadwl-lc` (its nodes cannot see `/project`).
-* **HDX post-processing items await the user's decision** (user, 10-11; findings 5.5): the
-  `4.calc_D_uptake.py` PF = 1000 cap on never-exchanging amides (a master line), three docstring/README
-  statements that call TM helices non-exchanging, and the unmeasured interface boundary of the 7 A
-  tail-contact criterion. Nothing is changed until then; do not compare uptake with the HXMS data before.
+* **HDX post-processing items await the user's decision** (user, 10-11; findings 5.5): three docstring/README
+  statements that call TM helices non-exchanging, and the unmeasured interface boundary of the 7 A tail-contact
+  criterion. The PF = 1000 uptake cap was replaced in Upside 3 by the per-temperature ESS bound with censored
+  amides (A64, 10-20, under the user's 10-19 direction to fix every bug in Upside 3; master unchanged), told to
+  the user 10-20. Do not compare uptake with the HXMS data before the remaining items are settled.
 * **lambda's helix 2 / helix 4 misorientation** is a known ff2.1 limitation with no single
   side-chain cause (findings 11d). It is re-tested after ff3.0, not trained against.

@@ -31,42 +31,28 @@ def write_h5(source_h5_path, destination_h5_path, selected_indices):
     with tb.open_file(source_h5_path, 'r') as src_file:
         with tb.open_file(destination_h5_path, 'w') as dest_file:
             src_file.copy_node('/input', newparent=dest_file.root, recursive=True)
-            if '/output' not in dest_file:
-                dest_file.create_group('/', 'output')
+            dest_file.create_group('/', 'output')
 
-            lengths = []
-            data = []
-            node_names = []
-            for output_group in _output_groups(src_file):
-                lengths.append(len(output_group.pos))
+            # Join each dataset by name across the restart segments. The first frame of every segment after the
+            # first repeats the last frame before the restart; mdtraj_upside.load_upside_traj drops it, and
+            # selected_indices count frames that way. Datasets that are not per-frame are taken once.
+            per_frame = {}
+            once = {}
+            groups = list(_output_groups(src_file))
+            for g_no, output_group in enumerate(groups):
+                n_frame = len(output_group.pos)
                 for node in src_file.list_nodes(output_group):
-                    data.append(node.read())
-                    node_names.append(node.name)
+                    if node.shape[0] == n_frame:
+                        per_frame.setdefault(node.name, []).append(node.read()[1 if g_no else 0:])
+                    else:
+                        once.setdefault(node.name, node.read())
 
-            total_length = sum(lengths)
-            node_count = int(len(node_names) / (src_file.root._v_nchildren - 1))
-            if len(node_names[:node_count]) != len(set(node_names[:node_count])):
-                raise SystemExit('Output nodes do not match across groups in {}'.format(source_h5_path))
-            node_names = node_names[:node_count]
-
-            combined_data = []
-            for i in range(src_file.root._v_nchildren - 1):
-                if i == 0:
-                    combined_data = data[:node_count]
-                    continue
-
-                node_data = data[node_count * i:node_count * (i + 1)]
-                previous_data = combined_data
-                combined_data = []
-                for old_data, new_data in zip(previous_data, node_data):
-                    combined_data.append(np.concatenate([old_data, new_data]))
-
-            for combined, node_name in zip(combined_data, node_names):
-                if combined.shape[0] == total_length:
-                    filtered = combined[selected_indices]
-                else:
-                    filtered = combined
-                dest_file.create_array('/output', node_name, obj=filtered)
+            for node_name, parts in per_frame.items():
+                if len(parts) != len(groups):
+                    raise SystemExit('{} is not logged in every output group of {}'.format(node_name, source_h5_path))
+                dest_file.create_array('/output', node_name, obj=np.concatenate(parts)[selected_indices])
+            for node_name, data in once.items():
+                dest_file.create_array('/output', node_name, obj=data)
 
 
 target = md.load('{}/{}.pdb'.format(paths['pdb_dir'], pdb_id))

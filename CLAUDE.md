@@ -5,9 +5,9 @@ Upside is a molecular dynamics simulation package for protein folding and confor
 
 Before editing any `.up` simulation input file, force-field `.h5` parameter file, or preparation script in `py/`, read **`up.md`** in the repo root. It documents:
 - The HDF5 structure of `.up` files (all `/input` datasets, all `/input/potential` node types and their dataset schemas, the `/output` trajectory layout)
-- Every force-field parameter file (`sidechain.h5`, `hbond.h5`, `environment.h5`, `bb_env.dat`, `martini.h5`, `dopc.h5`, `rama.dat`, `sheet`, `membrane.h5`)
-- Hybrid-specific groups (`hybrid_bb_map`, `hybrid_remap`, `cgl_gle`, `barostat`, `stage_parameters`)
-- Critical conventions: angle storage as cosines, CGL target angle sign, GLY Ramachandran handedness (it lives in the library file, never in the config writer), spline table exactness, thermostat timescales
+- Every force-field parameter file (`sidechain.h5`, `hbond.h5`, `environment.h5`, `bb_env.dat`, `martini.h5`, the `parameters/dryMARTINI/` bilayer templates, `rama.dat`, `sheet`, `membrane.h5`)
+- Hybrid-specific groups (`hybrid_bb_map`, `hybrid_control`, `brownian`, `barostat`, `stage_parameters`)
+- Critical conventions: angle storage as cosines, GLY Ramachandran handedness (it lives in the library file, never in the config writer), spline table exactness, thermostat timescales
 
 ## Physical Model Integrity
 **CRITICAL: Do not modify, scale to zero, or disable core physics interactions.**
@@ -39,11 +39,16 @@ it is not.
   when a cause is unproven, and correct the record when a claim turns out to be wrong.
 
 ## Development Rules
-* **Backward Compatibility**: Modifications to C++ source files must not break existing function calls or the Python-to-C++ interface.
-* **Function Signatures**: When adding parameters to an existing function, the additional parameters must be optional (i.e., provide default values).
-* **Master Branch Parity**: The `master` branch is the gold standard; all modifications must produce results identical to those of the `master` branch for existing simulation configurations.
+**This branch (`martini-dev`) is Upside 3**, a new version that branches off `master` (user, 2026-10-19). `master` is the record of Upside 2 and the coding-style reference. It is not a parity target, and fixes go only into Upside 3. The plan is in `upside3.md`.
+
+* **Deliberate Departures Only**: Upside 3 may change results wherever it fixes a defect or improves the model. Every change must be deliberate and verified:
+  * a fix's reproducer passes;
+  * the node passes `tests/node_fd.py`;
+  * `tests/regress.py compare` against the build before the change shows that only the intended arrays moved.
+
+  An unintended change is a bug. Effects of fixes on ff2.1 are not measured or published.
+* **ff2.1 During Development**: ff2.1 configs and the Python-to-C++ interface keep working while Upside 3 is developed, because development still needs them. Upside 3 will later refuse ff2.1; that is a planned step, not done yet.
 * **Memory Layout**: Do not reorder existing member variables in classes accessed by Python to avoid memory corruption.
-* **Deprecation**: Mark old functions as deprecated instead of removing them to support legacy scripts.
 * **Physical Interactions**: Except for the Upside core, which uses a trained force field for protein dynamics, everything else should be physical. "Twisting parameters to make it work" is not allowed. No arbitrary capping, and no additional orientational potential for CGL. The CGL force field should not contain information of the bilayer. A stable bilayer should be a result of correct force field evolving, not something you twist parameters into.
 * **Spline Table Only**: During simulations, all interactions computed by Upside should use a spline table. Even if two particles have a simple Lennard-Jones potential, their interaction potentials need to be written to an .h5 file before the simulation, and Upside needs to read them from the .h5 file.
 * **Spline Tables Must Be The Original Potential**: A spline table is a representation, never a variant. Evaluated in native force-field units it must equal the published functional form exactly, including how that form reaches its cutoff — for dry-MARTINI that means reaction-field electrostatics (`epsilon_r = 15`, `epsilon_rf = 0`) and a potential-shifted Lennard-Jones, both going to zero at 1.2 nm. Do not tabulate a bare truncation, a re-fit, or a smoothed approximation. Assert the equivalence against the analytic form after unit conversion rather than assuming it.
@@ -59,16 +64,14 @@ it is not.
 * **Stylistic Matching**: Exactly match the formatting, naming conventions, and style of the human-written code found in the master repository.
 * **Exclusions**: Completely ignore `/Users/yinhan/Documents/upside2-md-master/example/00.AnalysisScripts` for style reference, as it is AI-written and not a valid baseline.
 
-### The "Clean Slate" Exception
-The rules for **Backward Compatibility**, **Function Signatures**, and **Deprecation** DO NOT apply to the code actively being developed. You must determine this scope by diffing the current repository against the master repository. 
-
-**CRITICAL RULE FOR DIFFED FILES:** Keep the actively modified or newly added interface files impeccably clean. Do not build layers of disabled code, do not leave commented-out legacy blocks, and do not write wrapper functions for old implementations. You must completely remove old or unused code and write the new implementations directly.
+### Clean Slate
+Upside 3 keeps no legacy layers. Do not mark old functions deprecated, add optional parameters only to stay compatible, or wrap old implementations. Remove old or unused code and write the new implementation directly. Do not build layers of disabled code or leave commented-out legacy blocks. The only compatibility kept is the ff2.1 support above, for as long as development needs it.
 
 ### Coherence of Edits
 **All edits must be coherent.** Every change to a C++, Python, or Markdown file must leave that file reading as a single, unified, logical whole — not layers of patches on patches, disabled toggles, commented-out legacy blocks, or wrappers around old implementations. When you fix or extend something, overwrite or delete the old implementation and write the new one directly, so the file reads as though authored in one pass. This applies equally to source (`.cpp`/`.h`), Python (`.py`), and documentation (`.md`).
 
 Two exceptions only:
-1. **Master parity takes precedence.** Do not refactor for coherence when doing so would change code that must remain identical to the `master` branch. Where a coherent rewrite would break master parity, keep master parity and leave that code alone.
+1. **A coherence refactor changes no results.** Rewriting code for coherence must leave `tests/regress.py compare` bitwise unchanged. If it cannot, the rewrite is a change of results and must be verified as one (Deliberate Departures Only).
 2. **Temporary debugging scaffolding.** Incoherent, throwaway edits (scaffolding, probes, temporary toggles) are allowed *while actively debugging*, but must be removed and the code returned to a coherent state before the task is considered complete.
 
 ### Environment Setup

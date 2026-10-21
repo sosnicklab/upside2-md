@@ -96,12 +96,45 @@ def resolve_start_frame(num_frames, default_fraction=0.20):
     return max(0, min(int(round(num_frames * default_fraction)), max(num_frames - 1, 0)))
 
 
-def protection_to_dg(mean_pf, temp_scale):
-    if mean_pf >= 1.0 - 1e-8:
-        return 1000.0
-    if mean_pf <= 1e-8:
-        return -1000.0
-    return 0.001987 * temp_scale * np.log(mean_pf / (1.0 - mean_pf))
+def require_on_ladder(T, temps, name):
+    """MBAR reweights within the sampled temperatures only; the ladder is logged in float32."""
+    for value in np.atleast_1d(np.asarray(temps, dtype=float)):
+        if not np.float32(np.min(T)) <= np.float32(value) <= np.float32(np.max(T)):
+            raise SystemExit('{} = {:.4f} lies outside the replica ladder {:.4f}-{:.4f}'.format(
+                name, value, np.min(T), np.max(T)))
+
+
+def load_pdb_numbering(input_dir, pdb_id):
+    """(chain, residue number) in the PDB of every Upside residue, from the .chi file PDB_to_initial_structure.py
+    writes. For a hybrid view martini_hdx_project.py has checked it equals the hybrid's hybrid_bb_map/bb_resseq."""
+    path = '{}/{}.chi'.format(input_dir, pdb_id)
+    if not os.path.exists(path):
+        raise SystemExit('missing {}, the PDB numbering PDB_to_initial_structure.py writes'.format(path))
+    with open(path) as handle:
+        rows = [line.split() for line in handle.read().splitlines()[1:] if line.strip()]
+    # residue restype chain resnum chi1 chi2, the chain column empty for a PDB without chain ids
+    return (np.array([row[2] if len(row) == 6 else '' for row in rows]),
+            np.array([int(row[-3]) for row in rows]))
+
+
+def residue_labels(chains, numbers):
+    """PDB residue labels, prefixed with the chain when there is more than one."""
+    if np.unique(chains).size > 1:
+        return np.array(['{}{}'.format(chain, number) for chain, number in zip(chains, numbers)])
+    return np.array([str(number) for number in numbers])
+
+
+def label_residue_axis(ax, labels):
+    """Label an axis drawn against the Upside residue index with the PDB numbering of each residue."""
+    from matplotlib.ticker import FuncFormatter, MaxNLocator
+
+    def label(x, position):
+        index = int(round(x))
+        return labels[index] if abs(x - index) < 1e-6 and 0 <= index < len(labels) else ''
+
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.xaxis.set_major_formatter(FuncFormatter(label))
+    ax.set_xlabel('Residue (PDB numbering)')
 
 
 def save_csv_rows(path, rows):

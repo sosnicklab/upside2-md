@@ -28,6 +28,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter, MaxNLocator
 import mdtraj as md
 
 Y_LIMITS = (-20.0, 30.0)  # the axis the reference figures use, so the two can be read side by side
@@ -91,11 +92,15 @@ def main():
     args = parser.parse_args()
 
     d = np.load(args.npz)
-    for required in ("dG_unclipped", "dg_limit"):
+    for required in ("dG_unclipped", "dg_limit", "pdb_resnum"):
         if required not in d.files:
             raise ValueError('%s has no %r; re-run 4.calc_D_uptake.py to regenerate it'
                              % (args.npz, required))
     residue = d["res"]
+    chains = d["pdb_chain"].astype(str)
+    numbers = d["pdb_resnum"]
+    multichain = np.unique(chains).size > 1
+    labels = np.array(["%s%d" % (c, n) if multichain else "%d" % n for c, n in zip(chains, numbers)])
     temps = np.asarray(d["temps"], dtype=float)
     dG = d["dG_unclipped"]
     dg_limit = np.asarray(d["dg_limit"], dtype=float)
@@ -116,7 +121,12 @@ def main():
         axis.plot(residue[resolved], y[resolved], marker, color=colour, markersize=8,
                   linestyle="none", label="T = %g" % temps[j], zorder=3)
 
-    axis.set_xlabel("Residue ID", fontsize=26)
+    # Drawn against the Upside residue index, labelled with the PDB numbering of each residue.
+    axis.xaxis.set_major_locator(MaxNLocator(integer=True))
+    axis.xaxis.set_major_formatter(FuncFormatter(
+        lambda x, position: labels[int(round(x))] if abs(x - round(x)) < 1e-6 and 0 <= round(x) < labels.size
+        else ""))
+    axis.set_xlabel("Residue (PDB numbering)", fontsize=26)
     axis.set_ylabel("DG (kcal/mol)", fontsize=26)
     axis.set_title(args.title, fontsize=27)
     axis.set_ylim(*Y_LIMITS)
@@ -137,7 +147,7 @@ def main():
     if segments:
         cap = cap_mask(residue, segments)
         interior = interior_mask(residue, segments)
-        print("  DSSP helices: %s" % ", ".join("%d-%d" % s for s in segments))
+        print("  DSSP helices: %s" % ", ".join("%s-%s" % (labels[a], labels[b]) for a, b in segments))
         print("  donors: %d helix interior, %d helix N-terminal cap, %d loop"
               % (int(interior.sum()), int(cap.sum()), int((~interior & ~cap).sum())))
     for target in wanted:
@@ -156,9 +166,9 @@ def main():
                   % (np.median(y[deep]) if deep.any() else np.nan,
                      np.median(y[resolved & cap]) if (resolved & cap).any() else np.nan,
                      np.median(y[loop]) if loop.any() else np.nan))
-            outlier = residue[deep & (y < 0.0)]
+            outlier = labels[residue[deep & (y < 0.0)]]
             print("          helix-interior amides below 0 kcal/mol: %s"
-                  % (outlier.tolist() if outlier.size else "none"))
+                  % (", ".join(outlier) if outlier.size else "none"))
 
 
 if __name__ == "__main__":

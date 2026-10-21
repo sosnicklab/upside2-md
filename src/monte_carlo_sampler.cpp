@@ -252,20 +252,32 @@ void JumpSampler::propose_random_move(float* delta_lprob,
 
 // ===[Monte Carlo Sampler Definitions]===
 
+// The momentum trails the coordinates by half a kick (half_kick for the whole force, slow_half_kick for the
+// slow forces of the multi-step integrator) and is correlated with the force there.  An accepted move
+// carries that half kick to the new coordinates; otherwise the next kick heats the system.
 void MonteCarloSampler::monte_carlo_step(
         uint32_t seed, 
         uint64_t round,
         const float temperature,
-        DerivEngine& engine) 
+        DerivEngine& engine,
+        VecArray mom,
+        float half_kick,
+        float slow_half_kick)
 {
     RandomGenerator random(seed, stream_id, 0, round);
 
     auto &pos = engine.pos->output;
+    int n_atom = engine.pos->n_atom;
     VecArrayStorage pos_copy(pos);
     float delta_lprob;
 
+    bool multi_step = slow_half_kick != half_kick;
+    if(multi_step) engine.compute(DerivMode, 1);
+    VecArrayStorage slow_sens_old(engine.pos->sens);
+
     engine.compute(PotentialAndDerivMode);
     float old_potential = engine.potential;
+    VecArrayStorage sens_old(engine.pos->sens);
 
     propose_random_move(&delta_lprob, random, pos);
 
@@ -277,6 +289,14 @@ void MonteCarloSampler::monte_carlo_step(
 
     if(lboltz_diff >= 0.f || expf(lboltz_diff) >= random.uniform_open_closed().x()) {
         move_stats.n_success++;
+        for(int na=0; na<n_atom; ++na)
+            update_vec(mom, na, -half_kick*(load_vec<3>(sens_old, na) - load_vec<3>(engine.pos->sens, na)));
+        if(multi_step) {
+            engine.compute(DerivMode, 1);
+            for(int na=0; na<n_atom; ++na)
+                update_vec(mom, na, -(slow_half_kick-half_kick)*
+                        (load_vec<3>(slow_sens_old, na) - load_vec<3>(engine.pos->sens, na)));
+        }
     } else {
         // If we reject the move, we must reverse it
         copy(pos_copy, pos);
@@ -285,8 +305,9 @@ void MonteCarloSampler::monte_carlo_step(
 
 // ===[Multiple Monte Carlo Sampler Definitions]===
 
-void MultipleMonteCarloSampler::execute(uint32_t seed, uint64_t round, const float temperature, DerivEngine& engine) {
-    for (auto& s: samplers) s->monte_carlo_step(seed, round, temperature, engine);
+void MultipleMonteCarloSampler::execute(uint32_t seed, uint64_t round, const float temperature, DerivEngine& engine,
+        VecArray mom, float half_kick, float slow_half_kick) {
+    for (auto& s: samplers) s->monte_carlo_step(seed, round, temperature, engine, mom, half_kick, slow_half_kick);
 }
 
 MultipleMonteCarloSampler::MultipleMonteCarloSampler(hid_t sampler_group, H5Logger& logger) {

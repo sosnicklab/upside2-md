@@ -50,7 +50,6 @@ def upside_config(fasta,
                   target_structure='',
                   spatial_transform_from_table='',
                   chain_break_from_file='',
-                  cavity_radius=0.,
                   intensive_memory= False,
 
                   bond_stiffness=None,
@@ -71,13 +70,11 @@ def upside_config(fasta,
                   dynamic_rotamer_1body = False,
                   rotamer_placement='',
                   rotamer_interaction='',
-                  rotamer_exclude_residues='',
 
                   environment_potential='',
                   environment_potential_type=None,
                   environment_weights_number=None,
                   vector_CA_CO=False,
-                  env_exclude_residues='',
 
                   bb_environment_potential='',
                   use_heavy_atom_coverage='',
@@ -89,7 +86,6 @@ def upside_config(fasta,
                   membrane_potential='',
                   channel_membrane_potential='',
                   membrane_thickness=0.,
-                  membrane_exposed_criterion=None,
                   membrane_exclude_residues='',
                   membrane_lateral_potential='',
                   use_curvature=False,
@@ -145,8 +141,6 @@ def upside_config(fasta,
         args.append('--rotamer-interaction=%s'%rotamer_interaction)
     if fix_rotamer:
         args.append('--fix-rotamer=%s'%fix_rotamer)
-    if rotamer_exclude_residues:
-        args.append('--rotamer-exclude-residues=%s'%rotamer_exclude_residues)
 
     if environment_potential:
         args.append('--environment-potential=%s'%environment_potential)
@@ -156,8 +150,6 @@ def upside_config(fasta,
         args.append('--environment-weights-number=%s'%environment_weights_number)
     if vector_CA_CO:
         args.append('--vector-CA-CO')
-    if env_exclude_residues:
-        args.append('--env-exclude-residues=%s'%env_exclude_residues)
 
     if bb_environment_potential:
         args.append('--bb-environment-potential=%s'%bb_environment_potential)
@@ -169,23 +161,23 @@ def upside_config(fasta,
 
     if surface:
         args.append('--surface')
-        if not membrane_thickness:
-            raise ValueError('Must supply membrane_thickness if using surface')
-    if surface_method:
+    if surface_method is not None:
         args.append('--surface-method=%i'%surface_method)
     if surface_included_residues:
         args.append('--surface-included-residues=%s'%surface_included_residues)
+    if zbuffer is not None:
+        args.append('--zbuffer=%f'%zbuffer)
+
+    if surface or channel_membrane_potential or membrane_potential:
+        if not membrane_thickness:
+            raise ValueError('Must supply membrane_thickness if using surface, channel_membrane_potential or membrane_potential')
+        args.append('--membrane-thickness=%f'%membrane_thickness)
 
     if channel_membrane_potential:
-        if not membrane_thickness:
-            raise ValueError('Must supply membrane_thickness if using channel_membrane_potential')
         if not surface:
             raise ValueError('Must supply --surface if using channel_membrane_potential')
 
         args.append('--channel-membrane-potential=%s'%channel_membrane_potential)
-        args.append('--membrane-thickness=%f'%membrane_thickness)
-        if membrane_exposed_criterion:
-            args.append('--membrane-exposed-criterion=%s'%membrane_exposed_criterion)
         if membrane_exclude_residues:
             args.append('--membrane-exclude-residues=%s'%membrane_exclude_residues)
 
@@ -195,12 +187,7 @@ def upside_config(fasta,
             args.append('--curvature-sign=%d'%curvature_sign)
 
     if membrane_potential:
-        if not membrane_thickness:
-            raise ValueError('Must supply membrane_thickness if using membrane_potential')
         args.append('--membrane-potential=%s'%membrane_potential)
-        args.append('--membrane-thickness=%f'%membrane_thickness)
-        if membrane_exposed_criterion:
-            args.append('--membrane-exposed-criterion=%s'%membrane_exposed_criterion)
         if membrane_exclude_residues:
             args.append('--membrane-exclude-residues=%s'%membrane_exclude_residues)
 
@@ -240,21 +227,9 @@ def advanced_config(config,
                   pair_spring='',
                   nail='',
                   contact_energies='',
-                  cooperation_contacts='',
-                  plumed='',
-                  plumed_time_step=0.009,
-                  plumed_temperature=0.9,
-                  external_table_potential='',
-                  external_pairs_type='',
-                  external_pairs_used='',
-                  spherical_well='',
-                  flat_bottom='',
-                  rotation='',
                   ask_before_using_AFM='',
                   AFM_time_initial=0.,
                   AFM_time_step=0.,
-                  secstr_bias='',
-                  chain_break_from_file='',
                   apply_restraint_group_to_each_chain=False,
                   make_unbound=False,
                   cavity_radius=0.,
@@ -269,8 +244,6 @@ def advanced_config(config,
         args.append('--restraint-group=%s'%rg)
     if restraint_spring_constant is not None:
         args.append('--restraint-spring-constant=%f'%restraint_spring_constant)
-    if flat_bottom:
-        args.append('--flat-bottom=%s'%flat_bottom)
 
     if fixed_wall:
         args.append('--fixed-wall=%s'%fixed_wall)
@@ -289,16 +262,9 @@ def advanced_config(config,
         args.append('--group-nail-spring=%s'%group_nail_spring)
     if group_const_spring:
         args.append('--group-const-spring=%s'%group_const_spring)
-        
-    if plumed:
-        args.append('--plumed=%s'%plumed)
-        args.append('--plumed-time-step=%f'%plumed_time_step)
-        args.append('--plumed-temperature=%f'%plumed_temperature)
 
     if contact_energies:
         args.append('--contact-energies=%s'%contact_energies)
-    if cooperation_contacts:
-        args.append('--cooperation-contacts=%s'%cooperation_contacts)
 
     if ask_before_using_AFM:
         args.append('--ask-before-using-AFM=%s'%ask_before_using_AFM)
@@ -307,21 +273,9 @@ def advanced_config(config,
     if AFM_time_step:
         args.append('--AFM-time-step=%f'%AFM_time_step)
 
-    if external_table_potential:
-        args.append('--external-pairs-table-potential=%s'%external_table_potential)
-    if external_pairs_type:
-        args.append('--external-pairs-type=%s'%external_pairs_type)
-    if external_pairs_used:
-        args.append('--external-pairs-used-percent=%s'%external_pairs_used)
-    if spherical_well:
-        args.append('--spherical-well=%s'%spherical_well)
-    if rotation:
-        args.append('--rotation=%s'%rotation)
     if nail:
-        args.append('--nail=%s'%nail)
+        args.append('--nail-spring=%s'%nail)
 
-    if chain_break_from_file:
-        args.append('--chain-break-from-file=%s'%chain_break_from_file)
     if apply_restraint_group_to_each_chain:
         args.append('--apply-restraint-group-to-each-chain')
     if cavity_radius:
@@ -362,7 +316,7 @@ class UpsideJob(object):
 
 def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threads=1, minutes=None, temperature=1., seed=None,
                replica_interval=None, anneal_factor=1., anneal_duration=-1., anneal_start=-1., anneal_end=-1., mc_interval=None, input_base=None, output_base=None,
-               time_step = None, swap_sets = None, exchange_criterion = None,
+               time_step = None, swap_sets = None,
                log_level='basic', account=None, disable_recentering=False, disable_z_recentering=False,
                extra_args=[], verbose=True):
     if isinstance(config,str): config = [config]
@@ -384,8 +338,6 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
             upside_args.extend(['--swap-set', s])
     if mc_interval is not None:
         upside_args.extend(['--monte-carlo-interval', '%f'%mc_interval])
-    if exchange_criterion is not None:
-        upside_args.extend(['--exchange-criterion', '%d'%exchange_criterion])
     if anneal_factor != 1.:
         upside_args.extend(['--anneal-factor', '%f'%anneal_factor])
     if anneal_duration != -1.:
@@ -557,9 +509,9 @@ def status(job):
 
 
 def read_hb(tr):
-    n_res = tr.root.input.pos.shape[0]/3
-    don_res =  tr.root.input.potential.infer_H_O.donors.id[:,1] / 3
-    acc_res = (tr.root.input.potential.infer_H_O.acceptors.id[:,1]-2) / 3
+    n_res = tr.root.input.pos.shape[0]//3
+    don_res =  tr.root.input.potential.infer_H_O.donors.id[:,1] // 3
+    acc_res = (tr.root.input.potential.infer_H_O.acceptors.id[:,1]-2) // 3
     
     n_hb = tr.root.output.hbond.shape[1]
     hb_raw   = tr.root.output.hbond[:]
@@ -652,12 +604,12 @@ def compute_topology(t):
         
         virtual = curr + bond_length[:,None] * vhat(vhat(curr-nxt) + vhat(curr-prev))
         new_pos = np.concatenate((pos,virtual), axis=0)
-        return json.dumps([map(float,x) for x in new_pos])  # convert to json form
+        return json.dumps(new_pos.tolist())  # convert to json form
     
     n_atom = 3*len(seq)
     backbone_names = ['N','CA','C']
     
-    backbone_atoms = [dict(name=backbone_names[i%3], residue_num=i/3, element=backbone_names[i%3][:1]) 
+    backbone_atoms = [dict(name=backbone_names[i%3], residue_num=i//3, element=backbone_names[i%3][:1])
                       for i in range(n_atom)]
     virtual_atoms  = [dict(name=('H' if i<n_donor else 'O'), residue_num=int(id[i,1]/3), 
                            element=('H' if i<n_donor else 'O'))
@@ -666,7 +618,7 @@ def compute_topology(t):
     virtual_bonds  = [[int(id[i,1]), n_atom+i] for i in range(n_donor+n_acceptor)]
     
     topology = json.dumps(dict(
-        residues = [dict(resname=str(s), resid=i) for i,s in enumerate(seq)],
+        residues = [dict(resname=s.decode('ASCII'), resid=i) for i,s in enumerate(seq)],
         atoms = backbone_atoms + virtual_atoms,
         bonds = backbone_bonds + virtual_bonds,
     ))

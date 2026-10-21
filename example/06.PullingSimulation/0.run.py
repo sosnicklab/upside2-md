@@ -171,6 +171,7 @@ upside_opts = (
                  "--frame-interval {} "
                  "--temperature {} "
                  "--seed {} "
+                 "--record-momentum "
                  "--disable-recentering "
                )
 
@@ -209,19 +210,25 @@ if continue_sim:
             else:
                 n = t.get_node('/output_previous_%i'%(i-1))
             t.root.input.pos[:,:,0] = n.pos[-1,0]
+            if 'mom' in t.root.input:
+                t.root.input.mom._f_remove()
+            t.create_array(t.root.input, 'mom', obj=n.mom[-1,0][:,:,None])
+            t.root.input.mom._v_attrs.round = n.round[-1]  # the round the momentum was recorded at
 
-            if 'tip_pos' in t.root.output:
-                tip_pos = t.root.output.tip_pos[-1]
-                #time_estimate   = t.root.output.time_estimate[-1][0]
-                if 'MovingConst3D' in t.root.input.potential:
-                    n = t.root.input.potential.MovingConst3D
-                elif 'MovingConst3D_pos' in t.root.input.potential:
-                    n = t.root.input.potential.MovingConst3D_pos
-                n.start_pos[:] = tip_pos
-                n._v_attrs.initialized_by_coord = 0
+            # the tip is at start_pos + velocities*time and its clock restarts at time_initial,
+            # so keep the tip's start and resume its clock
+            moving        = t.root.input.potential.MovingConst3D
+            time_estimate = n.time_estimate[-1,0]
+            start_pos     = n.tip_pos[-1] - moving.velocities[:]*time_estimate
+            if 'start_pos' in moving:
+                moving.start_pos._f_remove()
+            t.create_array(moving, 'start_pos', obj=start_pos)
+            moving._v_attrs.initialized_by_coord = 0
+            moving._v_attrs.time_initial         = time_estimate
 
             if 'output' in t.root:
                 t.root.output._f_rename(new_name)
+    upside_opts += "--restart-using-momentum "  # resumes the momentum and random counters copied above
 else:
     for fn in h5_files:
         shutil.copyfile(config_base, fn)

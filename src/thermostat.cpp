@@ -38,10 +38,7 @@ void OrnsteinUhlenbeckThermostat::apply(
             atom_mom_scale = expf(-delta_t/tau);
             atom_noise_scale = sqrtf(temp * (1.f-atom_mom_scale*atom_mom_scale));
         }
-        if(use_mass_aware_noise) {
-            float mass = martini_masses::get_mass(engine, na);
-            atom_noise_scale *= (mass > 0.f) ? sqrtf(mass) : 1.f;
-        }
+        if(use_mass_aware_noise) atom_noise_scale *= sqrtf(martini_masses::get_mass(engine, na));
         store_vec(mom, na, atom_mom_scale*p + atom_noise_scale*random.normal3());
     }
     n_invocations++;

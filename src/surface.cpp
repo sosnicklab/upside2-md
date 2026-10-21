@@ -12,7 +12,7 @@
 
 #define N_AMINO_ACID_TYPE 20
 #define ForceNorm 0.70710678
-#define FORCE_UNIT 2.428602e-5
+#define FORCE_UNIT 2.065948e-5  // 1 bar in E_up/A^3: 1e5 Pa * 1e-30 m^3/A^3 * N_A / (2914.952774272 J/mol per E_up)
 
 using namespace h5;
 using namespace std;

@@ -15,14 +15,11 @@ enum AtomRoleClass : unsigned char {
 
 struct HybridRuntimeState {
     bool has_config = false;
-    bool active = false;
-    bool exclude_intra_protein_martini = true;
+    bool active = false;   // the SC-env and BB-env interface is on; true exactly when has_config
     bool preprod_rigid = true;
     std::string activation_stage = "production";
     std::string preprod_mode = "rigid_body";
     size_t n_bb = 0;
-    size_t n_env = 0;
-    std::vector<int> bb_residue_index;
     std::vector<int> bb_atom_index;
     std::vector<int> bb_proxy_to_map_index;
     std::vector<std::array<int,4>> atom_indices;
@@ -45,7 +42,6 @@ struct HybridRuntimeState {
     std::vector<int> sc_env_po4_z_hold_atom_indices;
     float bb_env_interface_potential = 0.f;
     std::vector<int> preprod_fixed_atom_indices;
-    std::vector<int> preprod_z_fixed_atom_indices;
 };
 
 int bb_map_index_for_proxy(const HybridRuntimeState& st, int bb_proxy_atom);
@@ -60,6 +56,5 @@ std::string read_string_attribute_or_default(
         hid_t group,
         const char* attr_name,
         const std::string& fallback);
-void update_stage_for_engine(DerivEngine* engine, const std::string& stage);
 
 } // namespace martini_hybrid

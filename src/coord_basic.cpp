@@ -339,16 +339,17 @@ struct DihedralCoord : public CoordNode
 
         for(int nt=0; nt<n_elem; ++nt) {
             const auto& p = params[nt];
+            if (p.dummy_angle) {
+                dihe_pos(0,nt) = -1.3963f;   // -80 degrees if dummy angle; its atom -1 must not be read
+                continue;
+            }
+
             Float4 x[4];
             for(int na: range(4)) x[na] = Float4(posv + 4*p.atom[na]);
 
             Float4 d[4];
-	    if (p.dummy_angle)
-	        dihe_pos(0,nt) = -1.3963f;   // -80 degrees if dummy angle
-	    else {
-                dihe_pos(0,nt) = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
-                for(int na: range(4)) d[na].store(jac[nt].j[na]);
-            }
+            dihe_pos(0,nt) = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
+            for(int na: range(4)) d[na].store(jac[nt].j[na]);
         }
     }
 

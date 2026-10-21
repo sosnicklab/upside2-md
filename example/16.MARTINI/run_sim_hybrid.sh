@@ -40,15 +40,16 @@ while [[ $# -gt 0 ]]; do
 done
 
 PDB_ID="${PDB_ID:-1rkl}"
-TEMPERATURE="${TEMPERATURE:-0.8}"
+# dry-MARTINI is parameterised at 303.15 K = 0.8647 T_up
+TEMPERATURE="${TEMPERATURE:-0.8647}"
 
 # Full-resolution dynamics use one g-JF step for every physical degree of freedom. Production maps the
-# requested factor-four-corrected 40 ps clock onto the bare mobility of each MARTINI particle. A protein
-# carrier receives the additive FDT friction of the DOPC beads inside the 12 A interaction range. Molecular
-# DOPC COM diffusion remains an independently measured validation observable.
+# requested factor-four-corrected 40 ps clock onto the bare mobility of each MARTINI particle, each lipid's
+# beads at its own measured diffusion (LIPID_LATERAL_DIFFUSION_UM2_S in py/martini_prepare_system_lib.py). A
+# protein carrier receives the additive FDT friction of the lipid beads inside the 12 A interaction range.
+# Molecular lipid COM diffusion remains an independently measured validation observable.
 export UPSIDE_PROTEIN_TIME_PS_PER_STEP="${UPSIDE_PROTEIN_TIME_PS_PER_STEP:-40.0}"
 export UPSIDE_MARTINI_TIME_FACTOR="${UPSIDE_MARTINI_TIME_FACTOR:-4.0}"
-export UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S="${UPSIDE_DOPC_TARGET_DIFFUSION_UM2_S:-11.5}"
 export UPSIDE_DOPC_REFERENCE_TEMPERATURE_UP="${TEMPERATURE}"
 export UPSIDE_DRY_MARTINI_RELAXATION_PS="${UPSIDE_DRY_MARTINI_RELAXATION_PS:-4.0}"
 
@@ -72,17 +73,17 @@ PROTEIN_ORIENTATION_MODE="${PROTEIN_ORIENTATION_MODE:-input}"
 
 THERMOSTAT_TIMESCALE="${THERMOSTAT_TIMESCALE:-5.0}"
 THERMOSTAT_INTERVAL="${THERMOSTAT_INTERVAL:--1}"
-STRICT_STAGE_HANDOFF="${STRICT_STAGE_HANDOFF:-1}"
 
-MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-500}"
-MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-0}"
+# CHARMM-GUI step6.0 (soft core) and step6.1 each minimise for 5000 steps.
+MIN_60_MAX_ITER="${MIN_60_MAX_ITER:-5000}"
+MIN_61_MAX_ITER="${MIN_61_MAX_ITER:-5000}"
 MIN_70_MAX_ITER="${MIN_70_MAX_ITER:-500}"
-EQ_60_NSTEPS="${EQ_60_NSTEPS:-500}"
 EQ_62_NSTEPS="${EQ_62_NSTEPS:-500}"
 EQ_63_NSTEPS="${EQ_63_NSTEPS:-500}"
 EQ_64_NSTEPS="${EQ_64_NSTEPS:-500}"
 EQ_65_NSTEPS="${EQ_65_NSTEPS:-500}"
-EQ_66_NSTEPS="${EQ_66_NSTEPS:-500}"
+# 6.6 runs until the box (30,000 steps) and the lipid face (60,000) have converged (findings.md 8b).
+EQ_66_NSTEPS="${EQ_66_NSTEPS:-60000}"
 PROD_70_BURNIN_NSTEPS="${PROD_70_BURNIN_NSTEPS:-40000}"
 PROD_70_NSTEPS="${PROD_70_NSTEPS:-50000}"
 
@@ -173,11 +174,9 @@ workflow_args+=(
     --temperature "${TEMPERATURE}"
     --thermostat-timescale "${THERMOSTAT_TIMESCALE}"
     --thermostat-interval "${THERMOSTAT_INTERVAL}"
-    --strict-stage-handoff "${STRICT_STAGE_HANDOFF}"
     --min-60-max-iter "${MIN_60_MAX_ITER}"
     --min-61-max-iter "${MIN_61_MAX_ITER}"
     --min-70-max-iter "${MIN_70_MAX_ITER}"
-    --eq-60-nsteps "${EQ_60_NSTEPS}"
     --eq-62-nsteps "${EQ_62_NSTEPS}"
     --eq-63-nsteps "${EQ_63_NSTEPS}"
     --eq-64-nsteps "${EQ_64_NSTEPS}"

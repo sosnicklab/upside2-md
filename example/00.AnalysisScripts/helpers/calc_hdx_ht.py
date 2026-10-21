@@ -12,8 +12,12 @@ from scipy.stats import ks_2samp, linregress
 from helpers.advanced_analysis_utils import (
     build_paths,
     float_list_env,
+    label_residue_axis,
     load_optional_numeric_csv,
+    load_pdb_numbering,
     load_replica_results,
+    require_on_ladder,
+    residue_labels,
     resolve_start_frame,
     save_csv_rows,
 )
@@ -41,6 +45,20 @@ T = results['T']
 PS = results['PS']
 res = results['res']
 n_res = res.size
+pdb_chain, pdb_resnum = load_pdb_numbering(paths['input_dir'], pdb_id)
+pdb_labels = residue_labels(pdb_chain, pdb_resnum)
+
+require_on_ladder(T, target_temps, 'T_targets')
+require_on_ladder(T, plot_target_temps, 'plot_T_targets')
+require_on_ladder(T, target_T, 'target_T')
+
+
+def pdb_number_to_index(numbers):
+    """Upside residue index of each PDB residue number (-1 if absent); the experimental files carry no chain."""
+    if np.unique(pdb_resnum).size != pdb_resnum.size:
+        raise SystemExit('experimental residue numbers cannot be placed: the PDB numbering repeats across chains')
+    lookup = {int(number): index for index, number in enumerate(pdb_resnum)}
+    return np.array([lookup.get(int(number), -1) for number in numbers])
 
 if os.environ.get('start_frame') is None:
     start_frame = max(0, min(100, max(Rmsd.shape[1] - 1, 0)))
@@ -184,8 +202,7 @@ def calculate_residue_dg_profiles(temp_values, plot_mode=False):
             np.asarray(censor_masks), np.asarray(dg_limits))
 
 
-def residue_plot_limits(values):
-    return (-10.0, 30.0)
+RESIDUE_DG_LIMITS = (-10.0, 30.0)
 
 
 def plot_residue_profile_with_extremes(ax, x_values, y_values, y_errors, y_limits, label, color):
@@ -334,7 +351,7 @@ for t in T:
     hist, bins = np.histogram(Hb_flatten, 20, weights=weights)
     hist = np.clip(hist, 1e-12, None)
     bc = (bins[1:] + bins[:-1]) * 0.5
-    g = -0.593 * np.log(hist) * t
+    g = -0.001987 * (t / 0.85 * 298.0) * np.log(hist)
     g -= np.min(g)
     dG_hbond.append(g)
 
@@ -364,10 +381,14 @@ for temp_value, limit, mask in zip(dG_slice_temps, dGhx_slice_limit, dGhx_slice_
 # Persist the per-temperature profiles together with the censoring bound, so a renderer can show an
 # unresolved amide at the limit instead of running it off the axis.
 np.savez('{}/{}_dG_profiles.npz'.format(paths['result_dir'], pdb_id),
-         res=res, temps=dG_slice_temps, dG=dGhx_slice, dG_err=dGhx_slice_err,
+         res=res, pdb_chain=pdb_chain, pdb_resnum=pdb_resnum, temps=dG_slice_temps, dG=dGhx_slice, dG_err=dGhx_slice_err,
          censored=dGhx_slice_censored, dg_limit=dGhx_slice_limit,
          dG_unclipped=dGhx_slice_raw, dG_unclipped_err=dGhx_slice_raw_err)
-dG_profile_temps, dGhx_T, dGhx_T_err, _, _ = calculate_residue_dg_profiles(T)
+dG_profile_temps, dGhx_T, dGhx_T_err, dGhx_T_censored, _ = calculate_residue_dg_profiles(T)
+# A censored residue has no resolved dG (its sentinel, 1000 or -inf, would pass np.isfinite), so it is NaN
+# here and stays out of the ranking, the best-T choice, the NMR R^2 and the plots below.
+dGhx_T[dGhx_T_censored] = np.nan
+dGhx_T_err[dGhx_T_censored] = np.nan
 
 pf_frame = np.sum(PS[:, start_frame:, :], axis=2).flatten()
 den = np.linspace(0.0, 15.0, 151)
@@ -433,7 +454,7 @@ fig = plt.figure()
 ax = plt.subplot(111)
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
-plot_limits = residue_plot_limits(dGhx_slice)
+plot_limits = RESIDUE_DG_LIMITS
 ax.set_ylim(*plot_limits)
 color_cycle = plt.rcParams['axes.prop_cycle'].by_key().get('color', ['tab:blue'])
 for i in range(dG_slice_temps.size):
@@ -448,8 +469,9 @@ for i in range(dG_slice_temps.size):
     )
 if dGhx_NMR_MS is not None and getattr(dGhx_NMR_MS, 'ndim', 0) == 2 and dGhx_NMR_MS.shape[1] >= 2:
     x, y = dGhx_NMR_MS.T[:2]
-    ax.plot(x, y, color='k', marker='o')
-ax.set_xlabel('Residue Number (from N-term)')
+    x = pdb_number_to_index(x)
+    ax.plot(x[x >= 0], y[x >= 0], color='k', marker='o')
+label_residue_axis(ax, pdb_labels)
 ax.set_ylabel('∆G (kcal/mol)')
 ax.set_title('∆G for Upside T Slices')
 fontP = FontProperties()
@@ -465,7 +487,7 @@ ax = plt.subplot(111)
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for i in range(dG_profile_temps.size):
-    ax.plot(np.sort(dGhx_T[i])[::-1], label='T = {:.2f}'.format(dG_profile_temps[i]))
+    ax.plot(np.sort(dGhx_T[i][np.isfinite(dGhx_T[i])])[::-1], label='T = {:.2f}'.format(dG_profile_temps[i]))
 ranked_hxms = None
 if dGhx_HXMS is not None:
     ranked_hxms = np.sort(np.asarray(dGhx_HXMS, dtype=float))[::-1]
@@ -495,7 +517,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 plt.bar(res, dGhx_D[0, :])
 plt.title('∆G Upside vs. Sequential Residues')
-plt.xlabel('Residue Number (from N-term)')
+label_residue_axis(plt.gca(), pdb_labels)
 plt.ylabel('∆G (kcal/mol)')
 plt.savefig('{}/{}_DG_res.png'.format(paths['result_dir'], pdb_id), dpi=300, bbox_inches='tight')
 plt.close()
@@ -504,7 +526,7 @@ width = 0.5
 fig, ax1 = plt.subplots()
 plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
-ax1.set_xlabel('Residue Number (from N-term)')
+label_residue_axis(ax1, pdb_labels)
 ax1.set_ylabel('∆G (kcal/mol)', color='tab:blue')
 ax1.bar(res - width, dGhx_D[0, :], color='tab:blue')
 ax1.tick_params(axis='y', labelcolor='tab:blue')
@@ -518,17 +540,14 @@ plt.savefig('{}/{}_DG_mvalue.png'.format(paths['result_dir'], pdb_id), dpi=300, 
 plt.close()
 
 if ranked_hxms is not None:
-    diff_sorts = []
-    for i in range(T.size):
-        ranked_sim = np.sort(dGhx_T[i])[::-1]
-        diff_sorts.append(np.abs(ranked_sim[0] - ranked_hxms[0]))
-    selected_index = int(np.argmin(diff_sorts))
+    diff_sorts = [np.abs(np.nanmax(dGhx_T[i]) - ranked_hxms[0]) for i in range(T.size)]
+    selected_index = int(np.nanargmin(diff_sorts))
 else:
     selected_index = int(np.argmin(np.abs(T - reference_temperature)))
 
 selected_T = T[selected_index]
 selected_profile = dGhx_T[selected_index]
-selected_ranked = np.sort(selected_profile)[::-1]
+selected_ranked = np.sort(selected_profile[np.isfinite(selected_profile)])[::-1]
 
 if dGhx_HXMS is not None or dGhx_NMR is not None:
     fig = plt.figure()
@@ -548,9 +567,9 @@ if dGhx_HXMS is not None or dGhx_NMR is not None:
 
 if dGhx_NMR_MS is not None and getattr(dGhx_NMR_MS, 'ndim', 0) == 2 and dGhx_NMR_MS.shape[1] >= 2:
     nmr_ms = np.asarray(dGhx_NMR_MS, dtype=float)
-    nmr_res = nmr_ms[:, 0].astype(int)
+    nmr_res = pdb_number_to_index(nmr_ms[:, 0])
     nmr_vals = nmr_ms[:, 1].astype(float)
-    res_int = np.intersect1d(res.astype(int), nmr_res)
+    res_int = np.intersect1d(res.astype(int), nmr_res[nmr_res >= 0])
 
     if res_int.size >= 2:
         sorter_res = np.argsort(res.astype(int))
@@ -587,7 +606,7 @@ if dGhx_NMR_MS is not None and getattr(dGhx_NMR_MS, 'ndim', 0) == 2 and dGhx_NMR
             plt.plot(res, dGhx_T[best_index], '-o', label='Upside Simulation', color='tab:blue')
             plt.scatter(res_int, exp_vals, label='NMR Experiment', color='tab:orange')
             plt.legend()
-            plt.xlabel('Residue Number (from N-term)')
+            label_residue_axis(plt.gca(), pdb_labels)
             plt.ylabel('∆G (kcal/mol)')
             plt.title('∆G for Upside and NMR at Upside T = {:.2f}'.format(T[best_index]))
             plt.savefig('{}/{}_DG_res_NMR.png'.format(paths['result_dir'], pdb_id), dpi=300, bbox_inches='tight')
@@ -614,10 +633,10 @@ if dGhx_NMR_MS is not None and getattr(dGhx_NMR_MS, 'ndim', 0) == 2 and dGhx_NMR
 
             save_csv_rows(
                 '{}/{}_NMR_compare.csv'.format(paths['result_dir'], pdb_id),
-                [res_int, best_profile, exp_vals],
+                [pdb_resnum[res_int], best_profile, exp_vals],
             )
 
-save_csv_rows('{}/{}.csv'.format(paths['result_dir'], pdb_id), [res, selected_profile])
+save_csv_rows('{}/{}.csv'.format(paths['result_dir'], pdb_id), [res, pdb_resnum[res], selected_profile])
 rank_rows = [selected_ranked]
 if ranked_hxms is not None:
     rank_rows.append(ranked_hxms)

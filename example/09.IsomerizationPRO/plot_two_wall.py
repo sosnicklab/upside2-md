@@ -14,13 +14,11 @@ def main(pro_state_file):
 
     fields = [ln.split() for ln in open(pro_state_file)]
 
-    header_fields = 'residue init_state energy k width'.split()
-    if [x.lower() for x in fields[0]] == header_fields:
-        len_header_fields = len(header_fields)
-    else:
-        parser.error('First line of restraint table must be "%s"'%(" ".join(header_fields)))
-    if not all(len(f)==len_header_fields for f in fields):
-        parser.error('Invalid format for restraint file')
+    header_fields = 'residue energy k width'.split()
+    if [x.lower() for x in fields[0]] != header_fields:
+        raise ValueError('First line of restraint table must be "%s"'%(" ".join(header_fields)))
+    if not all(len(f)==len(header_fields) for f in fields):
+        raise ValueError('Invalid format for restraint file')
 
     fields = fields[1:]
     n_pro = len(fields)
@@ -29,9 +27,9 @@ def main(pro_state_file):
     k          = np.zeros(n_pro)
     width      = np.zeros(n_pro)
     for i,f in enumerate(fields):
-        energy[i]     = float(f[2])  # the height from the trans state to the transition state
-        k[i]          = float(f[3])  # k*energy is the  height from the cis state to the transition state
-        width[i]      = float(f[4])  # compact_sigmoid cuts off at angle +/- width (degree)
+        energy[i]     = float(f[1])  # the height from the trans state to the transition state
+        k[i]          = float(f[2])  # k*energy is the  height from the cis state to the transition state
+        width[i]      = float(f[3])  # compact_sigmoid cuts off at angle +/- width (degree)
 
     x1 = np.linspace(-np.pi, -0.5*np.pi, 50)
     x2 = np.linspace(-0.5*np.pi, 0., 50)

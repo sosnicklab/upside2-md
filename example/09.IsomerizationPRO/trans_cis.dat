@@ -1,2 +1,2 @@
-residue init_state energy k width
-18 0 3 0.7 45.0
+residue energy k width
+18 3 0.7 45.0

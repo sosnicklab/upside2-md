@@ -1,5 +1,5 @@
 #include "box.h"
-#include "martini.h"
+#include "martini_internal.h"
 #include <cmath>
 #include <algorithm>
 #include <atomic>
@@ -21,93 +21,97 @@ static std::atomic<NodeBoxUpdater> g_node_box_updater{nullptr};
 // Attempt to read barostat settings from H5 config
 static BarostatSettings read_barostat_settings(hid_t root) {
     BarostatSettings s;
-    if(h5_exists(root, "/input/barostat")) {
-        auto grp = open_group(root, "/input/barostat");
-        s.target_p_xy = read_attribute<float>(grp.get(), ".", "target_p_xy", s.target_p_xy);
-        s.target_p_z = read_attribute<float>(grp.get(), ".", "target_p_z", s.target_p_z);
-        s.tau_p = read_attribute<float>(grp.get(), ".", "tau_p", s.tau_p);
-        s.interval = read_attribute<int>(grp.get(), ".", "interval", s.interval);
-        s.compressibility = read_attribute<float>(grp.get(), ".", "compressibility", s.compressibility);
-        s.compressibility_xy = read_attribute<float>(grp.get(), ".", "compressibility_xy", s.compressibility);
-        s.compressibility_z = read_attribute<float>(grp.get(), ".", "compressibility_z", s.compressibility);
-        s.semi_isotropic = read_attribute<int>(grp.get(), ".", "semi_isotropic", int(s.semi_isotropic)) != 0;
-        s.mc_dmax_xy = read_attribute<float>(grp.get(), ".", "mc_dmax_xy", s.mc_dmax_xy);
-        s.mc_dmax_z  = read_attribute<float>(grp.get(), ".", "mc_dmax_z",  s.mc_dmax_z);
-        s.mc_seed    = read_attribute<unsigned>(grp.get(), ".", "mc_seed", s.mc_seed);
-    }
+    auto grp = open_group(root, "/input/barostat");
+    s.target_p_xy = read_attribute<float>(grp.get(), ".", "target_p_xy", s.target_p_xy);
+    s.target_p_z = read_attribute<float>(grp.get(), ".", "target_p_z", s.target_p_z);
+    s.interval = read_attribute<int>(grp.get(), ".", "interval", s.interval);
+    s.mc_dmax_xy = read_attribute<float>(grp.get(), ".", "mc_dmax_xy", s.mc_dmax_xy);
+    s.mc_dmax_z  = read_attribute<float>(grp.get(), ".", "mc_dmax_z",  s.mc_dmax_z);
     return s;
 }
 
-void register_barostat_for_engine(hid_t config_root, DerivEngine& engine) {
+void unregister_barostat_for_engine(DerivEngine& engine) {
+    std::lock_guard<std::mutex> lk(g_baro_mutex);
+    g_baro_state.erase(&engine);
+}
+
+void register_barostat_for_engine(hid_t config_root, DerivEngine& engine, uint32_t random_seed) {
     if(!h5_exists(config_root, "/input/barostat")) return;
     BarostatSettings s = read_barostat_settings(config_root);
 
-    float bx = 0.f, by = 0.f, bz = 0.f;
-    try {
-        // Try to get box dimensions from various sources
-        if(h5_exists(config_root, "/input/potential/periodic_boundary_potential")) {
-            auto grp = open_group(config_root, "/input/potential/periodic_boundary_potential");
-            bx = read_attribute<float>(grp.get(), ".", "x_len");
-            by = read_attribute<float>(grp.get(), ".", "y_len");
-            bz = read_attribute<float>(grp.get(), ".", "z_len");
-        } else if(h5_exists(config_root, "/input/potential/martini_potential")) {
-            auto grp = open_group(config_root, "/input/potential/martini_potential");
-            bx = read_attribute<float>(grp.get(), ".", "x_len");
-            by = read_attribute<float>(grp.get(), ".", "y_len");
-            bz = read_attribute<float>(grp.get(), ".", "z_len");
-        }
-    } catch(...) {
-        bx = by = bz = 0.f;
-    }
-    
+    const char* box_node = h5_exists(config_root, "/input/potential/periodic_boundary_potential")
+        ? "/input/potential/periodic_boundary_potential" : "/input/potential/martini_potential";
+    if(!h5_exists(config_root, box_node))
+        throw std::string("the barostat needs a periodic box (x_len, y_len, z_len on martini_potential)");
+    auto grp = open_group(config_root, box_node);
+    float bx = read_attribute<float>(grp.get(), ".", "x_len");
+    float by = read_attribute<float>(grp.get(), ".", "y_len");
+    float bz = read_attribute<float>(grp.get(), ".", "z_len");
+    if(!(bx > 0.f && by > 0.f && bz > 0.f))
+        throw std::string("the barostat needs a positive periodic box");
+
+    // Monte-Carlo barostat: group atoms by molecule (COM scaling)
+    int n_atom = engine.pos->n_atom;
+    if(!h5_exists(config_root, "/input/molecule_ids"))
+        throw std::string("Monte-Carlo barostat requires /input/molecule_ids for COM scaling");
+    check_size(config_root, "/input/molecule_ids", n_atom);
+    std::vector<int> mol_id;
+    traverse_dset<1,int>(config_root, "/input/molecule_ids", [&](size_t, int m){ mol_id.push_back(m); });
+    int max_id = *std::max_element(mol_id.begin(), mol_id.end());
+    if(max_id < 0 || *std::min_element(mol_id.begin(), mol_id.end()) < 0)
+        throw std::string("/input/molecule_ids must be nonnegative");
+
     std::lock_guard<std::mutex> lk(g_baro_mutex);
     auto& st = g_baro_state[&engine];
     st.settings = s;
     st.box_x = bx;
     st.box_y = by;
     st.box_z = bz;
-
-    // Monte-Carlo barostat: group atoms by molecule (COM scaling) + seed the RNG
-    st.mc_mol_atoms.clear();
-    st.mc_init = false;
-    try {
-        if(h5_exists(config_root, "/input/molecule_ids")) {
-            std::vector<int> mol_id;
-            traverse_dset<1,int>(config_root, "/input/molecule_ids",
-                [&](size_t, int m){ mol_id.push_back(m); });
-            int max_id = -1;
-            for(int m : mol_id) max_id = std::max(max_id, m);
-            if(max_id >= 0) {
-                st.mc_mol_atoms.assign(static_cast<size_t>(max_id + 1), {});
-                for(size_t a = 0; a < mol_id.size(); ++a)
-                    st.mc_mol_atoms[static_cast<size_t>(mol_id[a])].push_back(static_cast<int>(a));
-                st.mc_rng.seed(s.mc_seed);
-                st.mc_init = true;
-            }
-        }
-    } catch(...) { st.mc_mol_atoms.clear(); st.mc_init = false; }
-    if(!st.mc_init)
-        throw std::string("Monte-Carlo barostat requires /input/molecule_ids for COM scaling");
+    st.mc_mol_atoms.assign(static_cast<size_t>(max_id + 1), {});
+    for(int a = 0; a < n_atom; ++a)
+        st.mc_mol_atoms[static_cast<size_t>(mol_id[a])].push_back(a);
+    st.mc_seed = random_seed;
+    st.mc_init = true;
 }
 
 void register_node_box_updater(NodeBoxUpdater updater) {
     g_node_box_updater.store(updater, std::memory_order_relaxed);
 }
 
-// Monte-Carlo barostat: one lateral (xy) + one normal (z) trial move per call, each accepting on the
-// exact NPT weight exp(-beta[dU + P*dV]) * (V'/V)^N_mol. Molecule COMs are scaled (internal geometry
-// preserved), so dU is purely intermolecular -- the modulus reflects membrane area elasticity, not bond
-// stiffness. Correct fluctuations by construction, independent of any coupling constant.
+// The hybrid position node recomputes each residue's BB proxy and backbone O from the protein carriers at
+// every evaluation. Those slots are held fixed only so that the integrator leaves them alone: they move with
+// their molecule and do not pin it in space.
+static std::vector<unsigned char> hybrid_derived_slots(const DerivEngine& engine, int n_atom) {
+    std::vector<unsigned char> derived(static_cast<size_t>(n_atom), 0);
+    auto st = martini_hybrid::get_state_for_coord(*engine.pos);
+    if(!st || !st->active) return derived;
+    for(size_t k = 0; k < st->bb_atom_index.size() && k < st->bb_reference_runtime_atom_indices.size(); ++k) {
+        int bb = st->bb_atom_index[k];
+        int o  = st->bb_reference_runtime_atom_indices[k][3];
+        if(bb >= 0 && bb < n_atom) derived[bb] = 1;
+        if(o  >= 0 && o  < n_atom) derived[o]  = 1;
+    }
+    return derived;
+}
+
+// Monte-Carlo barostat: one lateral (xy) + one normal (z) trial move per call. Each move draws the log of
+// the box-length scale uniformly and scales molecule centres, internal geometry preserved, so dU is purely
+// intermolecular -- the modulus reflects membrane area elasticity, not bond stiffness. A move is accepted on
+// the exact NPT weight exp(-beta[dU + P*dV]) * (V'/V)^(N+1): one factor V'/V for each of the N scaled
+// centres and one because the proposal is uniform in ln V. A molecule holding a fixed atom (other than a
+// derived hybrid slot) is not scaled; one holding a z-fixed atom is scaled laterally but not by the normal move.
 static void apply_mc_barostat(BarostatState& st, DerivEngine& engine, int n_atom, float kT) {
     if(!st.mc_init || st.mc_mol_atoms.empty() || kT <= 0.f) return;
     auto& s = st.settings;
     VecArray pos = engine.pos->output;
 
-    std::vector<unsigned char> fixed(static_cast<size_t>(std::max(0, n_atom)), 0);
-    for(int a : martini_fix_rigid::get_fixed_atoms(engine))   if(a >= 0 && a < n_atom) fixed[a] = 1;
-    for(int a : martini_fix_rigid::get_z_fixed_atoms(engine)) if(a >= 0 && a < n_atom) fixed[a] = 1;
+    std::vector<unsigned char> derived = hybrid_derived_slots(engine, n_atom);
+    std::vector<unsigned char> fixed(static_cast<size_t>(n_atom), 0);
+    std::vector<unsigned char> z_fixed(static_cast<size_t>(n_atom), 0);
+    for(int a : martini_fix_rigid::get_fixed_atoms(engine))   if(a >= 0 && a < n_atom && !derived[a]) fixed[a] = 1;
+    for(int a : martini_fix_rigid::get_z_fixed_atoms(engine)) if(a >= 0 && a < n_atom) z_fixed[a] = 1;
 
-    std::vector<float> saved(3 * static_cast<size_t>(std::max(0, n_atom)));
+    std::vector<float> saved(3 * static_cast<size_t>(n_atom));
     std::uniform_real_distribution<double> uni(0.0, 1.0);
 
     engine.compute(PotentialAndDerivMode);
@@ -129,53 +133,57 @@ static void apply_mc_barostat(BarostatState& st, DerivEngine& engine, int n_atom
         long n_scaled = 0;
         for(auto& atoms : st.mc_mol_atoms) {
             if(atoms.empty()) continue;
-            bool anyfix = false;
-            for(int a : atoms) if(a < n_atom && fixed[a]) { anyfix = true; break; }
-            if(anyfix) continue;
+            bool held = false;
+            for(int a : atoms) if(fixed[a] || (axis == 1 && z_fixed[a])) { held = true; break; }
+            if(held) continue;
+            // centre of the molecule made whole: each atom taken at its minimum image from the first
+            int a0 = atoms[0];
+            float x0 = pos(0,a0), y0 = pos(1,a0), z0 = pos(2,a0);
             double cx = 0, cy = 0, cz = 0;
-            for(int a : atoms) { cx += pos(0,a); cy += pos(1,a); cz += pos(2,a); }
-            double inv = 1.0 / atoms.size(); cx *= inv; cy *= inv; cz *= inv;
-            float dx = float(cx*sx - cx), dy = float(cy*sy - cy), dz = float(cz*sz - cz);
-            for(int a : atoms) { pos(0,a) += dx; pos(1,a) += dy; pos(2,a) += dz; }
+            for(int a : atoms) {
+                float dx = pos(0,a) - x0, dy = pos(1,a) - y0, dz = pos(2,a) - z0;
+                minimum_image_scalar(dx, dy, dz, bx0, by0, bz0);
+                cx += dx; cy += dy; cz += dz;
+            }
+            double inv = 1.0 / atoms.size();
+            cx = x0 + cx*inv; cy = y0 + cy*inv; cz = z0 + cz*inv;
+            // An atom stored n box lengths from its place in the whole molecule moves by (s-1)(centre + n box):
+            // the scaled configuration is the same whichever periodic images the atoms are stored in.
+            for(int a : atoms) {
+                float nx = roundf((pos(0,a) - x0) / bx0);
+                float ny = roundf((pos(1,a) - y0) / by0);
+                float nz = roundf((pos(2,a) - z0) / bz0);
+                pos(0,a) += float((sx - 1.0) * (cx + nx*bx0));
+                pos(1,a) += float((sy - 1.0) * (cy + ny*by0));
+                pos(2,a) += float((sz - 1.0) * (cz + nz*bz0));
+            }
             ++n_scaled;
         }
         if(n_scaled == 0) continue;
 
-        st.box_x *= sx; st.box_y *= sy; st.box_z *= sz;
-        update_node_boxes(engine, sx, sz);       // xy scale = sx (=sy), z scale = sz
+        st.box_x = bx0 * sx; st.box_y = by0 * sy; st.box_z = bz0 * sz;
+        update_node_boxes(engine, st.box_x, st.box_y, st.box_z);
         double V_new = double(st.box_x) * st.box_y * st.box_z;
 
         engine.compute(PotentialAndDerivMode);
         double U_new = engine.potential;
 
         double arg = -(1.0/kT) * ((U_new - U_old) + double(P) * (V_new - V_old))
-                     + double(n_scaled) * std::log(V_new / V_old);
-        st.mc_attempt[axis]++;
+                     + double(n_scaled + 1) * std::log(V_new / V_old);
         if(std::log(uni(st.mc_rng)) < arg) {
-            U_old = U_new; st.mc_accept[axis]++;                 // accept
+            U_old = U_new;                                        // accept
         } else {
             for(int i = 0; i < n_atom; ++i) { pos(0,i) = saved[3*i]; pos(1,i) = saved[3*i+1]; pos(2,i) = saved[3*i+2]; }
-            st.box_x = bx0; st.box_y = by0; st.box_z = bz0;      // restore box exactly
-            update_node_boxes(engine, 1.f/sx, 1.f/sz);           // undo node-box scaling
+            st.box_x = bx0; st.box_y = by0; st.box_z = bz0;
+            update_node_boxes(engine, bx0, by0, bz0);            // restore every box exactly
         }
     }
-    st.last_scale_xy = 1.f; st.last_scale_z = 1.f;
 }
 
 void maybe_apply_barostat(DerivEngine& engine,
-                          const VecArray& mom,
                           int n_atom,
                           uint64_t round_num,
-                          float dt,
-                          int inner_step,
-                          float temperature,
-                          int verbose,
-                          bool print_now) {
-    (void)mom;
-    (void)dt;
-    (void)inner_step;
-    (void)verbose;
-    (void)print_now;
+                          float temperature) {
     std::lock_guard<std::mutex> lk(g_baro_mutex);
     auto it = g_baro_state.find(&engine);
     if(it == g_baro_state.end()) return;
@@ -186,9 +194,9 @@ void maybe_apply_barostat(DerivEngine& engine,
     if(s.interval <= 0) return;
     if(round_num == 0 || (round_num % s.interval) != 0) return;
 
-    // Box must be initialized before scaling
-    if(st.box_x == 0.f || st.box_y == 0.f || st.box_z == 0.f) return;
-
+    // Seed the trial moves from the round, so that a continuation draws the moves of the continuous run.
+    std::seed_seq seed{st.mc_seed, uint32_t(round_num), uint32_t(round_num >> 32)};
+    st.mc_rng.seed(seed);
     apply_mc_barostat(st, engine, n_atom, temperature);
 }
 
@@ -209,21 +217,9 @@ bool is_enabled(const DerivEngine& engine) {
     return it != g_baro_state.end();
 }
 
-void update_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
+void update_node_boxes(DerivEngine& engine, float box_x, float box_y, float box_z) {
     NodeBoxUpdater updater = g_node_box_updater.load(std::memory_order_relaxed);
-    if(updater) updater(engine, scale_xy, scale_z);
-}
-
-void get_pressure(const DerivEngine& engine, float& pxy, float& pz) {
-    std::lock_guard<std::mutex> lk(g_baro_mutex);
-    auto it = g_baro_state.find(const_cast<DerivEngine*>(&engine));
-    if(it != g_baro_state.end()) {
-        pxy = it->second.last_pxy_inst;
-        pz = it->second.last_pz_inst;
-    } else {
-        pxy = 0.0f;
-        pz = 0.0f;
-    }
+    if(updater) updater(engine, box_x, box_y, box_z);
 }
 
 float get_volume(const DerivEngine& engine) {

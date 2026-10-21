@@ -30,6 +30,14 @@ def infer_charge_from_atomtype(bead_type: str) -> float:
     return 0.0
 
 
+def sc_target_label(bead_type: str, charge: float) -> str:
+    """Name of a side-chain/environment table target: the bead type and its topology charge.
+
+    A bead type does not fix the charge (the PC choline bead is Q0 with charge +1), so a target is the pair.
+    """
+    return f"{bead_type.strip()}{float(charge):+g}"
+
+
 def parse_itp_defines(itp_path: str | Path) -> Dict[str, Tuple[float, ...]]:
     """Extract ``#define`` macros from an ITP file.
 

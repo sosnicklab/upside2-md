@@ -12,7 +12,8 @@ def _output_groups(t):
         yield t.get_node('/output')
         i += 1
 
-upside_to_pN   = 41.4
+# 1 E_up/A = 2.914952774272 kJ/mol/A = 2914.952774272/6.02214076e23 J / 1e-10 m = 48.40 pN
+upside_to_pN   = 48.40
 
 #-------------------------------------
 
@@ -85,7 +86,7 @@ for ii in range(ndx[0].size):
         tip_exten = tip_pos - start
         fname = '{}/{}-{}-replica{}-res{}-{}.dat'.format(result_dir, pdb_id, sim_id, rid, (aa-1)//3, dim_name[dim] )
         with open(fname, 'w') as out:
-            out.write('# Extension (nm) Force (pN) TipPos (nm)\n')
+            out.write('# Extension (A) Force (pN) TipPos (A)\n')
 
             for i,e in enumerate(extension):
                 out.write('{} {} {}\n'.format(e, force[i], tip_exten[i]))

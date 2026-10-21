@@ -21,6 +21,10 @@ three_letter_aa["*P"] = "CPR"
 
 nonstandard_restype_conversion = dict(
         MSE='MET',  # selenomethionine
+        HSD='HIS', HSE='HIS', HSP='HIS',  # CHARMM histidine protonation states
+        HID='HIS', HIE='HIS', HIP='HIS',  # AMBER histidine protonation states
+        CYX='CYS', CYM='CYS',             # AMBER disulfide-bonded and deprotonated cysteine
+        ASH='ASP', GLH='GLU', LYN='LYS',  # AMBER neutral aspartate, glutamate and lysine
         )
 
 aa_num = dict([(k,i) for i,k in enumerate(sorted(three_letter_aa.values()))])
@@ -54,9 +58,12 @@ def read_residues(chain):
         if restype in nonstandard_restype_conversion:
             restype = nonstandard_restype_conversion[restype]
 
-        if restype not in one_letter_aa: 
+        if restype not in one_letter_aa:
+            if set(('N','CA','C')) <= set(res.getNames()):
+                raise RuntimeError('Unknown amino acid %s (residue %i, chain %s); add it to nonstandard_restype_conversion'
+                        % (restype, res.getResnum(), chain.getChid()))
             ignored_restypes[restype] = ignored_restypes.get(restype,0) + 1
-            continue  # let's hope it is HOH or something
+            continue  # not an amino acid: water, ion or ligand
 
         try:
             phi = prody.calcPhi(res)*deg
@@ -105,7 +112,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('pdb', help='input .pdb file')
     parser.add_argument('basename', help='output basename')
-    parser.add_argument('--model', default=None, help='Choose only a specific model in the .pdb')
+    parser.add_argument('--model', default=None, type=int, help='Choose only a specific model in the .pdb')
     parser.add_argument('--chains', default='', 
             help='Comma-separated list of chains to parse (e.g. --chains=A,C,E). Default is all chains.')
     parser.add_argument('--allow-unexpected-chain-breaks', default=False, action='store_true', 
@@ -142,9 +149,8 @@ def main():
     chain_first_residue = []
     chain_counts = [] # Keep track of unexpected broken chain membership to actual chains
 
-    for ch_num, (chain_id, (res,ignored_restype)) in enumerate(chains):
+    for chain_id, (res,ignored_restype) in chains:
         print ("chain %s:" % chain_id)
-        chain_counts.append(1)
 
         # only look at residues with complete backbones
         res = [r for r in res if np.all(np.isfinite(np.array((r.N,r.CA,r.C))))]
@@ -156,6 +162,11 @@ def main():
             print ('    ignored restype %-3s (%i residues)'%(k,v))
         print ()
 
+        # a chain without a usable residue (an OPM file's DUM membrane atoms) is not a chain of the protein
+        if not res:
+            continue
+        chain_counts.append(1)
+
         for i,r in enumerate(res):
             if coords: # residues left by a previous chain
                 dist = vmag(r.N-coords[-1])
@@ -164,11 +175,11 @@ def main():
                          len(coords)//3, dist))
                     if i:
                         unexpected_chain_breaks = True
-                        chain_counts[ch_num] += 1
+                        chain_counts[-1] += 1
 
                     if args.record_chain_breaks: chain_first_residue.append(len(coords)/3)
                     if i and args.rl_chains:
-                        if ch_num < rl_chains_actual[0]:
+                        if len(chain_counts)-1 < rl_chains_actual[0]:
                             rl_chains[0] += 1
                         else:
                             rl_chains[1] += 1

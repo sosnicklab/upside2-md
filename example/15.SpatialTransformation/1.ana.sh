@@ -1,4 +1,5 @@
 #!/bin/bash
+set -e
 
 source ../../source.sh
 
@@ -13,7 +14,7 @@ run_dir=$output_dir/$sim_id
 ref=$input_dir/$pdb_id.up
 traj=$output_dir/$sim_id/$pdb_id.run.up
 
-mkdir results
+mkdir -p results
 
 # calculate the rmsd
 python calc_rmsd.py $ref $traj > results/${pdb_id}_$sim_id.rmsd

@@ -5,7 +5,6 @@ sys.path.insert(0, upside_utils_dir)
 
 import mdtraj as md
 import mdtraj_upside as mu
-import upside_engine as ue
 import numpy as np
 import tables as tb
 
@@ -17,14 +16,6 @@ def _output_groups(t):
     if 'output' in t.root:
         yield t.get_node('/output')
         i += 1
-
-def _output_groups_reverse(t, n):
-    if 'output' in t.root:
-        yield t.get_node('/output')
-
-    for i in range(n-2,-1,-1):
-        if 'output_previous_%i'%i in t.root:
-            yield t.get_node('/output_previous_%i'%i)
 
 def main():
     import argparse
@@ -57,21 +48,32 @@ def main():
     Rg   = 10.*md.compute_rg(trj)[first:last:stride]
 
     # use the "tables" to open the h5 file directly
-    exchange = False
     with tb.open_file(args.input_h5) as t:
-        T   = t.root.output.temperature[0,0]
+        # /output/hbond holds the donors and then the acceptors, so each H-bond appears twice;
+        # count it once, from the donor side
+        n_donor = t.root.input.potential.infer_H_O.donors.id.shape[0]
      
         for g_no, g in enumerate(_output_groups(t)):
             # take into account that the first frame of each pos is the same as the last frame before restart
             # attempt to land on the stride
             if g_no == 0:
                 Pot = g.potential[:]
-                Hb  = np.sum(g.hbond[:], axis=1)
+                Hb  = np.sum(g.hbond[:,:n_donor], axis=1)
+                Ts  = g.temperature[:,0]
             else:
                 Pot = np.concatenate([ Pot, g.potential[1:] ]) 
-                Hb  = np.concatenate([ Hb,  np.sum(g.hbond[1:], axis=1) ])
+                Hb  = np.concatenate([ Hb,  np.sum(g.hbond[1:,:n_donor], axis=1) ])
+                Ts  = np.concatenate([ Ts,  g.temperature[1:,0] ])
         Pot = Pot[first:last:stride]
         Hb  = Hb[first:last:stride]
+        Ts  = Ts[first:last:stride]
+
+    # MBAR assigns every frame of the file to one temperature, so the file must have been sampled at one;
+    # a continuation run on a different ladder would otherwise be labelled with the last segment's temperature
+    if np.any(Ts != Ts[0]):
+        raise SystemExit('%s was sampled at temperatures %s, not at one temperature' % (
+            args.input_h5, ', '.join('%g' % x for x in np.unique(Ts))))
+    T = Ts[0]
 
     np.save('{}_Energy.npy'.format(args.output_base), Pot )
     np.save('{}_Hbond.npy'.format(args.output_base), Hb )

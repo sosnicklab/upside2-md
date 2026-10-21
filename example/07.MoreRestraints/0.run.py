@@ -44,7 +44,6 @@ cmd = (
        "{1}/{2}.pdb "
        "{3}/{2} "
        "--record-chain-breaks "
-       "--disable-recentering "
       ).format(upside_utils_dir, pdb_dir, pdb_id, input_dir )
 print (cmd)
 sp.check_output(cmd.split())

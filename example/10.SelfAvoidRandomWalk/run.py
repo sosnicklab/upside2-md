@@ -147,6 +147,7 @@ upside_opts = (
                  "--frame-interval {} "
                  "--temperature {} "
                  "--seed {} "
+                 "--record-momentum "
                )
 
 tempers =  np.linspace(sqrt(T_low), sqrt(T_high), n_rep)**2
@@ -185,9 +186,14 @@ if continue_sim:
                 n = t.get_node('/output_previous_%i'%(i-1))
 
             t.root.input.pos[:,:,0] = n.pos[-1,0]
+            if 'mom' in t.root.input:
+                t.root.input.mom._f_remove()
+            t.create_array(t.root.input, 'mom', obj=n.mom[-1,0][:,:,None])
+            t.root.input.mom._v_attrs.round = n.round[-1]  # the round the momentum was recorded at
 
             if 'output' in t.root:
                 t.root.output._f_rename(new_name)
+    upside_opts += "--restart-using-momentum "  # resumes the momentum and random counters copied above
 else:
     for fn in h5_files:
         shutil.copyfile(config_base, fn)

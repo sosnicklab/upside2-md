@@ -896,9 +896,140 @@ to 10-07 12:00 is in git history.
   within run noise of the pre-fix runs. upside3.md written (findings and the Upside 3 plan, gated on the
   side-chain verdict); findings 11e shortened to a pointer. Files modified: src/environment.cpp, py/upside_config.py,
   up.md, upside3.md (new), findings.md, plan.md, progress.md.
+- 14:00 10-19 on, Upside 3 planning on the MacBook Pro (plan.md Phase 23; the user's five goals). Three read-only
+  research agents. Their reports are in `scratchpad/upside3_planning_20261019/`; the agents could not write files, so
+  the main session saved them.
+  * **Audit.** Defect inventory, 18 master and 7 branch-only audit units, and a writer/reader registry. A first pass
+    found:
+    * the Mac/cluster finite-math flag split;
+    * an ASan out-of-bounds read in `DihedralCoord`;
+    * `Concat`'s uninitialised member;
+    * unconfirmed candidates in `CurvatureChange`.
+  * **Units.** 45 C++ and about 67 Python unit sites. E_up's kJ/mol value is FF2's 298 K / 0.85 calibration, and the
+    master analysis scripts carry three conflicting kelvin conventions.
+  * **GPU.** Per-node profile (M3 Max) with no single hot spot; the hybrid spends 86% in the dry-MARTINI pair loop.
+    Recommended route: single-source kernels with many systems per launch, behind a prototype go/no-go. midway2's
+    `gpu2` has K80s only.
+
+  Also found: the MacBook Pro's `obj/` is the 10-02 build. upside3.md was rewritten for all five goals. Files
+  modified: upside3.md, plan.md, progress.md, findings.md. Engine and Python sources were not changed.
+- 14:10 10-19 on, Upside 3 audit started on martini-dev. The user made martini-dev Upside 3, with fixes there only
+  (plan.md Phase 24).
+  * Local `obj/` rebuilt from the branch.
+  * Harness written in `tests/` (`fixtures.py`, `node_fd.py`, `regress.py`), plus `get_param_size` in the C API.
+  * The first regression baseline did not reproduce: 2 of 6 dumps differed in the membrane fixture, one with NaN.
+    ASan through Python localized it to ledger A2. `MembraneCBPotential`/`MembraneSurfCBPotential::get_param_deriv`
+    wrote the right-hand spline derivative a whole table past `deriv` (master code).
+  * Fixed A2 and A1 (`DihedralCoord` reading dummy atom -1).
+  * Verification: ASan clean on all static records; the membrane parameter derivative's finite-difference median
+    error is 1e-6 (83-97 of 220 directions failed before); regression changes only that array, and three dumps
+    are bitwise equal.
+  * The REMD reviewer and six unit reviewers are running (batch 1: interaction graph, environment, BP, H-bond,
+    placement, writers).
+
+  Files modified: src/coord_basic.cpp, src/membrane_potential.cpp, src/engine_c_library.{h,cpp},
+  py/upside_engine.py, tests/ (new), plan.md, findings.md (3.14, 10.29), upside3.md.
+- 15:20-18:00 10-19, audit fixes on martini-dev (plan.md Phase 24).
+  * CLAUDE.md Development Rules reworded at the user's word: martini-dev is Upside 3, with deliberate departures
+    only.
+  * Reviewers reported: REMD, environment, interaction graph, BP, H-bond, writers, placement.
+  * Fixed and verified A3-A28 (findings 3.14):
+    * REMD: criterion 1 removed, swap scheduling, the momentum-swap reason (master heats the replicas), the guard
+      removed, hashed per-system seeds, inner_step taken from the integrator, the barostat seed, NPT replica
+      exchange refused;
+    * pair-list cache invalidation, NonlinearCoupling, the lateral-pressure mapping;
+    * writers: trans-cis maps, fix-rotamer, rot-scale, Rama and H-bond across chain breaks, the restraint group,
+      integer index arrays;
+    * engine: the doubled H-bond count, rotamer-count check, bad-solve count, extensive-logging names, pair-list
+      capacity, eigensolver tolerance (+2% runtime), Mac build flags.
+  * `tests/config_diff.py` added.
+  * Regression baseline: `scratchpad/upside3_audit/w5.npz` on `fixtures_w2`.
+  * Running:
+    * the membrane and engine-core reviewers;
+    * a Python option-fix agent;
+    * the BP floor patch.
+- 18:00-20:30 10-19, the user's three approvals applied (findings 3.14 A29-A34).
+  * A29: exact backbone-burial derivatives, the backbone weights' gradient added to `envw` in both ConDiv copies.
+  * A30: exact H-bond boundary derivatives, held frozen in the trainer's new `hbr` field.
+  * A31: the coverage stubs raise "not implemented".
+  * A32: dead nodes and options deleted.
+  * A33: the angular cosine held to [-1,1].
+  * A34: the BP floor patch.
+
+  Also: the Python option batch (13 options fixed by an agent); the dead `rl_cavity_radial.py` and
+  `write_sidechain_radial` deleted; make-unbound seeded; example 07's AFM argument fixed.
+
+  Reviews reported: membrane (8 findings) and engine core (9). Their verified patches are in preparation by
+  their reviewers. The usage limit stopped all agents at 20:00; they resumed at 20:20.
+
+  Regression baseline: `w10.npz` on `fixtures_w3`.
+- 21:00 10-19 to 01:40 10-20, audit fixes continued.
+  * Applied the engine-core patch (A42-A49), the coordinate patch (A51-A55), the I/O fixes (A56-A60) and the
+    analysis patch (A61-A65).
+  * My own A26 regression (capacity check too strict, A50) fixed.
+  * My CMake slicing error found and repaired, lesson findings 10.31.
+  * Analysis: the hybrid HDX accessibility was off by one residue; the arrays to regenerate are listed under plan.md
+    Known Errors.
+  * Dry-MARTINI engine review: the choline charge is missing from the side-chain/lipid table, and the prep barostat
+    never scaled lipids. Both are recorded under Known Errors; the patch is in preparation, with the martini.h5
+    rebuild the user approved.
+  * The usage limit stopped agents twice (20:00, 01:00).
+- 01:40 to 02:20 10-20, hybrid coupling and stages: the review reported 4 defects; applied its patch (A67-A69). The
+  barostat finding went to the dry-MARTINI patch.
+  * Files: `src/martini_fix_rigid.cpp`, `martini_hybrid.cpp`, `martini_internal.h`, `martini_stage_params.cpp`,
+    `martini.h`, `main.cpp`, `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.py`, `up.md`, CLAUDE.md
+    (group list).
+  * I added: a singular rigid-group inertia is refused instead of silently zeroing the rotation.
+  * Checks on the repo build: regression w18 against w17, 0 of 545 arrays differ; 7.0 MD with minimisation
+    identical bit for bit to the reviewer's build; 6.6 differs from it by one float ulp after one minimisation
+    iteration (fast-math reordering around my edit; each build reproduces itself exactly); "Production" refused.
+  * Memory note on the hybrid `pos` layout corrected (4i+3 is O; BB beads follow the backbone block).
+- 02:20 to 08:10 10-20, hybrid preparation: the review found 7 defects in every hybrid result (Known Errors);
+  applied its patch and its minimiser fix (A70-A73). The usage limit stopped agents 03:40 to 06:20.
+  * Files: `py/martini_prepare_system.py`, `py/martini_prepare_system_lib.py`, `example/16.MARTINI/` (readme, run.py,
+    two shell drivers), `src/martini_hybrid.cpp`, `martini_internal.h`, `martini_potential.cpp` (minimiser),
+    `main.cpp` (help text), up.md.
+  * Mine: atom roles required for a rigid prep; the minimiser's step floor reported as a stop.
+  * Checks: regression w19 against w18, 0 of 545 differ; a patched 1rkl 6.3 stage bitwise equal to the reviewer's
+    build. The reviewer's end-to-end 1rkl prep: KE/1.5kT 0.97-1.00 from 6.4, production 1.011, net charge 0.
+  * User 10-20: per-lipid diffusion targets, yes. Applied the follow-up (overlap_settling deleted, per-lipid table,
+    carriers summed per lipid type; DOPC builds bitwise unchanged). POPE/POPG values await the literature search.
+  * Cluster (midway3, read-only): August glpG preps did not overheat (KE/1.5kT 0.83-0.87) but carry the restraint
+    offset; the live REMD seeds carry the fixed rotamer 1-body.
+- 08:10 to 09:00 10-20, dry-MARTINI, examples, swap set, docs.
+  * Applied the dry-MARTINI patch (A74-A76): barostat, box, tables, bond spline, dead code; the side-chain/lipid
+    table's choline charge, mirrored angle, CB offset, cutoff tail and cubic spline. Installed the rebuilt
+    `parameters/ff_2.1/martini.h5` (md5 `cc90a933...`); old kept as `martini.h5.bak_20261020`.
+  * The examples agent's fixes were already in the repo (A78). Its leftover REMD item fixed by me (A77): the swap set
+    from the round; split run 10 of 10 frames equal to the continuous run (old build 1 of 10).
+  * POPE/POPG diffusion values from the literature search (findings 2.5): POPE 8.6, POPG 11.5 um^2/s.
+  * up.md: stale CGL nodes, groups and outputs removed (no code reads them); CLAUDE.md file-format list updated.
+  * Regression w21 against w20: 0 of 545 differ.
+  * Running: a fresh 1rkl prep with everything (box test), the angle-table follow-up, the hybrid analysis review.
+- 12:30 to 13:00 10-20 (after the 09:30-12:30 usage limit): the 1rkl box test finished (plan.md Phase 24: healthy
+  except the expanding box); applied the angle-table patch (A79), regression w22 0 of 545; smoke run on the new
+  binary KE/1.5kT 0.967. Agents resumed: box diagnosis, analysis patch.
+- 13:00 to 13:20 10-20: applied the hybrid analysis patch (A80; 16 files in py/ and example/). Pass 1 of the audit
+  has now reviewed every unit. Open: the box expansion (diagnosis running).
+  * apply_fix_rigid_md's unread force zeroing deleted (poison test bitwise), index ranges validated at build; w23 0 of 545; stale src/main.cpp.orig from a patch removed.
+- 13:40 10-20: box expansion diagnosed (no engine defect; CHARMM-GUI step5 bilayers start interdigitated, DOPC 93%, POPE/POPG 88%); leaflet-separation fix and area validation running. Live glpG seeds: about 71.5 A^2 box per lipid, P-P 42.5 A (constructed template).
+- 13:55 10-20: user offered CHARMM-GUI packages and any resource; GROMACS reference runs started (DOPC and POPE/POPG dry-MARTINI, 1.1 and 1.2 nm); leaflet-translation prep patch on hold.
+- 17:30 10-20: usage limit 14:00-17:30 stopped the GROMACS reference and the Upside bilayer validation; both resumed (no processes were left running).
+- 23:15 10-20: the 17:30-18:50 session (usage limit until 22:30) reported nothing. Both agents spent it re-reading
+  very large contexts while polling for simulations that had finished (findings 10.30). Every GROMACS reference run
+  and every Upside bilayer validation run completed; the analysis now runs as a detached job
+  (`scratchpad/detach.sh`), and the small outputs are copied to `scratchpad/bilayer_ref/`. Old agents not resumed.
+  * Results: GROMACS shows the same early box jump from CHARMM-GUI's overlapped start and recovers over ~12 ns, so the
+    Upside prep box expansion is the start, not the engine (plan.md Phase 24, findings 8 reference). Upside pure
+    bilayers (0.55 ns) not converged. Decision: prep from GROMACS-equilibrated membranes; leaflet-translation patch dropped.
+  * 23:29 detached campaign `scratchpad/bilayer_ref/upside_from_gmx_eq/run.sh` (10 threads, ~4-5 h): Upside pure
+    bilayers from the GROMACS equilibrium, glpG and 1rkl preps from GROMACS-equilibrated against step5 membranes.
+    DONE 02:34 10-21: DOPC holds the GROMACS equilibrium, POPE/POPG 1.3% smaller at 0.73 ns; 1rkl healthy from the
+    equilibrated membrane, interdigitated in production from step5; glpG fails the solvation gate from both
+    (plan.md Phase 24, findings 8). Files modified: findings.md (8), plan.md (Phase 24).
 - 22:30-23:30 10-20, status and convergence review (user: "check remote job status"; then "check if the finished ffs
   needs no more trainings" and "check if the deterministic / probabilistic side chain have a conclusion"; plan.md
-  Phase 23). Status read only: the control converged at step 76 and `mdc_ctrl_03` folds 0.353; the reruns at steps
+  Phase 25). Status read only: the control converged at step 76 and `mdc_ctrl_03` folds 0.353; the reruns at steps
   55/54 (ff3.1 rerun margin +0.0987 at step 52, a hold; a steric flag on each, beta' + pPII' at one step); glpG block 3
   running; all benchmark arms complete. One job submitted, `panel_compare` 49435922 (4 min, read only). New read-only
   tools in `checks/converge_20261020/` (`gate_window.py`, `gram_probe.py`, `ang_pull.py`, `depth_pull.py`,
@@ -907,16 +1038,33 @@ to 10-07 12:00 is in git history.
   no detectable pull at the control's or ff3.0's fixed point; ff_3.0_gdepth's glycine alpha_L depth is pulled one way
   every epoch (under the cut over the last); no-BP's ~110 angular coefficients are still pulled at step 76; at the
   fixed points no-BP folds -0.111 [-0.160, -0.065] (p 1e-5). Files modified: findings.md (1.21, 1.36), plan.md
-  (Phases 21, 23, Known Errors), upside3.md (status), remote_jobs.md; WATCH_STATUS.md on the cluster.
+  (Phases 21, 25, Known Errors), upside3.md (status), remote_jobs.md; WATCH_STATUS.md on the cluster.
 - 10-21 00:30-03:10, the side-chain comparison on one metric (user: email drafts to Tobin and John; "I prefer to use a
-  single metric (TM score?) for all tests"; plan.md Phase 24). Jobs: `tm_mdcath` 49436371 (TM of the converged mdCATH
+  single metric (TM score?) for all tests"; plan.md Phase 26). Jobs: `tm_mdcath` 49436371 (TM of the converged mdCATH
   runs), the 44-domain panel rerun at dt 0.009 for both converged force fields (49436374, 49436375; all runs finite,
   KE/1.5kT 1.00-1.01), `tm_panel` 49436485, and the last Peng pair's score (49436488). Mean TM: mdCATH -0.034 (p 7e-8),
   44 domains -0.026 (p 0.007), Peng natives -0.029 (p 0.18), de novo +0.010; the TM > 0.5 shares do not differ.
   References checked on the web (Peng JCTC 2022, Charron Nat Chem 2025, CATH 4.2 NAR 2019, mdCATH Sci Data 2024).
-  Lesson recorded: findings 10.29 (short results emails). Files modified: findings.md (1.21, 10.29), plan.md
-  (Phase 24), remote_jobs.md, progress.md; new `tm_panel.py`, `tm_panel.sbatch`, `panel44_dt009.sbatch` in
+  Lesson recorded: findings 10.32 (short results emails). Files modified: findings.md (1.21, 10.32), plan.md
+  (Phase 26), remote_jobs.md, progress.md; new `tm_panel.py`, `tm_panel.sbatch`, `panel44_dt009.sbatch` in
   `checks/converge_20261020/`.
+- 01:20 and 02:00 10-21: merged the user's pushes 9871ca81 (the 22:30-23:30 session above) and 138e6f12 (TM-score
+  comparison) at the user's request: HEAD moved to each with the local edits kept unstaged. The other machine numbers
+  from the committed plan.md, so its Phases 23 and 24 became 25 and 26 (plan.md, progress.md, remote_jobs.md) and its
+  lesson 10.29 became 10.32; upside3.md's status takes the verdict line. Pre-merge backups in
+  `scratchpad/pre_pull_20261021{,b}/`.
+- 02:40-03:35 10-21, "continue debug" (plan.md Phase 24). Fixed and verified: A81 (HDX peptide numbering), A82
+  (zero force where the angular cosine is clamped; the null-select build proves the 138 moved arrays are code
+  placement), A83 (the hybrid dropped every ALA and GLY side chain from the protein's side-chain node: glpG 42 of
+  210 residues), A84 (dead `Const1D`/`Const2D`, duplicate `WallSpring`). Harness: `tests/registry.py` (69 nodes),
+  `tests/line_integral.py`, node_fd with measured noise and a third step; fixtures regenerated (`fixtures_w4`),
+  baseline `w26.npz`. The rotamer FD candidates are refuted (float32 noise, kinks). glpG's bare belt: the gate
+  counts side chains as gap and the insertion void heals slowly (prep NPT 4.6 ps against CHARMM-GUI's 10 ns); NPT
+  convergence test running. Engine changes verified in `scratchpad/upside3_audit/clampfix_home`; obj/ not yet
+  rebuilt. Files modified: src/bead_interaction.h, src/martini_potential.cpp, src/coord_const.cpp,
+  src/sidechain_radial.cpp, py/martini_prepare_system_lib.py, py/upside_nodes.py,
+  example/00.AnalysisScripts/4.calc_D_uptake.py, tests/node_fd.py, tests/registry.py (new), tests/line_integral.py
+  (new), up.md, findings.md (3.14 A81-A84, 8, 10.12), plan.md.
 - 10-21 03:00-03:35, the Boltz-2 HDX sampler, Phase 0 (user: "develop a modified Boltz to replace upside (for HDX
   sampling)"; "we are building it on Boltz, not BioEmu"; "run on midway3 if it is the only one available").
   `diffusion_dynamics.md` rewritten around Boltz-2 with HDX as the goal: what the equilibrium HDX estimator needs from
@@ -925,9 +1073,33 @@ to 10-07 12:00 is in git history.
   on `/beagle3` (`/project` metadata 60x slower): Boltz at `b1ebfc4`, venv with torch 2.14.1+cu126 (PyPI's CUDA 13
   build lacks sm_70), weights, MSAs and references. First test queued on the midway3 `gpu` partition: 61216915-17,
   one each on A100, V100, RTX 6000 (ubiquitin and EHEE_rd2_0005; 5 default and 100 `md` samples). Lessons: findings
-  10.30 (Boltz, never BioEmu) and 10.14 (venvs on `/beagle3`, the CUDA 13 torch wheel, `pkill -f` over ssh). Files
+  10.34 (Boltz, never BioEmu) and 10.14 (venvs on `/beagle3`, the CUDA 13 torch wheel, `pkill -f` over ssh). Files
   modified: diffusion_dynamics.md, findings.md, remote_jobs.md, progress.md; cluster scripts in `$B` with copies in
   `scratchpad/boltz_hdx/`.
+- 03:35-08:40 10-21, debug continued (plan.md Phase 24).
+  * Fixed and verified:
+    * A85, logged kinetic energy degrees of freedom;
+    * A86, a refused config no longer segfaults Python;
+    * A87, environment weights mode 1 deleted;
+    * A88-A93, Python writer batch from the option fixtures (fix-rotamer on chainless `.chi`, dead options and
+      writerless placement nodes deleted, input checks that fire, example 07's frame, integer group ids).
+    * Refuted: the heavy-atom coverage node is dead (HDX reads it).
+  * Harness:
+    * fixtures for every writer option group (`fixtures_w6`, 28 configs);
+    * node_fd ties NonlinearCoupling;
+    * `regress.py compare` lists one-sided keys apart;
+    * `invariance.py` takes its SE from pymbar's statistical inefficiency.
+  * obj/ rebuilt with A82-A93; regression equals the o12 baseline bitwise (w30/w31, 0 of 4073).
+  * Equipartition passes in both systems. The hybrid protein "deficit" was seed 2's noise draw sampled by two
+    builds (same-seed r 0.92-0.96); the lipid FAILs were block SEs shorter than the 55-frame correlation.
+  * glpG: prep NPT converges the box in 30k steps and the belt plateaus at 8 A by 60k. Healthy interfaces have at
+    most 1% of belt sites beyond 8 A, glpG's prep 45-51%, so the void is real; production continuation running.
+  * D9 documented (needs an engine-side exclusion id).
+  * Pass 2 started on the six trained-node units. The session limit stopped all six reviewers at about 07:45, and
+    two were resumed at 08:31 (lesson in findings 10.30).
+  * Files modified: src/engine_c_library.cpp, src/environment.cpp, src/placement.cpp, src/main.cpp, py/upside_config.py,
+    py/run_upside.py, py/advanced_config.py, example/07, example/09, tests/{fixtures,node_fd,regress,invariance}.py,
+    up.md, findings.md (3.14 A85-A93, 10.30, 10.33), plan.md.
 - 10-21 08:30-08:45, the Boltz-2 HDX sampler: first test read, BioEmu2 code allowed (user: "Yes it can use code
   from bioemu2"). The three jobs ran early (04:37-07:44), about 7 min each. All three GPU types run bf16 with the
   cuEquivariance kernels; about 1 s per ubiquitin sample. Default samples are near-native with clean geometry;
@@ -935,5 +1107,17 @@ to 10-07 12:00 is in git history.
   crystal spread and clashes in 86-97% of samples; tag and step scale were changed together, so the cause is open.
   The 2x2 separating test (user: "Yes.") is queued on a V100, `tag_stepscale_test.sbatch`. Phase 3's lag conditioning now ports BioEmu2 `f99e0d8` code,
   paths verified in a local read-only clone. Files modified: diffusion_dynamics.md (status, sections 1 and 3, Phase
-  0 readout, Phases 1 and 3, risks, references), findings.md 10.30, remote_jobs.md, progress.md, memory
+  0 readout, Phases 1 and 3, risks, references), findings.md 10.34, remote_jobs.md, progress.md, memory
   `feedback_boltz_not_bioemu.md`.
+- 10-21 11:10-12:00, remote status, the Peng numbers and released ff2.1 (plan.md Phase 27). Read-only pass: both
+  `_angfix` reruns at step 76 (the ff3.2 rerun's margin -0.0024 at 75), steric at 75 clean beyond the known beta' +
+  pPII' flag, 8 glpG chains in block 3. Checked against Peng's SI: both step-37 side-chain arms sit below the
+  published FF2 (0.55 / 0.42) because alpha3d and homeodomain unfold at their cold rungs; the scorer and protocol
+  reproduce FF1 and gave the retired ff3.0 FF2-level numbers (findings 1.21). The probabilistic arm is a retrained
+  ff2.1 (no trained file equal to the release), so released ff2.1 was submitted on all three tests: mdCATH and
+  44-domain panels at 0.009 with dependent TM jobs, Peng's 30 missing arms, and a self-requeueing collector that
+  scores them and writes the three-way table. Then (user: does it affect the other trained force fields?) every
+  epoch end of every run on the 44-domain panel against ff2.1: all fold 0.13-0.23 less, mostly from epoch 0
+  (findings 1.37); the owed panels and the Peng scores of ff3.0 / ff3.1 were queued with jobs that write the final
+  tables. Files modified: findings.md 1.21 and 1.37, plan.md Phase 27, remote_jobs.md; new
+  `scratchpad/ff21_released_20261021/` (cluster copy `checks/ff21_released_20261021/`).

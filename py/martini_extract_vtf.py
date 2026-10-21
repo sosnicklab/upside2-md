@@ -50,20 +50,6 @@ def decode_str_array(dset):
     return np.array(out, dtype=object)
 
 
-def infer_pdb_id(input_file, user_pdb_id):
-    """Select the optional pdb/<id>.MARTINI.pdb that supplies residue and chain labels.
-
-    Never guess a specific protein here: falling back to one silently relabels every other system's
-    residues with that protein's metadata. Return None when no id is given and none can be derived,
-    and let the caller skip the metadata rather than attach the wrong protein's."""
-    if user_pdb_id:
-        return user_pdb_id
-    base = os.path.basename(input_file).lower()
-    if "bilayer" in base:
-        return "bilayer"
-    return None
-
-
 def find_martini_metadata_pdb(pdb_id, *up_files):
     """Locate <pdb_id>.MARTINI.pdb, which supplies lipid and ion residue labels for the VTF.
 
@@ -151,103 +137,38 @@ def read_martini_pdb_metadata(pdb_file):
     )
 
 
-def infer_residue_names_from_class(atom_names, particle_class):
-    if particle_class is None:
-        return np.array(["UNK"] * len(atom_names), dtype=object)
-
-    lipid_atom_names = {
-        "NC3", "PO4", "GL1", "GL2", "C1A", "C2A", "D3A", "C4A", "C5A",
-        "C1B", "C2B", "D3B", "C4B", "C5B",
-    }
+def residue_names_from_class(atom_names, particle_class):
+    """Residue names for a structure file that records none, from the particle class."""
     out = []
     for aname, pclass in zip(atom_names, particle_class):
         cls = str(pclass).upper()
         an = str(aname).upper()
         if cls == "PROTEIN":
             out.append("PRO")
+        elif cls == "LIPID":
+            out.append("LIP")
         elif cls == "ION":
-            if an == "NA":
-                out.append("NA")
-            elif an == "CL":
-                out.append("CL")
-            else:
-                out.append("ION")
-        elif cls == "OTHER" and an in lipid_atom_names:
-            out.append("DOPC")
+            out.append(an if an in ("NA", "CL") else "ION")
         else:
             out.append("UNK")
     return np.array(out, dtype=object)
 
 
-def infer_chain_ids_from_class(atom_names, particle_class):
-    if particle_class is None:
-        return np.array(["X"] * len(atom_names), dtype=object)
-
-    out = []
-    for aname, pclass in zip(atom_names, particle_class):
-        cls = str(pclass).upper()
-        an = str(aname).upper()
-        if cls == "PROTEIN" or cls == "PROTEINAA":
-            out.append("A")
-        elif cls == "ION":
-            out.append("I")
-        elif cls == "OTHER" and an in {"NC3", "PO4", "GL1", "GL2", "C1A", "C2A", "D3A", "C4A", "C5A", "C1B", "C2B", "D3B", "C4B", "C5B"}:
-            out.append("L")
-        else:
-            out.append("X")
-    return np.array(out, dtype=object)
+def chain_ids_from_class(particle_class):
+    chain_by_class = {"PROTEIN": "A", "LIPID": "L", "ION": "I"}
+    return np.array([chain_by_class.get(str(pclass).upper(), "X") for pclass in particle_class], dtype=object)
 
 
-def infer_box_lengths(traj_h5, struct_h5, pdb_file, input_file, output_group="output"):
-    x_len = y_len = z_len = None
-
-    box_path = f"{output_group}/box" if output_group else None
-    if box_path and box_path in traj_h5:
-        box_data = np.asarray(traj_h5[box_path][:])
-        if box_data.size >= 3:
-            last = box_data[-1]
-            while np.asarray(last).ndim > 1:
-                last = last[0]
-            last = np.asarray(last).reshape(-1)
-            if last.size >= 3:
-                bx, by, bz = float(last[0]), float(last[1]), float(last[2])
-                if bx > 0 and by > 0 and bz > 0:
-                    x_len, y_len, z_len = bx, by, bz
-
-    if x_len is None:
-        log_file = input_file.replace(".up", ".log")
-        if os.path.exists(log_file):
-            with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
-                lines = f.readlines()
-            for line in reversed(lines):
-                if "[NPT]" in line and "box" in line:
-                    m = re.search(r"box\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)", line)
-                    if m:
-                        x_len, y_len, z_len = float(m.group(1)), float(m.group(2)), float(m.group(3))
-                    break
-
-    if x_len is None and "input/potential/martini_potential" in struct_h5:
-        g = struct_h5["input/potential/martini_potential"]
-        if all(k in g.attrs for k in ("x_len", "y_len", "z_len")):
-            x_len = float(g.attrs["x_len"])
-            y_len = float(g.attrs["y_len"])
-            z_len = float(g.attrs["z_len"])
-
-    if x_len is None and os.path.exists(pdb_file):
-        with open(pdb_file, "r", encoding="utf-8", errors="ignore") as f:
-            for line in f:
-                if line.startswith("CRYST1"):
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        x_len = float(parts[1])
-                        y_len = float(parts[2])
-                        z_len = float(parts[3])
-                    break
-
-    if x_len is None:
-        x_len = y_len = z_len = 50.0
-
-    return x_len, y_len, z_len
+def group_boxes(traj_h5, struct_h5, output_group, n_frame):
+    """The box of every frame: logged per frame under a barostat, otherwise the fixed box of the structure."""
+    box_path = f"{output_group}/box"
+    if output_group != "input" and box_path in traj_h5:
+        return np.asarray(traj_h5[box_path][:], dtype=float).reshape(n_frame, 3)
+    g = struct_h5["input/potential/martini_potential"] if "input/potential/martini_potential" in struct_h5 else None
+    if g is None or not all(k in g.attrs for k in ("x_len", "y_len", "z_len")):
+        raise ValueError(f"no box for {output_group}: neither {box_path} nor "
+                         "input/potential/martini_potential x_len/y_len/z_len exists")
+    return np.tile([float(g.attrs["x_len"]), float(g.attrs["y_len"]), float(g.attrs["z_len"])], (n_frame, 1))
 
 
 def build_molecule_topology(n_output, bonds):
@@ -318,10 +239,6 @@ def centralize_system(frame_pos, residue_names, molecule_id, n_molecules, x_len,
 
     if protein_mask is not None and np.any(protein_mask):
         out -= out[protein_mask].mean(axis=0)[None, :]
-    elif residue_names is not None:
-        lipid_mask = np.array([name == "DOPC" for name in residue_names], dtype=bool)
-        if np.any(lipid_mask):
-            out[:, 2] -= np.mean(out[lipid_mask, 2])
 
     counts = np.bincount(molecule_id, minlength=n_molecules).astype(np.float64)
     centroid = np.stack(
@@ -331,22 +248,12 @@ def centralize_system(frame_pos, residue_names, molecule_id, n_molecules, x_len,
     return out - box * np.round(centroid[molecule_id] / box)
 
 
-def write_vtf_frame(fh, pos):
+def write_vtf_frame(fh, pos, box=None):
     fh.write("\ntimestep ordered\n")
+    if box is not None:
+        fh.write(f"pbc {box[0]} {box[1]} {box[2]}\n")
     for x, y, z in pos:
         fh.write(f"{x:.3f} {y:.3f} {z:.3f}\n")
-
-
-def copy_output_mapping(mapping):
-    out = {}
-    for key, value in mapping.items():
-        if isinstance(value, np.ndarray):
-            out[key] = value.copy()
-        elif isinstance(value, dict):
-            out[key] = value.copy()
-        else:
-            out[key] = value
-    return out
 
 
 def list_output_groups(traj_h5):
@@ -389,87 +296,28 @@ def remap_bonds(bonds, index_map):
 
 
 def build_backbone_projection_map(struct_h5, input_pos):
+    """The N/CA/C/O carriers of every residue, from /input/hybrid_bb_map (row i is Upside residue i).
+
+    A file without a protein has no map and gets None; a map that does not resolve all four carriers of every
+    residue is a broken build and is refused."""
     if "input/hybrid_bb_map" not in struct_h5:
         return None
 
     bb = struct_h5["input/hybrid_bb_map"]
-    if "bb_atom_index" not in bb or "bb_residue_index" not in bb:
-        return None
-
-    bb_atom_index_raw = np.asarray(bb["bb_atom_index"][:], dtype=int)
-    bb_residue_index = np.asarray(bb["bb_residue_index"][:], dtype=int)
-    if bb_atom_index_raw.ndim != 1:
-        return None
-    n_bb = bb_atom_index_raw.shape[0]
-    if bb_residue_index.shape[0] != n_bb:
-        return None
-
-    if "reference_atom_names" in bb:
-        ref_atom_names = decode_str_array(bb["reference_atom_names"])
-    else:
-        ref_atom_names = np.array(["N", "CA", "C", "O"], dtype=object)
-    if "bb_chain_id" in bb:
-        bb_chain_ids = decode_str_array(bb["bb_chain_id"])
-    else:
-        bb_chain_ids = np.array(["A"] * n_bb, dtype=object)
-    bb_chain_ids = np.asarray(bb_chain_ids, dtype=object)
-    if bb_chain_ids.shape[0] != n_bb:
-        bb_chain_ids = np.array(["A"] * n_bb, dtype=object)
-
-    n_particles = input_pos.shape[0]
-    valid_proxy = (bb_atom_index_raw >= 0) & (bb_atom_index_raw < n_particles)
-
-    atom_indices_full = None
-    valid_carrier = np.zeros(n_bb, dtype=bool)
-    if "atom_indices" in bb:
-        atom_indices_candidate = np.asarray(bb["atom_indices"][:], dtype=int)
-        if atom_indices_candidate.ndim == 2 and atom_indices_candidate.shape == (n_bb, 4):
-            atom_indices_full = atom_indices_candidate
-            valid_carrier = np.all((atom_indices_full >= 0) & (atom_indices_full < n_particles), axis=1)
-
-    valid = valid_proxy | valid_carrier
-    if not np.any(valid):
-        return None
-
-    if atom_indices_full is not None:
-        fallback_ca = atom_indices_full[:, 1]
-    else:
-        fallback_ca = np.full(n_bb, -1, dtype=int)
-    bb_atom_index = np.where(valid_proxy, bb_atom_index_raw, fallback_ca)
-    bb_atom_index = bb_atom_index[valid]
-    bb_residue_index = bb_residue_index[valid]
-    bb_chain_ids = bb_chain_ids[valid]
-
-    bb_residue_names = np.array(["UNK"] * bb_residue_index.shape[0], dtype=object)
-    if "input/sequence" in struct_h5:
-        sequence = decode_str_array(struct_h5["input/sequence"])
-        unique_residue_ids = []
-        for resid in bb_residue_index.tolist():
-            resid = int(resid)
-            if resid not in unique_residue_ids:
-                unique_residue_ids.append(resid)
-        if len(sequence) == len(unique_residue_ids):
-            residue_name_by_id = {
-                int(resid): str(resname)
-                for resid, resname in zip(unique_residue_ids, sequence.tolist())
-            }
-            bb_residue_names = np.array(
-                [residue_name_by_id.get(int(resid), "UNK") for resid in bb_residue_index.tolist()],
-                dtype=object,
-            )
-
-
-    if atom_indices_full is None:
-        return None
-    runtime_carrier_index = atom_indices_full[valid]
-    if not np.all((runtime_carrier_index >= 0) & (runtime_carrier_index < n_particles)):
-        return None
-    if "input/atom_roles" in struct_h5:
-        atom_roles = decode_str_array(struct_h5["input/atom_roles"])
-        ref_role_row = np.asarray(ref_atom_names, dtype=object).reshape(1, 4)
-        if not np.all(atom_roles[runtime_carrier_index] == ref_role_row):
-            raise ValueError(
-                "hybrid_bb_map/atom_indices do not point at %s for every residue" % list(ref_atom_names))
+    carriers = np.asarray(bb["atom_indices"][:], dtype=int)
+    if carriers.ndim != 2 or carriers.shape[1] != 4:
+        raise ValueError("hybrid_bb_map/atom_indices must have shape (n_residue, 4)")
+    if np.any(carriers < 0) or np.any(carriers >= input_pos.shape[0]):
+        raise ValueError("hybrid_bb_map/atom_indices contains an index outside input/pos")
+    ref_atom_names = decode_str_array(bb["reference_atom_names"])
+    atom_roles = decode_str_array(struct_h5["input/atom_roles"])
+    if not np.all(atom_roles[carriers] == np.asarray(ref_atom_names, dtype=object).reshape(1, 4)):
+        raise ValueError(
+            "hybrid_bb_map/atom_indices do not point at %s for every residue" % list(ref_atom_names))
+    sequence = decode_str_array(struct_h5["input/sequence"])
+    if sequence.shape[0] != carriers.shape[0]:
+        raise ValueError("hybrid_bb_map has %d residues but input/sequence has %d" % (
+            carriers.shape[0], sequence.shape[0]))
 
     # The engine writes a residue's O slot only where infer_H_O has an acceptor on that residue's
     # carbonyl C (martini_hybrid.cpp, resolve_bb_o_hbond_elements). The C-terminal residue has none, so
@@ -477,16 +325,15 @@ def build_backbone_projection_map(struct_h5, input_pos):
     if "input/potential/infer_H_O/acceptors/id" not in struct_h5:
         raise ValueError("hybrid_bb_map requires /input/potential/infer_H_O/acceptors, which supplies the O slots")
     carbonyl_c = np.asarray(struct_h5["input/potential/infer_H_O/acceptors/id"][:, 1], dtype=int)
-    carrier_present = np.ones(runtime_carrier_index.shape, dtype=bool)
-    carrier_present[:, 3] = np.isin(runtime_carrier_index[:, 2], carbonyl_c)
+    carrier_present = np.ones(carriers.shape, dtype=bool)
+    carrier_present[:, 3] = np.isin(carriers[:, 2], carbonyl_c)
 
     return {
-        "bb_atom_index": bb_atom_index,
-        "bb_residue_index": bb_residue_index,
-        "bb_residue_names": bb_residue_names,
-        "bb_chain_ids": bb_chain_ids,
+        "bb_residue_index": np.asarray(bb["bb_residue_index"][:], dtype=int),
+        "bb_residue_names": sequence,
+        "bb_chain_ids": decode_str_array(bb["bb_chain_id"]),
         "ref_atom_names": np.array(ref_atom_names, dtype=object),
-        "runtime_carrier_index": runtime_carrier_index,
+        "runtime_carrier_index": carriers,
         "carrier_present": carrier_present,
     }
 
@@ -511,12 +358,12 @@ def build_mode1_mapping(
     particle_class,
     pdb_metadata=None,
 ):
-    n_particles = input_pos.shape[0]
-    martini_indices = np.arange(n_particles, dtype=int)
-    if particle_class is not None:
-        keep_mask = np.array([pc != "PROTEINAA" for pc in particle_class], dtype=bool)
-        if np.any(~keep_mask):
-            martini_indices = np.where(keep_mask)[0]
+    # The backbone carriers are written once, after the MARTINI particles, by backbone_output_atoms.
+    bb_map = build_backbone_projection_map(struct_h5, input_pos)
+    keep = np.ones(input_pos.shape[0], dtype=bool)
+    if bb_map is not None:
+        keep[bb_map["runtime_carrier_index"].reshape(-1)] = False
+    martini_indices = np.where(keep)[0]
 
     if (
         pdb_metadata is not None
@@ -528,12 +375,7 @@ def build_mode1_mapping(
         mart_atom_names = np.asarray(atom_names, dtype=object)[martini_indices]
         mart_res_names = np.asarray(residue_names, dtype=object)[martini_indices]
         mart_res_ids = np.asarray(residue_ids, dtype=int)[martini_indices]
-        mart_chain_ids = infer_chain_ids_from_class(
-            np.asarray(atom_names, dtype=object)[martini_indices],
-            None if particle_class is None else np.asarray(particle_class, dtype=object)[martini_indices],
-        )
-
-    bb_map = build_backbone_projection_map(struct_h5, input_pos)
+        mart_chain_ids = chain_ids_from_class(np.asarray(particle_class, dtype=object)[martini_indices])
 
     out_atom_names = list(mart_atom_names)
     out_atom_types = [str(name).strip() or "X" for name in mart_atom_names]
@@ -601,10 +443,7 @@ def build_mode2_mapping(
         env_atom_names = np.asarray(atom_names, dtype=object)[non_protein_idx]
         env_res_names = np.asarray(residue_names, dtype=object)[non_protein_idx]
         env_res_ids = np.asarray(residue_ids, dtype=int)[non_protein_idx]
-        env_chain_ids = infer_chain_ids_from_class(
-            np.asarray(atom_names, dtype=object)[non_protein_idx],
-            None if particle_class is None else np.asarray(particle_class, dtype=object)[non_protein_idx],
-        )
+        env_chain_ids = chain_ids_from_class(np.asarray(particle_class, dtype=object)[non_protein_idx])
 
     out_atom_names = list(env_atom_names)
     out_atom_types = [str(name).strip() or "X" for name in env_atom_names]
@@ -670,7 +509,7 @@ def reconstruct_backbone_aa(frame_pos, bb_map):
     return np.asarray(frame_pos[carriers], dtype=np.float32).reshape(-1, 3)
 
 
-def assemble_mode1_frame(frame_pos, mapping, box_lengths=None):
+def assemble_mode1_frame(frame_pos, mapping):
     martini_pos = frame_pos[mapping["martini_indices"]]
     if not mapping.get("include_aa_backbone", False):
         return martini_pos
@@ -678,7 +517,7 @@ def assemble_mode1_frame(frame_pos, mapping, box_lengths=None):
     return np.vstack((martini_pos, aa_pos))
 
 
-def assemble_mode2_frame(frame_pos, mapping, box_lengths=None):
+def assemble_mode2_frame(frame_pos, mapping):
     env_pos = frame_pos[mapping["non_protein_idx"]]
     aa_pos = reconstruct_backbone_aa(frame_pos, mapping["bb_map"])
     return np.vstack((env_pos, aa_pos))
@@ -711,72 +550,55 @@ def parse_args():
     parser.add_argument(
         "--split-segments",
         action="store_true",
-        help="Write one output file per output_previous_* / output trajectory segment instead of combining them.",
+        help="Write one output file per output_previous_* / output trajectory segment instead of joining them "
+             "into one trajectory.",
     )
     return parser.parse_args()
 
 
-def extract_trajectory(
-    traj_h5,
-    struct_h5,
-    input_pos,
-    n_particles,
-    mapping,
-    out_bonds,
-    input_file,
-    structure_file,
-    output_file,
-    pdb_file,
-    pdb_id,
-    mode,
-    output_group,
-):
-    fmt = output_file.split(".")[-1].lower()
-    if fmt != "vtf":
+def extract_trajectory(traj_h5, struct_h5, input_pos, mapping, out_bonds, input_file, structure_file,
+                       output_file, pdb_id, mode, output_groups):
+    """Write the frames of `output_groups`, joined in order, to one VTF.
+
+    The first frame of every group after the first repeats the frame that ended the group before it (a
+    restart logs its starting state) and is dropped, as mdtraj_upside.load_upside_traj does. Each frame is
+    made whole and wrapped in its own box; a barostat run writes that box into every timestep."""
+    if output_file.split(".")[-1].lower() != "vtf":
         raise ValueError("Output file must be .vtf")
-    mapping = copy_output_mapping(mapping)
-    out_bonds = list(out_bonds)
+    n_particles = input_pos.shape[0]
 
     print(f"Extracting trajectory from: {input_file}")
     print(f"Structure source: {structure_file}")
     print(f"Output: {output_file}")
     print(f"Mode: {mode}")
     print(f"PDB ID: {pdb_id if pdb_id else '(none - no PDB metadata)'}")
-    print(f"Trajectory group: {output_group}")
+    print(f"Trajectory groups: {', '.join(output_groups)}")
 
-    if output_group == "input":
-        pos_data = None
-        n_frame_total = 1
-    else:
-        if output_group not in traj_h5:
-            raise ValueError(f"Trajectory group not found: {output_group}")
-        group = traj_h5[output_group]
-        if "pos" not in group:
-            raise ValueError(f"Trajectory group has no positions: {output_group}")
-        pos_data = group["pos"]
-        n_frame_total = int(pos_data.shape[0])
+    frames = []   # (group, frame index, box)
+    per_frame_box = False
+    for g_no, output_group in enumerate(output_groups):
+        if output_group == "input":
+            n_frame = 1
+        else:
+            if "pos" not in traj_h5[output_group]:
+                raise ValueError(f"Trajectory group has no positions: {output_group}")
+            n_frame = int(traj_h5[output_group]["pos"].shape[0])
+            per_frame_box |= f"{output_group}/box" in traj_h5
+        boxes = group_boxes(traj_h5, struct_h5, output_group, n_frame)
+        frames.extend((output_group, k, boxes[k]) for k in range(1 if g_no else 0, n_frame))
 
-    x_len, y_len, z_len = infer_box_lengths(
-        traj_h5,
-        struct_h5,
-        pdb_file,
-        input_file,
-        output_group=output_group,
-    )
-
-    print(f"Particles (input): {n_particles}")
     n_output_particles = mapping['output_atom_names'].shape[0]
+    print(f"Particles (input): {n_particles}")
     print(f"Particles (output): {n_output_particles}")
-
-    print(f"Frames: {n_frame_total}")
-    print(f"Box: {x_len:.3f} {y_len:.3f} {z_len:.3f}")
+    print(f"Frames: {len(frames)}")
+    print(f"Box: {frames[0][2][0]:.3f} {frames[0][2][1]:.3f} {frames[0][2][2]:.3f}")
 
     bond_walk, molecule_id, n_molecules = build_molecule_topology(n_output_particles, out_bonds)
 
     with open(output_file, "w", encoding="utf-8") as f:
         f.write("# VTF extracted from UPSIDE MARTINI trajectory\n")
         f.write(f"# mode {mode}\n")
-        f.write(f"# group {output_group}\n")
+        f.write(f"# groups {' '.join(output_groups)}\n")
         for i, (aname, atype, rname, resid, chain_id, atomic_number) in enumerate(
             zip(
                 mapping["output_atom_names"],
@@ -796,34 +618,33 @@ def extract_trajectory(
             )
         for i, j in out_bonds:
             f.write(f"bond {i}:{j}\n")
-        f.write(f"pbc {x_len} {y_len} {z_len}\n")
+        first_box = frames[0][2]
+        f.write(f"pbc {first_box[0]} {first_box[1]} {first_box[2]}\n")
 
-        for frame_idx in range(n_frame_total):
-            if pos_data is None:
+        for frame_idx, (output_group, k, frame_box) in enumerate(frames):
+            if output_group == "input":
                 frame = input_pos
             else:
-                frame = normalize_frame(pos_data[frame_idx], n_particles)
+                frame = normalize_frame(traj_h5[output_group]["pos"][k], n_particles)
 
             if mode == 1:
-                out_frame = assemble_mode1_frame(frame, mapping, box_lengths=(x_len, y_len, z_len))
+                out_frame = assemble_mode1_frame(frame, mapping)
             else:
-                out_frame = assemble_mode2_frame(frame, mapping, box_lengths=(x_len, y_len, z_len))
+                out_frame = assemble_mode2_frame(frame, mapping)
 
-            out_frame = unwrap_molecules(out_frame, bond_walk, x_len, y_len, z_len)
+            out_frame = unwrap_molecules(out_frame, bond_walk, *frame_box)
             out_frame = centralize_system(
                 out_frame,
                 mapping["output_residue_names"][:n_output_particles],
                 molecule_id,
                 n_molecules,
-                x_len,
-                y_len,
-                z_len,
+                *frame_box,
             )
             if np.isnan(out_frame).any():
-                raise ValueError(f"NaN coordinates found in frame {frame_idx} for group {output_group}")
-            write_vtf_frame(f, out_frame)
+                raise ValueError(f"NaN coordinates found in frame {frame_idx} ({output_group} frame {k})")
+            write_vtf_frame(f, out_frame, frame_box if per_frame_box else None)
             if frame_idx % 100 == 0:
-                print(f"Processed frame {frame_idx}/{n_frame_total - 1}")
+                print(f"Processed frame {frame_idx}/{len(frames) - 1}")
 
 
 def main():
@@ -832,8 +653,7 @@ def main():
     input_file = args.input_up
     output_file = args.output_file
     structure_file = args.structure_up or input_file
-    pdb_id = infer_pdb_id(input_file, args.pdb_id)
-    mode = args.mode
+    pdb_id = args.pdb_id
 
     pdb_file = find_martini_metadata_pdb(pdb_id, input_file, structure_file)
 
@@ -841,28 +661,17 @@ def main():
         input_pos = normalize_input_positions(s["input/pos"][:])
         n_particles = input_pos.shape[0]
 
-        if "input/atom_names" in s:
-            atom_names = decode_str_array(s["input/atom_names"])
+        atom_names = decode_str_array(s["input/atom_names"])
+        residue_ids = np.asarray(s["input/residue_ids"][:], dtype=int)
+        particle_class = decode_str_array(s["input/particle_class"])
+        for name, values in (("atom_names", atom_names), ("residue_ids", residue_ids),
+                             ("particle_class", particle_class)):
+            if values.shape[0] != n_particles:
+                raise ValueError(f"input/{name} length mismatch")
+        if "input/residue_names" in s:
+            residue_names = decode_str_array(s["input/residue_names"])
         else:
-            atom_names = decode_str_array(s["input/type"])
-        if atom_names.shape[0] != n_particles:
-            raise ValueError("input/atom_names length mismatch")
-
-        if "input/residue_ids" in s:
-            residue_ids = np.asarray(s["input/residue_ids"][:], dtype=int)
-            if residue_ids.shape[0] != n_particles:
-                residue_ids = np.arange(1, n_particles + 1, dtype=int)
-        else:
-            residue_ids = np.arange(1, n_particles + 1, dtype=int)
-
-        if "input/particle_class" in s:
-            particle_class = decode_str_array(s["input/particle_class"])
-            if particle_class.shape[0] != n_particles:
-                particle_class = None
-        else:
-            particle_class = None
-
-        inferred_res_names = infer_residue_names_from_class(atom_names, particle_class)
+            residue_names = residue_names_from_class(atom_names, particle_class)
 
         pdb_atom_names, pdb_res_names, pdb_res_ids, pdb_chain_ids = read_martini_pdb_metadata(pdb_file)
         pdb_metadata = (pdb_atom_names, pdb_res_names, pdb_res_ids, pdb_chain_ids)
@@ -874,96 +683,28 @@ def main():
         else:
             mode = args.mode
 
-        if mode == 1:
-            mapping = build_mode1_mapping(
-                s,
-                input_pos,
-                atom_names,
-                inferred_res_names,
-                residue_ids,
-                particle_class,
-                pdb_metadata=pdb_metadata,
-            )
-        else:
-            mapping = build_mode2_mapping(
-                s,
-                input_pos,
-                atom_names,
-                inferred_res_names,
-                residue_ids,
-                particle_class,
-                pdb_metadata=pdb_metadata,
-            )
+        build_mapping = build_mode1_mapping if mode == 1 else build_mode2_mapping
+        mapping = build_mapping(s, input_pos, atom_names, residue_names, residue_ids, particle_class,
+                                pdb_metadata=pdb_metadata)
 
         dist_bonds = collect_dist_spring_bonds(s)
-        if mode == 1:
-            mart_idx = mapping["martini_indices"]
-            idx_map = {int(old): int(new) for new, old in enumerate(mart_idx)}
-            out_bonds = remap_bonds(dist_bonds, idx_map)
-            if mapping.get("include_aa_backbone", False):
-                out_bonds.extend(backbone_bonds(len(mart_idx), mapping["bb_map"]))
-        else:
-            non_idx = mapping["non_protein_idx"]
-            idx_map = {int(old): int(new) for new, old in enumerate(non_idx)}
-            out_bonds = remap_bonds(dist_bonds, idx_map)
-            out_bonds.extend(backbone_bonds(len(non_idx), mapping["bb_map"]))
+        kept = mapping["martini_indices"] if mode == 1 else mapping["non_protein_idx"]
+        idx_map = {int(old): int(new) for new, old in enumerate(kept)}
+        out_bonds = remap_bonds(dist_bonds, idx_map)
+        if mapping["bb_map"] is not None:
+            out_bonds.extend(backbone_bonds(len(kept), mapping["bb_map"]))
 
-        if args.split_segments:
-            output_groups = list_output_groups(t)
-            if len(output_groups) <= 1:
-                target_group = output_groups[0] if output_groups else "input"
-                extract_trajectory(
-                    t,
-                    s,
-                    input_pos,
-                    n_particles,
-                    mapping,
-                    out_bonds,
-                    input_file,
-                    structure_file,
-                    output_file,
-                    pdb_file,
-                    pdb_id,
-                    mode,
-                    output_group=target_group,
-                )
-            else:
-                print(f"Found {len(output_groups)} trajectory segments; writing one file per segment.")
-                for segment_index, output_group in enumerate(output_groups):
-                    segment_output_file = build_segment_output_path(output_file, segment_index)
-                    extract_trajectory(
-                        t,
-                        s,
-                        input_pos,
-                        n_particles,
-                        mapping,
-                        out_bonds,
-                        input_file,
-                        structure_file,
-                        segment_output_file,
-                        pdb_file,
-                        pdb_id,
-                        mode,
-                        output_group=output_group,
-                    )
-                    print(f"Wrote segment {segment_index}: {segment_output_file} ({output_group})")
+        output_groups = list_output_groups(t) or ["input"]
+        if args.split_segments and len(output_groups) > 1:
+            print(f"Found {len(output_groups)} trajectory segments; writing one file per segment.")
+            for segment_index, output_group in enumerate(output_groups):
+                segment_output_file = build_segment_output_path(output_file, segment_index)
+                extract_trajectory(t, s, input_pos, mapping, out_bonds, input_file, structure_file,
+                                   segment_output_file, pdb_id, mode, [output_group])
+                print(f"Wrote segment {segment_index}: {segment_output_file} ({output_group})")
         else:
-            target_group = "output" if "output" in t else "input"
-            extract_trajectory(
-                t,
-                s,
-                input_pos,
-                n_particles,
-                mapping,
-                out_bonds,
-                input_file,
-                structure_file,
-                output_file,
-                pdb_file,
-                pdb_id,
-                mode,
-                output_group=target_group,
-            )
+            extract_trajectory(t, s, input_pos, mapping, out_bonds, input_file, structure_file,
+                               output_file, pdb_id, mode, output_groups)
 
 
 if __name__ == "__main__":

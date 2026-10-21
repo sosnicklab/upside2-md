@@ -13,10 +13,14 @@ modernised and restored to the published protocol. Differences from that file, e
     the port never used its second objective), 12 free replicas from T = 0.8 to 1.1 (port 6, up
     to ~0.97, where many proteins never unfold), 8000 time units (port 1000), minibatch 24 (port
     21), 4 epochs.
-  * what the engine gives no gradient for stays at ff2.1, exactly as in ff2.1's training: the
-    backbone term's center, sharpness and hbond weight (their derivatives are commented out in
-    BackboneSigmoidCoupling::get_param_deriv, in master too) and hbond.h5 entries 4-11, the rama
-    boundaries and sharpnesses. bb_env.dat still trains through its scale.
+  * what ff2.1's training did not train stays at ff2.1, at learning rate 0: the backbone term's
+    center, sharpness and hbond weight (`bbenvc`, `bbenvs`, `bbenvw`) and hbond.h5 entries 4-11,
+    the rama boundaries and sharpnesses (`hbr`). The engine returns exact derivatives for all of
+    them since 2026-10-19, so freezing them is this trainer's choice. bb_env.dat trains through
+    its scale. Inside `rot`, the 620 placement coordinates (hydrophobe placement 18, rotamer
+    centres 516, rotamer scalars 86) also stay fixed: d_obj gives them no gradient.
+  * the backbone term reads the side-chain burial's weights, so its weight derivative is added
+    to `envw`'s (findings 3.14; missing before 2026-10-19, ff2.1's training included).
   * two numerical defects fixed: the replica reweighting exponent was E*(T0-Ti)/Ti, which is
     T0 times the correct E*(1/Ti - 1/T0); and a dE < -200 clamp stood in for a normalisation,
     now an exact max-subtracted one. The port's guard that silently dropped the DSE term when a
@@ -119,7 +123,7 @@ hydrophobicity_order = ['ASP', 'GLU', 'LYS', 'HIS', 'ARG', 'GLY', 'ASN', 'GLN', 
                         'THR', 'PRO', 'CYS', 'VAL', 'MET', 'TYR', 'ILE', 'LEU', 'PHE', 'TRP']
 
 Target = collections.namedtuple('Target', 'fasta native native_path init_path n_res chi')
-FIELDS = 'enve envc envs envw bbenve bbenvc bbenvs bbenvw cov rot hyd hb dhb hbg sheet'.split()
+FIELDS = 'enve envc envs envw bbenve bbenvc bbenvs bbenvw cov rot hyd hb hbr dhb hbg sheet'.split()
 UpdateBase = collections.namedtuple('UpdateBase', FIELDS)
 
 
@@ -144,15 +148,15 @@ class Update(UpdateBase):
 
 
 def hb_split(parameter):
-    """hbond.h5 `parameter` -> (hb: entries 0-2 and 4-11, dhb: entry 3, as the port; hbg: the
-    residue-class offsets, entries 12 on)."""
+    """hbond.h5 `parameter` -> (hb: the basin energies, entries 0-2; hbr: the rama boundaries and
+    sharpnesses, entries 4-11; dhb: entry 3; hbg: the residue-class offsets, entries 12 on)."""
     parameter = np.asarray(parameter)
-    return parameter[[0, 1, 2] + list(range(4, 12))], parameter[3:4], parameter[12:]
+    return parameter[0:3], parameter[4:12], parameter[3:4], parameter[12:]
 
 
-def hb_join(hb, dhb, hbg):
+def hb_join(hb, hbr, dhb, hbg):
     out = np.zeros(12 + len(hbg))
-    out[:3], out[3], out[4:12], out[12:] = hb[:3], dhb[0], hb[3:], hbg
+    out[:3], out[3], out[4:12], out[12:] = hb, dhb[0], hbr, hbg
     return out
 
 
@@ -212,7 +216,7 @@ def residue_populations(rama_coord, weights=None):
 if not is_worker:
 
     def print_param(param):
-        print('hb    %s   dhb %.4f   hbg %s' % (np.array2string(param.hb[:3], precision=4),
+        print('hb    %s   dhb %.4f   hbg %s' % (np.array2string(param.hb, precision=4),
                                               param.dhb[0], np.array2string(param.hbg, precision=4)))
         print('sheet mean %.4f' % np.mean(param.sheet))
         print('bb env scale %.4f  center %.4f  sharpness %.4f  hbond_weight %.4f'
@@ -283,13 +287,13 @@ if not is_worker:
                                       t.root.weights[:])
         bbe, bbc, bbs, bbw = np.loadtxt(files['bbenv'])
         with tb.open_file(files['hb']) as t:
-            hb, dhb, hbg = hb_split(t.root.parameter[:])
+            hb, hbr, dhb, hbg = hb_split(t.root.parameter[:])
 
         param = Update(*([None] * len(FIELDS)))._replace(
             enve=enve, envc=envc, envs=envs, envw=envw,
             bbenve=bbe, bbenvc=bbc, bbenvs=bbs, bbenvw=bbw,
             rot=rp.pack_param(rotp, covp, hydp, hydplp, rotposp, np.zeros((rotposp.shape[0], 1))),
-            hb=hb, dhb=dhb, hbg=hbg, sheet=np.loadtxt(files['sheet']))
+            hb=hb, hbr=hbr, dhb=dhb, hbg=hbg, sheet=np.loadtxt(files['sheet']))
         return param, files
 
     def expand_param(params, orig, new):
@@ -315,7 +319,7 @@ if not is_worker:
 
         shutil.copyfile(orig['hb'], new['hb'])
         with tb.open_file(new['hb'], 'a') as t:
-            t.root.parameter[:] = hb_join(params.hb, params.dhb, params.hbg)
+            t.root.parameter[:] = hb_join(params.hb, params.hbr, params.dhb, params.hbg)
 
         np.savetxt(new['sheet'], params.sheet)
 
@@ -476,6 +480,8 @@ def compute_divergence(args):
         n_env = sum(p.sigmoid_coupling_environment[k].shape[0]
                     for k in ('scale', 'center', 'sharpness', 'weights'))
         n_type = p.sigmoid_coupling_environment.scale.shape[0]
+        if p.sigmoid_coupling_environment._v_attrs.number_independent_weights != 20:
+            raise ValueError('ConDiv trains one burial weight per residue type (number_independent_weights 20)')
 
     engine = ue.Upside(config_base)
     c = Update(*[[] for _ in FIELDS])
@@ -489,12 +495,15 @@ def compute_divergence(args):
         c.enve.append(env[:n_type])
         c.envc.append(env[n_type:2 * n_type])
         c.envs.append(env[2 * n_type:3 * n_type])
-        c.envw.append(env[3 * n_type:])
-        bb = engine.get_param_deriv((4,), 'bb_sigmoid_coupling_environment').ravel()
+        bb = engine.get_param_deriv((4 + n_type,), 'bb_sigmoid_coupling_environment').ravel()
         for k, f in enumerate((c.bbenve, c.bbenvc, c.bbenvs, c.bbenvw)):
             f.append(bb[k])
-        hb, dhb, hbg = hb_split(engine.get_param_deriv(hb_n, 'hbond_energy').ravel())
+        # every slot of the shared weights reports the derivative of its column's weight, and the
+        # backbone term reads that same weight
+        c.envw.append(env[3 * n_type:] + np.tile(bb[4:], n_type))
+        hb, hbr, dhb, hbg = hb_split(engine.get_param_deriv(hb_n, 'hbond_energy').ravel())
         c.hb.append(hb)
+        c.hbr.append(hbr)
         c.dhb.append(dhb)
         c.hbg.append(hbg)
         c.sheet.append(np.zeros(len(sheet_restype)))
@@ -690,12 +699,12 @@ def main_initialize(init_dir, protein_dir, protein_list, base_dir):
              origin.decode() if isinstance(origin, bytes) else origin))
 
     # The port's learning rates, times its global factor, except rot, 10x smaller (see the top);
-    # the glycine offsets take hb's. bbenvc/bbenvs/bbenvw are 0 because the engine returns no
-    # derivative for them, as in ff2.1's training.
+    # the glycine offsets take hb's. bbenvc/bbenvs/bbenvw and hbr are frozen, as in ff2.1's
+    # training.
     state['initial_alpha'] = Update(
         enve=0.10, envc=0.05, envs=0.02, envw=0.10,
         bbenve=0.05, bbenvc=0.00, bbenvs=0.00, bbenvw=0.00,
-        cov=0., rot=0.025, hyd=0., hb=0.02, dhb=0.01, hbg=0.02, sheet=0.03) * alpha_scale
+        cov=0., rot=0.025, hyd=0., hb=0.02, hbr=0., dhb=0.01, hbg=0.02, sheet=0.03) * alpha_scale
     state['solver'] = rp.AdamSolver(len(FIELDS), alpha=state['initial_alpha'])
     state['epoch'], state['i_mb'] = 0, 0
     print('\nOptimizing with solver', state['solver'], '\n')

@@ -1379,7 +1379,7 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   (-0.135) folds; beta is not resolved (-0.034 [-0.097, +0.038], p 0.13). So the step-37 verdict holds at the fixed
   points: the deterministic side chain loses folding on held-out proteins. Neither run's 38 fixed-engine steps
   changed its own folding, and no-BP is not at a fixed point in ~110 angular pair coefficients (1.36).
-  **On TM-score** (user 10-21: one metric for every test; plan.md Phase 24; `checks/converge_20261020/`,
+  **On TM-score** (user 10-21: one metric for every test; plan.md Phase 26; `checks/converge_20261020/`,
   `tm_panel.py` with the Peng scorer's `tmscore.py`, every 10th frame after 2,000 tu, 4 seeds pooled): mdCATH, the
   fixed points, mean TM 0.667 against 0.702, -0.034 [-0.045, -0.024], p 7e-8, lower on 65 of 89, every length bin and
   class (beta -0.013, p 0.05); the 44 Charron domains, both fixed points rerun at dt 0.009 (`p44_nobp_03`,
@@ -1389,6 +1389,18 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   frames at TM > 0.5 does not differ (0.920 against 0.946, p 0.24; 0.824 against 0.832, p 0.74): without BP the
   native fold is kept as often but sits further from the native, which the Q-based folded fraction, a stricter
   cutoff, reads as a larger loss.
+- **Both step-37 force fields sit below Peng's published FF2 on his benchmark** (10-21; Peng SI Fig S5: FF2 <TM>
+  0.55 native, 0.42 de novo; FF1 0.46, 0.37): control 0.486 / 0.299, no-BP 0.457 / 0.309. The scoring is not the
+  cause: the same scorer gives Peng's own FF1 trajectories 0.48 / 0.36 (11c), and the retired ff3.0 on the same
+  Table S2 protocol scored 0.585 / 0.401 (`ff3_benchmark/scoring/score_arms.json`). Against Fig S5's FF2 curves read by
+  eye (their means 0.53 / 0.41), the native gap is two proteins that unfold completely at their cold rungs:
+  alpha3d (T 0.90; control 0.17, median CA-RMSD 23 A, no-BP 0.35; FF2 ~0.62, retired ff3.0 0.61) and homeodomain
+  (T 0.87; 0.20 and 0.19; FF2 ~0.51, retired ff3.0 0.54). The other 14 agree with FF2 to a mean difference of
+  ~0.00. De novo, alpha3d, top7, homeodomain, NuG2, protein G and protein L fail to fold where FF2 reaches 0.4-0.6.
+  Both side-chain models share the deficit, so it is not the side chain; it matches the folding the retraining lost
+  on the 44-domain panel (released ff2.1 0.615 folded, the control at step 37 0.405; 1.22). Released ff2.1 has not
+  been run through this benchmark (only lambda, 11d), so whether our pipeline reproduces FF2's 0.55 / 0.42 with
+  ff2.1 itself is untested. The paired side-chain comparison stands; the absolute values are not FF2's.
 - **The side-chain model moves the shared H-bond margin, in opposite directions** (`check_step.py`, read 10-18):
   E_other - E_alpha at steps 18 / 37 is no-BP +0.296 / +0.354 and the control +0.135 / +0.157 (start +0.192), a gap of
   ~0.2 against run-to-run variation of ~0.04. No-BP's rise is E_other weakening (-1.769 -> -1.620), so an H-bond made
@@ -1503,6 +1515,28 @@ x 0.25 after two epochs, run as a restart (`test37_fixbead_finetune`).
   byte-identical, `sidechain.h5` differs by at most 3e-4 (a ConDiv run at rot's rate would move it
   far more), and `environment.h5` differs by up to 2.8 in center, 1.3 in scale, 0.95 in weights. How
   ff2.1 was made is not documented.
+
+**Where they stopped: a fixed budget, short of convergence on purpose** (read 2026-10-21, user: "check Peng's paper
+on how he determined where to stop").
+* Peng states the ideal and a fixed run. Main text p. 2: the iteration "continues until no energy parameter can be
+  updated to produce a better NSE", and "to avoid overtraining, this procedure is run for 456 proteins in batches of
+  19". SI p. 4: "a total of 76 ConDiv iterations (4 cycles) were executed", at the initial rate of Ref [2]'s
+  fine-tuning stage, "other details in training for FF1 [2] were followed". No convergence test, no validation-based
+  choice of checkpoint, and no starting point for FF2's training are given; the 16 proteins are scored after training.
+* Jumper (Ref [2], PLoS Comput Biol 2018, p. 7; thesis pp. 51-52, 66) ran two epochs at the large step, cut it 4x,
+  and stopped early knowingly: "there are indications that the parameters have not yet converged. Earlier tests,
+  however, showed that continuing the contrastive divergence until convergence does not necessarily produce better
+  results". His mechanism: "When large barriers surround the native states, minimal relaxation of the conformation
+  occurs, which in turn provides little new information, and further fine-tuning may even reduce the accuracy of the
+  model", "overtrains the model to distinguish between native and near-native structure at the expense of
+  distinguishing against a more diverse ensemble"; early stopping as a regulariser (Duvenaud et al. 2016). Thesis
+  p. 66: contrastive divergence "is noted to obtain peak accuracy before fully converging then declining accuracy
+  afterwards", from growing barriers that reduce exploration; his proposed remedy is persistent contrastive
+  divergence.
+* So our convergence gate (1.21, 1.26) is our own addition, against both authors' practice, and every run started
+  from ff2.1, which had already had FF2's full budget: each of our 76-step runs is a second budget on top of it.
+  The loss in the first epoch (1.37) is the decline Jumper describes, and it fits his mechanism: the training
+  proteins' free replicas barely relax (RMSD flat over four epochs, 1.37).
 
 **What kept the H-bond in check was rate and early stopping, not freezing.** Effective rates
 (Adam moves a scalar by about its rate per step when its gradient is consistent; Kleinmann's log
@@ -2438,6 +2472,19 @@ sampling, not how two trainings of one design differ.
   and the Peng benchmark (32 arms) is the larger test. The user ordered it with glpG TM4 (10-13 12:00):
   fd_03 is validated as `ff_3.1_depth_data` (plan.md Phase 14 step 6).
 
+- **What holds the maps where they start** (10-21, user: "ff3.2 and ff3.1 barely moved their rama map ... they are
+  suppose to move rama map"; `checks/ff21_released_20261021/depth_data_vs_prior.py`, output
+  `depth_data_vs_prior_20261021.txt`, the two angular-fix reruns). The data part of each step's depth gradient
+  (`T0 x train_gap`; the recorded `grad` adds the prior's share), apart from the prior. Every epoch end sits at its
+  MAP point, offset = sigma^2/T0^2 x the epoch's data pull, so the prior's pull back to the start balances the data.
+  Single depths are noise (|t| > 4: 0-4 of 1,442, 1.2 by chance); the data's consistency is in the pooled subsets.
+  Glycine's GLY|X alpha_L: from ff2.1's map (ff3.1) the data pull it shallower in every epoch (t +5.1 at epoch 0,
+  +5.6 at epoch 3), and the 0.2-nat prior centred on ff2.1 stops it at +0.07; from ff3.0's map (ff3.2) the data
+  have no consistent pull (t +1.1, +0.6; alpha_R -0.04, +1.67). So the data point to ff3.0's glycine map, ff3.2
+  stayed because it started there, and ff3.1 stayed because its per-map priors hold 37 maps apart against a pull
+  that is clear only pooled. 1.29's probe found pooled offsets (one set per central residue) transferring better
+  than per-map ones at every width.
+
 ### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; the defective chains' cold-rung glycine flips are absent from the corrected chains' block 1 (2026-10-14/18)
 
 Every chain read here ran with the misplaced side-chain beads (4.17); the corrected chains of 10-17 replace them.
@@ -2582,6 +2629,60 @@ audit's dhb 0.003.
   shrink (alpha_L offset +0.007, +0.012, +0.021, +0.015; 1.26). Over the last epoch alone it is under the gate's cut
   (p 0.10), so by the gate's rule it is converged; the free-native alpha_L gap at round 4 is +0.009 on the training
   reads and +0.008 held out. Its Adam groups pass (1.26).
+
+- **The ff3.2 rerun on the fixed engine is at a fixed point at step 76** (10-21; `ff32_depth_data_angfix`, files in
+  `checks/ff21_released_20261021/`): `convergence_gate.py` passes every group over steps 58-76; `gate_window.py`
+  passes every group and every `rot` subset (angular off-diagonal, diagonal, radial, rest) and the depths over both
+  steps 38-56 and 57-75; `depth_pull.py` finds no depth above |t| 4 (1.2 expected) and every subset's sign p >= 0.81,
+  glycine's maps included. Its pooled glycine map equals ff3.0's within 0.02 E_up at alpha_L, alpha_R and PII on the
+  non-helical zero (`scratchpad/plot_gly_rama_ff32_nonhelix_zero.py`; alpha_L - alpha_R per GLY|X map +0.626).
+
+### 1.37 Every force field this workflow trains from ff2.1 folds worse than released ff2.1 (2026-10-21)
+
+User 10-21: does the retraining's loss (1.21) reach the other trained force fields? 44-domain panel at time step
+0.015, as `ff21_released` ran; all 44 domains; folded fraction (Q at least the all-atom 5th percentile), 4 seeds
+pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/panel44_trajectory.py`, output
+`panel44_trajectory_20261021.txt`):
+
+| run (tag) | start | epoch 0 | 1 | 2 | 3 (step 76) |
+|---|---|---|---|---|---|
+| control, probabilistic side chain (`c9`) | 0.615 | 0.390 | 0.405 | | |
+| no-BP (`nb`) | 0.615 | | 0.389 | | |
+| ff3.0, glycine depth (`d9`) | 0.603 | 0.477 | 0.457 | 0.439 | 0.464 (released) |
+| ff3.1, data depths (`fd`) | | 0.479 | 0.472 | 0.449 | 0.452 (released) |
+| ff3.1, all depths (`fa`) | | 0.471 | 0.444 | 0.404 | 0.406 |
+| ff3.2 (`f32`, stopped in step 69) | | 0.486 | 0.465 | 0.432 | |
+
+* **Every epoch of every run folds less than ff2.1** (p < 1e-6 each): ff_3.0_gdepth -0.152 [-0.196, -0.110], lower on
+  37 of 44; ff_3.1_depth_data -0.164 [-0.202, -0.126], lower on 43. The starts are at ff2.1's level (`gdepth_start`
+  0.603, p 0.5; `ff21_awh` 0.585), so the loss is the training, not the library change.
+* **Most of it is the first epoch** (-0.13 to -0.23). Later epochs add -0.01 to -0.07 in ff3.1 and ff3.2, ff3.0 gives
+  part back at epoch 3, and the control is flat (0.390, 0.405; on mdCATH its step 76 equals step 37, 1.36). So the
+  cost is leaving ff2.1, not reaching the fixed point.
+* **The round-3 mechanism** (1.17 A): with ff2.1's side-chain pair table put back, epoch 0 folds as ff2.1's start
+  (`e00` 0.487, `e00_rot21` 0.583, ff2.1 -0.033); the table random-walks under Adam on a noise-dominated gradient. Not
+  tested on the round-4 runs.
+* **It holds at the training time step.** Released ff2.1 at 0.009 (`p44_ff21_released`, all 44 domains,
+  `paired_npz.py`) folds 0.603, as at 0.015 (0.615, +0.013 [-0.025, +0.048], p 0.35); the control at its fixed point
+  (`p44_ctrl_03`) 0.430, -0.173 [-0.227, -0.124], p 2e-7, lower on 40 of 44; no-BP (`p44_nobp_03`) 0.363, -0.240
+  [-0.314, -0.171], p 3e-7. mdCATH and the angular-fix reruns' panels are running.
+* **Peng's benchmark agrees** (`checks/ff21_released_20261021/peng_trained.txt`): released ff3.0 0.480 native / 0.305
+  de novo, ff3.1 0.464 / 0.326, the control 0.486 / 0.299, against FF2's 0.55 / 0.42; alpha3d native 0.15-0.35 and
+  homeodomain 0.19-0.31 in all four trained force fields. The retired ff3.0 (FF1-form trainer, which trained no `hb` or
+  `sheet`, 9e) kept them (0.61, 0.54) and scored 0.585 / 0.401. A lead on the H-bond, not a proof: that trainer also
+  differed in burial (9t, 9u).
+* **What moves in the control's epoch 0** (`check_step.py`, steps 0-18): E_alpha -1.961 to -1.877 at ~0.0045 a step,
+  one sign throughout, and the environment and backbone-burial terms likewise (env largest change 0.05 a step, bb
+  scale -0.301 to -0.404): consistent pulls, not Adam's first-step transient. The side-chain table spreads as noise
+  (rms 0.058 at step 18, lr x sqrt(19) = 0.054).
+* **The training proteins do not fold better either**: free-replica CA-RMSD over all 456, per epoch, 2.85 2.86 2.86
+  2.89 A (control) and 2.86 2.81 2.84 2.83 (ff3.1 rerun), epoch 3 against 0 p 0.37 in both. Not overfitting: the
+  objective buys nothing on its own proteins while held-out folding falls.
+* **No port defect found.** Where `ConDiv.py` departs from the SI's wording (the NSE mixes the three coldest replicas
+  0.6/0.3/0.1; the DSE takes the two replicas bracketing the Rg midpoint with Rg above 0.67 Rg(coldest) + 0.33
+  Rg(hottest)), Kleinmann's port of Peng's code does the same (`condiv2.py` 690-735); its other drifts were corrected
+  to the SI (9v). Peng's own file is lost, and ff2.1 was never this objective's fixed point (76 iterations without a
+  convergence test, burial refitted after training, 1.23), so restarting the procedure moves it.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -2757,6 +2858,13 @@ environment bead receives this friction; a real protein N/CA/C carrier receives 
 where `n_contact` is the number of lipid beads inside the existing 12 A spline cutoff. Counts are refreshed
 after stage handoff, minimization promotion and production continuation, then held fixed during each segment
 so the SDE does not silently acquire position-dependent multiplicative noise.
+
+**Per-lipid targets** (user 10-20). The 11.5 was copied from Lipid14's Table 9 (Dickson et al. 2014), which quotes
+pfg-NMR at 303 K (Filippov, Oradd and Lindblom, Langmuir 2003); the same group reads 9.8 at 30 wt% water. No study
+measures DOPC, POPE and POPG by one method. The best same-method evidence puts POPE at 0.75 +- 0.15 of DOPC (a fluid
+PE-rich bilayer against POPC, MAS pfg-NMR, Gawrisch lab) and POPG at 1.0 +- 0.3 (faster than PC at low salt, slowed
+by salt, unmeasured at physiological salt). `LIPID_LATERAL_DIFFUSION_UM2_S` holds DOPC 11.5, POPE 8.6 and POPG 11.5
+with these citations and refuses any other lipid; ions keep the DOPC clock as an interim rule.
 
 Measured molecular DOPC diffusion under it is only **0.013-0.015 um^2/s against the 11.5 target**. This is
 reported as a failed molecular target, not hidden. Name the calibrated observable in H5 and in the paper,
@@ -3560,6 +3668,128 @@ its per-site array and runs as master; an engine without the fix refuses a new f
 Installed in the repo's `obj/` only (backups `*.bak_pre_envfix_20261019`). `$P` and `/beagle3` keep the old writer
 and engine while trainings run; ff_2.1 and every training so far carry the defect. Upside 3 trains with the fix
 (`upside3.md` section 4).
+
+### 3.14 Upside 3 audit ledger (plan.md Phase 24; from 2026-10-19)
+
+Confirmed defects, fixed on martini-dev (Upside 3) only. Each fix is verified three ways:
+* its reproducer passes;
+* `tests/node_fd.py` passes on the node;
+* `tests/regress.py compare` shows only the intended arrays changed.
+
+Effects on ff2.1 are not measured (upside3.md section 1).
+
+| id | file:line | in master | defect | effect | verification |
+|---|---|---|---|---|---|
+| A1 | `coord_basic.cpp:343` `DihedralCoord` | yes | loads the dummy atom -1 of terminal phi/psi before testing for the dummy | out-of-bounds read; the value was unused | ASan clean; regression bitwise |
+| A2 | `membrane_potential.cpp:477, 978` `MembraneCBPotential`, `MembraneSurfCBPotential` `get_param_deriv` | yes | the right-hand spline's derivative went to `shift + np`, one whole table past the end of `deriv`. The energy evaluates both sides on the same coefficients | half of the membrane coefficient gradient was lost, and the write corrupted neighbouring heap memory: other nodes' outputs and NaN in 2 of 6 runs of a process that called it. Simulations never call it; membrane-potential training did | before: 83 and 97 of 220 directions failed; after: finite-difference median error 1e-6; ASan clean; only `cb_membrane_potential/param_deriv` changes; three dumps bitwise equal |
+
+| A3 | `main.cpp` `ReplicaExchange::attempt_swaps`, `--exchange-criterion` | yes | criterion 1 compared the two replicas' Boltzmann factors before the swap, which is not a Metropolis exchange rule | wrong ensemble whenever it was selected: z up to 12 in mean potential; nothing in the repo selected it | removed with its option and the `run_upside.py` passthrough; regression bitwise |
+| A4 | `main.cpp` main loop `do_break` | yes | the `nr>last_start` test (older than the `(nr+1)` fix) made a 1-round replica interval swap every 2 rounds | swap frequency halved at interval 1 | attempts now exactly rounds/interval at 1, 2 and 10 rounds |
+| A5 | `main.cpp` `inner_step` | branch | `inner_step` was set from `--duration-steps` rather than the integrator | protein runs under `--duration-steps` logged 1/3 of their time, with every interval 3x short. g-JF hybrid runs under `--duration` logged 3x their time (MARTINI workflows use `--duration-steps`, so production was right) | `inner_step` comes from `/input/brownian`; every system must share it (validated precondition); protein 300 rounds log 8.1 = 300 x 3 x 0.009; hybrid 10 rounds log 0.09; regression bitwise |
+| A6 | `main.cpp` swap acceptance | branch | `isfinite(lboltz_diff)` guard, compiled out under the Mac flags and active on the cluster | a guard under NO GUARDS, and platform-dependent behaviour | removed; regression bitwise |
+| A7 | `main.cpp` `coord_swap` | yes (master swaps coordinates only) | the integrator leaves momenta half a step behind the coordinates, so a coordinate-only swap breaks the momentum-force correlation | master's REMD heats the replicas: KE/1.5kT 1.011-1.013 at a swap every 37 rounds and 1.027-1.039 at every 10, against 1.002-1.006 for independent runs | this branch's momentum swap with sqrt(T_dest/T_src) rescaling (2026-08-05) measures 1.003-1.007; its comment, which gave the wrong reason, rewritten |
+| A8 | `interaction_graph.h` `change_cache_buffer` | yes | the cache check uses `sqr(0.5*(cache_cutoff-cutoff))`, so a `set_param` that raises the cutoff kept a stale pair list | wrong energies after an in-process parameter change (1dfn coverage r0 8 to 12: -14.61 against -12.84 fresh) | a new buffer invalidates the cache (reviewer: 0 mismatches over every case); simulations bitwise |
+| A9 | `environment.cpp:769` `NonlinearCoupling` | yes | assigned the coverage sensitivity instead of adding | another consumer's force on the same coverage lost; no writer combines them | `+=`; regression bitwise |
+| A10 | `membrane_potential.cpp:1346`, `upside_config.py:2029` `membranelateral_potential` | yes | the writer mapped the profile's z range onto spline coordinate [0,1]; the spline's samples sit at 1..n | the lateral-pressure term read one clamped value at every z: zero force | the spline reproduces the input profile; forces 0.06-0.08 where they were 1e-10 |
+| A11 | `main.cpp` per-system seed | yes | `seed + ns` | system 1 of seed s ran the noise streams of system 0 of seed s+1 | `system_seed()` hashes (seed, ns) with splitmix64; seed 5 system 1 and seed 6 system 0 now differ by 1.6 A; only the dynamics arrays change |
+| A12 | `box.cpp` barostat RNG; `main.cpp` replica exchange | branch | the barostat RNG was seeded from the config's `mc_seed`, the same in every replica and independent of `--seed`; replica exchange swapped coordinates without the box | identical barostat noise in every replica; mixed boxes in NPT replica exchange (latent: production replica exchange runs NVT) | seeded from the system seed (`mc_seed` and `UPSIDE_NPT_MC_SEED` removed); replica exchange refuses the barostat as a validated precondition, shown on 1rkl stage 6.0 |
+| A13 | `upside_config.py` trans-cis writers | yes | `seq_new2 = seq_new[:]` is a numpy view, so the trans map was built from the cis sequence; the proline arrays were partly in file order and partly residue-sorted | identical trans and cis maps (true difference up to 4.75 E_up on 2qke); energies depended on the input's line order (3.2-3.9 E_up) | one sorted reader `read_pro_state_file`, used by both writers, and a copy; written maps equal the expected trans and cis maps exactly; sorted and unsorted inputs give equal energy |
+| A14 | `upside_config.py` `--fix-rotamer` | yes | `argmin` of a signed periodic chi2 distance | picked the farthest-below state (22 of 51 chi2 choices wrong on 1UBQ) | `argmin(abs(...))` |
+| A15 | `upside_config.py` `--rot-scale` | yes | `[2*n_knot_ang:]` sliced axis 0 of a (20,20,54) table | the option did nothing | radial knots now scale exactly by the factor, angular knots unchanged, in all three tables |
+| A16 | `upside_config.py` `read_rama_maps_and_weights` | yes | neighbour-dependent maps ignored chain breaks | a chain's first and last residues took the other chain's residue as neighbour (1dfn: 1.2-1.9 E_up per map) | the maps take `chain_first_residue`; dimer maps equal each chain's own; single chains bitwise unchanged |
+| A17 | `upside_config.py` `write_infer_H_O`, `main`; `martini_prepare_system_lib.py` | yes | both residues at each break were excluded as donor and acceptor | each break lost a valid NH and C=O (1dfn: +4.08 E_up H-bond energy) | `hbond_residues()` excludes only the sites spanning the break; separated dimer's H-bond energy equals A+B (-68.8280 against -68.8283) |
+| A18 | `hbond.cpp:644` | yes | each bond was counted at both its donor's and its acceptor's residue | the printed "hbonds" was twice the real count (stdout only) | halved |
+| A19 | `rotamer.cpp` `calculate_n_elem` | yes | accepted 2, 4 or 5 rotamers, which have no node holder | segfault at the first energy call | throws unless 1, 3 or 6 |
+| A20 | `rotamer.cpp` `compute_value` | yes | `n_bad_solve` counted solves that ended near the iteration budget | a solve that converged at iteration 18 was counted bad for max_iter 19-21, and a NaN deviation never was | counts a final deviation that is not `<= tol` |
+| A21 | `upside_config.py` `write_rotamer_placement` | yes | the path without `--dynamic-rotamer-1body` reads `rotamer_prob_fixed`, which no shipped library has | `NoSuchNodeError` | a clear error naming the option |
+| A22 | `upside_engine.py` `get_rotamer_graph` | yes | asked for values the rotamer node does not log | always raised; nothing called it | deleted |
+| A23 | `placement.cpp`, `environment.cpp` loggers | yes | every instance of a node type logged under one fixed name | `--log-level extensive` failed on every standard config | named after the node's group (`group_name()` in `h5_support`); extensive runs on chig and 1qhj_memb, one dataset per node |
+| A24 | `upside_config.py` (`n_atom/3`, `bb_index/3`, `hbbb_coverage` id2) | yes | Python 3 true division wrote index datasets as floats | right only because HDF5 truncates on read | integer division; engine record bitwise unchanged |
+| A25 | `advanced_config.py:560` `make_restraint_group` (O1) | yes | `x/3 != y/3` is float division in Python 3 | same-residue pairs were restrained, including in ConDiv's native-restrained replica | `//`; 1ubq group: 445 pairs, none within a residue |
+| A26 | `interaction_graph.h` `PairlistComputation` | yes | 4-wide stores into a buffer of `max_n_edge` with no count check | heap overflow when an `intensive_memory` budget is exceeded (compressed 1ubq) | throws "pair list needs more than its max_n_edge" first (validated precondition); regression bitwise |
+| A27 | `eig.cpp:357` `AffineAlignment` | yes | eigensolver tolerance 1e-5 left frame errors near 5e-5 that switched on and off as residues crossed it | rotamer energy jumps of 1-4e-3 E_up the force does not see | tolerance 2e-7: largest path step 5.8e-4, path deviation at most 2.1e-4; quaternions change by at most 4.4e-5 after sign, forces by 5e-5 RMS; runtime +2% |
+| A28 | `src/CMakeLists_M1.txt` | branch (master lacks it on both) | the Mac build used `-ffast-math` without `-fno-finite-math-only`, which the cluster build had | NaN and infinity tests compiled out on the Mac only, so the two platforms behaved differently | flags now match; static arrays change by at most 1.3e-5 relative |
+| A29 | `environment.cpp` `BackboneSigmoidCoupling`; `upside_config.py` `write_bb_environment`; both `ConDiv.py` | yes | the backbone desolvation term reads the side-chain burial's trained weights, but exposed no weight parameters, and its center, sharpness and hbond weight derivatives were commented out (D1) | ConDiv trained `envw` on a partial gradient: the missing backbone part was 40-130% of the side-chain part in a native-vs-perturbed contrast, in an unrelated direction (ff2.1's training included) | parameters are scale, center, sharpness, hbond weight plus 20 weights, all with exact derivatives (finite differences: 0 bad of 44 per frame). The writer stores one weight per residue type and refuses a library whose rows differ; old 400-entry files read their first row, bitwise as before. ConDiv adds the backbone weight derivative to `envw` (finite difference of a shared weight: -0.582 against -0.586, where the side-chain part alone was -1.340) and refuses `number_independent_weights` other than 20. bbenvc/bbenvs/bbenvw stay frozen |
+| A30 | `hbond.cpp` `HBondEnergy::get_param_deriv`; both `ConDiv.py` | yes | entries 4-11 (rama boundaries and sharpnesses) returned 0 while sitting in the trained `hb` field | frozen by accident | exact derivatives (0 bad of 32 per frame, 35 with class offsets); the trainer's new field `hbr` holds them at learning rate 0 |
+| A31 | `environment.cpp` coverage interactions | yes | `param_deriv` returned zeros, marked "not implemented" | a silent zero gradient for any trainer that asked | throw "the coverage parameter derivative is not implemented"; the harness records it |
+| A32 | `environment.cpp`, `sigmoid_energy.cpp`, `hbond.cpp`, `sidechain_radial.cpp`; `advanced_config.py`, `run_upside.py` | yes | nodes and options that no writer creates or no reader accepts: SphereCoverage, WeightedSphereCoverage (heap overflow, one-sided counts), uniform_transform, linear_coupling_with_inactivation, SigmoidLEnergy (wrong derivatives), CTerHBond (no forces), cooperation_contacts (writer and reader disagree), `--plumed` and the external pair tables (no reader), and a commented-out legacy block | dead or broken code | deleted (user 10-19); regression bitwise |
+| A33 | `bead_interaction.h` angular splines | yes | the cosine of two unit vectors rounds past -1 (norms exceed 1 by up to 2.5e-7), which read `p[-1]` and wrote `d_param[-1]` | rare out-of-range read and write, the write clobbering a neighbouring edge's slot in training | `angular_coord()` holds the cosine to [-1,1] (user 10-19); in-range values are unchanged; forces move by at most 6e-7 relative where it applies |
+| A34 | `rotamer.cpp` BP (R2) | yes | 1e-10 floors applied to probabilities that were not normalised: single-rotamer edges were folded in after conversion and edge probabilities never rescaled | below-Bethe free energy and wrong marginals in severe clashes (-74 E_up at a pair shift of 30, NaN at 40); never reached at ff2.1 natives | edges hold energies, single-rotamer edges fold in before conversion, each edge carries its log scale, floors 1e-30. Clash cases equal float64 Bethe to at most 5e-5 (one residual, +0.60 at shift 40 on multi-rotamer pairs, needs a product-form cavity); forests exact to 7e-7; normal frames within the BP tolerance |
+| A35 | `membrane_potential.cpp` `MembraneSurfHBPotential::get_param_deriv` | yes | the derivative multiplied by `surfv` alone where the energy uses `surfv*compact_sigmoid(bl-2.5,2)` | wrong surface-membrane H-bond gradient (63 of 92 slots failed, ratios 1.1-3.7) | uses the energy's factor; 0 of 92 bad |
+| A36 | `membrane_potential.cpp` `MembraneLateralPotential` | yes | with `--membrane-exclude-residues`, arrays indexed by position were read by residue id | heap overflow (SIGBUS) and other residues' burial | consistent indexing; ASan clean; forces on kept residues bitwise equal to the run without exclusions |
+| A37 | `main.cpp` `CurvatureChange`; `random.h` | yes | multiplicative proposal without its Jacobian and with irreversible support; proposal from unseeded `rand()` shared across threads; acceptance draw on the replica-exchange stream with the base seed; uninitialised centre pointer; stale energies | sampled a flat prior in curvature by accident (chi2 1835/10 against the energy's own measure), ignored `--seed`, raced between replicas, segfaulted without the centre node | step symmetric in log\|z\| with the Jacobian for a measure flat in curvature 1/R (proper at the flat end; the flat-in-R measure runs away to R = 1e8 A because the energy falls monotonically to the flat membrane); own stream keyed by the system seed; centre found at setup or a clear error; fresh energies; exact restore. chi2 8.7/10 against exp(-E/T) on the flat-curvature measure; bitwise reproducible per seed |
+| A38 | `surface.cpp` `FORCE_UNIT` | yes | 2.428602e-5 is 1 bar in units of kT at 298 K, not E_up | lateral pressures 17.6% too strong | 2.065948e-5 E_up/A^3, derived in the comment |
+| A39 | `membrane_potential.cpp` curvature gradients | yes | assumed the curvature centre on the z axis | wrong forces for an off-axis centre (latent: the writer puts it on the axis) | `xyz - ccenter`; off-axis force FD 0 bad; on-axis bitwise unchanged |
+| A40 | `main.cpp` re-centering checks | yes | `is_prefix` arguments reversed and node names out of date | z-recentering was never refused: the membrane fixture's protein z centre was reset every frame under default flags | `is_prefix(type, name)` with the writers' current names (every membrane variant, surface, lateral, walls, tension, pulling, tethers, `restraint_position`), the cavity for any re-centering, and fixed atoms; the membrane fixture now refuses default flags, chig runs bitwise as before |
+| A41 | `upside_config.py` `write_membrane_potential`, `--membrane-exposed-criterion`; `run_upside.py` | yes | the old membrane writer raised KeyError under Python 3, and the option only fed it | dead | deleted; the C++ node stays registered so old configs load |
+| A42 | `main.cpp`, `thermostat`, `martini_brownian`, `box.cpp`; MARTINI workflow writers; example 13 | yes | every random counter (round, thermostat, Brownian, MC, barostat) restarted at 0 on a continuation | a continuation with the same seed replayed the previous segment's noise (chig centre-of-mass walk correlated 0.999; hybrid protein displacements 0.76); the MARTINI workflow restarts stages with one seed | `/output/round` is logged and `/input/mom@round` resumes every counter; chig continuations bitwise equal the continuous run (plain, off the frame grid, with pivots, under `mv`); the hybrid Brownian path bitwise. Momentum without the attribute (written before 10-19) restarts at round 0 as before |
+| A43 | `monte_carlo_sampler.cpp` | yes | an accepted pivot or jump moved the coordinates but left the half-step momentum correlated with the old force | MD heated: KE/1.5kT 1.040 with a pivot every round | half-kick correction on acceptance (`inner_step*dt/2` for the slow level under `mv`): 1.007 against 1.004 without pivots; pivot detailed balance unchanged (chi2/dof 288/291) |
+| A44 | `main.cpp` annealing | yes | without `--anneal-end` the schedule ended at its start | a step from T to T*factor | `anneal_end = anneal_start + anneal_duration`: 0.8, 0.754, ..., 0.4 |
+| A45 | `main.cpp` initial thermalization | yes | applied after the real thermostat interval was set, as a partial refresh | KE/1.5kT 0.0097 at frame 0, 0.63 over the first 5 time units | full refresh: 0.903 at frame 0 |
+| A46 | `martini_masses.cpp`, `thermostat.cpp`, `main.cpp` | branch | masses were not validated, with silent m=1 fallbacks | a zero mass gave NaN positions and exit 0; a short mass array ran with m=1 for the rest | one positive mass per atom required; fallbacks removed |
+| A47 | `main.cpp` logged kinetic energy | branch | fixed atoms were counted | KE/1.5kT read 0.902 with 3 of 30 atoms fixed | averaged over dynamic atoms |
+| A48 | `deriv_engine.cpp` Predescu `integration_cycle`, `integration_stage`; `src/pivot_sampler.h` | yes | the kick order was not palindromic (not reversible); the header did not compile; neither had a user | dead | deleted |
+| A49 | `main.cpp` small items | yes | MC, replica and curvature intervals truncated with `int()`; logged time in float; `--temperature` help claimed a default; final KE report used the final temperature under annealing; `--minimize` wrote a duplicate frame; MC moves moved fixed atoms | an MC interval of 0.75 at dt 0.025 ran every 9 rounds; time off by 0.013 at 5.4e5; etc. | `round()`; double; help text; per-frame temperature; no duplicate; MC refused with fixed atoms |
+| A50 | `interaction_graph.h` capacity check (follow-up to A26) | branch | the check compared against `max_n_edge`, stricter than the buffers' `round_up(max_n_edge,4)` | every energy call on a tripeptide threw (steric pair list capacity 3) | compares against the buffer size: tripeptide 25.657316 as master; compressed intensive-memory 1ubq still refused |
+| A51 | `coord_operator.cpp` `Multiply` | yes | `propagate_deriv` scaled each input's sensitivity by its own factor instead of the other's | the cis-proline Ramachandran force in trans-cis runs was off by the factor lambda_cis (work 0.837 against an energy change of 3.346 across the transition) | correct factor per input and dimension; fed-twice elements refused; FD and path work agree (3.34631) |
+| A52 | `upside_config.py` `read_pro_state_file` | yes | a switching proline at residue 0 or a chain start has no omega dihedral, but the switch ids assume one per proline | that proline read another proline's switch from allocation padding | refused with a clear message |
+| A53 | `backbone_steric.cpp`, `upside_config.py` `write_backbone_pair` | yes | the steric wall excluded neighbours by residue number across chain breaks | no wall between a chain's last and the next chain's first residue (2.5 A apart: 0.000 against 32.0) | optional `sequence_id`, offset by 2 per break, replaces `id` for the exclusion only; single chains bitwise unchanged |
+| A54 | `main.cpp` moving constants | yes | `MovingConst3D` advances by its own `time_step`, not the integrator's dt | the AFM tip moved 1.8x too fast at `--time-step 0.005`; the help gave the velocity per time step | refused when they differ; help gives A per time unit |
+| A55 | `coord_const.cpp`, `coord_map.cpp`, `coord_operator.cpp`, `upside_nodes.py`, `advanced_config.py`, `upside_config.py`, `up.md` | yes | broken nodes nothing writes (MovingConst1D/2D and WhirlingConst1D write out of bounds; concat segfaults; weight_pos truncates weights to int; sum_of_values miscounts repeated indices; Sum indexes the weights wrongly) and writers their readers reject (`write_angle_spring2`, `write_rama_coord`, `ConcatCoord`, the always-off `append_const3D_to_pos`) | dead or broken code; `Const1D/2D` writers raised on numpy arrays | deleted; `if values is not None` in the kept writers; up.md rows for `rama_coord`, `backbone_pairs` and `rama_map_pot_ref` corrected; regression bitwise |
+| A56 | MARTINI per-engine registries (`martini_masses`, `martini_fix_rigid`, `martini_stage_params`, `martini_hybrid`, `martini_brownian`, `box.cpp`); `engine_c_library.cpp`; `main.cpp` | branch | state kept in global maps keyed by the engine's address was never removed when the engine was destroyed, and stage registration wrote only when the config had a stage | an engine built at a freed engine's address inherited its stage: -13016 E_up where the fresh value is -18316 (4 of 4 reuses) | `martini_unregister_engine()` erases every module's entries, called by `free_deriv_engine` and by a guard at the end of `upside_main`; registration resets first; reuses give the fresh energy |
+| A57 | `engine_c_library.cpp` `set_param` | yes | no size check | a half-length vector overflowed the heap in the membrane nodes; parameter-less nodes accepted anything | refuses a wrong size, as `get_param` does |
+| A58 | `main.cpp` `upside_main` | yes | `received_signal` was never reset | after one interrupted in-process run, the next did 0 rounds and raised KeyboardInterrupt | reset at entry |
+| A59 | `engine_c_library.cpp` `get_sens`; `h5_support.cpp` `read_attribute`; `timing.h` | yes | `get_sens` on a potential returned the potential; an array attribute was read into a scalar; the timer counted the warm-up call it divided out | wrong value; stack overflow on malformed input (ASan); profile averages wrong | 1 (dE/dE); refuse a non-scalar attribute; skip warm-up as the divisor assumes |
+| A60 | `src/hmm.cpp`, `py/tensorflow_upside.py`, `py/predict_chi1.py`, `upside_engine.freeze_nodes`, `h5::open_file`, `h5::ensure_not_exist`, the Mac `upside_engine` MODULE target and its Python lookup | yes / branch | not compiled; Python 2 and unimportable; broken (bytes against str, nonexistent `constant_*` nodes); unused; a module without `PyInit` | dead | deleted; regression bitwise |
+| A61 | `py/martini_hdx_membrane_accessibility.py` | branch | 0-based donor indices were matched to PDB residue numbers | glpG (numbered from 1) gave each amide its neighbour's lipid accessibility with no error; 1rkl (from 4) raised | donor to amide through `/input/hybrid_bb_map`, as `martini_hdx_project` does. Arrays made before 10-20 and the HDX outputs built on them must be regenerated (plan.md Known Errors) |
+| A62 | `example/03` MBAR, `helpers/calc_hdx_ht.py`, `example/06` force | yes | kT taken as 0.593 kcal/mol per T_up (298 K) and 41.4 pN per E_up/A (300 K) | free energies 14.9% low, pulling forces 14.5% low | one convention, T_up 1 = 350.588 K: kT 0.6966 kcal/mol per T_up, 48.40 pN per E_up/A; the extension labelled in A |
+| A63 | `py/get_info_from_upside_traj.py` | yes | summed acceptor and donor columns of `/output/hbond` | the H-bond count doubled | donors only |
+| A64 | `example/00` HDX: `4.calc_D_uptake.py`, `helpers/calc_hdx_ht.py` | yes | PF 1000 for a fully protected residue; pKD2O at 298 K beside a 400 K Arrhenius factor; no check that the target T lies on the ladder; the dG 1000 sentinel passed `isfinite`; cis-proline `*` left in the sequence | the most protected residues exchanged fastest; base rate off by 219x at T_up 1.14; R2 and the best-T choice corrupted by sentinels; IndexError | the ESS bound; pKD2O at the Arrhenius T; refused outside the ladder; NaN for censored dG; `*` stripped. The default `legacy_T_range` 1.14 now stops ladders that end below it |
+| A65 | `py/extract_vtf.py`, `py/mdtraj_upside.py`, `helpers/select_h5_frames.py`, `py/martini_extract_vtf.py` | yes / branch | frame selection off by one across restarts; restart time offset added twice since A42; duplicate restart frames; datasets paired by position; H written on cis-proline and O/H placed across chain breaks; NPT frames unwrapped with the last box; `load_upside_ref` returned None | misaligned frames (up to 15.6 A), wrong times (2997), wrong VTF atoms, torn bonds, crash | each fixed as in `mdtraj_upside`; the dead helpers duplicate `get_info`, `write_hybrid_energy`, `estimate_rama_distributions.py`, `print_traj_vtf`, `load_upside_rep` and the stubs deleted |
+| A66 | `main.cpp` re-centering checks (follow-up to A40) | yes | xy-only re-centering was allowed with terms on absolute x and y | a 5 A x-shift changed an xyz nail's energy by 1158 and a curved membrane's by 0.63 while the run proceeded | any re-centering is refused with tethers, walls, pulling, restraints, the cavity, or a membrane with `use_curvature`; a flat membrane still allows xy-only re-centering |
+| A67 | `martini_fix_rigid.cpp` rigid-body fit | branch | the fit built Horn's correlation matrix transposed, so it returned the inverse rotation, and took 16 power iterations, which find the largest-magnitude eigenvalue rather than the largest | in prep stages 6.x and the 7.0 burn-in the protein turned at 0.29, 0.79 and 0.92 of its angular velocity about its three axes; NVE drift -19 to +37 E_up per 3000 steps; 6.6 minimisation rotated the protein 0.0005 rad | S(a,b) = sum m r_a c_b as in `AffineAlignment`, exact `SelfAdjointEigenSolver`; one projection routine for MD, minimisation and placement; masses from `martini_masses`; a singular inertia is refused. Rotation capture 1.00 on each axis, drift -0.74 E_up, 6.6 minimisation rotates 0.085 rad; production unchanged bit for bit |
+| A68 | `martini_hybrid.cpp`, `martini_stage_params.cpp`, `main.cpp` hybrid stages | branch | the interface was active only when the stage label matched; `--minimize` switched every config to the "minimization" stage, and an unknown label was accepted | plain `--minimize` on a production config, or `current_stage` "Production", turned the SC-env and BB-env interface off and froze the protein, exit 0; the workflow avoided it only through `--minimize-preserve-stage` | each `activation_stage` runs only in its own stages (minimization: minimization; production: production_handoff, production) with the interface on, anything else refused; `--minimize` keeps the config's stage; `--minimize-preserve-stage`, the stage switch and their callers deleted; up.md stage table |
+| A69 | `martini_fix_rigid.cpp` reader; hybrid dead code | branch | `catch(...)` around the fix_rigid read and silent skips of out-of-range indices; flags and fallbacks nothing uses (`exclude_intra_protein_martini`, `virtual_backbone_com_mode`, `n_env`, `bb_residue_index`, the BB inference fallback, an overwritten force projection) | a wrongly shaped or out-of-range `fix_rigid/atom_indices` fixed nothing, exit 0 | refused at registration; `bb_atom_index` required; dead code deleted, behaviour-neutral (the projection's derivatives poisoned with 1e30 leave the trajectory bit for bit); up.md `hybrid_bb_map`, `hybrid_control` and the hybrid `pos` layout corrected, `hybrid_remap` removed |
+| A70 | hybrid prep overlaps: `martini_prepare_system.py`, `martini_prepare_system_lib.py`; `martini_potential.cpp` `martini_run_minimization` | branch | CHARMM-GUI's hard minimisation was off by default and the soft core (alpha 0.2) is a flat plateau, so template overlaps survived into MD; the minimiser stepped proportionally to the gradient | 6.3 at KE/1.5kT 26-33 (1rkl x4, glpG), box +6-7 A; one 6.4 start at 1.1e13 E_up with two beads thrown to 1.5e8 A, carried into the 7.0 seed; turning 6.1 on threw beads 1e14 A (NaN placements, heap read overflow in `PosQuadSplineInteraction`, SIGBUS) | CHARMM-GUI's order: 6.0 soft-core minimisation (lambda 0.01), 6.1 hard minimisation; before each MD stage a pair above kT ln(1e9 N_pairs) is refused; GROMACS steep minimiser (bounded step, 1.2x / 0.2x). Max pair energy at MD starts 1.1-7.9 kT (1rkl), 1.4-4.8 kT (glpG); 6.3 KE/1.5kT 0.64 / 0.58, recovering to 0.97-1.00 by 6.4 |
+| A71 | PO4 restraint, `martini_prepare_system_lib.py`; prep z freeze, `martini_hybrid.cpp` | branch | the head restraint's reference was in the uncentred PDB frame while the engine also froze PO4 z | every PO4 was 53.23 A off its reference, adding 250,773 E_up to the logged potential; the freeze made the 200-to-10 ramp a no-op and pinned P-P at the template's 36.4 A | one mechanism: the harmonic z restraint with its reference in the stage frame, ramped 200, 100, 50, 20, 10 kJ/mol/nm^2 over 6.2-6.6; no restraint and no freeze at 7.0; prep freeze and `preprod_lipid_headgroup_roles` deleted. 6.2 logs real potential + 270.21 E_up (analytic 270.206) |
+| A72 | hybrid prep composition and topology: ions, rotamer 1-body, ITP mapping | branch | ions neutralised residue charges the runtime protein does not carry (findings 5.3c); without `rotamer_prob_fixed` (no library has it) the rotamer 1-body fell back to -log of the unweighted phi/psi-grid average; ITP bonds were mapped by bead position and out-of-range indices skipped | net charge +3 e (1rkl), -6 e (glpG); helix rotamer energies off by up to 9.1 E_up (LEU); a reordered lipid bonded NC3-GL1 at 7.04 A | ions from the charges the topology carries, net 0 asserted; `placement_scalar` on `rama_coord` as `--dynamic-rotamer-1body` (equal to the pure ff2.1 config on 117 rows); ITP index to bead name to PDB index, mismatches refused |
+| A73 | hybrid prep restarts and tables | branch | continuations position-only at round 0 with the same seed, the round dropped through minimisation and handoffs, one seed shared by prep and REMD; soft prep tables with bare 1/r Coulomb; continuations re-injected tables from disk; the protein restraint held the virtual O/BB slots | segment displacement correlation 0.220; prep tables -2.6 E_up at 12 A where the potential is 0; a continuation would switch force field mid-trajectory | momentum and round carried, per-stage splitmix64 seeds (a split production is bitwise the continuous run); soft tables are the published RF + shifted LJ with softened r (lambda 0 bitwise, 0 at 12 A); continuations copy `/input`; N/CA/C restrained only. Examples: POPE/POPG, midway2 args, T 0.8647, `env_shared.sh`; dead micelle, water and bilayer-mode paths deleted |
+| A74 | `box.cpp` MC barostat | branch | a molecule with any z-held atom, and the protein (its derived BB/O slots counted as fixed), was never scaled; molecule centres came from atoms in different periodic images; the volume term used N ln V; nodes received an incrementally rescaled box | prep NPT never moved a lipid or the protein (5e-8 A per 400 calls); a split dimer stretched to 8.43 A; ideal-gas <A> 49.8 for 100; node box 552 float steps off after 1e6 calls | z-held atoms block only z; derived slots excluded; whole-molecule centres with consistent image moves; (N+1) ln V; nodes get the absolute box. 400 calls move lipids 2.1 A, protein 0.19 A; <A> 99.8 |
+| A75 | `martini_potential.cpp`, `martini_stage_params.cpp`, `main.cpp`, `deriv_engine.h` | branch | table n_grid read wrongly for non-1000 grids; bond spline domain shorter than minimum-image lengths, with an analytic fallback; dead `DihedralSpring`, `MartiniScTablePotential`, unused angle spline, no-op stage bond/angle calls, pressure logger, a diagnostic block, and a box hook in the core header | wrong energies at 500/1500 points; bond force 0.005 for 25.30 at 10.70 A | n_grid from the table; bond spline spans every minimum-image length and refits when the box grows; dead code deleted (`deriv_engine.h` back to master's form). Regression bitwise |
+| A76 | `martini_build_tables.py` side-chain/environment table; `martini_potential.cpp` reader | branch | targets keyed by bead type, so choline NC3 (+1) was neutral; the engine read the table's angle mirrored; the builder put the CB 0.57 A off; the radial grid ended at 12 A from the CB while side-chain beads reach 5.2 A further; linear interpolation | ASP-NC3 missed -2.15 E_up at 5 A; a bead 4.5 A from a LEU CB on the side-chain side got the backbone side's value (-1.04 for +151); 1702 of 3192 layers ended with slope > 0.01 (worst -0.414 E_up, 0.341 E_up/A); force jumps up to 78 E_up/A at nodes | targets keyed by (type, topology charge); angle and CB fixed; grid to bead reach + 1.2 nm with value and slope exactly 0; clamped cubic spline in r and theta (37 theta nodes). `parameters/ff_2.1/martini.h5` rebuilt (md5 `cc90a933...`, old kept as `.bak_20261020`); prepared hybrid `.up` files must be re-prepared |
+| A77 | `main.cpp` `ReplicaExchange` | yes | the alternating swap set came from a counter that restarts at 0 | a continuation after an odd number of attempts proposed the other set: 1 of 10 frames equal to the continuous run | set chosen by round / replica_interval - 1: 10 of 10 equal; fresh runs unchanged |
+| A78 | examples 01-15, `generate_restart_config.py`, `mdtraj_upside.py` | yes | `[ $is_native ]` true for "false"; continuations position-only with the same seed; example 12's slow step at dt 0.009; mts integrator on 08; stale artefacts and docs | frame-0 RMSD 5.8-6.4 A instead of 0; segment step correlation 0.97-1.00; KE/1.5kT 1.04-1.18 | each fixed; continuations carry momentum and round (bitwise the continuous run); up.md parameter-file rows corrected |
+| A79 | `martini_potential.cpp` angle term and side-chain table | branch | the MARTINI angle was evaluated analytically (Spline Table Only rule); the side-chain table's energy used the unnormalised CB vector while its gradient assumed a unit vector | node_fd flagged 22 of 26 CB-placement parameter derivatives | angle as a fixed spline of delta^2/2 over delta = cos - cos0 in [-2, 2] padded (5.1e-7 relative to the analytic form, no fallback); CB direction used for theta (0 flagged). Regression bitwise |
+| A80 | hybrid HDX analysis: `run_hdx_analysis.sh`, `00` chain, `martini_hdx_project.py`, `martini_hdx_membrane_accessibility.py`, `martini_extract_vtf.py`, `get_info_from_upside_traj.py`, `PDB_to_initial_structure.py` | yes / branch | the shipped driver never applied the lipid term; `stage_7.N` continuations read as replicas; no ladder check in `calc_hdx_ht.py`; the contact radius re-measured per replica; one temperature stamped on every group; no terminal corrections inside a multichain sequence; segments dropped from VTFs; sentinels in `percentD_feats.csv`; 0-based residue labels; projection checked only by residue count; static box under NPT; the OPM DUM chain counted; unknown ids plotted as LysM; lipids labelled UNK and a 50 A box fallback | `PS.npy` identical to `PS_protein.npy`; two segments of one run pooled as two states; profiles at T with ESS 1.1; radius 6.6-7.3 A across rungs; 1AFO chain-B rates 0.024x and 63x; 3 of 5 frames | each fixed; one pooled radius recorded beside the ACC arrays; PDB numbering carried; 1rkl lipid term changes 7 amides (e.g. residue 31: 0.000 to 0.337), glpG 6; protein-only outputs identical except the added numbering and censored columns |
+| A81 | `00.AnalysisScripts/4.calc_D_uptake.py` `sanitize_peptides`, peptide uptake | branch | experimental peptide Start/End used as 1-based positions in the simulated sequence; a sequence mismatch printed "using bounds" and went on | right only for a structure numbered from 1; numbered from 87, every peptide was dropped as out of bounds, and an offset numbering would sum the wrong residues | Start/End mapped through the PDB numbering (`load_pdb_numbering`); peptides with residues the structure lacks are skipped, a sequence mismatch stops; reproducer `scratchpad/upside3_audit/hdx_numbering/test_peptides.py` fails before, passes after; identical for structures numbered from 1 |
+| A82 | `bead_interaction.h` `quadspline` | branch (follows A33's clamp) | where `angular_coord` holds a cosine at +/-1 the energy no longer depends on it, but the force kept the spline slope at +/-1 | only off the unit sphere (rounding, or a trainer moving the placement vectors); the line integral of the force drifted from the energy past the clamp, 1.3e-2 and 4.8e-2 over 0.8 (1ubq placement params 40, 501; `scratchpad/upside3_audit/fd_candidates_20261021.md`) | angular derivatives zero where the cosine is held: drift 7e-5 and 1.3e-4 (`fd_probe/probe_clamp.py`); regression against w23 moves 138 of 545 arrays at rounding level, all of it -ffast-math code placement: a build with the same select never firing (cos > 10) equals the fix bitwise (0 of 545), so no fixture lane is clamped; new baseline `w24_clampB.npz` |
+| A83 | `martini_prepare_system_lib.py` `load_sidechain_rotamer_payload`; `martini_potential.cpp` `martini_sc_table_1body` | branch | the hybrid dropped every residue without a side-chain/environment table (ALA, GLY: no MARTINI side chain) from the rotamer rows, which the protein's side-chain node, its placement and the H-bond coverage share | every hybrid run lacked those residues' Upside side chains: their pair energies with every other side chain and their H-bond coverage (1rkl 3 of 31 residues, glpG 42 of 210); found by the registry (`scratchpad/upside3_audit/registry_20261021.md`) | every residue keeps its rows; table index -1 marks ALA and GLY and the node gives them no environment term; any other residue without a table raises. Reproducer `scratchpad/upside3_audit/alagly/repro.py`: rows 117 and 747 before, 120 and 789 after, identical to upside_config; table-less rows exactly 0 in the engine; node_fd on the 1rkl hybrid clean but for one direction-vector stencil (smaller steps agree); ff2.1 regression bitwise (w24_clampB to w25_alagly, 0 of 545) |
+| A84 | `coord_const.cpp` `Const1D`/`Const2D`, `upside_nodes.py` `Const1DCoord`/`Const2DCoord`; `sidechain_radial.cpp` `WallSpring` | yes | dead: no caller writes `Const1D` or `Const2D`, and `Const1D` without `initialized_by_coord` could not be built (`value` sized rank 1, checked rank 2); an unregistered second `struct WallSpring` beside `spring.cpp`'s broke the one-definition rule | none at run time | deleted; regression bitwise (w25_alagly to w25_dead, 0 of 545); fixtures regenerated from the current writers (`fixtures_w4`, 1dfn now carries `backbone_pairs/sequence_id`), baseline `w26.npz` equal to w25 |
+| A85 | `main.cpp` `compute_logged_subset_kinetic_energy` | branch | the logged `kinetic`, `protein_kinetic` and `lipid_kinetic` gave every non-fixed atom 3 degrees of freedom, also the PO4 atoms whose z is held for the first 150 production rounds | `avg_kinetic_energy/1.5kT`, the run health check, read 2.3% low during the hold; dynamics unaffected (found by the invariance tests) | degrees of freedom counted (2 for a z-held atom), energy per 3 of them: logged over the DOF-correct value from the recorded momenta 0.9773 during the hold and 1.0000 after (old), 1.000000 in both (new); ff2.1 regression bitwise (w26 to w27_ke, 0 of 545) |
+| A86 | `engine_c_library.cpp` `free_deriv_engine` | branch (A56) | dereferenced the NULL engine that `construct_deriv_engine` returns for a refused config, when `Upside.__del__` freed the half-built object | a config the engine refuses killed the Python process with SIGSEGV after its RuntimeError was caught (found by the option fixtures) | NULL is a no-op, as `delete` is: the reproducer (`option_fixtures/repro_refused_config_segfault.py`) exits 0 after the except block (-11 before); regression w28 to w29 bitwise |
+| A87 | `environment.cpp` `NonlinearCoupling`, `SigmoidCoupling`; `upside_config.py --environment-weights-number` | yes | mode 1 returned 0 for all 400 weight derivatives while the energy uses the stored library weights, which the help claimed were all 1.0 | a silent zero for parameters the energy depends on (a weight slot's central difference 0.083 against 0); no trainer uses mode 1 (ConDiv refuses anything but 20) | mode 1 deleted: the engine accepts 20 or 400 and refuses 1 with a clear message, the writer offers only 20 and 400; regression on the 28 remaining option fixtures bitwise (w28 to w29: only the refused `chig_envw1` keys absent) |
+| A88 | `upside_config.py` `write_rotamer_placement` (`--fix-rotamer`) | yes | unpacked six fields per `.chi` row, but `PDB_to_initial_structure` leaves the chain column empty for a PDB without chain ids | `--fix-rotamer` raised ValueError on any chainless structure (chig) | the reader takes residue, restype, chi1, chi2 as fields 0, 1, -2, -1 (the writer is master's format); chig fixes all 10 residues; a chained fixture (1ubq_rotamer) bitwise equal |
+| A89 | `upside_config.py --dynamic-rotamer-placement`; `placement.cpp` `placement_point_only`, `placement_point_vector_only` | yes | the option reads `rotamer_center`, which none of the 13 side-chain libraries holds; the two Rama-dependent point placements had no other writer | the option always ended in a NoSuchNodeError; two registered nodes nothing could build | option, its writer path and both registrations deleted; regression bitwise (w6 to w30, 0 of 4073) |
+| A90 | `upside_config.py --remove-pivot`, `--rama-sheet-library`, `--trans-cis` table; `run_upside.py` `cavity_radius` | yes | parsed and never read (the trans-cis `init_state` column dropped by its reader) | dead inputs that looked like controls | deleted; the trans-cis table is `residue energy k width` (example 09's table and plotter follow); every fixture's datasets bitwise equal |
+| A91 | `upside_config.py` input checks; `apply_spatial_transformation` | yes | checks that could not fire (`is None` on a store_true flag and on a '' default), writers that read nodes other options must supply, `--surface-method 2` written as a method the engine does not have, `parser.error` called out of scope | invalid configs written (a channel potential with no `surface` node), or failures deep in a writer | each a validated precondition with a clear error: channel needs `--surface`; bb environment needs `--environment-potential` and `--hbond-energy`; both membrane potentials need `--environment-potential` type 1 and `--hbond-energy`; `--surface-method` takes 0 or 1; the spatial table raises ValueError; fixtures bitwise |
+| A92 | `example/07.MoreRestraints/0.run.py` | yes | the structure was converted with `--disable-recentering`, leaving 1UBQ 37-47 A from its tables' reference points | the default wall pulled CA0 and CA5 with 127-148 E_up/A and stretched a backbone bond to 3.36 A within 20 time units | the conversion recentres (the Upside run keeps `--disable-recentering`, A66): start forces 35 and 11 E_up/A, max backbone bond 1.99 A |
+| A93 | `advanced_config.py` `write_group_const_spring`, `write_group_nail_spring` | yes | atom indices parsed with `float()` (the A24 class) | `id` stored as float64, right only while HDF5 converts integral values | `int()`, as `write_group_dist_spring`; ids int64 with equal values, node_fd and regression unchanged |
+| A94 | `upside_config.py` `write_rotamer_backbone` | yes | the pre-proline backbone class went to any residue followed by PRO, across a chain break as well | the last residue of a chain whose successor chain starts with proline took the pre-proline `hbond_coverage` and `hbond_coverage_hydrophobe` rows (1dfn with residue 30 PRO: 24 coverage outputs moved, up to 1.77; potential -8.130 against -7.955; found by `tests/index_oracle.py`) | the class comes from one per-residue list that respects `chain_first_residue`, and the dead `pre_PRO` toggle is gone; the oracle on that config leaves only D9's exclusions, and the 28 rebuilt fixtures equal fixtures_w6 in every dataset |
+| A95 | `rotamer.cpp` stop test, `max_deviation`, constructor | yes (stop test); A20 (NaN) | the stop test compared the damped step, (1-damping) times the fixed-point residual, with `tol`, so the enforced tolerance was tol/(1-damping) (at 1.0 the beliefs never moved and the solve stopped at once); `std::max` dropped a NaN deviation, so A20's bad-solve count never saw one; any damping and an `iteration_chunk_size` of 0 were accepted | at the shipped 0.4 beliefs stopped up to 1.6x tol from converged (free energy up to 2.4e-3 E_up, forces 1.1e-2 of RMS); at 0.99, 55-97x; at 1.0 1ubq's free energy 19.4 E_up high with `n_bad_solve` 0; a NaN solve counted 0 (found by pass 2) | the residual is the damped step over 1-damping, the deviation fold keeps NaN, damping must lie in [0,1) and the chunk size be at least 1: errors at most 1.2x tol for damping 0-0.97, NaN solves counted, the converged answer unchanged; node_fd on chig 0 bad of 42; regression w31 to w32: the 315 rotamer-fed arrays (rotamer energy and parameter derivatives, placement and coverage parameter derivatives and forces in 15 of 84 frames, seeded runs) and nothing else |
+| A96 | `environment.cpp` `EnvironmentCoverage`, `BackboneSigmoidCoupling`; `sigmoid_energy.cpp`; `upside_config.py` `read_pro_state_file` | yes | `aa_types` values were not checked against `num_aa_types`; `bb_sigmoid_coupling` did not check that its coverages have n_bb x 20 and n_bb elements; `SigmoidEnergy` windows were closed at both ends; a trans-cis width above 45 degrees was accepted, where the four 90-degree windows no longer meet | a bad type moved coverage into the next CB's channel (ASan BUS error for a large one); mismatched coverages read and wrote past the buffer (ASan heap overflow, energy -21.7 or -22.5 for -16.5); E doubled at omega exactly +-90; width 60 gave a discontinuous wall (dE 0.049 against force work 0.010 across -92 to -88) (found by pass 2) | each a validated precondition with a clear error, windows half-open [min, max); the malformed configs and width 60 are refused; regression w32 to w33 bitwise |
+| A97 | `sidechain_radial.cpp` `radial`, `hbond_sc_radial`, `symm_fast_contact`, `nosymm_fast_contact`; `environment.cpp` `linear_coupling_uniform`; `upside_config.py --rotamer-exclude-residues`, `--env-exclude-residues` | yes | five registered nodes with no writer (one with an `is_compatible` that accepted asymmetric tables), and two options the writer refused at parse time while `write_rotamer_placement` and `write_environment` kept their branches and two unused parameters | dead code | deleted, with the `run_upside` keywords; regression w33 to w34 bitwise; the 28 fixtures rebuilt equal fixtures_w6 in every dataset |
+| A98 | `interaction_graph.h` `get_param_deriv`, `propagate_derivatives` | yes | the parameter derivative re-ran the whole backward pass, adding the pair forces into the input nodes' sens again | after one `get_param_deriv` the `protein_hbond` sens read 2.000x, after two 3.000x (latent: nothing reads sens after a parameter derivative; found by pass 2 BP, confirmed by the igraph review) | `get_param_deriv` accumulates the parameter derivative from the stored edge sensitivities, and `propagate_derivatives` does positions only: ratios 1.000000; regression w34 to w35: only the `param_deriv` arrays of `rotamer`, `hbond_coverage`, `hbond_coverage_hydrophobe` (median 1 ulp, max 1.9e-6), bitwise with FMA contraction off (the reviewer's null build) |
+| A99 | `bead_interaction.h` `quadspline_param_deriv` | yes | the four coefficient blocks were written with `=`, so at a cosine of +1 the angular block's last bin (weight 0) overwrote the wide radial spline's coefficient 0 | the training gradient of radial coefficient 0 of the pair, coverage and hydrophobe tables read 0 for pairs closer than 1.4 A with a bead pointing at the other (exact 3.1e-2 at 1.0 A, 1/6 at 0.5 A); energies and forces unaffected | every block adds into the zeroed derivative: the harness gives 0 wrong of 54 slots in the targeted cases and of 20,000 random pairs (reproduced with the fix reversed) |
+| A100 | `interaction_graph.h` constructor, `set_param` | yes | a refused `set_param` had already copied its parameters in; index and type values were not range-checked; a symmetric graph was not required to have a square table | after a refused call later energies used the refused table (8.669 for 5.942); `type1` 11 of 8, -1, or `index1` 22 of 17 were accepted and read outside the arrays | compatibility is checked on the candidate before it is copied; indices, types and the square table are validated preconditions: the refused call changes nothing, the four bad configs are refused; regression unchanged by this part |
+| A101 | `hbond.cpp` `ProteinHBondInteraction::compute_edge` | yes | the 90-degree angular cutoff was tested per SIMD group of four edges, so an out-of-cone pair was evaluated whenever another pair of its group passed | the H-bond energy depended on edge order (the same config with rows reversed: 6.2e-3 E_up on chig_hbond, 4.6e-2 on 1ubq with `--loose-hbond-criteria`; below float32 at the default geometry) | every edge is evaluated, the sigmoid product being the potential and the cutoff only a shortcut: row order no longer matters (0 difference), the engine equals the float64 no-cutoff oracle; node_fd on chig_hbond 0 bad of 42; regression w35 to w36: forces up to 5.3e-5 E_up/A, the 1qhj 1 A noise frame's downstream nodes up to 7.6e-6, the seeded runs |
+
+Deliberately not changed: the H-bond radial cutoff of 3.5 A truncates the factor at 3.4e-4, which is below the
+1e-4-scale energy noise BP already carries. Moving it to 4.0 A would cut the jump to 6e-6, at about 1.5x the
+donor-acceptor pairs in a node that takes 13-19% of runtime.
+
+Every parameter derivative in Upside 3 is exact or raises "not implemented" (A29-A31). Refuted 10-21: `--use-heavy-atom-coverage`
+writes a node no potential reads, but `get_protection_state.py` reads its output for HDX, so it is not dead. Which parameters ConDiv
+trains is decided in its learning-rate table. Open items are in plan.md Phase 24.
 
 ## 4. What the hybrid gets wrong, and what is still open
 
@@ -4436,6 +4666,11 @@ an empty array when every residue is off-scale.)
 
 ### 5.3 The membrane term, and how its criterion was calibrated (findings 113)
 
+**Correction (2026-10-20, findings 3.14 A61):** every per-residue `acc` value in this section came from
+`martini_hdx_membrane_accessibility.py` before its off-by-one fix. glpG is numbered from 1, so each value belongs to the
+preceding residue. Re-measure them before using them, and recompute the HDX outputs built from those arrays
+(plan.md Known Errors). The criterion and its calibration are unaffected.
+
 `get_protection_state.py` scores an amide protected only if H-bonded or buried by *protein*. A TM amide
 facing lipid is buried by neither, so it drops out of the protected state whenever its backbone H-bond
 flickers, even though there is no water there to exchange with. Master handles this with
@@ -4790,6 +5025,7 @@ nothing changed).** The protection rule and the dG profile (`calc_hdx_ht.py`, `p
   Proposed: the per-temperature ESS bound in place of 1000, and censored amides carried as lower bounds in
   the uptake comparison. Even fixed, a censored amide's uptake is determined only to t ~ 0.1*ESS/k_int,
   about 10^3-10^4 s, so the multi-day HXMS points cannot test the TM cores at the present sampling.
+  Done in Upside 3 as proposed (3.14 A64, 10-20); master keeps the cap.
 * **Wording.** `py/martini_hdx_membrane_accessibility.py` ("the continuous +inf that a non-exchanging TM
   helix should show") and `helpers/plot_ref_style.py` ("a non-exchanging transmembrane helix") say
   non-exchanging where the literature says slower than the estimator resolves. `00.AnalysisScripts/README.md`
@@ -5192,6 +5428,26 @@ enlarging it costs almost nothing.
 
 ## 8. Bilayer physics measured with this force field
 
+**Reference (GROMACS 2026.4, CHARMM-GUI's own protocol, 2026-10-20).** The published potential (RF eps_r 15,
+potential-shifted LJ, both 1.2 nm), SD tau-t 4 ps, C-rescale semi-isotropic 0 bar, dt 40 fs, second half of
+50-100 ns unrestrained: DOPC (1148) 64.8 A^2 / P-P 43.8 A with 0.15 M NaCl, 62.8 / 44.9 without; POPE/POPG
+(332) 61.8 / 41.8 with or without salt. CHARMM-GUI's mdp cutoff (1.1 nm) adds 1.9-2.4 A^2; the Arnarez 2015
+force switch (0.9-1.2 nm) adds 3 A^2. About 27-30% of tail ends lie past the midplane at equilibrium (the
+bilayer_ts.py definition); CHARMM-GUI's step5 bilayers start at 83-93%, so GROMACS's own run jumps to
+88 A^2 (DOPC) within 50 ps and needs about 12 ns (2 ns without the PO4 restraint) to recover. Equilibrated
+frames and scripts: `scratchpad/bilayer_ref/gmx/`. The 128-DOPC numbers below were measured with the old
+barostat and are superseded for area and thickness.
+
+**Upside against GROMACS from the same start (2026-10-21, `scratchpad/bilayer_ref/upside_from_gmx_eq/`).** Each
+GROMACS-equilibrated frame (1.2 nm, no added salt) run in Upside on the same potential as tables, tensionless xy MC
+barostat, 400,000 steps (0.73 ns), second half against GROMACS's second half: DOPC (288) 63.26 +- 0.11 A^2, P-P
+44.66 A, 27.0% of tail ends past the midplane, against 62.88 +- 0.22, 44.88, 26.7%; POPE/POPG (332, counterions)
+60.93 +- 0.12, 42.24, 27.5%, against 61.74 +- 0.12, 41.84, 27.0%. DOPC matches. POPE/POPG is 1.3% smaller and 0.4 A
+thicker, its area still falling at the end (61.1 at 300,000 steps, 60.4 at 400,000); the run's block error ignores
+correlation beyond 0.1 ns, so 0.73 ns cannot separate a difference in the potentials from a slow fluctuation. The
+minimisation before MD thins both bilayers by 3.4-3.6 A in P-P (POPE/POPG 41.8 to 38.3), recovered within 8,000
+steps; cause not examined.
+
 Static structure validates the force field and is the strongest positive physical claim available
 (g-JF, 128-DOPC, T = 0.8647, 1500 frames): APL 65.6 A^2 (experiment ~67.4, -3%), P-P thickness 43.3 A
 (experiment 37-39, +10-15% thick), chain order P2 tail-average 0.30 (MARTINI DOPC 0.2-0.3), tilt
@@ -5265,6 +5521,32 @@ exactly that interface. Campaign 6 used all frames. Two things to check before t
 equality is called converged: re-run the estimator on the last third only, and measure this same shell
 curve for the other three variants -- if the relaxation differs between them, part of the comparison is
 between equilibration states rather than between chemistries.
+
+### 8b. The stage-7.0 gate counts glpG's bundle interior as vacuum; the lipid-facing gap is real and heals (2026-10-21)
+
+The gate (`assert_environment_solvation`) fails a build if any belt BB site (|z - midplane| <= 14.1 A for glpG) has
+no environment bead within 2 x `protein_lipid_cutoff` = 6 A. Measured on the gate's own quantity, nearest environment
+bead per belt site, split by burial (protein N, CA, C, O within 10 A of the site; `scratchpad/glpg_belt_20261021/
+gate_calibration.py`, `burial_split.py`):
+
+| state | all belt: median / >8 A | lipid-facing (burial 40-60): median / >8 A | buried (>= 80): >8 A |
+|---|---|---|---|
+| 1rkl production, healthy (one helix) | 5.62 / 1% | 5.64 / 1% | none |
+| glpG findings-100 production, healthy | 5.2 / 0% (all BB sites, max 7.3) | | |
+| glpG 7.0 state the gate rejected | 8.03 / 51% | 6.86 / 18% | 69% |
+| glpG 6.6 continued in NPT, plateau 60k-300k steps | 7.78 / 45% | 6.27 / 5% | 68% |
+| glpG production, 50k steps from the 7.0 state | 6.92 / 30% | 5.89 / 5% | 39% |
+| glpG production, 200k steps | 6.02 / 15% | 5.56 / 4% | 25% |
+
+* The 6 A rule fails every healthy state (38% of 1rkl's healthy sites exceed it), and most of what it counts in glpG
+  is the inside of the six-helix bundle, where protein, not lipid, surrounds the backbone. 1rkl's lone helix has
+  no inside, which is why the rule looked plausible there.
+* The lipid face did have a real gap when production started (18% beyond 8 A against 1%). Prep NPT cannot finish
+  it: the box converges in 30,000 steps (99.8 to 98.5 A) and the lipid face reaches 5% by 60,000, then stays,
+  under the rigid protein and the PO4 restraint. Flexible production closes it to 4% by 200,000 steps, which is the
+  slow annulus filling of 8a. The protein stayed intact (peptide C-N max 1.84 A, KE/1.5kT 1.003). The backbone
+  H-bond count fell from 97 to about 84 over the same run, on a config that predates A83.
+* The prep's NPT is 5 x 500 = 2,500 steps, so the box and the lipid face entered production unrelaxed.
 
 ## 9. The nanoparticle campaign (1AO6 + MPA-AuNP)
 
@@ -5826,6 +6108,9 @@ the new loop, while energy, forces and every other derivative stayed bitwise equ
 loop after the function's last shared accumulation, with `dparams` grown only there, restored
 bitwise equality of everything. So for a master-parity change in the engine: compare bitwise, not
 with a tolerance, and when only a reduction differs, look at code placement before the arithmetic.
+Where no placement keeps the bits (a select inside an inlined kernel, A82), the proof is a null build: the same
+code with a condition that never fires. If the fix equals the null build bitwise, the fix's own semantics moved
+nothing, and every difference from the old record is code generation.
 
 ### 10.13 Test whether a fix holds, and put the fix where the cause is (2026-10-04)
 
@@ -6137,7 +6422,55 @@ user's names: `ff21_nobp_dt009` (release `ff_2.1_nobp`) is "the deterministic si
 description and put the tag in parentheses**: "deterministic side-chain ff2.1 (`ff21_nobp_dt009`)", "ff3.1 rerun on
 the fixed engine (`ff31_depth_data_angfix`)". Internal tags (no-BP, ctrl38, a31_, a32_) alone read as unknown jobs.
 
-### 10.29 Emails to Tobin and John carry the experiment, not the session (2026-10-21)
+### 10.29 A debug goal means we find the bugs ourselves (2026-10-19)
+
+The user's goal "an overall debug of the current code" cited Jumper's Claude audit of master. I proposed asking Jumper
+or Tobin for his bug list as the audit's first input. The user corrected this: we are to find all bugs in the repo
+ourselves, on this branch, master's code first. **When the user names someone else's result as the model for a task,
+the task is to reproduce that kind of result independently, not to obtain theirs.** An outside list is at most a
+cross-check after our own audit.
+
+The same day I planned to measure each fix's effect on ff2.1 natives and globules, as was done for 3.13, and to
+attribute every departure from master to a named fix. The user: Upside 3 is a new release precisely so that no list
+of fixes and their effects on ff2.1 has to be published. **For Upside 3 work, prove each fix correct (reproducer, finite
+differences, nothing else changed); do not plan effect measurements against ff2.1 or master.** That differs from
+Upside 2 work, where the master-parity rule still holds.
+
+### 10.30 A long job finishes without an agent, and no agent waits on it (2026-10-20)
+
+User correction: the 17:30-18:50 session used up the allowance and reported nothing. Measured from
+the two agents' transcripts:
+* Both agents had been alive since early morning. The dry-MARTINI agent re-read about 650k tokens
+  of context per turn (709 turns that day); the GROMACS agent about 200k.
+* In that session they spent 113 turns, mostly waiting: `until <done>; do sleep; done` cut off by
+  the 10-minute Bash timeout, a check, then another wait (22 waits). Every wake-up re-read the whole
+  context, and waits longer than the cache lifetime rewrote it (11.3M cache-creation tokens in 42
+  turns for one agent). They wrote 45k tokens of output in total.
+* The simulations had finished by 18:52, but the analysis existed only in the agents' plans, so the
+  usage limit left the results on disk unanalysed and unreported.
+
+Rules:
+* A long job is one driver script that runs the whole chain, simulation through analysis, and
+  writes a small results file ending in `DONE`. Launch it with `scratchpad/detach.sh LOG CMD...`
+  (own session via `setsid`, `caffeinate -i` keeps the Mac awake), so it survives this session,
+  its agents and a usage limit. Keep durable outputs in the repo `scratchpad/`, not `/private/tmp`.
+* Wait with one `run_in_background` waiter that exits when `DONE` appears. Never wait in agent turns.
+* Agents are short-lived: one task, write results to a file, report, end. An agent that starts a
+  long job hands back the results path instead of waiting for it. Do not resume an agent with a large
+  context; start a fresh one from a brief file.
+* (10-21) Six pass-2 reviewers launched together, beside two other agents, hit the session limit within
+  minutes and all stopped mid-read. Run at most two or three heavy agents at once and start the next when
+  one reports.
+
+### 10.31 Cut a delimited block by searching for its end from its start (2026-10-19)
+
+Removing a `# --- START CHANGE --- ... # --- END CHANGE ---` block from `CMakeLists_M1.txt`, I searched for the end
+marker from the top of the file. An earlier block's end marker came first, so the slice duplicated half the file
+(two `upside` targets). The build still ran, and only a grep for duplicate targets caught it. **When cutting text
+between markers, search for the end marker from the start marker's position, assert the counts, and read the diff
+against HEAD before building.**
+
+### 10.32 Emails to Tobin and John carry the experiment, not the session (2026-10-21)
 
 A first draft of the side-chain result for the PI and Jumper ran to a page: library-file mechanics, the trainer's
 gradient bug in full, the convergence probes. The user: much shorter; no list of bugs; drop the running details the
@@ -6145,7 +6478,22 @@ AI did; say what was tested and on what, with the sizes of the test sets. **For 
 and why (one or two sentences), each test set with its size and what it is, the numbers, and what we conclude.**
 Leave out bugs found along the way, gradient checks, job mechanics and file paths unless asked.
 
-### 10.30 The diffusion sampler is built on Boltz, never BioEmu (2026-10-21)
+### 10.33 A block SE needs blocks longer than the correlation, and a shared seed is one sample (2026-10-21)
+
+The equipartition test took its SE from a fixed number of blocks per copy. In the 1rkl hybrid, lipid kinetic energy
+stays correlated for about 55 frames (25 time units): the friction calibrated to lipid diffusion gives a momentum
+relaxation time m/gamma of 35 time units. Blocks of 60-120 frames were not independent, so eight copies scattered
+3-4 times beyond their own SEs and read as FAIL. Separately, a 0.995 protein value seen with seed 2 in two builds
+looked like two confirmations. It was one draw seen twice: protein carriers are damped in 0.25 time units, so
+their momenta follow the bath noise, which depends only on (seed, atom, step). The same seed gave per-frame protein
+kinetic energies that correlate at r 0.92-0.96 across builds, and r near 0 for another seed. Independent seeds
+show no deficit. I also deleted the deciding runs' trajectories in their drivers before the analysis was final,
+and twice had to re-run to get a time series. **Take a statistical test's SE from the measured statistical
+inefficiency (pymbar `statistical_inefficiency_multiple`), with each series many g long. Compare builds or settings
+on independent seeds, or say that the runs are paired. Keep a deciding run's trajectories until its conclusion is
+written.**
+
+### 10.34 The diffusion sampler is built on Boltz, never BioEmu (2026-10-21)
 
 `diffusion_dynamics.md` had been drafted as "BioEmu2 first, Boltz-2 only if needed", and I read it back to the user
 on that basis. The user: we are building it on Boltz, not BioEmu; Jumper does not accept BioEmu because its data are
@@ -6406,6 +6754,21 @@ The full record, its tables and the Upside 3 plan are in `upside3.md` (sections 
   size contrast under one protocol (the control does not fold at constant T either).
 * The coverage-typing defect found on the way: 3.13.
 
+## 11f. Upside 3 planning: units, GPU and the first audit pass (2026-10-19)
+
+The full record is in `upside3.md` sections 2, 3 and 6 (reports in `scratchpad/upside3_planning_20261019/`).
+* **E_up's kJ/mol value is a temperature calibration.** 350.588 K = 298 K / 0.85, and Peng 2022 SI eq. S14 matches
+  T_up 0.85 to 298 K for FF2; FF1's match of 1.0 gives 2.479 kJ/mol. Converting parameter files to kJ/mol fixes one
+  force field's fit into them, and the MARTINI factor is this same calibration.
+* The Rama, rotamer and BP free-energy terms are evaluated at a fixed kT_ref = 1, at any simulation temperature.
+* Master's analysis scripts disagree on the kelvin scale: 0.593 kcal/mol per T_up implies 298 K, and 41.4 pN is kT at
+  300 K, where the 350.6 K convention gives 48.4 pN.
+* **The cluster and Mac builds treat NaN differently.** Master has `-ffast-math` on both. This branch added
+  `-fno-finite-math-only` only to `CMakeLists_Other.txt`. Under the Mac flags `isfinite(NaN)` is true (probe; not yet
+  shown in an engine run).
+* **Profile, ff_2.1 on one M3 Max core.** BP is 20-24% of the time, side-chain pair edges 25-27%, burial 19-22% and
+  H-bond 13-19%, from 76 to 578 residues. In the hybrid, the dry-MARTINI pair loop is 86%.
+
 ## 12. Claims that turned out to be wrong
 
 One line each: what was believed, what is true, and why it is worth keeping.
@@ -6553,3 +6916,4 @@ Rules these produced are collected in 6.7.
   field feeds, and check that each one was replaced.**
 * **"ff2.1's H-bond energies came from the H-bond node rewrite, not from a trainer"** (old 9e, 1.17).
   Peng's SI says ConDiv returned them (1.23). Read the SI before saying where a parameter came from.
+

@@ -1,35 +1,19 @@
 #!/bin/bash
 #SBATCH --job-name=1afo_hybrid_full
+#SBATCH --account=pi-trsosnic
+#SBATCH --partition=broadwl
 #SBATCH --output=slurm-%x-%j.out
 #SBATCH --time=36:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
+# Submit from midway2: sbatch $(cat /project/trsosnic/yinhan/slurm/midway2.args) run_sim_1afo_full.sh
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="${UPSIDE_PROJECT_ROOT:-$(cd "${SCRIPT_DIR}/../.." && pwd)}"
-
-if [ -f /etc/profile.d/modules.sh ]; then
-    source /etc/profile.d/modules.sh
-fi
-
-if command -v module >/dev/null 2>&1; then
-    module load python/3.11.9 || true
-    module load cmake || true
-    module load "${UPSIDE_HDF5_MODULE:-hdf5/1.14.3}" || true
-fi
-
-if [ -f "${PROJECT_ROOT}/.venv/bin/activate" ]; then
-    source "${PROJECT_ROOT}/.venv/bin/activate"
-fi
-
-export UPSIDE_SKIP_SOURCE_SH="${UPSIDE_SKIP_SOURCE_SH:-1}"
-export UPSIDE_HOME="${PROJECT_ROOT}"
-export PYTHONUNBUFFERED="${PYTHONUNBUFFERED:-1}"
-export PYTHONPATH="${PROJECT_ROOT}/py${PYTHONPATH:+:$PYTHONPATH}"
-export PATH="${PROJECT_ROOT}/obj:$PATH"
+source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh
+export UPSIDE_SKIP_SOURCE_SH=1
+export PYTHONUNBUFFERED=1
 
 export PDB_ID="${PDB_ID:-1afo}"
 export RUNTIME_PDB_ID="${RUNTIME_PDB_ID:-1afo_hybrid_full}"
@@ -37,4 +21,4 @@ export RUN_DIR="${RUN_DIR:-outputs/martini_1afo_hybrid_full}"
 export PROTEIN_AA_PDB="${PROTEIN_AA_PDB:-pdb/1AFO.pdb}"
 export AUTO_CONTINUE_STAGE_70="${AUTO_CONTINUE_STAGE_70:-1}"
 
-exec "${SCRIPT_DIR}/run_sim_hybrid.sh" "$@"
+exec bash "${UPSIDE_HOME}/example/16.MARTINI/run_sim_hybrid.sh" "$@"

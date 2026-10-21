@@ -11,7 +11,7 @@ pdb_id=chig
 pdb_dir=./pdb
 sim_id=simple_test
 
-is_native=$true
+is_native=true
 ff=ff_2.1
 T=0.8
 duration=1000
@@ -63,7 +63,7 @@ kwargs="$kwargs --bb-environment-potential=$param_dir_ff/bb_env.dat"
 kwargs="$kwargs --chain-break-from-file=$input_dir/$pdb_id.chain_breaks"
 kwargs="$kwargs --spatial-transform-from-table=spatial_table"
 
-if [ $is_native ]; then
+if [ "$is_native" = true ]; then
     kwargs="$kwargs --initial-structure=$input_dir/$pdb_id.initial.npy"
 fi
 

@@ -10,6 +10,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zlib
 from collections import Counter
 from pathlib import Path
 
@@ -17,30 +18,30 @@ import numpy as np
 
 from martini_itp_reader import lipid_max_sigma_nm, parse_dry_forcefield, parse_itp_file, parse_lipid_from_itp
 from martini_prepare_system_lib import (
+    BB_TYPE_CHARGE,
+    PROTEIN_RESIDUE_NAMES,
+    STAGE_SOFT_CORE_LAMBDA,
+    active_lipid_names,
+    lipid_diffusion_targets,
     build_backbone_with_virtual_bb,
-    build_detergent_micelle,
     center_of_mass,
     convert_stage,
     compute_lipid_residue_indices,
     coords,
     estimate_salt_pairs,
     extract_protein_backbone_atoms_from_aa,
-    infer_protein_charge_from_residues,
     inject_particles_table,
     inject_stage7_sc_table_nodes,
     lipid_resname,
     measure_belt_hydrophobic_coverage,
     membrane_slab_excluded_volume,
     set_active_lipid_name,
-    map_backbone_types_from_martinize_fallback,
     map_backbone_types_from_structure,
     parse_pdb,
     place_ions,
-    reject_inside_aggregate,
     reject_inside_slab,
     remove_overlapping_lipids,
     set_initial_position,
-    set_box_for_micelle,
     set_box_from_lipid_xy,
     set_coords,
     read_charmm_gui_membrane,
@@ -53,33 +54,46 @@ from martini_prepare_system_lib import (
 
 PY_DIR = Path(__file__).resolve().parent
 REPO_ROOT = PY_DIR.parent
-WORKFLOW_DIR = REPO_ROOT / "example" / "16.MARTINI"
 
 DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS = 150
-DEFAULT_NPT_TAU = 4.0
 DEFAULT_NPT_INTERVAL = 10
 # Monte-Carlo barostat lateral step: exp(+-mc_dmax_xy) per trial (~1% box change), tuned for a
 # reasonable acceptance rate on a dry-MARTINI membrane.
 DEFAULT_NPT_MC_DMAX_XY = 0.01
 DEFAULT_MARTINI_ENERGY_CONVERSION = 2.914952774272
 DEFAULT_MARTINI_LENGTH_CONVERSION = 10.0
-DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP = 14.521180763676
 MARTINI_MD_INTEGRATOR = "v"
 MARTINI_MD_TIME_STEP = 0.009
 # Mean amino-acid excluded volume (partial specific volume 0.73 cm^3/g, <MW> ~110 Da) used to
 # subtract the protein from the solvent-accessible volume when counting ions.
 PROTEIN_RESIDUE_VOLUME_A3 = 130.0
+# CHARMM-GUI's Martini bilayer equilibration (step6.2-6.6): the phosphate height restraint
+# BILAYER_LIPIDHEAD_FC in kJ/mol/nm^2, released over five stages.
+EQUILIBRATION_STAGES = (
+    ("6.2", 200.0),
+    ("6.3", 100.0),
+    ("6.4", 50.0),
+    ("6.5", 20.0),
+    ("6.6", 10.0),
+)
+# The stage-7.0 solvation gate (findings 8b). A belt site faces lipid when fewer than BELT_FACING_MAX_BACKBONE
+# protein backbone atoms lie within BELT_BURIAL_RADIUS_A of it. Averaged over a burn-in's last quarter, healthy
+# productions leave 0.4-3.3% of those sites without an environment bead within BELT_VACUUM_RADIUS_A (1-7.5% without
+# an acyl tail), a relaxed glpG prep 4.9% (6.5%), and the insertion void the gate guards 18% (25%).
+BELT_BURIAL_RADIUS_A = 10.0
+BELT_FACING_MAX_BACKBONE = 60
+BELT_VACUUM_RADIUS_A = 8.0
+BELT_VACUUM_MAX_FRACTION = 0.10
+# An MD start is refused if a pair has an energy the equilibrium ensemble would show in fewer than one
+# configuration in this many (assert_no_core_overlap).
+CORE_OVERLAP_ODDS = 1.0e9
 
 
 def find_lipid_itp_path(ff_dir: Path, lipid_name: str) -> Path:
     """Return the ITP under *ff_dir* that defines the *lipid_name* moleculetype."""
     target = lipid_name.strip().upper()
     for itp in sorted(Path(ff_dir).glob("*.itp")):
-        try:
-            topology = parse_itp_file(itp)
-        except Exception:
-            continue
-        if any(mol.upper() == target for mol in topology.get("molecules", {})):
+        if any(mol.upper() == target for mol in parse_itp_file(itp).get("molecules", {})):
             return itp
     raise FileNotFoundError(
         f"Lipid molecule '{lipid_name}' not found in any ITP under '{ff_dir}'."
@@ -131,14 +145,14 @@ def _count_hydrophobic_tails(lipid: dict) -> int:
     return tails
 
 
-def derive_environment_morphology(upside_home: Path, lipid_name: str) -> str:
-    """"micelle" for a single-tailed amphiphile, "bilayer" otherwise, read from the ITP topology.
+def require_bilayer_lipids(upside_home: Path, lipid_name: str):
+    """Refuse single-tailed amphiphiles, read from the ITP topology (findings 7.1).
 
     A one-chain amphiphile with a bulky head has a packing parameter far below 1, so it forms micelles,
     not lamellae: forcing it into a slab pins the area per molecule at the head's cross-section and
-    starves the hydrophobic core (DDM: ~14 A against a ~28 A transmembrane belt). Deriving this from
-    tail count rather than a name table keeps the rule universal and makes the unphysical combination
-    impossible to request.
+    starves the hydrophobic core (DDM: ~14 A against a ~28 A transmembrane belt). Only bilayers are
+    built, so a lipid whose acyl-chain count is one is rejected; deciding by tail count rather than a
+    name table keeps the rule universal.
     """
     ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
     tails = {}
@@ -147,14 +161,12 @@ def derive_environment_morphology(upside_home: Path, lipid_name: str) -> str:
         tails[name.upper()] = _count_hydrophobic_tails(lipid)
     if not tails:
         raise ValueError("Lipid name must be provided (--lipid-name)")
-    single = {n for n, t in tails.items() if t <= 1}
-    if single and len(single) != len(tails):
+    single = sorted(n for n, t in tails.items() if t <= 1)
+    if single:
         raise ValueError(
-            f"Cannot mix detergents {sorted(single)} with bilayer-forming lipids "
-            f"{sorted(set(tails) - single)}: the aggregate morphology is ambiguous. Tails per "
-            f"molecule: {tails}."
+            f"{single} are single-tailed amphiphiles, which form micelles, not bilayers; only bilayer-forming "
+            f"lipids are supported. Tails per molecule: {tails}."
         )
-    return "micelle" if single else "bilayer"
 
 
 def derive_lipid_apolar_bead_names(upside_home: Path, lipid_name: str) -> set:
@@ -203,31 +215,22 @@ def derive_lipid_net_charges(upside_home: Path, lipid_name: str) -> dict:
 
 def parse_prepare_args(argv=None):
     parser = argparse.ArgumentParser(
-        description=(
-            "Unified preparation script for bilayer-only, protein-only, or mixed "
-            "protein+bilayer systems. Can optionally convert prepared structure "
-            "to UPSIDE input."
-        )
+        description="Pack a protein into a CHARMM-GUI bilayer and convert it to an Upside hybrid stage input."
     )
-    parser.add_argument("--mode", choices=["bilayer", "both"], required=True)
     parser.add_argument("--pdb-id", required=True, help="Runtime PDB id for stage conversion")
-    parser.add_argument("--runtime-pdb-output", default=None)
+    parser.add_argument("--runtime-pdb-output", required=True)
     parser.add_argument("--prepare-structure", type=int, default=1, choices=[0, 1])
-    parser.add_argument("--stage", default=None, help="stage name for UPSIDE input conversion")
-    parser.add_argument("--run-dir", default="outputs/martini_test")
+    parser.add_argument("--stage", default=None, choices=sorted(STAGE_SOFT_CORE_LAMBDA),
+                        help="pair tables of the UPSIDE input conversion")
+    parser.add_argument("--run-dir", required=True)
 
     parser.add_argument("--lipid-name", required=True,
                         help="Membrane lipid moleculetype name(s), comma-separated for a mixed bilayer "
-                             "(e.g. DOPC, DDM, or POPE,POPG); topology read from the input ITP files")
-    parser.add_argument("--bilayer-pdb", default=None,
-                        help="Bilayer slab PDB for mode=bilayer (default: parameters/dryMARTINI/<lipid-name>.pdb)")
-    parser.add_argument("--charmm-gui-dir", default=None,
-                        help="CHARMM-GUI Martini job dir (mode=both): membrane read from "
-                             "gromacs/step5_charmm2gmx.pdb + gromacs/system.top")
+                             "(e.g. DOPC or POPE,POPG); topology read from the input ITP files")
     parser.add_argument("--membrane-pdb", default=None,
-                        help="CHARMM-GUI membrane CG PDB (overrides --charmm-gui-dir); must carry a CRYST1 box")
+                        help="CHARMM-GUI membrane CG PDB (gromacs/step5_charmm2gmx.pdb); must carry a CRYST1 box")
     parser.add_argument("--membrane-top", default=None,
-                        help="CHARMM-GUI system.top for the lipid-count cross-check (overrides --charmm-gui-dir)")
+                        help="CHARMM-GUI system.top for the lipid-count cross-check")
     parser.add_argument("--protein-cg-pdb", default=None,
                         help="martinize MARTINI22 CG PDB of the protein (BB+SC envelope; prep-time geometric aid only)")
     parser.add_argument("--opm-reference", default=None,
@@ -248,7 +251,6 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--seed", type=int, default=2026)
 
     parser.add_argument("--protein-lipid-cutoff", type=float, default=3.0)
-    parser.add_argument("--protein-net-charge", type=int, default=None)
     parser.add_argument(
         "--protein-orientation-mode",
         choices=["input", "lay-flat", "opm"],
@@ -265,15 +267,6 @@ def parse_prepare_args(argv=None):
     )
     parser.add_argument("--summary-json", default=None)
     return parser.parse_args(argv)
-
-
-def runtime_paths(args):
-    runtime_pdb = (
-        Path(args.runtime_pdb_output).expanduser().resolve()
-        if args.runtime_pdb_output
-        else (WORKFLOW_DIR / "pdb" / f"{args.pdb_id}.MARTINI.pdb")
-    )
-    return runtime_pdb
 
 
 def copy_if_different(src: Path, dst: Path):
@@ -459,33 +452,31 @@ def pack_bilayer_environment(args, lipid_template, bilayer_box, protein_backbone
     for atom in lipid_template:
         atom["z"] = float(atom["z"] + (membrane_center_z - lip_mid_z))
 
-    # xy fill window: the protein CG-envelope footprint + a PBC-safe belt on each side, rounded up to
-    # a whole number of template tiles so the bilayer tiles seamlessly (no lateral gaps/contraction).
+    # xy fill window: the protein CG-envelope's larger footprint + a PBC-safe belt on each side, on both
+    # axes because the protein turns freely in the membrane plane. Each axis is then rounded up to a whole
+    # number of ITS OWN template tiles, so a rectangular tile also repeats seamlessly across both periodic
+    # boundaries (findings 7.2).
     fmin = cg_xyz.min(axis=0)
     fmax = cg_xyz.max(axis=0)
     pspan = fmax - fmin
     pcenter_xy = 0.5 * (fmin[:2] + fmax[:2])
     belt = float(args.box_padding_xy) + float(args.protein_pbc_margin)
-    tile_xy = float(bilayer_box[0])
-    target_side = max(tile_xy, float(np.max(pspan[:2] + 2.0 * belt)) * max(1.0, float(args.xy_scale)))
-    target_side = float(np.ceil(target_side / tile_xy) * tile_xy)
-    target_xy_min = np.array([pcenter_xy[0] - 0.5 * target_side, pcenter_xy[1] - 0.5 * target_side], dtype=float)
-    target_xy_max = np.array([pcenter_xy[0] + 0.5 * target_side, pcenter_xy[1] + 0.5 * target_side], dtype=float)
+    tile_xy = np.array([float(bilayer_box[0]), float(bilayer_box[1])])
+    fill_side = float(np.max(pspan[:2] + 2.0 * belt)) * max(1.0, float(args.xy_scale))
+    target_xy = np.maximum(np.ceil(fill_side / tile_xy), 1.0) * tile_xy
     bilayer_lipids = tile_and_crop_bilayer_lipids(
         bilayer_atoms=lipid_template,
         bilayer_box=bilayer_box,
-        target_xy_min=target_xy_min,
-        target_xy_max=target_xy_max,
+        target_xy_min=pcenter_xy - 0.5 * target_xy,
+        target_xy_max=pcenter_xy + 0.5 * target_xy,
     )
 
     # Overlap removal against the CG envelope (BB+SC), not the backbone: whole lipids clashing with
     # the protein's true girth (including where the sidechain rotamers are rebuilt) are deleted.
-    lipid_residues, keep_nonlipid = compute_lipid_residue_indices(bilayer_lipids)
     bilayer_kept, removed_lipids = remove_overlapping_lipids(
         bilayer_atoms=bilayer_lipids,
         protein_atoms=cg_atoms,
-        lipid_residues=lipid_residues,
-        keep_nonlipid=keep_nonlipid,
+        lipid_residues=compute_lipid_residue_indices(bilayer_lipids),
         cutoff=float(args.protein_lipid_cutoff),
     )
 
@@ -499,23 +490,20 @@ def pack_bilayer_environment(args, lipid_template, bilayer_box, protein_backbone
         belt_half_thickness=(
             read_opm_hydrophobic_half_thickness(Path(args.opm_reference).expanduser().resolve())
             if args.opm_reference
-            else 0.5 * float(np.ptp(coords([a for a in bilayer_kept if lipid_resname(a["resname"])])[:, 2]))
+            else 0.5 * float(np.ptp(coords(bilayer_kept)[:, 2]))
         ),
     )
 
     packed_atoms = protein_backbone_atoms + bilayer_kept
-    min_box_z_target = float(pspan[2] + 2.0 * (float(args.box_padding_z) + float(args.protein_pbc_margin)))
     box_lengths = set_box_from_lipid_xy(
         all_atoms=packed_atoms,
         lipid_atoms=bilayer_kept,
+        xy_box=target_xy,
         pad_z=float(args.box_padding_z),
-        force_square_xy=True,
-        min_box_z=min_box_z_target,
-        center_lipid_in_z=True,
-        force_xy_box=(target_side, target_side),
+        min_box_z=float(pspan[2] + 2.0 * (float(args.box_padding_z) + float(args.protein_pbc_margin))),
     )
 
-    kept_lipid_xyz = coords([a for a in bilayer_kept if lipid_resname(a["resname"])])
+    kept_lipid_xyz = coords(bilayer_kept)
     membrane_z_lo = float(kept_lipid_xyz[:, 2].min())
     membrane_z_hi = float(kept_lipid_xyz[:, 2].max())
     packed_thickness_z = membrane_z_hi - membrane_z_lo
@@ -527,6 +515,11 @@ def pack_bilayer_environment(args, lipid_template, bilayer_box, protein_backbone
         if float(args.membrane_thickness_angstrom) > 0.0
         else packed_thickness_z
     )
+    # The slab already excludes the protein's transmembrane part; only residues outside it take solvent
+    # volume from the ions.
+    membrane_mid_z = 0.5 * (membrane_z_lo + membrane_z_hi)
+    ca_z = np.array([float(a["z"]) for a in protein_backbone_atoms if a["name"].strip() == "CA"])
+    n_residues_outside_slab = int(np.count_nonzero(np.abs(ca_z - membrane_mid_z) > 0.5 * count_thickness_z))
     # The belt is the protein's own hydrophobic band: the OPM reference publishes it, otherwise fall
     # back to the packed slab's extent.
     belt_half_thickness = (
@@ -535,115 +528,29 @@ def pack_bilayer_environment(args, lipid_template, bilayer_box, protein_backbone
         else 0.5 * packed_thickness_z
     )
     geometry = {
-        "morphology": "bilayer",
         "lipid_residues_removed": int(removed_lipids),
         "belt_half_thickness_a": float(belt_half_thickness),
         "belt_coverage": coverage,
-        "base_xy_side_angstrom": tile_xy,
-        "target_xy_side_angstrom": target_side,
+        "base_xy_tile_angstrom": [float(v) for v in tile_xy],
+        "target_xy_angstrom": [float(v) for v in target_xy],
         "membrane_thickness_z_angstrom": packed_thickness_z,
         "ion_count_thickness_z_angstrom": count_thickness_z,
         "protein_span_angstrom": [float(v) for v in pspan],
-        "excluded_volume_a3": membrane_slab_excluded_volume(
-            box_lengths, count_thickness_z, 0.0
-        ),
-        "ion_reject": lambda box: reject_inside_slab(membrane_z_lo, membrane_z_hi),
+        "protein_residues_outside_ion_slab": n_residues_outside_slab,
+        "excluded_volume_a3": membrane_slab_excluded_volume(box_lengths, count_thickness_z)
+                              + n_residues_outside_slab * PROTEIN_RESIDUE_VOLUME_A3,
+        "membrane_z_range": (membrane_z_lo, membrane_z_hi),
     }
     return bilayer_kept, box_lengths, geometry
 
 
-def pack_micelle_environment(args, lipid_template, bilayer_box, protein_backbone_atoms, cg_atoms, upside_home):
-    """Wrap the protein's hydrophobic belt in a detergent monolayer (tails in, heads out)."""
-    if not args.opm_reference:
-        raise ValueError(
-            "A micelle build needs --opm-reference: the protein's hydrophobic belt comes from the "
-            "reference's OPM thickness REMARK."
-        )
-    if float(args.membrane_thickness_angstrom) > 0.0:
-        raise ValueError(
-            "--membrane-thickness-angstrom is a lamellar ion-counting input and does not apply to a "
-            "micelle; the aggregate's own volume is measured instead."
-        )
-    belt_half_thickness = read_opm_hydrophobic_half_thickness(
-        Path(args.opm_reference).expanduser().resolve()
-    )
-    ff_dir = Path(upside_home) / "example" / "16.MARTINI" / "dryMARTINI_itp"
-    first_lipid = next(part.strip() for part in str(args.lipid_name).split(",") if part.strip())
-    lipid = parse_lipid_from_itp(find_lipid_itp_path(ff_dir, first_lipid), first_lipid)
-
-    micelle_atoms, diagnostics = build_detergent_micelle(
-        template_atoms=lipid_template,
-        template_box=bilayer_box,
-        protein_cg_atoms=cg_atoms,
-        belt_half_thickness=belt_half_thickness,
-        contact_clearance=float(args.protein_lipid_cutoff),
-        apolar_bead_indices=_apolar_bead_indices(lipid),
-        rng=np.random.default_rng(int(args.seed)),
-    )
-    tail_covered = diagnostics["exposed_belt_beads"] - diagnostics["uncovered_exposed_belt_beads"]
-    print(
-        f"Micelle packing: {diagnostics['n_detergent']} {first_lipid} "
-        f"({diagnostics['n_refilled']} refilled) around a {2.0 * belt_half_thickness:.1f} A "
-        f"hydrophobic belt; {tail_covered}/{diagnostics['exposed_belt_beads']} exposed belt beads "
-        f"tail-covered, {diagnostics['vacuum_exposed_belt_beads']} facing vacuum; bead spacing "
-        f"min {diagnostics['min_intermolecular_a']:.2f} / median "
-        f"{diagnostics['median_intermolecular_a']:.2f} A; min protein-detergent distance "
-        f"{diagnostics['min_protein_detergent_distance_a']:.2f} A"
-    )
-    # Residual bald spots are REPORTED here, not fatal: a rigid conformer cannot always reach into a
-    # deeply recessed site that a flexible chain would, and refining the grid only surfaces more such
-    # sites rather than filling them. The authoritative solvation check is
-    # assert_environment_solvation(), run on the equilibrated coordinates that actually enter
-    # production -- by then the ladder has closed single-bead voids, and anything still bare is real.
-    if diagnostics["vacuum_exposed_belt_beads"] > 0:
-        print(
-            f"  note: {diagnostics['vacuum_exposed_belt_beads']} exposed belt bead(s) start beyond "
-            f"{diagnostics['coverage_radius_a']:.2f} A of any detergent bead; equilibration must close "
-            "this, and the stage-7.0 solvation gate will verify it."
-        )
-
-    apolar_names = derive_lipid_apolar_bead_names(upside_home, args.lipid_name)
-    # Measure belt coverage BEFORE the box shift, while z=0 is still the membrane midplane.
-    coverage = measure_belt_hydrophobic_coverage(
-        protein_backbone_atoms=protein_backbone_atoms,
-        env_atoms=micelle_atoms,
-        apolar_bead_names=apolar_names,
-        belt_half_thickness=belt_half_thickness,
-    )
-
-    packed_atoms = protein_backbone_atoms + micelle_atoms
-    box_lengths = set_box_for_micelle(
-        packed_atoms, float(args.box_padding_z) + float(args.protein_pbc_margin)
-    )
-    tail_xyz = np.array(
-        [[a["x"], a["y"], a["z"]] for a in micelle_atoms if a["name"].strip() in apolar_names],
-        dtype=float,
-    )
-    head_xyz = np.array(
-        [[a["x"], a["y"], a["z"]] for a in micelle_atoms if a["name"].strip() not in apolar_names],
-        dtype=float,
-    )
-    cg_span = coords(cg_atoms).max(axis=0) - coords(cg_atoms).min(axis=0)
-    geometry = {
-        "morphology": "micelle",
-        "lipid_residues_removed": 0,
-        "belt_half_thickness_a": float(belt_half_thickness),
-        "belt_coverage": coverage,
-        "protein_span_angstrom": [float(v) for v in cg_span],
-        "excluded_volume_a3": diagnostics["aggregate_volume_a3"],
-        "ion_reject": lambda box: reject_inside_aggregate(tail_xyz, head_xyz, box),
-    }
-    geometry.update({f"micelle_{k}": v for k, v in diagnostics.items()})
-    return micelle_atoms, box_lengths, geometry
-
-
 def prepare_mixed_structure(args, runtime_pdb):
     if not args.protein_aa_pdb:
-        raise ValueError("--protein-aa-pdb is required for mode=both")
+        raise ValueError("--protein-aa-pdb is required")
     if not args.membrane_pdb:
-        raise ValueError("--membrane-pdb (or --charmm-gui-dir) is required for mode=both")
+        raise ValueError("--membrane-pdb is required")
     if not args.protein_cg_pdb:
-        raise ValueError("--protein-cg-pdb (martinize CG envelope) is required for mode=both")
+        raise ValueError("--protein-cg-pdb (martinize CG envelope) is required")
 
     protein_aa_pdb = Path(args.protein_aa_pdb).expanduser().resolve()
     membrane_pdb = Path(args.membrane_pdb).expanduser().resolve()
@@ -668,29 +575,21 @@ def prepare_mixed_structure(args, runtime_pdb):
     R, t = compute_protein_orientation(protein_backbone_atoms, args)
     apply_rigid_transform(protein_backbone_atoms, R, t)
     apply_rigid_transform(cg_atoms, R, t)
-    prot_xyz = coords(protein_backbone_atoms)
-    cg_xyz = coords(cg_atoms)
 
     upside_home = Path(os.environ.get("UPSIDE_HOME", str(REPO_ROOT)))
-    morphology = derive_environment_morphology(upside_home, args.lipid_name)
-    print(f"Environment morphology: {morphology} (from acyl-tail count in the lipid ITP)")
-    if morphology == "micelle":
-        bilayer_kept, box_lengths, env_geometry = pack_micelle_environment(
-            args, lipid_template, bilayer_box, protein_backbone_atoms, cg_atoms, upside_home
-        )
-    else:
-        bilayer_kept, box_lengths, env_geometry = pack_bilayer_environment(
-            args, lipid_template, bilayer_box, protein_backbone_atoms, cg_atoms, prot_xyz, cg_xyz
-        )
+    require_bilayer_lipids(upside_home, args.lipid_name)
+    bilayer_kept, box_lengths, env_geometry = pack_bilayer_environment(
+        args, lipid_template, bilayer_box, protein_backbone_atoms, cg_atoms,
+        coords(protein_backbone_atoms), coords(cg_atoms)
+    )
     packed_atoms = protein_backbone_atoms + bilayer_kept
-    removed_lipids = env_geometry["lipid_residues_removed"]
 
     # Gate G1: the protein's hydrophobic belt must sit against acyl tails, not headgroups. A lamellar
     # DDM slab fails this (~14 A tail span, half the belt facing maltose), which is what unfolded TM4.
     # Reported, not gated: CHARMM-GUI templates are pre-minimization and laterally compressed, so a
     # packed-state span reads low for every lipid (DOPC 20 A, POPE/POPG 21 A) and cannot be compared with
-    # OPM's relaxed hydrophobic thickness. assert_environment_solvation() does the real check per belt
-    # residue on equilibrated coordinates, which is both local and like-for-like.
+    # OPM's relaxed hydrophobic thickness. assert_environment_solvation() does the real check on the lipid-
+    # facing belt sites over the rigid burn-in's last quarter, which is both local and like-for-like.
     coverage = env_geometry.pop("belt_coverage")
     print(
         f"Hydrophobic coverage (packed state): tail span {coverage['tail_hydrophobic_span_a']:.1f} A, "
@@ -698,109 +597,79 @@ def prepare_mixed_structure(args, runtime_pdb):
         f"{coverage['belt_residues']} belt residues nearest a polar bead"
     )
 
-    protein_charge = (
-        int(args.protein_net_charge)
-        if args.protein_net_charge is not None
-        else int(infer_protein_charge_from_residues(protein_backbone_atoms))
-    )
-    # Charged lipids (e.g. POPG) contribute a net membrane charge that counterions must
-    # neutralize alongside the protein; neutral bilayers add nothing.
-    lipid_net_charges = derive_lipid_net_charges(
-        Path(os.environ.get("UPSIDE_HOME", str(REPO_ROOT))), args.lipid_name
-    )
+    bb_type_by_residue, bb_secondary_by_residue, bb_type_source_by_residue = \
+        map_backbone_types_from_structure(protein_backbone_atoms)
+    # Counterions neutralise the charges the topology actually carries. On the protein those are the BB
+    # beads' MARTINI charges (the charged chain ends); its side chains carry no explicit charge by design,
+    # their environment interaction being the side-chain/lipid table (findings 5.3c).
+    protein_charge = int(round(sum(BB_TYPE_CHARGE.get(t, 0.0) for t in bb_type_by_residue.values())))
+    lipid_net_charges = derive_lipid_net_charges(upside_home, args.lipid_name)
     membrane_charge = 0
     seen_lipid_molecules = set()
     for atom in bilayer_kept:
-        resname = atom["resname"].upper()
-        if resname not in lipid_net_charges:
-            continue
         key = (atom["chain"], atom["resseq"], atom["icode"])
         if key in seen_lipid_molecules:
             continue
         seen_lipid_molecules.add(key)
-        membrane_charge += lipid_net_charges[resname]
+        membrane_charge += lipid_net_charges[atom["resname"].upper()]
     system_charge = protein_charge + membrane_charge
 
-    # Ions occupy the solvent-accessible volume only (implicit solvent): the box minus whatever the
-    # amphiphile aggregate and the protein exclude, and never inside the hydrophobic interior.
-    n_protein_residues = len({(a["chain"], a["resseq"], a["icode"]) for a in protein_backbone_atoms})
-    protein_volume_a3 = float(n_protein_residues) * PROTEIN_RESIDUE_VOLUME_A3
+    # Ions occupy the solvent-accessible volume only (implicit solvent): the box minus the membrane slab
+    # and the protein outside it, and never inside the hydrophobic interior.
     if int(args.explicit_ions):
         salt_pairs = estimate_salt_pairs(
             box_lengths=box_lengths,
             salt_molar=float(args.salt_molar),
-            excluded_volume_a3=env_geometry["excluded_volume_a3"] + protein_volume_a3,
+            excluded_volume_a3=env_geometry["excluded_volume_a3"],
         )
         n_na = int(salt_pairs + max(0, -system_charge))
         n_cl = int(salt_pairs + max(0, system_charge))
-        rng = np.random.default_rng(int(args.seed))
         ion_atoms = place_ions(
             atoms=packed_atoms,
             box_lengths=box_lengths,
             n_na=n_na,
             n_cl=n_cl,
             cutoff=float(args.ion_cutoff),
-            rng=rng,
-            reject=env_geometry["ion_reject"](box_lengths),
+            rng=np.random.default_rng(int(args.seed)),
+            reject=reject_inside_slab(*env_geometry.pop("membrane_z_range")),
         )
     else:
         salt_pairs = 0
         n_na = 0
         n_cl = 0
         ion_atoms = []
+        env_geometry.pop("membrane_z_range")
 
-    (
-        bb_type_by_residue,
-        bb_secondary_by_residue,
-        bb_type_source_by_residue,
-    ) = map_backbone_types_from_structure(protein_backbone_atoms)
     protein_atoms, bb_entries = build_backbone_with_virtual_bb(
-        protein_backbone_atoms,
-        bb_type_by_residue,
-        bb_secondary_by_residue=bb_secondary_by_residue,
-        bb_type_source_by_residue=bb_type_source_by_residue,
+        protein_backbone_atoms, bb_type_by_residue, bb_secondary_by_residue
     )
     all_atoms = protein_atoms + bilayer_kept + ion_atoms
     write_pdb(runtime_pdb, all_atoms, box_lengths)
     protein_xyz_final = coords(protein_backbone_atoms)
-    bilayer_kept_lipid_atoms = [a for a in bilayer_kept if lipid_resname(a["resname"])]
-    bilayer_xyz_final = coords(bilayer_kept_lipid_atoms) if bilayer_kept_lipid_atoms else coords(bilayer_kept)
+    bilayer_xyz_final = coords(bilayer_kept)
 
     mapping_summary = {}
     if args.hybrid_mapping_output:
         mapping_h5 = Path(args.hybrid_mapping_output).expanduser().resolve()
         mapping_h5.parent.mkdir(parents=True, exist_ok=True)
-        env_atom_indices = list(range(len(protein_atoms), len(all_atoms)))
         write_hybrid_mapping_h5(
             mapping_h5,
             bb_entries=bb_entries,
             total_martini_atoms=len(all_atoms),
-            env_atom_indices=env_atom_indices,
+            env_atom_indices=list(range(len(protein_atoms), len(all_atoms))),
             n_protein_atoms=len(protein_atoms),
         )
-
-        mapping_summary["protein_aa_pdb"] = str(protein_aa_pdb)
         mapping_summary["mapping_h5"] = str(mapping_h5)
-        mapping_summary["bb_structure_typed_residues"] = int(
-            sum(1 for source in bb_type_source_by_residue.values() if source == "structure_geometry")
-        )
-        mapping_summary["bb_fallback_typed_residues"] = int(
-            sum(1 for source in bb_type_source_by_residue.values() if source == "coil_geometry_fallback")
-        )
         mapping_summary["bb_secondary_counts"] = dict(sorted(Counter(bb_secondary_by_residue.values()).items()))
         mapping_summary["bb_type_counts"] = dict(sorted(Counter(bb_type_by_residue.values()).items()))
-        mapping_summary["bb_type_source_counts"] = dict(
-            sorted(Counter(bb_type_source_by_residue.values()).items())
-        )
+        mapping_summary["bb_type_source_counts"] = dict(sorted(Counter(bb_type_source_by_residue.values()).items()))
         mapping_summary["bb_map_entries"] = int(len(bb_entries))
-
         if args.hybrid_bb_map_json_output:
             mapping_json = Path(args.hybrid_bb_map_json_output).expanduser().resolve()
             write_summary(mapping_json, {"bb_entries": bb_entries, "count": len(bb_entries)})
             mapping_summary["mapping_json"] = str(mapping_json)
 
     summary = {
-        "mode": "both",
         "input_protein_aa_pdb": str(protein_aa_pdb),
         "input_membrane_pdb": str(membrane_pdb),
         "input_protein_cg_pdb": str(protein_cg_pdb),
@@ -809,15 +678,15 @@ def prepare_mixed_structure(args, runtime_pdb):
         "opm_reference": str(args.opm_reference) if args.opm_reference else None,
         "xy_scale": float(args.xy_scale),
         "box_angstrom": [float(v) for v in box_lengths],
-        "protein_charge_used": int(protein_charge),
+        "protein_charge": int(protein_charge),
         "membrane_charge": int(membrane_charge),
         "explicit_ions": int(args.explicit_ions),
         "salt_pairs_target": int(salt_pairs),
         "na_added": int(n_na),
         "cl_added": int(n_cl),
+        "net_charge": int(system_charge + n_na - n_cl),
         "protein_atoms": int(len(protein_atoms)),
         "bilayer_atoms_kept": int(len(bilayer_kept)),
-        "lipid_residues_removed": int(removed_lipids),
         "ion_atoms_added": int(len(ion_atoms)),
         "total_atoms": int(len(all_atoms)),
         "protein_final_z_min": float(protein_xyz_final[:, 2].min()),
@@ -825,134 +694,10 @@ def prepare_mixed_structure(args, runtime_pdb):
         "lipid_final_z_min": float(bilayer_xyz_final[:, 2].min()),
         "lipid_final_z_max": float(bilayer_xyz_final[:, 2].max()),
     }
-    summary.update({k: v for k, v in env_geometry.items() if k != "ion_reject"})
+    summary.update(env_geometry)
     summary.update({f"belt_{k}": v for k, v in coverage.items()})
     summary.update(mapping_summary)
     return summary
-
-
-def prepare_bilayer_structure(args, runtime_pdb):
-    if not args.bilayer_pdb:
-        raise ValueError("--bilayer-pdb is required for mode=bilayer")
-
-    bilayer_pdb = Path(args.bilayer_pdb).expanduser().resolve()
-    if not bilayer_pdb.exists():
-        raise FileNotFoundError(f"Bilayer PDB not found: {bilayer_pdb}")
-
-    bilayer_atoms, bilayer_box = parse_pdb(bilayer_pdb)
-    bilayer_lipid_atoms = [dict(a) for a in bilayer_atoms if lipid_resname(a["resname"])]
-    if not bilayer_lipid_atoms:
-        raise ValueError("No lipid residues found in bilayer template.")
-
-    # The template is a periodic tile, so its CRYST1 record IS the lateral box. Sizing from the coordinate
-    # extent instead is wrong twice over: it loses the sub-bead gap between the outermost bead and the tile
-    # edge, and it squares a rectangular tile up to its longer edge (measured 84.41 x 73.10 -> 84.26 x 84.26),
-    # which opens a vacuum stripe along the shorter edge and changes the area per lipid by 15%.
-    if bilayer_box is None:
-        raise ValueError(f"Bilayer template {bilayer_pdb} has no CRYST1 record: the periodic tile's box "
-                         "cannot be recovered from the coordinates alone.")
-    lipid_xyz = coords(bilayer_lipid_atoms)
-    bmin = lipid_xyz.min(axis=0)
-    bmax = lipid_xyz.max(axis=0)
-    tile_xy = np.array([float(bilayer_box[0]), float(bilayer_box[1])], dtype=float)
-    target_xy = tile_xy * float(max(1.0, args.xy_scale))
-    if float(args.xy_scale) > 1.000001:
-        center_xy = 0.5 * (bmin[:2] + bmax[:2])
-        target_xy_min = center_xy - 0.5 * target_xy
-        target_xy_max = center_xy + 0.5 * target_xy
-        bilayer_lipid_atoms = tile_and_crop_bilayer_lipids(
-            bilayer_atoms=bilayer_atoms,
-            bilayer_box=bilayer_box,
-            target_xy_min=target_xy_min,
-            target_xy_max=target_xy_max,
-        )
-
-    box_lengths = set_box_from_lipid_xy(
-        all_atoms=bilayer_lipid_atoms,
-        lipid_atoms=bilayer_lipid_atoms,
-        pad_z=float(args.box_padding_z),
-        force_square_xy=False,
-        center_lipid_in_z=True,
-        force_xy_box=target_xy,
-    )
-
-    if int(args.explicit_ions):
-        lipid_z = coords(bilayer_lipid_atoms)[:, 2]
-        membrane_thickness_z = float(lipid_z.max() - lipid_z.min())
-        salt_pairs = estimate_salt_pairs(
-            box_lengths=box_lengths,
-            salt_molar=float(args.salt_molar),
-            excluded_volume_a3=membrane_slab_excluded_volume(box_lengths, membrane_thickness_z, 0.0),
-        )
-        # An anionic lipid (POPG) leaves the membrane charged, so the counterions have to come from the
-        # salt budget here too -- otherwise a pure POPG-containing bilayer is built non-neutral.
-        lipid_net_charges = derive_lipid_net_charges(
-            Path(os.environ.get("UPSIDE_HOME", str(REPO_ROOT))), args.lipid_name
-        )
-        membrane_charge = 0
-        seen = set()
-        for atom in bilayer_lipid_atoms:
-            key = (atom["chain"], atom["resseq"], atom["icode"])
-            if key in seen:
-                continue
-            seen.add(key)
-            membrane_charge += lipid_net_charges.get(atom["resname"].upper(), 0)
-        rng = np.random.default_rng(int(args.seed))
-        ion_atoms = place_ions(
-            atoms=bilayer_lipid_atoms,
-            box_lengths=box_lengths,
-            n_na=int(salt_pairs + max(0, -membrane_charge)),
-            n_cl=int(salt_pairs + max(0, membrane_charge)),
-            cutoff=float(args.ion_cutoff),
-            rng=rng,
-            reject=reject_inside_slab(float(lipid_z.min()), float(lipid_z.max())),
-        )
-    else:
-        salt_pairs = 0
-        ion_atoms = []
-
-    all_atoms = bilayer_lipid_atoms + ion_atoms
-    write_pdb(runtime_pdb, all_atoms, box_lengths)
-    lipid_xyz_final = coords(bilayer_lipid_atoms)
-    return {
-        "mode": "bilayer",
-        "input_bilayer_pdb": str(bilayer_pdb),
-        "runtime_pdb": str(runtime_pdb),
-        "xy_scale": float(args.xy_scale),
-        "template_tile_xy_angstrom": [float(v) for v in tile_xy],
-        "target_xy_angstrom": [float(v) for v in target_xy],
-        "box_angstrom": [float(v) for v in box_lengths],
-        "explicit_ions": int(args.explicit_ions),
-        "salt_pairs_target": int(salt_pairs),
-        "na_added": int(salt_pairs) if int(args.explicit_ions) else 0,
-        "cl_added": int(salt_pairs) if int(args.explicit_ions) else 0,
-        "bilayer_atoms_kept": int(len(bilayer_lipid_atoms)),
-        "ion_atoms_added": int(len(ion_atoms)),
-        "total_atoms": int(len(all_atoms)),
-        "lipid_final_z_min": float(lipid_xyz_final[:, 2].min()),
-        "lipid_final_z_max": float(lipid_xyz_final[:, 2].max()),
-    }
-
-
-def run_stage_conversion(args, runtime_pdb: Path):
-    prev_pdb = os.environ.get("UPSIDE_RUNTIME_PDB_FILE")
-
-    os.environ["UPSIDE_RUNTIME_PDB_FILE"] = str(runtime_pdb)
-    os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
-
-    try:
-        convert_stage(
-            pdb_id=args.pdb_id,
-            stage=args.stage,
-            run_dir=args.run_dir,
-        )
-    finally:
-        if prev_pdb is None:
-            os.environ.pop("UPSIDE_RUNTIME_PDB_FILE", None)
-        else:
-            os.environ["UPSIDE_RUNTIME_PDB_FILE"] = prev_pdb
-
-        os.environ.pop("UPSIDE_RUNTIME_ITP_FILE", None)
 
 
 def write_summary(path: Path, payload):
@@ -962,30 +707,13 @@ def write_summary(path: Path, payload):
         f.write("\n")
 
 
-def resolve_charmm_gui_membrane_paths(args):
-    """Fill --membrane-pdb/--membrane-top from --charmm-gui-dir (explicit paths win)."""
-    if args.charmm_gui_dir:
-        gmx = Path(args.charmm_gui_dir).expanduser() / "gromacs"
-        if args.membrane_pdb is None:
-            args.membrane_pdb = str(gmx / "step5_charmm2gmx.pdb")
-        if args.membrane_top is None:
-            args.membrane_top = str(gmx / "system.top")
-    if args.membrane_pdb is None:
-        raise ValueError("mode=both requires --charmm-gui-dir or --membrane-pdb")
-
-
 def run_prepare_command(argv):
     args = parse_prepare_args(argv)
     set_active_lipid_name(args.lipid_name)
-    if args.mode == "bilayer" and args.bilayer_pdb is None:
-        args.bilayer_pdb = str(REPO_ROOT / "parameters" / "dryMARTINI" / f"{args.lipid_name}.pdb")
-    if args.mode == "both" and args.prepare_structure:
-        resolve_charmm_gui_membrane_paths(args)
-    runtime_pdb = runtime_paths(args)
+    runtime_pdb = Path(args.runtime_pdb_output).expanduser().resolve()
     runtime_pdb.parent.mkdir(parents=True, exist_ok=True)
 
     summary = {
-        "mode": args.mode,
         "pdb_id": args.pdb_id,
         "prepare_structure": bool(args.prepare_structure),
         "stage": args.stage,
@@ -993,65 +721,41 @@ def run_prepare_command(argv):
     }
 
     if args.prepare_structure:
-        if args.mode == "bilayer":
-            summary.update(prepare_bilayer_structure(args, runtime_pdb))
-        else:
-            summary.update(prepare_mixed_structure(args, runtime_pdb))
-    else:
-        if not runtime_pdb.exists():
-            raise FileNotFoundError(
-                f"Runtime PDB not found for stage conversion: {runtime_pdb}. "
-                "Run with --prepare-structure 1 first."
-            )
+        summary.update(prepare_mixed_structure(args, runtime_pdb))
+    elif not runtime_pdb.exists():
+        raise FileNotFoundError(
+            f"Runtime PDB not found for stage conversion: {runtime_pdb}. Run with --prepare-structure 1 first."
+        )
 
     if args.stage:
         with temporary_env(
             {
-                "UPSIDE_HOME": os.environ.get("UPSIDE_HOME", str(REPO_ROOT)),
                 "UPSIDE_MARTINI_FF_DIR": os.environ.get(
-                    "UPSIDE_MARTINI_FF_DIR",
-                    str(REPO_ROOT / "example" / "16.MARTINI" / "dryMARTINI_itp"),
+                    "UPSIDE_MARTINI_FF_DIR", str(REPO_ROOT / "example" / "16.MARTINI" / "dryMARTINI_itp")
                 ),
                 "UPSIDE_MARTINI_ENERGY_CONVERSION": os.environ.get(
-                    "UPSIDE_MARTINI_ENERGY_CONVERSION",
-                    str(DEFAULT_MARTINI_ENERGY_CONVERSION),
+                    "UPSIDE_MARTINI_ENERGY_CONVERSION", str(DEFAULT_MARTINI_ENERGY_CONVERSION)
                 ),
                 "UPSIDE_MARTINI_LENGTH_CONVERSION": os.environ.get(
-                    "UPSIDE_MARTINI_LENGTH_CONVERSION",
-                    str(DEFAULT_MARTINI_LENGTH_CONVERSION),
+                    "UPSIDE_MARTINI_LENGTH_CONVERSION", str(DEFAULT_MARTINI_LENGTH_CONVERSION)
                 ),
             }
         ):
-            run_stage_conversion(args, runtime_pdb)
-        target_file = Path(args.run_dir).expanduser().resolve() / "test.input.up"
-        if args.mode == "bilayer":
-            inject_particles_table(
-                up_file=target_file,
-                martini_h5=REPO_ROOT / "parameters" / "ff_2.1" / "martini.h5",
-            )
-        summary["upside_input"] = str(target_file)
+            convert_stage(pdb_id=args.pdb_id, stage=args.stage, run_dir=args.run_dir, runtime_pdb=runtime_pdb)
+        summary["upside_input"] = str(Path(args.run_dir).expanduser().resolve() / "test.input.up")
 
-    if args.summary_json:
-        summary_path = Path(args.summary_json).expanduser().resolve()
-    else:
-        summary_path = runtime_pdb.with_suffix(".prep_summary.json")
+    summary_path = (Path(args.summary_json).expanduser().resolve() if args.summary_json
+                    else runtime_pdb.with_suffix(".prep_summary.json"))
     write_summary(summary_path, summary)
     print(f"Preparation summary written to: {summary_path}")
 
 
-PROTEIN_RESIDUES = {
-    "ALA", "ARG", "ASN", "ASP", "CYS", "GLN", "GLU", "GLY", "HIS",
-    "ILE", "LEU", "LYS", "MET", "PHE", "PRO", "SER", "THR", "TRP",
-    "TYR", "VAL", "HID", "HIE", "HIP", "HSD", "HSE", "HSP", "CYX",
-}
 SC_LIBRARY_REQUIRED_DATASETS = [
+    "target_order",
     "grid_ang",
-    "cos_theta_grid",
+    "theta_grid",
     "rotamer_count",
     "rotamer_probability_fixed",
-    "rotamer_radial_energy_eup",
-    "rotamer_angular_energy_eup",
-    "rotamer_angular_profile",
     "rotamer_full_energy_eup",
 ]
 
@@ -1088,19 +792,7 @@ class Config:
         return float(os.environ.get(name, str(default)))
 
 
-def env_default(name, default):
-    return Config.text(name, default)
-
-
-def env_int(name, default):
-    return Config.integer(name, default)
-
-
-def env_float(name, default):
-    return Config.floating(name, default)
-
-
-def workflow_path(value, base=WORKFLOW_DIR):
+def workflow_path(value, base=REPO_ROOT / "example" / "16.MARTINI"):
     path = Path(value).expanduser()
     return path if path.is_absolute() else base / path
 
@@ -1108,6 +800,19 @@ def workflow_path(value, base=WORKFLOW_DIR):
 def generate_random_seed():
     seed = random.SystemRandom().randint(1, 2**32 - 1)
     return seed if seed != 0 else 1
+
+
+def stage_seed(seed: int, stage: str) -> int:
+    """Seed of one workflow stage: a splitmix64 hash of (seed, crc32(stage)), the hash main.cpp's
+    system_seed applies to (seed, system). Every stage draws its own noise, so no stage replays another's.
+    Production and its continuations share the stage name "production", so with the round carried a
+    segmented production draws exactly the random numbers of the continuous run."""
+    mask = (1 << 64) - 1
+    z = (((int(seed) & 0xffffffff) << 32) | zlib.crc32(stage.encode())) + 0x9e3779b97f4a7c15
+    z &= mask
+    z = ((z ^ (z >> 30)) * 0xbf58476d1ce4e5b9) & mask
+    z = ((z ^ (z >> 27)) * 0x94d049bb133111eb) & mask
+    return int((z ^ (z >> 31)) >> 32)
 
 
 def run_checked(cmd, cwd=None, log_file=None, echo=True):
@@ -1161,26 +866,12 @@ def run_checked(cmd, cwd=None, log_file=None, echo=True):
 
 
 def pdb_min_protein_lipid_distance(pdb_file: Path):
-    protein_xyz = []
-    lipid_xyz = []
-    with pdb_file.open("r", encoding="utf-8", errors="ignore") as fh:
-        for line in fh:
-            if not line.startswith(("ATOM", "HETATM")):
-                continue
-            resname = line[17:21].strip().upper()
-            xyz = (float(line[30:38]), float(line[38:46]), float(line[46:54]))
-            if resname in PROTEIN_RESIDUES:
-                protein_xyz.append(xyz)
-            elif lipid_resname(resname):
-                lipid_xyz.append(xyz)
-    if not protein_xyz or not lipid_xyz:
-        return float("nan")
-    protein = np.asarray(protein_xyz, dtype=float)
-    lipid = np.asarray(lipid_xyz, dtype=float)
+    atoms, _ = parse_pdb(pdb_file)
+    protein = coords([a for a in atoms if a["resname"].upper() in PROTEIN_RESIDUE_NAMES])
+    lipid = coords([a for a in atoms if lipid_resname(a["resname"])])
     min_d2 = float("inf")
     for i in range(0, lipid.shape[0], 2000):
-        block = lipid[i:i + 2000]
-        d = block[:, None, :] - protein[None, :, :]
+        d = lipid[i:i + 2000][:, None, :] - protein[None, :, :]
         min_d2 = min(min_d2, float(np.einsum("ijk,ijk->ij", d, d).min()))
     return min_d2 ** 0.5
 
@@ -1202,9 +893,9 @@ def prepare_workflow_hybrid_artifacts(args):
         optional_prep_args += ["--opm-reference", str(args.opm_reference)]
     run_prepare_command(
         [
-            "--mode", "both",
             "--pdb-id", args.runtime_pdb_id,
             "--runtime-pdb-output", str(args.hybrid_packed_pdb),
+            "--run-dir", str(args.run_dir),
             "--prepare-structure", "1",
             "--protein-aa-pdb", str(workflow_path(args.protein_aa_pdb).resolve()),
             "--protein-cg-pdb", str(cg_pdb),
@@ -1227,8 +918,6 @@ def prepare_workflow_hybrid_artifacts(args):
             "--summary-json", str(args.hybrid_prep_dir / "hybrid_prep_summary.json"),
         ]
     )
-    if not args.hybrid_packed_pdb.exists():
-        raise FileNotFoundError(args.hybrid_packed_pdb)
     # Overlap removal against the CG envelope is the packing guarantee; the backbone-lipid distance
     # is a sanity log (it can sit near the clearance since a BB bead may be the closest CG bead).
     min_gap = pdb_min_protein_lipid_distance(args.hybrid_packed_pdb)
@@ -1236,13 +925,9 @@ def prepare_workflow_hybrid_artifacts(args):
         f"Hybrid packing: min protein(backbone)-lipid distance {min_gap:.3f} A "
         f"(CG-envelope clearance {float(args.protein_lipid_cutoff):.3f} A)"
     )
-    if np.isfinite(min_gap) and min_gap < 2.0:
+    if min_gap < 2.0:
         raise RuntimeError(f"Hybrid packing left a hard protein-lipid clash ({min_gap:.3f} A).")
-
-    if not args.hybrid_mapping_file.exists():
-        raise FileNotFoundError(args.hybrid_mapping_file)
-    if args.hybrid_validate:
-        validate_hybrid_mapping(args.hybrid_mapping_file)
+    validate_hybrid_mapping(args.hybrid_mapping_file)
     copy_if_different(args.hybrid_packed_pdb, args.runtime_pdb_file)
     print(f"Runtime MARTINI PDB: {args.runtime_pdb_file}")
 
@@ -1256,48 +941,19 @@ def h5_as_text(value):
 def inject_hybrid_mapping(up_file: Path, mapping_file: Path):
     import h5py
 
-    groups = ["hybrid_control", "hybrid_bb_map", "hybrid_env_topology"]
-    optional_groups = ("chain_break",)
-
     with h5py.File(mapping_file, "r") as src, h5py.File(up_file, "r+") as dst:
         src_inp = src["/input"]
-        dst_inp = dst.require_group("input")
-        base_n_atom = int(dst_inp["pos"].shape[0])
-        src_mem = src_inp["hybrid_env_topology"]["protein_membership"][:].astype(np.int32)
-
-        if base_n_atom != int(src_mem.shape[0]):
+        dst_inp = dst["/input"]
+        n_atom = int(dst_inp["pos"].shape[0])
+        if src_inp["hybrid_env_topology"]["protein_membership"].shape[0] != n_atom:
             raise ValueError(
-                f"Hybrid mapping n_atom mismatch for {up_file}: up has {base_n_atom}, "
-                f"mapping has {src_mem.shape[0]}"
+                f"Hybrid mapping n_atom mismatch for {up_file}: up has {n_atom}, mapping has "
+                f"{src_inp['hybrid_env_topology']['protein_membership'].shape[0]}"
             )
-
+        groups = ["hybrid_control", "hybrid_bb_map", "hybrid_env_topology"]
+        groups += [g for g in ("chain_break",) if g in src_inp]
         for group in groups:
-            if group not in src_inp:
-                raise ValueError(f"Missing mapping group in {mapping_file}: /input/{group}")
-            if group in dst_inp:
-                del dst_inp[group]
             src.copy(src_inp[group], dst_inp, name=group)
-        for group in optional_groups:
-            if group not in src_inp:
-                continue
-            if group in dst_inp:
-                del dst_inp[group]
-            src.copy(src_inp[group], dst_inp, name=group)
-
-        bb_grp = dst_inp["hybrid_bb_map"]
-        env_grp = dst_inp["hybrid_env_topology"]
-        if bb_grp["atom_indices"].shape[0] != bb_grp["bb_residue_index"].shape[0]:
-            raise ValueError("hybrid_bb_map atom_indices/bb_residue_index size mismatch")
-        if bb_grp["atom_indices"].shape[1] != 4:
-            raise ValueError("hybrid_bb_map/atom_indices must have shape (n_bb,4)")
-
-        bb_grp.attrs["atom_index_space"] = np.bytes_("stage_runtime")
-        bb_grp.attrs["reference_index_space"] = np.bytes_("stage_runtime")
-        bb_grp.attrs["reference_index_offset"] = np.int32(0)
-        bb_grp.attrs["reference_index_count"] = np.int32(0)
-        membership = env_grp["protein_membership"][:].astype(np.int32, copy=False)
-        if membership.shape[0] != base_n_atom:
-            raise ValueError(f"{up_file}: hybrid_env_topology/protein_membership length mismatch")
 
 
 def set_stage_label(up_file: Path, stage_label: str):
@@ -1318,32 +974,26 @@ def set_hybrid_control_mode(up_file: Path, activation_stage: str, preprod_mode="
 
 
 def inject_protein_position_restraints(up_file: Path, spring_const: float = 10.0):
+    """Hold the protein's N/CA/C carriers during the soft-core minimisation. The O and BB slots are derived
+    sites the engine places, so they take no restraint."""
     import h5py
 
     with h5py.File(up_file, "r+") as h5:
         pm = h5["/input/hybrid_env_topology/protein_membership"][:]
-        protein_atoms = np.where(pm >= 0)[0].astype(np.int32)
-        if len(protein_atoms) == 0:
-            return
-        ref_pos = np.asarray(h5["/input/pos"][:][protein_atoms, :, 0], dtype=np.float32)
-        grp = h5.require_group("/input/potential/restraint_position")
+        names = np.char.strip(h5["/input/atom_names"][:].astype(str))
+        carriers = np.where((pm >= 0) & np.isin(names, ["N", "CA", "C"]))[0].astype(np.int32)
+        grp = h5.create_group("/input/potential/restraint_position_protein")
         grp.attrs["arguments"] = np.array([np.bytes_("pos")])
-        for name in ("restraint_indices", "ref_pos", "spring_const", "spring_const_xyz"):
-            if name in grp:
-                del grp[name]
-        grp.create_dataset("restraint_indices", data=protein_atoms)
-        grp.create_dataset("ref_pos", data=ref_pos)
-        spring_xyz = np.full((len(protein_atoms), 3), float(spring_const), dtype=np.float32)
-        grp.create_dataset("spring_const_xyz", data=spring_xyz)
+        grp.create_dataset("restraint_indices", data=carriers)
+        grp.create_dataset("ref_pos", data=np.asarray(h5["/input/pos"][:][carriers, :, 0], dtype=np.float32))
+        grp.create_dataset("spring_const_xyz", data=np.full((len(carriers), 3), float(spring_const), dtype=np.float32))
 
 
 def remove_protein_position_restraints(up_file: Path):
     import h5py
 
     with h5py.File(up_file, "r+") as h5:
-        path = "/input/potential/restraint_position"
-        if path in h5:
-            del h5[path]
+        del h5["/input/potential/restraint_position_protein"]
 
 
 def set_hybrid_production_controls(up_file: Path, args):
@@ -1446,40 +1096,22 @@ def assert_hybrid_stage_active(
     print(f"Hybrid activation verified: stage={expected_stage}, activation_stage={expected_activation}")
 
 
-def stage_conversion_env(args, stage_label: str, prepare_stage: str, npt_enable: int, lipidhead_fc: float):
-    if stage_label in {"production", "production_handoff"}:
-        dynamics_phase = "production"
-    elif prepare_stage == "npt_prod":
-        dynamics_phase = "overlap_settling"
-    else:
-        dynamics_phase = "early_equilibration"
-    # A finite aggregate has no lateral tension to relax, so box scaling is not a degree of freedom:
-    # a tensionless xy barostat would just squeeze the box down onto the micelle. NVT throughout.
-    if args.environment_morphology == "micelle":
-        npt_enable = 0
+def stage_conversion_env(args, npt_enable: int, lipidhead_fc: float, dynamics_phase: str):
     return {
         "UPSIDE_HOME": str(args.upside_home),
         "UPSIDE_MARTINI_FF_DIR": str(args.itp_dir),
         "UPSIDE_MARTINI_ENERGY_CONVERSION": str(args.martini_energy_conversion),
         "UPSIDE_MARTINI_LENGTH_CONVERSION": str(args.martini_length_conversion),
-        "UPSIDE_SIMULATION_STAGE": prepare_stage,
         "UPSIDE_MARTINI_DYNAMICS_PHASE": dynamics_phase,
         "UPSIDE_NPT_ENABLE": str(int(npt_enable)),
         # Tensionless (zero lateral pressure) dry-MARTINI membrane barostat.
         "UPSIDE_NPT_TARGET_PXY": "0.0",
         "UPSIDE_NPT_TARGET_PZ": "0.0",
-        "UPSIDE_NPT_TAU": str(args.npt_tau),
-        "UPSIDE_NPT_COMPRESSIBILITY": str(args.compressibility_3e4_bar_inv_to_a3_per_eup),
-        "UPSIDE_NPT_COMPRESSIBILITY_XY": str(args.compressibility_3e4_bar_inv_to_a3_per_eup),
-        "UPSIDE_NPT_COMPRESSIBILITY_Z": "0.0",
         "UPSIDE_NPT_INTERVAL": str(args.npt_interval),
-        "UPSIDE_NPT_SEMI": "1",
         # Monte-Carlo barostat steps: couple xy, freeze z (mc_dmax_z=0).
         "UPSIDE_NPT_MC_DMAX_XY": str(args.npt_mc_dmax_xy),
         "UPSIDE_NPT_MC_DMAX_Z": "0.0",
-        "UPSIDE_NPT_MC_SEED": str(args.prep_seed),
         "UPSIDE_BILAYER_LIPIDHEAD_FC": str(lipidhead_fc),
-        "THERMOSTAT_TIMESCALE": str(args.thermostat_timescale),
     }
 
 
@@ -1504,94 +1136,139 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
     )
 
 
-def prepare_stage_file(args, target_file: Path, prepare_stage: str, npt_enable: int, lipidhead_fc: float, stage_label: str):
+def prepare_stage_file(args, target_file: Path, tables: str, npt_enable: int, lipidhead_fc: float,
+                       dynamics_phase: str, stage_label: str):
     start = time.perf_counter()
-    with temporary_env(stage_conversion_env(args, stage_label, prepare_stage, npt_enable, lipidhead_fc)):
+    with temporary_env(stage_conversion_env(args, npt_enable, lipidhead_fc, dynamics_phase)):
         run_prepare_command(
             [
-                "--mode", args.universal_prep_mode,
                 "--lipid-name", args.lipid_name,
                 "--pdb-id", args.runtime_pdb_id,
                 "--runtime-pdb-output", str(args.runtime_pdb_file),
                 "--prepare-structure", "0",
-                "--stage", prepare_stage,
+                "--stage", tables,
                 "--run-dir", str(args.run_dir),
-                "--summary-json", str(args.hybrid_prep_dir / f"stage_{prepare_stage}.summary.json"),
+                "--summary-json", str(args.hybrid_prep_dir / f"stage_{target_file.stem}.summary.json"),
             ]
         )
-    prepared_tmp = args.run_dir / "test.input.up"
-    if not prepared_tmp.exists():
-        raise FileNotFoundError(prepared_tmp)
     target_file.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(prepared_tmp), str(target_file))
+    shutil.move(str(args.run_dir / "test.input.up"), str(target_file))
     inject_hybrid_mapping(target_file, args.hybrid_mapping_file)
-    set_hybrid_control_mode(target_file, args.hybrid_preprod_activation_stage)
     set_stage_label(target_file, stage_label)
-    inject_particles_table(up_file=target_file, martini_h5=args.martini_h5)
-    if stage_label in {"production", "production_handoff"}:
-        inject_hybrid_interface_nodes(args, target_file, stage_label, "production")
-    else:
-        inject_hybrid_interface_nodes(
-            args,
-            target_file,
-            stage_label,
-            args.hybrid_preprod_activation_stage,
-    )
-    elapsed = time.perf_counter() - start
+    inject_particles_table(up_file=target_file, martini_h5=args.martini_h5,
+                           energy_conversion=args.martini_energy_conversion,
+                           length_conversion=args.martini_length_conversion)
+    activation = "production" if stage_label in {"production", "production_handoff"} else "minimization"
+    inject_hybrid_interface_nodes(args, target_file, stage_label, activation)
     print(
         f"[workflow timing] stage {stage_label} preparation/injection finished "
-        f"in {elapsed:.3f} s -> {target_file}"
+        f"in {time.perf_counter() - start:.3f} s -> {target_file}"
     )
+
+
+def assert_no_core_overlap(up_file: Path, temperature: float):
+    """Refuse to start MD from a configuration with a pair inside the repulsive core.
+
+    The limit is read off the potential. A pair at energy U carries the Boltzmann weight exp(-U/kT), so
+    with N pairs inside the cutoff, a pair above U* = kT ln(CORE_OVERLAP_ODDS * N) would appear in fewer
+    than one equilibrium configuration in CORE_OVERLAP_ODDS. Each pair is evaluated on the stage file's own
+    tables, at the positions MD starts from, for every pair the MARTINI term computes (intra-protein pairs
+    are the Upside force field's and are skipped, as the engine skips them).
+    """
+    import h5py
+
+    kT = float(temperature)
+    with h5py.File(up_file, "r") as h5:
+        pos = np.asarray(h5["/input/pos"][:, :, 0], dtype=np.float64)
+        mp = h5["/input/potential/martini_potential"]
+        box = np.array([mp.attrs["x_len"], mp.attrs["y_len"], mp.attrs["z_len"]], dtype=np.float64)
+        pairs = mp["pairs"][:]
+        coeff_index = mp["coefficient_indices"][:]
+        grids = mp["combined_energy_grids"][:]
+        r_min, r_max = float(mp.attrs["r_min_ang"]), float(mp.attrs["r_max_ang"])
+        membership = h5["/input/hybrid_env_topology/protein_membership"][:]
+        names = np.char.strip(h5["/input/atom_names"][:].astype(str))
+        types = np.char.strip(h5["/input/type"][:].astype(str))
+
+    keep = ~((membership[pairs[:, 0]] >= 0) & (membership[pairs[:, 0]] == membership[pairs[:, 1]]))
+    pairs, coeff_index = pairs[keep], coeff_index[keep]
+    n_knot = grids.shape[1]
+    energy, dist, atom_i, atom_j = [], [], [], []
+    for start in range(0, len(pairs), 2_000_000):
+        p = pairs[start:start + 2_000_000]
+        delta = pos[p[:, 0]] - pos[p[:, 1]]
+        delta -= box * np.rint(delta / box)
+        d = np.sqrt(np.sum(delta * delta, axis=1))
+        inside = d < r_max
+        p, d, rows = p[inside], d[inside], coeff_index[start:start + 2_000_000][inside]
+        coord = np.clip((d - r_min) / (r_max - r_min) * (n_knot - 1), 0.0, n_knot - 1 - 1e-9)
+        lo = coord.astype(np.int64)
+        frac = coord - lo
+        energy.append(grids[rows, lo] * (1.0 - frac) + grids[rows, lo + 1] * frac)
+        dist.append(d)
+        atom_i.append(p[:, 0])
+        atom_j.append(p[:, 1])
+    energy, dist, atom_i, atom_j = (np.concatenate(x) for x in (energy, dist, atom_i, atom_j))
+    limit = kT * np.log(CORE_OVERLAP_ODDS * max(energy.size, 1))
+    print(f"Core check {up_file.name}: {energy.size} MARTINI pairs inside {r_max:g} A; largest pair energy "
+          f"{energy.max() / kT:.2f} kT (limit {limit / kT:.2f} kT)")
+    offenders = np.where(energy > limit)[0]
+    if offenders.size:
+        worst = offenders[np.argsort(-energy[offenders])][:5]
+        detail = "; ".join(f"{atom_i[k]}:{names[atom_i[k]]}({types[atom_i[k]]})-{atom_j[k]}:{names[atom_j[k]]}"
+                           f"({types[atom_j[k]]}) at {dist[k]:.3f} A, {energy[k] / kT:.3g} kT" for k in worst)
+        raise RuntimeError(
+            f"{up_file}: MD would start with {offenders.size} pairs inside the repulsive core, above "
+            f"{limit / kT:.2f} kT (an equilibrium configuration shows such a pair less than once in "
+            f"{CORE_OVERLAP_ODDS:.0e}); the worst: {detail}. The minimisations that precede this stage did "
+            "not remove them."
+        )
 
 
 def refresh_particle_mobility_friction(up_file: Path):
+    """Recount each protein carrier's lipid contacts at the stage's positions and set its friction to the sum
+    of their frictions, each lipid bead counted at its own molecule's bead friction. Bead frictions themselves
+    do not depend on position and are left as built."""
     import h5py
 
     with h5py.File(up_file, "r+") as h5:
         if "/input/brownian" not in h5:
             return
         brownian = h5["/input/brownian"]
-        observable = brownian.attrs.get("transport_observable", b"")
-        if isinstance(observable, bytes):
-            observable = observable.decode()
-        if observable != "bare_martini_particle_lateral_diffusion":
+        if h5_as_text(brownian.attrs.get("transport_observable", b"")) != "bare_martini_particle_lateral_diffusion":
             return
 
         atom_index = brownian["atom_index"][:]
         particle_class = h5["/input/particle_class"][:]
         atom_names = h5["/input/atom_names"][:]
+        residue_names = np.char.strip(h5["/input/residue_names"][:].astype(str))
         position = np.asarray(h5["/input/pos"][:], dtype=np.float64).reshape((-1, 3))
-        lipid_beads = np.where(particle_class == b"LIPID")[0]
         protein_carrier = (
             (particle_class == b"PROTEIN")
             & np.isin(atom_names, np.array([b"N", b"CA", b"C"], dtype=atom_names.dtype))
         )
-
         potential = h5["/input/potential/martini_potential"]
         box = np.array(
             [potential.attrs["x_len"], potential.attrs["y_len"], potential.attrs["z_len"]],
             dtype=np.float64,
         )
         cutoff = float(brownian.attrs["interface_friction_cutoff_A"])
-        contact_count = np.zeros(particle_class.size, dtype=np.int32)
         carrier_index = np.where(protein_carrier)[0]
-        for start in range(0, lipid_beads.size, 512):
-            delta = (
-                position[carrier_index, None, :]
-                - position[lipid_beads[start:start + 512]][None, :, :]
-            )
-            delta -= box * np.rint(delta / box)
-            contact_count[carrier_index] += np.sum(
-                np.sum(delta * delta, axis=2) < cutoff * cutoff,
-                axis=1,
-            )
+        contact_count = np.zeros(particle_class.size, dtype=np.int32)
+        carrier_friction = np.zeros(particle_class.size, dtype=np.float64)
+        for name, bead_friction in zip(brownian.attrs["lipid_names"], brownian.attrs["lipid_bead_friction_up"]):
+            beads = np.where((particle_class == b"LIPID") & (residue_names == h5_as_text(name)))[0]
+            count = np.zeros(particle_class.size, dtype=np.int32)
+            for start in range(0, beads.size, 512):
+                delta = position[carrier_index, None, :] - position[beads[start:start + 512]][None, :, :]
+                delta -= box * np.rint(delta / box)
+                count[carrier_index] += np.sum(np.sum(delta * delta, axis=2) < cutoff * cutoff, axis=1)
+            contact_count += count
+            carrier_friction += float(bead_friction) * count
 
-        particle_friction = float(brownian.attrs["bare_particle_friction_up"])
-        friction = np.full(atom_index.size, particle_friction, dtype=np.float32)
+        friction = brownian["friction"][:]
         protein_index = protein_carrier[atom_index]
-        friction[protein_index] = (
-            particle_friction * contact_count[atom_index[protein_index]]
-        )
+        friction[protein_index] = carrier_friction[atom_index[protein_index]]
         brownian["friction"][:] = friction
 
         contact_atom_index = np.where(contact_count > 0)[0].astype(np.int32)
@@ -1605,18 +1282,8 @@ def refresh_particle_mobility_friction(up_file: Path):
         )
 
 
-def handoff_initial_position(args, input_file: Path, output_file: Path, mode="default", previous_dt=None):
-    preserve_transition = "1" if mode == "production_restart" and previous_dt is not None else "0"
-    public_dt = float(previous_dt) if previous_dt is not None else 0.0
-    with temporary_env(
-        {
-            "UPSIDE_SET_INITIAL_STRICT_COPY": str(args.strict_stage_handoff),
-            "UPSIDE_SET_INITIAL_RECENTER_PRODUCTION": "0",
-            "UPSIDE_SET_INITIAL_PRESERVE_HYBRID_TRANSITION": preserve_transition,
-            "UPSIDE_SET_INITIAL_TIME_STEP": str(public_dt),
-        }
-    ):
-        set_initial_position(input_file, output_file)
+def handoff_initial_position(input_file: Path, output_file: Path):
+    set_initial_position(input_file, output_file)
     refresh_particle_mobility_friction(output_file)
 
 
@@ -1638,33 +1305,25 @@ def output_restart_state_valid(up_file: Path):
         return int(h5["/output/mom"].attrs.get("restart_final_state_valid", 0)) != 0
 
 
-def mark_output_restart_state(up_file: Path, nsteps: int, dt: float):
+def mark_output_restart_state(up_file: Path, nsteps: int):
     import h5py
 
-    public_dt = float(dt)
-    expected_time = float(nsteps) * public_dt
     with h5py.File(up_file, "r+") as h5:
-        if "/output/time" not in h5 or h5["/output/time"].shape[0] == 0:
-            raise RuntimeError(f"{up_file} has no output/time; cannot mark restart state")
         if "/output/mom" not in h5 or h5["/output/mom"].shape[0] == 0:
             raise RuntimeError(f"{up_file} has no output/mom; cannot mark restart state")
-        final_time = float(h5["/output/time"][-1])
-        tolerance = max(1e-6, abs(public_dt) * 0.51)
-        if abs(final_time - expected_time) > tolerance:
+        # a continuation runs on from the round its input momentum was recorded at
+        start_round = 0
+        if int(h5["/input/mom"].attrs.get("restart_valid", 0)) != 0:
+            start_round = int(h5["/input/mom"].attrs["round"])
+        final_round = int(h5["/output/round"][-1])
+        if final_round != start_round + int(nsteps):
             raise RuntimeError(
-                f"{up_file} final output time {final_time:.10g} does not match expected {expected_time:.10g}"
+                f"{up_file} final output round {final_round} does not match expected {start_round + int(nsteps)}"
             )
         h5["/output/mom"].attrs["restart_final_state_valid"] = np.int8(1)
-        h5["/output/mom"].attrs["restart_duration_steps"] = np.int64(nsteps)
-        h5["/output/mom"].attrs["restart_time_step"] = float(dt)
-        h5["/output/mom"].attrs["restart_public_time_step"] = public_dt
-        h5["/output/mom"].attrs["restart_final_time"] = final_time
 
 
-def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int, preserve_stage: bool = False):
-    if int(max_iter) <= 0:
-        print(f"=== Stage {stage_label}: Minimization skipped (max_iter <= 0) ===")
-        return
+def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int):
     print(f"=== Stage {stage_label}: Minimization ===")
     cmd = [
         args.upside_executable,
@@ -1674,7 +1333,7 @@ def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int,
         "--temperature", args.temperature,
         "--thermostat-timescale", args.thermostat_timescale,
         "--thermostat-interval", args.thermostat_interval,
-        "--seed", args.seed,
+        "--seed", stage_seed(args.seed, stage_label),
         "--disable-recentering",
         "--minimize",
         "--min-max-iter", max_iter,
@@ -1682,62 +1341,34 @@ def run_minimization_stage(args, stage_label: str, up_file: Path, max_iter: int,
         "--min-force-tol", "1e-3",
         "--min-step", "0.01",
     ]
-    if preserve_stage:
-        cmd.append("--minimize-preserve-stage")
     run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.min.log")
     promote_minimized_state_to_input(up_file)
 
 
 def promote_minimized_state_to_input(up_file: Path):
+    """The minimised positions become the stage's input. A minimisation does not touch the momentum, so the
+    input momentum and its round stay as they were."""
     import h5py
-    import numpy as np
 
     with h5py.File(up_file, "r+") as h5:
         if "/output/pos" not in h5 or h5["/output/pos"].shape[0] == 0:
             raise RuntimeError(f"{up_file} has no minimized output/pos to promote")
         last_pos = h5["/output/pos"][-1, 0, :, :][:, :, np.newaxis]
-        if "/input/pos" in h5:
-            del h5["/input/pos"]
+        del h5["/input/pos"]
         h5.create_dataset("/input/pos", data=last_pos)
-
-        if "/input/mom" in h5:
-            del h5["/input/mom"]
-        mom = h5.create_dataset(
-            "/input/mom",
-            data=np.zeros(last_pos.shape, dtype=last_pos.dtype),
-        )
-        mom.attrs["restart_valid"] = np.int8(0)
-
-        last_box = None
-        if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
-            last_box = np.asarray(h5["/output/box"][-1], dtype=float).reshape(-1)
-        if last_box is not None and last_box.size >= 3 and "/input/potential" in h5:
-            n_updated = 0
-            for pot_grp in h5["/input/potential"].values():
-                if not isinstance(pot_grp, h5py.Group):
-                    continue
-                if all(k in pot_grp.attrs for k in ("x_len", "y_len", "z_len")):
-                    pot_grp.attrs["x_len"] = float(last_box[0])
-                    pot_grp.attrs["y_len"] = float(last_box[1])
-                    pot_grp.attrs["z_len"] = float(last_box[2])
-                    n_updated += 1
-            print(
-                f"Promoted minimized state to input and updated {n_updated} potential node boxes: "
-                f"x={last_box[0]:.3f}, y={last_box[1]:.3f}, z={last_box[2]:.3f}"
-            )
-        else:
-            print("Promoted minimized state to input")
+        del h5["/output"]
+    print(f"Promoted minimized state to input of {up_file}")
     refresh_particle_mobility_friction(up_file)
 
 
 def run_md_stage(
     args,
     stage_label: str,
-    input_file: Path,
-    output_file: Path,
+    up_file: Path,
     nsteps: int,
     dt: float,
     frame_steps: int,
+    seed_stage: str,
     echo: bool = True,
 ):
     effective_frame_steps = int(frame_steps)
@@ -1745,13 +1376,11 @@ def run_md_stage(
         effective_frame_steps = max(1, int(nsteps) // 10)
         print(f"NOTICE: frame_steps ({frame_steps}) >= nsteps ({nsteps}); using frame_steps={effective_frame_steps}")
     frame_interval = f"{effective_frame_steps * float(dt):.10g}"
-    if input_file.resolve() != output_file.resolve():
-        shutil.copy2(input_file, output_file)
-        handoff_initial_position(args, input_file, output_file)
+    assert_no_core_overlap(up_file, args.temperature)
     print(f"=== Stage {stage_label}: MD ===")
     cmd = [
         args.upside_executable,
-        output_file,
+        up_file,
         "--duration-steps", nsteps,
         "--frame-interval", frame_interval,
         "--temperature", args.temperature,
@@ -1759,78 +1388,41 @@ def run_md_stage(
         "--integrator", MARTINI_MD_INTEGRATOR,
         "--thermostat-timescale", args.thermostat_timescale,
         "--thermostat-interval", args.thermostat_interval,
-        "--seed", args.seed,
+        "--seed", stage_seed(args.seed, seed_stage),
         "--disable-recentering",
         "--record-momentum",
     ]
-    if input_momentum_restart_valid(output_file):
+    if input_momentum_restart_valid(up_file):
         cmd.append("--restart-using-momentum")
     run_checked(cmd, log_file=args.log_dir / f"stage_{stage_label}.log", echo=echo)
-    mark_output_restart_state(output_file, nsteps, dt)
+    mark_output_restart_state(up_file, nsteps)
 
 
-def promote_md_output_state_to_input(up_file: Path, elapsed_steps: int):
+def promote_md_output_state_to_input(up_file: Path):
     import h5py
-    import numpy as np
 
     with h5py.File(up_file, "r+") as h5:
-        if "/output/pos" not in h5 or h5["/output/pos"].shape[0] == 0:
-            raise RuntimeError(f"{up_file} has no MD output/pos to promote")
         if "/output/mom" not in h5 or h5["/output/mom"].shape[0] == 0:
             raise RuntimeError(f"{up_file} has no MD output/mom to promote")
-
-        last_pos = h5["/output/pos"][-1, 0, :, :][:, :, np.newaxis]
-        last_mom = h5["/output/mom"][-1, 0, :, :][:, :, np.newaxis]
-        if "/input/pos" in h5:
-            del h5["/input/pos"]
-        if "/input/mom" in h5:
-            del h5["/input/mom"]
-        h5.create_dataset("/input/pos", data=last_pos)
-        mom = h5.create_dataset("/input/mom", data=last_mom)
-        mom.attrs["restart_valid"] = np.int8(1)
-
-        if "/input/hybrid_control" in h5:
-            ctrl = h5["/input/hybrid_control"].attrs
-            stage = h5_as_text(
-                h5["/input/stage_parameters"].attrs.get("current_stage", b"")
-            ).strip()
-            if stage == "production":
-                start = int(ctrl.get("sc_env_transition_step_start", 0))
-                ctrl["sc_env_transition_step_start"] = np.int32(start + int(elapsed_steps))
-
-        last_box = None
-        if "/output/box" in h5 and h5["/output/box"].shape[0] > 0:
-            last_box = np.asarray(h5["/output/box"][-1], dtype=float).reshape(-1)
-        if last_box is not None and last_box.size >= 3 and "/input/potential" in h5:
-            for pot_grp in h5["/input/potential"].values():
-                if not isinstance(pot_grp, h5py.Group):
-                    continue
-                if all(k in pot_grp.attrs for k in ("x_len", "y_len", "z_len")):
-                    pot_grp.attrs["x_len"] = float(last_box[0])
-                    pot_grp.attrs["y_len"] = float(last_box[1])
-                    pot_grp.attrs["z_len"] = float(last_box[2])
-
+    set_initial_position(up_file, up_file)
+    with h5py.File(up_file, "r+") as h5:
         del h5["/output"]
     refresh_particle_mobility_friction(up_file)
 
 
 def run_stage70_burnin(args, stage_file: Path):
+    """The rigid burn-in, then the solvation gate on its last quarter, then its final state becomes production's
+    input."""
     nsteps = int(args.prod_70_burnin_nsteps)
     if nsteps <= 0:
         print("=== Stage 7.0: Rigid interface-handoff burn-in skipped (nsteps <= 0) ===")
+        assert_environment_solvation(args, stage_file)
         return
     print(f"=== Stage 7.0: Rigid interface-handoff burn-in ({nsteps} steps) ===")
-    run_md_stage(
-        args,
-        "7.0.burnin",
-        stage_file,
-        stage_file,
-        nsteps,
-        args.prod_time_step,
-        args.prod_frame_steps,
-        echo=False,
-    )
-    promote_md_output_state_to_input(stage_file, nsteps)
+    run_md_stage(args, "7.0.burnin", stage_file, nsteps, args.prod_time_step, args.prod_frame_steps,
+                 "7.0.burnin", echo=False)
+    assert_environment_solvation(args, stage_file)
+    promote_md_output_state_to_input(stage_file)
     print(f"Promoted rigid handoff final state for production: {stage_file}")
 
 
@@ -1882,26 +1474,22 @@ def resolve_continuation_outputs(args):
 
 
 def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_label: str):
+    """Continue production: the source's /input unchanged, with the positions, momentum, round and PO4
+    hold clock of its last frame, so the continuation is the continuous run."""
     if not source_file.exists():
         raise FileNotFoundError(source_file)
     assert_hybrid_stage_active(source_file, "production", "production")
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    if source_file.resolve() != output_file.resolve():
-        shutil.copy2(source_file, output_file)
     if not output_restart_state_valid(source_file):
         raise ValueError(
             "Production continuation requires a source stage generated by the current workflow with "
             "a validated final restart state. Regenerate the previous production stage with the current workflow."
-    )
-    handoff_initial_position(args, source_file, output_file, "production_restart", args.prod_time_step)
-    inject_hybrid_interface_nodes(args, output_file, "production", "production")
-    if not input_momentum_restart_valid(output_file):
-        raise ValueError(
-            "Production continuation requires restart-valid /output/mom in the source stage. "
-            "Regenerate the previous production stage with the current workflow so momentum is recorded."
         )
-    assert_hybrid_stage_active(output_file, "production", "production")
-    run_md_stage(args, stage_label, output_file, output_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
+    if source_file.resolve() != output_file.resolve():
+        shutil.copy2(source_file, output_file)
+    set_initial_position(source_file, output_file, continuation=True)
+    run_md_stage(args, stage_label, output_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps,
+                 "production")
     extract_stage_vtf(args, stage_label, output_file, "2")
 
 
@@ -1923,16 +1511,11 @@ def normalize_hybrid_workflow_args(args):
     args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
     args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
     args.upside_reference_state_rama = args.upside_home / "parameters" / "common" / "rama_reference.pkl"
-    args.universal_prep_mode = "both"
-    args.hybrid_validate = True
-    args.hybrid_preprod_activation_stage = "minimization"
     args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
-    args.npt_tau = DEFAULT_NPT_TAU
     args.npt_interval = DEFAULT_NPT_INTERVAL
     args.npt_mc_dmax_xy = DEFAULT_NPT_MC_DMAX_XY
     args.martini_energy_conversion = DEFAULT_MARTINI_ENERGY_CONVERSION
     args.martini_length_conversion = DEFAULT_MARTINI_LENGTH_CONVERSION
-    args.compressibility_3e4_bar_inv_to_a3_per_eup = DEFAULT_COMPRESSIBILITY_3E4_BAR_INV_TO_A3_PER_EUP
     args.extract_vtf_script = workflow_path(args.extract_vtf_script).resolve()
     args.continue_stage_70_from = workflow_path(args.continue_stage_70_from).resolve() if args.continue_stage_70_from else None
     args.continue_stage_70_output = workflow_path(args.continue_stage_70_output).resolve() if args.continue_stage_70_output else None
@@ -1940,145 +1523,65 @@ def normalize_hybrid_workflow_args(args):
         args.prep_seed = generate_random_seed()
     if args.seed is None:
         args.seed = generate_random_seed()
-        if args.seed == args.prep_seed:
-            args.seed = generate_random_seed()
     for path in [args.run_dir, args.checkpoint_dir, args.log_dir, args.hybrid_prep_dir]:
         path.mkdir(parents=True, exist_ok=True)
     return args
 
 
-def _decode_stage_strings(values):
-    out = []
-    for value in np.asarray(values):
-        if isinstance(value, (bytes, np.bytes_)):
-            out.append(value.decode("utf-8", errors="ignore").strip())
-        else:
-            out.append(str(value).strip())
-    return np.asarray(out, dtype=object)
-
-
-def _detect_has_bonded_environment_particles(up_file: Path) -> bool:
-    """Return True when the stage has real bonded dry-MARTINI environment pairs."""
-    import h5py
-
-    with h5py.File(up_file, "r") as h5:
-        bond_path = "/input/potential/dist_spring/id"
-        if bond_path not in h5:
-            print("  No dist_spring bonds found in stage input")
-            print("  Extended pre-7.0 equilibrium stages needed: False")
-            return False
-
-        bonds = np.asarray(h5[bond_path][:], dtype=np.int64)
-        if bonds.ndim != 2 or bonds.shape[1] < 2 or bonds.size == 0:
-            print("  Empty dist_spring bond list in stage input")
-            print("  Extended pre-7.0 equilibrium stages needed: False")
-            return False
-
-        inp = h5["/input"]
-        atom_types = (
-            _decode_stage_strings(inp["type"][:])
-            if "type" in inp
-            else np.asarray([""] * int(inp["pos"].shape[0]), dtype=object)
-        )
-        env_mask = None
-        membership_path = "/input/hybrid_env_topology/protein_membership"
-        if membership_path in h5:
-            membership = np.asarray(h5[membership_path][:], dtype=np.int32)
-            env_mask = membership < 0
-        elif "particle_class" in inp:
-            classes = np.char.upper(_decode_stage_strings(inp["particle_class"][:]).astype(str))
-            env_mask = (classes != "PROTEIN") & (classes != "PROTEINAA")
-        else:
-            env_mask = np.ones(atom_types.shape[0], dtype=bool)
-
-        bonded_env_pairs = []
-        for raw_i, raw_j in bonds[:, :2]:
-            i = int(raw_i)
-            j = int(raw_j)
-            if i < 0 or j < 0 or i >= atom_types.shape[0] or j >= atom_types.shape[0]:
-                continue
-            pair_types = {str(atom_types[i]).strip().upper(), str(atom_types[j]).strip().upper()}
-            if bool(env_mask[i]) and bool(env_mask[j]):
-                bonded_env_pairs.append((i, j, tuple(sorted(pair_types))))
-
-    print(f"  Real bonded dry-MARTINI environment pairs: {len(bonded_env_pairs)}")
-    if bonded_env_pairs:
-        preview = ", ".join(
-            f"{i}:{j}({'/'.join(pair_types)})" for i, j, pair_types in bonded_env_pairs[:5]
-        )
-        print(f"  Example bonded environment pairs: {preview}")
-    print(f"  Extended pre-7.0 equilibrium stages needed: {bool(bonded_env_pairs)}")
-    return bool(bonded_env_pairs)
-
-
-def ensure_martini_parameter_libraries(args):
-    """Check that the consolidated force-field file exists.
-
-    If it is missing, print a clear error telling the user to run the
-    generation script.
-    """
-    if not args.martini_h5.exists():
-        raise RuntimeError(
-            f"MARTINI force-field file not found: {args.martini_h5}"
-            + "\nRun 'python py/martini_build_tables.py --upside-home "
-            + str(args.upside_home) + "' to generate it."
-        )
-    print(f"MARTINI force-field library found: {args.martini_h5}")
-
-
 def add_hybrid_workflow_arguments(parser):
-    parser.add_argument("--pdb-id", default=env_default("PDB_ID", None))
-    parser.add_argument("--runtime-pdb-id", default=env_default("RUNTIME_PDB_ID", None))
-    parser.add_argument("--upside-home", default=env_default("UPSIDE_HOME", str(REPO_ROOT)))
-    parser.add_argument("--run-dir", default=env_default("RUN_DIR", None))
-    parser.add_argument("--protein-aa-pdb", default=env_default("PROTEIN_AA_PDB", None))
-    parser.add_argument("--lipid-name", default=env_default("LIPID_NAME", None),
+    parser.add_argument("--pdb-id", default=Config.text("PDB_ID", None))
+    parser.add_argument("--runtime-pdb-id", default=Config.text("RUNTIME_PDB_ID", None))
+    parser.add_argument("--upside-home", default=Config.text("UPSIDE_HOME", str(REPO_ROOT)))
+    parser.add_argument("--run-dir", default=Config.text("RUN_DIR", None))
+    parser.add_argument("--protein-aa-pdb", default=Config.text("PROTEIN_AA_PDB", None))
+    parser.add_argument("--lipid-name", default=Config.text("LIPID_NAME", None),
                         help="Membrane lipid moleculetype name(s), comma-separated for a mixed "
-                             "bilayer (e.g. DOPC, DDM, or POPE,POPG)")
-    parser.add_argument("--charmm-gui-dir", default=env_default("CHARMM_GUI_DIR", None),
+                             "bilayer (e.g. DOPC or POPE,POPG)")
+    parser.add_argument("--charmm-gui-dir", default=Config.text("CHARMM_GUI_DIR", None),
                         help="CHARMM-GUI Martini job dir; membrane read from gromacs/step5_charmm2gmx.pdb + system.top")
-    parser.add_argument("--membrane-pdb", default=env_default("MEMBRANE_PDB", None))
-    parser.add_argument("--membrane-top", default=env_default("MEMBRANE_TOP", None))
-    parser.add_argument("--opm-reference", default=env_default("OPM_REFERENCE", None),
+    parser.add_argument("--membrane-pdb", default=Config.text("MEMBRANE_PDB", None))
+    parser.add_argument("--membrane-top", default=Config.text("MEMBRANE_TOP", None))
+    parser.add_argument("--opm-reference", default=Config.text("OPM_REFERENCE", None),
                         help="OPM membrane-oriented reference PDB (for --protein-orientation-mode opm)")
-    parser.add_argument("--extract-vtf-script", default=env_default("EXTRACT_VTF_SCRIPT", str(PY_DIR / "martini_extract_vtf.py")))
-    parser.add_argument("--salt-molar", type=float, default=env_float("SALT_MOLAR", 0.15))
-    parser.add_argument("--explicit-ions", type=int, choices=[0, 1], default=env_int("EXPLICIT_IONS", 1))
-    parser.add_argument("--protein-lipid-cutoff", type=float, default=env_float("PROTEIN_LIPID_CUTOFF", 0.0))
-    parser.add_argument("--ion-cutoff", type=float, default=env_float("ION_CUTOFF", 10.0))
-    parser.add_argument("--xy-scale", type=float, default=env_float("XY_SCALE", 1.0))
-    parser.add_argument("--box-padding-xy", type=float, default=env_float("BOX_PADDING_XY", 0.0))
-    parser.add_argument("--box-padding-z", type=float, default=env_float("BOX_PADDING_Z", 0.0))
-    parser.add_argument("--membrane-thickness-angstrom", type=float, default=env_float("MEMBRANE_THICKNESS_ANGSTROM", 0.0),
+    parser.add_argument("--extract-vtf-script", default=Config.text("EXTRACT_VTF_SCRIPT", str(PY_DIR / "martini_extract_vtf.py")))
+    parser.add_argument("--salt-molar", type=float, default=Config.floating("SALT_MOLAR", 0.15))
+    parser.add_argument("--explicit-ions", type=int, choices=[0, 1], default=Config.integer("EXPLICIT_IONS", 1))
+    parser.add_argument("--protein-lipid-cutoff", type=float, default=Config.floating("PROTEIN_LIPID_CUTOFF", 0.0))
+    parser.add_argument("--ion-cutoff", type=float, default=Config.floating("ION_CUTOFF", 10.0))
+    parser.add_argument("--xy-scale", type=float, default=Config.floating("XY_SCALE", 1.0))
+    parser.add_argument("--box-padding-xy", type=float, default=Config.floating("BOX_PADDING_XY", 0.0))
+    parser.add_argument("--box-padding-z", type=float, default=Config.floating("BOX_PADDING_Z", 0.0))
+    parser.add_argument("--membrane-thickness-angstrom", type=float, default=Config.floating("MEMBRANE_THICKNESS_ANGSTROM", 0.0),
                         help="Equilibrated dry-MARTINI membrane thickness for the ion count "
                              "(0 = measure from the compressed packed lipids)")
-    parser.add_argument("--protein-orientation-mode", choices=["input", "lay-flat", "opm"], default=env_default("PROTEIN_ORIENTATION_MODE", "opm"))
-    parser.add_argument("--protein-pbc-margin", type=float, default=env_float("PROTEIN_PBC_MARGIN", 15.0))
-    parser.add_argument("--temperature", type=float, default=env_float("TEMPERATURE", 0.8647))
-    parser.add_argument("--thermostat-timescale", type=float, default=env_float("THERMOSTAT_TIMESCALE", 5.0))
-    parser.add_argument("--thermostat-interval", type=int, default=env_int("THERMOSTAT_INTERVAL", -1))
-    parser.add_argument("--strict-stage-handoff", type=int, default=env_int("STRICT_STAGE_HANDOFF", 1))
-    parser.add_argument("--min-60-max-iter", type=int, default=env_int("MIN_60_MAX_ITER", 500))
-    parser.add_argument("--min-61-max-iter", type=int, default=env_int("MIN_61_MAX_ITER", 0))
-    parser.add_argument("--min-70-max-iter", type=int, default=env_int("MIN_70_MAX_ITER", 500))
-    parser.add_argument("--eq-60-nsteps", type=int, default=env_int("EQ_60_NSTEPS", 500))
-    parser.add_argument("--eq-62-nsteps", type=int, default=env_int("EQ_62_NSTEPS", 500))
-    parser.add_argument("--eq-63-nsteps", type=int, default=env_int("EQ_63_NSTEPS", 500))
-    parser.add_argument("--eq-64-nsteps", type=int, default=env_int("EQ_64_NSTEPS", 500))
-    parser.add_argument("--eq-65-nsteps", type=int, default=env_int("EQ_65_NSTEPS", 500))
-    parser.add_argument("--eq-66-nsteps", type=int, default=env_int("EQ_66_NSTEPS", 500))
-    parser.add_argument("--prod-70-burnin-nsteps", type=int, default=env_int("PROD_70_BURNIN_NSTEPS", 40000))
-    parser.add_argument("--prod-70-nsteps", type=int, default=env_int("PROD_70_NSTEPS", 10000))
-    parser.add_argument("--eq-time-step", type=float, default=env_float("EQ_TIME_STEP", MARTINI_MD_TIME_STEP))
-    parser.add_argument("--prod-time-step", type=float, default=env_float("PROD_TIME_STEP", MARTINI_MD_TIME_STEP))
-    parser.add_argument("--eq-frame-steps", type=int, default=env_int("EQ_FRAME_STEPS", 1000))
-    parser.add_argument("--prod-frame-steps", type=int, default=env_int("PROD_FRAME_STEPS", 50))
-    parser.add_argument("--prod-70-npt-enable", type=int, default=env_int("PROD_70_NPT_ENABLE", 0))
+    parser.add_argument("--protein-orientation-mode", choices=["input", "lay-flat", "opm"], default=Config.text("PROTEIN_ORIENTATION_MODE", "opm"))
+    parser.add_argument("--protein-pbc-margin", type=float, default=Config.floating("PROTEIN_PBC_MARGIN", 15.0))
+    parser.add_argument("--temperature", type=float, default=Config.floating("TEMPERATURE", 0.8647))
+    parser.add_argument("--thermostat-timescale", type=float, default=Config.floating("THERMOSTAT_TIMESCALE", 5.0))
+    parser.add_argument("--thermostat-interval", type=int, default=Config.integer("THERMOSTAT_INTERVAL", -1))
+    # CHARMM-GUI step6.0 and step6.1 each run 5000 steepest-descent steps.
+    parser.add_argument("--min-60-max-iter", type=int, default=Config.integer("MIN_60_MAX_ITER", 5000))
+    parser.add_argument("--min-61-max-iter", type=int, default=Config.integer("MIN_61_MAX_ITER", 5000))
+    parser.add_argument("--min-70-max-iter", type=int, default=Config.integer("MIN_70_MAX_ITER", 500))
+    parser.add_argument("--eq-62-nsteps", type=int, default=Config.integer("EQ_62_NSTEPS", 500))
+    parser.add_argument("--eq-63-nsteps", type=int, default=Config.integer("EQ_63_NSTEPS", 500))
+    parser.add_argument("--eq-64-nsteps", type=int, default=Config.integer("EQ_64_NSTEPS", 500))
+    parser.add_argument("--eq-65-nsteps", type=int, default=Config.integer("EQ_65_NSTEPS", 500))
+    parser.add_argument("--eq-66-nsteps", type=int, default=Config.integer("EQ_66_NSTEPS", 60000))
+    parser.add_argument("--prod-70-burnin-nsteps", type=int, default=Config.integer("PROD_70_BURNIN_NSTEPS", 40000))
+    parser.add_argument("--prod-70-nsteps", type=int, default=Config.integer("PROD_70_NSTEPS", 10000),
+                        help="production steps of stage 7.0 and of each continuation; 0 ends stage 7.0 after the "
+                             "burn-in, leaving its final state as the input of the stage file (a production seed)")
+    parser.add_argument("--eq-time-step", type=float, default=Config.floating("EQ_TIME_STEP", MARTINI_MD_TIME_STEP))
+    parser.add_argument("--prod-time-step", type=float, default=Config.floating("PROD_TIME_STEP", MARTINI_MD_TIME_STEP))
+    parser.add_argument("--eq-frame-steps", type=int, default=Config.integer("EQ_FRAME_STEPS", 1000))
+    parser.add_argument("--prod-frame-steps", type=int, default=Config.integer("PROD_FRAME_STEPS", 50))
+    parser.add_argument("--prod-70-npt-enable", type=int, default=Config.integer("PROD_70_NPT_ENABLE", 0))
     parser.add_argument("--prep-seed", default=os.environ.get("PREP_SEED"))
     parser.add_argument("--seed", default=os.environ.get("SEED"))
-    parser.add_argument("--continue-stage-70-from", default=env_default("CONTINUE_STAGE_70_FROM", ""))
-    parser.add_argument("--continue-stage-70-output", default=env_default("CONTINUE_STAGE_70_OUTPUT", ""))
-    parser.add_argument("--continue-stage-70-label", default=env_default("CONTINUE_STAGE_70_LABEL", ""))
+    parser.add_argument("--continue-stage-70-from", default=Config.text("CONTINUE_STAGE_70_FROM", ""))
+    parser.add_argument("--continue-stage-70-output", default=Config.text("CONTINUE_STAGE_70_OUTPUT", ""))
+    parser.add_argument("--continue-stage-70-label", default=Config.text("CONTINUE_STAGE_70_LABEL", ""))
 
 
 def parse_hybrid_workflow_args(argv):
@@ -2094,7 +1597,7 @@ def parse_hybrid_workflow_args(argv):
     if args.protein_aa_pdb is None:
         args.protein_aa_pdb = f"pdb/{args.pdb_id}.pdb"
     if not args.lipid_name or not str(args.lipid_name).strip():
-        raise ValueError("A lipid name is required (--lipid-name, e.g. DOPC or DDM)")
+        raise ValueError("A lipid name is required (--lipid-name, e.g. DOPC or POPE,POPG)")
     set_active_lipid_name(args.lipid_name)
     if args.charmm_gui_dir:
         gmx = Path(args.charmm_gui_dir).expanduser() / "gromacs"
@@ -2122,6 +1625,7 @@ def validate_hybrid_workflow_args(args):
         Path(args.membrane_pdb).expanduser().resolve(),
         args.venv_python,
         args.martinize_script,
+        args.martini_h5,
         args.upside_rama_library,
         args.upside_hbond_energy,
         args.upside_reference_state_rama,
@@ -2132,14 +1636,8 @@ def validate_hybrid_workflow_args(args):
     for path in required:
         if not path.exists():
             raise FileNotFoundError(path)
-    # The aggregate morphology follows from the amphiphile's tail count and decides whether the
-    # barostat has any meaning, so resolve it once here and carry it on args.
-    args.environment_morphology = derive_environment_morphology(args.upside_home, args.lipid_name)
-    if args.environment_morphology == "micelle" and not args.opm_reference:
-        raise ValueError(
-            f"{args.lipid_name} is a single-tailed detergent, so the environment is built as a micelle, "
-            "which needs --opm-reference for the protein's hydrophobic belt."
-        )
+    require_bilayer_lipids(args.upside_home, args.lipid_name)
+    lipid_diffusion_targets(active_lipid_names())
     # The belt is the protein's published hydrophobic band, so it only exists if an OPM reference was
     # given. Substituting 0.0 makes every |z - midplane| <= 0 test empty, which turned a missing input into
     # a downstream "no backbone sites inside the belt" failure on a correctly inserted protein. None means
@@ -2152,23 +1650,9 @@ def validate_hybrid_workflow_args(args):
 
 
 def workflow_stage_files(args):
-    return {
-        "prepared_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.prepared.up",
-        "stage_60": args.checkpoint_dir / f"{args.pdb_id}.stage_6.0.up",
-        "prepared_61": args.checkpoint_dir / f"{args.pdb_id}.stage_6.1.prepared.up",
-        "stage_61": args.checkpoint_dir / f"{args.pdb_id}.stage_6.1.up",
-        "stage_62": args.checkpoint_dir / f"{args.pdb_id}.stage_6.2.up",
-        "prepared_63": args.checkpoint_dir / f"{args.pdb_id}.stage_6.3.prepared.up",
-        "stage_63": args.checkpoint_dir / f"{args.pdb_id}.stage_6.3.up",
-        "prepared_64": args.checkpoint_dir / f"{args.pdb_id}.stage_6.4.prepared.up",
-        "stage_64": args.checkpoint_dir / f"{args.pdb_id}.stage_6.4.up",
-        "prepared_65": args.checkpoint_dir / f"{args.pdb_id}.stage_6.5.prepared.up",
-        "stage_65": args.checkpoint_dir / f"{args.pdb_id}.stage_6.5.up",
-        "prepared_66": args.checkpoint_dir / f"{args.pdb_id}.stage_6.6.prepared.up",
-        "stage_66": args.checkpoint_dir / f"{args.pdb_id}.stage_6.6.up",
-        "prepared_70": args.checkpoint_dir / f"{args.pdb_id}.stage_7.0.prepared.up",
-        "stage_70": args.checkpoint_dir / f"{args.pdb_id}.stage_7.0.up",
-    }
+    files = {label: args.checkpoint_dir / f"{args.pdb_id}.stage_{label}.up" for label in ("6.0", "6.1", "7.0")}
+    files.update({label: args.checkpoint_dir / f"{args.pdb_id}.stage_{label}.up" for label, _ in EQUILIBRATION_STAGES})
+    return files
 
 
 def print_hybrid_workflow_summary(args, source=None, output=None):
@@ -2184,43 +1668,51 @@ def print_hybrid_workflow_summary(args, source=None, output=None):
         print(f"Continuation output: {output}")
 
 
-def run_stage60_relaxation(args, files):
+def run_soft_core_minimization(args, files):
+    """CHARMM-GUI step6.0: steepest descent on the soft-core potential, which pushes template overlaps
+    apart where the published potential's core is too steep to minimise. The protein carriers are held by a
+    position restraint as well as moving as one rigid body."""
     prepare_workflow_hybrid_artifacts(args)
-    print("=== Stage 6.0: rigid-protein NPT box relaxation ===")
-    prepare_stage_file(args, files["prepared_60"], "npt_equil", 1, 0, "minimization")
-    shutil.copy2(files["prepared_60"], files["stage_60"])
-    inject_protein_position_restraints(files["stage_60"])
-    run_minimization_stage(args, "6.0", files["stage_60"], args.min_60_max_iter)
-    remove_protein_position_restraints(files["stage_60"])
-    run_md_stage(
-        args,
-        "6.0",
-        files["stage_60"],
-        files["stage_60"],
-        args.eq_60_nsteps,
-        args.eq_time_step,
-        args.eq_frame_steps,
-    )
-    extract_stage_vtf(args, "6.0", files["stage_60"], "1")
-    return files["stage_60"]
+    print("=== Stage 6.0: soft-core minimization ===")
+    prepare_stage_file(args, files["6.0"], "soft_core", 0, 0, "equilibration", "minimization")
+    inject_protein_position_restraints(files["6.0"])
+    run_minimization_stage(args, "6.0", files["6.0"], args.min_60_max_iter)
+    remove_protein_position_restraints(files["6.0"])
+    extract_stage_vtf(args, "6.0", files["6.0"], "1")
+
+
+def run_bilayer_equilibration(args, files):
+    """CHARMM-GUI step6.1-6.6: steepest descent on the published potential, then NPT dynamics under a
+    phosphate height restraint released over five stages."""
+    print("=== Stage 6.1: minimization ===")
+    prepare_stage_file(args, files["6.1"], "hard", 1, 0, "equilibration", "minimization")
+    set_initial_position(files["6.0"], files["6.1"])
+    run_minimization_stage(args, "6.1", files["6.1"], args.min_61_max_iter)
+    extract_stage_vtf(args, "6.1", files["6.1"], "1")
+
+    previous = files["6.1"]
+    for label, lipidhead_fc in EQUILIBRATION_STAGES:
+        stage_file = files[label]
+        prepare_stage_file(args, stage_file, "hard", 1, lipidhead_fc, "equilibration", "minimization")
+        handoff_initial_position(previous, stage_file)
+        nsteps = getattr(args, f"eq_{label.replace('.', '')}_nsteps")
+        run_md_stage(args, label, stage_file, nsteps, args.eq_time_step, args.eq_frame_steps, label)
+        extract_stage_vtf(args, label, stage_file, "1")
+        previous = stage_file
+    return previous
 
 
 def assert_environment_solvation(args, up_file: Path):
-    """Gate G2: the protein must be properly solvated in the state that actually enters production.
+    """Gate G2: the protein's lipid face must be solvated in the state that enters production.
 
-    Run on the equilibrated stage-7.0 coordinates, because that is the configuration production samples,
-    and per belt residue rather than as a global thickness, because that is the only like-for-like
-    comparison (a packed-state span reads low for every lipid). Two distinct failures are caught:
+    Measured on the last quarter of the rigid burn-in (the input state when the burn-in is skipped), on the belt
+    sites that face lipid: the inside of a helix bundle is surrounded by protein, not lipid, so it says nothing about
+    an insertion void. Two fractions of those sites are taken, averaged over the frames:
 
-      * vacuum -- a belt site with no environment bead at all in reach. This is what an unhealed
-        insertion void looks like; the lamellar glpG build entered production with the first shell empty
-        (mean nearest environment bead 11.7 A over transmembrane CA).
-      * headgroup solvation -- a belt site whose only company is polar. This is the hydrophobic-mismatch
-        failure that unfolded TM4: the DDM slab's 14 A tail core left half the belt against maltose, and
-        it is invisible to a vacuum test because the headgroups are right there.
-
-    The limit for both is the derived coverage radius the builder uses: twice the force field's contact
-    distance, i.e. a gap wide enough for another bead to sit in.
+      * vacuum -- no environment bead within BELT_VACUUM_RADIUS_A. This is what an unhealed insertion void looks
+        like, and it fails the build above BELT_VACUUM_MAX_FRACTION.
+      * acyl-tail reach -- no acyl-tail bead within the same radius, the hydrophobic-mismatch signature that
+        unfolded glpG TM4 against the DDM slab's headgroups. Reported, with a warning above the same fraction.
     """
     import h5py
     from scipy.spatial import cKDTree
@@ -2234,14 +1726,13 @@ def assert_environment_solvation(args, up_file: Path):
         )
         return
 
-    clearance = float(args.protein_lipid_cutoff)
-    coverage_radius = 2.0 * clearance
     with h5py.File(up_file, "r") as h5:
-        pos = np.array(h5["/input/pos"])[:, :, 0]
+        n_frame = h5["/output/pos"].shape[0] if "/output/pos" in h5 else 0
+        frames = (np.array(h5["/output/pos"][(3 * n_frame) // 4:, 0]) if n_frame
+                  else np.array(h5["/input/pos"])[None, :, :, 0])
         env_index = np.array(h5["/input/hybrid_env_topology/env_atom_indices"])
         bb_index = np.array(h5["/input/hybrid_bb_map/bb_atom_index"])
         atom_names = np.array([n.decode().strip() for n in np.array(h5["/input/atom_names"])])
-    env_xyz = pos[env_index]
     apolar_names = derive_lipid_apolar_bead_names(args.upside_home, args.lipid_name)
     is_tail = np.isin(atom_names[env_index], sorted(apolar_names))
     if not is_tail.any():
@@ -2249,142 +1740,80 @@ def assert_environment_solvation(args, up_file: Path):
             f"No apolar environment beads {sorted(apolar_names)} found in {up_file.name}; cannot verify "
             "hydrophobic solvation."
         )
-    # The aggregate defines its own midplane; a finite micelle is free to drift off the box centre.
-    bb_xyz = pos[bb_index]
+    protein = np.setdiff1d(np.arange(atom_names.size), env_index)
+    backbone = protein[np.isin(atom_names[protein], ["N", "CA", "C", "O"])]
     half_thickness = float(args.belt_half_thickness_a)
-    midplane = env_xyz[:, 2].mean()
-    offset = np.abs(bb_xyz[:, 2] - midplane)
-    belt = bb_xyz[offset <= half_thickness]
-    if belt.shape[0] == 0:
-        raise RuntimeError(
-            f"Stage-7.0 solvation gate found no backbone sites inside the belt: no BB site lies within "
-            f"{half_thickness:.2f} A of the environment midplane z={midplane:.2f} A. Closest BB site is "
-            f"{offset.min():.2f} A away and the BB span is z={bb_xyz[:, 2].min():.2f}..{bb_xyz[:, 2].max():.2f}, "
-            "so the protein is not inserted where the OPM reference says its hydrophobic belt is; check the "
-            "orientation and insertion depth."
-        )
 
-    d_any = cKDTree(env_xyz).query(belt)[0]
-    d_tail = cKDTree(env_xyz[is_tail]).query(belt)[0]
-    bare = int(np.count_nonzero(d_any > coverage_radius))
-    dry = int(np.count_nonzero(d_tail > coverage_radius))
-    # Local hydrophobic thickness: the z-extent of tail beads in a cylinder around the protein, i.e. the
-    # core the belt actually sits in, measured after equilibration so it is not the compressed template.
-    lateral = np.linalg.norm(env_xyz[:, :2] - belt[:, :2].mean(axis=0), axis=1)
-    local_tails = env_xyz[is_tail & (lateral <= np.linalg.norm(belt[:, :2].std(axis=0)) + 3.0 * clearance)]
-    local_span = (
-        float(np.percentile(local_tails[:, 2], 95) - np.percentile(local_tails[:, 2], 5))
-        if local_tails.shape[0] > 10
-        else float("nan")
-    )
-    belt_span = 2.0 * float(args.belt_half_thickness_a)
+    bare, dry, n_site = [], [], []
+    for pos in frames:
+        env_xyz, bb_xyz = pos[env_index], pos[bb_index]
+        # the bilayer's own midplane, which the equilibration may have moved off the packed one
+        midplane = env_xyz[:, 2].mean()
+        offset = np.abs(bb_xyz[:, 2] - midplane)
+        belt = bb_xyz[offset <= half_thickness]
+        if belt.shape[0] == 0:
+            raise RuntimeError(
+                f"Stage-7.0 solvation gate found no backbone sites inside the belt: no BB site lies within "
+                f"{half_thickness:.2f} A of the environment midplane z={midplane:.2f} A. Closest BB site is "
+                f"{offset.min():.2f} A away and the BB span is z={bb_xyz[:, 2].min():.2f}..{bb_xyz[:, 2].max():.2f}, "
+                "so the protein is not inserted where the OPM reference says its hydrophobic belt is; check the "
+                "orientation and insertion depth."
+            )
+        burial = np.array([len(n) for n in cKDTree(pos[backbone]).query_ball_point(belt, BELT_BURIAL_RADIUS_A)])
+        facing = belt[burial < BELT_FACING_MAX_BACKBONE]
+        if facing.shape[0] == 0:
+            raise RuntimeError(
+                f"Stage-7.0 solvation gate found no lipid-facing belt site: each of the {belt.shape[0]} belt sites "
+                f"has at least {BELT_FACING_MAX_BACKBONE} protein backbone atoms within {BELT_BURIAL_RADIUS_A:.0f} A."
+            )
+        bare.append(np.mean(cKDTree(env_xyz).query(facing)[0] > BELT_VACUUM_RADIUS_A))
+        dry.append(np.mean(cKDTree(env_xyz[is_tail]).query(facing)[0] > BELT_VACUUM_RADIUS_A))
+        n_site.append(facing.shape[0])
+    bare, dry = float(np.mean(bare)), float(np.mean(dry))
+
     print(
-        f"Stage-7.0 solvation gate: {belt.shape[0]} belt sites; nearest environment bead mean "
-        f"{d_any.mean():.2f} / max {d_any.max():.2f} A ({bare} bare); nearest acyl tail mean "
-        f"{d_tail.mean():.2f} / max {d_tail.max():.2f} A ({dry} beyond reach); local tail core "
-        f"{local_span:.1f} A vs {belt_span:.1f} A belt; limit {coverage_radius:.2f} A"
+        f"Stage-7.0 solvation gate over {len(frames)} frame(s): {np.mean(n_site):.0f} lipid-facing belt sites; "
+        f"{100 * bare:.1f}% with no environment bead and {100 * dry:.1f}% with no acyl-tail bead within "
+        f"{BELT_VACUUM_RADIUS_A:.1f} A; limit {100 * BELT_VACUUM_MAX_FRACTION:.0f}%"
     )
-    # Only the vacuum test gates. Tail reach and local core thickness are reported because both are
-    # ambiguous on a post-equilibration snapshot: once a helix has already been stripped, detergent flows
-    # into the cavity and the statistics recover, so they diagnose rather than decide. Promoting the
-    # thickness check to a hard gate needs the DOPC/POPC bilayer regression first (plan.md P7) -- a
-    # packed-state span reads ~20 A for every lipid, so an unvalidated threshold would break the
-    # lamellar path.
-    if bare:
+    if bare > BELT_VACUUM_MAX_FRACTION:
         raise RuntimeError(
-            f"{bare} of {belt.shape[0]} hydrophobic-belt sites enter production with no environment bead "
-            f"within {coverage_radius:.2f} A. The belt would sample against vacuum; lengthen "
-            "equilibration or check the environment build."
+            f"{100 * bare:.1f}% of the lipid-facing belt sites enter production with no environment bead within "
+            f"{BELT_VACUUM_RADIUS_A:.1f} A (limit {100 * BELT_VACUUM_MAX_FRACTION:.0f}%). The lipid face would "
+            "sample against vacuum; lengthen the 6.6 NPT equilibration or check the environment build."
         )
-    if dry or (local_span == local_span and local_span < belt_span - clearance):
+    if dry > BELT_VACUUM_MAX_FRACTION:
         print(
-            f"  WARNING: {dry} belt site(s) beyond acyl-tail reach and a {local_span:.1f} A local tail "
-            f"core against a {belt_span:.1f} A belt. This is the hydrophobic-mismatch signature that "
-            "unfolded glpG TM4 in the lamellar DDM slab; inspect before trusting the run."
+            f"  WARNING: {100 * dry:.1f}% of the lipid-facing belt sites have no acyl-tail bead within "
+            f"{BELT_VACUUM_RADIUS_A:.1f} A. This is the hydrophobic-mismatch signature that unfolded glpG TM4 "
+            "in the lamellar DDM slab; inspect before trusting the run."
         )
 
 
 def run_stage70_handoff(args, files, source_stage: Path):
-    prepare_stage_file(
-        args,
-        files["prepared_70"],
-        "npt_prod",
-        args.prod_70_npt_enable,
-        0,
-        "production_handoff",
-    )
-    shutil.copy2(files["prepared_70"], files["stage_70"])
-    handoff_initial_position(args, source_stage, files["stage_70"], "production_hybrid")
-    assert_hybrid_stage_active(files["stage_70"], "production_handoff", "production")
-    run_minimization_stage(args, "7.0", files["stage_70"], args.min_70_max_iter, preserve_stage=True)
-    run_stage70_burnin(args, files["stage_70"])
-    set_stage_label(files["stage_70"], "production")
-    assert_hybrid_stage_active(files["stage_70"], "production", "production")
-    assert_environment_solvation(args, files["stage_70"])
-    run_md_stage(
-        args,
-        "7.0",
-        files["stage_70"],
-        files["stage_70"],
-        args.prod_70_nsteps,
-        args.prod_time_step,
-        args.prod_frame_steps,
-    )
-    extract_stage_vtf(args, "7.0", files["stage_70"], "2")
-
-
-def run_pre70_equilibration(args, files):
-    print("=== Bonded dry-MARTINI environment detected -> running extended pre-7.0 equilibrium ===")
-
-    prepare_stage_file(args, files["prepared_61"], "npt_prod", 1, 0, "minimization")
-    shutil.copy2(files["prepared_61"], files["stage_61"])
-    handoff_initial_position(args, files["stage_60"], files["stage_61"])
-    run_minimization_stage(args, "6.1", files["stage_61"], args.min_61_max_iter)
-    extract_stage_vtf(args, "6.1", files["stage_61"], "1")
-
-    prepare_stage_file(args, files["stage_62"], "npt_equil", 1, 200, "minimization")
-    handoff_initial_position(args, files["stage_61"], files["stage_62"])
-    run_md_stage(args, "6.2", files["stage_62"], files["stage_62"], args.eq_62_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.2", files["stage_62"], "1")
-
-    prepare_stage_file(args, files["prepared_63"], "npt_equil_reduced", 1, 100, "minimization")
-    shutil.copy2(files["prepared_63"], files["stage_63"])
-    handoff_initial_position(args, files["stage_62"], files["stage_63"])
-    run_md_stage(args, "6.3", files["stage_63"], files["stage_63"], args.eq_63_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.3", files["stage_63"], "1")
-
-    prepare_stage_file(args, files["prepared_64"], "npt_prod", 1, 50, "minimization")
-    shutil.copy2(files["prepared_64"], files["stage_64"])
-    handoff_initial_position(args, files["stage_63"], files["stage_64"])
-    run_md_stage(args, "6.4", files["stage_64"], files["stage_64"], args.eq_64_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.4", files["stage_64"], "1")
-
-    prepare_stage_file(args, files["prepared_65"], "npt_prod", 1, 20, "minimization")
-    shutil.copy2(files["prepared_65"], files["stage_65"])
-    handoff_initial_position(args, files["stage_64"], files["stage_65"])
-    run_md_stage(args, "6.5", files["stage_65"], files["stage_65"], args.eq_65_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.5", files["stage_65"], "1")
-
-    prepare_stage_file(args, files["prepared_66"], "npt_prod", 1, 10, "minimization")
-    shutil.copy2(files["prepared_66"], files["stage_66"])
-    handoff_initial_position(args, files["stage_65"], files["stage_66"])
-    run_md_stage(args, "6.6", files["stage_66"], files["stage_66"], args.eq_66_nsteps, args.eq_time_step, args.eq_frame_steps)
-    extract_stage_vtf(args, "6.6", files["stage_66"], "1")
-    return files["stage_66"]
+    """Stage 7.0: the production configuration. Minimise and burn in with the protein rigid, then run
+    production with it flexible. The lipids are free in both: CHARMM-GUI's production carries no head-group
+    restraint, and the 6.6 restraint (10 kJ/mol/nm^2) already leaves the phosphates about 5 A of play."""
+    stage_file = files["7.0"]
+    prepare_stage_file(args, stage_file, "hard", args.prod_70_npt_enable, 0, "production", "production_handoff")
+    handoff_initial_position(source_stage, stage_file)
+    assert_hybrid_stage_active(stage_file, "production_handoff", "production")
+    run_minimization_stage(args, "7.0", stage_file, args.min_70_max_iter)
+    run_stage70_burnin(args, stage_file)
+    set_stage_label(stage_file, "production")
+    assert_hybrid_stage_active(stage_file, "production", "production")
+    if int(args.prod_70_nsteps) <= 0:
+        print(f"=== Stage 7.0: production not run (nsteps <= 0); {stage_file} holds the production seed ===")
+        return
+    run_md_stage(args, "7.0", stage_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps,
+                 "production")
+    extract_stage_vtf(args, "7.0", stage_file, "2")
 
 
 def run_fresh_hybrid_workflow(args):
-    ensure_martini_parameter_libraries(args)
     files = workflow_stage_files(args)
-    stage60 = run_stage60_relaxation(args, files)
-
-    if _detect_has_bonded_environment_particles(stage60):
-        stage70_source = run_pre70_equilibration(args, files)
-    else:
-        print("=== No bonded dry-MARTINI environment pairs -> handoff from stage 6.0 to stage 7.0 ===")
-        stage70_source = stage60
-
-    run_stage70_handoff(args, files, stage70_source)
+    run_soft_core_minimization(args, files)
+    run_stage70_handoff(args, files, run_bilayer_equilibration(args, files))
 
 
 def run_hybrid_workflow_command(argv):

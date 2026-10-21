@@ -1,4 +1,7 @@
-# VERY IMPORTANT all distances must be in nanometers for MDTraj
+'''Upside trajectories and structures as MDTraj objects.
+
+Very important: all distances are in nanometers, as MDTraj requires; Upside files store Angstrom.
+'''
 import sys
 import pickle as cp
 import numpy as np
@@ -12,8 +15,6 @@ aa_conv_dict = {"A": "ALA", "R": "ARG", "N": "ASN", "D": "ASP", "C": "CYS", "E":
                 "Q": "GLN", "G": "GLY", "H": "HIS", "I": "ILE", "L": "LEU", "K": "LYS",
                 "M": "MET", "F": "PHE", "P": "PRO", "S": "SER", "T": "THR", "W": "TRP",
                 "Y": "TYR", "V": "VAL",}
-
-print ('Very Important: All distances are in nanometers for MDTraj')
 
 def vmag(x):
     assert x.shape[-1] == 3
@@ -189,8 +190,11 @@ def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, 
                     # attempt to land on the stride
                     sl = slice(start_frame,None,stride)
                     xyz.append(g.pos[sl,0])
-                    time.append(g.time[sl]+last_time)
-                    last_time = g.time[-1]+last_time
+                    # a continuation either restarts its clock or resumes it (momentum restarts); its first
+                    # frame is the last frame before it, so align its time on that frame
+                    offset = last_time - g.time[0] if g_no else 0.
+                    time.append(g.time[sl]+offset)
+                    last_time = g.time[-1]+offset
                     total_frames_produced += g.pos.shape[0]-(1 if g_no else 0)  # correct for first frame
                     start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
         
@@ -223,7 +227,6 @@ def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, 
 
     return traj_from_upside(seq, time, xyz, chain_first_residue, chain_counts, add_extra_atoms=add_atoms)
 
-@FormatRegistry.register_loader('.up')
 def load_upside_ref(fname, add_atoms=True):
     import tables as tb
 
@@ -242,68 +245,7 @@ def load_upside_ref(fname, add_atoms=True):
             else:
                 chain_counts = np.array([1 for i in chain_first_residue])
 
-    if add_atoms:
-        return traj_from_upside(seq, time, xyz, chain_first_residue, chain_counts, add_extra_atoms=add_atoms)
-
-def load_upside_data(fname, output_names):
-    pass
-
-    # return dict from output_names to numpy array of values
-
-def load_upside_rep(fnames, rep_select, stride=1, add_atoms=True):
-    import tables as tb
-    for i, fn in enumerate(fnames):
-        if i == 0:
-            with tb.open_file(fn) as t:
-                last_time = 0.
-                start_frame = 0
-                total_frames_produced = 0
-                xyz = []
-                time = []
-                for g_no, g in enumerate(_output_groups(t)):
-                    # take into account that the first frame of each pos is the same as the last frame before restart
-                    # attempt to land on the stride
-                    sl = slice(start_frame,None,stride)
-                    xyz.append(g.pos[sl,0])
-                    time.append(g.time[sl]+last_time)
-                    last_time = g.time[-1]+last_time
-                    total_frames_produced += g.pos.shape[0]-(1 if g_no else 0)  # correct for first frame
-                    start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
-                xyz = np.concatenate(xyz,axis=0)
-                time = np.concatenate(time,axis=0)
-
-                seq = t.root.input.sequence[:]
-
-                # Check for chain breaks in config file
-                chain_first_residue = np.array([0], dtype='int32')
-                chain_counts = np.array([1], dtype='int32')
-                if 'chain_break' in t.root.input:
-                    chain_first_residue = np.append(chain_first_residue, t.root.input.chain_break.chain_first_residue[:])
-                    if 'chain_counts' in t.root.input.chain_break:
-                        chain_counts = t.root.input.chain_break.chain_counts[:]
-                    else:
-                        chain_counts = np.array([1 for i in chain_first_residue])
-        else:
-            with tb.open_file(fn) as t:
-                start_frame = 0
-                total_frames_produced = 0
-                xyz2 = []
-                replica_idx = []
-                for g_no, g in enumerate(_output_groups(t)):
-                    # take into account that the first frame of each pos is the same as the last frame before restart
-                    # attempt to land on the stride
-                    sl = slice(start_frame,None,stride)
-                    xyz2.append(g.pos[sl,0])
-                    replica_idx.append(g.replica_index[sl,0])
-                    total_frames_produced += g.pos.shape[0]-(1 if g_no else 0)  # correct for first frame
-                    start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
-            xyz2 = np.concatenate(xyz2, axis=0)
-            replica_idx = np.concatenate(replica_idx, axis=0)
-            replica_idx = (replica_idx == rep_select)
-            
-            xyz[replica_idx] = xyz2[replica_idx]
-        
-    return traj_from_upside(seq, time, xyz, chain_first_residue, chain_counts, add_extra_atoms=add_atoms)        
+    return traj_from_upside(seq, time, xyz, chain_first_residue, chain_counts, add_extra_atoms=add_atoms)
 
 def ca_contact_pca(traj, n_pc, cutoff_angstroms=8., variance_scaled=True):
     from sklearn.decomposition import TruncatedSVD
@@ -400,13 +342,6 @@ def pick_all_representative_points(coord, labels, sigma_fraction=0.1):
 
 def select(traj, sel_text):
     return traj.atom_slice(traj.topology.select(sel_text))
-
-def replex_demultiplex(list_of_replex_traj, replica_index):
-    n_frame = list_of_replex_traj[0].n_frames
-    n_atom  = list_of_replex_traj[0].n_atoms
-
-
-
 
 class ca_interfacial_rmsd_angstroms:
 

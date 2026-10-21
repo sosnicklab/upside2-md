@@ -22,7 +22,7 @@ struct TimeKeeper {
     void add_time(const std::string &name, double t_elapsed) {
         TimeRecord& record = records[name];
         record.n_invoke++;
-        if(record.n_invoke<n_ignore) return; 
+        if(record.n_invoke<=n_ignore) return;  // the first n_ignore calls are warm-up
         record.total_elapsed += t_elapsed;
     }
 

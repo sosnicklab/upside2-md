@@ -71,50 +71,57 @@ helpers/   — utility modules used by the workflow steps
 ## Full dry-MARTINI hybrid trajectories
 
 Set `trajectory_mode=martini_hybrid`, the directory containing the full hybrid
-H5 files, and a filename pattern containing `{replica}`. Step 2 calls
-`py/martini_hdx_project.py` to create ordinary protein-only trajectory views in
-`outputs/<sim_id>/`. The views contain mapped N/CA/C coordinates but retain the
-full protein-plus-bilayer potential and the original Upside temperature for
-MBAR. Steps 2--6 then run through the same code used by `example/04.HDX` and the
-ordinary workflow.
+H5 files, and a filename pattern. `{replica}` numbers the files of a REMD
+ladder (`<pdb>.run.{replica}.up`); `{segment}` numbers the consecutive
+continuations of one run (`<pdb>.stage_7.{segment}.up`, the default), which are
+joined in order into one trajectory, so a pattern without `{replica}` needs
+`n_rep=1`. Step 2 calls `py/martini_hdx_project.py` to create ordinary
+protein-only trajectory views in `outputs/<sim_id>/`. The views contain mapped
+N/CA/C coordinates but retain the full protein-plus-bilayer potential and the
+original Upside temperature for MBAR; the projection refuses a hybrid whose
+sequence, H-bond donors and acceptors, or residue numbering differ from the HDX
+topology. Steps 2--6 then run through the same code used by `example/04.HDX` and
+the ordinary workflow.
 
 ```bash
 work_dir=/path/to/hdx_work \
 pdb_id=1rkl sim_id=martini_hybrid n_rep=1 start_frame=100 \
 trajectory_mode=martini_hybrid \
 hybrid_source_dir=/path/to/martini_1rkl_hybrid_full/checkpoints \
-hybrid_source_pattern='1rkl.stage_7.{replica}.up' \
-legacy_T_range=0.8647 T_targets=0.8647 target_T=0.8647 \
+hybrid_source_pattern='1rkl.stage_7.{segment}.up' \
+legacy_T_range=0.8647 T_targets=0.8647 plot_T_targets=0.8647 target_T=0.8647 \
 skip_experiment_data=true \
 bash analysis.sh
 ```
 
-For a single-temperature trajectory, set every analysis target to that sampled
-Upside temperature. Do not temperature-reweight one hybrid replica to an
-unsampled condition. `example/16.MARTINI/run_hdx_analysis.sh` reads the
-temperature from replica 0 and supplies these settings automatically.
+Every analysis temperature must lie on the sampled ladder; step 4 refuses one
+that does not. For a single-temperature trajectory that is the sampled
+temperature itself. `example/16.MARTINI/run_hdx_analysis.sh` reads it from
+replica 0 and supplies these settings automatically.
 
 The work directory must contain the normal `inputs/<pdb>.fasta`,
-`inputs/<pdb>.initial.npy`, `inputs/<pdb>.chain_breaks`, and `pdb/` directory.
-`1.config.py` builds the same heavy-atom-coverage `inputs/<pdb>-HDX.up` used for
-ordinary Upside HDX analysis.
+`inputs/<pdb>.initial.npy`, `inputs/<pdb>.chi`, `inputs/<pdb>.chain_breaks` (for
+more than one chain) and `pdb/` directory, as `py/PDB_to_initial_structure.py`
+writes them. `1.config.py` builds the same heavy-atom-coverage
+`inputs/<pdb>-HDX.up` used for ordinary Upside HDX analysis. Per-residue results
+carry the PDB numbering from `inputs/<pdb>.chi`.
 
 Step 3 always saves the unmodified protein result as
-`<prefix>_PS_protein.npy`. With no additional input, downstream
-`<prefix>_PS.npy` is identical. A calibrated per-frame water-accessibility array
-may be supplied with `water_accessibility_dir` and a
-`water_accessibility_pattern` containing `{replica}`. The array must match PS
-shape and contain values in `[0,1]`; the combined exchange probability is
+`<prefix>_PS_protein.npy`. For a hybrid analysis it then measures the membrane
+term with `py/martini_hdx_membrane_accessibility.py`: an amide is
+water-inaccessible in a frame where a lipid tail bead lies within the first
+minimum of the tail-tail g(r), measured once over all replicas and written to
+`results/<pdb>_<sim>_all_ACC_radius.txt`. `<prefix>_PS.npy` combines the two as
 
 ```text
-(1 - protein_protection) * water_accessibility
+protection = 1 - (1 - protein_protection) * water_accessibility
 ```
 
-Dry MARTINI has no water, so the workflow does not invent this calibration. A
-global between-phosphate-planes Boolean is not a quantitative substitute: it
-saturates stable transmembrane amides. Leave the accessibility pattern empty
-unless the array has been calibrated against explicit-water simulation or an
-experimental reference.
+An external per-frame accessibility array may be supplied instead with
+`water_accessibility_dir` and a `water_accessibility_pattern` containing
+`{replica}`; it must match PS shape and contain values in `[0,1]`. An ordinary
+Upside analysis without one keeps `<prefix>_PS.npy` identical to the protein
+result.
 
 ## Slurm
 

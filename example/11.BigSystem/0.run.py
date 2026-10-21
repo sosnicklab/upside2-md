@@ -86,7 +86,6 @@ kwargs = dict(
                rotamer_interaction       = param_dir_ff + "sidechain.h5",
                environment_potential     = param_dir_ff + "environment.h5",
                bb_environment_potential  = param_dir_ff + "bb_env.dat",
-               chain_break_from_file     = "{}/{}.chain_breaks".format(input_dir, pdb_id),
                intensive_memory          = intensive_memory,
              )
 

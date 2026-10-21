@@ -25,6 +25,7 @@ namespace martini_brownian {
 void register_brownian_for_engine(DerivEngine* engine, hid_t config_root, uint32_t random_seed);
 
 // True if this engine has g-JF atoms.
+void unregister_brownian_for_engine(DerivEngine* engine);
 bool has_brownian(DerivEngine* engine);
 
 // Per-atom mask for particles that receive stochastic noise in this integrator. A zero-friction
@@ -33,6 +34,10 @@ const std::vector<unsigned char>& stochastic_mask(DerivEngine* engine);
 
 // Set the target temperature (kT in E_up) used for the Brownian noise.
 void set_brownian_temperature(DerivEngine* engine, float temperature);
+
+// Set the number of outer steps already taken, so that a continuation draws the noise of the
+// continuous run.
+void set_brownian_invocations(DerivEngine* engine, uint64_t n_invocations);
 
 // Advance every dynamic atom by one outer g-JF step of size dt using pos->sens (= dU/dx), as
 // inner_steps substeps of dt/inner_steps. dt must equal /input/brownian numerical_time_step.

@@ -25,8 +25,9 @@ def load_profile_rows(pdb_id):
     profile_rows = load_csv_rows('{}/{}.csv'.format(fig_dir, pdb_id))
     ranked_rows = load_csv_rows('{}/{}_ranked.csv'.format(fig_dir, pdb_id))
 
-    residue_ids = np.asarray(profile_rows[0], dtype=float)
-    sim_profile = np.asarray(profile_rows[1], dtype=float)
+    # rows: Upside residue index, PDB residue number, dG
+    residue_ids = np.asarray(profile_rows[1], dtype=float)
+    sim_profile = np.asarray(profile_rows[2], dtype=float)
     sim_ranked = np.asarray(ranked_rows[0], dtype=float)
     exp_ranked = np.asarray(ranked_rows[1], dtype=float) if len(ranked_rows) > 1 else None
     return residue_ids, sim_profile, sim_ranked, exp_ranked
@@ -83,7 +84,7 @@ plt.rcParams['font.family'] = 'sans-serif'
 plt.rcParams['font.sans-serif'] = SANS_SERIF_FONTS
 for pdb_id, residue_ids, sim_profile, sim_ranked, exp_ranked in loaded:
     ax.plot(residue_ids, sim_profile, '-o', label='{}'.format(pdb_id))
-ax.set_xlabel('Residue Number')
+ax.set_xlabel('Residue (PDB numbering)')
 ax.set_ylabel('∆G (kcal/mol)')
 ax.set_title('Residue-Level ∆G Across Analyses')
 box = ax.get_position()
@@ -126,7 +127,7 @@ def classify_protein_family(pdb_id):
         return "PASTA"
     if "LysM" in pdb_id:
         return "LysM"
-    return "LysM"
+    return None
 
 
 def family_label(family_key):
@@ -183,7 +184,7 @@ def plot_family_residues(family_key, family_entries):
     for pdb_id, residue_ids, sim_profile, sim_ranked, exp_ranked in family_entries:
         ax.plot(residue_ids, sim_profile, '-o', label='{}'.format(pdb_id))
 
-    ax.set_xlabel('Residue Number (from N-term)')
+    ax.set_xlabel('Residue (PDB numbering)')
     ax.set_ylabel('∆G (kcal/mol)')
     ax.set_title('∆G for Upside Simulations ({})'.format(family_label(family_key)))
 
@@ -197,9 +198,12 @@ def plot_family_residues(family_key, family_entries):
     plt.close()
 
 
+# Only the named families are grouped; any other protein appears in the summaries above alone.
 families = {}
 for entry in loaded:
-    families.setdefault(classify_protein_family(entry[0]), []).append(entry)
+    family_key = classify_protein_family(entry[0])
+    if family_key is not None:
+        families.setdefault(family_key, []).append(entry)
 
 for family_key, family_entries in families.items():
     if len(family_entries) == 0:

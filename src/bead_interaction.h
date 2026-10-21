@@ -28,6 +28,15 @@
 #endif
 
 namespace {
+    // Spline coordinate of the cosine between two unit vectors.  Rounding can carry the cosine just past
+    // +/-1, outside the spline's knots, so it is held to [-1,1], where the cosine of unit vectors lies.
+    inline Float4 angular_coord(const Float4& cos_angle, float inv_dtheta) {
+        return (min(max(cos_angle, Float4(-1.f)), Float4(1.f)) + Float4(1.f))*Float4(inv_dtheta) + Float4(1.f);
+    }
+    inline float angular_coord(float cos_angle, float inv_dtheta) {
+        return (std::min(std::max(cos_angle, -1.f), 1.f) + 1.f)*inv_dtheta + 1.f;
+    }
+
     template<int n_knot_angular, int n_knot, int n_dim1, int n_dim2>
         inline Float4 quadspline(
                 Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2,
@@ -48,10 +57,10 @@ namespace {
             auto cos_cov_angle2 = dot(rvec2,-displace_unitvec);
 
             // Spline evaluation
-            auto angular_sigmoid1 = deBoor_value_and_deriv(p,  (cos_cov_angle1+one)*Float4(inv_dtheta)+one);
+            auto angular_sigmoid1 = deBoor_value_and_deriv(p,  angular_coord(cos_cov_angle1, inv_dtheta));
             int o = n_knot_angular; const float* pp[4] = {p[0]+o, p[1]+o, p[2]+o, p[3]+o};
 
-            auto angular_sigmoid2 = deBoor_value_and_deriv(pp, (cos_cov_angle2+one)*Float4(inv_dtheta)+one);
+            auto angular_sigmoid2 = deBoor_value_and_deriv(pp, angular_coord(cos_cov_angle2, inv_dtheta));
             o=n_knot_angular; pp[0]+=o; pp[1]+=o; pp[2]+=o; pp[3]+=o;
 
             auto wide_cover   = clamped_deBoor_value_and_deriv(pp, dist_coord, n_knot);
@@ -65,6 +74,9 @@ namespace {
             auto radial_deriv   = Float4(inv_dx    ) * (wide_cover.y() + angular_weight*narrow_cover.y());
             auto angular_deriv1 = Float4(inv_dtheta) * angular_sigmoid1.y()*angular_sigmoid2.x()*narrow_cover.x();
             auto angular_deriv2 = Float4(inv_dtheta) * angular_sigmoid1.x()*angular_sigmoid2.y()*narrow_cover.x();
+            // a cosine angular_coord holds at +/-1 does not enter the energy
+            angular_deriv1 = ternary((Float4(1.f)<cos_cov_angle1) | (cos_cov_angle1<Float4(-1.f)), Float4(0.f), angular_deriv1);
+            angular_deriv2 = ternary((Float4(1.f)<cos_cov_angle2) | (cos_cov_angle2<Float4(-1.f)), Float4(0.f), angular_deriv2);
 
             auto rXX = angular_deriv1*rvec1 - angular_deriv2*rvec2;
             auto deriv_dir = inv_dist * (rXX - dot(displace_unitvec,rXX)*displace_unitvec);
@@ -105,29 +117,31 @@ namespace {
             float  cos_cov_angle1 = dot(rvec1, displace_unitvec);
             float  cos_cov_angle2 = dot(rvec2,-displace_unitvec);
 
-            float2 angular_sigmoid1 = deBoor_value_and_deriv(p,                (cos_cov_angle1+1.f)*inv_dtheta+1.f);
-            float2 angular_sigmoid2 = deBoor_value_and_deriv(p+n_knot_angular, (cos_cov_angle2+1.f)*inv_dtheta+1.f);
+            float2 angular_sigmoid1 = deBoor_value_and_deriv(p,                angular_coord(cos_cov_angle1, inv_dtheta));
+            float2 angular_sigmoid2 = deBoor_value_and_deriv(p+n_knot_angular, angular_coord(cos_cov_angle2, inv_dtheta));
 
+            // Each spline adds into d_param: at a cosine of +1 the angular spline's last bin reaches, with
+            // weight 0, the first slot of the block after its own
             // wide_cover derivative
             int starting_bin;
             float result[4];
             clamped_deBoor_coeff_deriv(&starting_bin, result, dist_coord, n_knot);
-            for(int i: range(4)) d_param[2*n_knot_angular+starting_bin+i] = result[i];
+            for(int i: range(4)) d_param[2*n_knot_angular+starting_bin+i] += result[i];
 
             // narrow_cover derivative
             clamped_deBoor_coeff_deriv(&starting_bin, result, dist_coord, n_knot);
             for(int i: range(4))
-                d_param[2*n_knot_angular+n_knot+starting_bin+i] = angular_sigmoid1.x()*angular_sigmoid2.x()*result[i];
+                d_param[2*n_knot_angular+n_knot+starting_bin+i] += angular_sigmoid1.x()*angular_sigmoid2.x()*result[i];
 
             // angular_sigmoid derivatives
             float2 narrow_cover = clamped_deBoor_value_and_deriv(p+2*n_knot_angular+n_knot, dist_coord, n_knot);
 
-            deBoor_coeff_deriv(&starting_bin, result, (cos_cov_angle1+1.f)*inv_dtheta+1.f);
-            for(int i: range(4)) d_param[starting_bin+i] = angular_sigmoid2.x()*narrow_cover.x()*result[i];
+            deBoor_coeff_deriv(&starting_bin, result, angular_coord(cos_cov_angle1, inv_dtheta));
+            for(int i: range(4)) d_param[starting_bin+i] += angular_sigmoid2.x()*narrow_cover.x()*result[i];
 
-            deBoor_coeff_deriv(&starting_bin, result,                 (cos_cov_angle2+1.f)*inv_dtheta+1.f);
+            deBoor_coeff_deriv(&starting_bin, result, angular_coord(cos_cov_angle2, inv_dtheta));
             for(int i: range(4))
-                d_param[n_knot_angular+starting_bin+i] = angular_sigmoid1.x()*narrow_cover.x()*result[i];
+                d_param[n_knot_angular+starting_bin+i] += angular_sigmoid1.x()*narrow_cover.x()*result[i];
         }
 
     constexpr static const int n_bit_rotamer = 4; // max number of rotamers is 2**n_bit_rotamer

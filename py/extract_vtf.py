@@ -22,29 +22,6 @@ def vmag(x):# special version for systems
 def vhat(x):  # special version for systems
     return x / vmag(x)[...,None,:]
 
-def print_traj_vtf(fname, sequence, traj, bond_id):
-    vtf = open(fname,'w')
-    n_timestep, n_atom, three, n_system = traj.shape
-    assert three == 3
-
-    for ns in xrange(n_system):
-        for na in xrange(n_atom):
-            print ( "atom %i name %s resid %i resname %s segid s%i" % (
-                    n_atom*ns+na, ['N','CA','C'][na%3], na/3, sequence[na/3], ns), file=vtf)
-    
-    for a,b in bond_id:
-        for ns in xrange(n_system):
-            print ("bond %i:%i" % (n_atom*ns+a,n_atom*ns+b), file=vtf)
-
-    for frame in traj:
-        print ("\ntimestep ordered", file=vtf)
-        for ns in xrange(n_system):
-            for na in xrange(n_atom):
-                print ("%.3f %.3f %.3f" % (frame[na,0,ns], frame[na,1,ns], frame[na,2,ns]), file=vtf)
-    print ('', file=vtf)
-    vtf.close()
-
-
 def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
     n_timestep, n_atom, three, n_system = traj.shape
     assert three == 3
@@ -59,47 +36,43 @@ def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
     H  = N[:,1: ] - H_bond * vhat(vhat(C [:,:-1]-N[:,1: ]) + vhat(CA[:,1: ]-N[:,1: ]))
     O  = C[:,:-1] - O_bond * vhat(vhat(CA[:,:-1]-C[:,:-1]) + vhat(N [:,1: ]-C[:,:-1]))
 
+    # H is placed from the previous C and O from the next N, so neither exists at a chain end;
+    # proline (CPR is cis-proline) has no amide H
+    chain_first = np.zeros(n_res, dtype=bool)
+    chain_first[0] = True
+    if chain_first_residue is not None:
+        chain_first[chain_first_residue] = True
+    chain_last = np.append(chain_first[1:], True)
+    has_H = ~chain_first & ~np.isin(sequence, ['PRO','CPR'])
+    has_O = ~chain_last
+    chain_idx = np.cumsum(chain_first) - 1
+
     # write structure information
     atom_id = 0
-    prev_C = None
     for ns in range(n_system):
         for nr in range(n_res):
-            if nr == 0:
-                ch_idx = 0
-            if chain_first_residue is not None:
-                if nr in chain_first_residue:
-                    ch_idx += 1
-            res = 'resid %i resname %s segid s%i chain %s' % (nr, sequence[nr], ns, chain_labels[ch_idx])
+            res = 'resid %i resname %s segid s%i chain %s' % (nr, sequence[nr], ns, chain_labels[chain_idx[nr]])
 
             vtf.write('atom %i name N  %s\n' % (atom_id+0, res))
             vtf.write('atom %i name CA %s\n' % (atom_id+1, res))
             vtf.write('atom %i name C  %s\n' % (atom_id+2, res))
 
-            if prev_C is not None:
-                if chain_first_residue is not None:
-                    if nr not in chain_first_residue:
-                        vtf.write('bond %i:%i\n' % (prev_C,atom_id+0)) # prevC->N  bond
-                else:                     
-                    vtf.write('bond %i:%i\n' % (prev_C,atom_id+0)) # prevC->N  bond
+            if not chain_first[nr]:
+                vtf.write('bond %i:%i\n' % (prev_C,atom_id+0)) # prevC->N  bond
             vtf.write('bond %i:%i\n' % (atom_id+0,atom_id+1))  # N->CA bond
             vtf.write('bond %i:%i\n' % (atom_id+1,atom_id+2))  # CA->C bond
 
-            if nr==0 or (sequence[nr]=='PRO' and nr!=n_res-1):
-                vtf.write('atom %i name O  %s\n' % (atom_id+3, res))
-                vtf.write('bond %i:%i\n' % (atom_id+2, atom_id+3))  # C->O bond
-                consumed = 4
-            elif nr==n_res-1 and sequence[nr]=='PRO':
-                consumed = 3
-            elif nr==n_res-1:
-                vtf.write('atom %i name H  %s\n' % (atom_id+3, res))
-                vtf.write('bond %i:%i\n' % (atom_id+0, atom_id+3))  # N->H bond
-                consumed = 4
-            else:
-                vtf.write('atom %i name H  %s\n' % (atom_id+3, res))
-                vtf.write('atom %i name O  %s\n' % (atom_id+4, res))
-                vtf.write('bond %i:%i\n' % (atom_id+0, atom_id+3))  # N->H bond
-                vtf.write('bond %i:%i\n' % (atom_id+2, atom_id+4))  # C->O bond
-                consumed = 5;
+            H_id = atom_id+3
+            O_id = atom_id+3+has_H[nr]
+            if has_H[nr]:
+                vtf.write('atom %i name H  %s\n' % (H_id, res))
+            if has_O[nr]:
+                vtf.write('atom %i name O  %s\n' % (O_id, res))
+            if has_H[nr]:
+                vtf.write('bond %i:%i\n' % (atom_id+0, H_id))  # N->H bond
+            if has_O[nr]:
+                vtf.write('bond %i:%i\n' % (atom_id+2, O_id))  # C->O bond
+            consumed = 3+has_H[nr]+has_O[nr]
 
             prev_C = atom_id+2
             atom_id += consumed
@@ -111,9 +84,9 @@ def print_augmented_vtf(fname, sequence, traj, chain_first_residue):
                 vtf.write("%.3f %.3f %.3f\n" % (N [f,nr,0,ns], N [f,nr,1,ns], N [f,nr,2,ns]))
                 vtf.write("%.3f %.3f %.3f\n" % (CA[f,nr,0,ns], CA[f,nr,1,ns], CA[f,nr,2,ns]))
                 vtf.write("%.3f %.3f %.3f\n" % (C [f,nr,0,ns], C [f,nr,1,ns], C [f,nr,2,ns]))
-                if nr>0 and sequence[nr]!='PRO': 
+                if has_H[nr]:
                     vtf.write("%.3f %.3f %.3f\n" % (H[f,nr-1,0,ns], H[f,nr-1,1,ns], H[f,nr-1,2,ns]))
-                if nr<n_res-1: 
+                if has_O[nr]:
                     vtf.write("%.3f %.3f %.3f\n" % (O[f,nr,0,ns], O[f,nr,1,ns], O[f,nr,2,ns]))
 
 def main():
@@ -146,17 +119,18 @@ def main():
         if 'output' in t.root:  # 'output' is the *last* produced output
             output_paths.append('/output')
 
-        start_frame = args.start
         total_frames_produced = 0
         pos = []
         stride = args.stride
-        for opath in output_paths:
+        for g_no, opath in enumerate(output_paths):
             g = t.get_node(t.get_node(opath))
-            pos.append(g.pos[start_frame::stride].transpose((0,2,3,1)))
-            # take into account that the first frame of each pos is the same as the last frame before restart
-            # attempt to land on the stride
-            total_frames_produced += g.pos.shape[0]-1  # correct for first frame
-            start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
+            # the first frame of each pos after the first is the same as the last frame before restart;
+            # take the frames args.start + k*stride of the concatenated trajectory
+            first = 1 if g_no else 0
+            start_frame = max(args.start, total_frames_produced)
+            start_frame += (args.start - start_frame) % stride
+            pos.append(g.pos[start_frame-total_frames_produced+first::stride].transpose((0,2,3,1)))
+            total_frames_produced += g.pos.shape[0]-first
             print (opath, total_frames_produced, 'cumulative frames found')
 
     pos = np.concatenate(pos, axis=0)

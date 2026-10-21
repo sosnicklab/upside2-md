@@ -10,18 +10,21 @@ namespace martini_masses {
     static std::mutex g_mass_mutex;
     static std::map<DerivEngine*, std::vector<float>> g_masses;
 
+    void unregister_masses_for_engine(DerivEngine* engine) {
+        std::lock_guard<std::mutex> lk(g_mass_mutex);
+        g_masses.erase(engine);
+    }
+
     void load_masses_for_engine(DerivEngine* engine, hid_t config_root) {
         std::lock_guard<std::mutex> lk(g_mass_mutex);
         auto& masses = g_masses[engine];
         masses.clear();
-        
-        try {
-            if(h5_exists(config_root, "/input/mass")) {
-                traverse_dset<1,float>(config_root, "/input/mass", [&](size_t i, float m){ masses.push_back(m); });
-            }
-        } catch(...) {
-            // Silently handle errors
-        }
+        if(!h5_exists(config_root, "/input/mass")) return;
+
+        check_size(config_root, "/input/mass", engine->pos->n_atom);
+        traverse_dset<1,float>(config_root, "/input/mass", [&](size_t i, float m) {
+                if(!(m > 0.f)) throw string("/input/mass must have one positive value per atom");
+                masses.push_back(m);});
     }
     
     // Get mass for a specific atom

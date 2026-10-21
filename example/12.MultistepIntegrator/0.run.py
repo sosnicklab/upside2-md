@@ -20,7 +20,8 @@ T              = 0.8
 duration       = 1000
 frame_interval = 50
 integrator     = 'mv'  # v: verlet; mv: multi-step verlet
-inner_step     = 2
+time_step      = 0.003 # step of the fast forces
+inner_step     = 3     # the slow forces step every inner_step*time_step = 0.009; a longer one heats the protein
 base_dir       = './'
 
 #----------------------------------------------------------------------
@@ -99,9 +100,10 @@ upside_opts = (
                  "--temperature {} "
                  "--seed {} "
                  "--integrator {} "
+                 "--time-step {} "
                  "--inner-step {} "
               )
-upside_opts = upside_opts.format(duration, frame_interval, T, randomseed, integrator, inner_step )
+upside_opts = upside_opts.format(duration, frame_interval, T, randomseed, integrator, time_step, inner_step )
 
 h5_file  = "{}/{}.run.up".format(run_dir, pdb_id)
 log_file = "{}/{}.run.log".format(run_dir, pdb_id)

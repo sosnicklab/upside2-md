@@ -39,6 +39,8 @@ struct OrnsteinUhlenbeckThermostat
             delta_t   = delta_t_;   update_parameters(); return *this;}
         OrnsteinUhlenbeckThermostat& set_atom_timescale(const std::vector<float>& atom_timescale_) {
             atom_timescale = atom_timescale_; return *this;}
+        OrnsteinUhlenbeckThermostat& set_n_invocations(uint64_t n_invocations_) {
+            n_invocations = n_invocations_; return *this;}
 
         void apply(
                 VecArray mom,

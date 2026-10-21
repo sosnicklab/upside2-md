@@ -15,8 +15,10 @@ START_FRAME=${START_FRAME:-100}
 PROTEIN_AA_PDB=${PROTEIN_AA_PDB:-$SCRIPT_DIR/pdb/$PDB_ID.pdb}
 HYBRID_RUN_DIR=${HYBRID_RUN_DIR:-$SCRIPT_DIR/outputs/martini_${PDB_ID}_hybrid_full}
 HYBRID_SOURCE_DIR=${HYBRID_SOURCE_DIR:-$HYBRID_RUN_DIR/checkpoints}
+# One production run: its stage_7.N continuations, joined in order. A REMD ladder: a pattern with
+# {replica}, such as '<id>.run.{replica}.up', and N_REP.
 if [ -z "${HYBRID_SOURCE_PATTERN:-}" ]; then
-    HYBRID_SOURCE_PATTERN="$PDB_ID.stage_7.{replica}.up"
+    HYBRID_SOURCE_PATTERN="$PDB_ID.stage_7.{segment}.up"
 fi
 HDX_WORK_DIR=${HDX_WORK_DIR:-$HYBRID_RUN_DIR/hdx_analysis}
 ANALYSIS_SCRIPT=${ANALYSIS_SCRIPT:-$PROJECT_ROOT/example/00.AnalysisScripts/analysis.sh}
@@ -35,8 +37,9 @@ if [ ! -d "$HYBRID_SOURCE_DIR" ]; then
 fi
 
 replica_token='{replica}'
+segment_token='{segment}'
 first_source_name=${HYBRID_SOURCE_PATTERN//$replica_token/0}
-first_source_path=$HYBRID_SOURCE_DIR/$first_source_name
+first_source_path=$HYBRID_SOURCE_DIR/${first_source_name//$segment_token/0}
 if [ ! -f "$first_source_path" ]; then
     echo "Missing first hybrid trajectory: $first_source_path" >&2
     exit 1
@@ -46,6 +49,7 @@ if [ -z "$HDX_T_UP" ]; then
         'import sys, tables as tb; f = tb.open_file(sys.argv[1]); print(float(f.root.output.temperature[0, 0])); f.close()' \
         "$first_source_path")
 fi
+PLOT_T_TARGETS=${PLOT_T_TARGETS:-$HDX_T_UP}
 
 mkdir -p "$HDX_WORK_DIR/inputs" "$HDX_WORK_DIR/outputs" "$HDX_WORK_DIR/pdb" "$HDX_WORK_DIR/results"
 
@@ -70,6 +74,7 @@ exec env \
     water_accessibility_pattern="$WATER_ACCESSIBILITY_PATTERN" \
     legacy_T_range="$HDX_T_UP" \
     T_targets="$HDX_T_UP" \
+    plot_T_targets="$PLOT_T_TARGETS" \
     target_T="$HDX_T_UP" \
     reference_temperature="$HDX_T_UP" \
     skip_experiment_data=true \

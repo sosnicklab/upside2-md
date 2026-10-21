@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 '''
-Generate a new config file (.up or .h5) for restart simulation
+Generate a new config file (.up or .h5) for restart simulation.
+Run it with --restart-using-momentum when the source run recorded momentum (--record-momentum).
 '''
 
 __author__  = 'Xiangda Peng'
@@ -29,18 +30,24 @@ def generate_config_for_restart(up_fname, up_fname_for_next_round, frame=-1):
             assert NF > frame
 
             out_H5.root.input.pos[:,:,0] = in_H5.root.output.pos[frame, 0]
+            # the momentum of the frame and the round it was recorded at, which --restart-using-momentum
+            # reads to resume the momentum and every random counter; a run without --record-momentum has none
+            if 'mom' in out_H5.root.input:
+                out_H5.root.input.mom._f_remove()
+            if 'mom' in in_H5.root.output:
+                out_H5.create_array(out_H5.root.input, 'mom', obj=in_H5.root.output.mom[frame, 0][:,:,None])
+                out_H5.root.input.mom._v_attrs.round = in_H5.root.output.round[frame]
             if 'tip_pos' in in_H5.root.output:
-                use_AFM_pulling = True
-                tip_pos         = in_H5.root.output.tip_pos[frame]
-                time_estimate   = in_H5.root.output.time_estimate[frame][0]
-                out_H5.root.input.potential.AFM.starting_tip_pos[:] = tip_pos
-                #out_H5.root.input.potential.AFM.pulling_vel._v_attrs.time_initial = time_estimate
-            if 'rotation_tip_angles' in in_H5.root.output:
-                use_rotation = True
-                rotation_tip_angles    = in_H5.root.output.rotation_tip_angles[frame]
-                rotation_time_estimate = in_H5.root.output.rotation_time_estimate[frame][0]
-                out_H5.root.input.potential.rotation.starting_tip_angle[:] = rotation_tip_angles
-                #out_H5.root.input.potential.rotation.angular_vel._v_attrs.time_initial = rotation_time_estimate
+                # the tip is at start_pos + velocities*time and its clock restarts at time_initial,
+                # so keep the tip's start and resume its clock
+                moving        = out_H5.root.input.potential.MovingConst3D
+                time_estimate = in_H5.root.output.time_estimate[frame][0]
+                start_pos     = in_H5.root.output.tip_pos[frame] - moving.velocities[:]*time_estimate
+                if 'start_pos' in moving:
+                    moving.start_pos._f_remove()
+                out_H5.create_array(moving, 'start_pos', obj=start_pos)
+                moving._v_attrs.initialized_by_coord = 0
+                moving._v_attrs.time_initial         = time_estimate
 
 def main():
     up_fname                = sys.argv[1]

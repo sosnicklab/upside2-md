@@ -106,7 +106,7 @@ for k in range(T.size):
     a,b = np.histogram(Hb_flatten, 20, weights=w1)
     bc = (b[1:]+b[:-1])*0.5
 
-    g = -0.593*np.log(a)*t
+    g = -0.001987*(t/0.85*298.)*np.log(a)  # kT in kcal/mol: T_up 0.85 is 298 K
     g -= np.min(g)
     dG_hbond.append(g)
 

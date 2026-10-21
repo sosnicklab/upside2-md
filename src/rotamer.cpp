@@ -18,6 +18,8 @@ using namespace h5;
 
 constexpr static int UPPER_ROT = 7;  // 1 more than the most possible rotamers (handle 0)
 
+inline float max_keep_nan(float a, float b) {return (a>b || std::isnan(a)) ? a : b;}
+
 template <int N_Float4>
 Vec<N_Float4,Float4> read4vec(float* address, Alignment align=Alignment::aligned) {
     Vec<N_Float4,Float4> ret;
@@ -273,10 +275,11 @@ struct NodeHolder {
         }
 
     float max_deviation() {
+        // a NaN difference is kept, so that a NaN belief reaches the stop test (std::max would drop it)
         float dev = 0.f;
         for(int d: range(n_rot)) 
             for(int nn: range(n_elem)) 
-                dev = max(fabsf(cur_belief(d,nn)-old_belief(d,nn)), dev);
+                dev = max_keep_nan(fabsf(cur_belief(d,nn)-old_belief(d,nn)), dev);
         return dev;
     }
 
@@ -297,7 +300,7 @@ struct NodeHolder {
 
             float en = energy_offset[nn];
             // free energy is average energy - entropy
-            for(int no: range(N_ROT)) en += b[no] * logf((1e-10f+b[no])*rcp(1e-10f+pr[no]));
+            for(int no: range(N_ROT)) en += b[no] * logf((1e-30f+b[no])*rcp(1e-30f+pr[no]));
             return en;
         }
 
@@ -312,11 +315,11 @@ struct NodeHolder {
             if (EType == 0) {
                 // average energy 
                 en = energy_offset[nn];
-                for(int no: range(N_ROT)) en -= b[no] * logf( 1e-10f+pr[no] );
+                for(int no: range(N_ROT)) en -= b[no] * logf( 1e-30f+pr[no] );
             }
             else {
                 // entropy
-                for(int no: range(N_ROT)) en += b[no] * logf( 1e-10f+b[no] );
+                for(int no: range(N_ROT)) en += b[no] * logf( 1e-30f+b[no] );
             }
             return en;
         }
@@ -333,11 +336,12 @@ struct EdgeHolder {
     public:
         struct EdgeLoc {int edge_num, dim, ne;};
 
-        // FIXME include numerical stability data (basically scale each probability in a sane way)
         VecArrayStorage prob;
         VecArrayStorage cur_belief;
         VecArrayStorage old_belief;
         VecArrayStorage marginal;
+
+        unique_ptr<float[]> energy_offset;
 
         unique_ptr<int[]> edge_indices1;
         unique_ptr<int[]> edge_indices2;
@@ -353,6 +357,8 @@ struct EdgeHolder {
             old_belief(ru(n_rot1)+ru(n_rot2), max_n_edge+3),
             marginal(n_rot1*n_rot2,           max_n_edge+3), // the +1 ensures we can write past the end
 
+            energy_offset(new_aligned<float>(max_n_edge+3,4)),
+
             edge_indices1(new_aligned<int>(max_n_edge,simd_width)),
             edge_indices2(new_aligned<int>(max_n_edge,simd_width)),
 
@@ -360,7 +366,7 @@ struct EdgeHolder {
         {
 
             edge_loc.reserve(n_rot1*n_rot2*max_n_edge);
-            fill(cur_belief, 0.f);
+            fill(cur_belief, 1.f);  // never updated for edges with a 1-rotamer node, whose marginal is then 1
             fill(old_belief, 0.f);
             fill_n(edge_indices1, round_up(max_n_edge,simd_width), 0);
             fill_n(edge_indices2, round_up(max_n_edge,simd_width), 0);
@@ -369,11 +375,11 @@ struct EdgeHolder {
         }
 
         void reset() {
-            // reset the probabilities we wrote over
+            // reset the energies we wrote over (prob array initially contains energy)
             for(int idx=0; idx<nodes_to_edge.n_edge; ++idx)
                 for(int i: range(n_rot1)) 
                     for(int j: range(n_rot2)) 
-                        prob(i*ru(n_rot2)+j,idx) = 1.f;
+                        prob(i*ru(n_rot2)+j,idx) = 0.f;
 
             nodes_to_edge.clear();
             edge_loc.clear();
@@ -381,7 +387,7 @@ struct EdgeHolder {
         void swap_beliefs() { swap(cur_belief, old_belief); }
 
         void add_to_edge(
-                int ne, float prob_val,
+                int ne, float energy,
                 unsigned id1, unsigned rot1, 
                 unsigned id2, unsigned rot2) {
             int32_t idx;
@@ -391,25 +397,33 @@ struct EdgeHolder {
             }
 
             int j = rot1*ru(n_rot2)+rot2;
-            prob(j, idx) *= prob_val;
+            prob(j, idx) += energy;
             edge_loc.emplace_back(EdgeLoc{ne, int(rot1*n_rot2+rot2), int(idx)});
         }
 
-        void move_edge_prob_to_node2() {
+        void move_edge_energy_to_node2() {
             // FIXME assert n_rot1 == 1
-            VecArray p = nodes2.prob;
+            // must be called before the node energies are converted to probabilities
+            VecArray e = nodes2.prob;
             for(int ne: range(nodes_to_edge.n_edge)) {
                 int nr = edge_indices2[ne];
-                for(int no: range(n_rot2)) p(no,nr) *= prob(no,ne);
+                for(int no: range(n_rot2)) e(no,nr) += prob(no,ne);
             }
         }
 
-        void standardize_probs() { // FIXME should accumulate the rescaled probability
+        void convert_energy_to_prob() {
+            // same scaling as NodeHolder::convert_energy_to_prob; the largest entry of each edge is 1.
             for(int ne: range(nodes_to_edge.n_edge)) {
-                float max_prob = 1e-10f;
-                for(int nd: range(n_rot1*n_rot2)) if(prob(nd,ne)>max_prob) max_prob = prob(nd,ne);
-                float inv_max_prob = rcp(max_prob);
-                for(int nd: range(n_rot1*n_rot2)) prob(nd,ne) *= inv_max_prob;
+                float e_offset = prob(0,ne);
+                for(int i: range(n_rot1))
+                    for(int j: range(n_rot2))
+                        e_offset = min(e_offset, prob(i*ru(n_rot2)+j,ne));
+
+                for(int i: range(n_rot1))
+                    for(int j: range(n_rot2))
+                        prob(i*ru(n_rot2)+j,ne) = expf(e_offset-prob(i*ru(n_rot2)+j,ne));
+
+                energy_offset[ne] = e_offset;
             }
         }
 
@@ -433,8 +447,8 @@ struct EdgeHolder {
 
                 // correct for self interaction
                 auto b = load_vec<ru(N_ROT1)+ru(N_ROT2)>(cur_belief, ne);
-                auto bc1 = b1 * vec_rcp(1e-10f + extract<0,         N_ROT1>           (b));
-                auto bc2 = b2 * vec_rcp(1e-10f + extract<ru(N_ROT1),ru(N_ROT1)+N_ROT2>(b));
+                auto bc1 = b1 * vec_rcp(1e-30f + extract<0,         N_ROT1>           (b));
+                auto bc2 = b2 * vec_rcp(1e-30f + extract<ru(N_ROT1),ru(N_ROT1)+N_ROT2>(b));
 
                 auto p = load_vec<N_ROT1*ru(N_ROT2)>(prob, ne);
                 Vec<N_ROT1*N_ROT2> marg;
@@ -456,14 +470,14 @@ struct EdgeHolder {
             auto p  = load_vec<N_ROT1*   N_ROT2 >(marginal, ne);
             auto pr = load_vec<N_ROT1*ru(N_ROT2)>(prob, ne);
 
-            float en = 0.f;
+            float en = energy_offset[ne];
             for(int no1: range(N_ROT1)) {
                 for(int no2: range(N_ROT2)) {
                     int i = no1*N_ROT2 + no2;
                     // this is the average potential energy plus the mutual information,
                     // which is what I want for calculating the overall energy
-                    // the 1e-10f prevents NaN if some probabilities are exactly 0
-                    en += p[i] * logf((1e-10f+p[i]) * rcp(1e-10f+pr[no1*ru(N_ROT2)+no2]*b1[no1]*b2[no2]));
+                    // the 1e-30f prevents NaN if some probabilities are exactly 0
+                    en += p[i] * logf((1e-30f+p[i]) * rcp(1e-30f+pr[no1*ru(N_ROT2)+no2]*b1[no1]*b2[no2]));
                 }
             }
 
@@ -479,17 +493,17 @@ struct EdgeHolder {
             auto p  = load_vec<N_ROT1*   N_ROT2 >(marginal, ne);
             auto pr = load_vec<N_ROT1*ru(N_ROT2)>(prob, ne);
 
-            float en = 0.f;
+            float en = (EType == 0) ? energy_offset[ne] : 0.f;
             for(int no1: range(N_ROT1)) {
                 for(int no2: range(N_ROT2)) {
                     int i = no1*N_ROT2 + no2;
                     if (EType == 0) {
                         // average potential energy 
-                        en -= p[i] * logf( 1e-10f+pr[no1*ru(N_ROT2)+no2] );
+                        en -= p[i] * logf( 1e-30f+pr[no1*ru(N_ROT2)+no2] );
                     }
                     else {
                         // the mutual information
-                        en += p[i] * logf( (1e-10f+p[i]) * rcp(1e-10f+b1[no1]*b2[no2]) );
+                        en += p[i] * logf( (1e-30f+p[i]) * rcp(1e-30f+b1[no1]*b2[no2]) );
                     }
                 }
             }
@@ -522,8 +536,8 @@ struct EdgeHolder {
                     auto old_node_belief1 = read4vec<w1>(vec_old_node_belief1 + i1);
                     auto old_node_belief2 = read4vec<w2>(vec_old_node_belief2 + i2);
 
-                    auto v1 = old_node_belief1 * vec_rcp(Float4(1e-10f) + old_edge_belief1);
-                    auto v2 = old_node_belief2 * vec_rcp(Float4(1e-10f) + old_edge_belief2);
+                    auto v1 = old_node_belief1 * vec_rcp(Float4(1e-30f) + old_edge_belief1);
+                    auto v2 = old_node_belief2 * vec_rcp(Float4(1e-30f) + old_edge_belief2);
 
                     // load the edge probability matrix
                     auto eprob = PaddedMatrix<N_ROT1,N_ROT2>(prob.x + ne*N_ROT1*4*w2);
@@ -618,7 +632,8 @@ array<int,UPPER_ROT> calculate_n_elem(InteractionGraph<BT> &igraph) {
         unique_ids[n_rot].insert(id);
     }
     for(auto& kv: unique_ids) {
-        if(kv.first >= UPPER_ROT) throw string("invalid rotamer count ")+to_string(kv.first);
+        if(kv.first!=1 && kv.first!=3 && kv.first!=6)  // the only node holders that exist
+            throw string("invalid rotamer count ")+to_string(kv.first);
         result.at(kv.first) = kv.second.size();
     }
     return result;
@@ -686,6 +701,9 @@ struct RotamerSidechain: public PotentialNode {
         energy_fresh_relative_to_derivative(false),
         n_bad_solve(0)
     {
+        if(!(0.f <= damping && damping < 1.f)) throw string("rotamer damping must be in [0,1)");
+        if(iteration_chunk_size < 1) throw string("rotamer iteration_chunk_size must be at least 1");
+
         for(int i: range(UPPER_ROT)) node_holders_matrix[i] = nullptr;
         node_holders_matrix[1] = &nodes1;
         node_holders_matrix[3] = &nodes3;
@@ -766,7 +784,7 @@ struct RotamerSidechain: public PotentialNode {
                 for(int ne=0; ne<nodes.n_elem; ++ne, ++nn)  // increment both global and local counters
                     for(int nr=0; nr<6; ++nr)
                         node_energy[nn*6+nr] = (nr<n_rot)
-                            ? /*nodes.energy_offset[ne]*/-logf(nodes.prob(nr,ne))
+                            ? nodes.energy_offset[ne] - logf(nodes.prob(nr,ne))
                             : 1e5f;
             }
             return node_energy;
@@ -817,7 +835,7 @@ struct RotamerSidechain: public PotentialNode {
                                 edge_value[((i2*n_node + i1)*6 + nr2)*6 + nr1] =
                                     do_marginal
                                         ? edges.marginal(nr1*n_rot2 + nr2, ne)
-                                        : -logf(edges.prob(nr1*ru(n_rot2) + nr2, ne));
+                                        : edges.energy_offset[ne] - logf(edges.prob(nr1*ru(n_rot2) + nr2, ne));
                 }
             }
 
@@ -842,7 +860,7 @@ struct RotamerSidechain: public PotentialNode {
 
         fill_holders();
         auto solve_results = solve_for_marginals();
-        if(solve_results.first >= max_iter - iteration_chunk_size - 1)
+        if(!(solve_results.second <= tol))  // not converged, or NaN
             n_bad_solve++;
 
         propagate_derivatives();
@@ -882,18 +900,14 @@ struct RotamerSidechain: public PotentialNode {
             // at this point, the node "prob" is really energy
             node_holders_matrix[n_rot]->prob(rot,id) += energy;
         }
-        for(int n_rot: range(1,UPPER_ROT))
-            if(node_holders_matrix[n_rot])
-                node_holders_matrix[n_rot]->convert_energy_to_prob(energy_cap, energy_cap_width);
 
-        // Fill edge probabilities
+        // Fill edge energies
         igraph.compute_edges();
 
         const unsigned selector = (1u<<n_bit_rotamer) - 1u;
         for(int ne=0; ne<igraph.n_edge; ++ne) {
             int   id1  = igraph.edge_id1[ne];
             int   id2  = igraph.edge_id2[ne];
-            float prob = expf(-igraph.edge_value[ne]);  // value of edge is potential
 
             if((id1&(selector<<n_bit_rotamer)) > (id2&(selector<<n_bit_rotamer))) swap(id1,id2);
 
@@ -903,23 +917,31 @@ struct RotamerSidechain: public PotentialNode {
             unsigned n_rot1 = id1 & selector; id1 >>= n_bit_rotamer;
             unsigned n_rot2 = id2 & selector; id2 >>= n_bit_rotamer;
 
-            edge_holders_matrix[n_rot1][n_rot2]->add_to_edge(ne, prob, id1, rot1, id2, rot2);
+            edge_holders_matrix[n_rot1][n_rot2]->add_to_edge(ne, igraph.edge_value[ne], id1, rot1, id2, rot2);
         }
 
         // for edges with a 1, we can just move it
         for(int n_rot: range(2,UPPER_ROT))
             if(edge_holders_matrix[1][n_rot])
-                edge_holders_matrix[1][n_rot]->move_edge_prob_to_node2();
+                edge_holders_matrix[1][n_rot]->move_edge_energy_to_node2();
+
+        for(int n_rot: range(1,UPPER_ROT))
+            if(node_holders_matrix[n_rot])
+                node_holders_matrix[n_rot]->convert_energy_to_prob(energy_cap, energy_cap_width);
+        for(int n_rot1: range(UPPER_ROT))
+            for(int n_rot2: range(UPPER_ROT))
+                if(edge_holders_matrix[n_rot1][n_rot2])
+                    edge_holders_matrix[n_rot1][n_rot2]->convert_energy_to_prob();
     }
 
     float calculate_energy_from_marginals() {
         // marginals must already have been solved
-        // since edges1x were folded into the node probabilites, they should not be accumulated here
+        // since edges1x were folded into the node energies, they should not be accumulated here
         float en = 0.f;
         for(int nn: range(nodes1 .n_elem)) en += nodes1 .node_free_energy<1>  (nn);
         for(int nn: range(nodes3 .n_elem)) en += nodes3 .node_free_energy<3>  (nn);
         for(int nn: range(nodes6 .n_elem)) en += nodes6 .node_free_energy<6>  (nn);
-        for(int ne: range(edges11.nodes_to_edge.n_edge)) en += -logf(edges11.prob(0,ne));
+        for(int ne: range(edges11.nodes_to_edge.n_edge)) en += edges11.energy_offset[ne];
         for(int ne: range(edges33.nodes_to_edge.n_edge)) en += edges33.edge_free_energy<3,3>(ne);
         for(int ne: range(edges36.nodes_to_edge.n_edge)) en += edges36.edge_free_energy<3,6>(ne);
         for(int ne: range(edges66.nodes_to_edge.n_edge)) en += edges66.edge_free_energy<6,6>(ne);
@@ -936,7 +958,7 @@ struct RotamerSidechain: public PotentialNode {
         for(int nn: range(nodes6 .n_elem)) {float en = nodes6.node_free_energy<6>(nn); e6[nn] += en;}
 
         for(int ne: range(edges11.nodes_to_edge.n_edge)) {
-            float en = -logf(edges11.prob(0,ne));
+            float en = edges11.energy_offset[ne];
             e1[edges11.edge_indices1[ne]] += 0.5*en;
             e1[edges11.edge_indices2[ne]] += 0.5*en;
         }
@@ -975,7 +997,7 @@ struct RotamerSidechain: public PotentialNode {
 
         if (EType == 0) {
             for(int ne: range(edges11.nodes_to_edge.n_edge)) {
-                float en = -logf(edges11.prob(0,ne));
+                float en = edges11.energy_offset[ne];
                 e1[edges11.edge_indices1[ne]] += 0.5*en;
                 e1[edges11.edge_indices2[ne]] += 0.5*en;
             }
@@ -1146,9 +1168,8 @@ struct RotamerSidechain: public PotentialNode {
                 calculate_new_beliefs(damping);
             }
 
-            // compute max deviation
-            // printf("(%i,%.3f,%.3f)\n", iter, nodes3.max_deviation(), nodes6.max_deviation());
-            max_deviation = max(nodes3.max_deviation(), nodes6.max_deviation());
+            // the damped update moves each belief by (1-damping) times the residual of the undamped update
+            max_deviation = max_keep_nan(nodes3.max_deviation(), nodes6.max_deviation()) / (1.f-damping);
         }
 
         nodes1 .calculate_marginals<1>  ();

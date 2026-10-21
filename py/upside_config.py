@@ -113,12 +113,12 @@ def apply_spatial_transformation(pos, spatial_tranform_table):
     header = 'resid1 resid2 axis_x axis_y axis_z offset_x offset_y offset_z'
     actual_header = [x.lower() for x in fields[0]]
     if actual_header != header.split():
-        parser.error('First line of spatial transform table must be "%s" but is "%s"'
+        raise ValueError('First line of spatial transform table must be "%s" but is "%s"'
                 %(header," ".join(actual_header)))
     if not all(len(f)==len(fields[0]) for f in fields):
-        parser.error('Invalid format for spatial transform table')
+        raise ValueError('Invalid format for spatial transform table')
     if len(fields) > 2:
-        parser.error('the spatial transformation table can not be more than 2 lines')
+        raise ValueError('the spatial transformation table can not be more than 2 lines')
 
     resid1, resid2 = np.array(fields[1][:2]).astype('int')
     axis_x, axis_y, axis_z, offset_x, offset_y, offset_z = np.array(fields[1][2:]).astype('float')
@@ -329,11 +329,19 @@ def write_affine_alignment(n_res):
     create_array(grp, 'atoms', obj=atoms)
     create_array(grp, 'ref_geom', obj=ref_geom)
 
-def write_infer_H_O(fasta, excluded_residues):
+def hbond_residues(fasta, excluded_residues):
+    # Donor i is placed from C(i-1), N(i), CA(i) and acceptor i from CA(i), C(i), N(i+1), so neither may span a
+    # chain break.  Proline is not a donor since it has no NH.
     n_res = len(fasta)
-    # note that proline is not an hbond donor since it has no NH
-    donor_residues    = np.array([i for i in range(n_res) if i>0       and i not in excluded_residues and fasta[i]!='PRO'])
-    acceptor_residues = np.array([i for i in range(n_res) if i<n_res-1 and i not in excluded_residues])
+    starts = set(int(i) for i in chain_first_residue)
+    donors    = np.array([i for i in range(n_res)
+                          if i>0 and i not in starts and i not in excluded_residues and fasta[i]!='PRO'])
+    acceptors = np.array([i for i in range(n_res)
+                          if i<n_res-1 and i+1 not in starts and i not in excluded_residues])
+    return donors, acceptors
+
+def write_infer_H_O(fasta, excluded_residues):
+    donor_residues, acceptor_residues = hbond_residues(fasta, excluded_residues)
 
     print()
     print ('hbond, %i donors, %i acceptors in sequence' % (len(donor_residues), len(acceptor_residues)))
@@ -394,18 +402,8 @@ def write_CB(fasta):
     create_array(pgrp, 'layer_index',     np.zeros(len(fasta),dtype='i'))
     create_array(pgrp, 'placement_data',  placement_data)
 
-def write_rama_coord():
-    grp = t.create_group(potential, 'rama_coord')
-    grp._v_attrs.arguments = np.array([b'pos'])
-    n_res = n_atom/3
-    N_id = 3*np.arange(n_res)
-    id = np.column_stack((N_id-1,N_id,N_id+1,N_id+2,N_id+3))
-    id[id>=n_atom] = -1  # last atom is non-existent (as is first)
-                         #   and non-existence is indicated by -1
-    create_array(grp, 'id', id)
-
 def write_rama_coord2():
-    n_res = n_atom/3
+    n_res = n_atom//3
     N_id = 3*np.arange(n_res)
     id1 = np.column_stack((N_id-1,N_id,N_id+1,N_id+2))
     id2 = np.column_stack((N_id,N_id+1,N_id+2,N_id+3))
@@ -514,35 +512,6 @@ def write_angle_spring(args):
     create_array(grp, 'equil_dist',   obj=equil_angles)
     create_array(grp, 'spring_const', obj=spring_const)
 
-def write_angle_spring2(args):
-
-    agrp = t.create_group(potential, 'VectorAngle')
-    agrp._v_attrs.arguments = np.array([b'pos'])
-    id = np.arange(n_atom-2)
-    id = np.column_stack((id,id+2,id+1))
-    if n_chains > 1:
-        between_chain = find_multichain_terms(id, chain_starts)
-        ndx = np.where(between_chain)[0]
-        id  = id[ndx]
-    create_array(agrp, 'id', obj=id)
-
-    grp = t.create_group(potential, 'Spring_angle')
-    grp._v_attrs.arguments = np.array([b'VectorAngle'])
-    grp._v_attrs.integrator_level = 0
-    grp._v_attrs.dim1 = 0
-    grp._v_attrs.pbc  = 0
-    grp._v_attrs.box_len  = 0
-
-    spring_const = args.angle_stiffness*np.ones(id.shape[0])
-    equil_angles = np.zeros(id.shape[0])
-    equil_angles[0::3] = np.cos(109.5*deg)  # N->CA->C angle
-    equil_angles[1::3] = np.cos(120.0*deg)  # CA->C->N angle
-    equil_angles[2::3] = np.cos(120.0*deg)  # C->N->CA angle
-
-    create_array(grp, 'id',           obj=np.arange(id.shape[0]))
-    create_array(grp, 'equil_dist',   obj=equil_angles)
-    create_array(grp, 'spring_const', obj=spring_const)
-
 def write_omega_spring1(args, fasta_seq):
     # this is primarily used for omega bonds
     dgrp = t.create_group(potential, 'Dihedral_omega')
@@ -568,38 +537,38 @@ def write_omega_spring1(args, fasta_seq):
     create_array(grp, 'equil_dist',   obj=target_angle[ndx])
     create_array(grp, 'spring_const', obj=args.omega_stiffness*np.ones(id.shape[0]))
 
+def read_pro_state_file(parser, pro_state_file, n_res):
+    # the switching prolines sorted by residue (0 is the first residue), with their energy, k and width
+    fields = [ln.split() for ln in open(pro_state_file)]
+    header_fields = 'residue energy k width'.split()
+    if [x.lower() for x in fields[0]] != header_fields:
+        parser.error('First line of restraint table must be "%s"'%(" ".join(header_fields)))
+    if not all(len(f)==len(header_fields) for f in fields):
+        parser.error('Invalid format for restraint file')
+
+    rows = sorted((int(f[0]), float(f[1]), float(f[2]), float(f[3])) for f in fields[1:])
+    pro_res_id = np.array([r[0] for r in rows], dtype=int)
+    energy     = np.array([r[1] for r in rows])  # the height from the trans state to the transition state
+    k          = np.array([r[2] for r in rows])  # k*energy is the height from the cis state to the transition state
+    width      = np.array([r[3] for r in rows])  # compact_sigmoid cuts off at angle +/- width (degree)
+
+    msg = 'Double wall energy specified for residue %i (zero is first residue) but there are only %i residues in the FASTA'
+    for r in pro_res_id:
+        if not (0 <= r < n_res): raise ValueError(msg % (r, n_res))
+        if r == 0 or r in chain_first_residue:
+            raise ValueError('Residue %i starts a chain, so it has no omega to switch between trans and cis' % r)
+    if len(set(pro_res_id)) != len(pro_res_id): raise ValueError('A residue appears twice in %s' % pro_state_file)
+    if np.any(width <= 0.): raise ValueError('Cannot have negative width value')
+    # each of the four sigmoid windows spans 90 degrees, so the double wall is continuous only while the
+    # sigmoid reaches its plateau inside its window
+    if np.any(width > 45.): raise ValueError('The width of the trans-cis wall cannot exceed 45 degrees')
+    return pro_res_id, energy, k, width
+
 def write_omega_spring2(parser, args, fasta_seq, pro_state_file):
 
     n_res = len(fasta_seq)
-
-    fields = [ln.split() for ln in open(pro_state_file)]
-
-    header_fields = 'residue init_state energy k width'.split()
-    if [x.lower() for x in fields[0]] == header_fields:
-        len_header_fields = len(header_fields)
-    else:
-        parser.error('First line of restraint table must be "%s"'%(" ".join(header_fields)))
-    if not all(len(f)==len_header_fields for f in fields):
-        parser.error('Invalid format for restraint file')
-
-    fields = fields[1:]
-    n_pro = len(fields)
-    
-    pro_res_id = np.zeros(n_pro, dtype=int)
-    pro_state  = np.zeros(n_pro, dtype=int)
-    energy     = np.zeros(n_pro)
-    k          = np.zeros(n_pro)
-    width      = np.zeros(n_pro)
-
-    for i,f in enumerate(fields):
-        pro_res_id[i] = int(f[0])
-        msg = 'Double wall energy specified for residue %i (zero is first residue) but there are only %i residues in the FASTA'
-        if not (0 <= pro_res_id[i] < n_res): raise ValueError(msg % (pro_res_id[i], n_res))
-        pro_state[i]  = int(f[1])
-        energy[i]     = float(f[2])  # the height from the trans state to the transition state
-        k[i]          = float(f[3])  # k*energy is the  height from the cis state to the transition state
-        width[i]      = float(f[4])  # compact_sigmoid cuts off at angle +/- width (degree)
-        if width[i] <= 0.: raise ValueError('Cannot have negative width value')
+    pro_res_id, energy, k, width = read_pro_state_file(parser, pro_state_file, n_res)
+    n_pro = len(pro_res_id)
 
     highlight_residues('residues that participate in any double wall potential in uppercase', fasta_seq, pro_res_id.ravel())
     # 0-based indexing sometimes trips up users, so give them a quick check
@@ -695,7 +664,7 @@ def mixture_potential(weights, potentials):
     min_pot = potentials.min(axis=0)
     return min_pot - np.log(np.exp(min_pot-potentials).sum(axis=0))
 
-def read_rama_maps_and_weights(seq, rama_group, mode='mixture', allow_CPR=True):
+def read_rama_maps_and_weights(seq, rama_group, mode='mixture', allow_CPR=True, chain_first_residue=()):
     assert mode in ['mixture', 'product']
     restype = rama_group._v_attrs.restype
     dirtype = rama_group._v_attrs.dir
@@ -723,10 +692,21 @@ def read_rama_maps_and_weights(seq, rama_group, mode='mixture', allow_CPR=True):
     pots    = np.zeros((len(seq), dimer_pot.shape[-2], dimer_pot.shape[-1]), dtype='f4')
     weights = np.zeros((len(seq),),dtype='f4')
 
-    pots   [0] = V(seq[0], 'right', seq[1])
-    weights[0] = W(seq[0], 'right', seq[1])
+    # the first and last residue of each chain see only their neighbour within the chain
+    first = set([0]) | set(int(i) for i in chain_first_residue)
+    last  = set([len(seq)-1]) | set(int(i)-1 for i in chain_first_residue)
+    if first & last: raise ValueError('chains of a single residue are not supported')
 
-    for i,l,c,r in zip(range(1,len(seq)-1), seq[:-2], seq[1:-1], seq[2:]):
+    for i,c in enumerate(seq):
+        if i in first:
+            pots[i]    = V(c,'right',seq[i+1])
+            weights[i] = W(c,'right',seq[i+1])
+            continue
+        if i in last:
+            pots[i]    = V(c,'left',seq[i-1])
+            weights[i] = W(c,'left',seq[i-1])
+            continue
+        l,r = seq[i-1], seq[i+1]
         if   mode == 'product':
             pots[i]    = V(c,'left',l) + V(c,'right',r) - V(c,'right','ALL')
             weights[i] = 0.5*(W(c,'left',l) + W(c,'right',r))  # always just average weights
@@ -739,22 +719,21 @@ def read_rama_maps_and_weights(seq, rama_group, mode='mixture', allow_CPR=True):
         else:
             raise RuntimeError('impossible')
 
-    pots   [-1] = V(seq[-1], 'left', seq[-2])
-    weights[-1] = W(seq[-1], 'left', seq[-2])
-
     # Ensure normalization
     pots -= -np.log(np.exp(-1.0*pots).sum(axis=(-2,-1), keepdims=1))
 
     return pots, weights
 
-def read_weighted_maps(seq, rama_library_h5, sheet_mixing=None, mode='mixture'):
+def read_weighted_maps(seq, rama_library_h5, sheet_mixing=None, mode='mixture', chain_first_residue=()):
     with tb.open_file(rama_library_h5) as tr:
-        coil_pots, coil_weights = read_rama_maps_and_weights(seq, tr.root.coil, mode=mode)
+        coil_pots, coil_weights = read_rama_maps_and_weights(seq, tr.root.coil, mode=mode,
+                                                             chain_first_residue=chain_first_residue)
 
         if sheet_mixing is None:
             return coil_pots
         else:
-            sheet_pots, sheet_weights = read_rama_maps_and_weights(seq, tr.root.sheet, allow_CPR=False)
+            sheet_pots, sheet_weights = read_rama_maps_and_weights(seq, tr.root.sheet, allow_CPR=False,
+                                                                   chain_first_residue=chain_first_residue)
             return mixture_potential([coil_weights, sheet_weights*np.exp(-sheet_mixing)],
                                      [coil_pots,    sheet_pots])
 
@@ -769,30 +748,23 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
         sheet_rid_dict   = dict([(x,i) for i,x in enumerate(sheet_restype)])
         grp._v_attrs.restype = sheet_restype
 
-    if sheet_mixing_energy is not None:
+    sheet_rids = np.array([sheet_rid_dict["PRO" if s == "CPR" else s] for s in seq])
+
+    if sheet_mixing_energy:
         # support finite differencing for potential derivative
         eps = 1e-2
         grp._v_attrs.sheet_eps = eps
         sheet_mixing_values = np.loadtxt(sheet_mixing_energy)
         assert sheet_mixing_values.size == len(sheet_restype)
+        sheet = sheet_mixing_values[sheet_rids]
+    else:
+        sheet = None  # coil maps only
 
-    sheet      = []
-    sheet_rids = []
-
-    for s in seq:
-        if s == "CPR":
-            rid = sheet_rid_dict["PRO"]
-        else:
-            rid = sheet_rid_dict[s]
-        sheet_rids.append(rid)
-        sheet.append(sheet_mixing_values[rid])
-
-    sheet      = np.array(sheet)
-    sheet_rids = np.array(sheet_rids)
-    rama_pot   = read_weighted_maps(seq, rama_library_h5, sheet, mode)
+    rama_pot   = read_weighted_maps(seq, rama_library_h5, sheet, mode, chain_first_residue)
 
     # support finite differencing for potential derivative
     if param_deriv:
+        if sheet is None: raise ValueError('--rama-param-deriv requires --rama-sheet-mixing-energy')
         eps = 5e-4
         grp._v_attrs.sheet_eps = eps
         for s in sheet_restype:
@@ -810,8 +782,8 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
             more_sheet[sheet_rids == rid] += eps
             less_sheet = sheet.copy()
             less_sheet[sheet_rids == rid] -= eps
-            create_array(grp, 'more_sheet_rama_pot_'+s, read_weighted_maps(seq, rama_library_h5, more_sheet))
-            create_array(grp, 'less_sheet_rama_pot_'+s, read_weighted_maps(seq, rama_library_h5, less_sheet))
+            create_array(grp, 'more_sheet_rama_pot_'+s, read_weighted_maps(seq, rama_library_h5, more_sheet, mode, chain_first_residue))
+            create_array(grp, 'less_sheet_rama_pot_'+s, read_weighted_maps(seq, rama_library_h5, less_sheet, mode, chain_first_residue))
  
     if secstr_bias:
         assert len(rama_pot.shape) == 3
@@ -823,7 +795,7 @@ def write_rama_map_pot(seq, rama_library_h5, sheet_mixing_energy=None, secstr_bi
         sheet_basin   = sigmoid_lessthan(phi,0.*deg) * (sigmoid_lessthan(psi,-100.*deg) + sigmoid_lessthan(50.*deg,psi))
 
         f = (ln.split() for ln in open(secstr_bias))
-        assert f.next() == 'residue secstr energy'.split()
+        assert next(f) == 'residue secstr energy'.split()
         for residue,secstr,energy in f:
             residue = int(residue)
             energy = float(energy)
@@ -849,31 +821,12 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
 
     n_res = len(seq)
     seq_new = np.array(seq)
-
-    fields = [ln.split() for ln in open(pro_state_file)]
-
-    header_fields = 'residue init_state energy k width'.split()
-    if [x.lower() for x in fields[0]] == header_fields:
-        len_header_fields = len(header_fields)
-    else:
-        parser.error('First line of restraint table must be "%s"'%(" ".join(header_fields)))
-    if not all(len(f)==len_header_fields for f in fields):
-        parser.error('Invalid format for restraint file')
-
-    fields = fields[1:]
-    n_pro = len(fields)
-    
-    pro_res_id = np.zeros(n_pro, dtype=int)
-    pro_state  = np.zeros(n_pro, dtype=int)
-    for i,f in enumerate(fields):
-        pro_res_id[i] = int(f[0])
-        pro_state[i]  = int(f[1])
+    pro_res_id = read_pro_state_file(parser, pro_state_file, n_res)[0]
 
     state_list = ["PRO", "CPR"]
     for i,pr in enumerate(pro_res_id):
         is_pro = (seq[pr] in state_list)
         assert(is_pro)
-        #seq_new[pr] = state_list[pro_state[i]]
         seq_new[pr] = state_list[0]
 
     # create a sheet array for all the residures
@@ -881,24 +834,17 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
         sheet_restype  = tr.root.sheet._v_attrs.restype
         sheet_rid_dict = dict([(x,i) for i,x in enumerate(sheet_restype)])
 
-    if sheet_mixing_energy is not None:
-        # support finite differencing for potential derivative
+    if sheet_mixing_energy:
         sheet_mixing_values = np.loadtxt(sheet_mixing_energy)
         assert sheet_mixing_values.size == len(sheet_restype)
+        sheet = sheet_mixing_values[[sheet_rid_dict["PRO" if s == "CPR" else s] for s in seq_new]]
+    else:
+        sheet = None  # coil maps only
 
-    sheet = []
-    for s in seq_new:
-        if s == "CPR":
-            rid = sheet_rid_dict["PRO"]
-        else:
-            rid = sheet_rid_dict[s]
-        sheet.append(sheet_mixing_values[rid])
-    sheet = np.array(sheet)
-
-    rama_pot   = read_weighted_maps(seq_new, rama_library_h5, sheet, mode)
+    rama_pot   = read_weighted_maps(seq_new, rama_library_h5, sheet, mode, chain_first_residue)
     rama_pot  -= (rama_pot*np.exp(-rama_pot)).sum(axis=(-2,-1),keepdims=1)
 
-    seq_new2 = seq_new[:]
+    seq_new2 = seq_new.copy()
     for i,r in enumerate(pro_res_id):
         seq_new2[r] = state_list[1]
 
@@ -918,9 +864,9 @@ def write_rama_map_pot2(parser, seq, rama_library_h5, pro_state_file, sheet_mixi
     create_array(grp, 'rama_map_id_all', obj=np.arange(rama_pot.shape[0]))
     create_array(grp, 'rama_pot',        obj=rama_pot)
 
-    rama_pot_trans  = read_weighted_maps(seq_new, rama_library_h5, sheet, mode)
+    rama_pot_trans  = read_weighted_maps(seq_new, rama_library_h5, sheet, mode, chain_first_residue)
     rama_pot_trans -= (rama_pot_trans*np.exp(-rama_pot_trans)).sum(axis=(-2,-1),keepdims=1)
-    rama_pot_cis    = read_weighted_maps(seq_new2, rama_library_h5, sheet, mode)
+    rama_pot_cis    = read_weighted_maps(seq_new2, rama_library_h5, sheet, mode, chain_first_residue)
     rama_pot_cis   -= (rama_pot_cis*np.exp(-rama_pot_cis)).sum(axis=(-2,-1),keepdims=1)
 
     grp = t.create_group(potential, 'SigmoidCoord_trans1')
@@ -1013,6 +959,9 @@ def write_backbone_pair(fasta):
     create_array(grp, 'id', obj=np.arange(n_res))
     create_array(grp, 'ref_pos', obj=ref_pos)
     create_array(grp, 'n_atom',  obj=np.isfinite(grp.ref_pos[:].sum(axis=-1)).sum(axis=-1))
+    if n_chains > 1:
+        # sequence neighbours are excluded; a chain break adds 2 so the residues across it interact
+        create_array(grp, 'sequence_id', obj=np.arange(n_res) + 2*np.searchsorted(chain_first_residue, np.arange(n_res), side='right'))
 
 
 def write_count_hbond(fasta, loose_hbond ):
@@ -1083,7 +1032,7 @@ def write_short_hbond(fasta, hbond_energy):
         create_array(grp, 'residue_class', obj=np.array([1 + class_restype.index(r) if r in class_restype else 0
                                                          for r in fasta], dtype='i4'))
 
-def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic_1body, fix_rotamer, excluded_residues):
+def write_rotamer_placement(fasta, placement_library, dynamic_1body, fix_rotamer):
     def compute_chi1_state(angles):
         chi1_state = np.ones(angles.shape, dtype='i')
         chi1_state[(   0.*deg<=angles)&(angles<120.*deg)] = 0
@@ -1092,15 +1041,13 @@ def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic
 
     with tb.open_file(placement_library) as data:
         restype_num = dict((aa.decode('ASCII'),i) for i,aa in enumerate(data.root.restype_order[:]))
-
-        if dynamic_placement:
-            placement_pos = data.root.rotamer_center[:].transpose((2,0,1,3)) # put layer index first
-        else:
-            placement_pos = data.root.rotamer_center_fixed[:]
+        placement_pos = data.root.rotamer_center_fixed[:]
 
         if dynamic_1body:
             placement_energy = -np.log(data.root.rotamer_prob[:].transpose((2,0,1)))[...,None]
         else:
+            if 'rotamer_prob_fixed' not in data.root:
+                raise ValueError('%s has no rotamer_prob_fixed; use --dynamic-rotamer-1body' % placement_library)
             placement_energy = data.root.rotamer_prob_fixed[:][...,None]
 
         start_stop = data.root.rotamer_start_stop_bead[:]
@@ -1120,7 +1067,9 @@ def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic
             raise RuntimeError('First line of fix-rotamer table must be "%s" but is "%s" for file %s'
                     %(header," ".join(actual_header),fix_rotamer))
 
-        for residue, restype, chain, resnum, chi1, chi2 in fields[1:]:
+        for f in fields[1:]:
+            # the chain column is empty for a PDB without chain ids
+            residue, restype, chi1, chi2 = f[0], f[1], f[-2], f[-1]
             if fasta[int(residue)] != (restype if restype != 'CPR' else 'PRO'):
                 raise RuntimeError("fix-rotamer file does not match FASTA"
                     + ", residue %i should be %s but fix-rotamer file has %s"%(
@@ -1146,7 +1095,7 @@ def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic
                     # now find the closest chi2 among those states and read off the state index
                     chi2_dist = (admissible_chi2-chi2)%(2*np.pi)
                     chi2_dist[chi2_dist>np.pi] -= 2*np.pi  # find closest periodic image
-                    fix_state = admissible_state[np.argmin(chi2_dist)]
+                    fix_state = admissible_state[np.argmin(np.abs(chi2_dist))]
 
             fix[int(residue)] = fix_state
 
@@ -1160,9 +1109,6 @@ def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic
     count_by_n_rot = dict()
 
     for rnum,aa in enumerate(fasta):
-        if rnum in excluded_residues:
-            continue
-
         restype = restype_num[aa]
         start,stop,n_bead = start_stop[restype]
         assert (stop-start)%n_bead == 0
@@ -1186,9 +1132,9 @@ def write_rotamer_placement(fasta, placement_library, dynamic_placement, dynamic
         beadtype_seq  .extend(['%s_%i'%(aa,i) for i in range(n_bead)]*n_rot)
         id_seq        .extend(np.arange(stop-start)//n_bead + (base_id<<n_bit_rotamer))
 
-    sc_node_name = 'placement%s_point_vector_only' % ('' if dynamic_placement else '_fixed')
+    sc_node_name = 'placement_fixed_point_vector_only'
     grp = t.create_group(potential, sc_node_name)
-    grp._v_attrs.arguments = np.array([b'affine_alignment'] + ([b'rama_coord'] if dynamic_placement else []))
+    grp._v_attrs.arguments = np.array([b'affine_alignment'])
     create_array(grp, 'rama_residue',    rama_residue)
     create_array(grp, 'affine_residue',  affine_residue)
     create_array(grp, 'layer_index',     layer_index)
@@ -1214,10 +1160,14 @@ def write_rotamer_backbone(fasta, coverage_library, sc_node_name):
 
     n_res          = len(fasta)
 
-    pre_PRO        = True
     backbone_group = backbone_group4
     group_id       = set(val for val in backbone_group.values())
     num_group      = len(group_id)
+
+    # each residue's backbone class; the extra class num_group marks a residue whose chain continues into a proline
+    starts   = set(int(i) for i in chain_first_residue)
+    bb_class = [num_group if resid+1 < n_res and resid+1 not in starts and fasta[resid+1] in ['PRO', 'CPR']
+                else backbone_group[res] for resid, res in enumerate(fasta)]
 
     # for donor and acceptor
     infer_group = t.get_node('/input/potential/infer_H_O')
@@ -1248,23 +1198,8 @@ def write_rotamer_backbone(fasta, coverage_library, sc_node_name):
         cgrp._v_attrs.max_n_edge = n_res * 80
 
     create_array(cgrp, 'interaction_param', coverage_interaction)
-    # create the hbond type 
-    hb_type = []
-    for resid in d_residues:
-        res     = fasta[resid]
-        bbt     = backbone_group[res]
-        if resid < n_res-1 and pre_PRO:
-            if fasta[resid+1] in ['PRO', 'CPR']:
-                bbt = num_group
-        hb_type.append(bbt*2+0)
-    for resid in a_residues:
-        res     = fasta[resid]
-        bbt     = backbone_group[res]
-        if resid < n_res-1 and pre_PRO:
-            if fasta[resid+1] in ['PRO', 'CPR']:
-                bbt = num_group
-        hb_type.append(bbt*2+1)
-    hb_type = np.array(hb_type)
+    # create the hbond type
+    hb_type = np.array([bb_class[resid]*2+0 for resid in d_residues] + [bb_class[resid]*2+1 for resid in a_residues])
     # group1 is the HBond partners
     create_array(cgrp, 'index1', hb_index)
     create_array(cgrp, 'type1',  hb_type)  # donor is 0, acceptor is 1
@@ -1276,7 +1211,7 @@ def write_rotamer_backbone(fasta, coverage_library, sc_node_name):
 
     # create the oriented backbone atoms
     bb_index  = np.arange(3*n_res)
-    bb_resnum = bb_index/3
+    bb_resnum = bb_index//3
     grp = t.create_group(potential, 'placement_fixed_point_vector_scalar')
     grp._v_attrs.arguments = np.array([b'affine_alignment'])
     create_array(grp, 'affine_residue',  bb_resnum)
@@ -1290,15 +1225,7 @@ def write_rotamer_backbone(fasta, coverage_library, sc_node_name):
         cgrp._v_attrs.max_n_edge = n_res * 120
     create_array(cgrp, 'interaction_param', hydrophobe_interaction)
     # for backbone type
-    bb_type = []
-    for resid, res in enumerate(fasta):
-        for i in [0,1,2]:
-            bbt = backbone_group[res]
-            if resid < n_res-1 and pre_PRO:
-                if fasta[resid+1] in ['PRO', 'CPR']:
-                    bbt = num_group
-            bb_type.append(bbt*3+i)
-    bb_type = np.array(bb_type)
+    bb_type = np.array([bb_class[resid]*3+i for resid in range(n_res) for i in [0,1,2]])
     # group1 is the backbone partners
     create_array(cgrp, 'index1', bb_index)
     create_array(cgrp, 'type1',  bb_type)
@@ -1347,7 +1274,7 @@ def write_rotamer(fasta, interaction_library, damping, sc_node_name, pl_node_nam
 #                           multibody interactions
 #---------------------------------------------------------------------------
 
-def write_environment(fasta, environment_library, sc_node_name, potential_type=0, weights_number = 20, vector_CA_CO = False, use_bb_bl_for_hb=False, excluded_residues=[], rot_exclude_residues=[]):
+def write_environment(fasta, environment_library, sc_node_name, potential_type=0, weights_number = 20, vector_CA_CO = False):
 
     n_res = len(fasta)
 
@@ -1390,11 +1317,11 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
     if use_intensive_memory:
         cgrp._v_attrs.max_n_edge = n_res * 160
 
-    res_seq = np.array([resid for resid in range(len(fasta)) if resid not in excluded_residues]) 
+    res_seq = np.arange(len(fasta))
 
     # group1 is the source CB
     create_array(cgrp, 'index1', res_seq)
-    create_array(cgrp, 'type1',  np.array([restype_order[s] for resid, s in enumerate(fasta) if resid not in excluded_residues]))  # one type per CB type
+    create_array(cgrp, 'type1',  np.array([restype_order[s] for s in fasta]))  # one type per CB type
     create_array(cgrp, 'id1',    res_seq)
     # group 2 is the weighted points to interact with
     create_array(cgrp, 'index2', np.arange(n_sc))
@@ -1410,9 +1337,9 @@ def write_environment(fasta, environment_library, sc_node_name, potential_type=0
     egrp = t.create_group(potential, '{}_coupling_environment'.format(coupling_method))
     egrp._v_attrs.arguments = np.array([b'environment_coverage_sc'])
     egrp._v_attrs.integrator_level = 1
-    egrp._v_attrs.number_independent_weights = weights_number # 1, or 20, or 400
+    egrp._v_attrs.number_independent_weights = weights_number # 20 or 400
 
-    create_array(egrp, 'coupling_types', np.array([restype_order[s] for resid, s in enumerate(fasta) if resid not in excluded_residues]))
+    create_array(egrp, 'coupling_types', np.array([restype_order[s] for s in fasta]))
     create_array(egrp, 'weights', np.array(weights))
 
     # spline-like coupling function
@@ -1518,14 +1445,14 @@ def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, us
             cgrp._v_attrs.max_n_edge = n_res * 200
 
         create_array(cgrp, 'interaction_param', coverage_param)
-        # group1 is the O
+        # group1 is the H
         create_array(cgrp, 'index1', np.arange(n_donor))
         create_array(cgrp, 'type1',  np.arange(n_donor)*0)
         create_array(cgrp, 'id1',    np.array(d_res_id))
-        # group 2 is the H
+        # group 2 is the backbone N, CA and C
         create_array(cgrp, 'index2', np.arange(n_res*3))
         create_array(cgrp, 'type2',  np.arange(n_res*3)*0)
-        create_array(cgrp, 'id2',    np.arange(n_res*3)/3)
+        create_array(cgrp, 'id2',    np.arange(n_res*3)//3)
 
     # cat them 
     pgrp = t.create_group(potential, 'cat_pos_bb_coverage')
@@ -1544,7 +1471,12 @@ def write_bb_environment(fasta, environment_library, sc_node_name, bb_env_fn, us
     egrp._v_attrs.center = bb_env_param[1]
     egrp._v_attrs.sharpness = bb_env_param[2]
     egrp._v_attrs.hbond_weight = bb_env_param[3]
-    create_array(egrp, 'weights', np.array(weights))
+    # one weight per residue type: the side-chain burial's weights, shared by every coupling type
+    weights = np.array(weights).reshape(20, 20)
+    if not np.allclose(weights, weights[0], atol=1e-4):
+        raise ValueError('backbone burial needs one weight per residue type, but %s has different weight rows'
+                         % environment_library)
+    create_array(egrp, 'weights', weights[0])
 
 #---------------------------------------------------------------------------
 #                               membrane
@@ -1599,8 +1531,6 @@ def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=
     grp._v_attrs.n_smallgridz = 2
     grp._v_attrs.atom_radius = 1.6
 
-    if method not in [0,1]:
-        print('Error')
     grp._v_attrs.method_type = method
 
     if len(included_list) > 0:
@@ -1609,129 +1539,6 @@ def write_surface_coord(fasta_seq, method, thickness, included_list=[], zbuffer=
 
     create_array( grp, 'index_cb',        index_cb+n_res*3 )
     create_array( grp, 'auxiliary_point', np.array(auxiliary_point) )
-
-def write_membrane_potential(
-        fasta_seq, membrane_potential_fpath, membrane_thickness, environment_potential, membrane_exposed_criterion, membrane_exclude_residues, hbond_exclude_residues):
-
-    grp = t.create_group(t.root.input.potential, 'membrane_potential')
-    grp._v_attrs.arguments = np.array([b'placement_fixed_point_only_CB', b'environment_coverage_sc', b'protein_hbond'])
-    grp._v_attrs.integrator_level = 0
-
-    with tb.open_file(environment_potential) as lib:
-        weights         = lib.root.weights[:]
-
-    with tb.open_file(membrane_potential_fpath) as lib:
-        resnames        = lib.root.names[:]
-        cb_energy       = lib.root.cb_energy[:]
-        cb_z_min        = lib.root.cb_energy._v_attrs.z_min
-        cb_z_max        = lib.root.cb_energy._v_attrs.z_max
-        thickness       = lib.root.cb_energy._v_attrs.thickness
-        uhb_energy      = lib.root.uhb_energy[:]
-        uhb_z_min       = lib.root.uhb_energy._v_attrs.z_min
-        uhb_z_max       = lib.root.uhb_energy._v_attrs.z_max
-        cov_midpoint    = lib.root.cov_midpoint[:]
-        cov_sharpness   = lib.root.cov_sharpness[:]
-
-    if membrane_exposed_criterion:
-        with tb.open_file(membrane_exposed_criterion) as lib:
-            cov_midpoint    = lib.root.cov_midpoint[:]
-            cov_sharpness   = lib.root.cov_sharpness[:]
-    
-    #<----- ----- ----- ----- donor/acceptor res ids ----- ----- ----- ----->#
-    # Note: hbond_excluded_residues is the same as in the function write_infer_H_O.
-    n_res                = len(fasta_seq)
-    donor_residue_ids    = np.array([i for i in range(n_res) if i>0       and i not in hbond_exclude_residues and fasta_seq[i]!='PRO'])
-    acceptor_residue_ids = np.array([i for i in range(n_res) if i<n_res-1 and i not in hbond_exclude_residues])
-
-    #<----- ----- ----- ----- make energy splines ----- ----- ----- ----->#
-    import scipy.interpolate
-    def extrapolated_spline(x0, y0):
-        spline = scipy.interpolate.InterpolatedUnivariateSpline(x0,y0)
-        def f(x, spline=spline):
-            return np.select(
-                    [(x<x0[0]),              (x>x0[-1]),              np.ones_like(x,dtype='bool')],
-                    [np.zeros_like(x)+y0[0], np.zeros_like(x)+y0[-1], spline(x)])
-        return f
-
-    cb_z_lib           = np.linspace(cb_z_min, cb_z_max, cb_energy.shape[-1])
-    cb_energy_splines  = [extrapolated_spline(cb_z_lib, ene) for ene in cb_energy]
-
-    uhb_z_lib          = np.linspace(uhb_z_min, uhb_z_max, uhb_energy.shape[-1])
-    uhb_energy_splines = [extrapolated_spline(uhb_z_lib, ene) for ene in uhb_energy]
-
-    #<----- ----- ----- ----- make energy splines ----- ----- ----- ----->#
-    # This step is necessary in case the supplied membrane thickness is not eaual to the thickness in the membrane potential file.
-    default_half_thickness = thickness/2.
-    half_thickness         = membrane_thickness/2.
-    z_                     = np.linspace(-half_thickness - 15., half_thickness + 15., int((membrane_thickness+30.)/0.25)+1)
-
-    # ensure that the potential is continuous at 0
-    # spline(z-(half_thickness-default_half_thickness)) may not equal to spline(z+(half_thickness-default_half_thickness))
-    membrane_cb_energies = np.zeros((len(cb_energy_splines), len(z_)))
-    for ispl, spline in enumerate(cb_energy_splines):
-        if half_thickness < default_half_thickness:
-            delta_t = default_half_thickness - half_thickness
-            delta_s = spline(delta_t) - spline(-delta_t)
-            membrane_cb_energies[ispl] = np.select([(z_ < 0), (z_ >= 0.)],
-                                                   [spline(z_-delta_t) + 0.5*delta_s, spline(z_+delta_t) - 0.5*delta_s])
-        elif half_thickness > default_half_thickness:
-            delta_t = half_thickness - default_half_thickness
-            membrane_cb_energies[ispl] = np.select([
-                (z_ <  -delta_t),
-                (z_ >= -delta_t) & (z_ <= delta_t),
-                (z_ >   delta_t)],
-                [spline(z_+delta_t), spline(0), spline(z_-delta_t)])
-        else:
-            membrane_cb_energies[ispl] = spline(z_)
-
-    membrane_uhb_energies = np.zeros((len(uhb_energy_splines), len(z_)))
-    for ispl, spline in enumerate(uhb_energy_splines):
-        if half_thickness < default_half_thickness:
-            delta_t = default_half_thickness - half_thickness
-            delta_s = spline(delta_t) - spline(-delta_t)
-            membrane_uhb_energies[ispl] = np.select([(z_ < 0), (z_ >= 0.)],
-                                                    [spline(z_-delta_t) + 0.5*delta_s, spline(z_+delta_t) - 0.5*delta_s])
-        elif half_thickness > default_half_thickness:
-            delta_t = half_thickness - default_half_thickness
-            membrane_uhb_energies[ispl] = np.select([
-                (z_ <  -delta_t),
-                (z_ >= -delta_t) & (z_ <= delta_t),
-                (z_ >   delta_t)],
-                [spline(z_+delta_t), spline(0), spline(z_-delta_t)])
-        else:
-            membrane_uhb_energies[ispl] = spline(z_)
-
-    #<----- ----- ----- ----- cb energy indices ----- ----- ----- ----->#
-    # Note: there's a residue type, NON, in resnames for those excluded from membrane potential.
-    # And there's a potential profile in cb_energy for NON, which is all zeros. 
-    if set(membrane_exclude_residues).difference(range(len(fasta_seq))) != set():
-        raise ValueError('Residue number', set(membrane_exclude_residues).difference(range(len(fasta_seq))), 'not valid')
-    highlight_residues('membrane_exclude_residues', fasta_seq, membrane_exclude_residues)
-
-    sequence = list(fasta_seq)
-    for num in membrane_exclude_residues:
-        sequence[num] = 'NON' 
-    sequence = np.array(sequence)
-
-    resname_to_num  = dict([(aa,i) for i,aa in enumerate(resnames)])
-    residue_id      = np.array([i for i,aa in enumerate(sequence)])
-    cb_energy_index = np.array([resname_to_num[aa] for aa in sequence])
-
-    #<----- ----- ----- ----- write to grp ----- ----- ----- ----->#
-    create_array(grp,             'cb_index', residue_id)
-    create_array(grp,            'env_index', residue_id)
-    create_array(grp,         'residue_type', cb_energy_index)
-    create_array(grp,         'cov_midpoint', cov_midpoint)
-    create_array(grp,        'cov_sharpness', cov_sharpness)
-    create_array(grp,            'cb_energy', membrane_cb_energies)
-    create_array(grp,              'weights', weights[:20])
-    create_array(grp,           'uhb_energy', membrane_uhb_energies)
-    create_array(grp,    'donor_residue_ids', donor_residue_ids)
-    create_array(grp, 'acceptor_residue_ids', acceptor_residue_ids)
-    grp. cb_energy._v_attrs.z_min = z_[ 0]
-    grp. cb_energy._v_attrs.z_max = z_[-1]
-    grp.uhb_energy._v_attrs.z_min = z_[ 0]
-    grp.uhb_energy._v_attrs.z_max = z_[-1]
 
 def write_membrane_potential3(fasta_seq, membrane_potential_fpath, membrane_thickness, membrane_exclude_residues, hbond_exclude_residues, use_curvature=False, curvature_radius=200, curvature_sign=1):
 
@@ -2026,7 +1833,7 @@ def write_membrane_lateral_potential( parser, fasta_seq, lateral_potential_fpath
 
     grp._v_attrs.min_z = min_z
     grp._v_attrs.max_z = max_z
-    grp._v_attrs.inv_dz = 1./(max_z-min_z)
+    grp._v_attrs.inv_dz = (n_knot-1)/(max_z-min_z)   # sample k of f_ sits at spline coordinate k+1
     grp._v_attrs.n_knot = len(pp)
     grp._v_attrs.half_thickness = half_thickness
     grp._v_attrs.integrator_level     = 0
@@ -2038,9 +1845,7 @@ def apply_param_scale(hb_scale=1., env_scale=1., rot_scale=1., memb_scale=1.):
     pot_group = t.root.input.potential
     if hb_scale != 1.:
         print ("scaling hb {}x".format(hb_scale))
-        # See write_short_hbond() for layout of params.
-        # WARNING: First three are supposed to be helix_hbond_energy, sheet_hbond_energy, turn_hbond_energy, 
-        # but there seems to be an extra fourth energy in the actual param data not included in the (outdated?) layout  
+        # entries 0-3 are the alpha, beta and other basin energies and the bias; 4-11 are rama boundaries
         pot_group.hbond_energy.parameters[:4] *= hb_scale
         pot_group.hbond_energy.parameters[12:] *= hb_scale   # per-class offsets, if any
         # ToDo: what about the hbond_coverage groups -> how are they coupled
@@ -2060,11 +1865,14 @@ def apply_param_scale(hb_scale=1., env_scale=1., rot_scale=1., memb_scale=1.):
     if rot_scale != 1.:
         print ("scaling rot {}x".format(rot_scale))
         # ToDo: scale placement energy? They are rama dep 1-body
-        # Scaling only the radial parts
+        # Scaling only the radial knots, which follow the two beads' angular knots on the last axis
         n_knot_ang = 15
-        pot_group.hbond_coverage.interaction_param[2*n_knot_ang:] *= rot_scale
-        pot_group.hbond_coverage_hydrophobe.interaction_param[2*n_knot_ang:] *= rot_scale
-        pot_group.rotamer.pair_interaction.interaction_param[2*n_knot_ang:] *= rot_scale
+        for param in [pot_group.hbond_coverage.interaction_param,
+                      pot_group.hbond_coverage_hydrophobe.interaction_param,
+                      pot_group.rotamer.pair_interaction.interaction_param]:
+            p = param[:]
+            p[..., 2*n_knot_ang:] *= rot_scale
+            param[:] = p
 
     if memb_scale != 1.:
         print ("scaling memb {}x".format(memb_scale))
@@ -2114,7 +1922,6 @@ def main():
             help='File with indices of chain first residues recorded during initial structure generation to automate creation and analysis of separate chains.')
     parser.add_argument('--jump-length-scale', type=float, default=5., help='Translational gaussian width in angstroms for Monte Carlo JumpSampler. Default: 5 angstroms')
     parser.add_argument('--jump-rotation-scale', type=float, default=30., help='Rotational gaussian width in degrees for Monte Carlo JumpSampler. Default: 30 degrees')
-    parser.add_argument('--remove-pivot', action='store_true', help='Whether to remove the MC PivotSampler param group to isolate JumpSampler for testing')
 
     parser.add_argument('--bond-stiffness', default=48., type=float,
             help='Bond spring constant in units of energy/A^2 (default 48)')
@@ -2138,14 +1945,12 @@ def main():
             '(mixture or product).  Default is mixture.')
     parser.add_argument('--trans-cis', default='', 
             help='Table of the trans-cis state for PRO.  Each line must contain 4 fields and the header line must be '+
-            '"residue init_state energy k width". '+
+            '"residue energy k width". '+
             '"residue" is used to specify the residue id of PRO involved in trans-cis transformation (starting from 0). ' +
-            '"init_state" is the initial state (0: trans, 1: cis). ' +
             '"energy" is the energy barrier from trans state to the transition state. ' +
             '"k" is used to set the  energy barrier from cis state to the transition state: k*energy. ' +
-            '"width" controls the 1/4 width (degree) of the energy barrier (such as 45 degree).')
-    parser.add_argument('--rama-sheet-library', default=None,
-            help='smooth Rama probability library for sheet structures')
+            '"width" controls the 1/4 width (degree) of the energy barrier, at most 45 degree. ' +
+            'The initial state is the omega of the initial structure.')
     parser.add_argument('--secstr-bias', default='',
             help='Bias file for secondary structure.  First line of the file must be "residue secstr energy".  '+
             'secstr must be one of "helix" or "sheet".  Bias is implemented by a simple Rama bias, hence coil bias '+
@@ -2172,46 +1977,37 @@ def main():
 
     parser.add_argument('--rotamer-placement', default=None,
             help='rotameric sidechain library')
-    parser.add_argument('--dynamic-rotamer-placement', default=False, action='store_true',
-            help='Use dynamic rotamer placement (not recommended)')
     parser.add_argument('--dynamic-rotamer-1body', default=False, action='store_true',
             help='Use dynamic rotamer 1body')
     parser.add_argument('--fix-rotamer', default='',
-            help='Table of fixed rotamers for specific sidechains.  A header line must be present and the first '+
-            'three columns of that header must be '+
-            '"residue restype rotamer", but there can be additional, ignored columns.  The restype must '+
+            help='Table of fixed rotamers for specific sidechains, as the .chi file PDB_to_initial_structure writes.  '+
+            'The header line must be "residue restype chain resnum chi1 chi2"; the chain column is empty for a PDB '+
+            'without chain ids, and chain and resnum are not read.  The restype must '+
             'match the corresponding restype in the FASTA file (intended to prevent errors).  It is permissible '+
-            'to fix only a subset of rotamers.  The value of rotamer must be an integer, corresponding to the '+
-            'numbering in the --rotamer-placement file.  Such a file can be created with PDB_to_initial_structure '+
-            '--output-chi1.')
+            'to fix only a subset of rotamers.  chi1 and chi2 are in degrees.  GLY and ALA take their single state; '+
+            'another residue takes the state of the --rotamer-placement library with its chi1 state and, where '+
+            'chi2 tells the states apart, the nearest chi2, and stays free when an angle it needs is nan.')
     parser.add_argument('--rotamer-interaction', default=None,
             help='rotamer sidechain pair interaction parameters')
     parser.add_argument('--rotamer-solve-damping', default=0.4, type=float,
-            help='damping factor to use for solving sidechain placement problem')
-    parser.add_argument('--rotamer-exclude-residues', default=[], type=parse_segments,
-            help='Residues that do not have rotamer sidechain beads nor participate in their pair interaction. Currently not properly implemented')
-
+            help='damping factor in [0,1) for solving the sidechain placement problem')
     parser.add_argument('--environment-potential', default='',
             help='Path to many-body environment potential')
     parser.add_argument('--environment-potential-type', default=1, type=int,
             help='The type 0 is spline-like nonlinear coupling function, 1 is the sigmoid-like coupling function')
-    parser.add_argument('--environment-weights-number', default=20, type=int,
-            help='Only three values are allowed: 1, 20, 40. The value 1 means that the weights of the side chain ' + 
-            'beads of all amino acids are the same (1.0); The value 20 means that the weights depends on the amino ' +
-            'acid type of side chain beads; The value 400 means that the weights depends on the residue type type of ' + 
-            'side chain beads or CB atoms belongs to.')
+    parser.add_argument('--environment-weights-number', default=20, type=int, choices=[20, 400],
+            help='Number of independent weights of the side chain coverage in the environment coupling.  The config ' +
+            'stores the library\'s 400 weights, one per pair of the CB\'s and the covering side chain\'s residue ' +
+            'types.  20 (default): the parameter derivative is with respect to one weight per covering residue ' +
+            'type, shared by every CB residue type (the trained form); 400: every weight is independent.')
     parser.add_argument('--vector-CA-CO', default=False, action='store_true', help='use vector CA-CO for the hemisphere orientation to be compatible with FF2.0 ')
-    parser.add_argument('--env-exclude-residues', default=[], type=parse_segments,
-            help='Residues that do not participate as the CB center for the environment interaction. Note that residues ' +
-            'in --rotamer-exclude-residues do not contribute beads for the interaction. Currently not properly implemented')
-
     parser.add_argument('--bb-environment-potential', default='',
             help='Path to many-body environment potential for backbone')
     parser.add_argument('--use-heavy-atom-coverage', default=False, action='store_true',
             help='include heavy atoms on backbone when count the coverage for H/O')
 
     parser.add_argument('--surface', default=False, action='store_true', help='surface')
-    parser.add_argument('--surface-method', default=1, type=int, help='surface finding method. 0: fast method; 1: lipid diffusion algorithm.')
+    parser.add_argument('--surface-method', default=1, type=int, choices=[0, 1], help='surface finding method. 0: fast method; 1: lipid diffusion algorithm.')
     parser.add_argument('--surface-included-residues', default=[], type=parse_segments,
             help='List of residues in the protein.  The residue list should be of a form like ' +
             '--restraint-group 10-13,17,19-21 and that list would specify all the atoms in '+
@@ -2239,8 +2035,6 @@ def main():
     parser.add_argument('--membrane-exclude-residues', default=[], type=parse_segments,
             help='Residues that do not participate in the --membrane-potential (same format as --restraint-group).' +
                  'User must also supply --membrane-potential.')
-    parser.add_argument('--membrane-exposed-criterion', default=None,
-            help='Parameter file including the sigmoid-like exposed criterion (.h5 format) for membrane potential.')
 
     parser.add_argument('--membrane-lateral-potential', default='',
             help='Table of lateral pressure curve.  Each line must contain 2 fields and the header line must be '+
@@ -2253,9 +2047,6 @@ def main():
     parser.add_argument('--memb-scale', default=1., type=float, help='Scaling for membrane potential')
 
     args = parser.parse_args()
-
-    if args.rotamer_exclude_residues or args.env_exclude_residues:
-        parser.error('--rotamer-exclude-residues and --env-exclude-residues are not properly implemented yet')
 
     require_affine = False
     require_rama = False
@@ -2318,6 +2109,7 @@ def main():
     #---------------------------------------------
 
     n_chains = 1
+    chain_first_residue = np.array([], dtype='int32')
     if args.chain_break_from_file:
         try:
             with open(args.chain_break_from_file) as infile:
@@ -2354,16 +2146,6 @@ def main():
             if has_rl_info:
                 t.create_array(break_grp, "rl_chains_actual", rl_chains_actual, "Numbers of actual receptor and ligand chains")
                 t.create_array(break_grp, "rl_chains", rl_chains, "Numbers of receptor and ligand chains")    
-
-            required_hbond_exclude_res = [i+j for i in chain_first_residue for j in [-1,0]]
-            if args.hbond_exclude_residues:
-                args.hbond_exclude_residues = np.unique(np.append(args.hbond_exclude_residues, required_hbond_exclude_res))
-            else:
-                args.hbond_exclude_residues = np.array(required_hbond_exclude_res)
-
-            print ()
-            print ("hbond_exclude_residues")
-            print (args.hbond_exclude_residues)
 
         chain_starts = np.array(chain_first_residue)*3
         chain_starts = np.append([0], chain_starts)
@@ -2437,9 +2219,7 @@ def main():
         require_rama = True
         require_affine = True
         sc_node_name, pl_node_name = write_rotamer_placement(
-                fasta_seq, args.rotamer_placement,
-                args.dynamic_rotamer_placement, args.dynamic_rotamer_1body,
-                args.fix_rotamer, args.rotamer_exclude_residues)
+                fasta_seq, args.rotamer_placement, args.dynamic_rotamer_1body, args.fix_rotamer)
 
     if args.hbond_energy and sc_node_name:
         write_rotamer_backbone(fasta_seq, args.rotamer_interaction, sc_node_name)
@@ -2455,11 +2235,13 @@ def main():
         if args.rotamer_placement is None:
             parser.error('--rotamer-placement is required, based on other options.')
         require_weighted_pos = True     
-        write_environment(fasta_seq, args.environment_potential, sc_node_name, args.environment_potential_type, args.environment_weights_number, args.vector_CA_CO, False, args.env_exclude_residues, args.rotamer_exclude_residues)
+        write_environment(fasta_seq, args.environment_potential, sc_node_name, args.environment_potential_type, args.environment_weights_number, args.vector_CA_CO)
 
     if args.bb_environment_potential:
-        if args.environment_potential is None:
-            parser.error('--environment-potential is required, based on other options.')
+        if not args.environment_potential:
+            parser.error('--bb-environment-potential requires --environment-potential')
+        if not args.hbond_energy:
+            parser.error('--bb-environment-potential requires --hbond-energy, whose infer_H_O it reads')
         require_weighted_pos = True     
         write_bb_environment(fasta_seq, args.environment_potential, sc_node_name, args.bb_environment_potential, args.use_heavy_atom_coverage)
 
@@ -2467,17 +2249,22 @@ def main():
     # membrance potential
 
     if args.surface:
+        if args.membrane_thickness is None:
+            parser.error('--surface requires --membrane-thickness')
         require_backbone_point = True
-        if args.surface_included_residues:
-            write_surface_coord(fasta_seq, args.surface_method, thickness=args.membrane_thickness, included_list=args.surface_included_residues )
-        else:
-            write_surface_coord(fasta_seq, args.surface_method, thickness=args.membrane_thickness)
+        write_surface_coord(fasta_seq, args.surface_method, args.membrane_thickness,
+                            args.surface_included_residues, args.zbuffer or 0.)
 
     if args.channel_membrane_potential:
         if args.membrane_thickness is None:
             parser.error('--channel-membrane-potential requires --membrane-thickness')
-        if args.surface is None:
+        if not args.surface:
             parser.error('--channel-membrane-potential requires --surface')
+        if not args.environment_potential or args.environment_potential_type != 1:
+            parser.error('--channel-membrane-potential requires --environment-potential with '
+                         '--environment-potential-type 1, whose sigmoid coupling weights it reads')
+        if not args.hbond_energy:
+            parser.error('--channel-membrane-potential requires --hbond-energy, whose protein_hbond it reads')
         require_backbone_point = True
         write_membrane_potential4(fasta_seq,
                                  args.channel_membrane_potential,
@@ -2491,6 +2278,11 @@ def main():
     if args.membrane_potential:
         if args.membrane_thickness is None:
             parser.error('--membrane-potential requires --membrane-thickness')
+        if not args.environment_potential or args.environment_potential_type != 1:
+            parser.error('--membrane-potential requires --environment-potential with '
+                         '--environment-potential-type 1, whose sigmoid coupling weights it reads')
+        if not args.hbond_energy:
+            parser.error('--membrane-potential requires --hbond-energy, whose protein_hbond it reads')
         require_backbone_point = True
         write_membrane_potential3(fasta_seq,
                                  args.membrane_potential,
@@ -2518,7 +2310,6 @@ def main():
         write_weighted_pos(sc_node_name, pl_node_name)
 
     if require_rama:
-        #write_rama_coord()
         write_rama_coord2()
 
     if require_affine:

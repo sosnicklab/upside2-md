@@ -252,8 +252,7 @@ struct PlacementNode: public CoordNode
         traverse_dset<1,int>(grp, "affine_residue", [&](size_t np, int x){affine_residue[np] = x;});
 
         if(logging(LOG_EXTENSIVE)) {
-            // FIXME prepend the logging with the class name for disambiguation
-            default_logger->add_logger<float>("placement_pos", {n_elem, n_pos_dim}, [&](float* buffer) {
+            default_logger->add_logger<float>(group_name(grp).c_str(), {n_elem, n_pos_dim}, [&](float* buffer) {
                     VecArray pos = output;
                     for(int ne: range(n_elem))
                         for(int d: range(n_pos_dim))
@@ -318,9 +317,7 @@ struct PlacementNode: public CoordNode
 // times.
 static RegisterNodeType<PlacementNode<RamaPlacement <1>, PlaceT::SCALAR               >,2> pl1("placement_scalar");
 static RegisterNodeType<PlacementNode<FixedPlacement<1>, PlaceT::SCALAR               >,1> pl2("placement_fixed_scalar");
-static RegisterNodeType<PlacementNode<RamaPlacement <3>, PlaceT::POINT                >,2> pl3("placement_point_only");
 static RegisterNodeType<PlacementNode<FixedPlacement<3>, PlaceT::POINT                >,1> pl4("placement_fixed_point_only");
-static RegisterNodeType<PlacementNode<RamaPlacement <6>, PlaceT::POINT, PlaceT::VECTOR>,2> pl5("placement_point_vector_only");
 static RegisterNodeType<PlacementNode<FixedPlacement<6>, PlaceT::POINT, PlaceT::VECTOR>,1> pl6("placement_fixed_point_vector_only");
 static RegisterNodeType<PlacementNode<FixedPlacement<7>, PlaceT::POINT, PlaceT::VECTOR, PlaceT::SCALAR>,1> pl7("placement_fixed_point_vector_scalar");
 }

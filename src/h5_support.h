@@ -70,19 +70,14 @@ inline H5Obj duplicate_obj(H5Obj& obj) {
     return H5Obj(obj.get(), obj.get_deleter());
 }
 
-static H5Obj open_file(char* path, decltype(H5F_ACC_RDONLY) flags) {
-    if(flags == H5F_ACC_RDONLY || flags == H5F_ACC_RDWR)
-        return h5_obj(H5Fclose, H5Fopen(path, flags, H5P_DEFAULT));
-    else 
-        return h5_obj(H5Fclose, H5Fcreate(path, flags, H5P_DEFAULT, H5P_DEFAULT));
-
-}
-
 //! Check that an HDF object exists at a given path
 
 //! If check_valid is true, then the function will also 
 //! ensure that the path is not a dangling link.
 bool h5_exists(hid_t base, const char* nm);
+
+//! last component of the group's path, e.g. "rotamer" for /input/potential/rotamer
+std::string group_name(hid_t grp);
 
 // Read the dimension sizes of a dataset
 std::vector<hsize_t> get_dset_size(int ndims, hid_t group, const char* name);
@@ -130,7 +125,6 @@ void check_size(hid_t group, const char* name, size_t sz1, size_t sz2, size_t sz
 
 H5Obj ensure_group(hid_t loc, const char* nm);    //!< Ensure that a group of a specific name exists
 H5Obj open_group(hid_t loc, const char* nm);      //!< Open an existing group
-void ensure_not_exist(hid_t loc, const char* nm); //!< Delete a group if it exists
 
 
 //! Create a new dataset

@@ -14,7 +14,7 @@ dynamics against all-atom MD on mdCATH. Find out whether a route with no trainin
 time on a fine-tune.
 
 **Built on Boltz, not BioEmu** (user, 2026-10-21): Jumper does not accept BioEmu because its data are selected. No
-BioEmu weights, samples, training data or benchmarks are used (findings 10.30). BioEmu2's code may be used (user,
+BioEmu weights, samples, training data or benchmarks are used (findings 10.34). BioEmu2's code may be used (user,
 2026-10-21): it is MIT-licensed, and its layer, denoising and steering code is itself adapted from Boltz (its
 `NOTICES.md`), so it ports onto Boltz's modules directly. Phase 3 takes its lag conditioning from there.
 

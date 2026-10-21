@@ -128,8 +128,6 @@ static RegisterNodeType<Infer_H_O,1> infer_node("infer_H_O");
 
 
 #define radial_cutoff2 (3.5f*3.5f)
-// angular cutoff at 90 degrees
-#define angular_cutoff (0.f)
 
 template <typename S>
 Vec<2,S> hbond_radial_potential(const S& input,
@@ -191,40 +189,32 @@ namespace {
             auto dotHOC =  dot(rHO,rOC);
             auto dotOHN = -dot(rHO,rHN);
 
-            Vec<3,Float4> dH,dO,drHN,drOC;
-            Float4 hb;
-            auto within_angular_cutoff = (Float4(angular_cutoff) < dotHOC) & (Float4(angular_cutoff) < dotOHN);
-            if(none(within_angular_cutoff)) {
-                dH=dO=drHN=drOC=make_zero<3,Float4>();
-                hb = zero<Float4>();
-            } else {
-                // FIXME I have to load up 4 of these rather pointlessly since they will all be the same
-                // FIXME I don't know if I guarantee alignment on parameters
-                // I expand to 8 to be sure
-                auto p0 = Float4(p[0]);
-                auto p1 = Float4(p[1]);
-                auto p2 = Float4(p[2]);
-                auto p3 = Float4(p[3]);   transpose4(p0,p1,p2,p3);
-                auto p4 = Float4(p[0]+4);
-                auto p5 = Float4(p[1]+4);
-                auto p6 = Float4(p[2]+4);
-                auto p7 = Float4(p[3]+4); transpose4(p4,p5,p6,p7);
+            // FIXME I have to load up 4 of these rather pointlessly since they will all be the same
+            // FIXME I don't know if I guarantee alignment on parameters
+            // I expand to 8 to be sure
+            auto p0 = Float4(p[0]);
+            auto p1 = Float4(p[1]);
+            auto p2 = Float4(p[2]);
+            auto p3 = Float4(p[3]);   transpose4(p0,p1,p2,p3);
+            auto p4 = Float4(p[0]+4);
+            auto p5 = Float4(p[1]+4);
+            auto p6 = Float4(p[2]+4);
+            auto p7 = Float4(p[3]+4); transpose4(p4,p5,p6,p7);
 
-                auto radial   = hbond_radial_potential (magHO , p0, p1, p2, p3);  // x has val, y has deriv
-                auto angular1 = hbond_angular_potential(dotHOC, p4, p5);
-                auto angular2 = hbond_angular_potential(dotOHN, p4, p5);
+            auto radial   = hbond_radial_potential (magHO , p0, p1, p2, p3);  // x has val, y has deriv
+            auto angular1 = hbond_angular_potential(dotHOC, p4, p5);
+            auto angular2 = hbond_angular_potential(dotOHN, p4, p5);
 
-                hb      =  radial.x() * angular1.x() * angular2.x();
-                auto c0 =  radial.y() * angular1.x() * angular2.x();
-                auto c1 =  radial.x() * angular1.y() * angular2.x();
-                auto c2 = -radial.x() * angular1.x() * angular2.y();
+            auto hb =  radial.x() * angular1.x() * angular2.x();
+            auto c0 =  radial.y() * angular1.x() * angular2.x();
+            auto c1 =  radial.x() * angular1.y() * angular2.x();
+            auto c2 = -radial.x() * angular1.x() * angular2.y();
 
-                drOC = c1*rHO;
-                drHN = c2*rHO;
+            auto drOC = c1*rHO;
+            auto drHN = c2*rHO;
 
-                dH = c0*rHO + (c1*invHOmag)*(rOC-dotHOC*rHO) + (c2*invHOmag)*(rHN+dotOHN*rHO);
-                dO = -dH;
-            }
+            auto dH = c0*rHO + (c1*invHOmag)*(rOC-dotHOC*rHO) + (c2*invHOmag)*(rHN+dotOHN*rHO);
+            auto dO = -dH;
 
             auto hb_log = ternary(one<=hb, Float4(100.f), -logf(one-hb));  // work in multiplicative space
 
@@ -293,65 +283,6 @@ namespace {
         static bool is_compatible(const float* p1, const float* p2) {return true;};
     };
 }
-
-struct CTerHBond : public CoordNode {
-    CoordNode& infer;
-    CoordNode& bb;
-    int n_donor;
-    float cutoff;
-    std::vector<int> id1, id2;
-    std::vector<index_t> index1, index2;
-    float inner_barrier, inner_scale, outer_barrier, outer_scale;
-
-    CTerHBond(hid_t grp, CoordNode& infer_, CoordNode& bb_):
-        CoordNode(get_dset_size(1,grp,"index1")[0], 1),
-        infer(infer_), bb(bb_),
-        n_donor(get_dset_size(1, grp, "index1")[0]),
-        cutoff(5.5),
-        id1(n_donor), id2(1),
-        index1(n_donor), index2(1),
-        inner_barrier(read_attribute<float>(grp, ".", "inner_barrier")),
-        inner_scale(read_attribute<float>(grp, ".", "inner_scale")),
-        outer_barrier(read_attribute<float>(grp, ".", "outer_barrier")),
-        outer_scale(read_attribute<float>(grp, ".", "outer_scale"))
-    {
-
-        check_size(grp, "id1",      n_donor);
-        check_size(grp, "index1",   n_donor);
-        check_size(grp, "id2",      1);
-        check_size(grp, "index2",   1);
-
-        traverse_dset<1,int>(grp, "id1",    [&](size_t i, int x){id1[i] = x;});
-        traverse_dset<1,int>(grp, "id2",    [&](size_t i, int x){id2[i] = x;});
-        traverse_dset<1,int>(grp, "index1", [&](size_t i, int x){index1[i] = x;});
-        traverse_dset<1,int>(grp, "index2", [&](size_t i, int x){index2[i] = x;});
-    }
-
-    virtual void compute_value(ComputeMode mode) override {
-        Timer timer(string("CTer_hbond"));
-
-        VecArray vs = output;
-
-        auto C = load_vec<3>(bb.output, index2[0]);
-        for(int n=0; n<n_donor; ++n) {
-
-            auto NH = load_vec<6>(infer.output, index1[n]);
-            auto H = extract<0,3>(NH);
-            auto disp = H - C;
-            auto magHC = mag(disp);
-            if (magHC <  cutoff and abs(id1[n]-id2[0]) > 1) {
-                //auto radial = hbond_radial_potential(magHC, inner_barrier, inner_scale, outer_barrier, outer_scale);
-                //vs(0,n) = radial.x();
-                vs(0,n) = magHC;
-            }
-            else
-                vs(0,n) = cutoff;
-       }
-    }
-
-    virtual void propagate_deriv() override { }
-};
-static RegisterNodeType<CTerHBond,2> cter_hbond_node("cter_hbond");
 
 
 struct ProteinHBond : public CoordNode
@@ -641,7 +572,7 @@ struct HBondEnergy : public HBondCounter
         for( int i =0; i<n_res; i++ ) {
             if (hb_number1[i] == 0.0)
                 continue;
-            n_hbond      += hb_number1[i];
+            n_hbond      += 0.5f*hb_number1[i];   // a bond counts at its donor's and its acceptor's residue
             potential    += hb_number1[i]*Ehbond[i];
 
             auto iter = resid_donor.find(i);
@@ -677,36 +608,9 @@ struct HBondEnergy : public HBondCounter
     virtual std::vector<float> get_param() const override {return params;}
 #ifdef PARAM_DERIV
     virtual std::vector<float> get_param_deriv() override {
-        std::vector<float> dparams(12);
-
-        std::vector<float> dE_other(n_res);
-        std::vector<float> dE_alpha(n_res);
-        std::vector<float> dE_beta(n_res);
-
-        for( int i =0; i<12; i++ ) 
-            dparams[i] = 0.0;
-
+        std::vector<float> dparams(n_param, 0.f);
         VecArray ramac = rama.output;
         VecArray pp    = protein_hbond.output;
-        for( int i=0; i<n_res; i++) {
-            auto r = load_vec<2>(ramac, i);
-
-            auto phiv1 = compact_sigmoid(r.v[0]-boundary_turn1, sharpness_turn1);
-            auto phiv2 = compact_sigmoid(r.v[0]-boundary_turn2, sharpness_turn2);
-            auto psiv1 = compact_sigmoid(r.v[1]-boundary_helix1, sharpness_helix1);
-            auto psiv2 = compact_sigmoid(r.v[1]-boundary_helix2, sharpness_helix2);
-
-            float turn_score   = (1.-phiv1.x())*phiv2.x();
-            float psi_score    = (1.-psiv1.x())*psiv2.x();
-            float n_turn_score = 1. - turn_score;
-            float n_psi_score  = 1. - psi_score;
-            float helix_score  = n_turn_score * psi_score;
-            float sheet_score  = n_turn_score * n_psi_score;
-
-            dE_alpha[i] = helix_score;
-            dE_beta[i]  = sheet_score;
-            dE_other[i] = turn_score;
-        }
 
         for( int i =0; i<n_res; i++ ) 
             hb_number1[i] = 0.0;
@@ -719,10 +623,48 @@ struct HBondEnergy : public HBondCounter
             hb_number1[resid] += pp(6,na+n_donor);
         }
 
-        for( int i =0; i<n_res; i++ ) {
-            dparams[0] += hb_number1[i]*dE_alpha[i];
-            dparams[1] += hb_number1[i]*dE_beta[i];
-            dparams[2] += hb_number1[i]*dE_other[i];
+        for( int i=0; i<n_res; i++) {
+            float h = hb_number1[i];
+            if (h == 0.0) continue;
+            auto r = load_vec<2>(ramac, i);
+
+            auto phiv1 = compact_sigmoid(r.v[0]-boundary_turn1, sharpness_turn1);
+            auto phiv2 = compact_sigmoid(r.v[0]-boundary_turn2, sharpness_turn2);
+            auto psiv1 = compact_sigmoid(r.v[1]-boundary_helix1, sharpness_helix1);
+            auto psiv2 = compact_sigmoid(r.v[1]-boundary_helix2, sharpness_helix2);
+
+            float turn_score   = (1.-phiv1.x())*phiv2.x();
+            float psi_score    = (1.-psiv1.x())*psiv2.x();
+            float helix_score  = (1.-turn_score) * psi_score;
+            float sheet_score  = (1.-turn_score) * (1.-psi_score);
+
+            dparams[0] += h*helix_score;
+            dparams[1] += h*sheet_score;
+            dparams[2] += h*turn_score;
+            if(res_class[i]) {  // the residue class's offsets, after the shared values
+                int o = 12 + 3*(res_class[i]-1);
+                dparams[o+0] += h*helix_score;
+                dparams[o+1] += h*sheet_score;
+                dparams[o+2] += h*turn_score;
+            }
+
+            // the rama boundaries and sharpnesses act through turn_score and psi_score; a sigmoid's value
+            // depends on its boundary b and sharpness s through (angle-b)*s
+            float e_alpha  = E_alpha + class_offset(i,0);
+            float e_beta   = E_beta  + class_offset(i,1);
+            float e_other  = E_other + class_offset(i,2);
+            float dE_dturn = e_other - e_alpha*psi_score - e_beta*(1.f-psi_score);
+            float dE_dpsi  = (1.f-turn_score) * (e_alpha-e_beta);
+            float x1 = r.v[0]-boundary_turn1,  x2 = r.v[0]-boundary_turn2;
+            float y1 = r.v[1]-boundary_helix1, y2 = r.v[1]-boundary_helix2;
+            dparams[4]  += h*dE_dturn *  phiv1.y()*phiv2.x();
+            dparams[5]  += h*dE_dturn * -x1/sharpness_turn1*phiv1.y()*phiv2.x();
+            dparams[6]  += h*dE_dturn * -(1.f-phiv1.x())*phiv2.y();
+            dparams[7]  += h*dE_dturn *  (1.f-phiv1.x())*x2/sharpness_turn2*phiv2.y();
+            dparams[8]  += h*dE_dpsi  *  psiv1.y()*psiv2.x();
+            dparams[9]  += h*dE_dpsi  * -y1/sharpness_helix1*psiv1.y()*psiv2.x();
+            dparams[10] += h*dE_dpsi  * -(1.f-psiv1.x())*psiv2.y();
+            dparams[11] += h*dE_dpsi  *  (1.f-psiv1.x())*y2/sharpness_helix2*psiv2.y();
         }
 
         for( int i =0; i<n_res-1; i++ ) 
@@ -738,16 +680,6 @@ struct HBondEnergy : public HBondCounter
         for( int i =0; i<n_res-1; i++ ) {
             auto dE     = compact_sigmoid(1.5-hb_number2[i], 2.0);
             dparams[3] += dE.x();
-        }
-
-        // each residue class's offsets, after the shared values
-        dparams.resize(n_param, 0.f);
-        for( int i =0; i<n_res; i++ ) {
-            if(!res_class[i]) continue;
-            int o = 12 + 3*(res_class[i]-1);
-            dparams[o+0] += hb_number1[i]*dE_alpha[i];
-            dparams[o+1] += hb_number1[i]*dE_beta[i];
-            dparams[o+2] += hb_number1[i]*dE_other[i];
         }
 
         return dparams;

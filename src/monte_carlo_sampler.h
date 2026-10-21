@@ -43,7 +43,7 @@ struct MonteCarloSampler {
     virtual void propose_random_move(float* delta_lprob, RandomGenerator& random, VecArray pos) const = 0;
 
     void monte_carlo_step(uint32_t seed, uint64_t round, const float temperature,
-            DerivEngine& engine);
+            DerivEngine& engine, VecArray mom, float half_kick, float slow_half_kick);
 };
 
 struct MultipleMonteCarloSampler {
@@ -53,7 +53,8 @@ struct MultipleMonteCarloSampler {
     
     MultipleMonteCarloSampler(hid_t sampler_group, H5Logger& logger);
     
-    void execute(uint32_t seed, uint64_t round, const float temperature, DerivEngine& engine);
+    void execute(uint32_t seed, uint64_t round, const float temperature, DerivEngine& engine,
+            VecArray mom, float half_kick, float slow_half_kick);
 };
 
 #endif /* MONTE_CARLO_SAMPLER_H */

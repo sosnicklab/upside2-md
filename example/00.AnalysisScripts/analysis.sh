@@ -24,15 +24,18 @@ start_frame=${start_frame:-100}
 
 # Use trajectory_mode=martini_hybrid to project full hybrid trajectories into the
 # ordinary protein-only HDX trajectory contract before running steps 2--6.
+# In the source pattern {replica} numbers the files of a REMD ladder and {segment} the
+# consecutive continuations of one run, joined in order.
 trajectory_mode=${trajectory_mode:-upside} # upside or martini_hybrid
 hybrid_source_dir=${hybrid_source_dir:-}
 if [ -z "${hybrid_source_pattern:-}" ]; then
-    hybrid_source_pattern="$pdb_id.stage_7.{replica}.up"
+    hybrid_source_pattern="$pdb_id.stage_7.{segment}.up"
 fi
 hybrid_project_overwrite=${hybrid_project_overwrite:-true}
 
-# Optional calibrated water-accessibility arrays, shaped exactly like PS.npy.
-# Leave the pattern empty to retain the stock protein-only protection state.
+# Optional calibrated water-accessibility arrays, shaped exactly like PS.npy. Left empty, a
+# martini_hybrid analysis measures the membrane term from its trajectories and an upside analysis
+# keeps the stock protein-only protection state.
 water_accessibility_dir=${water_accessibility_dir:-}
 water_accessibility_pattern=${water_accessibility_pattern:-}
 

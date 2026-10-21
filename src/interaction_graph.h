@@ -34,6 +34,7 @@ struct PairlistComputation {
     typedef Int4(*acceptable_id_pair_t)(const Int4&,const Int4&);
     public:
         const int n_elem1, n_elem2;
+        const int max_n_edge;
         std::unique_ptr<int32_t[]>  edge_indices1, edge_indices2;
         std::unique_ptr<int32_t[]>  edge_id1,      edge_id2;
         int n_edge;
@@ -148,7 +149,9 @@ struct PairlistComputation {
                     // i2_vec and my_id2 is constant, so we don't have to left pack
                     // left_pack requires a read, so do before the writes
 
-                    // write out pairs
+                    // write out pairs; each store writes 4 entries
+                    if(ne+4 > round_up(max_n_edge,4))  // the buffers hold round_up(max_n_edge,4) entries
+                        throw std::string("pair list needs more than its max_n_edge of ") + std::to_string(max_n_edge);
                     int n_hit = popcnt_nibble(is_hit_bits);
                     i1_vec.left_pack(is_hit_bits).store(cache_edge_indices1+ne, Alignment::unaligned);
                     my_id1.left_pack(is_hit_bits).store(cache_edge_id1     +ne, Alignment::unaligned);
@@ -169,9 +172,10 @@ struct PairlistComputation {
         }
 
     public:
-        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer;}
-        PairlistComputation(int n_elem1_, int n_elem2_, int max_n_edge):
-            n_elem1(n_elem1_), n_elem2(n_elem2_),
+        // a new buffer goes with a new cutoff (set_param), so the cached pair list must be rebuilt
+        void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer; cache_valid=false;}
+        PairlistComputation(int n_elem1_, int n_elem2_, int max_n_edge_):
+            n_elem1(n_elem1_), n_elem2(n_elem2_), max_n_edge(max_n_edge_),
 
             edge_indices1(new_aligned<int32_t>(max_n_edge, 16)),
             edge_indices2(new_aligned<int32_t>(max_n_edge, 16)),
@@ -375,8 +379,10 @@ struct InteractionGraph{
         if(!s) check_elem_width_lower_bound(*pos_node2, n_dim2);
 
         check_size(grp, "interaction_param", n_type1, n_type2, n_param);
+        if(s && n_type1!=n_type2) throw std::string("a symmetric interaction needs a square interaction_param");
         traverse_dset<3,float>(grp, "interaction_param", [&](size_t nt1, size_t nt2, size_t np, float x) {
                 interaction_param[(nt1*n_type2+nt2)*n_param+np] = x;});
+        check_compatible(interaction_param.get());
         update_cutoffs();
 
         check_size(grp, suffix1("index").c_str(), n_elem1); if(!s) check_size(grp, "index2", n_elem2);
@@ -397,22 +403,29 @@ struct InteractionGraph{
             for(int nr: range(n_elem2)) types2[nr] = types1[nr];
             for(int nr: range(n_elem2)) id2   [nr] = id1   [nr];
         }
+
+        for(int nr: range(n_elem1)) if(loc1[nr]<0 || loc1[nr]>=pos_node1->n_elem || types1[nr]<0 || types1[nr]>=n_type1)
+            throw std::string("index or type of element ") + std::to_string(nr) + " is out of range";
+        if(!s) for(int nr: range(n_elem2)) if(loc2[nr]<0 || loc2[nr]>=pos_node2->n_elem || types2[nr]<0 || types2[nr]>=n_type2)
+            throw std::string("index2 or type2 of element ") + std::to_string(nr) + " is out of range";
     } catch (std::runtime_error& e) {
         std::cerr << e.what() << std::endl;
     } 
 
+    void check_compatible(const float* param) const {
+        // parameters are checked before the graph holds them, so a refused set_param changes nothing
+        if(!IType::symmetric) return;
+        for(int nt1: range(n_type1))
+            for(int nt2: range(n_type2))
+                if(!IType::is_compatible(param+(nt1*n_type2+nt2)*n_param, param+(nt2*n_type2+nt1)*n_param))
+                    throw std::string("incompatible parameters");
+    }
+
     void update_cutoffs() {
         cutoff = 0.f;
-        for(int nt1: range(n_type1)) {
-            for(int nt2: range(n_type2)) {
+        for(int nt1: range(n_type1))
+            for(int nt2: range(n_type2))
                 cutoff = std::max(cutoff, IType::cutoff(interaction_param+(nt1*n_type2+nt2)*n_param));
-
-                if(IType::symmetric && !IType::is_compatible(interaction_param+(nt1*n_type2+nt2)*IType::n_param, 
-                                                             interaction_param+(nt2*n_type2+nt1)*IType::n_param)){
-                    throw std::string("incompatible parameters");
-                }
-            }
-        }
         float new_buffer = 1.0f + 0.2f*cutoff;
         pairlist.change_cache_buffer(new_buffer);
         // printf("using cache_buffer %.2f for %i %i %i\n", new_buffer, n_dim1, n_dim2, int(symmetric));
@@ -423,9 +436,18 @@ struct InteractionGraph{
     }
 
     std::vector<float> get_param_deriv() {
-        // Re-execute the computation with parameter derivatives on
+        // Re-execute the edge computation with parameter derivatives on; each edge is weighted by the
+        // sensitivity the user set for the last propagate_derivatives
         compute_edges<true>();
-        propagate_derivatives<true>();
+
+        fill(interaction_param_deriv, 0.f);
+        for(int ne=0; ne<n_edge; ++ne) {
+            int t1 = types1[edge_indices1[ne]];
+            int t2 = types2[edge_indices2[ne]];
+            update_vec(interaction_param_deriv, t1*n_type2+t2, edge_sensitivity[ne]*edge_param_deriv[ne]);
+            if(symmetric)
+                update_vec(interaction_param_deriv, t2*n_type1+t1, edge_sensitivity[ne]*edge_param_deriv_exchanged[ne]);
+        }
 
         std::vector<float> ret; ret.reserve(n_type1*n_type2*n_param);
         for(int i: range(n_type1*n_type2))
@@ -441,6 +463,7 @@ struct InteractionGraph{
                 std::to_string(n_type1*n_type2*IType::n_param) + " params of shape (" +
                 std::to_string(n_type1)+", "+std::to_string(n_type2)+", "+
                 std::to_string(IType::n_param)+")";
+        check_compatible(new_param.data());
         std::copy(begin(new_param), end(new_param), interaction_param.get());
         update_cutoffs();
     }
@@ -537,7 +560,6 @@ struct InteractionGraph{
     }
 
 
-    template<bool param_deriv=false>
     void propagate_derivatives() {
         // Finally put the data where it is needed.
         // This function must be called after the user sets edge_sensitivity
@@ -551,8 +573,6 @@ struct InteractionGraph{
         // Zero accumulation buffers
         fill_n(pos1_deriv, n_elem1*n_dim1a, 0.f);
         if(!symmetric) fill_n(pos2_deriv, n_elem2*n_dim2a, 0.f);
-        if(param_deriv)
-            fill(interaction_param_deriv, 0.f);
 
         // Accumulate derivatives
         for(int ne=0; ne<n_edge; ne+=4) {
@@ -567,16 +587,6 @@ struct InteractionGraph{
 
             aligned_scatter_update_vec_destructive(pos1_deriv.get(),                       i1*Int4(n_dim1a), d1);
             aligned_scatter_update_vec_destructive((symmetric?pos1_deriv:pos2_deriv).get(),i2*Int4(n_dim2a), d2);
-
-            if(param_deriv) {
-                for(int i: range(4)) {
-                    int t1 = types1[edge_indices1[ne+i]];
-                    int t2 = types2[edge_indices2[ne+i]];
-                    update_vec(interaction_param_deriv, t1*n_type2+t2, extract_float(sens,i)*edge_param_deriv[ne+i]);
-                    if(symmetric) 
-                        update_vec(interaction_param_deriv, t2*n_type1+t1, extract_float(sens,i)*edge_param_deriv_exchanged[ne+i]);
-                }
-            }
         }
 
         // Push derivatives to slots

@@ -41,6 +41,13 @@ try {
 }
 
 
+std::string group_name(hid_t grp) {
+    std::string path(H5Iget_name(grp, nullptr, 0)+1, '\0');
+    H5Iget_name(grp, &path[0], path.size());
+    path.pop_back();  // the terminating NUL
+    return path.substr(path.rfind('/')+1);
+}
+
 bool h5_exists(hid_t base, const char* nm) {
     // Note that this function does not do the full dance specified in 
     // the documentation for H5Oexists_by_name.  I don't think this will cause
@@ -75,6 +82,8 @@ try {
 
     // From here, everything should exist
     auto attr  = h5_obj(H5Aclose, H5Aopen_by_name(h5, path, attr_name, H5P_DEFAULT, H5P_DEFAULT));
+    auto space = h5_obj(H5Sclose, H5Aget_space(attr.get()));
+    if(H5Sget_simple_extent_npoints(space.get()) != 1) throw std::string("attribute is not a scalar");
     h5_noerr(H5Aread(attr.get(), predtype, attr_value_output));
     return true;
 }
@@ -183,11 +192,6 @@ try {
 } catch(std::string &s) {
     throw std::string("unable to open group ") + nm + " (does it exist?), " + s;
 }
-
-void ensure_not_exist(hid_t loc, const char* nm) {
-    if(h5_exists(loc, nm)) H5Ldelete(loc, nm, H5P_DEFAULT);
-}
-
 
 H5Obj create_earray(hid_t group, const char* name, hid_t dtype,
         const std::initializer_list<int> &dims, // any direction that is extendable must have dims == -1

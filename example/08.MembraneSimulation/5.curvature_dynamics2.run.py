@@ -42,8 +42,7 @@ continue_sim     = False # when you run a new simulation, set it as "False"
                          # pdb_id and sim_id as the new simulation, and exist in the 
                          # corresponding path)
 
-randomseed       = -1    # np.random.randint(0,100000) 
-                         # Might want to change the fixed seed for the random number
+randomseed       = 1     # a fixed seed; np.random.randint(0,100000) gives a new one each run
 
 account          = "your_account"    # FIXME change it 
 partition        = "yout_partition"  # FIXME change it
@@ -164,8 +163,8 @@ upside_opts = (
                  "--frame-interval {} "
                  "--temperature {} "
                  "--seed {} "
+                 "--record-momentum "
                  "--disable-recentering "
-                 "--integrator mv "
                  "--curvature-changer-interval 10 "
                )
 
@@ -205,9 +204,14 @@ if continue_sim:
                 n = t.get_node('/output_previous_%i'%(i-1))
 
             t.root.input.pos[:,:,0] = n.pos[-1,0]
+            if 'mom' in t.root.input:
+                t.root.input.mom._f_remove()
+            t.create_array(t.root.input, 'mom', obj=n.mom[-1,0][:,:,None])
+            t.root.input.mom._v_attrs.round = n.round[-1]  # the round the momentum was recorded at
 
             if 'output' in t.root:
                 t.root.output._f_rename(new_name)
+    upside_opts += "--restart-using-momentum "  # resumes the momentum and random counters copied above
 
 else:
     for fn in h5_files:

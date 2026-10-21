@@ -16,8 +16,6 @@ if analysis_mode == 'compare_hxms':
 if analysis_mode != 'uptake':
     raise SystemExit('unsupported analysis_mode: %s' % analysis_mode)
 
-import mdtraj as md
-import mdtraj_upside as mu
 import numpy as np
 import scipy as sp
 import pandas as pd
@@ -281,58 +279,6 @@ def main():
     
     else:
         sequence = ''.join(fasta)
-    
-    # calculate dG_HX at different T
-    
-    dGhx_Ts = np.array([])
-    for p, (pdb_id, result_dir) in enumerate(zip(loaded_pdb_ids, loaded_result_dirs)):
-        PS = []
-        T_mean_vals = []
-        for i in range(n_rep):
-            PS.append(np.load('{}/{}_{}_{}_PS.npy'.format(result_dir, pdb_id, sim_id, i)))
-            # get_info_from_upside_traj.py stores one temperature per replica as a 0-d array
-            # (`output.temperature[0,0]`), so it cannot be sliced by frame; atleast_1d covers both that and a
-            # per-frame array, should a caller supply one.
-            t_arr = np.atleast_1d(np.load('{}/{}_{}_{}_T.npy'.format(result_dir, pdb_id, sim_id, i)))
-            T_mean_vals.append(np.mean(t_arr[start_frame:] if t_arr.size > start_frame else t_arr))
-    
-        min_idx = np.min([len(PS[i][:, 0]) for i in range(n_rep)])
-        PS_idx = [PS[i][:min_idx] for i in range(n_rep)]
-        PS = np.array(PS_idx)
-    
-        res = np.loadtxt('{}/{}.resid'.format(result_dir, pdb_id), dtype=int)
-        n_res = res.size
-    
-        dGhx_T = []
-        for t in T_mean_vals:
-            tt = t / 0.85 * 298.
-    
-            dG = np.zeros(n_res)
-            for r in range(n_res):
-                pf_i = PS[:,start_frame:,r].flatten()
-                mean_pf = np.average(pf_i)
-                #mean_pf = np.average(pf_i, weights=w1)
-                if mean_pf == 1:
-                #print(k, r)
-                    dG[r] = 1000.
-                else:
-                    dG[r] = 0.001987*tt*np.log((mean_pf/(1.-mean_pf)))
-            dGhx_T.append(dG)
-        dGhx_T = np.array(dGhx_T)
-    
-        dGhx_Ts = np.concatenate([dGhx_Ts, dGhx_T[0]], axis=0)
-    
-    dGhx_T_plots = []
-    for r in range(len(sequence)):
-        if r in res:
-            dGhx_T_plot = dGhx_Ts[np.argwhere(res==r)][0][0]
-            dGhx_T_plots.append(dGhx_T_plot)
-    
-        else:
-            dGhx_T_plot = np.nan
-            dGhx_T_plots.append(dGhx_T_plot)
-    
-    dGhx_T_plots = np.array(dGhx_T_plots)
     
     # compare D uptake at peptide level
     
@@ -760,84 +706,6 @@ def main():
     if res_cof_up_valid.size > 0:
         norm_Up = colors.TwoSlopeNorm(vmin=-np.nanmax(res_avg_int_df_Up['res_COF_Up']), vcenter=-np.nanmedian(res_avg_int_df_Up['res_COF_Up']), vmax=-np.nanmin(res_avg_int_df_Up['res_COF_Up']))
         diff_color_Up = apply_cmap(-res_avg_int_df_Up['res_COF_Up'], cmap, norm_Up)
-    
-    def peptide_plot_res(merged_df, colors, subplot):
-        fig, ax = plt.subplots(figsize=(60, 10))
-        plt.rcParams['font.family'] = 'sans-serif'
-        plt.rcParams['font.sans-serif'] = sans_serif_fonts
-    
-        for index, row in merged_df.reset_index().iterrows():
-            for segment_index, segment in enumerate(sequence):
-                if (int(row['res_idx']) == segment_index+1) and (row['res'] == segment):
-                    height = (index + 1) * 0.02 # use the calculated height
-                    bar = patches.Rectangle((index, height), 0.01, 0.01, color=colors[index])
-                    ax.add_patch(bar)
-    
-        # set axis limits and labels for each segment
-        ax.set_xlim(0, len(sequence) + 1)
-        ax.set_ylim(0, ((len(colors) + 1) * 0.02) + 0.1) # increase y-space to avoid clipping
-    
-        # set x-ticks and x-tick labels to match the sequence positions
-        x_ticks = range(1, len(sequence) + 1)
-        x_tick_labels = [c for i, c in enumerate(sequence)]
-    
-        # test whether x_tick_labels have the same length as x_ticks
-        if len(x_tick_labels) < len(x_ticks):
-            x_tick_labels.extend([''] * (len(x_ticks) - len(x_tick_labels)))
-    
-        ax.set_xticks(x_ticks)
-        ax.set_xticklabels(x_tick_labels[:len(x_ticks)], fontsize=20)
-    
-        ax.set_yticks([])
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['left'].set_visible(False)
-    
-        if subplot == 'stability':
-            twin = ax.twinx()
-            for i, c in enumerate(sequence):
-                twin.plot(dGhx_T_plots[i])
-    
-            twin.set_ylim(0, np.nanmax(dGhx_T_plots))
-            twin.set_ylabel('∆G (kcal/mol)')
-    
-            plt.tight_layout()
-            pdf_cof.savefig(fig, dpi=300, bbox_inches = 'tight')
-            plt.close()
-    
-        elif subplot == 'helicity':
-            twin = ax.twinx()
-    
-            helicity_avg = []
-            for p, (pdb_id, run_dir) in enumerate(zip(pdb_ids, run_dirs)):
-                helicity = []
-                for i in range(n_rep):
-                    traj = mu.load_upside_traj('{}/{}.run.{}.up'.format(run_dir, pdb_id, i))
-                    dssp = md.compute_dssp(traj)
-                    time = traj._time * 1e-6
-                    #dssp.shape, time.shape
-                    helicity_matrix = (dssp=='H').astype('int').T
-                    helicity.append(np.average(helicity_matrix, axis=1)*100)
-    
-                helicity_avg.append(np.average(helicity, axis=0))
-    
-            helicity_avg = np.array(helicity_avg)
-    
-            for i, c in enumerate(sequence):
-                twin.plot(helicity_avg[i])
-    
-            twin.set_ylim(0, 100)
-            twin.set_ylabel("Helicity (%)")
-    
-            plt.tight_layout()
-            pdf_cof.savefig(fig, dpi=300, bbox_inches = 'tight')
-            plt.close()
-    
-        else:
-            plt.tight_layout()
-            pdf_cof.savefig(fig, dpi=300, bbox_inches = 'tight')
-            plt.close()
-    
     
     pdf_cof.close()
     

@@ -66,6 +66,9 @@ calc.get_param_deriv.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_char_p
 calc.get_param.restype  = ct.c_int
 calc.get_param.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_char_p]
 
+calc.get_param_size.restype  = ct.c_int
+calc.get_param_size.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_char_p]
+
 calc.get_output_dims.restype  = ct.c_int
 calc.get_output_dims.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_char_p]
 
@@ -235,6 +238,13 @@ class Upside(object):
         if retcode: raise RuntimeError('Unable to get param')
         return param
 
+    def get_param_size(self, node_name):
+        node_name = bytes(node_name, encoding="ascii")
+        n_param = np.zeros(1, dtype=np.intc)
+        retcode = calc.get_param_size(n_param.ctypes.data, self.engine, node_name)
+        if retcode: raise RuntimeError('Unable to get param size')
+        return int(n_param[0])
+
     def get_sens(self, node_name):
         node_name = bytes(node_name, encoding="ascii")
         n_elem = np.zeros(1,dtype=np.intc)
@@ -274,38 +284,3 @@ class Upside(object):
 
     def __del__(self):
         calc.free_deriv_engine(self.engine)
-
-def get_rotamer_graph(engine):
-    n_node, n_edge = engine.get_value_by_name((2,),         'rotamer', 'graph_nodes_edges_sizes').astype('i')
-    node_prob      = engine.get_value_by_name((n_node,3),   'rotamer', 'graph_node_prob')
-    edge_prob      = engine.get_value_by_name((n_edge,3,3), 'rotamer', 'graph_edge_prob')
-    edge_indices   = engine.get_value_by_name((n_edge,2),   'rotamer', 'graph_edge_indices').astype('i')
-    return node_prob, edge_prob, edge_indices
-
-def freeze_nodes(new_h5_path, old_h5_path, nodes_to_freeze, additional_nodes_to_delete, quiet=False):
-    '''Replace computation nodes with constant nodes that give the same answer on the initial structure'''
-    shutil.copyfile(old_h5_path, new_h5_path)
-
-    engine = Upside(old_h5_path)
-    pos = engine.initial_pos
-
-    en = engine.energy(pos)  # required to fill output
-    if not quiet: print ('energy', en)
-    freeze = dict((nm,engine.get_output(nm)) for nm in nodes_to_freeze)
-
-    with tb.open_file(new_h5_path, 'a') as tn:
-        for nm in list(nodes_to_freeze) + list(additional_nodes_to_delete):
-            tn.get_node('/input/potential/%s'%nm)._f_remove(recursive=True)
-
-        for nm,value in freeze.items():
-            g = tn.create_group(tn.root.input.potential, 'constant_'+nm)
-            g._v_attrs.arguments = []
-            tn.create_array(g, 'value', obj=value)
-
-        for node in tn.root.input.potential:
-            node._v_attrs.arguments = np.array(
-                    [('constant_'+nm if nm in freeze else nm) 
-                        for nm in node._v_attrs.arguments])
-
-    new_en = Upside(new_h5_path).energy(pos)
-    if not quiet: print ('new_energy', new_en)

@@ -32,192 +32,6 @@ inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* att
     return exists > 0;
 }
 
-struct DihedralSpring : public PotentialNode
-{
-    struct Params {
-        index_t atom[4];
-        float equil_dihedral;
-        float spring_constant;
-        int dihedral_type;  // 1=periodic, 2=harmonic
-    };
-
-    int n_elem;
-    CoordNode& pos;
-    vector<Params> params;
-    
-    // Box dimensions for minimum image
-    float box_x, box_y, box_z;
-    
-    // Spline interpolation for dihedral potential
-    LayeredClampedSpline1D<1> dihedral_potential_spline;
-    
-    // Spline parameters
-    float dihedral_min, dihedral_max;
-    float max_spring;  // Store max spring constant for scaling
-
-    DihedralSpring(hid_t grp, CoordNode& pos_):
-        PotentialNode(),
-        n_elem(get_dset_size(2, grp, "id")[0]), pos(pos_), params(n_elem),
-        dihedral_potential_spline(1, 1000)
-    {
-        int n_dep = 4;  // number of atoms that each term depends on 
-        check_size(grp, "id",           n_elem, n_dep);
-        check_size(grp, "equil_angle_deg", n_elem);
-        check_size(grp, "spring_const", n_elem);
-
-        auto& p = params;
-        traverse_dset<2,int>  (grp, "id",              [&](size_t i, size_t j, int   x) {p[i].atom[j]  =x;});
-        traverse_dset<1,float>(grp, "equil_angle_deg", [&](size_t i,           float x) {p[i].equil_dihedral =x;});
-        traverse_dset<1,float>(grp, "spring_const",    [&](size_t i,           float x) {p[i].spring_constant=x;});
-        traverse_dset<1,int>(grp, "dihedral_type", [&](size_t i, int x) {p[i].dihedral_type = x;});
-
-        box_x = read_attribute<float>(grp, ".", "x_len");
-        box_y = read_attribute<float>(grp, ".", "y_len");
-        box_z = read_attribute<float>(grp, ".", "z_len");
-        
-        // Initialize spline parameters for dihedral potential
-        // Find the range of equilibrium dihedrals and spring constants
-        float min_dihedral = std::numeric_limits<float>::max();
-        float max_dihedral = std::numeric_limits<float>::lowest();
-        float max_spring = std::numeric_limits<float>::lowest();
-        
-        for(const auto& p : params) {
-            min_dihedral = std::min(min_dihedral, p.equil_dihedral);
-            max_dihedral = std::max(max_dihedral, p.equil_dihedral);
-            max_spring = std::max(max_spring, p.spring_constant);
-        }
-        
-        // Store max_spring as member variable
-        this->max_spring = max_spring;
-        
-        // Set spline range for dihedral angles (typically -pi to pi radians)
-        dihedral_min = -M_PI_F;
-        dihedral_max = M_PI_F;
-        
-        // Use periodic dihedral potential: V = k * (1 + cos(n*phi - phi0))
-        // For MARTINI, n=1 (multiplicity=1) and phi0 is the equilibrium angle
-        // We'll use a canonical spline for V = 1 + cos(phi - phi0)
-        std::vector<double> dihedral_pot_data(1000);
-        for(int i = 0; i < 1000; ++i) {
-            float phi = dihedral_min + i * (dihedral_max - dihedral_min) / 999.0f;
-            dihedral_pot_data[i] = 1.0 + cos(phi);  // Canonical form: 1 + cos(phi)
-        }
-        
-        // Fit spline
-        dihedral_potential_spline.fit_spline(dihedral_pot_data.data());
-
-    }
-
-    virtual void compute_value(ComputeMode mode) override {
-        Timer timer(string("dihedral_spring"));
-
-        float* posc = pos.output.x.get();
-        float* pos_sens = pos.sens.x.get();
-        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
-        float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
-        if(pot) *pot = 0.f;
-
-        for(int nt=0; nt<n_elem; ++nt) {
-            const auto& p = params[nt];
-            if(hybrid_state && !martini_hybrid::allow_multibody_term_if_active(*hybrid_state, p.atom, 4)) {
-                continue;
-            }
-            Float4 x_orig[4];
-            for(int na: range(4)) x_orig[na] = Float4(posc + 4*params[nt].atom[na]);
-
-            // Reconstruct the unbroken chain (0-1-2-3) across PBC using atom 1 as reference
-            Float4 x[4];
-            x[1] = x_orig[1];
-            
-            float dx0 = x_orig[0].x() - x_orig[1].x();
-            float dy0 = x_orig[0].y() - x_orig[1].y();
-            float dz0 = x_orig[0].z() - x_orig[1].z();
-            simulation_box::minimum_image_scalar(dx0, dy0, dz0, box_x, box_y, box_z);
-            {
-                alignas(16) float disp0[4] = {dx0, dy0, dz0, 0.f};
-                x[0] = x[1] + Float4(disp0);
-            }
-            
-            float dx2 = x_orig[2].x() - x_orig[1].x();
-            float dy2 = x_orig[2].y() - x_orig[1].y();
-            float dz2 = x_orig[2].z() - x_orig[1].z();
-            simulation_box::minimum_image_scalar(dx2, dy2, dz2, box_x, box_y, box_z);
-            {
-                alignas(16) float disp2[4] = {dx2, dy2, dz2, 0.f};
-                x[2] = x[1] + Float4(disp2);
-            }
-            
-            // atom 3 hangs off atom 2, not atom 1
-            float dx3 = x_orig[3].x() - x_orig[2].x();
-            float dy3 = x_orig[3].y() - x_orig[2].y();
-            float dz3 = x_orig[3].z() - x_orig[2].z();
-            simulation_box::minimum_image_scalar(dx3, dy3, dz3, box_x, box_y, box_z);
-            {
-                alignas(16) float disp3[4] = {dx3, dy3, dz3, 0.f};
-                x[3] = x[2] + Float4(disp3);
-            }
-
-            Float4 d[4];
-            float dihedral = dihedral_germ(x[0],x[1],x[2],x[3], d[0],d[1],d[2],d[3]).x();
-
-            // Use appropriate dihedral potential based on type
-            float delta_phi = dihedral - p.equil_dihedral;
-            if(delta_phi > M_PI_F) delta_phi -= 2.0f * M_PI_F;
-            if(delta_phi < -M_PI_F) delta_phi += 2.0f * M_PI_F;
-            
-            if(p.dihedral_type == 1) {
-                // Periodic dihedral: V = k * (1 + cos(phi - phi0))
-                if(delta_phi >= dihedral_min && delta_phi <= dihedral_max) {
-                    // Transform delta_phi to spline coordinate [0, 999]
-                    float phi_coord = (delta_phi - dihedral_min) / (dihedral_max - dihedral_min) * 999.0f;
-                    
-                    // Get potential and force from spline
-                    float result[2];
-                    dihedral_potential_spline.evaluate_value_and_deriv(result, 0, phi_coord);
-                    float dihedral_pot = result[1]; // Index 1 is the value (1 + cos(delta_phi))
-                    float dE_ddelta_spline = result[0]; // Index 0 is the derivative
-                    
-                    // Convert derivative from spline coordinate to physical coordinate
-                    float coord_scale = 999.0f / (dihedral_max - dihedral_min);
-                    float dE_ddelta = dE_ddelta_spline * coord_scale;
-                    float dihedral_force_mag = p.spring_constant * dE_ddelta;
-                    
-                    // Use periodic dihedral potential: V = k * (1 + cos(phi - phi0))
-                    if(pot) *pot += p.spring_constant * dihedral_pot;
-
-                    // Apply force with mass scaling (dihedral_force_mag corresponds to dE/dphi)
-                    auto s = Float4(dihedral_force_mag);
-                    for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
-                } else {
-                    // Fallback to direct calculation for out-of-range periodic dihedrals
-                    if(pot) *pot += p.spring_constant * (1.0f + cos(delta_phi));
-                    
-                    // Force is the derivative of V = k * (1 + cos(phi - phi0))
-                    // dV/dphi = k * (-sin(phi - phi0)) = -k * sin(delta_phi)
-                    auto s = Float4(-p.spring_constant * sin(delta_phi));
-                    for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
-                }
-            } else if(p.dihedral_type == 2) {
-                // Harmonic dihedral: V = 0.5 * k * (phi - phi0)^2
-                if(pot) *pot += 0.5f * p.spring_constant * delta_phi * delta_phi;
-                
-                // Force is the derivative of V = 0.5 * k * (phi - phi0)^2
-                // dV/dphi = k * (phi - phi0) = k * delta_phi
-                auto s = Float4(p.spring_constant * delta_phi);
-                for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
-            } else {
-                // Unknown dihedral type - use harmonic as fallback
-                if(pot) *pot += 0.5f * p.spring_constant * delta_phi * delta_phi;
-                
-                auto s = Float4(p.spring_constant * delta_phi);
-                for(int na: range(4)) d[na].scale_update(s, pos_sens + 4*params[nt].atom[na]);
-            }
-        }
-    }
-    
-};
-static RegisterNodeType<DihedralSpring,1> dihedral_spring_node("dihedral_spring");
-
 // MARTINI potential using spline interpolation for LJ and Coulomb calculations
 struct MartiniPotential : public PotentialNode
 {
@@ -245,7 +59,6 @@ struct MartiniPotential : public PotentialNode
     std::vector<char> coeff_is_zero;
 
     float r_min, r_max;
-    float r_shift, r_scale;
     // Radial points in the combined table. Read from the table rather than assumed: the grid size, like
     // the radial domain, is declared once by py/martini_build_tables.py and carried through the .up.
     int n_grid;
@@ -534,8 +347,6 @@ struct MartiniPotential : public PotentialNode
         n_grid = read_attribute<int>(grp, ".", "n_points");
         if(n_grid < 4)
             throw string("martini particles table declares n_points=" + to_string(n_grid));
-        r_shift = -r_min;
-        r_scale = float(n_grid - 1) / (r_max + r_shift);
 
         // Fit one combined LJ+Coulomb spline per unique coefficient row, looking up
         // its energy grid in the injected per-run martini table by (eps, sig, qq).
@@ -556,9 +367,9 @@ struct MartiniPotential : public PotentialNode
             traverse_dset<1,double>(grp, "unique_sig_ang", [&](size_t i, double x) { h5_sig[i] = (float)x; });
             traverse_dset<1,double>(grp, "unique_charge_product", [&](size_t i, double x) { h5_qq[i] = (float)x; });
 
-            std::vector<double> all_grids(n_triples * 1000);
+            std::vector<double> all_grids(n_triples * size_t(n_grid));
             traverse_dset<2,double>(grp, "combined_energy_grids", [&](size_t row, size_t col, double x) {
-                all_grids[row * 1000 + col] = x;
+                all_grids[row * size_t(n_grid) + col] = x;
             });
 
             std::map<std::tuple<float,float,float>, size_t> h5_index;
@@ -655,8 +466,7 @@ struct MartiniPotential : public PotentialNode
                                    const Vec<3>& pb,
                                    const PairParam& param,
                                    float& pair_potential,
-                                   Vec<3>& pair_force,
-                                   float& out_dist) -> bool {
+                                   Vec<3>& pair_force) -> bool {
             auto dr = pa - pb;
             if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
                 dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
@@ -665,7 +475,6 @@ struct MartiniPotential : public PotentialNode
             auto dist = sqrtf(max(dist2, kMinDistance));
             pair_potential = 0.f;
             pair_force = make_zero<3>();
-            out_dist = dist;
 
             if(dist > cutoff) return false;
 
@@ -688,26 +497,6 @@ struct MartiniPotential : public PotentialNode
         if(pairlist_needs_rebuild(pos1)) {
             rebuild_pairlist(pos1);
         }
-
-        // TEMPORARY per-evaluation pair diagnostics (findings 90): the stored trajectories cannot resolve
-        // the blow-up onset -- frames are ~60 steps apart and no momenta are kept -- so the closest
-        // approach and the largest delivered force are reported here. Enabled by
-        // UPSIDE_MARTINI_PAIR_DIAG and free when unset. Reporting is thresholded so a long run stays
-        // readable: every evaluation whose closest approach is under UPSIDE_MARTINI_PAIR_DIAG_DIST
-        // (default 3.0 A, against a healthy 4.03 A) or whose largest force exceeds
-        // UPSIDE_MARTINI_PAIR_DIAG_FORCE (default 500 E_up/A, against a healthy 35), plus a heartbeat
-        // every UPSIDE_MARTINI_PAIR_DIAG_EVERY evaluations. These thresholds only decide what is
-        // PRINTED -- no force, energy or coordinate is altered. Remove once the trigger is identified.
-        static const bool diag_on = std::getenv("UPSIDE_MARTINI_PAIR_DIAG") != nullptr;
-        static const float diag_dist_thresh = std::getenv("UPSIDE_MARTINI_PAIR_DIAG_DIST")
-            ? atof(std::getenv("UPSIDE_MARTINI_PAIR_DIAG_DIST")) : 3.0f;
-        static const float diag_force_thresh = std::getenv("UPSIDE_MARTINI_PAIR_DIAG_FORCE")
-            ? atof(std::getenv("UPSIDE_MARTINI_PAIR_DIAG_FORCE")) : 500.0f;
-        static const uint64_t diag_every = std::getenv("UPSIDE_MARTINI_PAIR_DIAG_EVERY")
-            ? strtoull(std::getenv("UPSIDE_MARTINI_PAIR_DIAG_EVERY"), nullptr, 10) : 20000ull;
-        static uint64_t diag_step = 0;
-        float diag_min_dist = 1.0e30f, diag_max_force = 0.f;
-        int diag_min_i = -1, diag_min_j = -1, diag_max_i = -1, diag_max_j = -1;
 
         for(int32_t active_idx : active_pair_indices) {
             size_t np = size_t(active_idx);
@@ -755,14 +544,8 @@ struct MartiniPotential : public PotentialNode
 
             Vec<3> force = make_zero<3>();
             float pair_pot = 0.f;
-            float pair_dist = 0.f;
-            if(!eval_pair_force(p1, p2, param, pair_pot, force, pair_dist)) {
+            if(!eval_pair_force(p1, p2, param, pair_pot, force)) {
                 continue;
-            }
-            if(diag_on) {
-                if(pair_dist < diag_min_dist) { diag_min_dist = pair_dist; diag_min_i = i; diag_min_j = j; }
-                float fm = sqrtf(mag2(force));
-                if(fm > diag_max_force) { diag_max_force = fm; diag_max_i = i; diag_max_j = j; }
             }
             if(pot) *pot += pair_pot;
             if(mutable_hybrid && (i_is_protein != j_is_protein)) {
@@ -772,348 +555,29 @@ struct MartiniPotential : public PotentialNode
             update_vec<3>(pos1_sens, i, -force);
             update_vec<3>(pos1_sens, j,  force);
         }
-
-        if(diag_on && (diag_min_dist < diag_dist_thresh || diag_max_force > diag_force_thresh ||
-                       !std::isfinite(diag_max_force) || (diag_step % diag_every) == 0)) {
-            auto klass_of = [&](int a) {
-                if(!hybrid_state || a < 0 ||
-                   a >= (int)hybrid_state->protein_membership.size()) return 'e';
-                return hybrid_state->protein_membership[a] >= 0 ? 'p' : 'e';
-            };
-            printf("[pairdiag] step %llu min_dist %.4f (%d%c-%d%c) max_force %.6g (%d%c-%d%c) pot %.6g\n",
-                   (unsigned long long)diag_step, diag_min_dist,
-                   diag_min_i, klass_of(diag_min_i), diag_min_j, klass_of(diag_min_j),
-                   diag_max_force,
-                   diag_max_i, klass_of(diag_max_i), diag_max_j, klass_of(diag_max_j),
-                   pot ? *pot : 0.f);
-            fflush(stdout);
-        }
-        ++diag_step;
     }
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
 
-struct MartiniScTablePotential : public PotentialNode
-{
-    int n_cb;
-    int n_env;
-    int n_restype;
-    int n_target;
-    int n_grid;
-    int n_layer;
+// Uniform cubic B-spline weights and their derivatives at fraction t of a knot interval.
+static inline void cubic_bspline_weights(float w[4], float dw[4], float t) {
+    float u = 1.f - t;
+    w[0] = (1.f/6.f)*u*u*u;
+    w[1] = (1.f/6.f)*(4.f + t*t*(3.f*t - 6.f));
+    w[2] = (1.f/6.f)*(1.f + 3.f*t*(1.f + t*(1.f - t)));
+    w[3] = (1.f/6.f)*t*t*t;
+    dw[0] = -0.5f*u*u;
+    dw[1] = t*(1.5f*t - 2.f);
+    dw[2] = 0.5f + t*(1.f - 1.5f*t);
+    dw[3] = 0.5f*t*t;
+}
 
-    CoordNode& pos;
-    CoordNode& cb_pos;
-
-    vector<int> cb_index;
-    vector<int> residue_table_index;
-    vector<int> env_atom_index;
-    vector<int> env_target_index;
-
-    float box_x;
-    float box_y;
-    float box_z;
-
-    float grid_start_ang;
-    float grid_step_ang;
-    float cutoff_ang;
-    int n_angle;
-    float cos_start;
-    float cos_step;
-    float cos_end;
-
-    vector<float> radial_table;
-    vector<float> angular_table;
-    vector<float> radial_left_value;
-    vector<float> radial_left_slope;
-    vector<float> angular_left_value;
-    vector<float> angular_left_slope;
-    vector<float> angular_profile_table;
-
-    inline int radial_index(int layer, int grid_idx) const {
-        return layer * n_grid + grid_idx;
-    }
-
-    inline int profile_index(int layer, int angle_idx) const {
-        return layer * n_angle + angle_idx;
-    }
-
-    inline void evaluate_component_value_and_deriv(
-            float& value,
-            float& dVdr,
-            const vector<float>& table,
-            const vector<float>& left_value,
-            const vector<float>& left_slope,
-            int layer,
-            float dist) const {
-        if(dist <= grid_start_ang) {
-            value = left_value[layer] + left_slope[layer] * (dist - grid_start_ang);
-            dVdr = left_slope[layer];
-            return;
-        }
-
-        float radial_coord = (dist - grid_start_ang) / grid_step_ang;
-        int grid_idx = int(floorf(radial_coord));
-        if(grid_idx < 0) grid_idx = 0;
-        if(grid_idx > n_grid - 2) grid_idx = n_grid - 2;
-        float frac = radial_coord - float(grid_idx);
-        float e0 = table[radial_index(layer, grid_idx)];
-        float e1 = table[radial_index(layer, grid_idx + 1)];
-        value = (1.f - frac) * e0 + frac * e1;
-        dVdr = (e1 - e0) / grid_step_ang;
-    }
-
-    inline void evaluate_angular_profile_and_deriv(
-            float& value,
-            float& dVdcoord,
-            int layer,
-            float angular_coord) const {
-        if(n_angle <= 1) {
-            value = angular_profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-
-        if(angular_coord <= cos_start) {
-            value = angular_profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-        if(angular_coord >= cos_end) {
-            value = angular_profile_table[profile_index(layer, n_angle - 1)];
-            dVdcoord = 0.f;
-            return;
-        }
-
-        float angle_coord = (angular_coord - cos_start) / cos_step;
-        int angle_idx = int(floorf(angle_coord));
-        if(angle_idx < 0) angle_idx = 0;
-        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
-        float frac = angle_coord - float(angle_idx);
-        float value_lo = angular_profile_table[profile_index(layer, angle_idx)];
-        float value_hi = angular_profile_table[profile_index(layer, angle_idx + 1)];
-        value = (1.f - frac) * value_lo + frac * value_hi;
-        dVdcoord = (value_hi - value_lo) / cos_step;
-    }
-
-    MartiniScTablePotential(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
-        PotentialNode(),
-        n_cb(get_dset_size(1, grp, "cb_index")[0]),
-        n_env(get_dset_size(1, grp, "env_atom_index")[0]),
-        n_restype(get_dset_size(3, grp, "radial_energy_eup")[0]),
-        n_target(get_dset_size(3, grp, "radial_energy_eup")[1]),
-        n_grid(get_dset_size(3, grp, "radial_energy_eup")[2]),
-        n_layer(n_restype * n_target),
-        pos(pos_),
-        cb_pos(cb_pos_),
-        cb_index(n_cb),
-        residue_table_index(n_cb),
-        env_atom_index(n_env),
-        env_target_index(n_env),
-        box_x(read_attribute<float>(grp, ".", "x_len")),
-        box_y(read_attribute<float>(grp, ".", "y_len")),
-        box_z(read_attribute<float>(grp, ".", "z_len")),
-        grid_start_ang(0.f),
-        grid_step_ang(0.f),
-        cutoff_ang(0.f),
-        n_angle(get_dset_size(3, grp, "angular_profile")[2]),
-        cos_start(0.f),
-        cos_step(0.f),
-        cos_end(0.f),
-        radial_table(n_layer * n_grid, 0.f),
-        angular_table(n_layer * n_grid, 0.f),
-        radial_left_value(n_layer, 0.f),
-        radial_left_slope(n_layer, 0.f),
-        angular_left_value(n_layer, 0.f),
-        angular_left_slope(n_layer, 0.f),
-        angular_profile_table(n_layer * n_angle, 0.f)
-    {
-        check_elem_width_lower_bound(pos, 3);
-        check_elem_width_lower_bound(cb_pos, 6);
-
-        check_size(grp, "residue_table_index", n_cb);
-        check_size(grp, "env_target_index", n_env);
-        check_size(grp, "grid_ang", n_grid);
-        check_size(grp, "cos_theta_grid", n_angle);
-        check_size(grp, "angular_energy_eup", n_restype, n_target, n_grid);
-        check_size(grp, "angular_profile", n_restype, n_target, n_angle);
-
-        if(n_restype <= 0 || n_target <= 0 || n_grid < 2 || n_angle < 1) {
-            throw string("martini_sc_table_potential requires non-empty residue/target/grid dimensions");
-        }
-
-        traverse_dset<1,int>(grp, "cb_index", [&](size_t i, int x) { cb_index[i] = x; });
-        traverse_dset<1,int>(grp, "residue_table_index", [&](size_t i, int x) { residue_table_index[i] = x; });
-        traverse_dset<1,int>(grp, "env_atom_index", [&](size_t i, int x) { env_atom_index[i] = x; });
-        traverse_dset<1,int>(grp, "env_target_index", [&](size_t i, int x) { env_target_index[i] = x; });
-
-        vector<float> grid_ang(n_grid, 0.f);
-        traverse_dset<1,float>(grp, "grid_ang", [&](size_t i, float x) { grid_ang[i] = x; });
-        vector<float> cos_theta_grid(n_angle, 0.f);
-        traverse_dset<1,float>(grp, "cos_theta_grid", [&](size_t i, float x) { cos_theta_grid[i] = x; });
-
-        grid_step_ang = grid_ang[1] - grid_ang[0];
-        if(!(grid_step_ang > 0.f)) {
-            throw string("martini_sc_table_potential grid_ang must be strictly increasing");
-        }
-        for(int i = 2; i < n_grid; ++i) {
-            float step = grid_ang[i] - grid_ang[i-1];
-            if(fabsf(step - grid_step_ang) > 1e-4f * std::max(1.f, fabsf(grid_step_ang))) {
-                throw string("martini_sc_table_potential requires a uniform radial grid");
-            }
-        }
-        grid_start_ang = grid_ang[0];
-        cutoff_ang = grid_ang[n_grid-1];
-        if(!(grid_step_ang > 0.f) || !(cutoff_ang > grid_start_ang)) {
-            throw string("martini_sc_table_potential radial grid is invalid");
-        }
-
-        if(n_angle > 1) {
-            cos_step = cos_theta_grid[1] - cos_theta_grid[0];
-            if(!(cos_step > 0.f)) {
-                throw string("martini_sc_table_potential cos_theta_grid must be strictly increasing");
-            }
-            for(int i = 2; i < n_angle; ++i) {
-                float step = cos_theta_grid[i] - cos_theta_grid[i-1];
-                if(fabsf(step - cos_step) > 1e-4f * std::max(1.f, fabsf(cos_step))) {
-                    throw string("martini_sc_table_potential requires a uniform cos_theta_grid");
-                }
-            }
-            cos_start = cos_theta_grid[0];
-            cos_end = cos_theta_grid[n_angle - 1];
-        } else {
-            cos_start = cos_end = cos_theta_grid[0];
-            cos_step = 1.f;
-        }
-
-        for(int i = 0; i < n_cb; ++i) {
-            if(cb_index[i] < 0 || cb_index[i] >= cb_pos.n_elem) {
-                throw string("martini_sc_table_potential cb_index out of bounds");
-            }
-            if(residue_table_index[i] < 0 || residue_table_index[i] >= n_restype) {
-                throw string("martini_sc_table_potential residue_table_index out of bounds");
-            }
-        }
-        for(int i = 0; i < n_env; ++i) {
-            if(env_atom_index[i] < 0 || env_atom_index[i] >= pos.n_elem) {
-                throw string("martini_sc_table_potential env_atom_index out of bounds");
-            }
-            if(env_target_index[i] < 0 || env_target_index[i] >= n_target) {
-                throw string("martini_sc_table_potential env_target_index out of bounds");
-            }
-        }
-
-        vector<float> radial_eup(n_layer * n_grid, 0.f);
-        vector<float> angular_eup(n_layer * n_grid, 0.f);
-        traverse_dset<3,float>(grp, "radial_energy_eup", [&](size_t ir, size_t it, size_t ig, float x) {
-            radial_eup[radial_index(int(ir * n_target + it), int(ig))] = x;
-        });
-        traverse_dset<3,float>(grp, "angular_energy_eup", [&](size_t ir, size_t it, size_t ig, float x) {
-            angular_eup[radial_index(int(ir * n_target + it), int(ig))] = x;
-        });
-        traverse_dset<3,float>(grp, "angular_profile", [&](size_t ir, size_t it, size_t ia, float x) {
-            angular_profile_table[profile_index(int(ir * n_target + it), int(ia))] = x;
-        });
-
-        for(int layer = 0; layer < n_layer; ++layer) {
-            float radial_tail = radial_eup[radial_index(layer, n_grid - 1)];
-            float angular_tail = angular_eup[radial_index(layer, n_grid - 1)];
-            for(int ig = 0; ig < n_grid; ++ig) {
-                radial_table[radial_index(layer, ig)] =
-                    radial_eup[radial_index(layer, ig)] - radial_tail;
-                angular_table[radial_index(layer, ig)] =
-                    angular_eup[radial_index(layer, ig)] - angular_tail;
-            }
-            radial_left_value[layer] = radial_table[radial_index(layer, 0)];
-            radial_left_slope[layer] =
-                (radial_table[radial_index(layer, 1)] - radial_table[radial_index(layer, 0)]) / grid_step_ang;
-            angular_left_value[layer] = angular_table[radial_index(layer, 0)];
-            angular_left_slope[layer] =
-                (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
-        }
-
-    }
-
-    virtual void update_box_dimensions_anisotropic(float scale_xy, float scale_z) override {
-        box_x *= scale_xy;
-        box_y *= scale_xy;
-        box_z *= scale_z;
-    }
-
-    virtual void compute_value(ComputeMode mode) override {
-        (void)mode;
-        Timer timer(string("martini_sc_table_potential"));
-        potential = 0.f;
-
-        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
-        if(!hybrid_state || !hybrid_state->active) return;
-
-        VecArray posc = pos.output;
-        VecArray pos_sens = pos.sens;
-        VecArray cbc = cb_pos.output;
-        VecArray cb_sens = cb_pos.sens;
-        constexpr float kMinDistance = 1.0e-8f;
-
-        for(int icb = 0; icb < n_cb; ++icb) {
-            int cb_idx = cb_index[icb];
-            int residue_idx = residue_table_index[icb];
-            Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
-            Vec<3> cbp = extract<0,3>(cb_site);
-            Vec<3> cbv = extract<3,6>(cb_site);
-
-            for(int ienv = 0; ienv < n_env; ++ienv) {
-                int atom_idx = env_atom_index[ienv];
-                int target_idx = env_target_index[ienv];
-                int layer = residue_idx * n_target + target_idx;
-                if(layer < 0 || layer >= n_layer) continue;
-
-                Vec<3> envp = load_vec<3>(posc, atom_idx);
-                Vec<3> dr = cbp - envp;
-                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-                }
-
-                float dist2 = mag2(dr);
-                float dist = sqrtf(std::max(dist2, kMinDistance));
-                if(dist >= cutoff_ang) continue;
-
-                Vec<3> displace_unitvec = (1.f / dist) * dr;
-                float cos_theta = dot(displace_unitvec, cbv);
-                float angular_coord = -cos_theta;
-                float value, dVdr, dVdcoord;
-
-                float radial_value = 0.f, radial_dVdr = 0.f;
-                float angular_value = 0.f, angular_dVdr = 0.f;
-                float ang1_value = 0.f, dAng1dcoord = 0.f;
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-                value = radial_value + ang1_value * angular_value;
-                dVdr = radial_dVdr + ang1_value * angular_dVdr;
-                dVdcoord = dAng1dcoord * angular_value;
-
-                potential += value;
-
-                if(dist <= 1.0e-6f) continue;
-                Vec<3> point_grad = dVdr * displace_unitvec +
-                                    (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec);
-                Vec<3> vector_grad = -dVdcoord * displace_unitvec;
-                Vec<6> grad_cb_full;
-                store<0,3>(grad_cb_full, point_grad);
-                store<3,6>(grad_cb_full, vector_grad);
-                Vec<6> grad_cb = grad_cb_full;
-                Vec<3> grad_env = -point_grad;
-
-                update_vec<6>(cb_sens, cb_idx, grad_cb);
-                update_vec<3>(pos_sens, atom_idx, grad_env);
-            }
-        }
-    }
-};
-static RegisterNodeType<MartiniScTablePotential, 2> martini_sc_table_potential_node("martini_sc_table_potential");
-
+// Side-chain/environment energy of every rotamer row: the sum over environment particles of the table
+// V(r, theta) of the row's (residue type, rotamer, target), r the CB-target distance and theta the angle
+// between the CB vector and the CB-to-target direction (0 on the side-chain side). Each table is a clamped
+// cubic spline in r and theta, fit here from the tabulated values as the particle tables are. Both clamped
+// conditions are those of the physical table: it is even in theta about 0 and pi, and its radial grid runs
+// from 0 past the reach of every side-chain bead, where it is zero, so its last node is the cutoff.
 struct MartiniScTableOneBody : public CoordNode
 {
     int n_row;
@@ -1122,6 +586,7 @@ struct MartiniScTableOneBody : public CoordNode
     int n_rotamer_max;
     int n_target;
     int n_grid;
+    int n_theta;
     int n_layer;
 
     CoordNode& pos;
@@ -1139,23 +604,11 @@ struct MartiniScTableOneBody : public CoordNode
     float box_y;
     float box_z;
 
-    float grid_start_ang;
     float grid_step_ang;
     float cutoff_ang;
-    int n_angle;
-    float cos_start;
-    float cos_step;
-    float cos_end;
-
-    vector<float> radial_table;
-    vector<float> angular_table;
-    vector<float> radial_left_value;
-    vector<float> radial_left_slope;
-    vector<float> angular_left_value;
-    vector<float> angular_left_slope;
-    vector<float> angular_profile_table;
-    bool use_full_tensor;
-    vector<float> full_table;
+    float theta_step;
+    // B-spline coefficients of each layer, (n_grid+2) x (n_theta+2) row-major
+    vector<float> spline_coeff;
 
     struct ActiveContact {
         int row;
@@ -1170,18 +623,6 @@ struct MartiniScTableOneBody : public CoordNode
     vector<float> cached_cb_point;
     vector<float> cached_env_pos;
     vector<ActiveContact> active_contacts;
-
-    inline int radial_index(int layer, int grid_idx) const {
-        return layer * n_grid + grid_idx;
-    }
-
-    inline int profile_index(int layer, int angle_idx) const {
-        return layer * n_angle + angle_idx;
-    }
-
-    inline int full_index(int layer, int grid_idx, int angle_idx) const {
-        return (layer * n_grid + grid_idx) * n_angle + angle_idx;
-    }
 
     inline int layer_index(int residue_idx, int rotamer_idx, int target_idx) const {
         return ((residue_idx * n_rotamer_max) + rotamer_idx) * n_target + target_idx;
@@ -1229,6 +670,7 @@ struct MartiniScTableOneBody : public CoordNode
         active_contacts.reserve(std::min<size_t>(size_t(n_row) * size_t(n_env), size_t(1u << 18)));
 
         for(int irow = 0; irow < n_row; ++irow) {
+            if(row_residue_table_index[irow] < 0) continue;
             int cb_idx = row_residue_index[irow];
             Vec<3> cbp = extract<0,3>(load_vec<6>(cbc, cb_idx));
 
@@ -1262,121 +704,39 @@ struct MartiniScTableOneBody : public CoordNode
         active_contacts_valid = true;
     }
 
-    inline void evaluate_component_value_and_deriv(
-            float& value,
-            float& dVdr,
-            const vector<float>& table,
-            const vector<float>& left_value,
-            const vector<float>& left_slope,
-            int layer,
-            float dist) const {
-        if(dist <= grid_start_ang) {
-            value = left_value[layer] + left_slope[layer] * (dist - grid_start_ang);
-            dVdr = left_slope[layer];
-            return;
+    // Value of a layer and its derivatives per Angstrom and per radian, at r < cutoff_ang and theta in [0, pi].
+    inline void evaluate(float& value, float& dVdr, float& dVdtheta, int layer, float dist, float theta) const {
+        float x = dist / grid_step_ang;
+        float y = theta / theta_step;
+        int ix = std::min(int(x), n_grid - 2);
+        int iy = std::min(int(y), n_theta - 2);
+        float wx[4], dwx[4], wy[4], dwy[4];
+        cubic_bspline_weights(wx, dwx, x - float(ix));
+        cubic_bspline_weights(wy, dwy, y - float(iy));
+        const float* c = spline_coeff.data() + (size_t(layer)*(n_grid + 2) + ix)*(n_theta + 2) + iy;
+        float v = 0.f, dx = 0.f, dy = 0.f;
+        for(int a = 0; a < 4; ++a) {
+            const float* row = c + a*(n_theta + 2);
+            float rv = wy[0]*row[0] + wy[1]*row[1] + wy[2]*row[2] + wy[3]*row[3];
+            float rd = dwy[0]*row[0] + dwy[1]*row[1] + dwy[2]*row[2] + dwy[3]*row[3];
+            v  +=  wx[a]*rv;
+            dx += dwx[a]*rv;
+            dy +=  wx[a]*rd;
         }
-
-        float radial_coord = (dist - grid_start_ang) / grid_step_ang;
-        int grid_idx = int(floorf(radial_coord));
-        if(grid_idx < 0) grid_idx = 0;
-        if(grid_idx > n_grid - 2) grid_idx = n_grid - 2;
-        float frac = radial_coord - float(grid_idx);
-        float e0 = table[radial_index(layer, grid_idx)];
-        float e1 = table[radial_index(layer, grid_idx + 1)];
-        value = (1.f - frac) * e0 + frac * e1;
-        dVdr = (e1 - e0) / grid_step_ang;
-    }
-
-    inline void evaluate_angular_profile_and_deriv(
-            float& value,
-            float& dVdcoord,
-            int layer,
-            float angular_coord) const {
-        if(n_angle <= 1) {
-            value = angular_profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-
-        if(angular_coord <= cos_start) {
-            value = angular_profile_table[profile_index(layer, 0)];
-            dVdcoord = 0.f;
-            return;
-        }
-        if(angular_coord >= cos_end) {
-            value = angular_profile_table[profile_index(layer, n_angle - 1)];
-            dVdcoord = 0.f;
-            return;
-        }
-
-        float angle_coord = (angular_coord - cos_start) / cos_step;
-        int angle_idx = int(floorf(angle_coord));
-        if(angle_idx < 0) angle_idx = 0;
-        if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
-        float frac = angle_coord - float(angle_idx);
-        float value_lo = angular_profile_table[profile_index(layer, angle_idx)];
-        float value_hi = angular_profile_table[profile_index(layer, angle_idx + 1)];
-        value = (1.f - frac) * value_lo + frac * value_hi;
-        dVdcoord = (value_hi - value_lo) / cos_step;
-    }
-
-    inline void evaluate_full_tensor_value_and_deriv(
-            float& value,
-            float& dVdr,
-            float& dVdcoord,
-            int layer,
-            float dist,
-            float angular_coord) const {
-        int angle_idx = 0;
-        int angle_next = 0;
-        float angle_frac = 0.f;
-        bool angle_deriv = false;
-
-        if(n_angle > 1) {
-            if(angular_coord <= cos_start) {
-                angle_idx = 0;
-                angle_next = 0;
-            } else if(angular_coord >= cos_end) {
-                angle_idx = n_angle - 1;
-                angle_next = n_angle - 1;
-            } else {
-                float angle_coord = (angular_coord - cos_start) / cos_step;
-                angle_idx = int(floorf(angle_coord));
-                if(angle_idx < 0) angle_idx = 0;
-                if(angle_idx > n_angle - 2) angle_idx = n_angle - 2;
-                angle_next = angle_idx + 1;
-                angle_frac = angle_coord - float(angle_idx);
-                angle_deriv = true;
-            }
-        }
-
-        float radial_coord = (dist - grid_start_ang) / grid_step_ang;
-        int grid_idx = int(floorf(radial_coord));
-        if(grid_idx < 0) grid_idx = 0;
-        if(grid_idx > n_grid - 2) grid_idx = n_grid - 2;
-        float radial_frac = radial_coord - float(grid_idx);
-
-        float v00 = full_table[full_index(layer, grid_idx, angle_idx)];
-        float v10 = full_table[full_index(layer, grid_idx + 1, angle_idx)];
-        float v01 = full_table[full_index(layer, grid_idx, angle_next)];
-        float v11 = full_table[full_index(layer, grid_idx + 1, angle_next)];
-        float v0 = (1.f - radial_frac) * v00 + radial_frac * v10;
-        float v1 = (1.f - radial_frac) * v01 + radial_frac * v11;
-        value = (1.f - angle_frac) * v0 + angle_frac * v1;
-        dVdr = ((1.f - angle_frac) * (v10 - v00) + angle_frac * (v11 - v01)) / grid_step_ang;
-        dVdcoord = angle_deriv
-            ? ((1.f - radial_frac) * (v01 - v00) + radial_frac * (v11 - v10)) / cos_step
-            : 0.f;
+        value = v;
+        dVdr = dx / grid_step_ang;
+        dVdtheta = dy / theta_step;
     }
 
     MartiniScTableOneBody(hid_t grp, CoordNode& pos_, CoordNode& cb_pos_):
         CoordNode(get_dset_size(1, grp, "row_residue_index")[0], 1),
         n_row(get_dset_size(1, grp, "row_residue_index")[0]),
         n_env(get_dset_size(1, grp, "env_atom_index")[0]),
-        n_restype(get_dset_size(4, grp, "rotamer_radial_energy_eup")[0]),
-        n_rotamer_max(get_dset_size(4, grp, "rotamer_radial_energy_eup")[1]),
-        n_target(get_dset_size(4, grp, "rotamer_radial_energy_eup")[2]),
-        n_grid(get_dset_size(4, grp, "rotamer_radial_energy_eup")[3]),
+        n_restype(get_dset_size(5, grp, "rotamer_full_energy_eup")[0]),
+        n_rotamer_max(get_dset_size(5, grp, "rotamer_full_energy_eup")[1]),
+        n_target(get_dset_size(5, grp, "rotamer_full_energy_eup")[2]),
+        n_grid(get_dset_size(5, grp, "rotamer_full_energy_eup")[3]),
+        n_theta(get_dset_size(5, grp, "rotamer_full_energy_eup")[4]),
         n_layer(n_restype * n_rotamer_max * n_target),
         pos(pos_),
         cb_pos(cb_pos_),
@@ -1390,22 +750,10 @@ struct MartiniScTableOneBody : public CoordNode
         box_x(read_attribute<float>(grp, ".", "x_len")),
         box_y(read_attribute<float>(grp, ".", "y_len")),
         box_z(read_attribute<float>(grp, ".", "z_len")),
-        grid_start_ang(0.f),
         grid_step_ang(0.f),
         cutoff_ang(0.f),
-        n_angle(get_dset_size(4, grp, "rotamer_angular_profile")[3]),
-        cos_start(0.f),
-        cos_step(0.f),
-        cos_end(0.f),
-        radial_table(n_layer * n_grid, 0.f),
-        angular_table(n_layer * n_grid, 0.f),
-        radial_left_value(n_layer, 0.f),
-        radial_left_slope(n_layer, 0.f),
-        angular_left_value(n_layer, 0.f),
-        angular_left_slope(n_layer, 0.f),
-        angular_profile_table(n_layer * n_angle, 0.f),
-        use_full_tensor(h5_exists(grp, "rotamer_full_energy_eup")),
-        full_table(n_layer * n_grid * n_angle, 0.f),
+        theta_step(0.f),
+        spline_coeff(size_t(n_layer) * (n_grid + 2) * (n_theta + 2), 0.f),
         cache_buffer(read_attribute<float>(grp, ".", "cache_buffer", 1.f)),
         active_contacts_valid(false),
         cached_box_x(0.f),
@@ -1422,16 +770,11 @@ struct MartiniScTableOneBody : public CoordNode
         check_size(grp, "row_residue_table_index", n_row);
         check_size(grp, "env_target_index", n_env);
         check_size(grp, "grid_ang", n_grid);
-        check_size(grp, "cos_theta_grid", n_angle);
+        check_size(grp, "theta_grid", n_theta);
         check_size(grp, "rotamer_count", n_restype);
-        check_size(grp, "rotamer_angular_energy_eup", n_restype, n_rotamer_max, n_target, n_grid);
-        check_size(grp, "rotamer_angular_profile", n_restype, n_rotamer_max, n_target, n_angle);
-        if(use_full_tensor) {
-            check_size(grp, "rotamer_full_energy_eup", n_restype, n_rotamer_max, n_target, n_grid, n_angle);
-        }
 
-        if(n_restype <= 0 || n_rotamer_max <= 0 || n_target <= 0 || n_grid < 2 || n_angle < 1) {
-            throw string("martini_sc_table_1body requires non-empty residue/rotamer/target/grid dimensions");
+        if(n_restype <= 0 || n_rotamer_max <= 0 || n_target <= 0 || n_grid < 4 || n_theta < 4) {
+            throw string("martini_sc_table_1body requires non-empty residue/rotamer/target dimensions and at least 4 radial and 4 theta nodes");
         }
 
         traverse_dset<1,int>(grp, "row_residue_index", [&](size_t i, int x) { row_residue_index[i] = x; });
@@ -1453,54 +796,45 @@ struct MartiniScTableOneBody : public CoordNode
             row_group_count[i] = (it == group_counts.end() || it->second < 1) ? 1 : it->second;
         }
 
+        // The radial grid must start at the CB, so that it covers every distance, and the theta grid must
+        // span [0, pi]; both uniform.
         vector<float> grid_ang(n_grid, 0.f);
         traverse_dset<1,float>(grp, "grid_ang", [&](size_t i, float x) { grid_ang[i] = x; });
-        vector<float> cos_theta_grid(n_angle, 0.f);
-        traverse_dset<1,float>(grp, "cos_theta_grid", [&](size_t i, float x) { cos_theta_grid[i] = x; });
+        vector<float> theta_grid(n_theta, 0.f);
+        traverse_dset<1,float>(grp, "theta_grid", [&](size_t i, float x) { theta_grid[i] = x; });
 
         grid_step_ang = grid_ang[1] - grid_ang[0];
-        if(!(grid_step_ang > 0.f)) {
-            throw string("martini_sc_table_1body grid_ang must be strictly increasing");
-        }
+        if(grid_ang[0] != 0.f || !(grid_step_ang > 0.f))
+            throw string("martini_sc_table_1body grid_ang must start at 0 and increase");
         for(int i = 2; i < n_grid; ++i) {
             float step = grid_ang[i] - grid_ang[i-1];
             if(fabsf(step - grid_step_ang) > 1e-4f * std::max(1.f, fabsf(grid_step_ang))) {
                 throw string("martini_sc_table_1body requires a uniform radial grid");
             }
         }
-        grid_start_ang = grid_ang[0];
         cutoff_ang = grid_ang[n_grid - 1];
-        if(!(grid_step_ang > 0.f) || !(cutoff_ang > grid_start_ang)) {
-            throw string("martini_sc_table_1body radial grid is invalid");
-        }
 
-        if(n_angle > 1) {
-            cos_step = cos_theta_grid[1] - cos_theta_grid[0];
-            if(!(cos_step > 0.f)) {
-                throw string("martini_sc_table_1body cos_theta_grid must be strictly increasing");
+        theta_step = theta_grid[1] - theta_grid[0];
+        if(fabsf(theta_grid[0]) > 1e-6f || fabsf(theta_grid[n_theta - 1] - M_PI_F) > 1e-5f)
+            throw string("martini_sc_table_1body theta_grid must span [0, pi]");
+        for(int i = 2; i < n_theta; ++i) {
+            float step = theta_grid[i] - theta_grid[i - 1];
+            if(fabsf(step - theta_step) > 1e-5f) {
+                throw string("martini_sc_table_1body requires a uniform theta_grid");
             }
-            for(int i = 2; i < n_angle; ++i) {
-                float step = cos_theta_grid[i] - cos_theta_grid[i - 1];
-                if(fabsf(step - cos_step) > 1e-4f * std::max(1.f, fabsf(cos_step))) {
-                    throw string("martini_sc_table_1body requires a uniform cos_theta_grid");
-                }
-            }
-            cos_start = cos_theta_grid[0];
-            cos_end = cos_theta_grid[n_angle - 1];
-        } else {
-            cos_start = cos_end = cos_theta_grid[0];
-            cos_step = 1.f;
         }
+        theta_step = M_PI_F / float(n_theta - 1);
 
         for(int i = 0; i < n_row; ++i) {
             if(row_residue_index[i] < 0 || row_residue_index[i] >= cb_pos.n_elem) {
                 throw string("martini_sc_table_1body row_residue_index out of bounds");
             }
-            if(row_residue_table_index[i] < 0 || row_residue_table_index[i] >= n_restype) {
+            // -1: a residue without a MARTINI side chain (ALA, GLY), which has no environment term
+            if(row_residue_table_index[i] < -1 || row_residue_table_index[i] >= n_restype) {
                 throw string("martini_sc_table_1body row_residue_table_index out of bounds");
             }
             int res_idx = row_residue_table_index[i];
-            if(row_rotamer_index[i] < 0 || row_rotamer_index[i] >= rotamer_count[res_idx]) {
+            if(res_idx >= 0 && (row_rotamer_index[i] < 0 || row_rotamer_index[i] >= rotamer_count[res_idx])) {
                 throw string("martini_sc_table_1body row_rotamer_index out of bounds");
             }
         }
@@ -1513,55 +847,33 @@ struct MartiniScTableOneBody : public CoordNode
             }
         }
 
-        vector<float> radial_eup(n_layer * n_grid, 0.f);
-        vector<float> angular_eup(n_layer * n_grid, 0.f);
-        traverse_dset<4,float>(grp, "rotamer_radial_energy_eup",
-                [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
-                    radial_eup[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
+        // values (layer, r, theta), then each layer's clamped spline: along r for every theta node, then
+        // along theta for every radial coefficient
+        vector<double> table(size_t(n_layer) * n_grid * n_theta, 0.);
+        traverse_dset<5,float>(grp, "rotamer_full_energy_eup",
+                [&](size_t ir, size_t iro, size_t it, size_t ig, size_t ia, float x) {
+                    table[(size_t(layer_index(int(ir), int(iro), int(it))) * n_grid + ig) * n_theta + ia] = x;
                 });
-        traverse_dset<4,float>(grp, "rotamer_angular_energy_eup",
-                [&](size_t ir, size_t iro, size_t it, size_t ig, float x) {
-                    angular_eup[radial_index(layer_index(int(ir), int(iro), int(it)), int(ig))] = x;
-                });
-        traverse_dset<4,float>(grp, "rotamer_angular_profile",
-                [&](size_t ir, size_t iro, size_t it, size_t ia, float x) {
-                    angular_profile_table[profile_index(layer_index(int(ir), int(iro), int(it)), int(ia))] = x;
-                });
-
-        if(use_full_tensor) {
-            vector<float> full_eup(n_layer * n_grid * n_angle, 0.f);
-            traverse_dset<5,float>(grp, "rotamer_full_energy_eup",
-                    [&](size_t ir, size_t iro, size_t it, size_t ig, size_t ia, float x) {
-                        full_eup[full_index(layer_index(int(ir), int(iro), int(it)), int(ig), int(ia))] = x;
-                    });
-            for(int layer = 0; layer < n_layer; ++layer) {
-                for(int ia = 0; ia < n_angle; ++ia) {
-                    float tail = full_eup[full_index(layer, n_grid - 1, ia)];
-                    for(int ig = 0; ig < n_grid; ++ig) {
-                        full_table[full_index(layer, ig, ia)] =
-                            full_eup[full_index(layer, ig, ia)] - tail;
-                    }
-                }
-            }
-        }
-
+        vector<double> data(std::max(n_grid, n_theta)), coeff(std::max(n_grid, n_theta) + 2);
+        vector<double> temp(3 * (std::max(n_grid, n_theta) + 2));
+        vector<double> radial(size_t(n_grid + 2) * n_theta);
         for(int layer = 0; layer < n_layer; ++layer) {
-            float radial_tail = radial_eup[radial_index(layer, n_grid - 1)];
-            float angular_tail = angular_eup[radial_index(layer, n_grid - 1)];
-            for(int ig = 0; ig < n_grid; ++ig) {
-                radial_table[radial_index(layer, ig)] =
-                    radial_eup[radial_index(layer, ig)] - radial_tail;
-                angular_table[radial_index(layer, ig)] =
-                    angular_eup[radial_index(layer, ig)] - angular_tail;
+            const double* v = table.data() + size_t(layer) * n_grid * n_theta;
+            for(int ia = 0; ia < n_theta; ++ia) {
+                if(v[(n_grid - 1)*n_theta + ia] != 0. || v[(n_grid - 2)*n_theta + ia] != 0.)
+                    throw string("martini_sc_table_1body table does not vanish at its last radial nodes; "
+                                 "rebuild martini.h5 and re-prepare the run");
+                for(int ig = 0; ig < n_grid; ++ig) data[ig] = v[ig*n_theta + ia];
+                solve_clamped_1d_spline_for_bsplines(n_grid + 2, coeff.data(), data.data(), temp.data());
+                for(int ig = 0; ig < n_grid + 2; ++ig) radial[ig*n_theta + ia] = coeff[ig];
             }
-            radial_left_value[layer] = radial_table[radial_index(layer, 0)];
-            radial_left_slope[layer] =
-                (radial_table[radial_index(layer, 1)] - radial_table[radial_index(layer, 0)]) / grid_step_ang;
-            angular_left_value[layer] = angular_table[radial_index(layer, 0)];
-            angular_left_slope[layer] =
-                (angular_table[radial_index(layer, 1)] - angular_table[radial_index(layer, 0)]) / grid_step_ang;
+            float* out = spline_coeff.data() + size_t(layer) * (n_grid + 2) * (n_theta + 2);
+            for(int ig = 0; ig < n_grid + 2; ++ig) {
+                for(int ia = 0; ia < n_theta; ++ia) data[ia] = radial[ig*n_theta + ia];
+                solve_clamped_1d_spline_for_bsplines(n_theta + 2, coeff.data(), data.data(), temp.data());
+                for(int ia = 0; ia < n_theta + 2; ++ia) out[ig*(n_theta + 2) + ia] = float(coeff[ia]);
+            }
         }
-
     }
 
     virtual void compute_value(ComputeMode mode) override {
@@ -1584,43 +896,23 @@ struct MartiniScTableOneBody : public CoordNode
             int irow = active.row;
             int ienv = active.env;
             int cb_idx = row_residue_index[irow];
-            int residue_idx = row_residue_table_index[irow];
-            int rotamer_idx = row_rotamer_index[irow];
-            int atom_idx = env_atom_index[ienv];
-            int target_idx = env_target_index[ienv];
-            int layer = layer_index(residue_idx, rotamer_idx, target_idx);
+            int layer = layer_index(row_residue_table_index[irow], row_rotamer_index[irow], env_target_index[ienv]);
 
             Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
             Vec<3> cbp = extract<0,3>(cb_site);
             Vec<3> cbv = extract<3,6>(cb_site);
-            Vec<3> envp = load_vec<3>(posc, atom_idx);
-            Vec<3> dr = cbp - envp;
+            Vec<3> dr = load_vec<3>(posc, env_atom_index[ienv]) - cbp;
             if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
                 dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
             }
 
-            float dist2 = mag2(dr);
-            float dist = sqrtf(std::max(dist2, kMinDistance));
+            float dist = sqrtf(std::max(mag2(dr), kMinDistance));
             if(dist >= cutoff_ang) continue;
 
-            Vec<3> displace_unitvec = (1.f / dist) * dr;
-            float angular_coord = -dot(displace_unitvec, cbv);
-
-            float radial_value = 0.f, radial_dVdr = 0.f;
-            float angular_value = 0.f, angular_dVdr = 0.f;
-            float ang1_value = 0.f, dAng1dcoord = 0.f;
-            if(use_full_tensor) {
-                evaluate_full_tensor_value_and_deriv(
-                    radial_value, radial_dVdr, dAng1dcoord, layer, dist, angular_coord);
-                output(0, irow) += radial_value;
-            } else {
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-                output(0, irow) += radial_value + ang1_value * angular_value;
-            }
+            float cos_theta = std::max(-1.f, std::min(1.f, dot(dr, cbv) / (dist * mag(cbv))));
+            float value, dVdr, dVdtheta;
+            evaluate(value, dVdr, dVdtheta, layer, dist, acosf(cos_theta));
+            output(0, irow) += value;
         }
 
         for(int irow = 0; irow < n_row; ++irow) {
@@ -1652,61 +944,44 @@ struct MartiniScTableOneBody : public CoordNode
             if(row_scale == 0.f) continue;
 
             int cb_idx = row_residue_index[irow];
-            int residue_idx = row_residue_table_index[irow];
-            int rotamer_idx = row_rotamer_index[irow];
-            int group_count = std::max(1, row_group_count[irow]);
-            row_scale = row_scale / float(group_count);
+            int atom_idx = env_atom_index[ienv];
+            int layer = layer_index(row_residue_table_index[irow], row_rotamer_index[irow], env_target_index[ienv]);
+            row_scale = row_scale / float(std::max(1, row_group_count[irow]));
 
             Vec<6> cb_site = load_vec<6>(cbc, cb_idx);
             Vec<3> cbp = extract<0,3>(cb_site);
             Vec<3> cbv = extract<3,6>(cb_site);
-
-            int atom_idx = env_atom_index[ienv];
-            int target_idx = env_target_index[ienv];
-            int layer = layer_index(residue_idx, rotamer_idx, target_idx);
-
-            Vec<3> envp = load_vec<3>(posc, atom_idx);
-            Vec<3> dr = cbp - envp;
+            Vec<3> dr = load_vec<3>(posc, atom_idx) - cbp;
             if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
                 dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
             }
 
-            float dist2 = mag2(dr);
-            float dist = sqrtf(std::max(dist2, kMinDistance));
+            float dist = sqrtf(std::max(mag2(dr), kMinDistance));
             if(dist >= cutoff_ang || dist <= 1.0e-6f) continue;
 
-            Vec<3> displace_unitvec = (1.f / dist) * dr;
-            float cos_theta = dot(displace_unitvec, cbv);
-            float angular_coord = -cos_theta;
-            float dVdr, dVdcoord;
+            Vec<3> u = (1.f / dist) * dr;
+            float inv_cbv = 1.f / mag(cbv);
+            Vec<3> v = inv_cbv * cbv;
+            float cos_theta = std::max(-1.f, std::min(1.f, dot(u, v)));
+            float value, dVdr, dVdtheta;
+            evaluate(value, dVdr, dVdtheta, layer, dist, acosf(cos_theta));
 
-            float radial_value = 0.f, radial_dVdr = 0.f;
-            float angular_value = 0.f, angular_dVdr = 0.f;
-            float ang1_value = 0.f, dAng1dcoord = 0.f;
-            if(use_full_tensor) {
-                evaluate_full_tensor_value_and_deriv(
-                    radial_value, radial_dVdr, dAng1dcoord, layer, dist, angular_coord);
-                dVdr = radial_dVdr;
-                dVdcoord = dAng1dcoord;
-            } else {
-                evaluate_component_value_and_deriv(
-                    radial_value, radial_dVdr, radial_table, radial_left_value, radial_left_slope, layer, dist);
-                evaluate_component_value_and_deriv(
-                    angular_value, angular_dVdr, angular_table, angular_left_value, angular_left_slope, layer, dist);
-                evaluate_angular_profile_and_deriv(ang1_value, dAng1dcoord, layer, angular_coord);
-                dVdr = radial_dVdr + ang1_value * angular_dVdr;
-                dVdcoord = dAng1dcoord * angular_value;
-            }
-            Vec<3> point_grad = row_scale * (
-                dVdr * displace_unitvec +
-                (-dVdcoord / dist) * (cbv - cos_theta * displace_unitvec));
-            Vec<3> vector_grad = row_scale * (-dVdcoord * displace_unitvec);
-            Vec<6> grad_cb_full;
-            store<0,3>(grad_cb_full, point_grad);
-            store<3,6>(grad_cb_full, vector_grad);
-            Vec<6> grad_cb = grad_cb_full;
-            Vec<3> grad_env = -point_grad;
+            // theta is the angle between the directions u and v = cbv/|cbv|: dtheta/d(target) = -w/dist and
+            // dtheta/d(cbv) = -w_v/|cbv|, with w and w_v the unit vectors perpendicular to u (toward v) and to
+            // v (toward u). On the CB axis they are undefined and dV/dtheta is exactly zero (clamped spline),
+            // so the angular term vanishes there.
+            Vec<3> perp_u = v - cos_theta * u;
+            Vec<3> perp_v = u - cos_theta * v;
+            float norm_u = mag(perp_u);
+            float norm_v = mag(perp_v);
+            Vec<3> grad_env = row_scale * dVdr * u;
+            Vec<3> vector_grad = make_zero<3>();
+            if(norm_u > 0.f) grad_env += (-row_scale * dVdtheta / (dist * norm_u)) * perp_u;
+            if(norm_v > 0.f) vector_grad = (-row_scale * dVdtheta * inv_cbv / norm_v) * perp_v;
 
+            Vec<6> grad_cb;
+            store<0,3>(grad_cb, -grad_env);
+            store<3,6>(grad_cb, vector_grad);
             update_vec<6>(cb_sens, cb_idx, grad_cb);
             update_vec<3>(pos_sens, atom_idx, grad_env);
         }
@@ -1714,7 +989,12 @@ struct MartiniScTableOneBody : public CoordNode
 };
 static RegisterNodeType<MartiniScTableOneBody, 2> martini_sc_table_1body_node("martini_sc_table_1body");
 
-// Bond potential using spline interpolation
+// Harmonic bond V = k/2 (r - r0)^2, evaluated from one canonical spline of delta^2/2 in delta = r - r0.
+// A bond length is a minimum-image distance, never longer than half the box diagonal, so the spline is fit
+// over delta from -max(r0) (r = 0) to that half diagonal minus min(r0) and evaluates every bond. The cubic
+// spline of a quadratic is exact apart from the zero end slopes of the clamped fit, whose error decays by
+// 2 - sqrt(3) per knot; the fit runs n_pad knots past both ends of the evaluated range, which puts that error
+// below float round-off inside it. A box that grows past the fitted reach refits the spline.
 struct DistSpring : public PotentialNode
 {
     struct Params {
@@ -1723,39 +1003,55 @@ struct DistSpring : public PotentialNode
         float spring_constant;
     };
 
+    static constexpr int n_knot = 1000;
+    static constexpr int n_pad = 24;
+
     int n_elem;
     CoordNode& pos;
     vector<Params> params;
-    vector<int> bonded_atoms;
-    
+
     // Box dimensions for minimum image
     float box_x, box_y, box_z;
-    
-    // Spline interpolation for bond potential
+
     LayeredClampedSpline1D<1> bond_potential_spline;
-    
-    // Spline parameters
-    float bond_r_min, bond_r_max;
-    // Canonical delta-r spline domain (shared across bonds)
-    float bond_delta_min, bond_delta_max;
-    float max_spring;  // Store max spring constant for scaling
+    float min_equil, max_equil;
+    float bond_reach;                     // half box diagonal the spline was fit for
+    float bond_delta_min, bond_delta_max; // fitted delta domain, padded past the evaluated range
+
+    void fit_bond_spline() {
+        bond_reach = 0.5f * sqrtf(box_x*box_x + box_y*box_y + box_z*box_z);
+        float lo = -max_equil;
+        float hi = bond_reach - min_equil;
+        float step = (hi - lo) / float(n_knot - 1 - 2*n_pad);
+        bond_delta_min = lo - n_pad*step;
+        bond_delta_max = hi + n_pad*step;
+        std::vector<double> bond_pot_data(n_knot);
+        for(int i = 0; i < n_knot; ++i) {
+            double delta_r = bond_delta_min + i * double(bond_delta_max - bond_delta_min) / (n_knot - 1);
+            bond_pot_data[i] = 0.5 * delta_r * delta_r;
+        }
+        bond_potential_spline.fit_spline(bond_pot_data.data());
+    }
+
+    void set_box(float bx, float by, float bz) {
+        box_x = bx; box_y = by; box_z = bz;
+        if(0.5f * sqrtf(box_x*box_x + box_y*box_y + box_z*box_z) > bond_reach) fit_bond_spline();
+    }
 
     DistSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
         n_elem(get_dset_size(2, grp, "id")[0]), pos(pos_), params(n_elem),
-        bond_potential_spline(1, 1000)
+        bond_potential_spline(1, n_knot)
     {
         int n_dep = 2;  // number of atoms that each term depends on 
         check_size(grp, "id",           n_elem, n_dep);
         check_size(grp, "equil_dist",   n_elem);
         check_size(grp, "spring_const", n_elem);
-        check_size(grp, "bonded_atoms", n_elem);
 
         auto& p = params;
         traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) {p[i].atom[j] = x;});
         traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) {p[i].equil_dist = x;});
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) {p[i].spring_constant = x;});
-        traverse_dset<1,int>  (grp, "bonded_atoms", [&](size_t i,           int   x) {bonded_atoms.push_back(x);});
 
         // Read box dimensions
         if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
@@ -1773,45 +1069,16 @@ struct DistSpring : public PotentialNode
             box_y = wall_yhi - wall_ylo;
             box_z = wall_zhi - wall_zlo;
         }
+        if(!(box_x > 0.f && box_y > 0.f && box_z > 0.f))
+            throw string("dist_spring requires a positive periodic box");
 
-        // Initialize spline parameters for bond potential
-        // Find the range of equilibrium distances and spring constants
-        float min_equil = std::numeric_limits<float>::max();
-        float max_equil = std::numeric_limits<float>::lowest();
-        float max_spring = std::numeric_limits<float>::lowest();
-        
+        min_equil = std::numeric_limits<float>::max();
+        max_equil = std::numeric_limits<float>::lowest();
         for(const auto& p : params) {
             min_equil = std::min(min_equil, p.equil_dist);
             max_equil = std::max(max_equil, p.equil_dist);
-            max_spring = std::max(max_spring, p.spring_constant);
         }
-        
-        // Store max_spring as member variable
-        this->max_spring = max_spring;
-        
-        // Define the bond r-range to start at 0 and extend to r_max
-        bond_r_min = 0.0f;
-        // Prefer an attribute if provided; otherwise choose a conservative default
-        if(attribute_exists(grp, ".", "bond_r_max")) {
-            bond_r_max = read_attribute<float>(grp, ".", "bond_r_max");
-        } else {
-            // heuristic default: at least 2x the largest equilibrium distance or 5 A
-            bond_r_max = std::max(2.0f * max_equil, 5.0f);
-        }
-        // Define and store a GLOBAL delta-r domain shared by all bonds corresponding to r in [0, bond_r_max]
-        bond_delta_min = bond_r_min - max_equil; // smallest possible (r - r0) with r_min=0
-        bond_delta_max = bond_r_max - min_equil; // largest possible (r - r0)
-
-        // Generate canonical spline in delta-r: pot=0.5*delta^2
-        std::vector<double> bond_pot_data(1000);
-        for(int i = 0; i < 1000; ++i) {
-            float delta_r = bond_delta_min + i * (bond_delta_max - bond_delta_min) / 999.0f;
-            bond_pot_data[i] = 0.5 * delta_r * delta_r;
-        }
-        
-        // Fit spline
-        bond_potential_spline.fit_spline(bond_pot_data.data());
-
+        fit_bond_spline();
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -1823,6 +1090,7 @@ struct DistSpring : public PotentialNode
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
 
+        float coord_scale = float(n_knot - 1) / (bond_delta_max - bond_delta_min);
         for(int nt=0; nt<n_elem; ++nt) {
             auto& p = params[nt];
             if(hybrid_state && !martini_hybrid::allow_intra_protein_pair_if_active(*hybrid_state, p.atom[0], p.atom[1])) {
@@ -1835,47 +1103,26 @@ struct DistSpring : public PotentialNode
             // Apply PBC minimum image convention for distance calculation
             auto disp = simulation_box::minimum_image(x1 - x2, box_x, box_y, box_z);
             float dist = mag(disp);
-            
-            // Use spline interpolation for bond potential and force (in delta-r space)
-            float delta_r = dist - p.equil_dist;
-            if(delta_r >= bond_delta_min && delta_r <= bond_delta_max) {
-                // Transform delta_r to spline coordinate [0, 999] (same as LJ and Coulomb splines)
-                float r_coord = (delta_r - bond_delta_min) / (bond_delta_max - bond_delta_min) * 999.0f;
-                
-                // Get potential and force from single spline
-                float result[2];
-                bond_potential_spline.evaluate_value_and_deriv(result, 0, r_coord);
-                float bond_pot = result[1]; // Index 1 is the value
-                float bond_deriv_spline = result[0]; // Index 0 is the derivative w.r.t. spline coordinate
-                
-                
-                // Convert derivative from spline coordinate to physical coordinate (dE/d(delta_r))
-                // dE/d(delta_r) = dE/d(coord) * d(coord)/d(delta_r)
-                float coord_scale = 999.0f / (bond_delta_max - bond_delta_min);
-                float bond_deriv = bond_deriv_spline * coord_scale;
-                
-                // Scale by spring constant to match parameterized harmonic
-                if(pot) *pot += p.spring_constant * bond_pot;
-                
-                // Apply force: F = -dE/dr, here dE/dr = k * dE/d(delta_r) * d(delta_r)/dr with d(delta_r)/dr = 1
-                // The derivative is now correctly dE/d(delta_r), so we use it directly
-                auto deriv = (p.spring_constant * bond_deriv / dist) * disp;
-                update_vec(pos_sens, p.atom[0],  deriv);
-                update_vec(pos_sens, p.atom[1], -deriv);
-            } else {
-                // Fallback to direct calculation for out-of-range distances
-                auto deriv = p.spring_constant * (1.f - p.equil_dist*inv_mag(disp)) * disp;
-                if(pot) *pot += 0.5f * p.spring_constant * sqr(mag(disp) - p.equil_dist);
-                update_vec(pos_sens, p.atom[0],  deriv);
-                update_vec(pos_sens, p.atom[1], -deriv);
-            }
+
+            // Canonical spline in delta-r: value delta^2/2 and its derivative per unit delta
+            float result[2];
+            bond_potential_spline.evaluate_value_and_deriv(result, 0, (dist - p.equil_dist - bond_delta_min) * coord_scale);
+            if(pot) *pot += p.spring_constant * result[1];
+
+            auto deriv = (p.spring_constant * result[0] * coord_scale / dist) * disp;
+            update_vec(pos_sens, p.atom[0],  deriv);
+            update_vec(pos_sens, p.atom[1], -deriv);
         }
     }
     
 };
 static RegisterNodeType<DistSpring, 1> dist_spring_node("dist_spring");
 
-// Angle potential using spline interpolation
+// Cosine-harmonic angle, V = k/2 (cos(theta) - cos(theta0))^2 (GROMACS angle type 2), evaluated from one
+// canonical spline of delta^2/2 in delta = cos(theta) - cos(theta0). Every delta lies in [-2, 2], so the spline
+// is fit over that range and evaluates every angle. The cubic spline of a quadratic is exact apart from the
+// zero end slopes of the clamped fit, whose error decays by 2 - sqrt(3) per knot; the fit runs n_pad knots
+// past both ends, which puts that error below float round-off inside the range.
 struct AngleSpring : public PotentialNode
 {
     struct Params {
@@ -1884,24 +1131,23 @@ struct AngleSpring : public PotentialNode
         float spring_constant;
     };
 
+    static constexpr int n_knot = 1000;
+    static constexpr int n_pad = 24;
+
     int n_elem;
     CoordNode& pos;
     vector<Params> params;
     
     // Box dimensions for minimum image
     float box_x, box_y, box_z;
-    
-    // Spline interpolation for angle potential
+
     LayeredClampedSpline1D<1> angle_potential_spline;
-    
-    // Spline parameters
-    float angle_cos_min, angle_cos_max;
-    float max_spring;  // Store max spring constant for scaling
+    float angle_delta_min, angle_delta_max; // fitted delta domain, padded past [-2, 2]
 
     AngleSpring(hid_t grp, CoordNode& pos_):
         PotentialNode(),
         n_elem(get_dset_size(2, grp, "id")[0]), pos(pos_), params(n_elem),
-        angle_potential_spline(1, 1000)
+        angle_potential_spline(1, n_knot)
     {
         int n_dep = 3;  // number of atoms that each term depends on 
         check_size(grp, "id",              n_elem, n_dep);
@@ -1930,45 +1176,15 @@ struct AngleSpring : public PotentialNode
             box_z = wall_zhi - wall_zlo;
         }
 
-        // Initialize spline parameters for angle potential
-        // Find the range of equilibrium angles and spring constants
-        float min_angle = std::numeric_limits<float>::max();
-        float max_angle = std::numeric_limits<float>::lowest();
-        float max_spring = std::numeric_limits<float>::lowest();
-        
-        for(const auto& p : params) {
-            min_angle = std::min(min_angle, p.equil_angle_deg);
-            max_angle = std::max(max_angle, p.equil_angle_deg);
-            max_spring = std::max(max_spring, p.spring_constant);
-        }
-        
-        // Store max_spring as member variable
-        this->max_spring = max_spring;
-        
-        // Set spline range for delta_cos = cos(theta) - cos(theta0)
-        // Find the range of cos(equilibrium angles) to set proper delta_cos bounds
-        float min_cos_equil = 1.0f;
-        float max_cos_equil = -1.0f;
-        for(const auto& p : params) {
-            float cos_equil = cosf(p.equil_angle_deg * M_PI / 180.0f);
-            min_cos_equil = std::min(min_cos_equil, cos_equil);
-            max_cos_equil = std::max(max_cos_equil, cos_equil);
-        }
-
-        // Set conservative bounds for delta_cos
-        angle_cos_min = -2.0f;  // Allow for angles deviating significantly from equilibrium
-        angle_cos_max = 2.0f;
-
-        // Canonical spline for angles: pot = 0.5*(delta_cos)^2 (cosine-based harmonic potential)
-        std::vector<double> angle_pot_data(1000);
-        for(int i = 0; i < 1000; ++i) {
-            float delta_cos = angle_cos_min + i * (angle_cos_max - angle_cos_min) / 999.0f;
+        float step = 4.f / float(n_knot - 1 - 2*n_pad);
+        angle_delta_min = -2.f - n_pad*step;
+        angle_delta_max =  2.f + n_pad*step;
+        std::vector<double> angle_pot_data(n_knot);
+        for(int i = 0; i < n_knot; ++i) {
+            double delta_cos = angle_delta_min + i * double(angle_delta_max - angle_delta_min) / (n_knot - 1);
             angle_pot_data[i] = 0.5 * delta_cos * delta_cos;
         }
-        
-        // Fit spline
         angle_potential_spline.fit_spline(angle_pot_data.data());
-
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -1980,6 +1196,7 @@ struct AngleSpring : public PotentialNode
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
         if(pot) *pot = 0.f;
 
+        float coord_scale = float(n_knot - 1) / (angle_delta_max - angle_delta_min);
         for(int nt=0; nt<n_elem; ++nt) {
             auto& p = params[nt];
             if(hybrid_state && !martini_hybrid::allow_multibody_term_if_active(*hybrid_state, p.atom, 3)) {
@@ -2013,10 +1230,13 @@ struct AngleSpring : public PotentialNode
             float cos_theta0 = cosf(equil_angle_rad);
             float delta_cos = dp - cos_theta0; // dp is cos(theta), cos_theta0 is cos(theta_0)
 
-            if (pot) *pot += 0.5f * p.spring_constant * delta_cos * delta_cos;
+            // Canonical spline in delta_cos: value delta_cos^2/2 and its derivative per unit delta_cos
+            float result[2];
+            angle_potential_spline.evaluate_value_and_deriv(result, 0, (delta_cos - angle_delta_min) * coord_scale);
+            if (pot) *pot += p.spring_constant * result[1];
 
             // Forces via chain rule: F = -dV/dx = -(dV/d(cos(theta))) * (d(cos(theta))/dx)
-            float dV_dcos = p.spring_constant * delta_cos;
+            float dV_dcos = p.spring_constant * result[0] * coord_scale;
             
             // Use standard formulas to get forces on atoms from dV/d(cos(theta))
             float3 r1 = disp1;
@@ -2116,61 +1336,17 @@ struct PositionRestraint : public PotentialNode
 static RegisterNodeType<PositionRestraint, 1> position_restraint_node("restraint_position");
 
 namespace {
-void update_martini_node_boxes(DerivEngine& engine, float scale_xy, float scale_z) {
-    if(!(scale_xy > 0.f) || !(scale_z > 0.f)) return;   // domain precondition: a box length is positive
-
+void update_martini_node_boxes(DerivEngine& engine, float box_x, float box_y, float box_z) {
     for(auto& n : engine.nodes) {
         if(!n.computation) continue;
-        if(is_prefix("martini_potential", n.name)) {
-            if(auto* node = dynamic_cast<MartiniPotential*>(n.computation.get())) {
-                node->box_x *= scale_xy;
-                node->box_y *= scale_xy;
-                node->box_z *= scale_z;
-            }
-            continue;
-        }
-        if(is_prefix("martini_sc_table_potential", n.name)) {
-            if(auto* node = dynamic_cast<MartiniScTablePotential*>(n.computation.get())) {
-                node->box_x *= scale_xy;
-                node->box_y *= scale_xy;
-                node->box_z *= scale_z;
-            }
-            continue;
-        }
-        if(is_prefix("martini_sc_table_1body", n.name)) {
-            if(auto* node = dynamic_cast<MartiniScTableOneBody*>(n.computation.get())) {
-                node->box_x *= scale_xy;
-                node->box_y *= scale_xy;
-                node->box_z *= scale_z;
-            }
-            continue;
-        }
-        if(is_prefix("dist_spring", n.name)) {
-            if(auto* node = dynamic_cast<DistSpring*>(n.computation.get())) {
-                node->box_x *= scale_xy;
-                node->box_y *= scale_xy;
-                node->box_z *= scale_z;
-            }
-            continue;
-        }
-        if(is_prefix("angle_spring", n.name)) {
-            if(auto* node = dynamic_cast<AngleSpring*>(n.computation.get())) {
-                node->box_x *= scale_xy;
-                node->box_y *= scale_xy;
-                node->box_z *= scale_z;
-            }
-            continue;
-        }
-        if(is_prefix("dihedral_spring", n.name)) {
-            if(auto* node = dynamic_cast<DihedralSpring*>(n.computation.get())) {
-                node->box_x *= scale_xy;
-                node->box_y *= scale_xy;
-                node->box_z *= scale_z;
-            }
-            continue;
-        }
-        if(auto* node = dynamic_cast<PotentialNode*>(n.computation.get())) {
-            node->update_box_dimensions_anisotropic(scale_xy, scale_z);
+        if(auto* node = dynamic_cast<MartiniPotential*>(n.computation.get())) {
+            node->box_x = box_x; node->box_y = box_y; node->box_z = box_z;
+        } else if(auto* node = dynamic_cast<MartiniScTableOneBody*>(n.computation.get())) {
+            node->box_x = box_x; node->box_y = box_y; node->box_z = box_z;
+        } else if(auto* node = dynamic_cast<DistSpring*>(n.computation.get())) {
+            node->set_box(box_x, box_y, box_z);
+        } else if(auto* node = dynamic_cast<AngleSpring*>(n.computation.get())) {
+            node->box_x = box_x; node->box_y = box_y; node->box_z = box_z;
         }
     }
 }
@@ -2183,110 +1359,78 @@ struct MartiniNodeRegistrar {
 static MartiniNodeRegistrar s_martini_node_registrar;
 }
 
-// Lightweight pre-run minimization using gradient descent with backtracking
+// Steepest descent with a bounded step, as GROMACS "steep": each trial moves the atom with the largest
+// force by `max_step` A and every other atom in proportion, so a trial is a length however large the force.
+// A step proportional to the gradient instead throws a pair at a hard-core overlap (gradient 1e17 E_up/A)
+// 1e14 A in one trial. The step grows by 1.2 after an accepted trial and shrinks by 0.2 after a rejected one.
 void martini_run_minimization(DerivEngine& engine,
                                           int max_iterations,
                                           double energy_tolerance,
                                           double force_tolerance,
-                                          double initial_step_size,
+                                          double max_step,
                                           int verbose)
 {
-    martini_fix_rigid::apply_fix_rigid_projection(engine, engine.pos->output);
-    engine.compute(PotentialAndDerivMode);
-    martini_fix_rigid::apply_fix_rigid_minimization(engine, engine.pos->output, engine.pos->sens);
-    double prev_potential = engine.potential;
-    if(verbose) printf("MIN: Initial potential %.6f\n", prev_potential);
-
     const int n_atom = engine.pos->n_elem;
     VecArray position = engine.pos->output;
 
-    auto grad_norm = [&]() -> double {
-        double sum = 0.0;
-        for(int i=0;i<n_atom;++i){
-            float3 g = load_vec<3>(engine.pos->sens, i);
-            sum += double(g.x())*g.x() + double(g.y())*g.y() + double(g.z())*g.z();
-        }
-        return sqrt(sum);
+    auto evaluate = [&]() {
+        martini_fix_rigid::apply_fix_rigid_projection(engine, position);
+        engine.compute(PotentialAndDerivMode);
+        martini_fix_rigid::apply_fix_rigid_minimization(engine, position, engine.pos->sens);
+        return double(engine.potential);
     };
 
-    std::vector<float> saved_pos(3*n_atom);
-    std::vector<float> descent(3*n_atom);
+    double potential = evaluate();
+    if(verbose) printf("MIN: Initial potential %.6f\n", potential);
 
+    std::vector<float> saved_pos(3*n_atom), saved_grad(3*n_atom);
+    double step = max_step;
     int iter = 0;
-    double step = initial_step_size;
-    while(iter < max_iterations){
-        // Apply fix rigid constraints to forces before building descent
-        martini_fix_rigid::apply_fix_rigid_minimization(engine, position, engine.pos->sens);
-        
-        // Save positions and build descent = -grad
-        for(int i=0;i<n_atom;++i){
-            float3 p = load_vec<3>(position, i);
-            saved_pos[3*i+0] = p.x();
-            saved_pos[3*i+1] = p.y();
-            saved_pos[3*i+2] = p.z();
-            float3 g = load_vec<3>(engine.pos->sens, i);
-            descent[3*i+0] = -g.x();
-            descent[3*i+1] = -g.y();
-            descent[3*i+2] = -g.z();
+    for(; iter < max_iterations; ++iter) {
+        double fmax = 0.0;
+        for(int i=0; i<n_atom; ++i) {
+            fmax = std::max(fmax, double(mag(load_vec<3>(engine.pos->sens, i))));
+            for(int d=0; d<3; ++d) {
+                saved_pos [3*i+d] = position(d,i);
+                saved_grad[3*i+d] = engine.pos->sens(d,i);
+            }
         }
-
-        double gnorm = grad_norm();
-        if(gnorm < force_tolerance){
-            if(verbose) printf("MIN: Converged by force tol |grad|=%.3g at iter %d\n", gnorm, iter);
+        if(fmax < force_tolerance) {
+            if(verbose) printf("MIN: Converged by force tol max|grad|=%.3g at iter %d\n", fmax, iter);
             break;
         }
 
-        // Backtracking line search
-        double alpha = step;
-        const double min_alpha = 1e-6;
-        bool accepted = false;
-        double best_pot = prev_potential;
-        while(alpha >= min_alpha){
-            for(int i=0;i<n_atom;++i){
-                auto p = make_vec3(
-                    saved_pos[3*i+0] + float(alpha)*descent[3*i+0],
-                    saved_pos[3*i+1] + float(alpha)*descent[3*i+1],
-                    saved_pos[3*i+2] + float(alpha)*descent[3*i+2]
-                );
-                store_vec<3>(position, i, p);
-            }
-            martini_fix_rigid::apply_fix_rigid_projection(engine, position);
-            engine.compute(PotentialAndDerivMode);
-            martini_fix_rigid::apply_fix_rigid_minimization(engine, position, engine.pos->sens);
-            if(engine.potential <= best_pot){
-                best_pot = engine.potential;
-                accepted = true;
+        float scale = float(step/fmax);
+        for(int i=0; i<n_atom; ++i)
+            for(int d=0; d<3; ++d) position(d,i) = saved_pos[3*i+d] - scale*saved_grad[3*i+d];
+        double trial = evaluate();
+
+        if(trial < potential) {
+            double dE = potential - trial;
+            potential = trial;
+            if(verbose && !(iter%100))
+                printf("MIN: iter %5d step %.3g A E %.6f dE %.3g max|grad| %.3g\n", iter, step, potential, dE, fmax);
+            if(dE < energy_tolerance) {
+                if(verbose) printf("MIN: Converged by energy tol dE=%.3g at iter %d\n", dE, iter);
+                ++iter;
                 break;
             }
-            alpha *= 0.5;
-        }
-
-        if(!accepted){
-            // restore and stop
-            for(int i=0;i<n_atom;++i){
-                auto p = make_vec3(saved_pos[3*i+0], saved_pos[3*i+1], saved_pos[3*i+2]);
-                store_vec<3>(position, i, p);
+            step *= 1.2;
+        } else {
+            for(int i=0; i<n_atom; ++i)
+                for(int d=0; d<3; ++d) {
+                    position(d,i) = saved_pos[3*i+d];
+                    engine.pos->sens(d,i) = saved_grad[3*i+d];
+                }
+            step *= 0.2;
+            // A float position near the box edge resolves about 1e-5 A, so a smaller step moves nothing.
+            if(step < 1e-6) {
+                if(verbose) printf("MIN: Stopped: step %.3g A is below the position resolution at iter %d\n", step, iter);
+                ++iter;
+                break;
             }
-            if(verbose) printf("MIN: Line search failed; stopping at iter %d\n", iter);
-            break;
         }
-
-        double dE = prev_potential - best_pot;
-        if(verbose && !(iter%10)){
-            printf("MIN: iter %4d step %.3g E %.6f dE %.3g |grad| %.3g\n", iter, alpha, best_pot, dE, gnorm);
-        }
-        if(dE >= 0.0 && fabs(dE) < energy_tolerance){
-            if(verbose) printf("MIN: Converged by energy tol dE=%.3g at iter %d\n", dE, iter);
-            break;
-        }
-
-        prev_potential = best_pot;
-        step = std::min(2.0*alpha, step*1.5);
-        ++iter;
     }
-    martini_fix_rigid::apply_fix_rigid_projection(engine, position);
-    engine.compute(PotentialAndDerivMode);
-    martini_fix_rigid::apply_fix_rigid_minimization(engine, position, engine.pos->sens);
-    prev_potential = engine.potential;
-    if(verbose) printf("MIN: Final potential %.6f after %d iterations\n", prev_potential, iter);
+    potential = evaluate();
+    if(verbose) printf("MIN: Final potential %.6f after %d iterations\n", potential, iter);
 }
