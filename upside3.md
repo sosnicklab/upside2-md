@@ -2,7 +2,8 @@
 
 **Status: proposal, not started.** Upside 3 starts after the side-chain verdict, deterministic (no-BP) against
 probabilistic (BP) side chains at their converged epochs (plan.md Phase 21 item 7, findings 1.21), and is built on
-the model that wins. Everything measured below is ff_2.1, the probabilistic side chain.
+the model that wins. The measurement is in (10-20, findings 1.21): at both fixed points BP folds 0.353 against
+no-BP's 0.241 on 89 held-out mdCATH domains (p 1e-5); the choice is the user's. Everything measured below is ff_2.1, the probabilistic side chain.
 
 Investigation: plan.md Phase 22, 2026-10-19. Data, scripts, the literature review (`lit/review.md`) and the code
 audit (`code_audit/audit.md`) are in `scratchpad/large_protein_20261019/` (gitignored, 76 G with trajectories).

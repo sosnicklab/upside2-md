@@ -1368,8 +1368,17 @@ b9_00 0.478, -0.030; `bz_00` (H-bond and sheet frozen) 0.450, -0.030; b9_01 0.46
   **Continued from step 38 on the fixed engine, no-BP reaches a fixed point at step 76** (10-19,
   `ff21_nobp_dt009/gate_step76.txt`: steps 58-76, every group p > 0.005, `rot` 0.44, lowest `dhb` 0.021). There its
   89-domain mdCATH panel `mdc_nobp_03` folds 0.241, against 0.264 at step 37 and the step-37 control's 0.365
-  (`ff3_selection/select_mdcath_ctrl38_nobp_nobp03_login1_20261019.txt`). The matched comparison, against the
-  control at its own fixed point (`mdc_ctrl_03`, paired by `panel_compare`), is not yet run.
+  (`ff3_selection/select_mdcath_ctrl38_nobp_nobp03_login1_20261019.txt`). **The control, continued the same way,
+  reaches its fixed point at step 76 as well** (10-20, `ff21_ctrl_dt009/gate_step76.txt`: every group p > 0.005,
+  lowest `dhb` 0.012, then `bbenve` 0.74), and its `mdc_ctrl_03` folds 0.353
+  (`ff3_selection/select_mdcath_ctrl38_nobp_nobp03_ctrl03_login1_20261020.txt`). At the two fixed points the
+  folded fractions are 0.241 against 0.353, at step 37 0.264 against 0.365. **Paired at the two fixed points**
+  (`ff3_selection/panel_compare_49435922.out`): no-BP folds -0.111 [-0.160, -0.065] (Wilcoxon p 1e-5), lower in 54
+  domains, higher in 18, equal in 17; mean Q -0.030 [-0.040, -0.019] (p 1e-6); CA-RMSD +0.26 [+0.12, +0.40] A (p 6e-4).
+  Folded falls in every length bin (50-100 -0.087, 101-150 -0.109, 151-250 -0.137) and in helix (-0.151) and mixed
+  (-0.135) folds; beta is not resolved (-0.034 [-0.097, +0.038], p 0.13). So the step-37 verdict holds at the fixed
+  points: the deterministic side chain loses folding on held-out proteins. Neither run's 38 fixed-engine steps
+  changed its own folding, and no-BP is not at a fixed point in ~110 angular pair coefficients (1.36).
 - **The side-chain model moves the shared H-bond margin, in opposite directions** (`check_step.py`, read 10-18):
   E_other - E_alpha at steps 18 / 37 is no-BP +0.296 / +0.354 and the control +0.135 / +0.157 (start +0.192), a gap of
   ~0.2 against run-to-run variation of ~0.04. No-BP's rise is E_other weakening (-1.769 -> -1.620), so an H-bond made
@@ -2527,6 +2536,42 @@ differing only in the force-field datasets. Glycine phi > 0 on every rung: `~/wa
     rounds 1-4 and held-out transfer fell to 0.06%. The per-map priors centred on ff2.1 hold glycine
     there; the same data pooled per central residue push alpha_L up +0.35 to +0.40 (1.29), and ff3.0's
     pair was set at its start from BioEmu's weights (dL - dR +0.554, 1.19) and only kept by training.
+
+### 1.36 Which finished force fields are at a fixed point (2026-10-20)
+
+User 10-20: "check if the finished ffs needs no more trainings". Tools in `checks/converge_20261020/`:
+`gate_window.py` (the gate's exact test over any one-epoch window; also `rot` split into its off-diagonal angular
+logits (5,700), diagonal ones (300), radial (7,200) and the rest (18,220), and the depth gradient from each step's
+`rama_step.npz`, data part plus the prior's share), `gram_probe.py`, `ang_pull.py` (each coefficient's t over an
+epoch), `depth_pull.py`. `gate_window.py` reproduces `ff21_ctrl_dt009/gate_step76.txt` exactly and the step-38
+audit's dhb 0.003.
+- **Reading the gate's p.** At a fixed point the large groups give p 1.0000: over an epoch the step gradients
+  cancel (mean pairwise cosine about -0.03, epoch sum 0.47-0.75 of the orthogonal-noise size), the training set's
+  summed pull being near zero while each minibatch's is not. A pull shows as a sum above the noise size: no-BP's
+  dhb 3.4x at step 38, ff3.0's glycine depths 2.3x in epoch 2.
+- **The whole-group gate can pass a pulled subset.** No-BP's `rot` passes at step 76 (p 0.44), but its off-diagonal
+  angular logits alone fail (p < 4e-6) in all three epochs from step 19: 118 and 106 of 5,700 with |t| > 4 in the
+  two fixed-engine epochs, where noise gives 4.8; epoch sum 1.59, 1.45, 1.32 of noise; epoch-mean gradient 1.77,
+  2.16, 1.90, not falling. Most sit near spline value 0.97 and move inward (96 of 118, 89 of 106), 0.19 logit an
+  epoch, near Adam's ceiling for the group (0.0125 a step), spline value up to 0.06 an epoch. The control has 3 and
+  2 such coefficients. So no-BP is not at a fixed point in ~110 angular coefficients, and reaching it would take
+  several epochs; its mdCATH folding did not change over steps 38-75 (`mdc_nobp_03` against `mdc_nobp` -0.022
+  [-0.057, +0.009], p 0.67; `paired_npz.py`, which reproduces `panel_compare`'s folded and Q from the npz).
+- **The angular-gradient defect (3.12) left no detectable pull at a defect-engine fixed point.** The control sat at
+  one at step 37; its first fixed-engine epoch (38-56) passes every group, off-diagonal angular p 1.000, 3
+  coefficients with |t| > 4 (noise 4.8); `mdc_ctrl_03` against `mdc_ctrl38` -0.012 [-0.034, +0.010], p 0.67, Q
+  -0.001. The ff3.2 rerun starts from ff3.0's step-75 parameters on the fixed engine, so its epoch 0 is the
+  corrected gradient at ff3.0's fixed point: off-diagonal angular p 1.000, none with |t| > 4. ff3.1's direct test
+  is its rerun (`ff31_depth_data_angfix`), at step 76 on 10-21.
+- **ff_3.1_depth_data (`ff31_depth_data`) and `ff31_depth_all` pass the gate** over steps 57-75, run for the first
+  time: every group p > 0.005, lowest dhb 0.033 and 0.032; both also pass over 19-37 and 38-56. Their depths show no
+  pull, whole (p 1.000, sum 0.72 of noise), by basin, or on the glycine maps (0-1 of 1,442 with |t| > 4, noise 1.2).
+  Their round-4 steps (rms 0.015) fit the training proteins without transfer (1.30, 1.34).
+- **ff_3.0_gdepth's glycine alpha_L depth is pulled the same way in every epoch.** The epoch-mean gradient on alpha_L
+  has one sign in all four epochs (t +0.9, +2.2, +3.5, +2.1; alpha_R within +/-0.8), and the round steps did not
+  shrink (alpha_L offset +0.007, +0.012, +0.021, +0.015; 1.26). Over the last epoch alone it is under the gate's cut
+  (p 0.10), so by the gate's rule it is converged; the free-native alpha_L gap at round 4 is +0.009 on the training
+  reads and +0.008 held out. Its Adam groups pass (1.26).
 
 ## 2. The hybrid model: what each side supplies
 

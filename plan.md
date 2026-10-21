@@ -712,7 +712,8 @@ as well"; stop the step-37 glpG chains. Decisions:
 7. [ ] Validations as each run ends: the gates and mdCATH panels (no-BP, control); `a31_EE`/`a32_EE` panels against
    `fd_EE`/`f32_EE` on folded fraction and Q (the old panels' `.up` files were deleted 10-18, so CA-RMSD cannot be
    compared against them; the same holds for the step-38 `mdc_nobp`/`mdc_ctrl38`). Records done (findings 3.12, remote_jobs.md); the watch session told (WATCH_STATUS.md is its).
-   No-BP's part done 10-19: converged at step 76, `mdc_nobp_03` folds 0.241 (findings 1.21); the control's waits.
+   No-BP and the control both converged at step 76 (10-19, 10-20); `mdc_nobp_03` folds 0.241, `mdc_ctrl_03` 0.353,
+   paired -0.111, p 1e-5 (findings 1.21; Phase 23). Owed: the `a31_EE`/`a32_EE` panels (none submitted by 10-20).
 
 ### Phase 22 - why de novo folding fails on large proteins (STARTED 2026-10-19, user)
 User 10-19: Upside folds large proteins de novo poorly; investigate, read the literature and other force fields'
@@ -750,11 +751,33 @@ negative examples in ConDiv, training past 150 residues, and replica exchange fo
 measured: the globules' free energy against the native's, and a size contrast under one protocol (the 1ENH control
 does not fold at constant T in 60,000 tu); both need replica exchange.
 
+### Phase 23 - are the finished force fields done training; the side-chain verdict (DONE 2026-10-20, user)
+User 10-20: "check if the finished ffs needs no more trainings (converge, etc)"; "check if the deterministic /
+probabilistic side chain have a conclusion". Read only, but for one read-only `panel_compare` job (1 CPU, 4 min).
+Working files in `/project/trsosnic/yinhan/checks/converge_20261020/`.
+1. [x] The gate on `ff31_depth_data` (ff_3.1_depth_data) and `ff31_depth_all` over steps 57-75: both CONVERGED
+   (lowest dhb 0.033, 0.032).
+2. [x] Their depths: no pull, whole, by basin or on the glycine maps (`depth_pull.py`). ff_3.0_gdepth's glycine
+   alpha_L depth is pulled one way in all four epochs but passes the cut over the last (p 0.10).
+3. [x] The defect left no detectable pull: the control's first fixed-engine epoch and the ff3.2 rerun's epoch 0 (the
+   corrected gradient at ff3.0's parameters) show no angular pull; `mdc_ctrl_03` equals `mdc_ctrl38` (-0.012, p 0.67).
+   Found on the way: no-BP's ~110 off-diagonal angular coefficients are still pulled at step 76, which its
+   whole-group `rot` test passes.
+4. [x] `panel_compare` 49435922 (4 min): no-BP -0.111 [-0.160, -0.065] folded, p 1e-5, at the fixed points.
+
+**Review (findings 1.21, 1.36).** Released and finished force fields need no further training by the gate's rule:
+ff_3.0_gdepth, ff_3.1_depth_data, ff31_depth_all and the control; the defect's direct test for ff3.1 is its rerun
+(step 76 on 10-21). Two exceptions, both reported to the user: ff_3.0_gdepth's glycine alpha_L depth drifts one way
+(+0.015 nats a round), and no-BP's ~110 angular coefficients are not at a fixed point. The side-chain verdict is in:
+at both fixed points the deterministic side chain folds 0.241 against 0.353 on 89 held-out domains. Choosing the
+side-chain model for Upside 3 (upside3.md gate) is the user's.
+
 ## Known Errors / Blockers
 
 * **Every ConDiv run before 2026-10-18 08:35 trained the side-chain pair term's off-diagonal angular coefficients on
   a mixed gradient** (findings 3.12; fixed in the engine then): ff2.1's retrainings to step 37, ff3.0, ff3.1, ff3.2.
-  The fix's effect is measured by the reruns (Phase 21); ff3.0 and ff2.1 are not retrained.
+  The corrected gradient shows no pull at ff3.0's or the control's fixed point (Phase 23); ff3.1's rerun is the
+  direct test for ff3.1 (Phase 21); ff3.0 and ff2.1 are not retrained.
 
 * **Every hybrid glpG result before 2026-10-17 ran with misplaced side-chain beads** (findings 4.17; Phase 18):
   TM1/TM4 helicity, glycine flips and HDX, under every force field, on the cluster and locally.

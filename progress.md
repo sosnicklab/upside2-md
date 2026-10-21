@@ -896,3 +896,15 @@ to 10-07 12:00 is in git history.
   within run noise of the pre-fix runs. upside3.md written (findings and the Upside 3 plan, gated on the
   side-chain verdict); findings 11e shortened to a pointer. Files modified: src/environment.cpp, py/upside_config.py,
   up.md, upside3.md (new), findings.md, plan.md, progress.md.
+- 22:30-23:30 10-20, status and convergence review (user: "check remote job status"; then "check if the finished ffs
+  needs no more trainings" and "check if the deterministic / probabilistic side chain have a conclusion"; plan.md
+  Phase 23). Status read only: the control converged at step 76 and `mdc_ctrl_03` folds 0.353; the reruns at steps
+  55/54 (ff3.1 rerun margin +0.0987 at step 52, a hold; a steric flag on each, beta' + pPII' at one step); glpG block 3
+  running; all benchmark arms complete. One job submitted, `panel_compare` 49435922 (4 min, read only). New read-only
+  tools in `checks/converge_20261020/` (`gate_window.py`, `gram_probe.py`, `ang_pull.py`, `depth_pull.py`,
+  `paired_npz.py`); `gate_window.py` reproduces the recorded gates and `paired_npz.py` the step-37 `panel_compare`
+  exactly. Results: ff_3.1_depth_data and ff31_depth_all pass the gate and their depths show no pull; the defect left
+  no detectable pull at the control's or ff3.0's fixed point; ff_3.0_gdepth's glycine alpha_L depth is pulled one way
+  every epoch (under the cut over the last); no-BP's ~110 angular coefficients are still pulled at step 76; at the
+  fixed points no-BP folds -0.111 [-0.160, -0.065] (p 1e-5). Files modified: findings.md (1.21, 1.36), plan.md
+  (Phases 21, 23, Known Errors), upside3.md (status), remote_jobs.md; WATCH_STATUS.md on the cluster.
