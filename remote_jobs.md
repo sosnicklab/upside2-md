@@ -697,6 +697,11 @@ cluster is newer than this whenever a pass ran after it.
 - **Stopped 08:33 10-18 (user):** 79HIS ff_2.1_ctrl38 49411323 and ff_2.1_nobp 49411324 (STOP files first, directories
   kept); ff3.2's link 49406726 and successor 49410635 (steps 0-68 kept; the partial step 69,
   `epoch_03_minibatch_12`, left in place).
+- **Side-chain comparison on TM-score** (user 10-21; plan.md Phase 24; read-only but for the panels): `tm_mdcath`
+  49436371 (TM of `mdc_nobp_03` / `mdc_ctrl_03`, one node, log `checks/converge_20261020/tm_mdcath_<id>.out`, series
+  in `checks/converge_20261020/tm_runs/`); the 44-domain panel at dt 0.009 for both converged force fields,
+  `p44_dt009` 49436374 (`p44_nobp_03`) and 49436375 (`p44_ctrl_03`), runs `ff3_selection/runs/p44_*/`, logs
+  `checks/converge_20261020/p44_dt009_<id>.out`; then `tm_panel.py` on them.
 - **Benchmarks: every arm COMPLETE.** ff_3.1_depth_data 32 of 32: ubiquitin de novo ran 49419940, 49422481,
   49426856 to their walls and COMPLETE in 49432541 17:53 10-20 (final frames: 14 replicas finite, KE/1.5kT 0.999-1.006,
   Rg 11.2 A at T 0.80). ff_2.1_ctrl38 32 of 32: ubiquitin de novo COMPLETE in 49420783 13:25 10-19; unscored ("Resume

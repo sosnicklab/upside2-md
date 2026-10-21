@@ -6117,6 +6117,14 @@ user's names: `ff21_nobp_dt009` (release `ff_2.1_nobp`) is "the deterministic si
 description and put the tag in parentheses**: "deterministic side-chain ff2.1 (`ff21_nobp_dt009`)", "ff3.1 rerun on
 the fixed engine (`ff31_depth_data_angfix`)". Internal tags (no-BP, ctrl38, a31_, a32_) alone read as unknown jobs.
 
+### 10.29 Emails to Tobin and John carry the experiment, not the session (2026-10-21)
+
+A first draft of the side-chain result for the PI and Jumper ran to a page: library-file mechanics, the trainer's
+gradient bug in full, the convergence probes. The user: much shorter; no list of bugs; drop the running details the
+AI did; say what was tested and on what, with the sizes of the test sets. **For a results email: what was compared
+and why (one or two sentences), each test set with its size and what it is, the numbers, and what we conclude.**
+Leave out bugs found along the way, gradient checks, job mechanics and file paths unless asked.
+
 ---
 
 ## 11. Reference: the two glpG PDBs disagree about TM4

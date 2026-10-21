@@ -772,6 +772,19 @@ ff_3.0_gdepth, ff_3.1_depth_data, ff31_depth_all and the control; the defect's d
 at both fixed points the deterministic side chain folds 0.241 against 0.353 on 89 held-out domains. Choosing the
 side-chain model for Upside 3 (upside3.md gate) is the user's.
 
+### Phase 24 - the side-chain comparison on one metric, TM-score (STARTED 2026-10-21, user)
+User 10-21: "I prefer to use a single metric (TM score?) for all tests". TM-score as the Peng benchmark is scored
+(`ff3_benchmark/scoring/tmscore.py`: fixed correspondence, superposition optimised, step 2, normalised by the full
+chain): per domain, 4 seeds pooled, frames after T_EQUIL, mean TM and the fraction of frames at TM > 0.5.
+1. [ ] mdCATH at the fixed points (`mdc_nobp_03`, `mdc_ctrl_03`, the only panel tags whose trajectories are kept):
+   `checks/converge_20261020/tm_panel.py`, one broadwl node, every 10th frame (80 a seed; 2.7 s a frame at 200
+   residues).
+2. [ ] The 44-domain panel: `nb_01`/`ctrl38` kept no trajectories. User 10-21: run both fixed points. Tags
+   `p44_nobp_03`, `p44_ctrl_03` in `ff3_selection/runs/`, params `params/mdc_<nobp|ctrl>_03` (the gate's copies),
+   at the training time step 0.009 as the mdCATH panel (the earlier 44-domain runs used 0.015); one node each
+   (`checks/converge_20261020/panel44_dt009.sbatch`), then `tm_panel.py`.
+3. [ ] Peng's benchmark: TM exists for the 38-step releases; the fixed points are not run (user; 32 arms each).
+
 ## Known Errors / Blockers
 
 * **Every ConDiv run before 2026-10-18 08:35 trained the side-chain pair term's off-diagonal angular coefficients on
