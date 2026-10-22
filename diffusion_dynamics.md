@@ -1,7 +1,8 @@
 # A modified Boltz-2 to replace Upside's sampling for HDX
 
-**Status: Phase 0 done (2026-10-21); Phase 1 has EHEE's 1,000 samples, and ubiquitin's rerun is queued after a
-fix to Boltz's sample batching (Phase 1).** `step_scale` 1.0, the unscaled sampler, gives
+**Status: Phase 0 done (2026-10-21). Phase 1's first dG profiles (2026-10-22): from 1,000 samples Boltz-2 resolves
+nothing above about 4 kcal/mol, below every measured amide, and opens 2 of 39 measured amides against Upside's 11; rank
+order is not testable at this sample count (Phase 1).** `step_scale` 1.0, the unscaled sampler, gives
 bond-length scatter 2 to 4x the crystal spread, but the scatter leaves the HDX protection flags unchanged, so Phase 1
 uses `md` at 1.0 (Phase 0). midway2 has no GPU that can run Boltz-2 (Phase 0). Jobs are recorded in `remote_jobs.md` §1.
 Every number below comes from reading code, docs and papers on 2026-10-21, or from the dated measurements in
@@ -207,11 +208,47 @@ HDX:
     10, so `--max_parallel_samples` had no effect in any run until then. `$B/boltz` now splits into chunks of
     `max_parallel_samples` (uncommitted edit in our clone). The noise and random rotations are drawn for every
     sample before the chunk loop, so chunking should leave the samples unchanged.
-  * Ubiquitin rerun, 2026-10-22 (61279169, `$B/phase1_ubq_rerun.sbatch`): 1,000 samples in chunks of 100, the batch
-    Phase 0 ran on a V100, after a chunking check on EHEE (100 samples unchunked twice and in chunks of 10,
-    `$B/compare_chunks.py`).
-- [ ] Protection flags from every sample's N/CA/C through the repo's protection-state code, uniform weights; dG per
+  * Ubiquitin rerun, 2026-10-22 (61279169, `$B/phase1_ubq_rerun.sbatch`), 1,000 samples in chunks of 100 (20 V100
+    minutes, peak 8.2 GB).
+    - Chunking leaves the samples unchanged. Of EHEE's 100 samples at seed 3, two unchunked runs agree exactly at
+      PDB precision, and chunks of 10 move no backbone atom by more than 0.001 A, the last printed digit, with the
+      same confidence order (`$B/compare_chunks.py`).
+    - Ubiquitin's set matches Phase 0's 100: CA-RMSD to 1UBQ median 1.49 A (1.58 and 1.62), pairwise CA-RMSD 1.88 A
+      (1.97, 1.99), Rg 11.35 +- 0.16 A (reference 11.49), C-N 1.343 +- 0.055 A with 6.8% outside 1.25-1.45 A (7.1%,
+      6.9%), CA RMSF up to 7.3 A at Gly76.
+    - 17 of 1,000 samples have a C-N bond outside 1.05 to 1.65 A (Phase 0: 2 and 1 of 100), and 2 have one over
+      2 A, a broken chain, both in the C-terminal tail (70-71 at 2.05 A, 75-76 at 3.71 A; Phase 0 had 74-75 at
+      2.89 A). The samples stay unfiltered with uniform weights.
+- [x] Protection flags from every sample's N/CA/C through the repo's protection-state code, uniform weights; dG per
       residue against experiment and against Upside. An amide with p = 1 is censored at RT ln(N), not a value.
+      Done 2026-10-22 on the two 1,000-sample sets (`scratchpad/boltz_hdx/flags/`: `run_flags.sh`, `dg_phase1.py`,
+      figure `dg/dg_phase1.png`). Rerunning the pipeline reproduced Phase 0's flags byte for byte.
+  * References: Peng 2022 SI Tables S5 and S7 (NMR HX, 0 M urea) and S8 and S10 (Upside FF2), in
+    `flags/reference/`; findings 11b. RT is the experiment's, 298 K for EHEE and 273 K for ubiquitin, so the bound
+    RT ln(1000) is 4.09 and 3.75 kcal/mol. The ubiquitin data are for Ub psWT (F45W/H68N); our samples are wild type.
+  * Protected fractions agree with Phase 0's independent 100 samples (Fisher's exact test, smallest p 0.011 over 72
+    ubiquitin donors, 0.127 over 39 EHEE donors).
+  * Boltz-2 never opens 34 of 72 ubiquitin and 21 of 39 EHEE donors. Every measured amide but EHEE's R40 (4.02)
+    lies above the bound (4.9 to 8.5 kcal/mol), so these sets can only show whether Boltz opens amides that
+    experiment shows are stable. With experiment and Upside censored at the same bound, Boltz-2 falls below it at
+    2 of 39 measured amides (ubiquitin R54 and Y59, with 1 and 2 open samples of 1,000), and Upside FF2 at 11 (EHEE
+    F6 Y24 V37 R40; ubiquitin L50 R54 T55 L56 Y59 L67 V70).
+  * Rank order cannot be tested. Upside's correlation with experiment (r 0.63 and 0.46) comes from values above
+    4 kcal/mol, where Boltz resolves nothing. Reaching 8.5 kcal/mol needs about 1.7 x 10^6 samples at 298 K and
+    6.4 x 10^6 at 273 K; 10^4 samples reach 5.5 and 5.0.
+  * Over-protection cannot be tested. Boltz never opens 6 EHEE amides (Y4 D8 E11 E18 A20 H27, all with assigned NMR
+    peaks) and 12 ubiquitin amides that have no reported dG, and the paper does not say why they are missing.
+- [ ] Ubiquitin psWT (F45W/H68N) ensemble, so the ubiquitin comparison is like for like: 1,000 `md` samples at seed
+      3, with its own ColabFold MSA. Reference: 1UBQ with residues 45 and 68 renamed and cut to backbone and CB
+      (no psWT structure is used anywhere in Peng 2022, whose Upside runs also start from 1UBQ). Submitted
+      2026-10-22 with HEEH below (61298446, `$B/phase1_heeh_pswt.sbatch`).
+- [ ] Rank order on HEEH_rd4_0097, the third Peng 2022 protein (decided 2026-10-22, delegated by the user). Its 20
+      measured amides lie at 2.2 to 4.3 kcal/mol (Table S6; HX at 278 K, pD_read 4.6), so 10^4 samples (bound
+      5.09 kcal/mol) resolve all of them, and Upside FF2's agreement is published (Table S14, 0 M: Pearson 0.185,
+      Spearman 0.317, RMSE 1.06 kcal/mol; its per-residue Table S9 is a copy error). Sequence: the 43-residue
+      design that Table S6 numbers from D1; reference the design model Peng simulated,
+      `/project2/trsosnic/share/HEEH_rd4_0097.pdb`. Taking ubiquitin and EHEE to 10^6 samples instead would cost
+      hundreds of V100-hours for 8.5 kcal/mol. Submitted 2026-10-22 (61298446), about 2 V100-hours.
 
 mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibrium only:
 - [ ] Test set: 8 to 12 domains from the 89-domain panel (`ff3_selection/` on the cluster; `plan.md` Phase 19), over

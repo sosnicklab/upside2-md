@@ -19,10 +19,10 @@ The user's four lines of work (10-21), and what each has on the clusters:
    ff2.1 with all terms free, fold 0.15-0.24 less than ff2.1. **Also running in this line:** the 8 glpG REMD chains
    on the released ff3.0 and ff3.1 (block 3 of 5), the TM4 and HDX validation.
 3. **Upside 3 design, debug stage** (upside3.md; plan.md Phase 24 and its "Resume here"). Local work, no cluster jobs.
-4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phase 0 is done (its two tests in §1 "Finished runs"). Phase 1's
-   first job finished 17:02 10-21 with EHEE's 1,000 samples; ubiquitin ran out of GPU memory because Boltz's
-   `--max_parallel_samples` did not split the batch. With that fixed in our clone, the ubiquitin rerun 61279169
-   was submitted 03:27 10-22 (§1 line 4).
+4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phase 0 is done. Phase 1 has 1,000 `md` samples per protein
+   (EHEE from 61254153, ubiquitin from the rerun 61279169 after a fix to Boltz's sample batching; §1 "Finished
+   runs") and their dG profiles. Running: 61298446, Ub psWT to match the experiment and HEEH_rd4_0097 at 10^4
+   samples for a rank-order test (§1 line 4).
 
 Open and not in the user's list:
 - The 8 glpG chains run force fields that carry the retraining loss; whether to stop them when block 3 closes
@@ -705,32 +705,24 @@ their successors and their collector; the 8 glpG chains. midway3: nothing known 
 
 **Line 3: Upside 3 design (debug stage).** No cluster jobs; local work (plan.md Phase 24 "Resume here", upside3.md).
 
-**Line 4: Boltz-2 HDX sampler (midway3).** Phase 0's two tests are in "Finished runs".
-- **Phase 1, first ensembles** (user 10-21, "submit phase 1"; `diffusion_dynamics.md` Phase 1): **61254153**
-  `boltz_phase1_md_s10_v100`, V100 midway3-0277, 16:49-17:02 10-21, COMPLETED, but **only EHEE has samples**.
-  Script `$B/phase1_hdx.sbatch` (md5 `c2064cec...`, local copy `scratchpad/boltz_hdx/`): ubiquitin and
-  EHEE_rd2_0005, 1,000 `md` samples each at `step_scale` 1.0, seed 3, tags `<name>_md_s10`. Log
-  `$B/logs/boltz_phase1_md_s10_v100_61254153.out`; data `$B/runs/boltz_phase1_md_s10_v100_61254153/` (per run
-  `<tag>.log`, predictions under `<tag>/`, `<tag>.npz` with every sample's N/CA/C).
-  * EHEE: 1,000 samples, statistics those of Phase 0's 100 (CA-RMSD median 0.95 A, Rg 9.22 A, C-N 1.337 +- 0.053 A,
-    6.7% of C-N outside 1.25-1.45 A against 7.2%).
-  * Ubiquitin: CUDA OOM on the 16 GB card in the first diffusion step; Boltz skipped the batch and exited 0, so the
-    wrapper printed `ok` (findings 10.14). Rerun below.
-- **Phase 1, ubiquitin rerun** (user 10-22, "proceed next step"): **61279169** `boltz_phase1_ubq_rerun_v100`,
-  submitted 03:27 10-22 from midway3-login5 with `--partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1
-  --time=01:00:00 --constraint=v100`; PD, `--test-only` estimate 10-23 11:01. Runs on `$B/boltz` with the chunk fix
-  (`diffusionv2.py:383` now `sample_ids.split(max_parallel_samples)`, uncommitted; `git diff` there shows it).
-  Script `$B/phase1_ubq_rerun.sbatch` (md5 `96365eef...`, local copy `scratchpad/boltz_hdx/`), seed 3: EHEE 100
-  samples twice unchunked (`ehee_c1a`, `ehee_c1b`) and once in chunks of 10 (`ehee_c10`), then ubiquitin 1,000
-  `md` samples at `step_scale` 1.0 in chunks of 100 (`ubq_md_s10`); `check_samples.py`, then `compare_chunks.py`
-  (md5 `055f97f2...`). About 20 min on the GPU. The wrapper now fails a run whose log lacks "Number of failed
-  examples: 0" (also in `phase1_hdx.sbatch`, now md5 `c9353dd1...`, chunks of 100). Log
-  `$B/logs/boltz_phase1_ubq_rerun_v100_61279169.out`; data `$B/runs/boltz_phase1_ubq_rerun_v100_61279169/`.
-  **Next:** chunking passes if `ehee_c1a` vs `ehee_c10` is as close as `ehee_c1a` vs `ehee_c1b`; ubiquitin's
-  statistics should match Phase 0's 100 (`ubq_md_s10` in 61231966: CA-RMSD median 1.62 A, Rg 11.32 A, C-N 1.344
-  +- 0.055 A). Then copy EHEE's set from 61254153 and ubiquitin's from this job to
-  `scratchpad/boltz_hdx/flags/samples/`, run the flags (`run_flags.sh`, `compare_flags.py` there) and dG per
-  residue.
+**Line 4: Boltz-2 HDX sampler (midway3).** No running jobs; Phase 0's tests and Phase 1's two jobs are in "Finished
+runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; local copies of the sets are
+`scratchpad/boltz_hdx/flags/samples/<name>_md_s10_n1000.npz`).
+- **Phase 1, Ub psWT and HEEH_rd4_0097** (user 10-22, "decide the two questions for me"; `diffusion_dynamics.md`
+  Phase 1): **61298446** `boltz_phase1_heeh_pswt_v100`, submitted 12:35 10-22 from midway3-login5 with
+  `--partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1 --time=05:00:00 --constraint=v100`; PD,
+  `--test-only` estimate 10-24 04:40. Script `$B/phase1_heeh_pswt.sbatch` (md5 `51073c54...`, local copy
+  `scratchpad/boltz_hdx/`), seed 3, chunks of 100: `ubqps_md_s10` (1,000 `md` samples of Ub F45W/H68N) and
+  `heeh_md_s10` (10^4 samples), about 2.5 V100-hours. Inputs from `$B/prep.py` (md5 `0ebd8a5f...`; log
+  `$B/logs/prep_phase1.log`): `inputs/{ubqps,heeh}.yaml`, MSAs `inputs/msa/{ubqps,heeh}_0.csv` (16,384 and 4
+  sequences), references `inputs/1UBQ_psWT_ref.pdb` and `inputs/HEEH_rd4_0097_ref.pdb`. `check_samples.py` (md5
+  `59c1d633...`) now takes pairwise CA-RMSD over a fixed subset of 1,000 in larger sets; its output on sets of 1,000
+  or fewer is unchanged (checked on `ehee_c1a`). Log `$B/logs/boltz_phase1_heeh_pswt_v100_61298446.out`; data
+  `$B/runs/boltz_phase1_heeh_pswt_v100_61298446/`. **Next:** check the samples as before (Rg, C-N, CA-RMSD to the
+  reference); copy `ubqps_md_s10.npz` and `heeh_md_s10.npz` to `scratchpad/boltz_hdx/flags/samples/` as
+  `ubqps_md_s10_n1000.npz` and `heeh_md_s10_n10000.npz`, extend `run_flags.sh`, `samples_to_traj.py` and
+  `dg_phase1.py` to them (HEEH at 278 K against `reference/heeh_experiment.csv` and Table S14's Upside numbers),
+  and compare.
 
 **Shared**
 - **The engine fix** (findings 3.12; plan.md Phase 21): `$P/obj/upside` and `libupside.so` from
@@ -1020,6 +1012,19 @@ short `output_previous_N` groups (100-287 frames), all finite (`checks/glpg_frag
   COMPLETED; `$B/tag_stepscale_test.sbatch`), has the same layout: log
   `$B/logs/boltz_tag_stepscale_v100_61231966.out`, data `$B/runs/boltz_tag_stepscale_v100_61231966/` (tags
   `<name>_<notag|md>_<s15|s10>`).
+* **midway3: Boltz-2 HDX sampler, Phase 1 first ensembles, finished 10-21 and 10-22** (`diffusion_dynamics.md`
+  Phase 1, where the readout is). Both V100, 1 GPU on `gpu`/QOS `gpu`, `pi-trsosnic`, seed 3, 1,000 `md` samples at
+  `step_scale` 1.0, same layout as Phase 0.
+  * 61254153 `boltz_phase1_md_s10_v100` (midway3-0277, 16:49-17:02 10-21; `$B/phase1_hdx.sbatch` at md5
+    `c2064cec...`): **EHEE's set** `ehee_md_s10`. Its ubiquitin ran out of memory, because Boltz then ignored
+    `--max_parallel_samples` (findings 10.14). Log `$B/logs/boltz_phase1_md_s10_v100_61254153.out`, data
+    `$B/runs/boltz_phase1_md_s10_v100_61254153/`.
+  * 61279169 `boltz_phase1_ubq_rerun_v100` (midway3-0281, 03:34-04:01 10-22; `$B/phase1_ubq_rerun.sbatch`, md5
+    `96365eef...`), on `$B/boltz` with the chunk fix (uncommitted, `git diff` there): **ubiquitin's set**
+    `ubq_md_s10` (chunks of 100, 1,183 s, peak 8.2 GB), and the chunking check `ehee_c1a`, `ehee_c1b` (unchunked)
+    and `ehee_c10` (chunks of 10). Log `$B/logs/boltz_phase1_ubq_rerun_v100_61279169.out`, data
+    `$B/runs/boltz_phase1_ubq_rerun_v100_61279169/`. `phase1_hdx.sbatch` (now md5 `c9353dd1...`) carries the same
+    wrapper fix for later Phase 1 jobs.
 
 * **ff3.2 `ff32_depth_data` stopped by the user 08:33 10-18 in step 69** (link 49406726, successor 49410635; plan.md
   Phases 17 and 21): trained with the angular-gradient defect (findings 3.12). Steps 0-68 and panels f32_00-02 are the

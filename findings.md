@@ -6295,7 +6295,9 @@ is ff30_glyhb. Two corrections from the user on the same day:
   whenever the sample count is a multiple of the setting, so 1,000 ubiquitin samples ran as one batch and ran out of
   memory on a 16 GB V100 (61254153). Boltz then skips the batch, logs "Number of failed examples: 1" and exits 0,
   which a wrapper testing the exit code reports as success. Our clone `$B/boltz` splits into chunks of
-  `max_parallel_samples`, and the job wrappers fail a run whose log lacks "Number of failed examples: 0".
+  `max_parallel_samples`, and the job wrappers fail a run whose log lacks "Number of failed examples: 0". Chunking
+  does not change the samples: at a fixed seed, chunks of 10 against one batch of 100 move no backbone atom by more
+  than 0.001 A, PDB precision (61279169).
 * **`pkill -f <pattern>` over ssh kills the ssh command's own shell** when the pattern is in the command
   line, ending the call with exit 255 before it reaches the target. Kill by PID.
 * **An isolated Upside engine without touching the repo's `obj/` (2026-10-21).** `py/upside_engine.py` loads
@@ -6608,6 +6610,19 @@ figure.** The first version of these panels was built from a one-line paraphrase
 summary markers and violins against grids of distribution curves. The underlying numbers were sound
 and reproducible, which made the error easy to miss. State "same quantities, my layout" unless the
 source figure has actually been read.
+
+**Per-residue HDX dG are printed in the SI (read 2026-10-22), so nothing needs digitizing.** Experiment: Table S5
+(EHEE_rd2_0005, 15 amides, NMR HX at 298 K, pD_read 7.1), Table S6 (HEEH_rd4_0097, 20 amides, 278 K, pD_read 4.6,
+2.2 to 4.3 kcal/mol at 0 M) and Table S7 (ubiquitin, 24 amides, 273 K, pD_read 7.6), each over urea. The designs are
+numbered by their design sequences (40 and 43 residues, His tag removed; SI p. 24), and the HEEH design model Peng
+simulated is `/project2/trsosnic/share/HEEH_rd4_0097.pdb`. Upside FF2: Tables S8 and S10, at 293 and 300 K on Upside's calibrated scale (Figs 5 and 9). Their
+0 M correlations with experiment, 0.631 and 0.455, are Table S14's. Three traps:
+* The ubiquitin is **Ub psWT (F45W/H68N)**, in experiment and simulation, not 1UBQ's wild type.
+* The paper never says why amides are absent from Tables S5 and S7; for EHEE most of them have assigned NMR peaks
+  (Table S12, His-tag numbering, subtract 21). Do not read an absent amide as fast-exchanging.
+* Table S9 (HEEH_rd4_0097, simulation) repeats Table S8's numbers, a copy error in the SI; Upside FF2's agreement
+  for HEEH survives only as Table S14's summary (0 M: Pearson 0.185, Spearman 0.317, RMSE 1.06 kcal/mol).
+Transcribed 0 M values: `scratchpad/boltz_hdx/flags/reference/`.
 
 ## 11c. Peng's benchmark trajectories on midway2 are FF1, not FF2 (measured 2026-09-14)
 

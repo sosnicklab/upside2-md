@@ -1194,3 +1194,24 @@ to 10-07 12:00 is in git history.
   batch. Ubiquitin rerun with an EHEE chunking check submitted, 61279169. Files: remote_jobs.md, diffusion_dynamics.md
   (status, Phase 1), findings.md 10.14, progress.md; new `scratchpad/boltz_hdx/{phase1_ubq_rerun.sbatch,
   compare_chunks.py}`, `phase1_hdx.sbatch` changed.
+- 10-22 12:05, the Boltz-2 HDX sampler: ubiquitin rerun read (61279169, finished 04:01). Chunking leaves the samples
+  unchanged (EHEE, chunks of 10 against one batch: at most 0.001 A, PDB precision); ubiquitin's 1,000 `md` samples
+  match Phase 0's 100, with 2 broken C-terminal C-N bonds (2.05, 3.71 A) at Phase 0's rate. Phase 1 now has both
+  1,000-sample sets; flags next. Files: remote_jobs.md (both Phase 1 jobs to "Finished runs"), diffusion_dynamics.md
+  (status, Phase 1), findings.md 10.14, progress.md.
+- 10-22 12:10-12:50, the Boltz-2 HDX sampler: Phase 1 dG profiles (user: "proceed to next step"). Protection flags
+  on both 1,000-sample sets (Phase 0's flags reproduced byte for byte), uniform-weight dG at the experiment's RT, and
+  the comparison with Peng 2022 SI Tables S5/S7 (experiment) and S8/S10 (Upside FF2), transcribed and checked against
+  the PDF. Every measured amide but one lies above Boltz's bound RT ln(1000) = 3.75-4.09 kcal/mol; Boltz opens 2 of
+  39, Upside 11. Rank order and over-protection are not testable; the ubiquitin data are psWT (F45W/H68N), our
+  samples wild type. Files: diffusion_dynamics.md (status, Phase 1), remote_jobs.md, findings.md 11b, progress.md;
+  in `scratchpad/boltz_hdx/flags/`: `samples_to_traj.py`, `run_flags.sh` extended, new `dg_phase1.py`,
+  `plot_dg_phase1.py`, `reference/`, `dg/`.
+- 10-22 12:20-12:40, the Boltz-2 HDX sampler (user: "update global CLAUDE.md. also decide the two questions for
+  me"). Global CLAUDE.md's plotting section now names the working venv (Python 3.10, matplotlib 3.10.0). Decided:
+  a Ub psWT ensemble for a like-for-like ubiquitin comparison, and rank order tested on HEEH_rd4_0097 (measured dG
+  2.2-4.3 kcal/mol, resolvable at 10^4 samples) rather than 10^6 samples of ubiquitin. `prep.py` extended (psWT and
+  HEEH MSAs, references), `check_samples.py` subsamples pairwise RMSD above 1,000 (output unchanged below);
+  61298446 submitted. Files: ~/.claude/CLAUDE.md, diffusion_dynamics.md (Phase 1), remote_jobs.md, findings.md 11b,
+  progress.md; `scratchpad/boltz_hdx/{prep.py,check_samples.py,phase1_heeh_pswt.sbatch}`,
+  `flags/reference/heeh_experiment.csv`, `flags/pdb/{ubqps,heeh}.pdb`.
