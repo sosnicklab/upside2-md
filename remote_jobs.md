@@ -710,8 +710,9 @@ runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; loca
 `scratchpad/boltz_hdx/flags/samples/<name>_md_s10_n1000.npz`).
 - **Phase 1, Ub psWT and HEEH_rd4_0097** (user 10-22, "decide the two questions for me"; `diffusion_dynamics.md`
   Phase 1): **61298446** `boltz_phase1_heeh_pswt_v100`, submitted 12:35 10-22 from midway3-login5 with
-  `--partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1 --time=05:00:00 --constraint=v100`; PD,
-  `--test-only` estimate 10-24 04:40. Script `$B/phase1_heeh_pswt.sbatch` (md5 `51073c54...`, local copy
+  `--partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1 --time=05:00:00 --constraint=v100`; running
+  from 16:05 10-22 on midway3-0277 (limit 21:05). `ubqps_md_s10` finished 16:26 (1,241 s, peak 8.2 GB); HEEH
+  predicting from 16:27, GPU at 100% at 18:09; Boltz writes its PDBs only at the end. Script `$B/phase1_heeh_pswt.sbatch` (md5 `51073c54...`, local copy
   `scratchpad/boltz_hdx/`), seed 3, chunks of 100: `ubqps_md_s10` (1,000 `md` samples of Ub F45W/H68N) and
   `heeh_md_s10` (10^4 samples), about 2.5 V100-hours. Inputs from `$B/prep.py` (md5 `0ebd8a5f...`; log
   `$B/logs/prep_phase1.log`): `inputs/{ubqps,heeh}.yaml`, MSAs `inputs/msa/{ubqps,heeh}_0.csv` (16,384 and 4
