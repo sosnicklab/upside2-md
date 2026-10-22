@@ -6290,6 +6290,12 @@ is ff30_glyhb. Two corrections from the user on the same day:
   sm_75 to sm_120 only, so it cannot run on midway3's V100s (sm_70), and its CUDA 13 runtime needs a newer
   driver than CUDA 12 builds. Install from `https://download.pytorch.org/whl/cu126` for these GPUs
   (`/beagle3/trsosnic/yinhan/boltz_hdx/install.sh`).
+* **Boltz-2 at `b1ebfc4` ignores `--max_parallel_samples`, and exits 0 when it runs out of memory (2026-10-22).**
+  `diffusionv2.py:383` cut the samples into `multiplicity % max_parallel_samples + 1` chunks, which is one chunk
+  whenever the sample count is a multiple of the setting, so 1,000 ubiquitin samples ran as one batch and ran out of
+  memory on a 16 GB V100 (61254153). Boltz then skips the batch, logs "Number of failed examples: 1" and exits 0,
+  which a wrapper testing the exit code reports as success. Our clone `$B/boltz` splits into chunks of
+  `max_parallel_samples`, and the job wrappers fail a run whose log lacks "Number of failed examples: 0".
 * **`pkill -f <pattern>` over ssh kills the ssh command's own shell** when the pattern is in the command
   line, ending the call with exit 255 before it reaches the target. Kill by PID.
 * **An isolated Upside engine without touching the repo's `obj/` (2026-10-21).** `py/upside_engine.py` loads

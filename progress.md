@@ -1187,3 +1187,10 @@ to 10-07 12:00 is in git history.
 - 10-21 16:23, the Boltz-2 HDX sampler: Phase 1's first job submitted (user: "submit phase 1"), 61254153 on one
   midway3 V100, 1,000 `md` samples per protein at `step_scale` 1.0 (`phase1_hdx.sbatch`). Files: diffusion_dynamics.md,
   remote_jobs.md, progress.md.
+- 10-22 03:15-03:30, the Boltz-2 HDX sampler: Phase 1's first job read (user: "check boltz job status", then
+  "proceed next step"). 61254153 gave EHEE's 1,000 samples, matching Phase 0's 100; ubiquitin ran out of GPU memory
+  because `diffusionv2.py` cut 1,000 samples into one chunk whatever `--max_parallel_samples` said, and Boltz exited 0.
+  Fixed in our clone `$B/boltz` (`sample_ids.split(max_parallel_samples)`, uncommitted); wrappers now fail a skipped
+  batch. Ubiquitin rerun with an EHEE chunking check submitted, 61279169. Files: remote_jobs.md, diffusion_dynamics.md
+  (status, Phase 1), findings.md 10.14, progress.md; new `scratchpad/boltz_hdx/{phase1_ubq_rerun.sbatch,
+  compare_chunks.py}`, `phase1_hdx.sbatch` changed.

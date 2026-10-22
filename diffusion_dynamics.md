@@ -1,6 +1,7 @@
 # A modified Boltz-2 to replace Upside's sampling for HDX
 
-**Status: Phase 0 done (2026-10-21); Phase 1's first job is queued.** `step_scale` 1.0, the unscaled sampler, gives
+**Status: Phase 0 done (2026-10-21); Phase 1 has EHEE's 1,000 samples, and ubiquitin's rerun is queued after a
+fix to Boltz's sample batching (Phase 1).** `step_scale` 1.0, the unscaled sampler, gives
 bond-length scatter 2 to 4x the crystal spread, but the scatter leaves the HDX protection flags unchanged, so Phase 1
 uses `md` at 1.0 (Phase 0). midway2 has no GPU that can run Boltz-2 (Phase 0). Jobs are recorded in `remote_jobs.md` §1.
 Every number below comes from reading code, docs and papers on 2026-10-21, or from the dated measurements in
@@ -199,8 +200,16 @@ HDX:
 - [ ] `md`-tagged ensembles of 10^3 to 10^4 samples per protein (20 V100-minutes to 3.3 V100-hours for ubiquitin,
       Phase 0), at `step_scale` 1.0 (Phase 0), for ubiquitin and EHEE_rd2_0005, then other soluble proteins with
       HDX data and Upside results.
-  * First job queued 2026-10-21 (61254153, one V100, `$B/phase1_hdx.sbatch`; `remote_jobs.md` §1): 1,000 samples
-    per protein at seed 3.
+  * First job, 2026-10-21 (61254153, one V100, `$B/phase1_hdx.sbatch`; `remote_jobs.md` §1): 1,000 samples per
+    protein at seed 3. EHEE's set matches Phase 0's 100 (CA-RMSD median 0.95 A, Rg 9.22 A, C-N 1.337 +- 0.053 A,
+    6.7% of C-N outside 1.25-1.45 A against 7.2%). Ubiquitin ran out of memory on the 16 GB card: Boltz split the
+    samples into `multiplicity % max_parallel_samples + 1` chunks (`diffusionv2.py:383`), one chunk for 1,000 and
+    10, so `--max_parallel_samples` had no effect in any run until then. `$B/boltz` now splits into chunks of
+    `max_parallel_samples` (uncommitted edit in our clone). The noise and random rotations are drawn for every
+    sample before the chunk loop, so chunking should leave the samples unchanged.
+  * Ubiquitin rerun, 2026-10-22 (61279169, `$B/phase1_ubq_rerun.sbatch`): 1,000 samples in chunks of 100, the batch
+    Phase 0 ran on a V100, after a chunking check on EHEE (100 samples unchunked twice and in chunks of 10,
+    `$B/compare_chunks.py`).
 - [ ] Protection flags from every sample's N/CA/C through the repo's protection-state code, uniform weights; dG per
       residue against experiment and against Upside. An amide with p = 1 is censored at RT ln(N), not a value.
 

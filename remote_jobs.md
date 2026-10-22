@@ -20,7 +20,9 @@ The user's four lines of work (10-21), and what each has on the clusters:
    on the released ff3.0 and ff3.1 (block 3 of 5), the TM4 and HDX validation.
 3. **Upside 3 design, debug stage** (upside3.md; plan.md Phase 24 and its "Resume here"). Local work, no cluster jobs.
 4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phase 0 is done (its two tests in §1 "Finished runs"). Phase 1's
-   first job, 1,000 `md` samples per protein on one midway3 V100, was submitted 16:23 10-21 (§1 line 4).
+   first job finished 17:02 10-21 with EHEE's 1,000 samples; ubiquitin ran out of GPU memory because Boltz's
+   `--max_parallel_samples` did not split the batch. With that fixed in our clone, the ubiquitin rerun 61279169
+   was submitted 03:27 10-22 (§1 line 4).
 
 Open and not in the user's list:
 - The 8 glpG chains run force fields that carry the retraining loss; whether to stop them when block 3 closes
@@ -705,14 +707,30 @@ their successors and their collector; the 8 glpG chains. midway3: nothing known 
 
 **Line 4: Boltz-2 HDX sampler (midway3).** Phase 0's two tests are in "Finished runs".
 - **Phase 1, first ensembles** (user 10-21, "submit phase 1"; `diffusion_dynamics.md` Phase 1): **61254153**
-  `boltz_phase1_md_s10_v100`, submitted 16:23 10-21 from midway3-login5 with `--partition=gpu --qos=gpu
-  --account=pi-trsosnic --gres=gpu:1 --time=01:30:00 --constraint=v100`; PD at submission, `--test-only` estimate
-  10-23 04:03 (the Phase 0 jobs started hours before theirs). Script `$B/phase1_hdx.sbatch` (md5 `c2064cec...`,
-  local copy `scratchpad/boltz_hdx/`): ubiquitin and EHEE_rd2_0005, 1,000 `md` samples each at `step_scale` 1.0,
-  seed 3, tags `<name>_md_s10`; about 30 min on the GPU. Log `$B/logs/boltz_phase1_md_s10_v100_61254153.out`; data
-  `$B/runs/boltz_phase1_md_s10_v100_61254153/` (per run `<tag>.log`, predictions under `<tag>/`, `<tag>.npz` with
-  every sample's N/CA/C). **Next:** copy the two npz files to `scratchpad/boltz_hdx/flags/samples/`, run the
-  flags (`run_flags.sh` and `compare_flags.py` there, extended to the new sets), and compute dG per residue.
+  `boltz_phase1_md_s10_v100`, V100 midway3-0277, 16:49-17:02 10-21, COMPLETED, but **only EHEE has samples**.
+  Script `$B/phase1_hdx.sbatch` (md5 `c2064cec...`, local copy `scratchpad/boltz_hdx/`): ubiquitin and
+  EHEE_rd2_0005, 1,000 `md` samples each at `step_scale` 1.0, seed 3, tags `<name>_md_s10`. Log
+  `$B/logs/boltz_phase1_md_s10_v100_61254153.out`; data `$B/runs/boltz_phase1_md_s10_v100_61254153/` (per run
+  `<tag>.log`, predictions under `<tag>/`, `<tag>.npz` with every sample's N/CA/C).
+  * EHEE: 1,000 samples, statistics those of Phase 0's 100 (CA-RMSD median 0.95 A, Rg 9.22 A, C-N 1.337 +- 0.053 A,
+    6.7% of C-N outside 1.25-1.45 A against 7.2%).
+  * Ubiquitin: CUDA OOM on the 16 GB card in the first diffusion step; Boltz skipped the batch and exited 0, so the
+    wrapper printed `ok` (findings 10.14). Rerun below.
+- **Phase 1, ubiquitin rerun** (user 10-22, "proceed next step"): **61279169** `boltz_phase1_ubq_rerun_v100`,
+  submitted 03:27 10-22 from midway3-login5 with `--partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1
+  --time=01:00:00 --constraint=v100`; PD, `--test-only` estimate 10-23 11:01. Runs on `$B/boltz` with the chunk fix
+  (`diffusionv2.py:383` now `sample_ids.split(max_parallel_samples)`, uncommitted; `git diff` there shows it).
+  Script `$B/phase1_ubq_rerun.sbatch` (md5 `96365eef...`, local copy `scratchpad/boltz_hdx/`), seed 3: EHEE 100
+  samples twice unchunked (`ehee_c1a`, `ehee_c1b`) and once in chunks of 10 (`ehee_c10`), then ubiquitin 1,000
+  `md` samples at `step_scale` 1.0 in chunks of 100 (`ubq_md_s10`); `check_samples.py`, then `compare_chunks.py`
+  (md5 `055f97f2...`). About 20 min on the GPU. The wrapper now fails a run whose log lacks "Number of failed
+  examples: 0" (also in `phase1_hdx.sbatch`, now md5 `c9353dd1...`, chunks of 100). Log
+  `$B/logs/boltz_phase1_ubq_rerun_v100_61279169.out`; data `$B/runs/boltz_phase1_ubq_rerun_v100_61279169/`.
+  **Next:** chunking passes if `ehee_c1a` vs `ehee_c10` is as close as `ehee_c1a` vs `ehee_c1b`; ubiquitin's
+  statistics should match Phase 0's 100 (`ubq_md_s10` in 61231966: CA-RMSD median 1.62 A, Rg 11.32 A, C-N 1.344
+  +- 0.055 A). Then copy EHEE's set from 61254153 and ubiquitin's from this job to
+  `scratchpad/boltz_hdx/flags/samples/`, run the flags (`run_flags.sh`, `compare_flags.py` there) and dG per
+  residue.
 
 **Shared**
 - **The engine fix** (findings 3.12; plan.md Phase 21): `$P/obj/upside` and `libupside.so` from
