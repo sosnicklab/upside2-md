@@ -192,6 +192,8 @@ if continue_sim:
                 t.root.input.mom._f_remove()
             t.create_array(t.root.input, 'mom', obj=n.mom[-1,0][:,:,None])
             t.root.input.mom._v_attrs.round = n.round[-1]  # the round the momentum was recorded at
+            if 'replica_index' in n:
+                t.root.input.mom._v_attrs.replica_index = n.replica_index[-1,0]  # the replica the system held
 
             if 'output' in t.root:
                 t.root.output._f_rename(new_name)

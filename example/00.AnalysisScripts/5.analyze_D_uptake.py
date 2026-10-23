@@ -32,6 +32,7 @@ import pymbar
 from pymbar import timeseries
 from helpers.function import (str_exp, plot_uptake, numerical_derivative, normalize_se, average_int,
                              select_state_file)
+from helpers.advanced_analysis_utils import load_pdb_numbering
 
 try:
     from pyhdx.plot import apply_cmap
@@ -279,6 +280,13 @@ def main():
     
     else:
         sequence = ''.join(fasta)
+
+    # Peptide Start/End are PDB residue numbers, as 4.calc_D_uptake.py reads them; the peptide map and the
+    # residue-level COFs need the sequence position each one names
+    pdb_chain, pdb_resnum = load_pdb_numbering('{}/inputs'.format(work_dir), primary_pdb_id)
+    pdb_position = {int(number): index for index, number in enumerate(pdb_resnum)}
+    if len(pdb_position) != pdb_resnum.size:
+        raise SystemExit('{} repeats PDB residue numbers across chains; peptide Start/End cannot name a residue'.format(primary_pdb_id))
     
     # compare D uptake at peptide level
     
@@ -321,6 +329,8 @@ def main():
     if merge_dfs.empty:
         print('no overlapping peptides between HXMS and sim, skipping comparison')
         sys.exit(0)
+    merge_dfs['pep_index_starts'] = [pdb_position[int(number)] for number in merge_dfs.pep_starts]
+    merge_dfs['pep_index_ends'] = [pdb_position[int(number)] for number in merge_dfs.pep_ends]
     
     # calculate cooperativity factor (COF)
     
@@ -601,10 +611,12 @@ def main():
             start_pos_segment = segment_index * segment_length
             end_pos_segment = start_pos_segment + segment_length - 1
     
+            # tick j + 1 carries residue start_pos_segment + j of the sequence
             for index, row in merged_df.iterrows():
-                if start_pos_segment <= int(row['pep_starts']) <= end_pos_segment:
-                    start_pos = max(int(row['pep_starts']), start_pos_segment) - start_pos_segment
-                    end_pos = min(int(row['pep_ends']), end_pos_segment) - start_pos_segment
+                start_index, end_index = int(row['pep_index_starts']), int(row['pep_index_ends'])
+                if start_pos_segment <= start_index <= end_pos_segment:
+                    start_pos = start_index - start_pos_segment + 1
+                    end_pos = min(end_index, end_pos_segment) - start_pos_segment + 1
                     height = heights[index] # use the calculated height
                     bar = patches.Rectangle((start_pos, height), end_pos - start_pos + 1, 0.01, color=colors[index])
                     ax.add_patch(bar)
@@ -667,9 +679,9 @@ def main():
     # plot regression for COF HXMS vs. Upside at peptide-level
     reg_plot(merge_dfs.COF_HXMS, merge_dfs.COF_Up, 'pep')
     
-    comb_res_HXMS, comb_res_idx_HXMS, comb_res_COF_HXMS = average_int(merge_dfs, 'COF_HXMS', 'peps', 'pep_starts')
+    comb_res_HXMS, comb_res_idx_HXMS, comb_res_COF_HXMS = average_int(merge_dfs, 'COF_HXMS', 'peps', 'pep_index_starts')
     
-    comb_res_Up, comb_res_idx_Up, comb_res_COF_Up = average_int(merge_dfs, 'COF_Up', 'peps', 'pep_starts')
+    comb_res_Up, comb_res_idx_Up, comb_res_COF_Up = average_int(merge_dfs, 'COF_Up', 'peps', 'pep_index_starts')
     
     # build dataframe of integrals for experimental residues
     res_int_HXMS = {"res": comb_res_HXMS, "res_idx": comb_res_idx_HXMS, "res_COF_HXMS": comb_res_COF_HXMS}
@@ -687,8 +699,7 @@ def main():
     res_avg_int_df = pd.merge(res_avg_int_df_Up, res_avg_int_df_HXMS, on=['res_idx', 'res'])
     
     res_avg_int_export = res_avg_int_df.reset_index()
-    if 'res_idx' in res_avg_int_export.columns:
-        res_avg_int_export['res_idx'] = pd.to_numeric(res_avg_int_export['res_idx'], errors='coerce') - 1
+    res_avg_int_export['pdb_resnum'] = pdb_resnum[res_avg_int_export['res_idx'].to_numpy(dtype=int)]
     res_avg_int_export.to_csv('{}/{}/{}_COF_values.csv'.format(work_dir, fig_dir, primary_pdb_id), index=False)
     
     # plot regression for COF HXMS vs. Upside at residue-level
@@ -710,11 +721,14 @@ def main():
     pdf_cof.close()
     
     # export colors to .npy file
-    np.save('{}/{}/{}_colors_res_HXMS.npy'.format(work_dir, fig_dir, primary_pdb_id), res_int_df_HXMS['res_idx'].unique())
+    # each colour belongs to a row of the per-residue groupby, so its residues are that frame's index (PDB numbers)
+    np.save('{}/{}/{}_colors_res_HXMS.npy'.format(work_dir, fig_dir, primary_pdb_id),
+            pdb_resnum[res_avg_int_df_HXMS.index.get_level_values('res_idx').to_numpy(dtype=int)])
     if diff_color_HXMS is not None:
         np.save('{}/{}/{}_colors_HXMS.npy'.format(work_dir, fig_dir, primary_pdb_id), diff_color_HXMS)
 
-    np.save('{}/{}/{}_colors_res_Up.npy'.format(work_dir, fig_dir, primary_pdb_id), res_int_df_Up['res_idx'].unique())
+    np.save('{}/{}/{}_colors_res_Up.npy'.format(work_dir, fig_dir, primary_pdb_id),
+            pdb_resnum[res_avg_int_df_Up.index.get_level_values('res_idx').to_numpy(dtype=int)])
     if diff_color_Up is not None:
         np.save('{}/{}/{}_colors_Upside.npy'.format(work_dir, fig_dir, primary_pdb_id), diff_color_Up)
 

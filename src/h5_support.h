@@ -82,6 +82,11 @@ std::string group_name(hid_t grp);
 // Read the dimension sizes of a dataset
 std::vector<hsize_t> get_dset_size(int ndims, hid_t group, const char* name);
 
+//! Transfer property list under which HDF5's conversion of a stored number to an integer type must be exact: a
+//! fractional, infinite or NaN float, or a value outside the integer's range, aborts the conversion and sets
+//! *inexact, so that a malformed index or count is refused instead of truncated or clipped
+H5Obj exact_conversion_plist(bool* inexact);
+
 // Attempt to read a scalar attribute.  Returns true if the attribute is present, false otherwise.
 // See below for more typesafe overloads.  attr_value_output is overwritten with the value of the 
 // attribute if it is present, otherwise it is unmodified.  If the underlying path does not exist,
@@ -94,7 +99,7 @@ template<class T>
 T read_attribute(hid_t h5, const char* path, const char* attr_name) {
     T value;
     if(!read_attribute(&value, h5, path, attr_name, select_predtype<T>()))
-        throw "attribute "+ std::string(attr_name) + " not present";
+        throw "attribute " + std::string(attr_name) + " of '" + std::string(path) + "' not present";
     return value;
 }
 
@@ -237,7 +242,11 @@ try {
 
     auto tmp = std::unique_ptr<T[]>(new T[dim_product]);
 
-    h5_noerr(H5Dread(dset.get(), select_predtype<T>(), H5S_ALL, H5S_ALL, H5P_DEFAULT, tmp.get()));
+    bool inexact = false;
+    auto xfer = exact_conversion_plist(&inexact);
+    herr_t status = H5Dread(dset.get(), select_predtype<T>(), H5S_ALL, H5S_ALL, xfer.get(), tmp.get());
+    if(inexact) throw std::string("holds a value that is not exactly an integer of the type read");
+    h5_noerr(status);
     traverse_dataset_iteraction_helper<ndims,T,F>()(tmp.get(), dims, f);
 } catch(const std::string &e) {
     throw "while traversing '" + std::string(name) + "', " + e;

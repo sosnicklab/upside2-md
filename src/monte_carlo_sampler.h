@@ -51,7 +51,7 @@ struct MultipleMonteCarloSampler {
 
     MultipleMonteCarloSampler() {}; // Empty default constructor  
     
-    MultipleMonteCarloSampler(hid_t sampler_group, H5Logger& logger);
+    MultipleMonteCarloSampler(hid_t sampler_group, H5Logger& logger, int n_atom);
     
     void execute(uint32_t seed, uint64_t round, const float temperature, DerivEngine& engine,
             VecArray mom, float half_kick, float slow_half_kick);

@@ -94,7 +94,7 @@ def compare(label, analytic, f, directions, e0, step):
 
 def check_term(config, term, path, frames):
     nodes = single_term_config(config, term, path)
-    engine = ue.Upside(path, quiet=True)
+    engine = ue.Upside(path)
     for i, x in enumerate(frames):
         e0 = float(engine.energy(x))
         g = engine.deriv(x).astype('f8')

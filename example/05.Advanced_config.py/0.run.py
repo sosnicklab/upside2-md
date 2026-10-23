@@ -95,7 +95,7 @@ print (config_stdout)
 #     restraints (spring energy)
 #     wall potential
 #     contact energy
-# Example 8 will show more details.
+# Example 07 shows more restraints.
 
 kwargs = dict(
                restraint_groups = ['0-9'],

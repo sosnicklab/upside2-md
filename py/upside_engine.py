@@ -1,9 +1,7 @@
 import numpy as np
 import ctypes as ct
-import shutil
 import tables as tb
 import os
-import time
 
 # We have to do a dirty trick to get the correct path to the native upside library.
 # It is likely possible to modify the build system to drop a config file 
@@ -29,12 +27,8 @@ def load_upside_library():
     for library_name in candidate_names:
         library_path = os.path.join(obj_dir, library_name)
         attempted_paths.append(library_path)
-        if not os.path.exists(library_path):
-            continue
-        try:
+        if os.path.exists(library_path):
             return ct.cdll.LoadLibrary(library_path)
-        except OSError:
-            raise
 
     raise OSError(
         'Could not find the Upside native library. Tried: {}'.format(
@@ -46,7 +40,7 @@ def load_upside_library():
 calc = load_upside_library()
 
 calc.construct_deriv_engine.restype  = ct.c_void_p
-calc.construct_deriv_engine.argtypes = [ct.c_int, ct.c_char_p, ct.c_bool]
+calc.construct_deriv_engine.argtypes = [ct.c_int, ct.c_char_p]
 
 calc.free_deriv_engine.restype  = None
 calc.free_deriv_engine.argtypes = [ct.c_void_p]
@@ -81,18 +75,6 @@ calc.get_output.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_char_p]
 calc.get_value_by_name.restype  = ct.c_int
 calc.get_value_by_name.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_char_p, ct.c_char_p]
 
-calc.get_clamped_value_and_deriv.restype  = ct.c_int
-calc.get_clamped_value_and_deriv.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_void_p]
-
-calc.clamped_spline_value.restype  = ct.c_int
-calc.clamped_spline_value.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_void_p]
-
-calc.clamped_spline_solve.restype  = ct.c_int
-calc.clamped_spline_solve.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p]
-
-calc.get_clamped_coeff_deriv.restype  = ct.c_int
-calc.get_clamped_coeff_deriv.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_float]
-
 
 def in_process_upside(args, verbose=True):
     # A bit of paranoia to make sure this doesn't interfere with python handlers
@@ -121,79 +103,13 @@ def in_process_upside(args, verbose=True):
     return
 
 
-def clamped_spline_value(bspline_coeff, x):
-    x = np.require(x, dtype='f4', requirements='C')
-    assert len(x.shape) == 1
-
-    bspline_coeff = np.require(bspline_coeff, dtype='f4', requirements='C')
-    assert len(bspline_coeff.shape) == 1
-
-    result = np.zeros(len(x), dtype='f4')
-
-    if calc.clamped_spline_value(
-            len(bspline_coeff),
-            result.ctypes.data, 
-            bspline_coeff.ctypes.data,
-            len(x),
-            x.ctypes.data): raise RuntimeError("spline evaluation error")
-    return result
-
-def clamped_spline_solve(values):
-    values = np.require(values, dtype='f4', requirements='C')
-    assert len(values.shape) == 1
-
-    bspline_coeff = np.zeros(len(values)+2, dtype='f4')
-
-    if calc.clamped_spline_solve(
-            len(bspline_coeff),
-            bspline_coeff.ctypes.data,
-            values.ctypes.data): raise RuntimeError("spline solve error")
-    return bspline_coeff
-
-def clamped_value_and_deriv(bspline_coeff, x):
-    x = np.require(x, dtype='f4', requirements='C')
-    assert len(x.shape) == 1
-
-    bspline_coeff = np.require(bspline_coeff, dtype='f4', requirements='C')
-    assert len(bspline_coeff.shape) == 1
-
-    result = np.zeros((len(x),2), dtype='f4')
-
-    if calc.get_clamped_value_and_deriv(
-            len(bspline_coeff),
-            result.ctypes.data, 
-            bspline_coeff.ctypes.data,
-            len(x),
-            x.ctypes.data): raise RuntimeError("spline evaluation error")
-    return result
-
-
-def clamped_coeff_deriv(bspline_coeff, x):
-    x = np.asarray(x, dtype='f4')
-    assert len(x.shape) == 1
-
-    bspline_coeff = np.require(bspline_coeff, dtype='f4', requirements='C')
-    assert len(bspline_coeff.shape) == 1
-
-    result = np.zeros((len(x),len(bspline_coeff)), dtype='f4')
-
-    for i,y in enumerate(x):
-        if calc.get_clamped_coeff_deriv(
-                len(bspline_coeff),
-                result[i].ctypes.data, 
-                bspline_coeff.ctypes.data,
-                y): raise RuntimeError("spline evaluation error")
-    return result
-
-
 class Upside(object):
-    def __init__(self, config_file_path, quiet=False):
+    def __init__(self, config_file_path):
         self.config_file_path = str(config_file_path)
         with tb.open_file(self.config_file_path) as t:
             self.initial_pos = t.root.input.pos[:,:,0]
             self.n_atom = self.initial_pos.shape[0]
-            self.sequence = t.root.input.sequence[:]
-        self.engine = calc.construct_deriv_engine(self.n_atom, bytes(self.config_file_path, encoding="ascii"), bool(quiet))
+        self.engine = calc.construct_deriv_engine(self.n_atom, bytes(self.config_file_path, encoding="ascii"))
         if self.engine is None: raise RuntimeError('Unable to initialize upside engine for %s'%(config_file_path,))
 
     def __repr__(self):

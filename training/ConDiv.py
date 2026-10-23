@@ -6,7 +6,8 @@ Divergence". The code is O. Kleinmann's Python 3 port of Peng's trainer
 (condiv2.py, 2025-12-16, github nnamnielk/condiv4upside2),
 modernised and restored to the published protocol. Differences from that file, each for a reason:
 
-  * modernised: the Theano regulariser is the same objective in torch; mdtraj is replaced by the
+  * modernised: the Theano regulariser is the same objective in numpy, with its gradient in closed
+    form, so a process holds one OpenMP runtime (the engine's); mdtraj is replaced by the
     equivalent numpy (C-alpha RMSD and unweighted Rg) on Upside's own output; site paths (conda,
     srun, LD_LIBRARY_PATH, rama files under /home/okleinmann) come from UPSIDE_HOME and env.sh.
   * protocol restored to the SI where the port had drifted: DSE weight lambda = 0.3 (port 0.0, so
@@ -17,8 +18,8 @@ modernised and restored to the published protocol. Differences from that file, e
     center, sharpness and hbond weight (`bbenvc`, `bbenvs`, `bbenvw`) and hbond.h5 entries 4-11,
     the rama boundaries and sharpnesses (`hbr`). The engine returns exact derivatives for all of
     them since 2026-10-19, so freezing them is this trainer's choice. bb_env.dat trains through
-    its scale. Inside `rot`, the 620 placement coordinates (hydrophobe placement 18, rotamer
-    centres 516, rotamer scalars 86) also stay fixed: d_obj gives them no gradient.
+    its scale. Inside `rot`, the 534 placement coordinates (hydrophobe placement 18, rotamer
+    centres 516) also stay fixed: d_obj gives them no gradient.
   * the backbone term reads the side-chain burial's weights, so its weight derivative is added
     to `envw`'s (findings 3.14; missing before 2026-10-19, ff2.1's training included).
   * two numerical defects fixed: the replica reweighting exponent was E*(T0-Ti)/Ti, which is
@@ -29,25 +30,27 @@ modernised and restored to the published protocol. Differences from that file, e
   * time step 0.009, Upside's standard (master, the FF1 trainer, the Peng benchmark), where the
     port ran 0.015: at 0.015 about one worker protein-step in 700 destroys a free replica, which
     stays finite and sits in the top replica at up to 177 times kT (findings 1.21).
-  * the Ramachandran library is a fixed input, `upside_input/rama.dat`, never trained. For ff3.0
-    it is parameters/common/rama31.dat, whose central-glycine row is fitted in Upside to BioEmu's
-    plain-MD octapeptides (up.md 2.8, findings 1.19): the PDB row is part local energy and part
-    evolutionary placement, and a map trained against native structures relearns the placement
-    (findings 1.15).
-  * two changes for ff3.0 (findings 1.17). Glycine has its own offsets on the three H-bond basin
-    energies (hbond.h5 entries 12-14, field `hbg`), trained from zero with everything else: with
-    the shared energies alone, keeping loop glycines left-handed costs every helical glycine its
-    helix. The side-chain (`rot`) learning rate is 10x the port's smaller: at the port's rate
-    Adam's normalised step random-walks the 31,420 pair coefficients, of which ~6% carry signal,
-    and the walk weakens helices and folds.
+  * the Ramachandran library is a fixed input, `upside_input/rama.dat`, never trained here: the PDB
+    row is part local energy and part evolutionary placement, and a map trained against native
+    structures relearns the placement (findings 1.15). The released ff3.0 read parameters/common/
+    rama.dat, its glycine depth pair trained by the run's own trainer/rama_basin.py (findings 1.27);
+    parameters/common/rama31.dat, the central-glycine row fitted in Upside to BioEmu's plain-MD
+    octapeptides (up.md 2.8, findings 1.19), was the fixed library of the ff30_bio line, not released.
+  * two changes made for the ff3.0 campaigns (findings 1.17). Glycine can carry its own offsets on
+    the three H-bond basin energies (hbond.h5 entries 12-14, field `hbg`), trained from zero with
+    everything else: with the shared energies alone, keeping loop glycines left-handed costs every
+    helical glycine its helix; the released ff3.0 has none (its hbond.h5 keeps 12 entries). The
+    side-chain (`rot`) learning rate is 10x the port's smaller: at the port's rate Adam's normalised
+    step random-walks the 31,334 side-chain coordinates, of which ~6% carry signal, and the walk
+    weakens helices and folds.
   * recorded, not trained: per-residue basin populations of the native-restrained replica and of
     the free ensemble (basin_weights below), the diagnostic that shows where the free simulation
     leaves the native conformation.
 
 One training step, per protein (main_worker):
   - 14 systems in one replica-exchange run: a native-restrained replica, 12 free replicas and one
-    self-avoiding-random-walk (SARW) replica with H-bond, side-chain burial and rotamer pair
-    energies scaled to zero. All start from the native structure.
+    self-avoiding-random-walk (SARW) replica with H-bond, side-chain and backbone burial and rotamer
+    pair energies scaled to zero. All start from the native structure.
   - NSE target: <dV/da>_native - <dV/da>_free, the free ensemble being the three coldest free
     replicas reweighted to T0 and mixed 0.6/0.3/0.1.
   - DSE target: <dV/da>_SARW - <dV/da>_unfolded, the unfolded ensemble being the frames of the two
@@ -58,7 +61,10 @@ One training step, per protein (main_worker):
     NSE mix), written to the step's divergence file.
 
 Commands (`initialize` copies this file into the run's output directory, and every later command
-runs that copy, so a run is never continued, judged or extracted by later code):
+runs that copy, so a run is never continued, judged or extracted by later code; the side-chain
+latent's layout is the tree's py/rotamer_parameter_estimation.py, and a checkpoint written before
+2026-10-22 (31,420 coordinates, 86 of them unused, against 31,334 now) resumes only in the tree it
+started in):
   ConDiv.py initialize <init_param_dir> <upside_input_dir> <pdb_list> <output_dir>
   ConDiv.py restart <checkpoint.pkl> <n_steps>
   ConDiv.py gate <run_dir>                      exit 0 converged, 3 not, anything else a failure
@@ -85,7 +91,6 @@ from multiprocessing import Pool
 
 import numpy as np
 import tables as tb
-import torch
 
 import run_upside as ru
 import upside_engine as ue
@@ -227,47 +232,30 @@ if not is_worker:
         for r in hydrophobicity_order:
             print('   ', r, env[r])
 
-    def _d_obj_fn():
-        """The port's Theano regulariser and coupling objective, in torch."""
-        def d_obj(lparam_np, rot_coupling_np, cov_coupling_np, hyd_coupling_np, reg_scale):
-            lparam = torch.tensor(lparam_np, requires_grad=True, dtype=torch.float64)
-            rot_p, cov_p, hyd_p, _, _, _, _ = rp.unpack_param_maker(lparam)
+    def d_obj(lparam, rot_coupling, cov_coupling, hyd_coupling, reg_scale):
+        """The gradient in the latent vector of the port's Theano objective: the couplings summed
+        against the pair, coverage and hydrophobe tables, plus, over each table's spline energies
+        E on its grid (rp.quadspline_energy), the regulariser
+            0.5 (nu + 1) log(1 + t^2 / (nu s^2)) / reg_scale + (E + 6)^2 where E < -6,
+        a student-t (s = 200, nu = 3) on t = E - 5 / (1 + exp((r - r0) / 0.2)), the departure
+        from an expected profile with r0 = 2 for the pair and coverage tables and 1 for the
+        hydrophobe, and a lower bound at -6."""
+        nu, s = 3., 200.
+        rot_p, cov_p, hyd_p, hydpl_p, rotpos_p = rp.unpack_params(lparam)
 
-            hb_n = (rp.n_knot_angular, rp.n_knot_angular, rp.n_knot_hb, rp.n_knot_hb)
-            sc_n = (rp.n_knot_angular, rp.n_knot_angular, rp.n_knot_sc, rp.n_knot_sc)
-            rot_e = rp.quadspline_energy(rot_p, sc_n)
-            cov_e = rp.quadspline_energy(cov_p, hb_n)
-            hyd_e = rp.quadspline_energy(hyd_p, hb_n)
+        def d_regulariser(p, n_knot, dr, r0):
+            n_knots = (rp.n_knot_angular, rp.n_knot_angular, n_knot, n_knot)
+            e = rp.quadspline_energy(p, n_knots)
+            r = np.arange(1, n_knot - 1) * dr
+            t = e - (5. / (1. + np.exp((r - r0) / 0.2)))[:, None, None]
+            d_e = (nu + 1.) * t / (nu * s ** 2 + t ** 2) / reg_scale + np.where(e < -6., 2. * (e + 6.), 0.)
+            return rp.quadspline_energy_vjp(p, n_knots, d_e)
 
-            def cutoff(x, scale):
-                return 1. / (1. + torch.exp(x / scale))
-
-            def lower_bound(x, lb):
-                return torch.where(x < lb, (x - lb) ** 2, torch.zeros_like(x))
-
-            def student_t(t, scale, nu):
-                return 0.5 * (nu + 1.) * torch.log(1. + (1. / (nu * scale ** 2)) * t ** 2)
-
-            r_rot = torch.tensor(np.arange(1, rp.n_knot_sc - 1) * rp.sc_dr)
-            r_hb = torch.tensor(np.arange(1, rp.n_knot_hb - 1) * rp.hb_dr)
-            rot_expect = (5. * cutoff(r_rot - 2., 0.2)).view(-1, 1, 1)
-            cov_expect = (5. * cutoff(r_hb - 2., 0.2)).view(-1, 1, 1)
-            hyd_expect = (5. * cutoff(r_hb - 1., 0.2)).view(-1, 1, 1)
-
-            reg = (student_t(rot_e - rot_expect, 200., 3.).sum() / reg_scale +
-                   student_t(cov_e - cov_expect, 200., 3.).sum() / reg_scale +
-                   student_t(hyd_e - hyd_expect, 200., 3.).sum() / reg_scale +
-                   lower_bound(rot_e, -6.).sum() +
-                   lower_bound(cov_e, -6.).sum() +
-                   lower_bound(hyd_e, -6.).sum())
-            obj = ((torch.tensor(rot_coupling_np) * rot_p).sum() +
-                   (torch.tensor(cov_coupling_np) * cov_p).sum() +
-                   (torch.tensor(hyd_coupling_np) * hyd_p).sum() + reg)
-            obj.backward()
-            return lparam.grad.numpy()
-        return d_obj
-
-    d_obj = _d_obj_fn()
+        return rp.unpack_params_vjp(lparam,
+                                    rot_coupling + d_regulariser(rot_p, rp.n_knot_sc, rp.sc_dr, 2.),
+                                    cov_coupling + d_regulariser(cov_p, rp.n_knot_hb, rp.hb_dr, 2.),
+                                    hyd_coupling + d_regulariser(hyd_p, rp.n_knot_hb, rp.hb_dr, 1.),
+                                    np.zeros_like(hydpl_p), np.zeros_like(rotpos_p))
 
     def get_init_param(init_dir, rama_library):
         files = dict(
@@ -292,14 +280,14 @@ if not is_worker:
         param = Update(*([None] * len(FIELDS)))._replace(
             enve=enve, envc=envc, envs=envs, envw=envw,
             bbenve=bbe, bbenvc=bbc, bbenvs=bbs, bbenvw=bbw,
-            rot=rp.pack_param(rotp, covp, hydp, hydplp, rotposp, np.zeros((rotposp.shape[0], 1))),
+            rot=rp.pack_param(rotp, covp, hydp, hydplp, rotposp),
             hb=hb, hbr=hbr, dhb=dhb, hbg=hbg, sheet=np.loadtxt(files['sheet']))
         return param, files
 
     def expand_param(params, orig, new):
         """Write the trained parameters to the files a worker (or a deployment) reads. The rama
         library is not trained and is never rewritten."""
-        rotp, covp, hydp, hydplp, rotposp, _ = rp.unpack_params(params.rot)
+        rotp, covp, hydp, hydplp, rotposp = rp.unpack_params(params.rot)
         shutil.copyfile(orig['rot'], new['rot'])
         with tb.open_file(new['rot'], 'a') as t:
             t.root.pair_interaction[:] = rotp
@@ -341,7 +329,7 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
     d_obj_files = dict((k, os.path.join(direc, 'nesterov_temp__' + os.path.basename(v)))
                        for k, v in init_files.items() if k != 'rama')
     d_obj_files['rama'] = init_files['rama']
-    expand_param(param + solver.update_for_d_obj(), init_files, d_obj_files)
+    expand_param(param, init_files, d_obj_files)
 
     has_slurm = shutil.which('srun') is not None
     files_arg = b64encode(cp.dumps(dict(files=d_obj_files))).decode('ascii')
@@ -429,14 +417,16 @@ def run_minibatch(worker_path, param, init_files, direc, minibatch, solver, reg_
 # ---------------------------------------------------------------------------
 
 def zero_for_sarw(config, scale):
-    """The port's apply_param_scale(hb, env, rot): H-bond energies (with any residue-class
-    offsets), side-chain burial and rotamer pair energies scaled by `scale`, leaving backbone
-    geometry, rama and the backbone term."""
+    """The SI's SARW, "without H-bonds, side chain and solvation terms", as upside_config's
+    apply_param_scale(hb, env, rot) scales them: H-bond energies (with any residue-class offsets),
+    side-chain and backbone burial and rotamer pair energies scaled by `scale`, leaving backbone
+    geometry and rama."""
     with tb.open_file(config, 'a') as t:
         p = t.root.input.potential
         p.hbond_energy.parameters[:4] *= scale
         p.hbond_energy.parameters[12:] *= scale
         p.sigmoid_coupling_environment.scale[:] *= scale
+        p.bb_sigmoid_coupling_environment._v_attrs.scale *= scale
         p.hbond_coverage.interaction_param[:] *= scale
         p.hbond_coverage_hydrophobe.interaction_param[:] *= scale
         p.rotamer.pair_interaction.interaction_param[:] *= scale
@@ -738,8 +728,9 @@ def main_gate(run_dir, alpha=0.05):
         print('only %d steps, fewer than one epoch (%d); nothing to judge yet' % (len(steps), n))
         return 3
     b1 = state['solver'].beta1
+    # a group is tested when it has a rate and parameters: hbg is empty for a 12-entry hbond.h5
     trained = [f for i, f in enumerate(FIELDS) if np.any(np.asarray(state['initial_alpha'][i]) != 0)
-               and getattr(state['param'], f) is not None]
+               and getattr(state['param'], f) is not None and np.size(getattr(state['param'], f)) > 0]
 
     def grad1(d):
         st = cp.load(open(os.path.join(d, 'solver_state.pkl'), 'rb'), encoding='latin1')
@@ -799,6 +790,9 @@ if __name__ == '__main__':
         state = main_initialize(*sys.argv[2:])
         with open(os.path.join(state['base_dir'], 'initial_checkpoint.pkl'), 'wb') as f:
             cp.dump(state, f, -1)
+        # the epoch's length, the minibatches initialize could build, for train_chain.sbatch's step count
+        with open(os.path.join(state['base_dir'], 'minibatches_per_epoch'), 'w') as f:
+            f.write('%d\n' % len(state['minibatches']))
     elif len(sys.argv) == 3 and sys.argv[1] == 'gate':
         raise SystemExit(main_gate(sys.argv[2]))
     elif len(sys.argv) == 4 and sys.argv[1] == 'extract':

@@ -17,57 +17,25 @@ typedef Float4 S;
 
 namespace {
 
-// S house_accurate(
-//         int n,
-//         S* x)  // size (n,), replaced by v, v[0] = |x|
-// {
-//     S beta,mu,s;
-//     S sigma = zero<S>();
-// 
-//     for(int i=1; i<n; ++i) sigma += x[i]*x[i];
-//     
-//     mu = sqrtf(x[0]*x[0] + sigma);   // |x|
-//     if(sigma == zero<S>()) {  // FIXME more robust condition needed here
-//         beta = (x[0]>=zero<S>()) ? zero<S>() : two<S>();
-//         s = one<S>();
-//     } else {
-//         s = (x[0]>zero<S>()) ? -sigma/(x[0]+mu) : (x[0]-mu);
-//         beta = two<S>()*s*s / (sigma+s*s);
-//     }
-// 
-//     x[0] = mu;
-//     for(int i=1; i<n; ++i) x[i] *= 1./s;
-//     return beta;
-// }
-// 
-// void givens_accurate(S *c, S *s, S a, S b)
-// {
-//     if(b==zero<S>()) {
-//         *c=one<S>(); *s=zero<S>();
-//     } else {
-//         if(fabsf(b) > fabsf(a)) {
-//             S tau = -a/b; *s = one<S>()/sqrtf(one<S>()+tau*tau); *c = *s * tau;
-//         } else {
-//             S tau = -b/a; *c = one<S>()/sqrtf(one<S>()+tau*tau); *s = *c * tau;
-//         }
-//     }
-// }
-
 S house(
         int n,
-        S* x)  // size (n,), replaced by v, v[0] = |x|
+        S* x)  // size (n,), replaced by v, v[0] = |x| (x[0] itself when the column is already reduced)
 {
     S beta,mu,s;
-    S sigma2 = 1e-20f;
+    S sigma2 = zero<S>();
 
     for(int i=1; i<n; ++i) sigma2 += x[i]*x[i];
-    
+
+    // a column with no tail is already reduced, so its reflection is the identity (Golub and van Loan 5.1.1)
+    auto reduced = sigma2 == zero<S>();
+
     mu = sqrtf(x[0]*x[0] + sigma2);   // |x|
     s = ternary(zero<S>()<x[0], -sigma2*rcp(x[0]+mu), x[0]-mu);
-    beta = two<S>()*s*s * rcp(sigma2+s*s);
+    beta = ternary(reduced, zero<S>(), two<S>()*s*s * rcp(sigma2+s*s));
 
-    x[0] = mu;
-    for(int i=1; i<n; ++i) x[i] *= rcp(s);
+    x[0] = ternary(reduced, x[0], mu);
+    auto inv_s = ternary(reduced, zero<S>(), rcp(s));
+    for(int i=1; i<n; ++i) x[i] *= inv_s;
 
     return beta;
 }
@@ -299,6 +267,7 @@ struct AffineAlignment : public CoordNode
         check_size(grp, "ref_geom", n_elem, 3,3);  // (residue, atom, xyz)
 
         traverse_dset<2,int  >(grp,"atoms",   [&](size_t i,size_t j,          int   x){
+                if(x<0 || x>=pos.n_elem) throw string("affine_alignment atoms outside its input");
                 params[i/4].atom_offsets[j][i%4] = x*pos.output.row_width;});
         traverse_dset<3,float>(grp,"ref_geom",[&](size_t i,size_t na,size_t d,float x){
                 params[i/4].ref_geom[na][d][i%4]=x;});
@@ -312,6 +281,14 @@ struct AffineAlignment : public CoordNode
                 for(int d: range(3))
                     params[i/4].ref_geom[na][d][i%4] = params[i/4].ref_geom[na][d][0];
         }
+
+        // the frame's origin is the centroid of its atoms, and the derivative below takes the covariance's
+        // derivative with respect to an atom as its ref_geom row, which holds only for a centred ref_geom
+        for(int i: range(n_elem))
+            for(int d: range(3))
+                if(fabsf(params[i/4].ref_geom[0][d][i%4] + params[i/4].ref_geom[1][d][i%4] +
+                         params[i/4].ref_geom[2][d][i%4]) > 3e-4f)
+                    throw string("ref_geom of residue ") + to_string(i) + " is not centred";
     }
 
     virtual void compute_value(ComputeMode mode) {

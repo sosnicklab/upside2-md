@@ -223,17 +223,17 @@ def check_stiffness(node, sp, args, key):
     compare(node, 'spring_const', np.full(len(k), args[key] if key in args else k[0]), k, 1e-12)
 
 def check_backbone_pairs(pot, L):
-    # backbone_steric.cpp:66-70: id is the affine_alignment row; sequence_id (else id) feeds the exclusion
-    # acceptable_backbone_pair, |s1-s2| > 1 (:32-35); n_atom counts ref_pos slots (N, CA, C, CB) used (:119-127)
+    # backbone_steric.cpp:66-74: id is the affine_alignment row; sequence_id (required) feeds the exclusion
+    # acceptable_backbone_pair, |s1-s2| > 1 (:32-35); n_atom counts ref_pos slots (N, CA, C, CB) used (:120-128)
     bp = pot['backbone_pairs']
     r = np.arange(L.n_res)
     compare('backbone_pairs', 'id', r, bp['id'][:])
     gly = np.array([x == 'GLY' for x in L.seq])
     compare('backbone_pairs', 'n_atom', np.where(gly, 3, 4), bp['n_atom'][:])
-    s = bp['sequence_id'][:] if 'sequence_id' in bp else bp['id'][:]
-    expect_excl = (L.chain[:, None] == L.chain[None, :]) & (np.abs(r[:, None] - r[None, :]) <= 1)
-    check_exclusion('backbone_pairs', 'sequence_id' if 'sequence_id' in bp else 'id',
-                    expect_excl, np.abs(s[:, None] - s[None, :]) <= 1, r, r)
+    if compare('backbone_pairs', 'sequence_id present', True, 'sequence_id' in bp):
+        s = bp['sequence_id'][:]
+        expect_excl = (L.chain[:, None] == L.chain[None, :]) & (np.abs(r[:, None] - r[None, :]) <= 1)
+        check_exclusion('backbone_pairs', 'sequence_id', expect_excl, np.abs(s[:, None] - s[None, :]) <= 1, r, r)
     ref = bp['ref_pos'][:].astype('f8')
     if 'affine_alignment' in pot:
         g = pot['affine_alignment/ref_geom'][:].astype('f8')
@@ -241,7 +241,7 @@ def check_backbone_pairs(pot, L):
     compare('backbone_pairs', 'ref_pos[:, 3] is NaN exactly for GLY', gly, np.isnan(ref[:, 3]).any(axis=1))
 
 def check_exclusion(node, dset, expected, engine, res1, res2):
-    # the engine excludes on the stored ids; the physics excludes sequence neighbours within a chain only
+    # the engine excludes on the stored sequence ids; the physics excludes sequence neighbours within a chain only
     bad = np.argwhere(expected != engine)
     for a, b in bad[:MAX_ROWS]:
         print('MISMATCH %s/%s exclusion of element pair (%d, %d), residues (%d, %d): expected %s, engine %s'
@@ -399,7 +399,8 @@ def check_hbond(pot, L, args, lib):
         compare('infer_H_O', 'N-H shorter than C=O', True, g['donors/bond_length'][0] < g['acceptors/bond_length'][0])
     if 'protein_hbond' in pot:
         # hbond.cpp:329-340: output row nv copies infer_H_O row nv and an edge adds to row edge_indices1/2, so
-        # index1/index2 must be the identity onto the donor and acceptor rows; id is the residue (exclusion :168-171)
+        # index1/index2 must be the identity onto the donor and acceptor rows; id is the residue; sequence_id
+        # excludes (:166-170)
         g = pot['protein_hbond']
         compare('protein_hbond', 'index1', np.arange(nd), g['index1'][:])
         compare('protein_hbond', 'index2', nd + np.arange(na), g['index2'][:])
@@ -428,11 +429,14 @@ def check_hbond(pot, L, args, lib):
             compare('hbond_energy', 'no residue_class without class_restype', False, 'residue_class' in g)
 
 def igraph_exclusion(node, g, L, res1, res2, k):
-    # interaction_graph.h:144 with the node's acceptable_id_pair: elements whose ids differ by k or less never pair
-    id1, id2 = g['id1'][:], g['id2'][:]
-    if len(id1) != len(res1) or len(id2) != len(res2): return
+    # interaction_graph.h:137 with the node's acceptable_id_pair on sequence_id1/2 (:490-492): elements whose
+    # sequence ids differ by k or less never pair
+    if not compare(node, 'sequence_id1 and sequence_id2 present', True, 'sequence_id1' in g and 'sequence_id2' in g):
+        return
+    s1, s2 = g['sequence_id1'][:], g['sequence_id2'][:]
+    if len(s1) != len(res1) or len(s2) != len(res2): return
     expect = (L.chain[res1][:, None] == L.chain[res2][None, :]) & (np.abs(res1[:, None] - res2[None, :]) <= k)
-    check_exclusion(node, 'id1/id2', expect, np.abs(id1[:, None] - id2[None, :]) <= k, res1, res2)
+    check_exclusion(node, 'sequence_id1/sequence_id2', expect, np.abs(s1[:, None] - s2[None, :]) <= k, res1, res2)
 
 # ------------------------------------------------------------------------------------------------------------------
 # side chains: placement, rotamer, coverage
@@ -484,8 +488,8 @@ def backbone_class(L):
     return np.where(pre, 3, cls)
 
 def check_sidechain(pot, L, args, lib):
-    sc_node = next((x for x in ('placement_fixed_point_vector_only', 'placement_point_vector_only') if x in pot), None)
-    if sc_node is None or not lib['sidechain']: return None
+    sc_node = 'placement_fixed_point_vector_only'
+    if sc_node not in pot or not lib['sidechain']: return None
     sclib = tb.open_file(lib['sidechain'])
     excluded = arg_list(args, 'rotamer_exclude_residues')
     g = pot[sc_node]
@@ -507,11 +511,8 @@ def check_sidechain(pot, L, args, lib):
     # placement.cpp:252, 272, 129, 140: affine_residue is the affine_alignment row, layer_index the placement_data row
     compare(sc_node, 'affine_residue', res, stored_res)
     compare(sc_node, 'layer_index', layer, g['layer_index'][:])
-    if sc_node == 'placement_fixed_point_vector_only':
-        compare(sc_node, 'placement_data (= library rotamer_center_fixed, so layers are library rows)',
-                sclib.root.rotamer_center_fixed[:, :6], g['placement_data'][:], 2e-6)
-    else:
-        compare(sc_node, 'rama_residue', res, g['rama_residue'][:])
+    compare(sc_node, 'placement_data (= library rotamer_center_fixed, so layers are library rows)',
+            sclib.root.rotamer_center_fixed[:, :6], g['placement_data'][:], 2e-6)
     pl_node = next((x for x in ('placement_scalar', 'placement_fixed_scalar') if x in pot), None)
     if pl_node:
         # rows must align with the bead rows: rotamer.cpp:715 sizes them, :889-892 reads both at loc1
@@ -532,9 +533,9 @@ def check_sidechain(pot, L, args, lib):
         compare('weighted_pos', 'index_weight', np.arange(len(rows)), w['index_weight'][:])
         compare('weighted_pos', 'arguments', [sc_node, pl_node], [x.decode() for x in w.attrs['arguments']])
     if 'rotamer' in pot:
-        # interaction_graph.h:391-393: index is the placement row (also the row of every probability node,
-        # rotamer.cpp:889), type the pair_interaction row; id decoded at rotamer.cpp:886-888, its residue part
-        # excludes a residue's own beads (bead_interaction.h:168)
+        # interaction_graph.h:378-381: index is the placement row (also the row of every probability node,
+        # rotamer.cpp:889), type the pair_interaction row; id decoded at rotamer.cpp:886-888; sequence_id excludes
+        # a residue's own beads (bead_interaction.h:148-150)
         pi = pot['rotamer/pair_interaction']
         compare('rotamer', 'pair_interaction/index', np.arange(len(rows)), pi['index'][:])
         compare('rotamer', 'pair_interaction/type (bead_order)', btype, pi['type'][:])
@@ -546,11 +547,11 @@ def check_sidechain(pot, L, args, lib):
                     radial_scaled(t.root.pair_interaction[:], args), pi['interaction_param'][:], 2e-6)
         args_ = [x.decode() for x in pot['rotamer'].attrs['arguments']]
         compare('rotamer', 'arguments[0] (the bead positions)', sc_node, args_[0])
-        sid = pi['id'][:]
-        if len(sid) == len(rows):
-            expect = res[:, None] == res[None, :]
-            check_exclusion('rotamer', 'pair_interaction/id', expect,
-                            (sid[:, None] >> N_BIT_ROTAMER) == (sid[None, :] >> N_BIT_ROTAMER), res, res)
+        if compare('rotamer', 'pair_interaction/sequence_id present', True, 'sequence_id' in pi):
+            sid = pi['sequence_id'][:]
+            if len(sid) == len(rows):
+                expect = res[:, None] == res[None, :]
+                check_exclusion('rotamer', 'pair_interaction/sequence_id', expect, sid[:, None] == sid[None, :], res, res)
 
     donors, acceptors = hbond_sites(L, args)
     nd, na = len(donors), len(acceptors)
@@ -687,11 +688,10 @@ def check_membrane(pot, L, args, lib):
     if lib['membrane']:
         with tb.open_file(lib['membrane']) as t:
             names = [x.decode() for x in t.root.names[:]]
-    for node, tdset in (('cb_membrane_potential', 'res_type'), ('cb_surf_membrane_potential', 'res_type'),
-                        ('membranelateral_potential', 'restypes')):
+    for node, tdset in (('cb_membrane_potential', 'res_type'), ('cb_surf_membrane_potential', 'res_type')):
         if node not in pot or names is None: continue
-        # membrane_potential.cpp:283-284, 316-322, 343 (surface variant :744-745, 783-788, 840; lateral :1315-1316,
-        # 1336-1342): cb_index is the CB row of the first argument, the element of environment_coverage_sc
+        # membrane_potential.cpp:283-284, 316-322, 343 (surface variant :744-745, 783-788, 840): cb_index is the CB
+        # row of the first argument, the element of environment_coverage_sc
         # (env_cov(0, ri*20+aa)) and the surface row; the residue type is the membrane.h5 row
         g = pot[node]
         cb_index = g['cb_index'][:].astype(int)
@@ -730,7 +730,7 @@ def check_membrane(pot, L, args, lib):
             compare('surface', 'included_list', np.array(sorted(inc)), g['included_list'][:])
     if 'hbbb_coverage' in pot:
         # environment.cpp:286-305 with HbondEnvironmentCoverageInteraction2: group 1 the donor rows of infer_H_O,
-        # group 2 the backbone atoms of pos; ids are residues (exclusion |id1-id2| > 2)
+        # group 2 the backbone atoms of pos; ids are residues (exclusion |sequence_id1-sequence_id2| > 2)
         g = pot['hbbb_coverage']
         atoms = np.column_stack((L.N, L.CA, L.C)).ravel()
         compare('hbbb_coverage', 'index1', np.arange(len(donors)), g['index1'][:])
@@ -776,8 +776,8 @@ def const_rows(pot, node, rows, points, dims):
 
 def check_advanced(f, pot, L, adv):
     CA = L.CA
-    for node in [g for g in pot if g.startswith('Const3D') and not int(pot[g].attrs['initialized_by_coord'])]:
-        # coord_const.cpp:24, 41-43: the node's size is id's, its rows are value's, so the two must agree
+    for node in [g for g in pot if g.startswith('Const3D')]:
+        # coord_const.cpp:13-16: the node's size is id's, its rows are value's, so the two must agree
         compare(node, 'id (one per value row)', np.arange(len(pot[node + '/value'])), pot[node + '/id'][:])
     for opt, name, kind, n_fix in (('fixed_wall', 'wall', 'WallSpring', 4), ('pair_wall', 'pair_wall', 'WallSpring', 5),
                                    ('fixed_spring', 'spring', 'Spring', 3), ('pair_spring', 'pair_spring', 'Spring', 4),
@@ -796,9 +796,10 @@ def check_advanced(f, pot, L, adv):
         else:
             compare(node, 'id[:, 0] (CA of each residue)', CA[res], ids[:, 0])
             if opt == 'nail_spring':
-                # Const3D_pos is initialized from pos row id[k] (coord_const.cpp:38, 66-72): the nail ties the CA to
-                # its own starting position
-                compare('Const3D_pos', 'id[slot 1 of %s] (the same CA)' % node, CA[res], pot['Const3D_pos/id'][:][ids[:, 1]])
+                # Const3D_pos row k holds the config's position of the CA it nails (coord_const.cpp:13-16): the nail
+                # ties the CA to its own starting position
+                compare('Const3D_pos', 'value[slot 1 of %s] (the same CA at the start)' % node,
+                        f['input/pos'][:, :, 0][CA[res]], pot['Const3D_pos/value'][:][ids[:, 1]], 1e-6)
             else:
                 const_rows(pot, 'Const3D', ids[:, 1], [[float(v) for v in r[n_fix:]] for r in rows], dims)
         c = 2 if pair else 1   # the radius column
@@ -875,17 +876,16 @@ def check_advanced(f, pot, L, adv):
         check_spring(pot, 'cavity_radial', 'WallSpring', len(ids), radius, np.full(len(ids), 5.), np.ones(len(ids)))
 
     if adv.get('ask_before_using_AFM'):
-        # coord_const.cpp:122, 138, 158-178: with initialized_by_coord the tip starts at pos row id[k], else at start_pos[k]
+        # coord_const.cpp:59-70, 93: tip k is at start_pos[k] + velocities[k]*t, its start the table's tip position or,
+        # for a table without one, its CA in the config
         head, rows = read_table(adv['ask_before_using_AFM'])
         res = [int(r[0]) for r in rows]
         g = pot['MovingConst3D']
-        by_coord = len(head) == 5
-        compare('MovingConst3D', 'initialized_by_coord (tables without a tip position)', int(by_coord),
-                int(g.attrs['initialized_by_coord']))
-        compare('MovingConst3D', 'id', CA[res] if by_coord else np.arange(len(rows)), g['id'][:])
+        start = (f['input/pos'][:, :, 0][CA[res]] if len(head) == 5
+                 else np.array([[float(v) for v in r[2:5]] for r in rows]))
+        compare('MovingConst3D', 'id', np.arange(len(rows)), g['id'][:])
         compare('MovingConst3D', 'velocities', np.array([[float(v) for v in r[-3:]] for r in rows]), g['velocities'][:], 1e-12)
-        if not by_coord:
-            compare('MovingConst3D', 'start_pos', np.array([[float(v) for v in r[2:5]] for r in rows]), g['start_pos'][:], 1e-12)
+        compare('MovingConst3D', 'start_pos', start, g['start_pos'][:], 1e-6)
         compare('Distance3D_moving', 'id (CA, tip row)', np.column_stack((CA[res], np.arange(len(rows)))),
                 pot['Distance3D_moving/id'][:].astype(int))
         check_spring(pot, 'pulling', 'Spring', len(rows), np.zeros(len(rows)), [float(r[1]) for r in rows])
@@ -1108,7 +1108,7 @@ def check_sc_table(pot, L, lib, sc, memb, atype, charge):
         names = [x.decode() for x in t.root.restype_order[:]]
         ss = t.root.rotamer_start_stop_bead[:]
         lib_nrot = np.array([(ss[names.index(x)][1]-ss[names.index(x)][0])//ss[names.index(x)][2] for x in restypes])
-    compare('martini_sc_table_1body', 'rotamer_count = sidechain library rotamers (martini_build_tables.py:294-306)',
+    compare('martini_sc_table_1body', 'rotamer_count = sidechain library rotamers (martini_build_tables.py _sidechain_conformers)',
             lib_nrot, g['rotamer_count'][:])
     res, rot = sc['res'], sc['rot']
     # martini_potential.cpp:780-785, 898-901: one row per rotamer row of the rotamer node; row_residue_index is the CB

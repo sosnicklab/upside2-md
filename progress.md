@@ -1171,6 +1171,242 @@ to 10-07 12:00 is in git history.
   fixtures regenerating on the D5 build for its node_fd and hybrid regression. Lesson 10.35 (user: concise edits in
   master's style). Files modified: src/{spline.cpp,spline.h,martini_potential.cpp}, py/martini_prepare_system_lib.py,
   up.md, findings.md 10.35, plan.md Phase 24.
+- 10-21 14:50-16:25, Upside 3 audit continued. Both pass-2 reviews in (placement, config writers; reports saved). The
+  user's four decisions taken by measurement (plan Phase 24 item 5) and applied with every queued fix that was
+  ready, one at a time, each reproduced before and verified after: D5 closed on regenerated 1rkl hybrid fixtures
+  (A103), generators deleted (A104), `membranelateral_potential` deleted (A105, its forces sum to up to 0.1 E_up/A:
+  no energy exists), chain breaks (A106), insertion codes (A107), placement D1-D3 (A108-A110), writers items 1, 3-12
+  (A111-A119). `obj/` rebuilt 16:18 (A101 kept as `obj/*.bak_a101`), regression equal to its source build;
+  `tests/regress.py` runs hybrids without pivot moves; fixture baseline `fixtures_w13`, hybrid baseline
+  `h41_obj.npz`. glpG seed replicates: gate 9.2% pass, 16.1% fail; the gap sits at the belt ends and wanders
+  7-16% under the rigid protein; s13's refused state continued in production to test whether it heals. Files
+  modified: src/{eig,placement,membrane_potential,main}.cpp, src/CMakeLists_{M1,Other}.txt (generators deleted),
+  py/{upside_config,advanced_config,upside_nodes,run_upside,PDB_to_initial_structure}.py, tests/{fixtures,
+  index_oracle,registry,regress}.py, example/08 (lateral script, table, readme), up.md, upside3.md, findings.md
+  (3.14 A103-A119, 10.35), plan.md Phase 24.
+- 10-21 16:25-16:50, Upside 3 audit continued. git pull (user: "git pull and continue"): fast-forward to 3224a0bf;
+  findings.md and progress.md, edited both locally and upstream, merged by hand (upstream's lesson and three Boltz-HDX
+  entries kept), no stash. s13's refused glpG state heals in production (16.1% to 4.5%): the rigid-stage gate fails
+  healthy preps; options to the user (plan Phase 24 item 3). Fixed and verified one at a time: writers items 2 and 15
+  (A120-A121), `HBondEnergy` input checks (A122), BP D4 log split (A123), the dead-code batch (A124); `obj/` holds to
+  A123. Reader preconditions (Distance ids, WallSpring wall type and ids, Surface included residues) under test.
+  Files modified: src/{main,hbond,rotamer,bead_interaction.h,interaction_graph.h,spline.h,spline,sigmoid_energy,
+  coord_basic,spring,surface}.cpp, py/{generate_restart_config,run_upside,upside_config,upside_nodes,
+  PDB_to_initial_structure}.py, tests/regress.py, example/08 scripts 4-5, up.md, findings.md (3.14 A120-A124, 8b),
+  plan.md Phase 24.
+- 10-21 16:50-17:40, Upside 3 audit continued. Gate option (a) applied (user): the glpG solvation gate measures
+  production's steps 15,000-20,000 and `run.py` starts REMD from that gated production (A126). Coordinate-node pass 2
+  reported; fixed one at a time, each reproduced first: MovingConst3D's clock under g-JF and mv's slow level (A127),
+  26 unchecked coordinate-reader inputs and the empty group (A128), reversed residue ranges (A129), Const3D and
+  MovingConst3D carrying their values with the auto tip written from the config (A130), eight writerless nodes
+  deleted (A131), dim1 against true widths (A132; corrects A124/A125's padded-width checks). `src/` to A132, `obj/`
+  to A125. Files modified: src/{coord_basic,coord_const,coord_map,coord_operator,main,spring,sigmoid_energy}.cpp,
+  py/{martini_prepare_system,advanced_config,upside_config,upside_nodes,generate_restart_config}.py,
+  example/{06.PullingSimulation/0.run.py,16.MARTINI/run.py,16.MARTINI/readme.md}, tests/{fixtures,index_oracle}.py,
+  up.md, findings.md (3.14 A126-A132, 8b), plan.md Phase 24.
+- 10-21 17:40-18:10, the engine-graph pass 2 (P1-01) reported; D2-D5, D7 and D6's documentation fixed (A133-A137),
+  D1 `mag` of a zero vector (A138; reproduced with builds without -ffast-math: nan before, finite after; the hybrid
+  moves at rounding). `obj/` rebuilt with every fix to A138; new baselines w45_obj/h45_obj on fixtures_w16. Second
+  reviews of P1-10 (driver, REMD, thermostat) and the dry-MARTINI engine started. Files modified: src/{main,
+  deriv_engine.h,vector_math.h}, up.md 1.3, findings.md 3.14, plan.md Phase 24, pass2/brief.md.
+- 10-21 21:45-22:35, pass 2 of the driver (P1-10) and the dry-MARTINI engine (P2-01, -03, -04) reported
+  (`pass2/driver/report.md`, `pass2/martini/report.md`). Fixed and verified in two builds: MARTINI reader
+  preconditions and the dead PO4 z reference (A139, A140), double sums of the MARTINI potentials (A141; hybrid 20
+  of 196 arrays move, all potential values), rigid-group degrees of freedom in the logged KE (A142); the annealed
+  continuation temperature, the synchronized stop, the frame taken before the round's MC move and re-centering,
+  option checks, replica labels across restarts, exact rejected exchanges (A143-A148; fixtures_w16 218 of 4070
+  arrays move, all exchange-run dynamics or frames on the MC grid). `obj/` holds every fix to A148 (`*.bak_a138`,
+  `*.bak_a142`); baselines w47_obj/h47_obj. Second reviews of P2-02 (hybrid coupling) and P1-08 (local backbone)
+  started. Files modified: src/{main,martini_potential,martini_brownian,martini_hybrid,martini_fix_rigid}.cpp,
+  src/{martini.h,martini_internal.h}, py/generate_restart_config.py, examples 02, 03, 04, 06, 08 (5 scripts), 10,
+  13 (2) continuations, up.md 1.1, 1.5, 1.7, findings.md 3.14, plan.md Phase 24, pass2/brief.md.
+- 10-21 23:00-10-22 00:10, driver pass 2 item 1 (A149): the OU thermostat step moved into the leapfrog's
+  `integration_cycle`, on the momentum at the coordinates; g-JF dispatched from `main.cpp`. First the four kick-drift
+  loops merged into `leapfrog_step` (bitwise on fixtures_w16, the hybrid, v and mv runs). Harmonic tethers at tau
+  0.05: v 0.920 to 1.0008 (exact 1.00008), mv slow level 0.792 to 1.0010 (exact 1.00073); REMD seeds 1-3,
+  equipartition and pivot MC PASS; fixtures_w16 224 of 4070 arrays move (seeded-run dynamics), the hybrid bitwise.
+  New `tests/invariance.py thermostat` (21 s, PASS). `obj/` to A149 (`*.bak_a148`); baselines w48/h48. Files
+  modified: src/{deriv_engine.cpp,deriv_engine.h,main.cpp}, tests/invariance.py, findings.md 3.14, plan.md
+  Phase 24, upside3.md, pass2/brief.md.
+- 10-22 00:40-01:30, local backbone pass 2 (P1-08) reported (`pass2/localbb/report.md`); fixed A150 (the rama maps'
+  `set_param`, refused since A57/A134, so a ConDiv step could not finish with the repo engine; the midway2 campaigns
+  run their own older binary), A151 (13 unchecked local-term indices), A152-A153 (`--secstr-bias` residue range,
+  non-proline trans-cis tables), A154 (dead spring block, dead `@sheet_eps`, up.md log columns). Reproducers match
+  the reviewer's, node_fd 194 rows clean on 11 fixtures, regression bitwise on w48/h48; `obj/` to A154
+  (`*.bak_a149`). D3 (`--secstr-bias` not periodic in phi) is with the user. P1-09 membrane review started. Files
+  modified: src/{rama_map_pot,backbone_steric,tension,spring}.cpp, py/upside_config.py, up.md 1.3 and 1.7,
+  findings.md 3.14, plan.md Phase 24, upside3.md, pass2/brief.md.
+- 10-22 02:10-02:50, after the usage limit: the three stopped reviewers restarted fresh (P2-02 told to re-derive
+  its first attempt's saved work, P1-11; P1-09 waits). P1-17 build read by the coordinator (leads in plan.md).
+  `--secstr-bias` decided for the user (A155): one periodic phi window, phi < 0 continued to +120, each window the
+  edge sigmoids summed over periodic images; the engine energy smooth through +-180 (forces off by 0.1 E_up/A at
+  most, from 9.7); only `chig_rama` moves. The rebuilt fixtures are `fixtures_w17`. Files modified:
+  py/upside_config.py, findings.md 3.14, plan.md Phase 24, upside3.md.
+- 10-22 03:00-04:00, Monte Carlo pass 2 (P1-11) reported (`pass2/mc/report.md`); fixed A156 (dead `prob_mod` that
+  broke jump detailed balance), A157 (10 unchecked MC indices), A158 (pivot bins drawn and scored on one double
+  cdf; deliberate departure). A 2x drop of pivot acceptance in a short MD+pivot chig control was chain noise: the
+  full-potential pivot-only chains agree (0.243 +- 0.028 against 0.249 +- 0.033). `obj/` to A158 (`*.bak_a155`);
+  baseline w50 on fixtures_w17. up.md 1.7 lists `pivot_stats`, `jump_stats`. P1-09 membrane review started. Files
+  modified: src/{monte_carlo_sampler.cpp,monte_carlo_sampler.h,random.h,main.cpp}, up.md 1.7, findings.md 3.14,
+  plan.md Phase 24, upside3.md, pass2/brief.md.
+- 10-22 02:30-03:10, hybrid coupling pass 2 (P2-02) reported (`pass2/hybrid/report.md`); fixed A159 (the rigid
+  protein re-referenced every round, drifting 1e-2 A per stage), A160 (the PO4 hold on the round clock,
+  `@po4_z_hold_end_round`; positions-only starts hold nothing; `generate_restart_config` carries the box), A161
+  (barostat centre over real particles, bond spline a function of the box: NPT continuations bitwise), A162 (silent
+  hybrid defaults refused, `preprod_protein_mode` removed), A163 (`AngleSpring` guard removed). Reviewer's
+  reproducers reproduced; on converted fixtures (`fixtures_hybrid_w2c`) the A158 engine gives h48 and the A163 one
+  moves only stage 7.0's seeded run; fixtures_w17 bitwise. `obj/` to A163 (`*.bak_a158`); baselines w51 (= w50),
+  h49. The hybrid fixtures regenerating through the full prep (`fixtures_hybrid_w3/`, detached). Files modified:
+  src/{martini_hybrid,martini_fix_rigid,martini_stage_params,martini_brownian,martini_potential,box,main}.cpp,
+  src/{martini.h,martini_internal.h,box.h}, py/{martini_prepare_system,martini_prepare_system_lib,
+  generate_restart_config}.py, tests/{invariance,registry}.py, up.md 1.4-1.5, findings.md 3.14, plan.md, upside3.md.
+- 10-22 03:20-04:15, membrane and surface pass 2 (P1-09) reported (`pass2/membrane/report.md`); fixed A164 (the
+  surface rotation scan: scores now rotation invariant; deliberate departure for the channel potential), A165 (the
+  curvature changer needs a curved membrane and samples R above the half-thickness), A166 (11 unchecked readers),
+  A167 (`--memb-scale` on the channel's inner tables), A168 (excluded residues' H/O rows), A169, A170 (dead surface
+  columns), A171 (dead inputs), A172 (the channel potential flat-membrane only; `1rkl_channel` rebuilt flat), A173
+  (up.md). M2 and M3 (ff2.1 table properties) left for the membrane retraining. The reviewer's changer patch held
+  stale hunks that would have reverted A160; its curvature parts applied by hand. Verified: rotation invariance on
+  four channel configs, FD 127 rows clean, the engine on the old set bitwise against w51 but for the surface
+  width, the rebuilt set moving only 1rkl_surface (its H/O rows), hybrid bitwise. `obj/` to A173 (`*.bak_a163`);
+  `fixtures_w18`, baseline w52. Files modified: src/{membrane_potential,surface,main}.cpp, py/upside_config.py,
+  tests/fixtures.py, up.md 1.3 and 2.5, findings.md 3.14, plan.md, upside3.md, pass2/brief.md.
+- 10-22 04:20-07:30, `git pull` (user: "git pull and merge with the recent change"): fast-forward to 6a320de5 (the
+  Boltz-2 notes), my edits to findings.md, progress.md, remote_jobs.md restored and re-applied, nothing staged. The
+  hybrid fixtures regenerated through the full prep on the A163 engine (`fixtures_hybrid_w3`): minimisers run their
+  budgets, KE/1.5kT 6.6 1.003, production 0.99, C-N max 1.86 A, node_fd clean but one known rotamer flag; new hybrid
+  baseline h50. Shipped-parameter pass 2 (P1-18) reported (`pass2/params/report.md`): documentation fixed (A174); D1,
+  the SC/environment table's MARTINI side-chain beads placed on Upside's trained rotamer point and vector (ARG's
+  charged bead 0.5-2 A from CB on the backbone side; table energies off by up to 21 E_up) and D7 dead parameter
+  content held for the user, D1 after the P2-05 reviewer's independent check. The P1-12 reviewer stopped at the
+  usage limit and was restarted fresh; P2-05 hybrid prep started. Files modified: up.md, training/{ConDiv.py,
+  README.md}, py/martini_build_tables.py (comment), findings.md 3.14, plan.md, upside3.md, pass2/brief.md.
+- 10-22 07:30-09:00, I/O and C API pass 2 (P1-12) reported and fixed (A175-A182: lost messages and a locked file
+  after a refused in-process run, exact integer conversion on read, negative round / array string attribute /
+  Brownian defaults refused, every run logs its starting round, dead dense logger, rama parameters as the model at
+  rounding, up.md 1.7); reproducers equal the reviewer's after-logs, regression equal to its build bitwise; baselines
+  w53, h51. Hybrid prep pass 2 (P2-05) reported and fixed (A183-A188: molecules wrapped whole, multi-chain molecule
+  ids, the soft core from r = 0, a negative cache_buffer refused, run.py's POPE/POPG thickness, numbering gaps
+  refused); regression bitwise. Its D1 confirms the side-chain table's bead placement independently; that, the table's
+  averaging temperature, dead parameter content and the ion-count thickness asked of the user. `obj/` to A188
+  (`*.bak_a182`). Files modified: src/{h5_support.h,h5_support.cpp,engine_c_library.cpp,main.cpp,martini_brownian.cpp,
+  martini_hybrid.cpp,rama_map_pot.cpp,state_logger.h,martini_potential.cpp}, py/{run_upside,martini_prepare_system,
+  martini_prepare_system_lib}.py, example/16.MARTINI/run.py, up.md 1.7, findings.md 2.4, 2.5, 3.14, plan.md,
+  upside3.md, pass2/brief.md.
+- 10-22 09:00-09:40, the user's decisions (all as recommended): rebuild the side-chain table from ideal chi-row
+  conformers through martinize's mapping, averaged at the simulation temperature; delete the dead content (done,
+  A189); the ion count from the P-P thickness (done, A190); then "Use DSSP" for the backbone types after I reported
+  that it changes helical proteins too (glpG 84 of 210; done, A191, `dssp_bb/compare.log`). The table rebuild runs in
+  an agent (`sc_rebuild/`); P2-07 ConDiv review started. Files modified: py/{martini_prepare_system,
+  martini_prepare_system_lib}.py, example/16.MARTINI/readme.md, up.md 2.7, 6; deleted parameters/ff_2.0/,
+  parameters/packing/, parameters/dryMARTINI/DDM.pdb.
+- 10-22 10:40-12:30, the side-chain table rebuilt by an agent from ideal chi-row conformers through martinize's
+  mapping, one free energy at 0.8647 (A192; beads against 1146 crystal side chains median 0.18 A, old 1.38; particle
+  tables bitwise); installed with the old `martini.h5` backed up. The hybrid fixtures re-prepared end to end on A188
+  + A189-A192 (`fixtures_hybrid_w4`): healthy (KE production 1.007, C-N max 1.82 A); two rotamer FD flags settled as
+  noise by the line integral; baseline h52. ConDiv pass 2 (P2-07) reported: the trainer runs right on the repo engine
+  (a two-protein step end to end, every group's derivative against FD); its D1 (the SARW kept the backbone desolvation
+  term) checked against Kleinmann's `condiv2.py` on midway2 (a separate `bb_scale` never passed) and decided by the
+  user for the SI (A193); A194 gate, A195 epoch length from `initialize`, A196 README. Files modified:
+  py/martini_build_tables.py, parameters/ff_2.1/martini.h5, training/{ConDiv.py,ff31/ConDiv.py,README.md,
+  train_chain.sbatch}, up.md 2.6, findings.md 3.14, plan.md, upside3.md, remote_jobs.md 0b, pass2/brief.md.
+- 10-22 12:35-13:00, parameter glue pass 2 (P1-14) and hybrid analysis pass 2 (P2-06) reported; applied and verified
+  together (bitwise on w53/h52; the wrapper runs a config without `/input/sequence`): A197 dead engine API, A198 the
+  unread `/input/sequence`, A199 dead Adam hook and `_read_comp`, A200 the REMD FES tool (flat FES on hybrid data),
+  A201 a REMD HDX analysis refused without `HDX_T_UP` (it ran at the bottom rung), A202 walker labels across
+  position-only continuations, A203 dG errors NaN where none is computed. `obj/` to A203 (`*.bak_a196`). The user had
+  me decide the glue's D1 and D6: torch out of the glue and trainers by closed-form gradients, the dead `rotscalar`
+  block removed (an agent, `notorch/`); P1-17 build review started. Files modified: src/{engine_c_library.h,
+  engine_c_library.cpp,deriv_engine.h,deriv_engine.cpp,main.cpp}, py/{upside_engine,rotamer_parameter_estimation}.py,
+  tests/{regress,invariance,line_integral,node_fd}.py, training/{ConDiv.py,ff31/ConDiv.py}, example/00.AnalysisScripts/
+  helpers/{analyze_remd,calc_hdx_ht}.py, example/16.MARTINI/{run_hdx_analysis.sh,run.py,readme.md}, up.md 1.1,
+  findings.md 3.14, plan.md, upside3.md, remote_jobs.md 0b.
+- 10-22 13:00-13:45, torch removal and build pass 2 (P1-17) reported; both checked and applied. A204: the glue and
+  both trainers in numpy with closed-form gradients, `rotscalar` removed (31,420 to 31,334 coordinates); I reran the
+  agent's torch comparison and import-order tests (logs identical: tables to 3.1e-16, gradients to 3.9e-16 of scale,
+  one libomp in every order); its seeded two-protein ConDiv step matched torch's bitwise except `rot` at 1.4e-13.
+  A205-A211 from the build review: cluster CMake OpenMP REQUIRED and dead lines, `engine_c_library.cpp` once, the
+  Mac Eigen option honoured (eigen@3), the unused `omp.h` include, `source_arm`/`source_sh` without the empty
+  PYTHONPATH entry (a stray `tables.py` in the run directory was imported) and the stale python@3.10 block,
+  `training/env.sh` refusing outside a tree, `install_python_env.sh` listing what the code imports (jax kept: pymbar's
+  backend). Built in `buildfix/home`: bitwise on w53 and h52; `obj/` to A211 (`*.bak_a204`); the local `source.sh`
+  regenerated from the template (old copy `buildfix/old/source.sh`). The build review's U1 confirmed by `nm` on
+  midway2: every cluster binary carries `set_fast_math` (flush-to-zero set on load), left for the first midway2
+  build. Started P1-15 analysis and P1-16 examples reviewers. Files modified: py/rotamer_parameter_estimation.py,
+  training/{ConDiv.py,ff31/ConDiv.py,README.md,env.sh}, src/{CMakeLists_M1.txt,CMakeLists_Other.txt,main.cpp},
+  source_arm, source_sh, source.sh (untracked), install_python_env.sh, findings.md 3.14, plan.md, upside3.md,
+  remote_jobs.md 0b, pass2/brief.md, pass2/build/report.md. Then A212, the dead `NONCOMPACT_SIGMOID` branch out of
+  `src/vector_math.h` (bitwise on w53 and h52, `buildfix/results2.txt`); `obj/` to A212 (`*.bak_a211`).
+- 10-22 13:47, the build review's B9 (user: "decide for me for that question"): `.devcontainer/` deleted (A213). It
+  clones and runs GitHub master, so in Upside 3 a developer would edit the workspace and run Upside 2 without an
+  error; nothing referred to it, and with no container runtime here a repaired one could not be tested. Copy in
+  `scratchpad/upside3_audit/buildfix/old/devcontainer/`. Files: .devcontainer/ (deleted), findings.md 3.14,
+  plan.md, upside3.md, progress.md.
+- 10-22 13:50-17:30, analysis pass 2 (P1-15) reported after a usage-limit stop (both reviewers resumed at 17:05); all
+  eight defects reproduced by me on an unpatched copy of example 00 against a regenerated chig REMD, then fixed in the
+  repo (`scratchpad/upside3_audit/afix/run.sh`, `results.txt`): A214 `analyze_remd.py` (mixed ladders refused, the
+  top bin closed, empty bins +inf; the same floor out of `calc_hdx_ht.py`'s H-bond plot), A215 the uptake curve grid,
+  A216 PDB numbering and colours in 5.analyze, A217 the temperature fit's glpG tag exclusion made a setting with a
+  refusal, A218 6.generate_hx_plots without glpG defaults, A219 `getkchem` pKD2O at T, A220 README and a dead MDTraj
+  loader. A200's record corrected: its FES maximum 21.9 was 3 empty bins at the floor (real 4.16). Files modified:
+  example/00.AnalysisScripts/{0.run_HXMS.py,4.calc_D_uptake.py,5.analyze_D_uptake.py,6.generate_hx_plots.py,
+  analysis.sh,README.md,helpers/{analyze_remd,calc_hdx_ht,hxfunctions_clean}.py}, py/mdtraj_upside.py, findings.md
+  3.14, plan.md, upside3.md, progress.md, pass2/brief.md, pass2/analysis/report.md.
+- 10-22 17:30-17:55, examples pass 2 (P1-16) reported; pass 2 is complete for every unit. Reproduced and applied:
+  A221 example 04's dG sentinel and unclipped log (a synthetic always-protected residue: 1000 and 20.087 kcal/mol, the
+  latter set by round-off; NaN after), A222 the AFM tip clock resumed by an integer step count (on the A212 build a
+  moving-tip continuation drifts 8.8 and 7.4 A from the continuous run at 50 + 50 and 300 + 300 time units; bitwise
+  after, moving and still; old pulling configs refused; `efix/results.txt`), A223 the intensive-memory switch
+  tri-state, A224 AFM and tension units in the help (E_up, not kT), A225 example readmes and comments (edited by me).
+  Fixtures rebuilt by the writers: only the two AFM configs change (`step_initial`), so fixtures_w19 and its
+  baseline w54 (equal to w53 bitwise); h52 bitwise. `obj/` to A225 (`*.bak_a220`). A130 and A172 records corrected.
+  Files modified: src/coord_const.cpp, py/{upside_nodes,generate_restart_config,run_upside,advanced_config}.py,
+  up.md, example/{01,02,05,06,07,08,09,12,13}/ readmes and scripts, example/04.HDX/4.calc_HDX.py, findings.md 3.14,
+  plan.md, upside3.md, progress.md, remote_jobs.md 0b, pass2/brief.md, pass2/examples/report.md.
+- 10-22 17:57-19:10, the audit's closing criteria (upside3.md 2.2 item 5), met. One driver (`closing/driver.sh`):
+  invariance all PASS; node_fd on all 30 configs with every flagged rotamer direction line-integrated to noise (the
+  line integral made to follow node_fd's tied direction and take a width, A230); sanitizers clean on a rerun that
+  preloads ASan into Python.app (the first lane aborted everywhere: the python3.11 launcher drops DYLD_*). The
+  registry, moved to the current fixtures, left 14 unmatched rows; a reviewer dispositioned all of them (no real
+  disagreement) and found three latent defects. Applied: A226 the MARTINI box required (a box-less hybrid ran
+  without periodic images at exit 0) and the non-periodic path removed (its release records move at float32
+  rounding from fast-math code generation alone: built without -ffast-math the two sources are bitwise; node_fd on
+  both hybrid stages clean), A227 dead writer outputs and the curvature changer's documented node, A228 RamaMap2's
+  unused log_pot, A229 the writerless old membrane node (decided for the user, superseding A41), A230 the test tools.
+  Baselines w55 on fixtures_w20 (bitwise w54) and h53 on fixtures_hybrid_w5; registry 44 of 50 matched, the rest
+  read outside the engine. `obj/` to A230 (`*.bak_a225`). Also: `git pull` fast-forwarded to c42d570a (the other
+  session's Boltz-2 note in remote_jobs.md), my uncommitted edits reapplied. Files modified:
+  src/{martini_potential,rama_map_pot,membrane_potential,main}.cpp, py/{martini_prepare_system_lib,upside_config}.py,
+  tests/{line_integral,registry,index_oracle}.py, up.md, findings.md 3.14, plan.md, upside3.md, progress.md,
+  pass2/brief.md, pass2/registry/report.md.
+- 10-22 19:20-22:30 (user: "keep ff2.1 useable for now"; then "git pull and merge. also fix D9 with (a). submit Peng 16
+  validation protein with ff2.1 and glpG hybrid simulation with ff2.1, on midway2, as a validation for our entire
+  debug"). `git pull`: fast-forward to 605901d2 (the other session's glpG ff3.0 HDX notes), my edits to the four shared
+  files reapplied identically. D9 (an agent, then reproduced by me): A231, a required `sequence_id` exclusion key in every
+  node that excludes by sequence distance; single-chain and hybrid records bitwise, only 1dfn's and 1dfn_cavity's seeded
+  runs move, the oracle's 7 cross-chain mismatches gone, old configs refused; `obj/` to A231, baseline w56 on
+  fixtures_w21, registry 44 of 50 as before. Validation: an Upside 3 tree `/beagle3/trsosnic/yinhan/upside3` (separate
+  from the shared deployment, which week-long campaigns read), built on midway2 with GCC 10.1, its own venv with mdtraj
+  1.9.9 from source (the prep's DSSP; glpG's DSSP equal to the Mac's); Peng's 32 arms and the glpG prep plus 4 REMD blocks
+  submitted 22:26 after a smoke test (remote_jobs.md §1 line 3). Found: `example/16.MARTINI/run.py`'s Stage 2 cannot run
+  (200,000 time units of 48 replicas in one 35:45 job), and the campaign's `run_remd.py` fails on Upside 3 and carries a
+  NaN rollback guard; the validation uses a block driver without one. Files modified: src/{interaction_graph.h,
+  bead_interaction.h,rotamer.cpp,environment.cpp,backbone_steric.cpp}, py/{upside_config,martini_prepare_system_lib}.py,
+  tests/{index_oracle,registry}.py, up.md, findings.md 3.14, plan.md, upside3.md, progress.md, remote_jobs.md,
+  pass2/brief.md; on the cluster the new tree and `upside3_validation/`.
+- 10-22 22:30-23:05 (user: "as we changed the upside core, the job scripts should also be updated to support it").
+  Inventory of the job scripts: examples 01-15 and ConDiv already run on Upside 3 (P1-16's runs; ConDiv writes fresh
+  configs each step); `example/16.MARTINI/run.py` could not (A232) and `run_sim_1afo_full.sh` ran the pre-audit tree
+  (A233). `run.py` rewritten to submit its stages as jobs, REMD in `--time-limit` blocks that queue the next; two
+  1rkl blocks run locally (a 2-replica run found the swap-set index bug, and a failed first block that the counter must
+  not count). The glpG validation relaunched through it (prep 49448466, block 1 49448467); the stand-in driver and its
+  partial prep removed. The submission showed numpy's zero-subnormal warning: the cluster library's flush-to-zero
+  reaches Python. Files modified: example/16.MARTINI/{run.py,readme.md,run_sim_1afo_full.sh}, findings.md 3.14, plan.md,
+  upside3.md, progress.md, remote_jobs.md, pass2/brief.md.
+- 10-22 23:10 (user: "yes. add it to claude.md"): CLAUDE.md now names the Upside 3 tree beside the shared deployment
+  (`/beagle3/trsosnic/yinhan/upside3`, `env_upside3.sh`, why it exists, how it is synced and its venv built), in the
+  Slurm environment list and wrapper example, and in the cluster compile section. Files modified: CLAUDE.md,
+  progress.md.
 - 10-21 16:10, the Boltz-2 HDX sampler: tag by step-scale test read (61231966, finished 09:03). `step_scale` 1.0
   causes the bond-length scatter (C-N sd 0.031 to 0.036 A with no tag, 0.054 to 0.055 with `md`; 0.008 to 0.009
   at 1.5 with either tag). The `md` tag widens the ensemble at both scales. Contacts under 2.5 A are mostly

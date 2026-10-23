@@ -11,8 +11,6 @@
 #include <set>
 
 #define N_AMINO_ACID_TYPE 20
-#define ForceNorm 0.70710678
-#define FORCE_UNIT 2.065948e-5  // 1 bar in E_up/A^3: 1e5 Pa * 1e-30 m^3/A^3 * N_A / (2914.952774272 J/mol per E_up)
 
 using namespace h5;
 using namespace std;
@@ -92,16 +90,12 @@ struct Surface : public CoordNode
     vector<float> bbx;
     vector<float> bby;
     vector<float> bbz;
-    vector<float> fx;
-    vector<float> fy;
-    vector<float> sfx;
-    vector<float> sfy;
 
     vector<auxiliary_point> auxiliary_points;
 
     //read_attribute<int>(grp, ".", "n_dim1")+read_attribute<int>(grp, ".", "n_dim2")),
     Surface(hid_t grp, CoordNode& pos_):
-        CoordNode( get_dset_size(1,grp,"index_cb")[0], 3 ),
+        CoordNode( get_dset_size(1,grp,"index_cb")[0], 1 ),
 
         method_type( read_attribute<int>(grp, ".", "method_type") ),
         n_residue( get_dset_size(1,grp,"index_cb")[0] ),
@@ -138,16 +132,17 @@ struct Surface : public CoordNode
         bbx(n_residue*3),
         bby(n_residue*3),
         bbz(n_residue*3),
-        fx(n_residue,  0.),
-        fy(n_residue,  0.),
-        sfx(n_residue, 0.),
-        sfy(n_residue, 0.),
 
         auxiliary_points(n_aux)
 
     {
         check_elem_width_lower_bound(pos, 3);
-        traverse_dset<1,   int>(grp, "index_cb",        [&](size_t rt, index_t x)      { index_cb[rt] = x;});
+        if(method_type != 0 && method_type != 1) throw string("surface method_type must be 0 (fast) or 1 (lipid diffusion)");
+        if(NGRIDZ < 2) throw string("surface n_gridz must be at least 2");
+        if(pos.n_elem < 3*n_residue) throw string("surface needs the N, CA and C of every residue in its input");
+        traverse_dset<1,   int>(grp, "index_cb",        [&](size_t rt, index_t x)      {
+                if(x<0 || x>=pos.n_elem) throw string("surface index_cb outside its input");
+                index_cb[rt] = x;});
         traverse_dset<2, float>(grp, "auxiliary_point", [&](size_t rt, int d, float x) { auxiliary_points[rt].xz[d] = x;});
 
         // 0, no exclusion; 
@@ -161,8 +156,11 @@ struct Surface : public CoordNode
             n_used_res = get_dset_size(1,grp,"included_list")[0];
             used_list.resize(n_used_res);
             tm_list.resize(n_used_res);
-            traverse_dset<1, int>(grp, "included_list", [&](size_t ne, index_t rt){ used_list[ne] = rt;});
+            traverse_dset<1, int>(grp, "included_list", [&](size_t ne, index_t rt){
+                    if(rt<0 || rt>=n_residue) throw string("surface included_list outside the residues");
+                    used_list[ne] = rt;});
         }
+        else throw string("surface exclusion must be 0 (every residue) or 1 (included_list)");
 
         if (n_used_res != n_residue) {
             cbx.resize(n_used_res);
@@ -171,8 +169,6 @@ struct Surface : public CoordNode
             bbx.resize(n_used_res*3);
             bby.resize(n_used_res*3);
             bbz.resize(n_used_res*3);
-            fx.resize(n_used_res);
-            fy.resize(n_used_res);
         }
     }
 
@@ -206,7 +202,6 @@ struct Surface : public CoordNode
             type_count[nr] = 0;
         }
 
-        int1d surf_cb(n_tm_res, 0);
         for(int ii=0; ii<n_tm_res; ii++){
             int nr = tm_list[ii];
             for (int j=0;j<3;j++) {
@@ -217,8 +212,6 @@ struct Surface : public CoordNode
             cbx[ii] = all_pos(0, index_cb[nr]);
             cby[ii] = all_pos(1, index_cb[nr]);
             cbz[ii] = all_pos(2, index_cb[nr]);
-            sfx[nr] = 0.0;
-            sfy[nr] = 0.0;
         }
 
         // 2, calculate the center of XY for TM residues
@@ -231,13 +224,14 @@ struct Surface : public CoordNode
         cx /= n_tm_res;
         cy /= n_tm_res;
 
-        // Start rotating to different angles to identify the surface and force direction
+        // Rotate to different angles to identify the surface
         for(int ai=0; ai<n_rotation; ai++) {
+            int1d surf_cb(n_tm_res, 0);   // the surface CBs of this rotation
 
             // 3, Rotate the coordinates
             float angle = ai * dangle;
             RotateXY(cbx, cby, cx, cy, angle, n_tm_res); // for cb atoms of TM residues
-            RotateXY(bbx, bby, cx, cy, angle, n_tm_res); // for backbone atoms of TM residues
+            RotateXY(bbx, bby, cx, cy, angle, n_tm_res*3); // for backbone atoms of TM residues
       
             // 4. Determine boundaries on XY plane
             float minx = 0.0;
@@ -593,100 +587,24 @@ struct Surface : public CoordNode
                 }
             }
 
-            // count the surface area
-            int num_xmin = 0; for (int i:xmin_surf_fine) if (i<big_int) num_xmin++;
-            int num_xmax = 0; for (int i:xmax_surf_fine) if (i > -1   ) num_xmax++;
-            int num_ymin = 0; for (int i:ymin_surf_fine) if (i<big_int) num_ymin++;
-            int num_ymax = 0; for (int i:ymax_surf_fine) if (i > -1   ) num_ymax++;
-            // count the number of surface CB atoms
-            int num_xmin_cb = 0; for (int i:xmin_surf_id) if (i > -1) num_xmin_cb++;
-            int num_xmax_cb = 0; for (int i:xmax_surf_id) if (i > -1) num_xmax_cb++;
-            int num_ymin_cb = 0; for (int i:ymin_surf_id) if (i > -1) num_ymin_cb++;
-            int num_ymax_cb = 0; for (int i:ymax_surf_id) if (i > -1) num_ymax_cb++;
+            // 9. Record the surface CB atoms of this rotation
+            for(auto surf_id: {&xmin_surf_id, &xmax_surf_id, &ymin_surf_id, &ymax_surf_id})
+                for(int nr: *surf_id)
+                    if (nr >= 0) surf_cb[nr] = 1;
 
-            float area_xz = GRID_X/SNGRID_X * GRID_Z/SNGRID_Z;
-            float area_yz = GRID_Y/SNGRID_Y * GRID_Z/SNGRID_Z;
-            float area_xmin = num_xmin*area_yz;
-            float area_xmax = num_xmax*area_yz;
-            float area_ymin = num_ymin*area_xz;
-            float area_ymax = num_ymax*area_xz;
-
-            float area_x = (area_xmin > area_xmax) ? area_xmin : area_xmax;
-            float area_y = (area_ymin > area_ymax) ? area_ymin : area_ymax;
-            float total_force_x = area_x*FORCE_UNIT;
-            float total_force_y = area_y*FORCE_UNIT;
-
-            float fxmin_per_CB = total_force_x/num_xmin_cb;
-            float fxmax_per_CB = total_force_x/num_xmax_cb;
-            float fymin_per_CB = total_force_y/num_ymin_cb;
-            float fymax_per_CB = total_force_y/num_ymax_cb;
-
-            // 9. Record all surface CB atoms. Assign forces derection according to the interface
-            for(int nr: range(n_tm_res)) {
-                fx[nr] = 0.0;
-                fy[nr] = 0.0;
-            }
-            for(int nr:xmin_surf_id) {
-                if (nr >= 0) {
-                    surf_cb[nr] = 1; 
-                    fx[nr]  = fxmin_per_CB;
-                }
-            }
-            for(int nr:xmax_surf_id) {
-                if (nr >= 0) {
-                    surf_cb[nr] = 1; 
-                    fx[nr] -= fxmax_per_CB;
-                }
-            }
-            for(int nr:ymin_surf_id) {
-                if (nr >= 0) {
-                    surf_cb[nr] = 1;
-                    fy[nr]  = fymin_per_CB;
-                }
-            }
-            for(int nr:ymax_surf_id) {
-                if (nr >= 0) {
-                    surf_cb[nr] = 1;
-                    fy[nr] -= fymax_per_CB;
-                }
-            }
-
-
-            // count the 
             for(int ns: range(n_tm_res)) {
                 if (surf_cb[ns] == 0) continue;
                 int nr = tm_list[ns];
                 type_count[nr] += 1;
             }
 
-            RotateXY( fx,  fy, 0.f, 0.f, -angle, n_tm_res);
             RotateXY(cbx, cby,  cx,  cy, -angle, n_tm_res);
-            RotateXY(bbx, bby,  cx,  cy, -angle, n_tm_res);
-
-
-            for(int ns: range(n_tm_res)) {
-                int nr   = tm_list[ns];
-                if (surf_cb[ns] == 0) continue;
-                sfx[nr] += fx[ns];
-                sfy[nr] += fy[ns];
-            }
+            RotateXY(bbx, bby,  cx,  cy, -angle, n_tm_res*3);
         }
 
-        for(int nr: tm_list) {
-            if (type_count[nr] <= 0) continue;
-            sfx[nr] /= type_count[nr];
-            sfy[nr] /= type_count[nr];
-        }
-
-        // 9. Assign mempot_switch  
-        for(int nr: range(n_residue)) {
-            if (type_count[nr] > 0)
-                output(0, nr) = type_count[nr]*r_n_rotation;
-            else
-                output(0, nr) = 0.0;
-            output(1, nr) = sfx[nr];
-            output(2, nr) = sfy[nr];
-        }
+        // 10. The surface score: the fraction of rotations in which the residue's CB faces the lipid
+        for(int nr: range(n_residue))
+            output(0, nr) = type_count[nr]*r_n_rotation;
     }
 
     virtual void propagate_deriv() override {

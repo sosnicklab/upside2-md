@@ -11,7 +11,7 @@ import run_upside as ru
 ## General Settings and Path
 #----------------------------------------------------------------------
 
-pdb_id         = '2qke_mon' # switch to 1dfn for multi-chain showing
+pdb_id         = '2qke_mon'
 pdb_dir        = './pdb'
 sim_id         = 'trans_cis'
 is_native      = True

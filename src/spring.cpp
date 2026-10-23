@@ -17,7 +17,6 @@ struct Spring : public PotentialNode
     int n_elem;
     CoordNode& pos;
     vector<Params> params;
-    int n_dim;
     int dim1;
     bool pbc;
     float box_len;
@@ -27,7 +26,6 @@ struct Spring : public PotentialNode
         n_elem(get_dset_size(1, grp, "id")[0]), 
 	pos(pos_), 
 	params(n_elem),
-	n_dim(pos.output.row_width),
         dim1( read_attribute<int>(grp, ".", "dim1") ),
         pbc(  read_attribute<int>(grp, ".", "pbc") ),
         box_len(read_attribute<float>(grp, ".", "box_len") )
@@ -36,12 +34,13 @@ struct Spring : public PotentialNode
         check_size(grp, "spring_const", n_elem);
 
         auto& p = params;
-        traverse_dset<1,int>  (grp, "id",           [&](size_t i, int   x) {p[i].id = x;});
+        if(dim1<0 || dim1>=pos.elem_width) throw string("Spring dim1 outside its input's columns");
+        if(pbc && !(box_len>0.f)) throw string("Spring with pbc needs a positive box_len");
+        traverse_dset<1,int>  (grp, "id",           [&](size_t i, int   x) {
+                if(x<0 || x>=pos.n_elem) throw string("Spring id outside its input");
+                p[i].id = x;});
         traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i, float x) {p[i].equil_dist = x;});
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i, float x) {p[i].spring_const = x;});
-	assert(dim1<n_dim);
-
-	if (pbc) assert(box_len>0);
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -92,7 +91,6 @@ struct WallSpring : public PotentialNode
     int n_elem;
     CoordNode& pos;
     vector<Params> params;
-    int n_dim;
     int dim1;
 
     WallSpring(hid_t grp, CoordNode& pos_):
@@ -100,7 +98,6 @@ struct WallSpring : public PotentialNode
         n_elem(get_dset_size(1, grp, "id")[0]), 
 	pos(pos_), 
 	params(n_elem),
-	n_dim(pos.output.row_width),
         dim1( read_attribute<int>(grp, ".", "dim1") )
     {
         check_size(grp, "equil_dist",   n_elem);
@@ -108,11 +105,15 @@ struct WallSpring : public PotentialNode
         check_size(grp, "wall_type",    n_elem);
 
         auto& p = params;
-        traverse_dset<1,int>  (grp, "id",           [&](size_t i, int   x) {p[i].id = x;});
+        if(dim1<0 || dim1>=pos.elem_width) throw string("WallSpring dim1 outside its input's columns");
+        traverse_dset<1,int>  (grp, "id",           [&](size_t i, int   x) {
+                if(x<0 || x>=pos.n_elem) throw string("WallSpring id outside its input");
+                p[i].id = x;});
         traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i, float x) {p[i].equil_dist = x;});
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i, float x) {p[i].spring_const = x;});
-        traverse_dset<1,int>  (grp, "wall_type",    [&](size_t i, int   x) {p[i].wall_type = x;});
-	assert(dim1<n_dim);
+        traverse_dset<1,int>  (grp, "wall_type",    [&](size_t i, int   x) {
+                if(x!=0 && x!=1) throw string("WallSpring wall_type must be 0 (lower wall) or 1 (upper wall)");
+                p[i].wall_type = x;});
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -138,83 +139,3 @@ struct WallSpring : public PotentialNode
     }
 };
 static RegisterNodeType<WallSpring,1> wall1_node("WallSpring");
-
-//struct MovingSpring : public PotentialNode
-//{
-//    struct Params {
-//        index_t id;
-//        float starting_equil_dist;
-//        float spring_const;
-//	float pulling_vel;
-//    };
-//
-//    int n_elem;
-//    vector<Param> params;
-//    CoordNode& pos;
-//
-//    float time_initial;
-//    float time_step;      // WARNING: this should be the same as the global time step !
-//    float time_estimate;  // WARNING: changes frequently
-//    int round_num;        // WARNING: changes frequently
-//    
-//    MovingSpring(hid_t grp, CoordNode& pos_):
-//        PotentialNode(),
-//        n_elem(get_dset_size(1, grp, "atom")[0]),
-//        params(n_elem),
-//        pos(pos_),
-//        time_initial(read_attribute<float>(grp, "pulling_vel", "time_initial")),
-//        time_step(read_attribute<float>(grp, "pulling_vel", "time_step")),
-//        time_estimate(time_initial),
-//        round_num(0),
-//    {
-//        check_size(grp, "atom",                n_elem);
-//        check_size(grp, "spring_const",        n_elem);
-//        check_size(grp, "starting_equil_dist", n_elem);
-//        check_size(grp, "pulling_vel",         n_elem);
-//        
-//        auto &p = params;
-//        traverse_dset<1,int>  (grp,"atom",                [&](size_t i,int   x){p[i].atom                = x;});
-//        traverse_dset<1,float>(grp,"spring_const",        [&](size_t i,float x){p[i].spring_const        = x;});
-//        traverse_dset<1,float>(grp,"starting_equil_dist", [&](size_t i,float x){p[i].starting_equil_dist = x;});
-//        traverse_dset<1,float>(grp,"pulling_vel",         [&](size_t i,float x){p[i].pulling_vel         = x;});
-//        
-//        if(logging(LOG_BASIC)) {
-//            default_logger->add_logger<float>("tip_pos", {n_elem, 3}, [&](float* buffer) {
-//                
-//                time_estimate = time_initial + float(time_step)*round_num;
-//                
-//                for(int nt=0; nt<n_elem; ++nt) {
-//                    auto p = params[nt];
-//                    auto tip_pos = p.starting_tip_pos + p.pulling_vel * time_estimate;
-//                    for(int d=0; d<3; ++d) buffer[nt*3+d] = tip_pos[d];
-//                }
-//            });
-//           
-//            default_logger->add_logger<float>("time_estimate", {1}, [&](float* buffer) {
-//                buffer[0] = time_estimate;
-//            });
-//        }
-//    }
-//
-//    virtual void compute_value(ComputeMode mode) {
-//        Timer timer(string("AFM"));
-//        
-//        if (mode == DerivMode) round_num += 1;
-//        time_estimate = time_initial + float(time_step)*round_num;
-//        
-//        VecArray pos_c    = pos.output;
-//        VecArray pos_sens = pos.sens;
-//        
-//        float pot = 0.f;
-//        for(auto &p: params) {
-//            auto x = load_vec<3>(pos_c, p.atom);
-//            auto tip_pos = p.starting_tip_pos + p.pulling_vel * time_estimate;
-//            auto x_diff = x - tip_pos;
-//            pot += 0.5*p.spring_const*mag2(x_diff);
-//            update_vec(pos_sens, p.atom, p.spring_const*x_diff);
-//        }
-//        potential = pot;
-//    }
-//};
-//static RegisterNodeType<AFMPotential,1> AFM_node("AFM");
-//

@@ -18,9 +18,9 @@ void set_dynamic_fixed_atoms(DerivEngine& engine, const std::vector<int>& atom_i
 void set_dynamic_z_fixed_atoms(DerivEngine& engine, const std::vector<int>& atom_indices);
 void clear_dynamic_z_fixed_atoms(DerivEngine& engine);
 void set_dynamic_rigid_groups(DerivEngine& engine, const std::vector<std::vector<int>>& groups);
-void clear_dynamic_rigid_groups(DerivEngine& engine);
 std::vector<int> get_fixed_atoms(const DerivEngine& engine);
 std::vector<int> get_z_fixed_atoms(const DerivEngine& engine);
+std::vector<std::vector<int>> get_rigid_groups(const DerivEngine& engine);
 }
 
 namespace martini_stage_params {
@@ -34,7 +34,7 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine);
 void unregister_hybrid_for_engine(DerivEngine& engine);
 bool is_hybrid_enabled(const DerivEngine& engine);
 double get_last_bb_env_interface_potential(const DerivEngine& engine);
-void refresh_transition_holds_for_engine(DerivEngine& engine);
+void refresh_transition_holds_for_engine(DerivEngine& engine, uint64_t round, bool continues_trajectory);
 void copy_positions_for_output(DerivEngine& engine, float* buffer);
 }
 

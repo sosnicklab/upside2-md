@@ -84,7 +84,7 @@ source source.sh
 
 ### Shared Upside Deployment (midway2 + midway3)
 
-**`/beagle3/trsosnic/yinhan/upside2-md` is the one deployment both clusters use.**
+**`/beagle3/trsosnic/yinhan/upside2-md` is the one deployment of the pre-audit Upside 2 engine both clusters use.**
 
 ```bash
 source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh
@@ -95,6 +95,27 @@ Do not build a second per-cluster tree; the whole point is that there is one. Th
 tree, `/project/trsosnic/yinhan/upside2-md-mdw2` (`$P` in `remote_jobs.md`), is separate: it runs
 only on midway2, uses its own `training/env.sh`, and is never overwritten from the repo during a
 campaign (`remote_jobs.md` §1b).
+
+**`/beagle3/trsosnic/yinhan/upside3` is the Upside 3 tree** (this branch, the audited engine; user
+2026-10-22). It serves both clusters the same way the shared deployment does: one tree, not a
+per-cluster copy, and the same four points below hold for it.
+
+```bash
+source /beagle3/trsosnic/yinhan/upside3/env_upside3.sh
+```
+
+* It exists beside the shared deployment because the shared one runs the pre-audit Upside 2 engine
+  for campaigns that read it for days, and a tree must never change under a running campaign. The
+  shared deployment stays Upside 2 until those campaigns end.
+* Its code is the Mac working tree, sent by rsync of `src py parameters cmake tests example/16.MARTINI`
+  (no `.git`, no `outputs/`, no `*.bak*`), then built on midway2 as below. Record each sync with the
+  ledger entry it reaches (`remote_jobs.md`).
+* Its `.venv` is built from its own copy of `pyrt/`, with the shared venv's package versions plus
+  **mdtraj 1.9.9, built from source** with `gcc/10.1.0` and Cython below 3. The hybrid preparation's
+  DSSP needs mdtraj, the shared venv lacks it, and PyPI has no binary wheel for this python. Its glpG
+  DSSP string is md5-equal to the Mac's mdtraj 1.11.
+* Every job that runs this branch's code sources `env_upside3.sh`: the hybrid workflow
+  (`example/16.MARTINI/run.py`'s `job_env_file`, `run_sim_1afo_full.sh`) and the Upside 3 validation.
 
 Why it works, each point measured rather than assumed:
 
@@ -124,7 +145,9 @@ scratch and the `/project2` group. Current headroom is tracked in `remote_jobs.m
 Cluster jobs do not use the Mac `source.sh` bootstrap. Each sources one environment file that loads
 the modules, activates its tree's venv and sets `UPSIDE_HOME`, `PATH` and `PYTHONPATH`:
 
-* **Shared deployment** (benchmarks, glpG, anything that may run on either cluster):
+* **Upside 3 tree** (this branch's code: the hybrid workflow, the Upside 3 validation, any new Upside 3
+  job): `source /beagle3/trsosnic/yinhan/upside3/env_upside3.sh`.
+* **Shared deployment** (the pre-audit Upside 2 engine: the running benchmark and glpG campaigns):
   `source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh`.
 * **ConDiv training** (`$P`, midway2 only): the run directory's own copy of `$P/training/env.sh`,
   which `train_chain.sbatch` sources. The repo's `training/env.sh` is site-neutral (it only
@@ -136,9 +159,10 @@ the modules, activates its tree's venv and sets `UPSIDE_HOME`, `PATH` and `PYTHO
 Rules:
 
 * For interactive local Mac work: `source .venv/bin/activate && source source.sh`.
-* Do not add module loads on top of these files. Both cluster venvs are built from python 3.9.18
-  (`env_shared.sh` from `pyrt/`, the training venv from midway2's `python/3.9.18` module), and each
-  file's module loads and library paths are what let `libupside.so` and `libpython3.9.so.1.0` load.
+* Do not add module loads on top of these files. Every cluster venv is built from python 3.9.18
+  (`env_upside3.sh` and `env_shared.sh` from their tree's `pyrt/`, the training venv from midway2's
+  `python/3.9.18` module), and each file's module loads and library paths are what let `libupside.so`
+  and `libpython3.9.so.1.0` load.
 * A wrapper that sets up the environment itself sets `UPSIDE_SKIP_SOURCE_SH=1` before invoking
   lower-level workflow scripts, so they do not re-enter the local-only bootstrap.
 * Never pipe `source <env file>`: the pipe runs it in a subshell and the environment is lost.
@@ -154,7 +178,7 @@ Example wrapper skeleton:
 #SBATCH --time=36:00:00
 set -euo pipefail
 
-source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh
+source /beagle3/trsosnic/yinhan/upside3/env_upside3.sh
 export UPSIDE_SKIP_SOURCE_SH=1
 
 bash "$UPSIDE_HOME/example/16.MARTINI/<workflow>.sh"
@@ -203,7 +227,7 @@ tree: `install.sh` empties `obj/` first, under jobs that have the binary loaded.
 ```bash
 source /software/modules/init/bash
 module load gcc/10.1.0 hdf5/1.14.3+oneapi-2023.1
-TREE=/project/trsosnic/yinhan/upside2-md-mdw2      # or /beagle3/trsosnic/yinhan/upside2-md
+TREE=/project/trsosnic/yinhan/upside2-md-mdw2      # or /beagle3/trsosnic/yinhan/upside2-md, or the Upside 3 tree /beagle3/trsosnic/yinhan/upside3
 mkdir -p $TREE/obj_<tag> && cd $TREE/obj_<tag>
 /software/cmake-3.19-el7-x86_64/bin/cmake ../src -DEIGEN3_INCLUDE_DIR=/software/eigen-3.3-el7-x86_64/include/eigen3
 make -j8

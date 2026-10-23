@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # Bitwise regression record of the engine.  "dump" evaluates every node's output, the force and every parameter
-# derivative on fixed frames of each config, and runs a short seeded replica-exchange simulation with pivot moves;
+# derivative on fixed frames of each config, and runs a short seeded replica-exchange simulation with pivot moves
+# (a hybrid without them);
 # "compare" lists every array that differs between two records, and apart from them the keys only one record holds.
 # usage: regress.py dump WORK_DIR RECORD.npz CONFIG [CONFIG ...]
 #        regress.py compare RECORD_A.npz RECORD_B.npz
@@ -20,7 +21,7 @@ def static_record(config, record):
         nodes = [g._v_name for g in t.root.input.potential]
     rng = np.random.default_rng(1)
     frames = [x0, (x0 + rng.normal(0., 0.2, x0.shape)).astype('f4'), (x0 + rng.normal(0., 1.0, x0.shape)).astype('f4')]
-    engine = ue.Upside(config, quiet=True)
+    engine = ue.Upside(config)
     for i, x in enumerate(frames):
         key = '%s/frame%d/' % (name, i)
         record[key+'deriv'] = engine.deriv(x)
@@ -38,9 +39,12 @@ def dynamics_record(work, config, record):
     name = os.path.basename(config)[:-3]
     copies = [os.path.join(work, '%s.run.%d.up' % (name, i)) for i in range(2)]
     for c in copies: shutil.copyfile(config, c)
+    with tb.open_file(config) as t:
+        # a hybrid holds atoms fixed (the PO4 height hold), which pivot moves would move, so it runs without them
+        pivot = [] if 'hybrid_bb_map' in t.root.input else ['--monte-carlo-interval', '2']
     sp.check_call([upside_path + '/obj/upside', '--duration', '20', '--frame-interval', '1', '--seed', '1',
                    '--temperature', '0.80,0.85', '--replica-interval', '1', '--swap-set', '0-1',
-                   '--monte-carlo-interval', '2', '--disable-recentering'] + copies, stdout=sp.DEVNULL)
+                   '--disable-recentering'] + pivot + copies, stdout=sp.DEVNULL)
     for i, c in enumerate(copies):
         with tb.open_file(c) as t:
             for node in ['pos', 'potential', 'kinetic', 'replica_index']:

@@ -17,6 +17,10 @@ from scipy.optimize import curve_fit
 
 sans_serif_fonts = ['Arial', 'DejaVu Sans', 'Liberation Sans', 'Helvetica']
 
+# points of the log-time grid each fitted uptake curve is sampled on; the cooperativity factor of
+# 5.analyze_D_uptake.py integrates the curve's derivative on this grid (converged to 0.02% at 150)
+uptake_curve_points = 200
+
 try:
     from helpers.function import str_exp, plot_uptake
 except ImportError:
@@ -214,7 +218,7 @@ def run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, ti
     time_e = -1
     tp = np.array(timepoints)
     tp_fit = np.array(timepoints[time_s:time_e])
-    t_int = np.geomspace(tp_fit[0], tp_fit[-1].item(), np.size(pep_list))
+    t_int = np.geomspace(tp_fit[0], tp_fit[-1].item(), uptake_curve_points)
 
     df_plots = [df_array[pep_ind] for df_array in df_arrays]
     df_fits = [df_array[pep_ind, time_s:time_e] for df_array in df_arrays]
@@ -272,11 +276,11 @@ def run_stretched_exp_workflow(state_names, peptides_plot, pep_ind, pep_list, ti
                     fit_Th.append(plot_uptake(thopt[0], thopt[1], t_int))
                 except Exception as exc:
                     print('could not fit peptide %s (%s): %s' % (p, pep_list[p], exc))
-                    fit_D.append([np.nan for _ in range(len(peptides_plot))])
-                    fit_Th.append([np.nan for _ in range(len(peptides_plot))])
+                    fit_D.append(np.full(t_int.size, np.nan))
+                    fit_Th.append(np.full(t_int.size, np.nan))
             else:
-                fit_D.append([np.nan for _ in range(len(peptides_plot))])
-                fit_Th.append([np.nan for _ in range(len(peptides_plot))])
+                fit_D.append(np.full(t_int.size, np.nan))
+                fit_Th.append(np.full(t_int.size, np.nan))
 
         fit_Ds.append(np.array(fit_D))
         fit_Ths.append(np.array(fit_Th))

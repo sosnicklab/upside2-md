@@ -545,11 +545,6 @@ inline void store(Vec<D,S>& x, const Vec<stop_loc-start_loc,S> &y) {
     for(int i=0; i<stop_loc-start_loc; ++i) x[i+start_loc] = y[i];
 }
 
-template <typename S>
-inline S a_sqrt(const S& a) {
-    return a * rsqrt(a);
-}
-
 // template <int D, typename S>
 // inline S mag2(const Vec<D,S>& a) {
 //     S m = zero<S>();
@@ -583,7 +578,7 @@ inline S inv_mag2(const Vec<ndim,S>& a) {
 
 template <int ndim, typename S>
 inline S mag(const Vec<ndim,S>& a) {
-    return a_sqrt(mag2(a));
+    return sqrtf(mag2(a));
 }
 
 template <int D, typename S>
@@ -683,7 +678,7 @@ S max(Vec<D,S> y) {
 
 //! sigmoid function and its derivative 
 
-//! Value of function is 1/(1+exp(x)) and the derivative is 
+//! Value of function is 1/(1+exp(-x)) and the derivative is 
 //! exp(x)/(1+exp(x))^2
 template <typename S>
 inline Vec<2,S> sigmoid(S x) {
@@ -701,11 +696,6 @@ inline bool none(bool x) {return !x;} // scalar none function is trivial
 template <typename S>
 inline Vec<2,S> compact_sigmoid(const S& x, const S& sharpness) {
     // FIXME this sigmoid is both narrower and reversed direction from a normal sigmoid
-#ifdef NONCOMPACT_SIGMOID
-    // factor of three makes the slopes even at the origin
-    auto z = sigmoid(-3.f*x*sharpness);
-    return make_vec2(z.x(), -3.f*z.y()*sharpness);
-#else
     S y = x*sharpness;
     Vec<2,S> z = make_vec2(S(0.25f)*(y+S(2.f))*(y-S(1.f))*(y-one<S>()), (sharpness*S(0.75f))*(sqr(y)-one<S>()));
 
@@ -716,15 +706,10 @@ inline Vec<2,S> compact_sigmoid(const S& x, const S& sharpness) {
     z.x() = ternary(too_small, one<S>(), ternary(too_big, zero<S>(), z.x()));
     z.y() = ternary(too_small | too_big, zero<S>(), z.y());
     return z;
-#endif
 }
 
 inline float compact_sigmoid_cutoff(float sharpness) {
-#ifdef NONCOMPACT_SIGMOID
-    return 2.f/sharpness;  // 0.002
-#else
     return 1.f/sharpness;  // exactly 0.
-#endif
 }
 
 

@@ -15,7 +15,7 @@ import run_upside as ru
 ## General Settings and Path
 #----------------------------------------------------------------------
 
-pdb_id         = 'chig' # switch to 1dfn for multi-chain showing
+pdb_id         = 'chig'
 pdb_dir        = './pdb'
 sim_id         = 'prod'
 is_native      = True
@@ -137,7 +137,7 @@ if not continue_sim:
 #     restraints (spring energy)
 #     wall potential
 #     contact energy
-# Example 8 will show more details.
+# Example 07 shows more restraints.
 
 if not continue_sim:
 
@@ -212,6 +212,8 @@ if continue_sim:
                         filters=tb.Filters(complib='zlib',
                                            complevel=5, fletcher32=True))
         t.root.input.mom._v_attrs.round = n.round[-1]  # the round the momentum was recorded at
+        if 'replica_index' in n:
+            t.root.input.mom._v_attrs.replica_index = n.replica_index[-1,0]  # the replica the system held
 
         if 'output' in t.root:
             t.root.output._f_rename(new_name)

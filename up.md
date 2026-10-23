@@ -30,7 +30,7 @@ The same file accumulates output trajectories during simulation.
 | Dataset | Shape | dtype | Notes |
 |---|---|---|---|
 | `pos` | `(N, 3, 1)` | float32 | Initial coordinates in Angstrom; last dim is frame placeholder |
-| `mom` | `(N, 3, 1)` | float32 | Momenta to restart from, read only with `--restart-using-momentum`; `@round` is the round they were recorded at, from which the engine resumes the time and every random counter. Copied from `/output/mom` and `/output/round` of the frame restarted from (`generate_restart_config.py`, the examples' `continue_sim`) |
+| `mom` | `(N, 3, 1)` | float32 | Momenta to restart from, read only with `--restart-using-momentum`; `@round` is the round they were recorded at, from which the engine resumes the time and every random counter; `@replica_index` is the replica the system held (replica exchange), read with or without the momentum (a position-only continuation keeps its walkers) and checked to be a permutation over the systems. Copied from `/output/mom`, `/output/round` and `/output/replica_index` of the frame restarted from (`generate_restart_config.py`, the examples' `continue_sim`) |
 | `mass` | `(N,)` | float32 | Per-atom mass in m_up |
 | `atom_names` | `(N,)` | `S4` | Atom names matching PDB convention (N, CA, C, PO4, NC3, ...) |
 | `atom_roles` | `(N,)` | `S4` | The atom names again (N, CA, C, O, BB, PO4, ...); the engine reads the carrier and phosphate roles from it |
@@ -78,8 +78,10 @@ Stores the full command-line argument set as HDF5 attributes. Key attributes:
 ### 1.3 `/input/potential` group
 
 Contains one sub-group per active force-field node. Each sub-group has at minimum
-an `@arguments` attribute listing which upstream node outputs it consumes, and
-`@integrator_level` (0 = evaluated every step, 1 = evaluated at backbone level).
+an `@arguments` attribute listing which upstream node outputs it consumes. A potential may carry
+`@integrator_level`, read only under `--integrator mv`: 1 puts it on the slow level (one kick of
+inner_step*dt per round), any other value (default 2) on the fast level. Coordinate nodes take their
+levels from the potentials that consume them.
 
 #### Node dependency chain (protein run)
 
@@ -113,15 +115,22 @@ pos
 | `Spring_bond` | `id (M,)`, `equil_dist (M,)`, `spring_const (M,)` | `@pbc=0`, `@dim1=0` |
 | `Spring_angle` | `id (M,)`, `equil_dist (M,)` (cosine), `spring_const (M,)` | Angles stored as cosines |
 | `Spring_omega` | `id (M,)`, `equil_dist (M,)` (pi, or 0 before a cis-proline), `spring_const (M,)` | `@pbc=1`, `@box_len=2pi` |
-| `affine_alignment` | `atoms (n_res,3)`, `ref_geom (n_res,3,3)` | N/CA/C local frame per residue |
-| `backbone_pairs` | `id (n_res,)`, `n_atom (n_res,)`, `ref_pos (n_res,4,3)`; `sequence_id (n_res,)` with chain breaks | Backbone steric wall between the N, CA, C and CB of residues at least 2 apart in `sequence_id` (default `id`); a chain break adds 2, so the residues across it interact |
+| `Const3D[_name]` | `id (M,)`, `value (M,3)` | Fixed points (walls, springs, nail and group-nail anchors, the curvature centre), written from the config; `id` sizes the node |
+| `cb_membrane_potential` | `cb_index (n,)`, `res_type (n,)`, `weights (20,)`, `bl_nodes (n_bl-1,)`, `coeff (20,n_bl,n_node)`; `@z_start`, `@z_scale`, `@bl_range_sharpness`, `@left_right_node`, `@left_right_sharpness`, `@use_curvature`, `@curvature_sign` | Arguments `placement_fixed_point_only_CB`, `environment_coverage_sc`, `Const3D_curvature_center`. One row per residue not in `--membrane-exclude-residues`; the energy of its CB at its depth, blended between burial bins by the environment coverage and between the two leaflets at the bilayer centre. With `@use_curvature` the depth is measured from the sphere around the curvature centre, of radius its \|z\| |
+| `hb_membrane_potential` | `hb_index (n,)`, `hb_type (n,)` (0 donor, 1 acceptor), `coeff (2,2,n_node)`; attributes as `cb_membrane_potential` without the burial ones, and `@half_thickness` | Arguments `protein_hbond`, `Const3D_curvature_center`. `@half_thickness` bounds the radius `--curvature-changer-interval` samples (the changer reads it from this node). One row per backbone H and O of `infer_H_O` outside the excluded residues, its energy blended between unpaired and paired by its H-bond |
+| `cb_surf_membrane_potential`, `hb_surf_membrane_potential` | as above without `@use_curvature` and `@curvature_sign`, plus `coeff_inner` (`icb_energy`, `ihb_energy`), and for H/O `hb_res (n,)`, `weights (20,)` | The channel potential (`--channel-membrane-potential`), flat membranes only: arguments as above with `surface` in place of `Const3D_curvature_center` (the H/O node also takes `environment_coverage_sc`). Inside the slab \|z\| < half_thickness a residue's energy mixes `coeff` and `coeff_inner` by its surface score; outside it is `coeff` (a hard switch, pass 2 membrane M2) |
+| `cat_pos_bb_cb` | `index_pos1 (3 n_res,)`, `index_pos2 (n_res,)`; `@n_dim=3` | The backbone N, CA, C of `pos` followed by the CBs of `placement_fixed_point_only_CB`, for `surface` |
+| `surface` | `index_cb (n_res,)` (row of each CB in `cat_pos_bb_cb`), `auxiliary_point (n_aux,2)`, optional `included_list`; `@method_type` (0 or 1), `@exclusion` (0, or 1 with `included_list`), `@n_rotation=20`, `@half_thickness`, `@zbuffer`, `@len_gridx`, `@len_gridy`, `@n_gridz`, `@n_smallgridx/y/z`, `@atom_radius=1.6` | One output per residue: the fraction of `@n_rotation` orientations about the membrane normal in which the residue's CB lies on the protein's lipid-facing surface, found on voxels of the residues in the flat slab \|z\| < half_thickness + zbuffer. Refused with a curved membrane |
+| `MovingConst3D` | `id (M,)`, `velocities (M,3)`, `start_pos (M,3)`, `@time_initial`, `@time_step`, `@step_initial` | AFM tips at start_pos + velocities*t, t = time_initial + time_step*steps, the step count starting at step_initial (0 in a fresh config) and advancing one per force evaluation (Verlet, or mv's fast level only); a table without tip positions starts each tip on its CA at time 0; a continuation (`generate_restart_config.py`, example 06) sets step_initial from `/output/tip_step` |
+| `affine_alignment` | `atoms (n_res,3)`, `ref_geom (n_res,3,3)` | N/CA/C local frame per residue, its origin the atoms' centroid. Each residue's `ref_geom` must be centred (the engine refuses a centroid beyond 1e-4 A), and every placement point is relative to that centroid |
+| `backbone_pairs` | `id (n_res,)` (the `affine_alignment` row), `sequence_id (n_res,)`, `n_atom (n_res,)`, `ref_pos (n_res,4,3)` | Backbone steric wall between the N, CA, C and CB of residues at least 2 apart in `sequence_id` (6, pair exclusion), so the residues across a chain break interact |
 
 #### Rama / secondary structure nodes
 
 | Node | Key datasets/attrs | Notes |
 |---|---|---|
-| `rama_coord` | `index_pos1 (n_res,)`, `index_pos2 (n_res,)`; `@arguments=[Dihedral_phi, Dihedral_psi]` | Pairs row `index_pos1` of phi with row `index_pos2` of psi into (phi, psi) per residue. The writer's `id (n_res,5)` is not read |
-| `rama_map_pot` | `residue_id`, `rama_map_id`, `rama_pot (n_res,72,72)` | 5-deg grid, one map PER RESIDUE, **not** a library map; `@restype` string, `@sheet_eps`. See 2.8a |
+| `rama_coord` | `index_pos1 (n_res,)`, `index_pos2 (n_res,)`; `@arguments=[Dihedral_phi, Dihedral_psi]` | Pairs row `index_pos1` of phi with row `index_pos2` of psi into (phi, psi) per residue. `id (n_res,5)`, the atoms of each residue's phi and psi, is read by the `pivot_moves` writer, not by the engine |
+| `rama_map_pot` | `residue_id`, `rama_map_id`, `rama_pot (n_res,72,72)`, `rama_map_id_all (n_res,)` | 5-deg grid, one map PER RESIDUE, **not** a library map; `rama_map_id_all` is every residue's layer, read by the `pivot_moves` writer as `pivot_restype`; `--rama-param-deriv` adds `@restype` (the sheet library's residue order), `@sheet_eps` and the `more_sheet_rama_pot_*`, `less_sheet_rama_pot_*` maps for ConDiv. The maps are the node's parameters (`get_param`, `set_param`); their derivative is not implemented. See 2.8a |
 | `rama_map_pot_ref` | `residue_id`, `rama_map_id (n_res,)` all 0, `rama_pot (1,72,72)` | Reference-state correction: one map shared by every residue; `@log_pot` |
 
 #### Sidechain rotamer nodes
@@ -133,19 +142,21 @@ pos
 | `placement_fixed_point_vector_scalar` | `placement_data (n_layer,7)` | Hydrophobe position (vec3 + dir + scalar), 3 library rows (`hydrophobe_placement`) |
 | `placement_scalar` | `affine_residue`, `layer_index`, `rama_residue`, `placement_data (n_layer,36,36,1)` | Rotamer 1-body energy, -log P(rotamer given phi, psi) per library row at the residue's (phi, psi); `placement_fixed_scalar` holds one value per row |
 | `rotamer` | `@arguments`, `@damping` (in [0,1); the writer's default 0.4), `@max_iter=1000`, `@tol=1e-3`, `@iteration_chunk_size=2`, all required; sub-group `pair_interaction` | Belief propagation over rotamer states; it stops when the undamped residual max|B(b) - b| is within `tol` |
-| `rotamer/pair_interaction` | (loaded from `sidechain.h5`) | SC-SC interaction table |
+| `rotamer/pair_interaction` | `index`, `type` (`bead_order` row), `id` (rotamer, n_rot<<4, node<<8: the node holder slot), `sequence_id` (the bead's residue), `interaction_param` (loaded from `sidechain.h5`) | SC-SC interaction graph; the beads of one residue, equal `sequence_id`, do not pair (6, pair exclusion) |
 
 #### H-bond and environment nodes
 
 | Node | Key datasets | Notes |
 |---|---|---|
 | `infer_H_O` | sub-groups `donors` and `acceptors` with `residue`, `bond_length`, `id` | Backbone H and O position inference |
-| `protein_hbond` | `index1`, `id1`, `type1` (donors: `infer_H_O` rows, residues, parameter rows); `index2`, `id2`, `type2` (acceptors) | Interaction graph; donor-acceptor pairs are found at run time |
+| `protein_hbond` | `index1`, `id1`, `sequence_id1`, `type1` (donors: `infer_H_O` rows, residues, their sequence ids, parameter rows); `index2`, `id2`, `sequence_id2`, `type2` (acceptors) | Interaction graph; donor-acceptor pairs are found at run time, excluding those within 1 in `sequence_id` (6, pair exclusion) |
 | `hbond_energy` | `parameters`, `donor_resid`, `acceptor_resid`, `rama_resid`, optional `residue_class (n_res,)` int32, `@integrator_level=1` | From `hbond.h5` (2.2): 12 values, or 12 + 3 per residue class with `residue_class` |
-| `hbond_coverage` | interaction graph: `index1/2`, `id1/2`, `type1/2`, `interaction_param` | Side-chain coverage of each H-bond site (`protein_hbond` row); `type1` = 2 x backbone class + (donor 0, acceptor 1) |
-| `hbond_coverage_hydrophobe` | interaction graph: `index1/2`, `id1/2`, `type1/2`, `interaction_param` | Side-chain coverage of each residue's three backbone hydrophobe points; `type1` = 3 x backbone class + point |
-| `environment_coverage_sc` | `@num_aa_types=20`, `aa_types (n_res,)` | Side-chain coverage of each CB, split by the covering residue's type `aa_types[id2]` |
+| `hbond_coverage` | interaction graph: `index1/2`, `id1/2` (residues), `sequence_id1/2`, `type1/2`, `interaction_param` | Side-chain coverage of each H-bond site (`protein_hbond` row); `type1` = 2 x backbone class + (donor 0, acceptor 1). This node and the coverage nodes below exclude the pairs within 2 in `sequence_id` (6, pair exclusion) |
+| `hbond_coverage_hydrophobe` | interaction graph: `index1/2`, `id1/2` (residues), `sequence_id1/2`, `type1/2`, `interaction_param` | Side-chain coverage of each residue's three backbone hydrophobe points; `type1` = 3 x backbone class + point |
+| `environment_coverage_sc` | interaction graph as above; `@num_aa_types=20`, `aa_types (n_res,)` | Side-chain coverage of each CB, split by the covering residue's type `aa_types[id2]` |
 | `environment_coverage_hb` | same | The same for each backbone H and O. Files written before 2026-10-19 hold one type per H/O site, read as master reads them (findings 3.13) |
+| `hb_environment_coverage_hn`, `hb_environment_coverage_oc` | interaction graph as above, both groups `infer_H_O` rows (hn: H then O; oc: O then H) | Coverage of each H by the O, and of each O by the H, for `cat_pos_bb_coverage` |
+| `hbbb_coverage` | interaction graph as above, group 1 the donor rows of `infer_H_O`, group 2 the N, CA, C of `pos` | Backbone coverage of each H (`--use-heavy-atom-coverage`), read by `get_protection_state.py` only |
 | `sigmoid_coupling_environment` | `@integrator_level=1`, `@number_independent_weights` (20: one weight per covering residue type, tied across coupling types; 400: every pair) | SC-environment coupling (ff_2.1) |
 | `bb_sigmoid_coupling_environment` | `weights (20,)`, `@num_aa_types=20`, `@scale`, `@center`, `@sharpness`, `@hbond_weight` | Backbone burial (2.4) |
 
@@ -153,8 +164,8 @@ pos
 
 | Node | Key datasets/attrs | Notes |
 |---|---|---|
-| `martini_potential` | `@potential_type`, `@cutoff`, `@n_points=1000`, `@optimized_format`, `@soft_core_lambda`, `combined_energy_grids (n,1000)`, `combined_energy_end_slopes (n,2)` | Precomputed LJ+Coulomb spline table; per-bead-type-pair energy grid, fitted as a cubic spline clamped to the analytic dV/dr (E_up/A) at `@r_min_ang` and, from inside, at `@r_max_ang`, where the potential-shifted LJ keeps a force. `@soft_core_lambda` 0 is the published potential; 0.01 (stage 6.0 only) is its GROMACS soft core, (1-lambda) V(r_sc) with r_sc = (4 sigma^6 lambda^2 + r^6)^(1/6), as CHARMM-GUI's step 6.0 minimisation uses |
-| `martini_sc_table_1body` | `env_atom_index`, `env_target_index`, `row_*`, `grid_ang`, `theta_grid`, `rotamer_count`, `rotamer_full_energy_eup`, `target_order`, `@x_len/y_len/z_len`, `@cache_buffer` | Side-chain/environment energy per rotamer row from the `/sc_table` of `martini.h5` (2.6): a clamped cubic spline in r and theta, cut off at the last radial node; each environment atom maps to the target of its bead type and charge |
+| `martini_potential` | `@cutoff`, `@n_points=1000`, `@optimized_format`, `@soft_core_lambda`, `@x_len/y_len/z_len`, `combined_energy_grids (n,1000)`, `combined_energy_end_slopes (n,2)` | Precomputed LJ+Coulomb spline table; per-bead-type-pair energy grid, fitted as a cubic spline clamped to the analytic dV/dr (E_up/A) at `@r_min_ang` and, from inside, at `@r_max_ang`, where the potential-shifted LJ keeps a force. `@soft_core_lambda` 0 is the published potential; 0.01 (stage 6.0 only) is its GROMACS soft core, (1-lambda) V(r_sc) with r_sc = (4 sigma^6 lambda^2 + r^6)^(1/6), as CHARMM-GUI's step 6.0 minimisation uses; the preparation's `inject_particles_table` builds the tables from it, and the engine reads only the tables |
+| `martini_sc_table_1body` | `env_atom_index`, `env_target_index`, `row_*`, `grid_ang`, `theta_grid`, `rotamer_count`, `rotamer_full_energy_eup`, `@x_len/y_len/z_len`; optional `@cache_buffer` (default 1 A, not written by the preparation) | Side-chain/environment energy per rotamer row from the `/sc_table` of `martini.h5` (2.6): a clamped cubic spline in r and theta, cut off at the last radial node; each environment atom maps to the target of its bead type and charge |
 | `dist_spring` | `id (N,2)`, `equil_dist (N,)`, `spring_const (N,)`, `@x_len/y_len/z_len` | Intra-lipid bond springs, V = k/2 (r - r0)^2 from a canonical spline that spans every minimum-image length |
 | `angle_spring` | `id (N,3)` (vertex in the middle), `equil_angle_deg (N,)`, `spring_const (N,)`, `@x_len/y_len/z_len` | Intra-lipid angles, V = k/2 (cos(theta) - cos(theta0))^2 (GROMACS type 2) from a canonical spline in cos(theta) - cos(theta0) over [-2, 2] |
 
@@ -180,7 +191,7 @@ pos
 | `barostat` | `@target_p_xy=0`, `@target_p_z=0`, `@interval=10`, `@mc_dmax_xy=0.01`, `@mc_dmax_z=0` (frozen z) | Monte-Carlo semi-isotropic barostat; XY only for membrane. Each trial scales molecule centres (`/input/molecule_ids`, taken whole across the boundary) and accepts on exp(-beta[dU + P dV]) (V'/V)^(N+1). A molecule with a fixed atom is not scaled (the derived BB/O slots do not count); a z-fixed atom blocks only the z move |
 | `brownian` | `atom_index (N_dyn,)`, `friction (N_dyn,)`, `protein_contact_atom_index`, `protein_lipid_contact_count`; `@numerical_time_step=0.009`, `@reference_temperature_up=0.8647`, `@lipid_names`, `@lipid_target_diffusion_um2_s`, `@ion_target_diffusion_um2_s`, `@protein_time_ps_per_step=40`, `@martini_time_factor=4`, `@dynamics_phase` (`equilibration` or `production`), `@inner_steps=4`; production adds `@lipid_bead_diffusion_up`, `@lipid_bead_friction_up`, `@ion_bead_friction_up`, `@interface_friction_cutoff_A=12` | g-JF Langevin atom list. Lists **every dynamic particle**. In production each lipid bead has its own molecule's bare-particle friction `kT_ref / D_bead,up`, where `D_bead,up` maps the lipid's measured lateral diffusion (`LIPID_LATERAL_DIFFUSION_UM2_S` in `py/martini_prepare_system_lib.py`, one cited entry per lipid; an untabulated lipid is refused) onto the factor-four, 10 ps-per-step clock; ions take the DOPC entry's clock as an interim rule. A protein N/CA/C carrier has the sum of the frictions of the lipid beads within 12 A (so a carrier with no lipid within 12 A has friction 0 and reduces to velocity Verlet, thermostatted by the OU bath instead), recounted at each stage handoff from `/input/residue_names`. O and sidechain slots are absent because the `placement_*` nodes derive them. The engine scales each friction by `T/T_ref` at runtime so the target diffusion holds at the temperature actually run. In the preparation stages (`equilibration`) every bead has the dry-MARTINI Langevin friction `mass / 4 ps` and the rigid protein's carriers 0. `@inner_steps` splits each outer step into N substeps of `dt/N`; the **outer** dt is the one the friction and the ps-per-step clock are calibrated against and must stay 0.009, which the engine enforces by throwing on mismatch. |
 | `hybrid_bb_map` | `atom_indices (n_res,4)` (N, CA, C, O), `atom_mask (n_res,4)`, `weights (n_res,4)`, `bb_atom_index (n_res,)`; metadata the engine does not read: `bb_residue_index`, `bb_type`, `bb_chain_id`, `bb_resseq`, `bb_secondary_structure`, `reference_atom_names` | One row per protein residue. `martini_hybrid_position` places the BB bead at `bb_atom_index` as the weighted centre of N/CA/C and the `infer_H_O` carbonyl O (weights 14/12/12/16 over 54); a residue with no acceptor (a chain's last) uses N/CA/C with the weights renormalised |
-| `hybrid_control` | `@activation_stage` (`minimization` or `production`), `@preprod_protein_mode` (`rigid` or `rigid_body`), `@sc_env_po4_z_hold_steps` (default 150), `@sc_env_transition_step_start` | Hybrid stages: see the stage table below |
+| `hybrid_control` | `@activation_stage` (`minimization` or `production`); in the `production` stage also `@po4_z_hold_end_round` | Hybrid stages: see the stage table below |
 | `hybrid_env_topology` | `env_atom_indices (N_env,)`, `protein_membership (N,)` | `protein_membership` holds each atom's protein id, or -1 for an environment particle |
 | `stage_parameters` | `@current_stage` (`minimization`, `production_handoff` or `production`) | Hybrid stage label |
 
@@ -192,20 +203,22 @@ including an unknown or misspelled label. The SC-env and BB-env interface is on 
 |---|---|---|---|---|
 | `minimization` | `minimization` | 6.0 soft-core minimisation, 6.1 minimisation, 6.2-6.6 NPT equilibration | N/CA/C one rigid body | free; 6.2-6.6 carry the harmonic `restraint_position` height restraint |
 | `production_handoff` | `production` | 7.0 minimization and burn-in | N/CA/C one rigid body | free |
-| `production` | `production` | 7.0 production and continuations | flexible | z held for the first `sc_env_po4_z_hold_steps` rounds after `sc_env_transition_step_start` |
+| `production` | `production` | 7.0 production and continuations | flexible | z held in the rounds before `po4_z_hold_end_round`, 150 rounds after the burn-in, by a run that continues the trajectory from its momentum (`--restart-using-momentum`); a run started from positions alone holds nothing |
 
 The workflow follows CHARMM-GUI's Martini protocol: 6.0 minimises on the soft-core tables, 6.1 on the published
 ones, and every MD stage runs the published tables. Before each MD stage the workflow refuses a configuration
 holding a MARTINI pair whose energy exceeds kT ln(1e9 N_pairs), the energy an equilibrium configuration shows
-less than once in 1e9. The rigid body applies when `preprod_protein_mode` is `rigid` or `rigid_body`.
+less than once in 1e9.
 `--minimize` minimises under the configuration's own stage. Each stage's seed is a splitmix64 hash of the base
 seed and the stage name; production and its continuations share one, and the momentum and its round are carried
 through every handoff, so a continued production is the continuous run.
 
 ### 1.5 `/input` restart state (hybrid)
 
-A hybrid run restarts from `/input/mom` and its `@round` (1.1), as a protein-only run does; there is no other
-restart state.
+A hybrid run restarts from `/input/mom` and its `@round` (1.1), as a protein-only run does, and also from the box
+of the frame (in every node that carries one). The PO4 hold ends at a round of that clock, so it is no restart state
+of its own. `set_initial_position` in `martini_prepare_system_lib.py` and `generate_restart_config.py` both carry the
+momentum, its round and the box.
 
 ### 1.6 `/input` Monte Carlo samplers (protein-only)
 
@@ -220,26 +233,37 @@ The engine appends one row per saved frame to each extendable dataset.
 
 | Dataset | Shape | dtype | Notes |
 |---|---|---|---|
-| `pos` | `(n_frame, n_replica, N, 3)` | float32 | Coordinates per frame |
-| `mom` | `(n_frame, n_replica, N, 3)` | float32 | Momenta per frame (`--record-momentum`) |
+| `pos` | `(n_frame, 1, N, 3)` | float32 | Coordinates per frame (each system writes its own file): the state at the start of the frame's round, before its Monte Carlo move and re-centering, so a continuation from it applies each once. A hybrid's BB and O slots are written as `martini_hybrid_position` derives them |
+| `mom` | `(n_frame, 1, N, 3)` | float32 | Momenta per frame (`--record-momentum`) |
 | `round` | `(n_frame,)` | int32 | Integration round of each frame (`--record-momentum`) |
-| `potential` | `(n_frame, n_replica)` | float64 | Total potential energy in E_up |
-| `kinetic` | `(n_frame, n_replica)` | float64 | Total kinetic energy in E_up |
-| `temperature` | `(n_frame, n_replica)` | float64 | Instantaneous temperature in T_up |
+| `replica_index` | `(n_frame, 1)` | int32 | Replica the system holds at the frame (replica exchange) |
+| `potential` | `(n_frame, 1)` | float64 | Total potential energy in E_up |
+| `kinetic` | `(n_frame, 1)` | float64 | Kinetic energy per three degrees of freedom in E_up (1.5 kT in equilibrium): fixed atoms, the z of z-held atoms and the internal motion of a rigid group are not counted. The final `avg_kinetic_energy/1.5kT` line averages it over the second half of the frames |
+| `protein_kinetic`, `lipid_kinetic` | `(n_frame, 1)` | float64 | The same over the PROTEIN and the LIPID particles (hybrid) |
+| `temperature` | `(n_frame, 1)` | float64 | Thermostat temperature of the frame in T_up (the annealing schedule's under `--anneal-factor`), not a measured temperature |
 | `time` | `(n_frame,)` | float64 | Simulation time |
-| `hbond` | `(n_frame, n_hbond)` | float32 | Per H-bond occupancy |
-| `rama_map_potential` | `(n_frame, n_res)` | float32 | Per-residue Ramachandran energy |
+| `hbond` | `(n_frame, n_donor + n_acceptor)` | float32 | H-bond count of each donor, then of each acceptor (`protein_hbond` column 6), so each bond appears twice; count it from the donors |
+| `rama_map_potential` | `(n_frame, n_row)` | float32 | Ramachandran energy per `residue_id` row of `rama_map_pot`: every residue, except that under `--trans-cis` the switching prolines are in `RamaMap2` and absent here |
 | `rotamer_potential` | `(n_frame, n_res)` | float32 | Per-residue rotamer pair energy |
 | `rotamer_free_energy` | `(n_frame, n_res)` | float32 | Per-residue rotamer free energy |
 | `rotamer_entropy` | `(n_frame, n_res)` | float32 | Per-residue rotamer entropy |
 | `rotamer_1body_energy0/1/2` | `(n_frame, n_res)` | float32 | Rotamer 1-body components |
 | `rotamer_bad_solves_cumulative` | `(n_frame, 1)` | int64 | Rotamer solver failure count |
+| `pivot_stats`, `jump_stats` | `(n_frame, 2)` | int32 | Monte Carlo moves [accepted, attempted] since the previous frame (`--monte-carlo-interval`) |
 | `box` | `(n_frame, 3)` | float32 | Box dimensions in Angstrom (MARTINI/hybrid) |
 | `volume` | `(n_frame, 1)` | float32 | Box volume (MARTINI/hybrid) |
+| `curvature_center` | `(n_frame, 1, 3)` | float32 | Centre of curvature as `--curvature-changer-interval` moves it; a continuation copies the frame's value into `Const3D_curvature_center/value` |
+| `replica_cumulative_swaps` | `(n_frame, n_partner, 2)` | int32 | Replica exchange with each swap partner [accepted, attempted] since the start of the run |
+| `replica_swap_partner` | `(n_partner,)` | int32 | The systems this one exchanges with, written once |
+| `tip_pos`, `time_estimate`, `tip_step` | `(n_frame, n_tip, 3)`, `(n_frame, 1)`, `(n_frame, 1)` | float32, float32, int64 | AFM tip positions, the tip's clock and its step count (`MovingConst3D`) |
+| `sigmoid_coupling`, `nonlinear_coupling`, `contact_energy`, `centers`, `Const3D_<k>` | `(n_frame, n)` or `(n_frame, n, 3)` | float32 | Per-residue burial energy, contact energy, group centres and constant points (`--log-level detailed`, the default) |
+| node group names (`environment_coverage_sc`, `placement_*`, ...), `virtual` | `(n_frame, n_elem[, width])` | float32 | Node outputs written at `--log-level extensive` |
 
-After a continuation run, the previous `/output` group is renamed to
-`/output_previous_0` (then `_1`, `_2`, ...) and a fresh `/output` is created.
-`py/run_upside.py:read_output` concatenates all of them.
+The engine deletes an existing `/output` when it starts (unless `-o` names another file). A continuation script
+therefore first renames it to `/output_previous_0` (then `_1`, `_2`, ...), as the examples' `continue_sim` do.
+Every run logs the round it starts from, so the first frame of each later segment repeats the last frame of the
+one before; `py/mdtraj_upside.py`, `py/extract_vtf.py` and `py/get_info_from_upside_traj.py` read the segments in
+order and drop that frame, and `py/martini_extract_vtf.py` reads hybrid trajectories.
 
 ---
 
@@ -256,14 +280,18 @@ Protein sidechain rotamer force field. Root-level datasets:
 | `pair_interaction` | `(20,20,54)` | float64 | SC-SC 2D quadratic spline knots; axes: bead type i, bead type j (`bead_order`; one bead per residue in ff2.1), combined angular+radial knots |
 | `coverage_interaction` | `(8,20,50)` | float64 | H-bond coverage interaction; axes: 2 x backbone class + (donor 0, acceptor 1), bead type, knots. Backbone classes: generic, GLY, PRO, and pre-proline (a residue whose chain continues into PRO or CPR; `backbone_group4` in `upside_config.py`) |
 | `hydrophobe_interaction` | `(12,20,50)` | float64 | Hydrophobe coverage; axes: 3 x backbone class + hydrophobe point, bead type, knots |
-| `hydrophobe_placement` | `(3,7)` | float64 | Fixed-point-vector-scalar placement for H/N/C; columns: xyz + direction_xyz + scalar |
+| `hydrophobe_placement` | `(3,7)` | float64 | Fixed-point-vector-scalar placement of each residue's three backbone hydrophobe points, trained sites that started at N, CA and C; columns: xyz + direction_xyz + scalar |
 | `rotamer_center_fixed` | `(86,6)` | float64 | Rotamer center positions (vec3 + unit_dir_vec3) per rotamer state |
 | `rotamer_start_stop_bead` | `(20,3)` | int64 | [start, stop, n_bead] per residue type into rotamer list |
 | `rotamer_prob` | `(36,36,86)` | float32 | Rotamer prior probability (phi_bin, psi_bin, rotamer_idx) |
 | `restype_and_chi_and_state` | `(242,4)` | float64 | (restype_idx, chi1, chi2, state_idx) for each rotamer |
 | `accuracy_trace` | `(n_iter,4)` | float32 | Training convergence log |
 
-Knot layout for `pair_interaction[i,j,:]`: two angular sections (r1 direction, r2 direction) followed by two radial sections (attractive, repulsive). `n_knot_angular=15`, `n_knot_sc=12` => 2×15 + 2×12 = 54 knots total.
+Knot layout for `pair_interaction[i,j,:]`: two angular sections (r1 direction, r2 direction) followed by two radial sections: one isotropic, in ff_2.1 the repulsive core (about +3.5 E_up at 0.7 A, its first coefficient
+pinned at 5 by the trainer), and one weighted by the two angular factors, whose sign changes along r. `n_knot_angular=15`, `n_knot_sc=12` => 2×15 + 2×12 = 54 knots total.
+
+`rotamer_center_fixed` and `rotamer_prob` were generated from Dunbrack's backbone-dependent rotamer library by
+master's `src/compute_rotamer_centers.cpp` and `src/compute_rotamer_pos.cpp`; Upside 3 does not carry those tools.
 
 **`ff_3.0/sidechain.h5`** is ff_2.1's file with `pair_interaction`, `coverage_interaction` and
 `hydrophobe_interaction` retrained by ConDiv (the ff30_gdepth_dt009 release, 4). Every other
@@ -317,7 +345,7 @@ Protein burial/environment potential. Root datasets:
 |---|---|---|
 | `restype_order` | `(20,)` S3 | AA ordering |
 | `center` | `(20,)` | Sigmoid center per residue type |
-| `scale` | `(20,)` | Sigmoid scale (positive = buried-favored) |
+| `scale` | `(20,)` | Sigmoid scale; which side is favoured depends on its sign together with `sharpness` (PRO has both negative and burial favoured, -0.538 E_up buried in ff_2.1) |
 | `sharpness` | `(20,)` | Sigmoid sharpness |
 | `coverage_param` | `(20,1,4)` | Coverage function parameters per residue |
 | `energies` | `(20,18)` | Energy table indexed by coverage bin; `@inv_dx=2.0`, `@offset=-0.5` |
@@ -360,16 +388,23 @@ weights. The retired FF1-form port never built it (findings.md 9t).
 
 ### 2.5 `membrane.h5`
 
-Implicit membrane potential (ff_2.1). Root datasets:
+Implicit membrane potential (ff_2.1). Root attributes `cb_z_min`, `cb_z_max` (-17, 15) and `hb_z_min`, `hb_z_max`
+(-33, 15), in A relative to the membrane surface at +-half_thickness (negative is outside). The writer lays each
+z axis on its n nodes with spacing (z_max - z_min)/(n - 2) and `z_start = z_min - half_thickness`; the clamped
+spline is flat beyond its end nodes. Root datasets:
 
 | Dataset | Shape | Notes |
 |---|---|---|
 | `names` | `(20,)` S3 | AA ordering |
-| `burial_nodes` | `(1,)` | z-coordinate node for membrane burial calculation |
-| `cb_energy` | `(20,2,18)` | CB burial energy per residue type, leaflet, z-bin |
-| `icb_energy` | `(20,18)` | Isotropic CB energy |
-| `hb_energy` | `(2,2,18)` | H-bond energy per donor/acceptor type, leaflet, z-bin |
-| `ihb_energy` | `(2,2,18)` | Isotropic H-bond energy |
+| `burial_nodes` | `(1,)` | burial level (2.5) dividing the two burial bins of `cb_energy` |
+| `cb_energy` | `(20,2,18)` | CB energy per residue type, burial bin, z node |
+| `icb_energy` | `(20,18)` | CB energy of a channel residue that faces no lipid, per residue type, z node |
+| `hb_energy` | `(2,2,18)` | backbone H/O energy per donor/acceptor, unpaired/paired, z node |
+| `ihb_energy` | `(2,2,18)` | `hb_energy`'s counterpart for a channel residue that faces no lipid |
+
+`icb_energy` and `ihb_energy` meet the clamped spline's end condition (zero slope at both end nodes); `cb_energy` and
+`hb_energy` do not, so their force jumps where a CB or H/O crosses an end node's depth (pass 2, membrane M3; a
+property of ff_2.1, left for the membrane retraining).
 
 ### 2.6 `martini.h5`
 
@@ -384,8 +419,6 @@ at 1.2 nm). Attrs: `@schema='martini_particles_combined'`, `@r_max_ang=12.0`,
 
 | Dataset | Shape | Notes |
 |---|---|---|
-| `type_order` | `(38,)` S8 | MARTINI bead type names (Qda, Qd, Qa, P5, ...) |
-| `type_charge` | `(38,)` float32 | Charge per bead type |
 | `unique_charge_product` | `(81,)` float64 | Distinct charge products for all pairs |
 | `unique_eps_eup` | `(81,)` float64 | LJ epsilon per unique pair in E_up |
 | `unique_sig_ang` | `(81,)` float64 | LJ sigma per unique pair in Angstrom |
@@ -393,19 +426,30 @@ at 1.2 nm). Attrs: `@schema='martini_particles_combined'`, `@r_max_ang=12.0`,
 
 #### `/sc_table`
 
-Side-chain/environment free-energy tables, one per (residue type, rotamer, environment target), a target
+Side-chain/environment free-energy tables, one per (residue type, rotamer state, environment target), a target
 being a bead type with its topology charge (`Q0+1` is the PC choline bead; the type name alone does not
 fix the charge). Attrs document the derivation: `@schema='martini_sc_combined'`,
 `@runtime_representation='clamped_cubic_spline_r_theta'`,
-`@azimuthal_average='tempered_boltzmann_free_energy'`, `@azimuthal_average_temperature_upside=25.0`,
+`@average='boltzmann_free_energy_over_conformers_and_azimuth'`, `@average_temperature_upside=0.8647`,
 `@nonbonded_cutoff_nm=1.2`, `@bead_reach_nm`, `@target_direction_count=2400`,
 `@sidechain_bead_frame_count=24`.
 
-Each cell averages the dry-MARTINI energy (potential-shifted LJ and reaction-field Coulomb) of a rotamer's
-beads with one target over 2400 Fibonacci-sphere directions and 24 rotations of the beads about the CB
-vector, binned linearly onto the theta grid. r is the distance from the CB, placed as the runtime places it
-(relative to the N/CA/C centroid); theta is the angle between the CB vector (CB - CA) and the CB-to-target
-direction, 0 on the side-chain side. The radial grid runs from 0 to the largest bead-CB distance plus
+A rotamer state's side chain is a set of conformers: ideal-geometry heavy atoms (the bond lengths, angles and
+dihedral offsets of master's `src/generate_from_rotamer.cpp`, with which the rotamer library was placed) built on
+the reference N, CA, CB at each of the state's (chi1, chi2) rows of `sidechain.h5 restype_and_chi_and_state`, with
+chi3 and chi4 at their staggered wells (-60, 60, 180; ARG's chi4 -85, 85, 180; the chi3 of GLU and GLN, which has
+no wells, every 30 degrees), syn-pentane combinations of adjacent sp3-sp3 dihedrals left out, all equally weighted
+(546 conformers over the 18 residues). Its beads are martinize's martini22 mapping centres, mass-weighted with
+martinize's masses. Each cell is the free energy, at the production temperature 0.8647 T_up, of one target over the
+state's conformers and the side chain's rotation about the CB vector:
+exp(-F/kT) = sum_c w_c <exp(-E_c/kT)>, with E_c the dry-MARTINI energy (potential-shifted LJ and reaction-field
+Coulomb) of conformer c's beads with the target and <> the average over 2400 Fibonacci-sphere directions, binned
+linearly onto the theta node, and 24 rotations of the beads about the CB vector. F is the target's potential of
+mean force in (r, theta): it gives a single target the Boltzmann distribution it has about the side chain with the
+conformer and the azimuth integrated out. A rotation about the CB vector is a chi1 rotation, so the table does not
+see chi1; states that differ only in chi1 get nearly the same table. r is the distance from the CB, placed as the
+runtime places it (relative to the N/CA/C centroid); theta is the angle between the CB vector (CB - CA) and the
+CB-to-target direction, 0 on the side-chain side. The radial grid runs from 0 to the largest bead-CB distance plus
 1.2 nm and a node, so the last two nodes are exactly zero (the builder asserts it and the engine refuses a
 table that is not). The engine fits each table as a clamped cubic spline in r and theta, exact for this
 table at both ends: zero value and slope at the radial end, and an azimuthal average is even in theta about
@@ -419,16 +463,14 @@ refused.
 | `target_type`, `target_charge` | `(13,)` S8, float32 | The same targets split |
 | `grid_ang` | `(N_r,)` float32 | Radial grid in Angstrom, uniform from 0 |
 | `theta_grid` | `(N_theta,)` float32 | Angular grid in radians, uniform on [0, pi] |
-| `rotamer_count` | `(18,)` float32 | Number of rotamers per residue type |
-| `rotamer_probability_fixed` | `(18,6)` float32 | Prior rotamer probabilities |
+| `rotamer_count` | `(18,)` float32 | Number of rotamer states per residue type, as in `sidechain.h5` |
 | `rotamer_full_energy_eup` | `(18,6,13,N_r,N_theta)` float32 | Free energy in E_up per (residue, rotamer, target, r, theta) |
 
 ### 2.7 `parameters/dryMARTINI/` (structure templates)
 
-Holds no parameter table. `DOPC.pdb` and `DDM.pdb` are dry-MARTINI lipid and detergent slabs;
-`martini_prepare_system.py` reads `parameters/dryMARTINI/<lipid-name>.pdb` as the default
-`--bilayer-pdb` for mode=bilayer. The dry-MARTINI non-bonded parameters are `ff_2.1/martini.h5`
-(2.6).
+Holds no parameter table. `DOPC.pdb` is the dry-MARTINI DOPC slab that `example/16.MARTINI/run_sim_hybrid.sh`
+passes as its default `--membrane-pdb`; `martini_prepare_system.py` itself requires the option and has no default.
+The dry-MARTINI non-bonded parameters are `ff_2.1/martini.h5` (2.6).
 
 ### 2.8 `rama.dat`
 
@@ -461,7 +503,7 @@ Upside is defined so `kT = 1 E_up` at `T_up = 1` (350.588 K).
 temperature it was measured, not by the E_up factor.** A GROMACS PMF in kJ/mol at 300 K enters as
 `PMF / 2.494339`; `PMF / 2.914952774272` would be 1.169x too small. The two are easy to swap,
 so check the normalisation of the map you are replacing: it is one line, and it settles the
-question. See `py/build_rama_from_awh.py`.
+question.
 
 **The 4.5% NaN is one whole neighbour column, not scattered bins.** 4.545% = 1/22 is the `CPR`
 column, which is never read: `read_rama_maps_and_weights` maps a cis-proline *neighbour* onto
@@ -484,7 +526,8 @@ in coil and sheet makes the coil/sheet mixture leave glycine unchanged; the left
 unchanged, so a glycine between a glycine and another residue reads a mixture of two entries.
 
 **A force field's library belongs in its own directory.** A release copies the run's library
-into `parameters/<ff>/rama.dat` (`ConDiv.py extract`). A config on ff_3.0 takes
+into `parameters/<ff>/rama.dat`; `ConDiv.py extract` copies it unchanged, and ff3.0's glycine depth pair was
+trained by that run's own `trainer/rama_basin.py` (findings 1.27; not in the repo). A config on ff_3.0 takes
 `ff_3.0/rama.dat`; `common/rama.dat` would give it ff2.1's glycine maps.
 
 ### 2.8a How a library map becomes the `rama_pot` the engine reads
@@ -590,7 +633,7 @@ Force-field files (read-only, never modified at runtime):
     rama.dat       -> Ramachandran library (HDF5)
     rama_reference.pkl -> reference state
   parameters/dryMARTINI/
-    DOPC.pdb, DDM.pdb -> lipid and detergent slab templates (2.7)
+    DOPC.pdb       -> dry-MARTINI DOPC slab template (2.7)
   parameters/ff_2.1/
     martini.h5     -> MARTINI non-bonded spline tables
   parameters/ff_3.0/
@@ -606,12 +649,14 @@ Force-field files (read-only, never modified at runtime):
 
 **`parameters/ff_3.0` is the release of ff30_gdepth_dt009** (step 75, `epoch_03_minibatch_18`;
 converged at its 2026-10-09 gate, findings 1.26), trained from ff2.1 with ff2.1's own FF2
-dual-target workflow (`training/ConDiv.py`) and md5-identical to `$P/parameters/ff_3.0_gdepth`.
+dual-target workflow (`training/ConDiv.py`; the glycine depth pair by the run's `trainer/rama_basin.py`) and
+md5-identical to `$P/parameters/ff_3.0_gdepth`. Its `hbond.h5` has ff2.1's 12 entries, no glycine offsets.
 The two earlier versions, trained with a port of FF1's trainer, are in `backup/` (gitignored) and
 in git history (findings 9t-9v). Build configs from all six files with the default
 `--environment-potential-type=1`, and take `membrane.h5` and `martini.h5` from `ff_2.1`. The
-examples and `martini_prepare_system.py` read ff_2.1's files and `common/rama.dat`, so a run on
-ff3.0 passes its files explicitly.
+examples take their parameter files as arguments, so a protein-only run on ff3.0 passes them explicitly; the hybrid
+preparation hard-codes ff_2.1's files and `common/rama.dat` (`martini_prepare_system.py`, `martini_prepare_system_lib.py`),
+so it cannot build an ff3.0 hybrid yet.
 
 ---
 
@@ -667,6 +712,16 @@ Do not tabulate a bare truncation or smoothed approximation.
 **Thermostat decoupling**: `thermostat_timescale` for frozen atoms is set to 1e8
 (effectively infinite), meaning those atoms are not thermostated and stay rigid.
 Protein atoms use ~5 Upside time units.
+
+**Pair exclusion (`sequence_id`)**: every pair list, `backbone_pairs` and each interaction graph (`protein_hbond`,
+`hbond_coverage`, `hbond_coverage_hydrophobe`, `environment_coverage_sc/_hb`, `hb_environment_coverage_hn/_oc`,
+`hbbb_coverage`, `rotamer/pair_interaction`), excludes element pairs by a required per-element `sequence_id`
+(`sequence_id1`, `sequence_id2` for the two groups of an asymmetric graph); the engine refuses a node without it. `id`
+is never the key: it is the node's own payload (the residue that indexes `aa_types`, a packed rotamer id). `sequence_id`
+is the element's residue number plus 2 for every chain break before it (`upside_config.sequence_id`), so residues on
+the two sides of a break are at least 3 apart, beyond every node's window: pairs within 2 are excluded by the coverage
+nodes, within 1 by `protein_hbond` and `backbone_pairs`, and equal ones (the same residue) by the rotamer. In a single
+chain `sequence_id` is the residue number.
 
 **NP ensemble barostat**: `@target_p_xy=0` with `@mc_dmax_z=0` gives a tensionless
 XY-only MC barostat. The z dimension is frozen. The MC step size (`mc_dmax_xy`) is

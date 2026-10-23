@@ -69,8 +69,19 @@ for k in range(n_rep):
         reducedPot0[k,l] = beta[l] * cE0[k]
 mbar0 = pymbar.MBAR(reducedPot0, FNs, verbose=True)
 
+def residue_dG(pf, w, tt):
+    # dG_HX (kcal/mol) of one residue from its protection states pf under the normalised weights w.
+    # With a binary protection state the smallest resolvable (1 - p_f) is one effective frame,
+    # ESS = 1/sum(w^2), so a residue protected or exposed within that bound has no resolved dG: NaN,
+    # as in 00.AnalysisScripts/helpers/calc_hdx_ht.py
+    ess     = 1./np.sum(w*w)
+    mean_pf = np.sum(pf*w)
+    if mean_pf >= 1.-1./ess or mean_pf <= 1./ess:
+        return np.nan
+    return 0.001987*tt*np.log(mean_pf/(1.-mean_pf))
+
 #============================================
-# calculate dG_HX at different T 
+# calculate dG_HX at different T
 #============================================
 
 dGhx_T = []
@@ -83,15 +94,7 @@ for k in range(T.size):
     w1 = np.exp(log_w1)
     w1 /= np.sum(w1)
 
-    dG = np.zeros(n_res)
-    for r in range(n_res):
-        pf_i = PS[:,start_frame:,r].flatten()
-        mean_pf = np.average(pf_i, weights=w1)
-        if mean_pf == 1:
-            print(k, r)
-            dG[r] = 1000.
-        else:
-            dG[r] = 0.001987*tt*np.log((mean_pf/(1.-mean_pf)))
+    dG = np.array([residue_dG(PS[:,start_frame:,r].flatten(), w1, tt) for r in range(n_res)])
     dGhx_T.append(dG)
 dGhx_T = np.array(dGhx_T)
 
@@ -130,13 +133,8 @@ dGhx_D = []
 for d in den:
     w  = np.exp(m*d/T_target)*w1
     w /= np.sum(w)
-    
-    probp = np.zeros(n_res)
-    for j in range(n_res):
-        pf_i = PS[:,start_frame:,j].flatten()
-        probp[j] = np.sum(pf_i*w)
-    probu = 1. - probp
-    dGhx_D.append(TT*np.log(probp/probu)*0.001987)
+
+    dGhx_D.append([residue_dG(PS[:,start_frame:,j].flatten(), w, TT) for j in range(n_res)])
 dGhx_D = np.array(dGhx_D)
 
 # m-value: the slope of dG vs [den]

@@ -5,9 +5,6 @@ import sys,os
 deg=np.deg2rad(1)
 default_filter = tb.Filters(complib='zlib', complevel=5, fletcher32=True)
 
-def check_node_exist():
-    return True
-
 def bstring(string):
     return bytes(string, encoding="ascii")
 
@@ -94,7 +91,7 @@ def COMCoord(h5, nodename, input_node, n_dim, index_pos, border, index_dim):
     create_array(h5, grp, 'index_dim', obj=index_dim)
     return name
 
-def Const3DCoord1(h5, nodename, input_node, dim1, dim2, dim3, values):
+def Const3DCoord1(h5, nodename, input_node, values):
     potential = h5.root.input.potential
     base = 'Const3D'
     if nodename is None:
@@ -103,30 +100,13 @@ def Const3DCoord1(h5, nodename, input_node, dim1, dim2, dim3, values):
         name = '{}_{}'.format(base, nodename)
     grp = h5.create_group(potential, name)
     grp._v_attrs.arguments = np.array([bstring(input_node)])
-    grp._v_attrs.dim1 = dim1
-    grp._v_attrs.dim2 = dim2
-    grp._v_attrs.dim3 = dim3
 
     values = np.array(values)
     assert values.ndim == 2
     ids = np.arange(values.shape[0])
     create_array(h5, grp, 'id', obj=ids)
-    grp._v_attrs.initialized_by_coord = 0
     create_array(h5, grp, 'value', obj=values)
 
-    return name
-
-def Const3DCoord2(h5, input_node, dim1, dim2, dim3, ids):
-    potential = h5.root.input.potential
-    base = 'Const3D'
-    name = '{}_{}'.format(base, input_node)
-    grp = h5.create_group(potential, name)
-    grp._v_attrs.arguments = np.array([bstring(input_node)])
-    grp._v_attrs.dim1 = dim1
-    grp._v_attrs.dim2 = dim2
-    grp._v_attrs.dim3 = dim3
-    create_array(h5, grp, 'id', obj=ids)
-    grp._v_attrs.initialized_by_coord = 1
     return name
 
 def MovingConst3DCoord1(h5, nodename, input_node, time_initial, time_step, velocities, values):
@@ -142,36 +122,12 @@ def MovingConst3DCoord1(h5, nodename, input_node, time_initial, time_step, veloc
     grp._v_attrs.arguments            = np.array([bstring(input_node)])
     grp._v_attrs.time_initial         = time_initial
     grp._v_attrs.time_step            = time_step
-    grp._v_attrs.initialized_by_coord = 0
-    grp._v_attrs.dim1 = 0
-    grp._v_attrs.dim2 = 1
-    grp._v_attrs.dim3 = 2
+    grp._v_attrs.step_initial         = 0   # time steps before this run; a continuation resumes /output/tip_step
 
     ids = np.arange(velocities.shape[0])
     create_array(h5, grp, 'id', obj=ids)
     create_array(h5, grp, 'velocities', obj=velocities)
     create_array(h5, grp, 'start_pos', obj=values)
-
-    return name
-
-def MovingConst3DCoord2(h5, nodename, input_node, time_initial, time_step, ids, velocities, dim1=0, dim2=1, dim3=2):
-    potential = h5.root.input.potential
-    base = 'MovingConst3D'
-    if nodename is None:
-        name = base
-    else:
-        name = '{}_{}'.format(base, nodename)
-    grp = h5.create_group(potential, name)
-    grp._v_attrs.arguments = np.array([bstring(input_node)])
-    grp._v_attrs.time_initial = time_initial
-    grp._v_attrs.time_step    = time_step
-    grp._v_attrs.dim1 = dim1
-    grp._v_attrs.dim2 = dim2
-    grp._v_attrs.dim3 = dim3
-    grp._v_attrs.initialized_by_coord = 1
-
-    create_array(h5, grp, 'id', obj=ids)
-    create_array(h5, grp, 'velocities', obj=velocities)
 
     return name
 

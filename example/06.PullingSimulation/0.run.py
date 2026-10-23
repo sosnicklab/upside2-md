@@ -150,7 +150,7 @@ if not continue_sim:
 #     restraints (spring energy)
 #     wall potential
 #     contact energy
-# Example 8 will show more details.
+# Example 07 shows more restraints.
 
 if not continue_sim:
     kwargs = dict(
@@ -214,17 +214,11 @@ if continue_sim:
                 t.root.input.mom._f_remove()
             t.create_array(t.root.input, 'mom', obj=n.mom[-1,0][:,:,None])
             t.root.input.mom._v_attrs.round = n.round[-1]  # the round the momentum was recorded at
+            if 'replica_index' in n:
+                t.root.input.mom._v_attrs.replica_index = n.replica_index[-1,0]  # the replica the system held
 
-            # the tip is at start_pos + velocities*time and its clock restarts at time_initial,
-            # so keep the tip's start and resume its clock
-            moving        = t.root.input.potential.MovingConst3D
-            time_estimate = n.time_estimate[-1,0]
-            start_pos     = n.tip_pos[-1] - moving.velocities[:]*time_estimate
-            if 'start_pos' in moving:
-                moving.start_pos._f_remove()
-            t.create_array(moving, 'start_pos', obj=start_pos)
-            moving._v_attrs.initialized_by_coord = 0
-            moving._v_attrs.time_initial         = time_estimate
+            # the tip is at start_pos + velocities*(time_initial + time_step*steps): resume its step count
+            t.root.input.potential.MovingConst3D._v_attrs.step_initial = n.tip_step[-1,0]
 
             if 'output' in t.root:
                 t.root.output._f_rename(new_name)

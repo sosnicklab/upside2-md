@@ -24,12 +24,12 @@ inline void minimum_image_scalar(float& dx, float& dy, float& dz, float box_x, f
 namespace npt {
 
 struct BarostatSettings {
-    int   interval = 0;           // steps between applications
-    float target_p_xy = 1.0f;     // UP units
-    float target_p_z  = 1.0f;     // UP units
-    // Monte-Carlo barostat: max fractional box-length step per trial move
-    float    mc_dmax_xy = 0.004f;
-    float    mc_dmax_z  = 0.004f;
+    int   interval;      // rounds between applications
+    float target_p_xy;   // E_up/A^3
+    float target_p_z;    // E_up/A^3
+    // Monte-Carlo barostat: largest log box-length step of each trial move; 0 holds that axis
+    float mc_dmax_xy;
+    float mc_dmax_z;
 };
 
 struct BarostatState {
@@ -39,7 +39,6 @@ struct BarostatState {
     std::vector<std::vector<int>> mc_mol_atoms;  // atoms of each scaled molecule
     std::mt19937_64 mc_rng;
     uint32_t mc_seed = 0;
-    bool mc_init = false;
 };
 
 // Sets the periodic box of every node that holds one.

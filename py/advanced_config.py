@@ -58,6 +58,8 @@ def parse_residue_list(input_string):
     for ss in input_string.split(','):
         sss = ss.split('-')
         if len(sss) > 1:
+            if int(sss[1]) < int(sss[0]):
+                raise ValueError('residue range %s runs backwards' % ss)
             num_list += range(int(sss[0]), int(sss[1])+1)
         else:
             num_list.append( int(sss[0]))
@@ -86,36 +88,20 @@ def add_to_const3D1(xyz):
     else:
         xyz     = np.array([xyz])
         n_const = xyz.shape[0]
-        const   = Const3DCoord1(t, None, 'pos', 0, 1, 2, xyz)
+        const   = Const3DCoord1(t, None, 'pos', xyz)
         index   = 0
 
     return index
 
-def add_to_const3D2(new_id, input_name):
-    pot_group = t.root.input.potential
-
-    node_name = 'Const3D_{}'.format(input_name)
-
-    if node_name in pot_group:
-
-        node = pot_group[node_name]
-
-        id0  = node.id[:]
-        index = -1
-        for i,x in enumerate(id0):
-            if x == new_id:
-                index = i*1
-                break
-        if index < 0:
-            index = id0.size
-            new_ids  = np.concatenate((id0, [new_id]))
-            node.id._f_remove(recursive=True, force=True)
-            create_array(node, 'id', new_ids)
-    else:
-        const   = Const3DCoord2(t, input_name, 0, 1, 2, [new_id])
-        index   = 0
-
-    return index
+def check_groups(groups, spring_table):
+    # group numbers are rows of GroupCenter_xyz, which --group writes
+    if 'GroupCenter_xyz' not in t.root.input.potential:
+        raise ValueError('%s needs the groups of --group' % spring_table)
+    n_group = t.root.input.potential.GroupCenter_xyz._v_attrs.n_group
+    for g in np.ravel(groups):
+        if not (0 <= g < n_group):
+            raise ValueError('%s names group %i but --group defines %i groups (zero is the first group)'
+                             % (spring_table, g, n_group))
 
 def write_affine_alignment(n_res):
     grp = t.create_group(potential, 'affine_alignment')
@@ -157,6 +143,12 @@ def write_CB(fasta):
 #                             wall potential 
 #=========================================================================
 
+def read_wall_type(field):
+    # WallSpring acts below its radius for wall type 0 (lower wall) and above it for 1 (upper wall)
+    if float(field) not in (0., 1.):
+        raise ValueError('wall_type must be 0 (lower wall) or 1 (upper wall), not %s' % field)
+    return int(float(field))
+
 def write_cavity_radial(radius, spring_const=5.):
     # add a (0,0,0) point
     const_index  = add_to_const3D1([0, 0, 0])
@@ -170,7 +162,7 @@ def write_cavity_radial(radius, spring_const=5.):
     ids = np.arange(n_atom)
     R0  = np.ones(n_atom)*radius
     K   = np.ones(n_atom)*spring_const
-    W   = np.ones(n_atom) # 0 means left wall, 1 means right wall
+    W   = np.ones(n_atom, dtype=int) # 0 means left wall, 1 means right wall
     cavity_radial_node = WallSpringPotential(t, 'cavity_radial', cavity_radial_dist, 0, ids, R0, K, W)
 
 def write_const_wall_spring(parser, fasta, spring_table):
@@ -219,7 +211,7 @@ def write_const_wall_spring(parser, fasta, spring_table):
             if not (0 <= group[j] < len(fasta)): raise ValueError(msg % (spring_table, group[j], len(fasta)))
             radius.append(float(f[1]))
             spring_const.append(float(f[2]))
-            wall_type.append(float(f[3]))
+            wall_type.append(read_wall_type(f[3]))
             xxx = [0., 0., 0.]
             if z_only:
                 xxx[dim]  = float(f[4])
@@ -302,7 +294,7 @@ def write_pair_wall_spring(parser, fasta, spring_table):
         if not (0 <= atom[-1][1] < len(fasta)): raise ValueError(msg % (spring_table, atom[-1][1], len(fasta)))
         radius.append(float(f[2]))
         spring_const.append(float(f[3]))
-        wall_type.append(float(f[4]))
+        wall_type.append(read_wall_type(f[4]))
     atom         = np.array(atom)
     atom         = atom*3+1  # Ca atoms
     radius       = np.array(radius)
@@ -527,18 +519,16 @@ def write_nail_spring(parser, fasta, spring_table):
 
     n_spring     = atom.shape[0]
 
-    ids = []
-    for i in range(n_spring):
-        index = add_to_const3D2(atom[i], 'pos')
-        ids.append([atom[i], index])
-    ids = np.array(ids)
+    # each CA is nailed to its position in this config, which stays its anchor when a continuation rewrites /input/pos
+    nail_pos = Const3DCoord1(t, 'pos', 'pos', t.root.input.pos[:,:,0][atom])
+    ids = np.column_stack((atom, np.arange(n_spring)))
 
     if z_only:
-        nail_dist = Distance1DCoord(t, 'nail', 'pos', 'Const3D_pos', dim,        ids)
+        nail_dist = Distance1DCoord(t, 'nail', 'pos', nail_pos, dim,        ids)
     elif xy_only:
-        nail_dist = Distance2DCoord(t, 'nail', 'pos', 'Const3D_pos', dim1, dim2, ids)
+        nail_dist = Distance2DCoord(t, 'nail', 'pos', nail_pos, dim1, dim2, ids)
     else:
-        nail_dist = DistanceCoord  (t, 'nail', 'pos', 'Const3D_pos',             ids)
+        nail_dist = DistanceCoord  (t, 'nail', 'pos', nail_pos,             ids)
 
     # make spring potential
     ids       = np.arange(n_spring)
@@ -572,6 +562,8 @@ def write_group_node(parser, fasta, spring_table):
     fields        = [ ln.split() for ln in open(spring_table) ]
     actual_header = [  x.lower() for  x in fields[0] ]
 
+    if actual_header != ['residues']:
+        parser.error('First line of %s must be "residues"' % spring_table)
     if not all(len(f)==(len(fields[0])) for f in fields):
         parser.error('Invalid format for %s file' % spring_table)
 
@@ -640,6 +632,7 @@ def write_group_dist_spring(parser, fasta, spring_table):
     radius       = np.array(radius)
     spring_const = np.array(spring_const)
     n_spring = atom.shape[0]
+    check_groups(atom, spring_table)
 
     if z_only:
         spring_dist = Distance1DCoord(t, 'group_dist', 'GroupCenter_xyz', 'GroupCenter_xyz', dim, atom)
@@ -712,6 +705,7 @@ def write_group_const_spring(parser, fasta, spring_table):
     xyz          = np.array(xyz)
 
     n_spring     = atom.shape[0]
+    check_groups(atom, spring_table)
 
     ids = []
     for i in range(n_spring):
@@ -780,12 +774,14 @@ def write_group_nail_spring(parser, fasta, spring_table):
 
     n_spring     = atom.shape[0]
 
-    const3d_group_nail = Const3DCoord2(t, 'GroupCenter_xyz', 0, 1, 2, atom)
+    check_groups(atom, spring_table)
 
-    ids = []
-    for i in range(n_spring):
-        ids.append([atom[i], i])
-    ids = np.array(ids)
+    # each group is nailed to its centre in this config, which stays its anchor when a continuation rewrites /input/pos
+    group = t.root.input.potential.GroupCenter_xyz
+    index_pos, border, pos = group.index_pos[:], group.border[:], t.root.input.pos[:,:,0]
+    centers = np.array([pos[index_pos[border[g]:border[g+1]]].mean(axis=0) for g in atom])
+    const3d_group_nail = Const3DCoord1(t, 'GroupCenter_xyz', 'GroupCenter_xyz', centers)
+    ids = np.column_stack((atom, np.arange(n_spring)))
 
     if z_only:
         group_nail_dist = Distance1DCoord(t, 'group_nail', 'GroupCenter_xyz', const3d_group_nail, dim,        ids)
@@ -843,11 +839,13 @@ def write_pulling(parser, fasta, AFM_table, time_initial, time_step):
     starting_tip_pos = np.array(starting_tip_pos)
     velocities       = np.array(velocities)
 
-    # create the moving const node
+    # create the moving const node; a tip without a given start starts on its CA in this config
     if len(fields[0]) == 5:
-        moving_node = MovingConst3DCoord2(t,  None, 'pos', time_initial, time_step, atom, velocities)
-    else:
-        moving_node = MovingConst3DCoord1(t,  None, 'pos', time_initial, time_step, velocities, starting_tip_pos )
+        if time_initial != 0.:
+            parser.error('a tip that starts on its CA starts at time 0; continue a pulling run with '
+                         'generate_restart_config.py, which keeps each tip\'s start')
+        starting_tip_pos = t.root.input.pos[:,:,0][atom]
+    moving_node = MovingConst3DCoord1(t,  None, 'pos', time_initial, time_step, velocities, starting_tip_pos)
 
     # the distance between pos and moving_node
     pairs = []
@@ -954,6 +952,8 @@ def parse_segments(s):
         if len(atoms) == 1:
             return np.array([int(atoms[0])])
         elif len(atoms) == 2:
+            if int(atoms[1]) < int(atoms[0]):
+                raise argparse.ArgumentTypeError('segment %s runs backwards' % x)
             return np.arange(int(atoms[0]),1+int(atoms[1]))  # inclusive on both ends
         else:
             raise RuntimeError('the impossible happened.  oops.')
@@ -1133,20 +1133,21 @@ def main():
     parser.add_argument('--ask-before-using-AFM', default='',
             help='Table of tip positions and pulling velocitis for mimicing AFM pulling experiment in the constant velocity mode. ' +
             'Each line must contain 8 fields and the first line must contain ' +
-            '"residue spring_const tip_pos_x tip_pos_y tip_pos_z pulling_vel_x pulling_vel_y pulling_vel_z". ' +
+            '"residue spring_const tip_pos_x tip_pos_y tip_pos_z pulling_vel_x pulling_vel_y pulling_vel_z", ' +
+            'or 5 fields under "residue spring_const pulling_vel_x pulling_vel_y pulling_vel_z", which starts each tip on its CA. ' +
             'The residue will be pulled in the direction (pulling_vel_x, pulling_vel_y, pulling_vel_z) by its CA atom, ' +
             'which is attached to the tip at (tip_pos_x, tip_pos_y, tip_pos_z). ' +
             'The magnitude of the pulling velocity vector sets the pulling speed. The unit is: angstrom per Upside time unit. ' +
-            'The spring_const is in the unit of kT/angstrom^2. At T = 298.15 K, it equals 41.14 pN/angstrom. ' + 
+            'The spring_const is in E_up/angstrom^2; 1 E_up/angstrom^2 is 48.40 pN/angstrom. ' + 
             'Note: consult with the developer before using this AFM function. '
             'Notice that to use this option, you have to either disable '+
             'the recentering (soluble protein) or distable z recentering for membrane protein. ' +
             'To do that, you will need to add --disable-recentering or --disable-z-recentering in UPSIDE EXECUTABLE arguments '+
             '(not arguments for upside_config.py or advanced_config.py)')
     parser.add_argument('--AFM-time-initial', default=0., type=float,
-            help='Time initial for AFM pulling simulation. The default value is 0. ' +
-            'WARNING: do not change this value unless the simulation is a continuation of a previous one. ' +
-            'To set the time initial, check the /root/output/time_estimate in the output h5 file. ' )
+            help='Time initial for AFM pulling simulation, for a table that gives each tip position. The default value '
+            'is 0, and a table without tip positions starts each tip on its CA at time 0. Continue a pulling run with '
+            'generate_restart_config.py, which keeps each tip\'s start and resumes its clock.')
     parser.add_argument('--AFM-time-step', default=0.009, type=float,
             help='Time step for AFM pulling simulation. The default value is 0.009. ' +
             'WARNING: this should be the same as the global time step, which is set to 0.009 by default. Change this value accordingly.')
@@ -1155,7 +1156,7 @@ def main():
             help='Table of linear tensions.  Each line must contain 4 fields and the first line '+
             'must contain "residue tension_x tension_y tension_z".  The residue will be pulled in the '+
             'direction (tension_x,tension_y,tension_z) by its CA atom.  The magnitude of the tension vector '+
-            'sets the force.  Units are kT/Angstrom. Notice that to use this option, you have to either disable '+
+            'sets the force.  Units are E_up/Angstrom (1 E_up/Angstrom is 48.40 pN). Notice that to use this option, you have to either disable '+
             'the recentering (soluble protein) or distable z recentering for membrane protein. ' +
             'To do that, you will need to add --disable-recentering or --disable-z-recentering in UPSIDE EXECUTABLE arguments '+
             '(not arguments for upside_config.py or advanced_config.py)')
@@ -1170,6 +1171,8 @@ def main():
             'residue.')
 
     args = parser.parse_args()
+    if args.tension and args.ask_before_using_AFM:
+        parser.error('--tension and --ask-before-using-AFM are two pulling modes; choose one')
 
 
     global n_atom, t, potential
@@ -1215,58 +1218,55 @@ def main():
 
     if args.heuristic_cavity_radius:
         if n_chains < 2:
-            eprint('WARNING: --heuristic-cavity-radius requires at least 2 chains. Skipping setting up cavity')
-        else:
-            if not has_rl_info: # all chains separately
-                com_list = []
-                for i in range(n_chains):
-                    first_res, next_first_res = chain_endpts(n_res, chain_first_residue, i)
-                    com_list.append(pos[first_res*3:next_first_res*3,:,0].mean(axis=0))
-            else: # receptor and ligand chains considered as groups
-                # receptor com
-                first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
-                next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
-                r_com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
+            parser.error('--heuristic-cavity-radius requires at least 2 chains')
+        if not has_rl_info: # all chains separately
+            com_list = []
+            for i in range(n_chains):
+                first_res, next_first_res = chain_endpts(n_res, chain_first_residue, i)
+                com_list.append(pos[first_res*3:next_first_res*3,:,0].mean(axis=0))
+        else: # receptor and ligand chains considered as groups
+            # receptor com
+            first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
+            next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
+            r_com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
 
-                # ligand com
-                first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
-                next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
-                l_com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
+            # ligand com
+            first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
+            next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
+            l_com = pos[first_res*3:next_first_res*3,:,0].mean(axis=0)
 
-                com_list = [r_com, l_com]
-            # Distance between chain com and all atoms
-            com_dist_list = []
-            for i in range(len(com_list)):
-                for j in range(n_atom):
-                        com_dist_list.append(vmag(com_list[i]-pos[j,:,0]) + 2.)
+            com_list = [r_com, l_com]
+        # Distance between chain com and all atoms
+        com_dist_list = []
+        for i in range(len(com_list)):
+            for j in range(n_atom):
+                    com_dist_list.append(vmag(com_list[i]-pos[j,:,0]) + 2.)
 
-            args.cavity_radius = args.heuristic_cavity_radius*max(com_dist_list)
-            print ()
-            print ("cavity_radius")
-            print (args.cavity_radius)
+        args.cavity_radius = args.heuristic_cavity_radius*max(com_dist_list)
+        print ()
+        print ("cavity_radius")
+        print (args.cavity_radius)
 
     if args.cavity_radius_from_config:
         if n_chains < 2:
-            eprint('WARNING: --cavity-radius-from-config requires at least 2 chains. Skipping setting up cavity')
-        elif args.heuristic_cavity_radius:
-            eprint('WARNING: Overwriting heuristic cavity with the one from --cavity-radius-from-config')
-        else:
-            t_cavity = tb.open_file(args.cavity_radius_from_config,'r')
-            args.cavity_radius = t_cavity.root.input.potential.WallSpring_cavity_radial.equil_dist[0]
-            t_cavity.close()
-            print ()
-            print ("cavity_radius")
-            print (args.cavity_radius)
+            parser.error('--cavity-radius-from-config requires at least 2 chains')
+        t_cavity = tb.open_file(args.cavity_radius_from_config,'r')
+        args.cavity_radius = t_cavity.root.input.potential.WallSpring_cavity_radial.equil_dist[0]
+        t_cavity.close()
+        print ()
+        print ("cavity_radius")
+        print (args.cavity_radius)
 
     if args.make_unbound:
         if n_chains < 2:
-            eprint('WARNING: --make-unbound requires at least 2 chains. Skipping separating chains.\n'
-                   'See --record-chain-breaks in PDB_to_initial_structure.py and --chain-break-from-file in upside_config.py')
+            parser.error('--make-unbound requires at least 2 chains. '
+                         'See --record-chain-breaks in PDB_to_initial_structure.py and --chain-break-from-file in upside_config.py')
         elif n_chains > 6 and not has_rl_info:
             parser.error('--make-unbound separates at most 6 chains, one per cavity axis direction, '
                          'unless receptor and ligand chains are given (--rl-chains in PDB_to_initial_structure.py)')
         elif not args.cavity_radius:
-            eprint('WARNING: --make-unbound requires setting a cavity radius. Skipping separating chains')
+            parser.error('--make-unbound requires a cavity radius (--cavity-radius, --heuristic-cavity-radius or '
+                         '--cavity-radius-from-config)')
         else:
             print ()
             print ("making unbound")
@@ -1349,11 +1349,9 @@ def main():
             print (i, restrained_residues)
             make_restraint_group(i, set(restrained_residues), pos[:,:,0], args.restraint_spring_constant)
 
-    if args.tension and args.ask_before_using_AFM:
-        print ('Nope, you cannot pull the protein using two modes. Choose one.')
-    elif args.tension and not args.ask_before_using_AFM:
+    if args.tension:
         write_tension(parser, fasta, args.tension)
-    elif args.ask_before_using_AFM and not args.tension:
+    if args.ask_before_using_AFM:
         write_pulling(parser, fasta, args.ask_before_using_AFM, args.AFM_time_initial, args.AFM_time_step)
 
     if args.contact_energies:

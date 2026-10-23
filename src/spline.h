@@ -385,37 +385,6 @@ inline void deBoor_coeff_deriv(int* starting_bin, float result[4], const float x
     }
 }
 
-//! \brief Coefficient derivative for 2d splines in the B-spline representation
-//! 
-//! The derivative of a spline has 4x4 non-zero coefficients in the B-spline basis,
-//! which are the 4x4 coefficients that contribute to that value.  This function
-//! returns the value of those coefficients in result and the first coefficient with
-//! non-zero derivative as starting_bin.
-inline void deBoor2d_coeff_deriv(int* starting_bin, float result[4][4], int ny, const float x, const float y) {
-    // this function is not intended to be especially efficient
-
-    int x_bin = int(x); // must be at least 1
-    int y_bin = int(y); // must be at least 1
-    *starting_bin = (x_bin-1)*ny + (y_bin-1);  // lower left corner of coeffs
-
-    // Derivative with respect to coefficient
-    // is the value of spline with zeros for every coefficient
-    // except that one since the coefficients are linearly coupled
-    // to the basis functions
-    
-    // Since the 2d spline basis functions are just products of 1d spline basis functions,
-    // we can just take the outer product of the 1d coeff_deriv values.
-    
-    int unused;
-    float x_deriv[4]; deBoor_coeff_deriv(&unused, x_deriv, x);
-    float y_deriv[4]; deBoor_coeff_deriv(&unused, y_deriv, y);
-
-    for(int i=0; i<4; ++i)
-        for(int j=0; j<4; ++j)
-            result[i][j] = x_deriv[i]*y_deriv[j];
-}
-
-
 //! \brief Coefficient derivative for clamped splines in the B-spline representation
 //!
 //! The derivative of a spline has 4 non-zero coefficients in the B-spline basis,

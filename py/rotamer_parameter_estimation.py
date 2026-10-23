@@ -1,10 +1,8 @@
-import collections
 import os
 import pickle
 
 import numpy as np
 import scipy.optimize as opt
-import torch
 
 # ---------------------------------------------------------------------------
 # Dimensionality constants
@@ -23,127 +21,116 @@ sc_dr          = 0.7
 
 
 # ---------------------------------------------------------------------------
-# Core unpacking: latent vector → structured parameter tensors
+# The latent vector ConDiv trains, block by block. Angular knots are logits
+# (the tables hold their sigmoids), radial knots the interior knots of a
+# clamped spline (the pair table's symmetrised over the two residue types),
+# directions unnormalised.
 # ---------------------------------------------------------------------------
 
-def unpack_param_maker(lparam):
-    """Unpack a flat latent float64 tensor into structured force-field tensors.
-
-    Returns (rot_param, cov_param, hyd_param, hydpl_param, rotpos_param,
-             rotscalar_param, n_param).  All outputs are PyTorch tensors so
-    that autograd can compute gradients through them.
-    """
-    i = [0]
-
-    def read_param(shape):
-        size = int(np.prod(shape))
-        ret  = lparam[i[0] : i[0] + size].reshape(shape)
-        i[0] += size
-        return ret
-
-    def read_symm(n):
-        """Read (n_restype, n_restype, n) and enforce E(A,B)=E(B,A)."""
-        x = read_param((n_restype, n_restype, n))
-        return 0.5 * (x + x.permute(1, 0, 2))
-
-    def clamp_spline(middle):
-        """Apply boundary conditions: left-clamp from middle[:,1], right-clamp to zero."""
-        c0  = middle[..., 1:2]
-        cn3 = middle[..., -1:]
-        cn2 = -0.5 * cn3
-        cn1 = cn3
-        return torch.cat([c0, middle, cn2, cn1], dim=-1)
-
-    # -----------------------------------------------------------------------
-    # rot_param  (pair_interaction): shape (20, 20, 54)
-    # -----------------------------------------------------------------------
-    angular_logits = read_param((n_restype, n_restype, n_knot_angular))
-
-    angular_spline_sc = torch.sigmoid(angular_logits)                 # (20, 20, 15)
-
-    clamped_1 = clamp_spline(read_symm(n_knot_sc - 3))              # (20, 20, 12)
-    clamped_2 = clamp_spline(read_symm(n_knot_sc - 3))              # (20, 20, 12)
-
-    rot_param = torch.cat([
-        angular_spline_sc,
-        angular_spline_sc.permute(1, 0, 2),   # dp2 — transpose of dp1
-        clamped_1,
-        clamped_2,
-    ], dim=-1)                                                       # (20, 20, 54)
-
-    # -----------------------------------------------------------------------
-    # cov_param  (coverage_interaction): shape (8, 20, 50)
-    # -----------------------------------------------------------------------
-    cov_dp1  = torch.sigmoid(read_param((n_cov, n_restype, n_knot_angular)))
-    cov_dp2  = torch.sigmoid(read_param((n_cov, n_restype, n_knot_angular)))
-    cov_uni  = clamp_spline(read_param((n_cov, n_restype, n_knot_hb - 3)))
-    cov_dir  = clamp_spline(read_param((n_cov, n_restype, n_knot_hb - 3)))
-
-    cov_param = torch.cat([cov_dp1, cov_dp2, cov_uni, cov_dir], dim=-1)  # (8, 20, 50)
-
-    # -----------------------------------------------------------------------
-    # hyd_param  (hydrophobe_interaction): shape (12, 20, 50)
-    # -----------------------------------------------------------------------
-    hyd_dp1  = torch.sigmoid(read_param((n_hyd, n_restype, n_knot_angular)))
-    hyd_dp2  = torch.sigmoid(read_param((n_hyd, n_restype, n_knot_angular)))
-    hyd_uni  = clamp_spline(read_param((n_hyd, n_restype, n_knot_hb - 3)))
-    hyd_dir  = clamp_spline(read_param((n_hyd, n_restype, n_knot_hb - 3)))
-
-    hyd_param = torch.cat([hyd_dp1, hyd_dp2, hyd_uni, hyd_dir], dim=-1)  # (12, 20, 50)
-
-    # -----------------------------------------------------------------------
-    # hydpl_param  (hydrophobe_placement): shape (3, 7)
-    # -----------------------------------------------------------------------
-    hydpl_com         = read_param((n_fix, 3))
-    hydpl_dir_unnorm  = read_param((n_fix, 3))
-    hydpl_dir_norm    = hydpl_dir_unnorm / torch.sqrt(
-        (hydpl_dir_unnorm ** 2).sum(dim=-1, keepdim=True)
-    )
-    hydpl_param = torch.cat(
-        [hydpl_com, hydpl_dir_norm, torch.zeros((n_fix, 1), dtype=lparam.dtype)],
-        dim=-1,
-    )                                                                # (3, 7)
-
-    # -----------------------------------------------------------------------
-    # rotpos_param  (rotamer_center_fixed): shape (86, 6)
-    # -----------------------------------------------------------------------
-    rotpos_com        = read_param((n_rotpos, 3))
-    rotpos_dir_unnorm = read_param((n_rotpos, 3))
-    rotpos_dir_norm   = rotpos_dir_unnorm / torch.sqrt(
-        (rotpos_dir_unnorm ** 2).sum(dim=-1, keepdim=True)
-    )
-    rotpos_param = torch.cat([rotpos_com, rotpos_dir_norm], dim=-1)  # (86, 6)
-
-    # -----------------------------------------------------------------------
-    # rotscalar_param: shape (86, 1)
-    # -----------------------------------------------------------------------
-    rotscalar_param = read_param((n_rotpos, 1))
-
-    return (rot_param, cov_param, hyd_param, hydpl_param,
-            rotpos_param, rotscalar_param, int(i[0]))
+latent_shapes = [
+    (n_restype, n_restype, n_knot_angular),   # pair dp1 (dp2 is its transpose)
+    (n_restype, n_restype, n_knot_sc - 3),    # pair uni
+    (n_restype, n_restype, n_knot_sc - 3),    # pair direc
+    (n_cov, n_restype, n_knot_angular),       # coverage dp1
+    (n_cov, n_restype, n_knot_angular),       # coverage dp2
+    (n_cov, n_restype, n_knot_hb - 3),        # coverage uni
+    (n_cov, n_restype, n_knot_hb - 3),        # coverage direc
+    (n_hyd, n_restype, n_knot_angular),       # hydrophobe dp1
+    (n_hyd, n_restype, n_knot_angular),       # hydrophobe dp2
+    (n_hyd, n_restype, n_knot_hb - 3),        # hydrophobe uni
+    (n_hyd, n_restype, n_knot_hb - 3),        # hydrophobe direc
+    (n_fix, 3), (n_fix, 3),                   # hydrophobe placement point, direction
+    (n_rotpos, 3), (n_rotpos, 3),             # rotamer centre point, direction
+]
+n_param = sum(int(np.prod(s)) for s in latent_shapes)
 
 
-def _compute_n_param():
-    dummy = torch.zeros(40000, dtype=torch.float64)
-    with torch.no_grad():
-        *_, n = unpack_param_maker(dummy)
-    return n
+def _blocks(lparam):
+    lparam = np.asarray(lparam, dtype=np.float64)
+    if lparam.shape != (n_param,):
+        raise ValueError(f'a side-chain latent vector has {n_param} coordinates, not shape {lparam.shape} '
+                         f'(a ConDiv checkpoint written before 2026-10-22 has 31420: training/README.md)')
+    edges = np.cumsum([0] + [int(np.prod(s)) for s in latent_shapes])
+    return [lparam[a:b].reshape(s) for a, b, s in zip(edges[:-1], edges[1:], latent_shapes)]
 
 
-n_param = _compute_n_param()
+def _sigmoid(x):
+    return 1. / (1. + np.exp(-x))
+
+
+def _symm(x):
+    """0.5 (x + x^T) over the two residue-type axes, so E(A,B) = E(B,A); its own adjoint."""
+    return 0.5 * (x + x.transpose(1, 0, 2))
+
+
+def _clamp_spline(middle):
+    """The knots of a clamped spline from its interior ones: the left end clamped to
+    middle[1], the right end to zero."""
+    return np.concatenate([middle[..., 1:2], middle, -0.5 * middle[..., -1:], middle[..., -1:]], axis=-1)
+
+
+def _clamp_spline_vjp(d):
+    d_middle = d[..., 1:-2].copy()
+    d_middle[..., 1] += d[..., 0]
+    d_middle[..., -1] += d[..., -1] - 0.5 * d[..., -2]
+    return d_middle
+
+
+def _norm(u):
+    return np.sqrt((u ** 2).sum(axis=-1, keepdims=True))
+
+
+def _normalize_vjp(u, d):
+    """The adjoint of u -> u/|u|: the part of d perpendicular to u, over |u|."""
+    y = u / _norm(u)
+    return (d - y * (y * d).sum(axis=-1, keepdims=True)) / _norm(u)
 
 
 # ---------------------------------------------------------------------------
-# Evaluate without gradient tracking (numpy in, numpy out)
+# Unpacking: latent vector -> side-chain tables, and its gradient
 # ---------------------------------------------------------------------------
 
-def unpack_params(lparam_numpy):
-    """Evaluate unpack_param_maker on a numpy array; return numpy arrays."""
-    lparam = torch.tensor(lparam_numpy, dtype=torch.float64)
-    with torch.no_grad():
-        rot, cov, hyd, hydpl, rotpos, rotscalar, _ = unpack_param_maker(lparam)
-    return (rot.numpy(), cov.numpy(), hyd.numpy(),
-            hydpl.numpy(), rotpos.numpy(), rotscalar.numpy())
+def unpack_params(lparam):
+    """The side-chain tables of a latent vector: pair_interaction (20, 20, 54),
+    coverage_interaction (8, 20, 50), hydrophobe_interaction (12, 20, 50),
+    hydrophobe_placement (3, 7) and rotamer_center_fixed (86, 6)."""
+    (rot_dp, rot_uni, rot_dir, cov_dp1, cov_dp2, cov_uni, cov_dir, hyd_dp1, hyd_dp2, hyd_uni, hyd_dir,
+     hydpl_com, hydpl_dir, rotpos_com, rotpos_dir) = _blocks(lparam)
+
+    rot_dp = _sigmoid(rot_dp)
+    rot = np.concatenate([rot_dp, rot_dp.transpose(1, 0, 2),
+                          _clamp_spline(_symm(rot_uni)), _clamp_spline(_symm(rot_dir))], axis=-1)
+    cov = np.concatenate([_sigmoid(cov_dp1), _sigmoid(cov_dp2),
+                          _clamp_spline(cov_uni), _clamp_spline(cov_dir)], axis=-1)
+    hyd = np.concatenate([_sigmoid(hyd_dp1), _sigmoid(hyd_dp2),
+                          _clamp_spline(hyd_uni), _clamp_spline(hyd_dir)], axis=-1)
+    hydpl = np.concatenate([hydpl_com, hydpl_dir / _norm(hydpl_dir), np.zeros((n_fix, 1))], axis=-1)
+    rotpos = np.concatenate([rotpos_com, rotpos_dir / _norm(rotpos_dir)], axis=-1)
+    return rot, cov, hyd, hydpl, rotpos
+
+
+def unpack_params_vjp(lparam, d_rot, d_cov, d_hyd, d_hydpl, d_rotpos):
+    """The gradient in lparam of sum(d_x * x) over the tables x of unpack_params(lparam)."""
+    (rot_dp, _, _, cov_dp1, cov_dp2, _, _, hyd_dp1, hyd_dp2, _, _,
+     _, hydpl_dir, _, rotpos_dir) = _blocks(lparam)
+    na, nsc, nhb = n_knot_angular, n_knot_sc, n_knot_hb
+
+    def sigmoid_vjp(x, d):
+        s = _sigmoid(x)
+        return d * s * (1. - s)
+
+    def table_vjp(dp1, dp2, d):
+        return [sigmoid_vjp(dp1, d[..., :na]), sigmoid_vjp(dp2, d[..., na:2*na]),
+                _clamp_spline_vjp(d[..., 2*na:2*na + nhb]), _clamp_spline_vjp(d[..., 2*na + nhb:])]
+
+    grads = ([sigmoid_vjp(rot_dp, d_rot[..., :na] + d_rot[..., na:2*na].transpose(1, 0, 2)),
+              _symm(_clamp_spline_vjp(d_rot[..., 2*na:2*na + nsc])),
+              _symm(_clamp_spline_vjp(d_rot[..., 2*na + nsc:]))] +
+             table_vjp(cov_dp1, cov_dp2, d_cov) +
+             table_vjp(hyd_dp1, hyd_dp2, d_hyd) +
+             [d_hydpl[:, :3], _normalize_vjp(hydpl_dir, d_hydpl[:, 3:6]),
+              d_rotpos[:, :3], _normalize_vjp(rotpos_dir, d_rotpos[:, 3:6])])
+    return np.concatenate([g.ravel() for g in grads])
 
 
 # ---------------------------------------------------------------------------
@@ -157,94 +144,50 @@ def _logit(p, eps=1e-6):
 
 
 def _clamp_middle(full_spline):
-    """Extract the interior middle knots from a clamp_spline output.
-
-    clamp_spline(middle) produces:
-        [middle[1], middle[0..n-1], -0.5*middle[-1], middle[-1]]
-    so middle[0..n-1] = full_spline[1:n+1].
-    """
+    """The interior knots of a _clamp_spline output, full_spline[1:n+1]."""
     return full_spline[..., 1:-2]
 
 
-def _init_x0(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
+def _init_x0(rotp, covp, hydp, hydplp, rotposp):
     """Construct a warm-start latent vector from structured parameter arrays.
 
-    This is an approximate inversion of unpack_param_maker.  It only sets the
+    This is an approximate inversion of unpack_params.  It only sets the
     starting point for pack_param's solve; the residual check there is what
     establishes that the result is right.  The Theano original started from a
     flat 0.5 vector instead.
     """
-    parts = []
-
-    # 1. angular_logits (20, 20, 15): logit of dp1 angular slice of rot
-    parts.append(_logit(rotp[:, :, :n_knot_angular]).ravel())
-
-    # 2. clamped_symm_1 middle (20, 20, 9): interior knots of radial block 1
-    parts.append(_clamp_middle(rotp[:, :, n_knot_angular*2:n_knot_angular*2 + n_knot_sc]).ravel())
-
-    # 3. clamped_symm_2 middle (20, 20, 9)
-    parts.append(_clamp_middle(rotp[:, :, n_knot_angular*2 + n_knot_sc:]).ravel())
-
-    # 4. cov_dp1_logits (8, 20, 15)
-    parts.append(_logit(covp[:, :, :n_knot_angular]).ravel())
-
-    # 5. cov_dp2_logits (8, 20, 15)
-    parts.append(_logit(covp[:, :, n_knot_angular:n_knot_angular*2]).ravel())
-
-    # 6. cov_uni_middle (8, 20, 7)
-    parts.append(_clamp_middle(covp[:, :, n_knot_angular*2:n_knot_angular*2 + n_knot_hb]).ravel())
-
-    # 7. cov_dir_middle (8, 20, 7)
-    parts.append(_clamp_middle(covp[:, :, n_knot_angular*2 + n_knot_hb:]).ravel())
-
-    # 8. hyd_dp1_logits (12, 20, 15)
-    parts.append(_logit(hydp[:, :, :n_knot_angular]).ravel())
-
-    # 9. hyd_dp2_logits (12, 20, 15)
-    parts.append(_logit(hydp[:, :, n_knot_angular:n_knot_angular*2]).ravel())
-
-    # 10. hyd_uni_middle (12, 20, 7)
-    parts.append(_clamp_middle(hydp[:, :, n_knot_angular*2:n_knot_angular*2 + n_knot_hb]).ravel())
-
-    # 11. hyd_dir_middle (12, 20, 7)
-    parts.append(_clamp_middle(hydp[:, :, n_knot_angular*2 + n_knot_hb:]).ravel())
-
-    # 12. hydpl_com (3, 3)
-    parts.append(np.asarray(hydplp)[:, :3].ravel())
-
-    # 13. hydpl_dir_unnorm (3, 3): target directions are unit vectors; set equal
-    parts.append(np.asarray(hydplp)[:, 3:6].ravel())
-
-    # 14. rotpos_com (86, 3)
-    parts.append(np.asarray(rotposp)[:, :3].ravel())
-
-    # 15. rotpos_dir_unnorm (86, 3): target directions are unit vectors; set equal
-    parts.append(np.asarray(rotposp)[:, 3:6].ravel())
-
-    # 16. rotscalar (86, 1)
-    parts.append(np.asarray(rotscalarp).ravel())
-
-    x0 = np.concatenate(parts)
+    na, nsc, nhb = n_knot_angular, n_knot_sc, n_knot_hb
+    parts = [
+        _logit(rotp[:, :, :na]),                       # pair dp1
+        _clamp_middle(rotp[:, :, 2*na:2*na + nsc]),    # pair uni
+        _clamp_middle(rotp[:, :, 2*na + nsc:]),        # pair direc
+        _logit(covp[:, :, :na]),
+        _logit(covp[:, :, na:2*na]),
+        _clamp_middle(covp[:, :, 2*na:2*na + nhb]),
+        _clamp_middle(covp[:, :, 2*na + nhb:]),
+        _logit(hydp[:, :, :na]),
+        _logit(hydp[:, :, na:2*na]),
+        _clamp_middle(hydp[:, :, 2*na:2*na + nhb]),
+        _clamp_middle(hydp[:, :, 2*na + nhb:]),
+        np.asarray(hydplp)[:, :3],
+        np.asarray(hydplp)[:, 3:6],    # target directions are unit vectors; set equal
+        np.asarray(rotposp)[:, :3],
+        np.asarray(rotposp)[:, 3:6],
+    ]
+    x0 = np.concatenate([p.ravel() for p in parts])
     assert len(x0) == n_param, f'x0 length {len(x0)} != n_param {n_param}'
     return x0
 
 
-def pack_param(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
+def pack_param(rotp, covp, hydp, hydplp, rotposp):
     """Inverse of unpack_params: find latent vector x s.t. unpack_params(x) ≈ inputs."""
-    targets = [
-        torch.tensor(np.asarray(t), dtype=torch.float64)
-        for t in [rotp, covp, hydp, hydplp, rotposp, rotscalarp]
-    ]
+    targets = [np.asarray(t, dtype=np.float64) for t in [rotp, covp, hydp, hydplp, rotposp]]
 
-    def obj_and_grad(x_np):
-        x = torch.tensor(x_np, dtype=torch.float64, requires_grad=True)
-        with torch.enable_grad():
-            out  = unpack_param_maker(x)
-            loss = sum(((a - b) ** 2).sum() for a, b in zip(out[:6], targets))
-            loss.backward()
-        return loss.item(), x.grad.numpy().copy()
+    def obj_and_grad(x):
+        resid = [a - b for a, b in zip(unpack_params(x), targets)]
+        return sum((r ** 2).sum() for r in resid), unpack_params_vjp(x, *[2. * r for r in resid])
 
-    x0     = _init_x0(rotp, covp, hydp, hydplp, rotposp, rotscalarp)
+    x0     = _init_x0(rotp, covp, hydp, hydplp, rotposp)
     result = opt.minimize(
         obj_and_grad, x0, jac=True, method='L-BFGS-B',
         options={'maxiter': 20000, 'ftol': 1e-15, 'gtol': 1e-10},
@@ -265,40 +208,61 @@ def pack_param(rotp, covp, hydp, hydplp, rotposp, rotscalarp):
 # Quadratic spline energy (used for regularization in ConDiv d_obj)
 # ---------------------------------------------------------------------------
 
+def _grid_values(sp):
+    """A quadratic spline's values at its grid points 1..n-2."""
+    return (1. / 6.) * sp[..., :-2] + (2. / 3.) * sp[..., 1:-1] + (1. / 6.) * sp[..., 2:]
+
+
+def _grid_values_vjp(d):
+    sp = np.zeros(d.shape[:-1] + (d.shape[-1] + 2,))
+    sp[..., :-2] += (1. / 6.) * d
+    sp[..., 1:-1] += (2. / 3.) * d
+    sp[..., 2:] += (1. / 6.) * d
+    return sp
+
+
+def _split_knots(params, n_knots):
+    edges = np.cumsum([0] + list(n_knots))
+    return [params[..., a:b] for a, b in zip(edges[:-1], edges[1:])]
+
+
 def quadspline_energy(params, n_knots):
     """Evaluate the quadratic spline potential on its grid.
 
     Args:
-        params:  tensor of shape (..., sum(n_knots))
+        params:  array of shape (..., sum(n_knots))
         n_knots: tuple (n1, n2, n3, n4) giving knot counts for (dp1, dp2, uni, direc)
 
     Returns:
-        tensor of shape (..., n3-2, n1-2, n2-2)
+        array of shape (..., n3-2, n1-2, n2-2): uni(r) + dp1(a) dp2(b) direc(r)
     """
-    dp1   = params[..., :sum(n_knots[:1])]
-    dp2   = params[..., sum(n_knots[:1]):sum(n_knots[:2])]
-    uni   = params[..., sum(n_knots[:2]):sum(n_knots[:3])]
-    direc = params[..., sum(n_knots[:3]):]
-
-    ev = lambda sp: (1. / 6.) * sp[..., :-2] + (2. / 3.) * sp[..., 1:-1] + (1. / 6.) * sp[..., 2:]
-
+    dp1, dp2, uni, direc = (_grid_values(x) for x in _split_knots(params, n_knots))
     return (
-        ev(uni)  [..., :, None, None] +
-        ev(dp1)  [..., None, :, None] *
-        ev(dp2)  [..., None, None, :] *
-        ev(direc)[..., :, None, None]
+        uni  [..., :, None, None] +
+        dp1  [..., None, :, None] *
+        dp2  [..., None, None, :] *
+        direc[..., :, None, None]
     )
 
 
+def quadspline_energy_vjp(params, n_knots, d_energy):
+    """The gradient in params of sum(d_energy * quadspline_energy(params, n_knots))."""
+    dp1, dp2, _, direc = (_grid_values(x) for x in _split_knots(params, n_knots))
+    return np.concatenate([_grid_values_vjp(d) for d in (
+        np.einsum('...rab,...b,...r->...a', d_energy, dp2, direc),
+        np.einsum('...rab,...a,...r->...b', d_energy, dp1, direc),
+        d_energy.sum(axis=(-2, -1)),
+        np.einsum('...rab,...a,...b->...r', d_energy, dp1, dp2),
+    )], axis=-1)
+
+
 # ---------------------------------------------------------------------------
-# Adam optimizer (pure Python / numpy — no framework dependency)
+# Adam optimizer
 # ---------------------------------------------------------------------------
 
 def _read_comp(x, i):
-    try:
-        return x[i]
-    except (TypeError, IndexError):
-        return x   # scalar
+    """A setting shared by every component, or component i of a per-component one."""
+    return x if np.isscalar(x) else x[i]
 
 
 class AdamSolver:
@@ -317,10 +281,6 @@ class AdamSolver:
         self.step_num = 0
         self.grad1    = [0. for _ in range(n_comp)]
         self.grad2    = [0. for _ in range(n_comp)]
-
-    def update_for_d_obj(self):
-        """Return zero corrections (used for Nesterov look-ahead; not needed in Adam)."""
-        return [0. for _ in self.grad1]
 
     def update_step(self, grad):
         """Consume gradient list, return list of parameter updates."""

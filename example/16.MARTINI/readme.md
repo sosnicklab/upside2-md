@@ -92,23 +92,26 @@ The preparation is a standard membrane-protein insertion:
    Before every MD stage the workflow refuses a configuration with a pair inside the repulsive core (pair
    energy above kT ln(1e9 N_pairs)).
 8. **Produce (NVT)** at the equilibrated box (stage 7.0). The whole protein is one rigid body through
-   the 7.0 minimization + burn-in, then relabeled `production` for flexible dynamics. Immediately before
-   production, `assert_environment_solvation` takes the belt sites that face lipid (fewer than 60 protein
-   backbone atoms within 10 Å) over the burn-in's last quarter and fails the build if more than 10% of them
+   the 7.0 minimization + burn-in, then relabeled `production` for flexible dynamics. Production runs at
+   least 20,000 steps, and `assert_environment_solvation` takes the belt sites that face lipid (fewer than 60
+   protein backbone atoms within 10 Å) over steps 15,000-20,000 and fails the build if more than 10% of them
    have no environment bead within 8 Å; it warns at the same fraction for acyl-tail beads (see §5 —
-   morphology; the limits are measured, `findings.md` 8b). Every stage draws its
+   morphology; `findings.md` 8b). It measures production because the prep's rigid protein leaves the belt
+   ends 7-16% bare whatever production then does, and the flexible protein closes them. Every stage draws its
    own noise (a seed hashed from `--seed` and the stage name), and the momentum and its round pass through
    every handoff, so a production continued with `CONTINUE_STAGE_70_FROM` is the continuous run.
 
-`run.py` drives both stages. Edit the inputs/settings at its top and run:
+`run.py` drives both stages as Slurm jobs. Edit the inputs/settings at its top and run, on a login node:
 
 ```bash
 python run.py
 ```
 
-With `continue_sim = False` it builds the seed (Stage 1) and submits the REMD job (Stage 2); re-run
-with `continue_sim = True` to extend production. To run **only** the Stage-1 preparation — e.g. to
-inspect the packed system before committing to production — call the workflow directly:
+Without a production seed it submits the Stage-1 preparation and, after it (`afterok`), the first REMD block
+(Stage 2); with the seed it submits the next REMD block, until `n_blocks` are done. Each job sources
+`job_env_file` and runs `run.py` again with `HYBRID_JOB_STAGE` naming its stage, so the work runs on compute
+nodes. To run **only** the Stage-1 preparation, e.g. locally to inspect the packed system before committing to
+production, call the workflow directly:
 
 ```bash
 python ../../py/martini_prepare_system.py run-hybrid-workflow \
@@ -128,46 +131,48 @@ Common knobs (CLI flags or the matching `UPPER_CASE` environment variables): `--
 or `lay-flat` (PCA).
 
 Outputs land under `outputs/<run>/`: `hybrid_prep/` (packed PDB + mapping), `checkpoints/` (per-stage
-`.up`), `logs/`, and per-stage `.vtf`. `run.py` runs stage 7.0 with `--prod-70-nsteps 0`, so the stage-7.0
-`.up` holds the burn-in's final state as its input: that is the **seed** for Stage 2.
+`.up`), `logs/`, and per-stage `.vtf`. `run.py` runs stage 7.0's production for the 20,000 steps the solvation
+gate measures; the stage-7.0 `.up` that passed it is the **seed** for Stage 2, which starts from its last frame.
 
 ---
 
 ## 3. Stage 2 — Temperature-REMD production
 
 REMD samples the opening/closing events HDX depends on and gives MBAR the multi-temperature data it
-needs. `run.py` copies the Stage-1 seed into `n_rep` replicas and submits one OpenMP `upside` process
-that advances **all replicas together**, attempting temperature swaps between neighbours. This follows
-the standard Upside REMD driver (see `example/04.HDX`).
+needs. It runs in **blocks** of one job each: one OpenMP `upside` process advances **all replicas together**,
+attempting temperature swaps between neighbours (the standard Upside REMD driver, see `example/04.HDX`), and
+stops itself at `--time-limit`, `time_margin` before the wall. The first block copies the seed into `n_rep`
+replicas and starts each from the seed's last frame; every later block restarts each slot from its own last
+frame with the walker label it held, archives the block's `/output` as `output_previous_N`, and draws its own
+seed (`stage_seed(randomseed, "remd.segment<N>")`). A block queues the next one until `n_blocks` blocks are done;
+raise `n_blocks` and re-run `run.py` to extend. The chain stops at an engine error; nothing is rolled back.
 
 **Temperature ladder.** 48 replicas spanning 0.70–0.90 T_up (≈ 245–316 K; the physiological target
 0.8647 T_up = 303 K sits near the top). Spacing is uniform in √T so the exchange acceptance is roughly
 constant along the ladder — `run.py` builds it with `np.linspace(√T_low, √T_high, n_rep)**2` and the
 neighbour swap sets with `ru.swap_table2d`.
 
-**Frame recording (keeps the disk bounded).** Output is written at `frame_interval = 100` upside time
-units (~2000 frames per replica over `duration = 200000`) — the Upside standard — and **momentum is
-not recorded**; restarts (`continue_sim = True`) reseed **position only** and re-thermalize velocities.
-Each replica therefore stays ~120 MB (all four variants ≈ 23 GB), instead of the multi-hundred-GB
-growth that an over-dense, momentum-recording, self-accumulating output would produce. Do **not**
-add `--record-momentum` or shrink `frame_interval` toward per-step recording.
+**Speed and frames.** glpG's hybrid advances ~49 time units per wall hour with 28 replicas on a 28-core broadwl
+node and ~28 with 48 (measured on the glpG campaign, 23 ms per system step), so a block covers ~1,000 time
+units; `frame_interval = 10` gives ~100 frames per replica per block. **Momentum is not recorded** and blocks
+restart from positions, re-thermalizing velocities, so a replica grows by one frame of positions per frame. Do
+**not** add `--record-momentum` or shrink `frame_interval` toward per-step recording.
 
-The submitted command is, in effect:
+A block's command is, in effect:
 
 ```bash
-OMP_NUM_THREADS=<n_rep> upside <id>.run.0.up ... <id>.run.47.up \
-  --duration 200000 --frame-interval 100 --temperature <ladder> \
+OMP_NUM_THREADS=28 upside <id>.run.0.up ... <id>.run.47.up \
+  --duration 1e6 --time-limit <wall - time_margin> --frame-interval 10 --temperature <ladder> \
   --time-step 0.009 --integrator v --thermostat-timescale 5.0 --thermostat-interval -1 \
-  --seed 1 --disable-recentering \
+  --seed <block seed> --disable-recentering \
   --replica-interval 10 --swap-set <even pairs> --swap-set <odd pairs>
 ```
 
-**Slurm (RCC midway3/beagle3).** `run.py` submits one node, `--cpus-per-task=n_rep`,
-`OMP_NUM_THREADS=n_rep`, `--partition=caslake --account=<acct>`, `--time=35:45:00` (under the 36 h QOS
-cap). Run from `/project` space and load `hdf5/1.14.3` at runtime (the binary needs `libhdf5.so.310`);
-see the Slurm setup in the repo `CLAUDE.md`. To extend a run, re-run `run.py` with `continue_sim = True`
-(it archives each replica's `/output` to `output_previous_N` and restarts from the last frame). Submit
-one job per protein variant.
+**Slurm (RCC midway2).** Every job takes the partition and node exclusions from `slurm_args_file`
+(`/project/trsosnic/yinhan/slurm/midway2.args`, CLAUDE.md), `--account`, `--time=run_time` (35:45:00, under the
+36 h cap), one node with `--cpus-per-task=min(n_rep, cpus_per_node)`, and sources `job_env_file`, the Upside 3
+tree's environment (`/beagle3/trsosnic/yinhan/upside3/env_upside3.sh`). Submit from midway2; one chain per
+protein variant.
 
 The result is 48 per-replica `.up` files per variant, each with the accumulated `output_previous_*`
 history.
@@ -189,14 +194,14 @@ The wrapper builds the FASTA, initial coordinates, chain-break file, and heavy-a
 T_up** so MBAR can reweight, while exposing only mapped N/CA/C coordinates); and runs the trajectory,
 protection-state, uptake, stability, and summary scripts. A single production run is its
 `<id>.stage_7.0.up`, `stage_7.1.up`, ... continuations, joined in order into one trajectory (the default
-`HYBRID_SOURCE_PATTERN='<id>.stage_7.{segment}.up'`, one replica). `T_up` is read from replica 0 and used
-as the uptake, stability and plotted temperature; set `HDX_T_UP` or `PLOT_T_TARGETS` (which must lie on
-the ladder) only to override.
+`HYBRID_SOURCE_PATTERN='<id>.stage_7.{segment}.up'`, one replica). A single run's `T_up` is read from its file
+and used as the uptake, stability and plotted temperature. A ladder has no one temperature, so a REMD analysis
+names its target with `HDX_T_UP` (it must lie on the ladder); `PLOT_T_TARGETS` sets the plotted ones (default `HDX_T_UP`).
 
 For the 48-replica REMD output:
 
 ```bash
-N_REP=48 HYBRID_SOURCE_DIR=/path/to/replicas \
+N_REP=48 HDX_T_UP=0.8647 HYBRID_SOURCE_DIR=/path/to/replicas \
 HYBRID_SOURCE_PATTERN='<id>.run.{replica}.up' \
 HDX_WORK_DIR=/path/to/hdx_analysis bash run_hdx_analysis.sh
 ```
@@ -262,9 +267,10 @@ dry-MARTINI CHARMM-GUI protocol (semi-isotropic, `compressibility 3e-4 0.0`, `re
 **Ion concentration.** Ions represent 0.15 M ionic strength in the *solvent* region, so the count is
 `molarity × N_A × [V_box − V_excluded]`, not the whole box:
 `V_excluded = A_xy·t_membrane + V_protein,outside`, where `t_membrane` is the **equilibrated** dry-MARTINI
-thickness (run a short pilot equilibration once, measure the relaxed lipid z-extent, and pass it as
-`--membrane-thickness-angstrom`) and `V_protein,outside` counts only the residues outside that slab, since
-the slab already excludes the transmembrane part. Ions never land between the headgroup planes.
+P-P thickness, between the two leaflets' mean PO4 heights (POPE/POPG 41.8 A, DOPC 43.8 A at the GROMACS
+equilibrium with 0.15 M salt, findings 8; pass it as `--membrane-thickness-angstrom`, else the packed lipids'
+own P-P is used) and `V_protein,outside` counts only the residues outside that slab, since the slab already
+excludes the transmembrane part. Ions never land between the headgroup planes.
 
 **Reviewing a prepared structure.** Upside stores unwrapped coordinates, so to inspect a stage
 `.up`/`.vtf` in VMD, wrap coordinates **per molecule** with the minimum image relative to the membrane

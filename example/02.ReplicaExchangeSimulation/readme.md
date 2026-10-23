@@ -10,6 +10,3 @@ python run.py
 
 More detailed analysis will be shown in the third example.
 
-TODO:
-finish the script "generate_restart_config.py" to modify the .up file to restart the simulation
-

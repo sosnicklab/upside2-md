@@ -9,39 +9,11 @@ using namespace std;
 
 struct ConstantCoord3D : public CoordNode
 {
-    struct Params { index_t id; };
-
-    int n_elem;
-    CoordNode& pos;
-    vector<Params> params;
-    bool initialized_by_coord;
-    bool initialized;
-    int dim1;
-    int dim2;
-    int dim3;
-
     ConstantCoord3D(hid_t grp, CoordNode& pos_):
-        CoordNode(get_dset_size(1, grp, "id")[0], 3),
-        n_elem(get_dset_size(1, grp, "id")[0]), 
-	pos(pos_), 
-	params(n_elem),
-        initialized_by_coord(read_attribute<int>(grp, ".", "initialized_by_coord")),
-        initialized(false),
-        dim1(read_attribute<int>(grp, ".", "dim1")),
-        dim2(read_attribute<int>(grp, ".", "dim2")),
-        dim3(read_attribute<int>(grp, ".", "dim3"))
+        CoordNode(get_dset_size(1, grp, "id")[0], 3)
     {
-	if (initialized_by_coord) {
-	    assert(dim1<pos.output.row_width);
-	    assert(dim2<pos.output.row_width);
-	    assert(dim3<pos.output.row_width);
-            traverse_dset<1,int> (grp, "id", [&](size_t i, int x) {params[i].id = x;});
-	}
-	else{
-            n_elem = get_dset_size(2, grp, "value")[0];
-            check_size(grp, "value", n_elem, 3);
-            traverse_dset<2,float>(grp, "value", [&](size_t ne, size_t nt, float x) { output(nt, ne) = x;});
-	}
+        check_size(grp, "value", n_elem, 3);  // one row of value for each row of id
+        traverse_dset<2,float>(grp, "value", [&](size_t ne, size_t nt, float x) { output(nt, ne) = x;});
 
         if(logging(LOG_DETAILED)) {
             if (default_logger) {
@@ -64,18 +36,7 @@ struct ConstantCoord3D : public CoordNode
         }
     }
 
-    virtual void compute_value(ComputeMode mode) {
-	if (initialized_by_coord and not initialized) {
-            VecArray posc = pos.output;
-            for(int nt=0; nt<n_elem; ++nt) {
-                auto& p = params[nt];
-	        output(0, nt) = posc(dim1, p.id);
-	        output(1, nt) = posc(dim2, p.id);
-	        output(2, nt) = posc(dim3, p.id);
-            }
-	    initialized = true;
-	}
-    }
+    virtual void compute_value(ComputeMode mode) {}
     virtual void propagate_deriv() {}
 };
 static RegisterNodeType<ConstantCoord3D,1> const3d_node("Const3D");
@@ -83,60 +44,34 @@ static RegisterNodeType<ConstantCoord3D,1> const3d_node("Const3D");
 struct MovingConstantCoord3D : public CoordNode
 {
     struct Params { 
-	index_t id; 
         float3 velocities;
         float3 start_pos;
     };
 
-    int n_elem;
-    CoordNode& pos;
     vector<Params> params;
-    bool initialized_by_coord;
-    bool initialized;
-    int dim1;
-    int dim2;
-    int dim3;
 
     float time_initial;
     float time_step;      // WARNING: this should be the same as the global time step !
     float time_estimate;  // WARNING: changes frequently
-    long round_num;        // WARNING: changes frequently
+    long round_num;       // time steps taken since time_initial: @step_initial before this run, then one per force evaluation
 
     MovingConstantCoord3D(hid_t grp, CoordNode& pos_):
         CoordNode(get_dset_size(1, grp, "id")[0], 3),
-        n_elem(get_dset_size(1, grp, "id")[0]), 
-	pos(pos_), 
 	params(n_elem),
-        initialized_by_coord(read_attribute<int>(grp, ".", "initialized_by_coord")),
-        initialized(false),
-	dim1(0),
-	dim2(1),
-	dim3(2),
         time_initial(read_attribute<float>(grp, ".", "time_initial")),
         time_step(read_attribute<float>(grp,    ".", "time_step")),
-        time_estimate(time_initial),
-        round_num(0)
-       
+        round_num(read_attribute<long>(grp, ".", "step_initial"))
     {
+        // A continuation resumes the step count (its frame's /output/tip_step), so that its clock is the continuous
+        // run's time_initial + time_step*steps, bit for bit; restarting the count at a shifted time_initial would
+        // round differently
+        if(round_num < 0) throw string("MovingConst3D step_initial must not be negative");
+        time_estimate = time_initial + float(time_step)*round_num;
         auto &p = params;
-        traverse_dset<1,int> (grp, "id", [&](size_t i, int x) {p[i].id = x;});
-
-        dim1 = read_attribute<int>(grp, ".", "dim1");
-        dim2 = read_attribute<int>(grp, ".", "dim2");
-        dim3 = read_attribute<int>(grp, ".", "dim3");
-
         check_size(grp, "velocities",  n_elem, 3);
+        check_size(grp, "start_pos",   n_elem, 3);
         traverse_dset<2, float>(grp,"velocities",  [&](size_t i, size_t j, float x) {p[i].velocities[j]  = x;});
-
-	if (initialized_by_coord) {
-	    assert(dim1<pos.output.row_width);
-	    assert(dim2<pos.output.row_width);
-	    assert(dim3<pos.output.row_width);
-	}
-	else {
-            check_size(grp, "start_pos", n_elem, 3);
-            traverse_dset<2,float>(grp, "start_pos", [&](size_t i, size_t j, float x) {p[i].start_pos[j] = x;});
-	}
+        traverse_dset<2, float>(grp,"start_pos",   [&](size_t i, size_t j, float x) {p[i].start_pos[j]   = x;});
 
         if(logging(LOG_BASIC)) {
             default_logger->add_logger<float>("tip_pos", {n_elem, 3}, [&](float* buffer) {
@@ -150,26 +85,14 @@ struct MovingConstantCoord3D : public CoordNode
             default_logger->add_logger<float>("time_estimate", {1}, [&](float* buffer) {
                 buffer[0] = time_estimate;
             });
+
+            default_logger->add_logger<long>("tip_step", {1}, [&](long* buffer) {
+                buffer[0] = round_num;
+            });
         }
     }
 
     virtual void compute_value(ComputeMode mode) {
-
-	if (initialized_by_coord and not initialized) {
-            VecArray posc = pos.output;
-            for(int nt=0; nt<n_elem; ++nt) {
-                auto& pa = params[nt];
-	        output(0, nt)   = posc(dim1, pa.id);
-	        output(1, nt)   = posc(dim2, pa.id);
-	        output(2, nt)   = posc(dim3, pa.id);
-		pa.start_pos[0] = posc(dim1, pa.id);
-		pa.start_pos[1] = posc(dim2, pa.id);
-		pa.start_pos[2] = posc(dim3, pa.id);
-            }
-
-	    initialized = true;
-	}
-
         if (mode == DerivMode) round_num += 1;
         time_estimate = time_initial + float(time_step)*round_num;
         for(int nt=0; nt<n_elem; ++nt) {

@@ -17,29 +17,19 @@ from cycler import cycler
 from helpers import hxfunctions_clean as hxf
 
 
-default_prefix = 'glpg'
-default_state = 'pd9'
-default_temperature_k = 296.0
-default_pd_corr = 9.0
-default_residue_offset = 66
-default_dseq = -1
-default_sequence = (
-    'GSSHHHHHHSSGLVPRGSHMAALRERAGPVTWVMMIACVVVFIAMQILGDQEVMLWLAWPFDPTLKFEFWRYFTHALMHFSLMHILFNLLWWWYLGGAVEKRLGSGKLIVITLISALLSGYVQQKFSGPWFGGLTGVVYALMGYVWLRGERDPQSGIYLQRGLIIFALIWIVAGWFDLFGMSMANGAHIAGLAVGLAMAFVDSLNARKRK'
-)
-default_ss_ranges = [[29, 47], [82, 102], [106, 126], [135, 151], [162, 175], [183, 207]]
-default_upside_temps = [0.70, 0.75, 0.80, 0.85, 0.90]
+def required_env(name):
+    """The protein and its experiment are named explicitly; a default would attach another system's metadata."""
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == '':
+        raise SystemExit('6.generate_hx_plots.py needs %s' % name)
+    return raw.strip()
 
 
-def parse_float_list(raw_value, default_values):
-    if raw_value is None or raw_value.strip() == '':
-        return list(default_values)
+def parse_float_list(raw_value):
     return [float(item.strip()) for item in raw_value.split(',') if item.strip()]
 
 
 def parse_ss_ranges(raw_value):
-    if raw_value is None or raw_value.strip() == '':
-        return [list(item) for item in default_ss_ranges]
-
     ranges = []
     for item in raw_value.split(','):
         item = item.strip()
@@ -48,6 +38,13 @@ def parse_ss_ranges(raw_value):
         start_text, end_text = item.split('-', 1)
         ranges.append([int(start_text), int(end_text)])
     return ranges
+
+
+def load_sequence(fasta_path):
+    if not os.path.isfile(fasta_path):
+        raise FileNotFoundError('Missing sequence FASTA: %s' % fasta_path)
+    with open(fasta_path) as handle:
+        return ''.join(handle.read().splitlines()[1:]).replace('*', '')  # '*' marks a cis-proline
 
 
 def load_fit_table(db_path):
@@ -75,9 +72,9 @@ def load_fit_table(db_path):
 
 
 def main():
-    prefix = os.environ.get('hx_plot_prefix', default_prefix).strip()
-    state = os.environ.get('hx_plot_state', os.environ.get('protein_state', default_state)).strip()
-    pdb_id = os.environ.get('pdb_id', 'glpG-RKRK-79HIS').strip()
+    prefix = required_env('hx_plot_prefix')
+    state = required_env('hx_plot_state')
+    pdb_id = required_env('pdb_id')
 
     work_dir = os.path.expanduser(os.environ.get('hx_plot_work_dir', '.'))
     output_dir = os.path.expanduser(os.environ.get('hx_plot_output_dir', work_dir))
@@ -88,13 +85,13 @@ def main():
     dg_path = os.path.expanduser(os.environ.get('hx_plot_dg_path', '%s/%s-dg.csv' % (work_dir, prefix)))
     resid_path = os.path.expanduser(os.environ.get('hx_plot_resid_path', '%s/%s.resid' % (results_dir, pdb_id)))
 
-    sequence = os.environ.get('hx_plot_sequence', default_sequence).strip()
-    ss_ranges = parse_ss_ranges(os.environ.get('hx_plot_ss_ranges'))
-    pD_corr = float(os.environ.get('hx_plot_pd_corr', str(default_pd_corr)))
-    temperature_k = float(os.environ.get('hx_plot_temperature_k', str(default_temperature_k)))
-    residue_offset = int(os.environ.get('hx_plot_residue_offset', str(default_residue_offset)))
-    dseq = int(os.environ.get('hx_plot_dseq', str(default_dseq)))
-    upside_temps = parse_float_list(os.environ.get('hx_plot_upside_temps'), default_upside_temps)
+    sequence = load_sequence('%s/inputs/%s.fasta' % (work_dir, pdb_id))
+    ss_ranges = parse_ss_ranges(required_env('hx_plot_ss_ranges'))
+    pD_corr = float(required_env('hx_plot_pd_corr'))
+    temperature_k = float(required_env('hx_plot_temperature_k'))
+    residue_offset = int(required_env('hx_plot_residue_offset'))
+    dseq = int(required_env('hx_plot_dseq'))
+    upside_temps = parse_float_list(required_env('hx_plot_upside_temps'))
 
     for path, desc in [(dfout_path, 'HX fit summary CSV'), (fitdata_path, 'HX fit database'),
                        (dg_path, 'simulation dG CSV'), (resid_path, 'residue ID file')]:

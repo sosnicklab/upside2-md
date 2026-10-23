@@ -1,4 +1,6 @@
 #include "h5_support.h"
+#include <algorithm>
+#include <cstring>
 
 
 namespace h5 {
@@ -40,6 +42,19 @@ try {
     throw "while getting size of '" + std::string(name) + "', " + e;
 }
 
+
+static H5T_conv_ret_t abort_inexact_integer(H5T_conv_except_t except, hid_t, hid_t dst_type, void*, void*,
+        void* inexact) {
+    if(except == H5T_CONV_EXCEPT_PRECISION || H5Tget_class(dst_type) != H5T_INTEGER) return H5T_CONV_UNHANDLED;
+    *static_cast<bool*>(inexact) = true;
+    return H5T_CONV_ABORT;
+}
+
+H5Obj exact_conversion_plist(bool* inexact) {
+    auto plist = h5_obj(H5Pclose, H5Pcreate(H5P_DATASET_XFER));
+    h5_noerr(H5Pset_type_conv_cb(plist.get(), abort_inexact_integer, inexact));
+    return plist;
+}
 
 std::string group_name(hid_t grp) {
     std::string path(H5Iget_name(grp, nullptr, 0)+1, '\0');
@@ -84,7 +99,19 @@ try {
     auto attr  = h5_obj(H5Aclose, H5Aopen_by_name(h5, path, attr_name, H5P_DEFAULT, H5P_DEFAULT));
     auto space = h5_obj(H5Sclose, H5Aget_space(attr.get()));
     if(H5Sget_simple_extent_npoints(space.get()) != 1) throw std::string("attribute is not a scalar");
-    h5_noerr(H5Aread(attr.get(), predtype, attr_value_output));
+
+    // read the value as stored, then convert it under the exactness a dataset read has (H5Aread takes no
+    // transfer property list)
+    auto stored_type = h5_obj(H5Tclose, H5Aget_type(attr.get()));
+    auto native_type = h5_obj(H5Tclose, H5Tget_native_type(stored_type.get(), H5T_DIR_DEFAULT));
+    std::vector<unsigned char> buffer(std::max(H5Tget_size(native_type.get()), H5Tget_size(predtype)));
+    h5_noerr(H5Aread(attr.get(), native_type.get(), buffer.data()));
+    bool inexact = false;
+    auto xfer = exact_conversion_plist(&inexact);
+    herr_t status = H5Tconvert(native_type.get(), predtype, 1, buffer.data(), nullptr, xfer.get());
+    if(inexact) throw std::string("holds a value that is not exactly an integer of the type read");
+    h5_noerr(status);
+    std::memcpy(attr_value_output, buffer.data(), H5Tget_size(predtype));
     return true;
 }
 catch(const std::string &e) {

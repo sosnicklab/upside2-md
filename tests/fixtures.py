@@ -16,7 +16,6 @@ import run_upside as ru
 out_dir = sys.argv[1]
 param_dir = upside_path + '/parameters/'
 ff_dir = param_dir + 'ff_2.1/'
-membrane_dir = upside_path + '/example/08.MembraneSimulation/'
 
 chig = 'example/01.GettingStarted/pdb/chig.pdb'
 dfn  = 'example/01.GettingStarted/pdb/1dfn.pdb'
@@ -99,10 +98,8 @@ build('chig_envw400', chig, environment_weights_number=400)
 build('chig_hbbb', chig, use_heavy_atom_coverage=True, intensive_memory=True)
 build('1rkl_curv', rkl, use_curvature=True, curvature_radius=120., curvature_sign=1, **membrane)
 build('1rkl_scales', rkl, hb_scale=0.8, env_scale=1.2, rot_scale=0.9, memb_scale=1.1, **membrane)
-build('1rkl_lateral', rkl, surface=True, membrane_lateral_potential=membrane_dir + 'lateral.dat',
-      membrane_exclude_residues='0-2,28-30', **membrane)
-build('1rkl_channel', rkl, surface=True, channel_membrane_potential=ff_dir + 'membrane.h5', membrane_thickness=24.8,
-      use_curvature=True, curvature_radius=200., curvature_sign=-1)
+build('1rkl_surface', rkl, surface=True, membrane_exclude_residues='0-2,28-30', **membrane)
+build('1rkl_channel', rkl, surface=True, channel_membrane_potential=ff_dir + 'membrane.h5', membrane_thickness=24.8)
 build('1rkl_channel_m0', rkl, surface=True, surface_method=0, surface_included_residues='4-26', zbuffer=2.,
       channel_membrane_potential=ff_dir + 'membrane.h5', membrane_thickness=24.8,
       membrane_exclude_residues='0-2', hbond_exclude_residues='29-30')
@@ -136,7 +133,7 @@ build('chig_afm', chig, adv=dict(ask_before_using_AFM=table('chig_afm.afm',
       '0 0.05 -9.0 -1.0 3.0 0.0 0.0 0.0\n9 0.05 -1.0 -6.0 6.0 0.0 0.0 0.001\n')))
 build('chig_afm_auto', chig, adv=dict(ask_before_using_AFM=table('chig_afm_auto.afm',
       'residue spring_const pulling_vel_x pulling_vel_y pulling_vel_z\n0 0.05 0.0 0.0 0.0\n9 0.05 0.0 0.0 0.1\n'),
-      AFM_time_initial=5., AFM_time_step=0.009))
+      AFM_time_step=0.009))
 build('1dfn_unbound', dfn, spatial_transform_from_table=centre_1dfn, cli=['--jump-length-scale=3', '--jump-rotation-scale=20'],
       adv=dict(heuristic_cavity_radius=1.5, make_unbound=True, apply_restraint_group_to_each_chain=True))
 build('1dfn_cavity', dfn, spatial_transform_from_table=centre_1dfn,

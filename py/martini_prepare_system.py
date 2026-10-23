@@ -77,9 +77,11 @@ EQUILIBRATION_STAGES = (
     ("6.6", 10.0),
 )
 # The stage-7.0 solvation gate (findings 8b). A belt site faces lipid when fewer than BELT_FACING_MAX_BACKBONE
-# protein backbone atoms lie within BELT_BURIAL_RADIUS_A of it. Averaged over a burn-in's last quarter, healthy
-# productions leave 0.4-3.3% of those sites without an environment bead within BELT_VACUUM_RADIUS_A (1-7.5% without
-# an acyl tail), a relaxed glpG prep 4.9% (6.5%), and the insertion void the gate guards 18% (25%).
+# protein backbone atoms lie within BELT_BURIAL_RADIUS_A of it. The gate averages the last quarter of production's
+# first BELT_GATE_PRODUCTION_STEPS steps: under the prep's rigid protein the belt ends wander 7-16% bare whatever
+# production then does, and flexible production closed every glpG prep measured to 0.7-4.5% of those sites without
+# an environment bead within BELT_VACUUM_RADIUS_A.
+BELT_GATE_PRODUCTION_STEPS = 20000
 BELT_BURIAL_RADIUS_A = 10.0
 BELT_FACING_MAX_BACKBONE = 60
 BELT_VACUUM_RADIUS_A = 8.0
@@ -194,7 +196,7 @@ def read_opm_hydrophobic_half_thickness(opm_reference_pdb: Path) -> float:
         if match:
             return float(match.group(1))
     raise ValueError(
-        f"No '1/2 of bilayer thickness' REMARK in {opm_reference_pdb}. A micelle build needs the "
+        f"No '1/2 of bilayer thickness' REMARK in {opm_reference_pdb}. The solvation gate needs the "
         "protein's hydrophobic belt; use an OPM-oriented reference PDB (opm.phar.umich.edu)."
     )
 
@@ -243,8 +245,8 @@ def parse_prepare_args(argv=None):
     parser.add_argument("--box-padding-xy", type=float, default=0.0)
     parser.add_argument("--box-padding-z", type=float, default=0.0)
     parser.add_argument("--membrane-thickness-angstrom", type=float, default=0.0,
-                        help="Equilibrated membrane thickness for the ion count; 0 = measure from the "
-                             "packed lipids (use the equilibrated dry-MARTINI value so production is 0.15 M)")
+                        help="Equilibrated membrane P-P thickness for the ion count; 0 = measure it from the "
+                             "packed lipids' PO4 beads (use the equilibrated dry-MARTINI value so production is 0.15 M)")
     parser.add_argument("--salt-molar", type=float, default=0.15)
     parser.add_argument("--explicit-ions", type=int, choices=[0, 1], default=1)
     parser.add_argument("--ion-cutoff", type=float, default=4.0)
@@ -507,13 +509,19 @@ def pack_bilayer_environment(args, lipid_template, bilayer_box, protein_backbone
     membrane_z_lo = float(kept_lipid_xyz[:, 2].min())
     membrane_z_hi = float(kept_lipid_xyz[:, 2].max())
     packed_thickness_z = membrane_z_hi - membrane_z_lo
-    # Count ions against the EQUILIBRATED membrane thickness (the dry-MARTINI membrane relaxes from
-    # the compressed CHARMM-GUI start), so the realized concentration is 0.15 M in production. Ions
-    # are still placed in the packed-time solvent slabs, outside the current membrane extent.
+    # Count ions against the membrane's P-P thickness, between the two leaflets' mean PO4 heights: the equilibrated
+    # value when given (the dry-MARTINI membrane relaxes from the compressed CHARMM-GUI start, so the realized
+    # concentration is 0.15 M in production), the packed lipids' own otherwise. Ions are still placed in the
+    # packed-time solvent slabs, outside the current membrane extent.
+    po4_z = np.array([float(a["z"]) for a in bilayer_kept if a["name"].strip() == "PO4"])
+    if po4_z.size == 0:
+        raise ValueError("the bilayer holds no PO4 bead to measure its P-P thickness from")
+    po4_mid = float(np.median(po4_z))
+    packed_pp_thickness = float(po4_z[po4_z > po4_mid].mean() - po4_z[po4_z <= po4_mid].mean())
     count_thickness_z = (
         float(args.membrane_thickness_angstrom)
         if float(args.membrane_thickness_angstrom) > 0.0
-        else packed_thickness_z
+        else packed_pp_thickness
     )
     # The slab already excludes the protein's transmembrane part; only residues outside it take solvent
     # volume from the ions.
@@ -755,7 +763,6 @@ SC_LIBRARY_REQUIRED_DATASETS = [
     "grid_ang",
     "theta_grid",
     "rotamer_count",
-    "rotamer_probability_fixed",
     "rotamer_full_energy_eup",
 ]
 
@@ -964,13 +971,12 @@ def set_stage_label(up_file: Path, stage_label: str):
         grp.attrs["current_stage"] = np.bytes_(stage_label)
 
 
-def set_hybrid_control_mode(up_file: Path, activation_stage: str, preprod_mode="rigid_body"):
+def set_hybrid_control_mode(up_file: Path, activation_stage: str):
     import h5py
 
     with h5py.File(up_file, "r+") as h5:
         grp = h5.require_group("input").require_group("hybrid_control")
         grp.attrs["activation_stage"] = np.bytes_(activation_stage)
-        grp.attrs["preprod_protein_mode"] = np.bytes_(preprod_mode)
 
 
 def inject_protein_position_restraints(up_file: Path, spring_const: float = 10.0):
@@ -996,12 +1002,17 @@ def remove_protein_position_restraints(up_file: Path):
         del h5["/input/potential/restraint_position_protein"]
 
 
-def set_hybrid_production_controls(up_file: Path, args):
+def start_production_po4_hold(up_file: Path):
+    """Production holds the phosphate heights for its first DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS rounds after the rigid
+    burn-in. The hold ends at a round of the trajectory's own clock, so a continuation, which carries the momentum
+    and its round, holds exactly what the continuous run holds."""
     import h5py
 
     with h5py.File(up_file, "r+") as h5:
-        grp = h5.require_group("input").require_group("hybrid_control")
-        grp.attrs["sc_env_po4_z_hold_steps"] = np.int32(args.sc_env_po4_z_hold_steps)
+        if int(h5["/input/mom"].attrs.get("restart_valid", 0)) == 0:
+            raise RuntimeError(f"{up_file}: production continues the burn-in from its momentum and round; none is recorded")
+        hold_end = int(h5["/input/mom"].attrs["round"]) + DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
+        h5["/input/hybrid_control"].attrs["po4_z_hold_end_round"] = np.int64(hold_end)
 
 
 def ensure_sc_martini_library(args):
@@ -1118,7 +1129,6 @@ def stage_conversion_env(args, npt_enable: int, lipidhead_fc: float, dynamics_ph
 def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, activation_stage: str):
     ensure_sc_martini_library(args)
     set_hybrid_control_mode(target_file, activation_stage)
-    set_hybrid_production_controls(target_file, args)
     inject_stage7_sc_table_nodes(
         up_file=target_file,
         martini_h5=args.martini_h5,
@@ -1411,17 +1421,14 @@ def promote_md_output_state_to_input(up_file: Path):
 
 
 def run_stage70_burnin(args, stage_file: Path):
-    """The rigid burn-in, then the solvation gate on its last quarter, then its final state becomes production's
-    input."""
+    """The rigid burn-in; its final state becomes production's input."""
     nsteps = int(args.prod_70_burnin_nsteps)
     if nsteps <= 0:
         print("=== Stage 7.0: Rigid interface-handoff burn-in skipped (nsteps <= 0) ===")
-        assert_environment_solvation(args, stage_file)
         return
     print(f"=== Stage 7.0: Rigid interface-handoff burn-in ({nsteps} steps) ===")
     run_md_stage(args, "7.0.burnin", stage_file, nsteps, args.prod_time_step, args.prod_frame_steps,
                  "7.0.burnin", echo=False)
-    assert_environment_solvation(args, stage_file)
     promote_md_output_state_to_input(stage_file)
     print(f"Promoted rigid handoff final state for production: {stage_file}")
 
@@ -1474,8 +1481,8 @@ def resolve_continuation_outputs(args):
 
 
 def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_label: str):
-    """Continue production: the source's /input unchanged, with the positions, momentum, round and PO4
-    hold clock of its last frame, so the continuation is the continuous run."""
+    """Continue production: the source's /input unchanged, with the positions, momentum, round and box of its
+    last frame, so the continuation is the continuous run."""
     if not source_file.exists():
         raise FileNotFoundError(source_file)
     assert_hybrid_stage_active(source_file, "production", "production")
@@ -1487,7 +1494,7 @@ def run_stage70_continuation(args, source_file: Path, output_file: Path, stage_l
     output_file.parent.mkdir(parents=True, exist_ok=True)
     if source_file.resolve() != output_file.resolve():
         shutil.copy2(source_file, output_file)
-    set_initial_position(source_file, output_file, continuation=True)
+    set_initial_position(source_file, output_file)
     run_md_stage(args, stage_label, output_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps,
                  "production")
     extract_stage_vtf(args, stage_label, output_file, "2")
@@ -1511,7 +1518,6 @@ def normalize_hybrid_workflow_args(args):
     args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
     args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
     args.upside_reference_state_rama = args.upside_home / "parameters" / "common" / "rama_reference.pkl"
-    args.sc_env_po4_z_hold_steps = DEFAULT_SC_ENV_PO4_Z_HOLD_STEPS
     args.npt_interval = DEFAULT_NPT_INTERVAL
     args.npt_mc_dmax_xy = DEFAULT_NPT_MC_DMAX_XY
     args.martini_energy_conversion = DEFAULT_MARTINI_ENERGY_CONVERSION
@@ -1552,8 +1558,8 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--box-padding-xy", type=float, default=Config.floating("BOX_PADDING_XY", 0.0))
     parser.add_argument("--box-padding-z", type=float, default=Config.floating("BOX_PADDING_Z", 0.0))
     parser.add_argument("--membrane-thickness-angstrom", type=float, default=Config.floating("MEMBRANE_THICKNESS_ANGSTROM", 0.0),
-                        help="Equilibrated dry-MARTINI membrane thickness for the ion count "
-                             "(0 = measure from the compressed packed lipids)")
+                        help="Equilibrated dry-MARTINI membrane P-P thickness for the ion count "
+                             "(0 = measure it from the packed lipids' PO4 beads)")
     parser.add_argument("--protein-orientation-mode", choices=["input", "lay-flat", "opm"], default=Config.text("PROTEIN_ORIENTATION_MODE", "opm"))
     parser.add_argument("--protein-pbc-margin", type=float, default=Config.floating("PROTEIN_PBC_MARGIN", 15.0))
     parser.add_argument("--temperature", type=float, default=Config.floating("TEMPERATURE", 0.8647))
@@ -1569,9 +1575,12 @@ def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--eq-65-nsteps", type=int, default=Config.integer("EQ_65_NSTEPS", 500))
     parser.add_argument("--eq-66-nsteps", type=int, default=Config.integer("EQ_66_NSTEPS", 60000))
     parser.add_argument("--prod-70-burnin-nsteps", type=int, default=Config.integer("PROD_70_BURNIN_NSTEPS", 40000))
-    parser.add_argument("--prod-70-nsteps", type=int, default=Config.integer("PROD_70_NSTEPS", 10000),
-                        help="production steps of stage 7.0 and of each continuation; 0 ends stage 7.0 after the "
-                             "burn-in, leaving its final state as the input of the stage file (a production seed)")
+    parser.add_argument("--prod-70-nsteps", type=int,
+                        default=Config.integer("PROD_70_NSTEPS", BELT_GATE_PRODUCTION_STEPS),
+                        help="production steps of stage 7.0 and of each continuation; stage 7.0's production carries "
+                             "the solvation gate on its first %d steps, so with --opm-reference it runs at least that "
+                             "many; 0 ends stage 7.0 after the burn-in, leaving its final state as the input of the "
+                             "stage file (an ungated production seed)" % BELT_GATE_PRODUCTION_STEPS)
     parser.add_argument("--eq-time-step", type=float, default=Config.floating("EQ_TIME_STEP", MARTINI_MD_TIME_STEP))
     parser.add_argument("--prod-time-step", type=float, default=Config.floating("PROD_TIME_STEP", MARTINI_MD_TIME_STEP))
     parser.add_argument("--eq-frame-steps", type=int, default=Config.integer("EQ_FRAME_STEPS", 1000))
@@ -1647,6 +1656,10 @@ def validate_hybrid_workflow_args(args):
         if args.opm_reference
         else None
     )
+    if (args.continue_stage_70_from is None and args.belt_half_thickness_a is not None
+            and 0 < int(args.prod_70_nsteps) < BELT_GATE_PRODUCTION_STEPS):
+        raise ValueError(f"--prod-70-nsteps {args.prod_70_nsteps}: the solvation gate measures stage 7.0's first "
+                         f"{BELT_GATE_PRODUCTION_STEPS} production steps")
 
 
 def workflow_stage_files(args):
@@ -1703,11 +1716,12 @@ def run_bilayer_equilibration(args, files):
 
 
 def assert_environment_solvation(args, up_file: Path):
-    """Gate G2: the protein's lipid face must be solvated in the state that enters production.
+    """Gate G2: the protein's lipid face must be solvated once production has relaxed it.
 
-    Measured on the last quarter of the rigid burn-in (the input state when the burn-in is skipped), on the belt
-    sites that face lipid: the inside of a helix bundle is surrounded by protein, not lipid, so it says nothing about
-    an insertion void. Two fractions of those sites are taken, averaged over the frames:
+    Measured on the last quarter of production's first BELT_GATE_PRODUCTION_STEPS steps, on the belt sites that face
+    lipid: the inside of a helix bundle is surrounded by protein, not lipid, so it says nothing about an insertion
+    void, and the prep's rigid protein leaves the belt ends bare whatever production then does. Two fractions of
+    those sites are taken, averaged over the frames:
 
       * vacuum -- no environment bead within BELT_VACUUM_RADIUS_A. This is what an unhealed insertion void looks
         like, and it fails the build above BELT_VACUUM_MAX_FRACTION.
@@ -1727,9 +1741,12 @@ def assert_environment_solvation(args, up_file: Path):
         return
 
     with h5py.File(up_file, "r") as h5:
-        n_frame = h5["/output/pos"].shape[0] if "/output/pos" in h5 else 0
-        frames = (np.array(h5["/output/pos"][(3 * n_frame) // 4:, 0]) if n_frame
-                  else np.array(h5["/input/pos"])[None, :, :, 0])
+        rounds = np.array(h5["/output/round"]) - int(h5["/output/round"][0])
+        if rounds[-1] < BELT_GATE_PRODUCTION_STEPS:
+            raise RuntimeError(f"{up_file.name} holds {rounds[-1]} production steps; the solvation gate measures "
+                               f"its first {BELT_GATE_PRODUCTION_STEPS}")
+        window = np.flatnonzero((rounds >= 3 * BELT_GATE_PRODUCTION_STEPS // 4) & (rounds <= BELT_GATE_PRODUCTION_STEPS))
+        frames = np.array(h5["/output/pos"][window[0]:window[-1] + 1, 0])
         env_index = np.array(h5["/input/hybrid_env_topology/env_atom_indices"])
         bb_index = np.array(h5["/input/hybrid_bb_map/bb_atom_index"])
         atom_names = np.array([n.decode().strip() for n in np.array(h5["/input/atom_names"])])
@@ -1772,15 +1789,17 @@ def assert_environment_solvation(args, up_file: Path):
     bare, dry = float(np.mean(bare)), float(np.mean(dry))
 
     print(
-        f"Stage-7.0 solvation gate over {len(frames)} frame(s): {np.mean(n_site):.0f} lipid-facing belt sites; "
+        f"Stage-7.0 solvation gate over production steps {3 * BELT_GATE_PRODUCTION_STEPS // 4}-"
+        f"{BELT_GATE_PRODUCTION_STEPS} ({len(frames)} frames): {np.mean(n_site):.0f} lipid-facing belt sites; "
         f"{100 * bare:.1f}% with no environment bead and {100 * dry:.1f}% with no acyl-tail bead within "
         f"{BELT_VACUUM_RADIUS_A:.1f} A; limit {100 * BELT_VACUUM_MAX_FRACTION:.0f}%"
     )
     if bare > BELT_VACUUM_MAX_FRACTION:
         raise RuntimeError(
-            f"{100 * bare:.1f}% of the lipid-facing belt sites enter production with no environment bead within "
-            f"{BELT_VACUUM_RADIUS_A:.1f} A (limit {100 * BELT_VACUUM_MAX_FRACTION:.0f}%). The lipid face would "
-            "sample against vacuum; lengthen the 6.6 NPT equilibration or check the environment build."
+            f"{100 * bare:.1f}% of the lipid-facing belt sites have no environment bead within "
+            f"{BELT_VACUUM_RADIUS_A:.1f} A after {BELT_GATE_PRODUCTION_STEPS} production steps (limit "
+            f"{100 * BELT_VACUUM_MAX_FRACTION:.0f}%). The lipid face did not close once the protein was flexible; "
+            "check the insertion and the environment build."
         )
     if dry > BELT_VACUUM_MAX_FRACTION:
         print(
@@ -1792,8 +1811,9 @@ def assert_environment_solvation(args, up_file: Path):
 
 def run_stage70_handoff(args, files, source_stage: Path):
     """Stage 7.0: the production configuration. Minimise and burn in with the protein rigid, then run
-    production with it flexible. The lipids are free in both: CHARMM-GUI's production carries no head-group
-    restraint, and the 6.6 restraint (10 kJ/mol/nm^2) already leaves the phosphates about 5 A of play."""
+    production with it flexible. The lipids carry no head-group restraint (CHARMM-GUI's production has none, and
+    the 6.6 restraint, 10 kJ/mol/nm^2, already leaves the phosphates about 5 A of play); production holds the PO4
+    heights for its first 150 rounds after the burn-in (`start_production_po4_hold`)."""
     stage_file = files["7.0"]
     prepare_stage_file(args, stage_file, "hard", args.prod_70_npt_enable, 0, "production", "production_handoff")
     handoff_initial_position(source_stage, stage_file)
@@ -1801,13 +1821,16 @@ def run_stage70_handoff(args, files, source_stage: Path):
     run_minimization_stage(args, "7.0", stage_file, args.min_70_max_iter)
     run_stage70_burnin(args, stage_file)
     set_stage_label(stage_file, "production")
+    start_production_po4_hold(stage_file)
     assert_hybrid_stage_active(stage_file, "production", "production")
     if int(args.prod_70_nsteps) <= 0:
-        print(f"=== Stage 7.0: production not run (nsteps <= 0); {stage_file} holds the production seed ===")
+        print(f"=== Stage 7.0: production not run (nsteps <= 0); {stage_file} holds the production seed, and the "
+              "solvation gate, which measures production, was NOT run ===")
         return
     run_md_stage(args, "7.0", stage_file, args.prod_70_nsteps, args.prod_time_step, args.prod_frame_steps,
                  "production")
     extract_stage_vtf(args, "7.0", stage_file, "2")
+    assert_environment_solvation(args, stage_file)
 
 
 def run_fresh_hybrid_workflow(args):

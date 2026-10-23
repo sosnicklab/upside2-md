@@ -86,7 +86,7 @@ for ii in range(ndx[0].size):
         tip_exten = tip_pos - start
         fname = '{}/{}-{}-replica{}-res{}-{}.dat'.format(result_dir, pdb_id, sim_id, rid, (aa-1)//3, dim_name[dim] )
         with open(fname, 'w') as out:
-            out.write('# Extension (A) Force (pN) TipPos (A)\n')
+            out.write('# Extension (A) Force (pN) TipExtension (A)\n')
 
             for i,e in enumerate(extension):
                 out.write('{} {} {}\n'.format(e, force[i], tip_exten[i]))

@@ -14,15 +14,21 @@
 #                  residue's (phi,psi) must follow exp(-E_rama/kT); the integrator is made inert by a 1e-7 time step
 #   remd           temperature replica exchange of harmonically tethered atoms, whose potential energy at T is
 #                  Gamma(3N/2, T): per-replica energy statistics and the exchange acceptance
+#   thermostat     the configurational temperature of harmonically tethered atoms under a short thermostat
+#                  timescale (tau 0.05), for --integrator v and for mv with the tethers on the fast and on the slow
+#                  level, against the exact stationary value of the scheme (a discrete Lyapunov equation); an OU step
+#                  on the leapfrog's half-step momentum instead of the momentum at the coordinates reads 8-21% cold
 # usage: invariance.py equipartition WORK_DIR CONFIG
 #        invariance.py kinetic RECORD.up
 #        invariance.py mc WORK_DIR CONFIG
 #        invariance.py remd WORK_DIR
+#        invariance.py thermostat WORK_DIR
 import sys, os, shutil, time
 import subprocess as sp
 import numpy as np
 import tables as tb
 from scipy import stats, special
+from scipy.linalg import solve_discrete_lyapunov
 from pymbar import timeseries
 
 upside_path = os.environ['UPSIDE_HOME']
@@ -71,11 +77,10 @@ def kinetic_classes(t):
     dynamic = ~protein | np.isin(roles, ['N', 'CA', 'C'])
     ctrl = inp.hybrid_control._v_attrs
     hold = None
-    if inp.stage_parameters._v_attrs.current_stage.decode() == 'production' and ctrl.sc_env_po4_z_hold_steps > 0:
-        # the logged momentum of round start+r is held when transition_start + r <= hold_steps
-        start = int(inp.mom._v_attrs.round)
-        transition = int(ctrl.sc_env_transition_step_start) if 'sc_env_transition_step_start' in ctrl else 0
-        hold = (~protein & (roles == 'PO4'), start + int(ctrl.sc_env_po4_z_hold_steps) - transition)
+    if inp.stage_parameters._v_attrs.current_stage.decode() == 'production':
+        # a continuation holds PO4 z in the rounds before the hold-end round, so the logged momentum of round R is
+        # held when R <= that round
+        hold = (~protein & (roles == 'PO4'), int(ctrl.po4_z_hold_end_round))
     return cls, dynamic, hold
 
 def halfstep_excess(paths, cls, mass, names, time_step, n_frame=200):
@@ -85,7 +90,7 @@ def halfstep_excess(paths, cls, mass, names, time_step, n_frame=200):
     import upside_engine as ue
     f2 = []
     for path in paths:
-        engine = ue.Upside(path, quiet=True)
+        engine = ue.Upside(path)
         with tb.open_file(path) as t:
             pos = t.root.output.pos[:, 0]
             temp = t.root.output.temperature[0, 0]
@@ -335,6 +340,47 @@ def remd(work):
     return ok
 
 
+# ---- thermostat ----
+
+def harmonic_round_exact(k, T, a, steps, half):
+    # stationary k<x^2>/T of one tethered coordinate of unit mass under a round of the OU step (a, the noise for T)
+    # on the momentum at the coordinates, p - half k x, then the (kick, drift) steps in order
+    L = np.eye(2)
+    for kick, drift in steps:
+        L = np.array([[1., drift], [0., 1.]]) @ np.array([[1., 0.], [-kick*k, 1.]]) @ L
+    P = np.array([[1., 0.], [-half*k, 1.]])
+    A = L @ np.linalg.inv(P) @ np.diag([1., a]) @ P
+    B = L @ np.linalg.inv(P) @ np.array([[0.], [np.sqrt(T*(1.-a*a))]])
+    return k*solve_discrete_lyapunov(A, B @ B.T)[0, 0]/T
+
+def thermostat(work):
+    n_atom, k, dt, T, tau, n_inner = 10, 4., 0.009, 1.0, 0.05, 3
+    a = np.exp(-n_inner*dt/tau)
+    mv = ['--integrator', 'mv', '--inner-step', str(n_inner)]
+    cases = [('v',       0, [], [(dt, dt)]*n_inner, 0.5*dt),
+             ('mv fast', 0, mv, [(0., 0.)] + [(dt, dt)]*n_inner, 0.5*dt),
+             ('mv slow', 1, mv, [(n_inner*dt, 0.)] + [(0., dt)]*n_inner, 0.5*n_inner*dt)]
+    ok = True
+    print('  %-8s %22s %10s' % ('', '<U>/(1.5 N T)', 'exact'))
+    for name, level, args, steps, half in cases:
+        path = os.path.join(work, 'thermostat.up')
+        harmonic_config(path, n_atom, k)
+        with tb.open_file(path, 'a') as t:
+            for d in 'xyz': t.get_node('/input/potential/Spring_tether_' + d)._v_attrs.integrator_level = level
+        run([path], ['--duration-steps', '4000000', '--time-step', str(dt), '--frame-interval', '1.08',
+                     '--thermostat-timescale', str(tau), '--temperature', str(T), '--seed', '1',
+                     '--disable-recentering'] + args)
+        with tb.open_file(path) as t:
+            u = t.root.output.potential[:, 0]/(1.5*n_atom*T)
+        mean, se = mean_se(block_means(u[len(u)//10:], 20))
+        exact = harmonic_round_exact(k, T, a, steps, half)
+        good = abs(mean-exact) <= 4.*se
+        ok &= good
+        print('  %-8s %12.5f +- %.5f %10.5f  %s' % (name, mean, se, exact, verdict(good)))
+        os.remove(path)
+    return ok
+
+
 def main():
     t0 = time.time()
     test = sys.argv[1]
@@ -346,7 +392,8 @@ def main():
         if   test == 'equipartition': ok = equipartition(work, sys.argv[3])
         elif test == 'mc':            ok = mc(work, sys.argv[3])
         elif test == 'remd':          ok = remd(work)
-        else: raise ValueError('test must be equipartition, kinetic, mc or remd')
+        elif test == 'thermostat':    ok = thermostat(work)
+        else: raise ValueError('test must be equipartition, kinetic, mc, remd or thermostat')
     print('%s %s (%.0f s)' % (test, verdict(ok), time.time()-t0))
 
 if __name__ == '__main__':

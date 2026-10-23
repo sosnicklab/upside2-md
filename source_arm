@@ -3,24 +3,16 @@
 # Universal Apple Silicon environment setup for UPSIDE2
 # Works with M1, M2, M3, M4 Macs
 
-# Detect and set Python path dynamically
-if [ -d "/opt/homebrew/Cellar/python@3.10" ]; then
-    # Find the latest Python 3.13 version
-    PYTHON_VERSION=$(ls /opt/homebrew/Cellar/python@3.10 | sort -V | tail -1)
-    export MY_PYTHON="/opt/homebrew/Cellar/python@3.10/$PYTHON_VERSION"
-fi
-
 # Set UPSIDE_HOME - this will be replaced by the install script
 export UPSIDE_HOME="UP_PATH"
 
 # Set up PATH and PYTHONPATH
-export PATH="$MY_PYTHON/bin:$PATH"
 export PATH=$UPSIDE_HOME/obj:$PATH
-export PYTHONPATH=$UPSIDE_HOME/py:$PYTHONPATH
+export PYTHONPATH=$UPSIDE_HOME/py${PYTHONPATH:+:$PYTHONPATH}
 
 # Set up Homebrew paths
 export CMAKE_PREFIX_PATH="$(brew --prefix)"
-export EIGEN_HOME=$(brew --prefix eigen)/include/eigen3
+export EIGEN_HOME=$(brew --prefix eigen@3)/include/eigen3
 export HDF5_ROOT=$(brew --prefix hdf5)
 
 # OpenMP configuration for Apple Silicon
@@ -34,9 +26,9 @@ export CPPFLAGS="-I$(brew --prefix libomp)/include"
 export CMAKE_PREFIX_PATH="$(brew --prefix libomp):$CMAKE_PREFIX_PATH"
 
 # Additional library paths
-export CPLUS_INCLUDE_PATH=$(brew --prefix libomp)/include:$CPLUS_INCLUDE_PATH
-export LIBRARY_PATH=$(brew --prefix libomp)/lib:$LIBRARY_PATH
-export LD_LIBRARY_PATH=$(brew --prefix libomp)/lib:$LD_LIBRARY_PATH
+export CPLUS_INCLUDE_PATH=$(brew --prefix libomp)/include${CPLUS_INCLUDE_PATH:+:$CPLUS_INCLUDE_PATH}
+export LIBRARY_PATH=$(brew --prefix libomp)/lib${LIBRARY_PATH:+:$LIBRARY_PATH}
+export LD_LIBRARY_PATH=$(brew --prefix libomp)/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}
 
 # Set up compiler paths
 export PATH="$(brew --prefix binutils)/bin:$PATH"

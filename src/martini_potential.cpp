@@ -2,7 +2,6 @@
 #include "deriv_engine.h"
 #include "timing.h"
 #include "spline.h"
-#include <H5Apublic.h>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -16,21 +15,6 @@
 
 using namespace h5;
 using namespace std;
-
-inline bool attribute_exists(hid_t loc_id, const char* obj_name, const char* attr_name) {
-    // H5Oopen(loc, ".") may alias the same ID in some HDF5 builds.
-    // Closing that alias can invalidate the caller's handle.
-    if(!obj_name || obj_name[0] == '\0' || (obj_name[0] == '.' && obj_name[1] == '\0')) {
-        htri_t exists = H5Aexists(loc_id, attr_name);
-        return exists > 0;
-    }
-
-    hid_t obj_id = H5Oopen(loc_id, obj_name, H5P_DEFAULT);
-    if (obj_id < 0) return false;
-    htri_t exists = H5Aexists(obj_id, attr_name);
-    H5Oclose(obj_id);
-    return exists > 0;
-}
 
 // MARTINI potential using spline interpolation for LJ and Coulomb calculations
 struct MartiniPotential : public PotentialNode
@@ -87,16 +71,13 @@ struct MartiniPotential : public PotentialNode
     vector<int> atom_cell, cell_start, cell_fill, cell_atoms;
     vector<float> sort_x, sort_y, sort_z;
 
-    // Distinct neighbor cell indices (self +/-1) along one axis, wrapping under
-    // PBC and clamping otherwise; dedups collapsed cells for small grids.
-    static inline int neighbor_cells(int c, int n_cells, bool periodic, int out[3]) {
-        int cand[3];
-        if(periodic) { cand[0] = (c - 1 + n_cells) % n_cells; cand[1] = c; cand[2] = (c + 1) % n_cells; }
-        else         { cand[0] = c - 1;                       cand[1] = c; cand[2] = c + 1; }
+    // Distinct neighbor cell indices (self +/-1) along one periodic axis; dedups
+    // collapsed cells for small grids.
+    static inline int neighbor_cells(int c, int n_cells, int out[3]) {
+        int cand[3] = {(c - 1 + n_cells) % n_cells, c, (c + 1) % n_cells};
         int m = 0;
         for(int k = 0; k < 3; ++k) {
             int v = cand[k];
-            if(v < 0 || v >= n_cells) continue;
             bool dup = false;
             for(int t = 0; t < m; ++t) if(out[t] == v) { dup = true; break; }
             if(!dup) out[m++] = v;
@@ -130,9 +111,7 @@ struct MartiniPotential : public PotentialNode
             float dx = pos1(0, na) - cached_pos[3*na + 0];
             float dy = pos1(1, na) - cached_pos[3*na + 1];
             float dz = pos1(2, na) - cached_pos[3*na + 2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
-            }
+            simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
             if(dx*dx + dy*dy + dz*dz > max_cache_dist2) return true;
         }
         return false;
@@ -142,38 +121,18 @@ struct MartiniPotential : public PotentialNode
         Timer timer(string("martini_pairlist_rebuild"));
         float active_cutoff = pairlist_cutoff + std::max(0.f, cache_buffer);
         float active_cutoff2 = sqr(active_cutoff);
-        bool periodic = box_x > 0.f && box_y > 0.f && box_z > 0.f;
 
         active_pair_indices.clear();
         active_pair_indices.reserve(std::min<size_t>(pairs.size(), size_t(1u << 20)));
 
-        // Grid origin/extent: the periodic box when set, otherwise the coordinate span.
-        float origin_x = 0.f, origin_y = 0.f, origin_z = 0.f;
-        float extent_x = box_x, extent_y = box_y, extent_z = box_z;
-        if(!periodic) {
-            origin_x = origin_y = origin_z = std::numeric_limits<float>::max();
-            float hi_x = std::numeric_limits<float>::lowest();
-            float hi_y = std::numeric_limits<float>::lowest();
-            float hi_z = std::numeric_limits<float>::lowest();
-            for(int a = 0; a < n_atom; ++a) {
-                origin_x = std::min(origin_x, pos1(0, a)); hi_x = std::max(hi_x, pos1(0, a));
-                origin_y = std::min(origin_y, pos1(1, a)); hi_y = std::max(hi_y, pos1(1, a));
-                origin_z = std::min(origin_z, pos1(2, a)); hi_z = std::max(hi_z, pos1(2, a));
-            }
-            extent_x = n_atom > 0 ? std::max(0.f, hi_x - origin_x) : 0.f;
-            extent_y = n_atom > 0 ? std::max(0.f, hi_y - origin_y) : 0.f;
-            extent_z = n_atom > 0 ? std::max(0.f, hi_z - origin_z) : 0.f;
-            if(n_atom == 0) origin_x = origin_y = origin_z = 0.f;
-        }
-
-        // Cell edge >= active_cutoff so any in-cutoff pair sits in one of the 27
-        // neighbouring cells.
-        int ncx = std::max(1, int(extent_x / active_cutoff));
-        int ncy = std::max(1, int(extent_y / active_cutoff));
-        int ncz = std::max(1, int(extent_z / active_cutoff));
-        float sx = extent_x > 0.f ? extent_x / ncx : 1.f;
-        float sy = extent_y > 0.f ? extent_y / ncy : 1.f;
-        float sz = extent_z > 0.f ? extent_z / ncz : 1.f;
+        // Cells tile the periodic box, edge >= active_cutoff, so any in-cutoff pair sits in one of
+        // the 27 neighbouring cells.
+        int ncx = std::max(1, int(box_x / active_cutoff));
+        int ncy = std::max(1, int(box_y / active_cutoff));
+        int ncz = std::max(1, int(box_z / active_cutoff));
+        float sx = box_x / ncx;
+        float sy = box_y / ncy;
+        float sz = box_z / ncz;
 
         int n_cells = ncx * ncy * ncz;
         atom_cell.resize(n_atom);
@@ -181,14 +140,10 @@ struct MartiniPotential : public PotentialNode
         sort_x.resize(n_atom); sort_y.resize(n_atom); sort_z.resize(n_atom);
         cell_start.assign(n_cells + 1, 0);
         for(int a = 0; a < n_atom; ++a) {
-            float rx = pos1(0, a) - origin_x;
-            float ry = pos1(1, a) - origin_y;
-            float rz = pos1(2, a) - origin_z;
-            if(periodic) {
-                rx -= box_x * floorf(rx / box_x);
-                ry -= box_y * floorf(ry / box_y);
-                rz -= box_z * floorf(rz / box_z);
-            }
+            float rx = pos1(0, a), ry = pos1(1, a), rz = pos1(2, a);
+            rx -= box_x * floorf(rx / box_x);
+            ry -= box_y * floorf(ry / box_y);
+            rz -= box_z * floorf(rz / box_z);
             int cx = int(rx / sx); if(cx < 0) cx = 0; if(cx >= ncx) cx = ncx - 1;
             int cy = int(ry / sy); if(cy < 0) cy = 0; if(cy >= ncy) cy = ncy - 1;
             int cz = int(rz / sz); if(cz < 0) cz = 0; if(cz >= ncz) cz = ncz - 1;
@@ -207,14 +162,14 @@ struct MartiniPotential : public PotentialNode
         }
 
         for(int cx = 0; cx < ncx; ++cx) {
-            int nxs[3]; int mx = neighbor_cells(cx, ncx, periodic, nxs);
+            int nxs[3]; int mx = neighbor_cells(cx, ncx, nxs);
             for(int cy = 0; cy < ncy; ++cy) {
-                int nys[3]; int my = neighbor_cells(cy, ncy, periodic, nys);
+                int nys[3]; int my = neighbor_cells(cy, ncy, nys);
                 for(int cz = 0; cz < ncz; ++cz) {
                     int home = (cx * ncy + cy) * ncz + cz;
                     int hlo = cell_start[home], hhi = cell_start[home + 1];
                     if(hlo == hhi) continue;
-                    int nzs[3]; int mz = neighbor_cells(cz, ncz, periodic, nzs);
+                    int nzs[3]; int mz = neighbor_cells(cz, ncz, nzs);
                     for(int ix = 0; ix < mx; ++ix)
                     for(int iy = 0; iy < my; ++iy)
                     for(int iz = 0; iz < mz; ++iz) {
@@ -228,7 +183,7 @@ struct MartiniPotential : public PotentialNode
                                 int b = cell_atoms[m];
                                 if(b <= a) continue;  // handle each unordered pair once (b>a)
                                 float dx = ax - sort_x[m], dy = ay - sort_y[m], dz = az - sort_z[m];
-                                if(periodic) simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
+                                simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
                                 if(dx*dx + dy*dy + dz*dz < active_cutoff2) {
                                     int32_t np = lookup_pair_index(a, b);
                                     if(np >= 0) active_pair_indices.push_back(np);
@@ -271,29 +226,15 @@ struct MartiniPotential : public PotentialNode
         
         cutoff       = read_attribute<float>(grp, ".", "cutoff");
         cache_buffer = read_attribute<float>(grp, ".", "cache_buffer", 1.f);
-        if(cache_buffer < 0.f) cache_buffer = 0.f;
+        if(!(cache_buffer >= 0.f)) throw string("martini_potential cache_buffer must be nonnegative");
         pairlist_cutoff = cutoff;
 
-        // Read box dimensions for minimum-image displacements.
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else if(attribute_exists(grp, ".", "wall_xlo") && attribute_exists(grp, ".", "wall_xhi") &&
-                  attribute_exists(grp, ".", "wall_ylo") && attribute_exists(grp, ".", "wall_yhi") &&
-                  attribute_exists(grp, ".", "wall_zlo") && attribute_exists(grp, ".", "wall_zhi")) {
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        } else {
-            box_x = box_y = box_z = 0.f;
-        }
+        // the periodic box of the minimum-image displacements (the barostat updates it)
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
+        if(!(box_x > 0.f && box_y > 0.f && box_z > 0.f))
+            throw string("martini_potential requires a positive periodic box");
 
         auto n_pair = get_dset_size(2, grp, "pairs")[0];
         
@@ -317,9 +258,16 @@ struct MartiniPotential : public PotentialNode
 
         pairs.resize(n_pair);
         traverse_dset<2,int>(grp, "pairs", [&](size_t np, size_t d, int x) {
+            if(x<0 || x>=n_atom) throw string("martini_potential pairs outside its input");
             if(d == 0) pairs[np].first = x;
             else pairs[np].second = x;
         });
+        // The cell-list rebuild finds a pair only as (lower atom, higher atom), by binary search in the lower
+        // atom's row of the adjacency built below, so each pair must be i < j and the list ascending.
+        for(size_t np = 0; np < n_pair; ++np) {
+            if(pairs[np].first >= pairs[np].second) throw string("martini_potential pairs must be written i < j");
+            if(np && !(pairs[np-1] < pairs[np])) throw string("martini_potential pairs must be sorted and distinct");
+        }
 
         pair_param_index.resize(n_pair);
         for(size_t np = 0; np < n_pair; ++np) {
@@ -456,14 +404,13 @@ struct MartiniPotential : public PotentialNode
         auto* mutable_hybrid = static_cast<martini_hybrid::HybridRuntimeState*>(nullptr);
         if(hybrid_state) {
             mutable_hybrid = const_cast<martini_hybrid::HybridRuntimeState*>(hybrid_state.get());
-            if(mutable_hybrid) {
-                mutable_hybrid->bb_env_interface_potential = 0.f;
-                martini_hybrid::initialize_sc_env_po4_z_reference(*mutable_hybrid, pos1, n_atom);
-            }
+            if(mutable_hybrid) mutable_hybrid->bb_env_interface_potential = 0.f;
         }
 
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
-        if(pot) *pot = 0.f;
+        // summed in double: a float sum over the ~1e6 pairs of a membrane box is off by 0.1-0.4 E_up, enough to
+        // decide minimiser steps and barostat trials
+        double pot_sum = 0.;
 
         // Compute particle-particle interactions
         const float kMinDistance = 1.0e-6f;
@@ -477,9 +424,7 @@ struct MartiniPotential : public PotentialNode
                                    float& pair_potential,
                                    Vec<3>& pair_force) -> bool {
             auto dr = pa - pb;
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-            }
+            dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
             auto dist2 = mag2(dr);
             auto dist = sqrtf(max(dist2, kMinDistance));
             pair_potential = 0.f;
@@ -556,7 +501,7 @@ struct MartiniPotential : public PotentialNode
             if(!eval_pair_force(p1, p2, param, pair_pot, force)) {
                 continue;
             }
-            if(pot) *pot += pair_pot;
+            if(pot) pot_sum += pair_pot;
             if(mutable_hybrid && (i_is_protein != j_is_protein)) {
                 mutable_hybrid->bb_env_interface_potential += pair_pot;
             }
@@ -564,6 +509,7 @@ struct MartiniPotential : public PotentialNode
             update_vec<3>(pos1_sens, i, -force);
             update_vec<3>(pos1_sens, j,  force);
         }
+        if(pot) *pot = float(pot_sum);
     }
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
@@ -650,9 +596,7 @@ struct MartiniScTableOneBody : public CoordNode
             float dx = cbc(0, icb) - cached_cb_point[3*icb + 0];
             float dy = cbc(1, icb) - cached_cb_point[3*icb + 1];
             float dz = cbc(2, icb) - cached_cb_point[3*icb + 2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
-            }
+            simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
             if(dx*dx + dy*dy + dz*dz > max_cache_dist2) return true;
         }
 
@@ -661,9 +605,7 @@ struct MartiniScTableOneBody : public CoordNode
             float dx = posc(0, atom_idx) - cached_env_pos[3*ienv + 0];
             float dy = posc(1, atom_idx) - cached_env_pos[3*ienv + 1];
             float dz = posc(2, atom_idx) - cached_env_pos[3*ienv + 2];
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
-            }
+            simulation_box::minimum_image_scalar(dx, dy, dz, box_x, box_y, box_z);
             if(dx*dx + dy*dy + dz*dz > max_cache_dist2) return true;
         }
 
@@ -687,9 +629,7 @@ struct MartiniScTableOneBody : public CoordNode
                 int atom_idx = env_atom_index[ienv];
                 Vec<3> envp = load_vec<3>(posc, atom_idx);
                 Vec<3> dr = cbp - envp;
-                if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                    dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-                }
+                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
                 if(mag2(dr) < active_cutoff2) {
                     active_contacts.push_back({irow, ienv});
                 }
@@ -773,7 +713,9 @@ struct MartiniScTableOneBody : public CoordNode
     {
         check_elem_width_lower_bound(pos, 3);
         check_elem_width_lower_bound(cb_pos, 6);
-        if(cache_buffer < 0.f) cache_buffer = 0.f;
+        if(!(cache_buffer >= 0.f)) throw string("martini_sc_table_1body cache_buffer must be nonnegative");
+        if(!(box_x > 0.f && box_y > 0.f && box_z > 0.f))
+            throw string("martini_sc_table_1body requires a positive periodic box");
 
         check_size(grp, "row_rotamer_index", n_row);
         check_size(grp, "row_residue_table_index", n_row);
@@ -911,9 +853,7 @@ struct MartiniScTableOneBody : public CoordNode
             Vec<3> cbp = extract<0,3>(cb_site);
             Vec<3> cbv = extract<3,6>(cb_site);
             Vec<3> dr = load_vec<3>(posc, env_atom_index[ienv]) - cbp;
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-            }
+            dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
 
             float dist = sqrtf(std::max(mag2(dr), kMinDistance));
             if(dist >= cutoff_ang) continue;
@@ -961,9 +901,7 @@ struct MartiniScTableOneBody : public CoordNode
             Vec<3> cbp = extract<0,3>(cb_site);
             Vec<3> cbv = extract<3,6>(cb_site);
             Vec<3> dr = load_vec<3>(posc, atom_idx) - cbp;
-            if(box_x > 0.f && box_y > 0.f && box_z > 0.f) {
-                dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-            }
+            dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
 
             float dist = sqrtf(std::max(mag2(dr), kMinDistance));
             if(dist >= cutoff_ang || dist <= 1.0e-6f) continue;
@@ -1003,7 +941,8 @@ static RegisterNodeType<MartiniScTableOneBody, 2> martini_sc_table_1body_node("m
 // over delta from -max(r0) (r = 0) to that half diagonal minus min(r0) and evaluates every bond. The cubic
 // spline of a quadratic is exact apart from the zero end slopes of the clamped fit, whose error decays by
 // 2 - sqrt(3) per knot; the fit runs n_pad knots past both ends of the evaluated range, which puts that error
-// below float round-off inside it. A box that grows past the fitted reach refits the spline.
+// below float round-off inside it. The fit is a function of the current box alone, refit whenever the box changes,
+// so the energy depends on the state and not on the boxes a barostat has tried.
 struct DistSpring : public PotentialNode
 {
     struct Params {
@@ -1024,11 +963,10 @@ struct DistSpring : public PotentialNode
 
     LayeredClampedSpline1D<1> bond_potential_spline;
     float min_equil, max_equil;
-    float bond_reach;                     // half box diagonal the spline was fit for
     float bond_delta_min, bond_delta_max; // fitted delta domain, padded past the evaluated range
 
     void fit_bond_spline() {
-        bond_reach = 0.5f * sqrtf(box_x*box_x + box_y*box_y + box_z*box_z);
+        float bond_reach = 0.5f * sqrtf(box_x*box_x + box_y*box_y + box_z*box_z);   // half box diagonal
         float lo = -max_equil;
         float hi = bond_reach - min_equil;
         float step = (hi - lo) / float(n_knot - 1 - 2*n_pad);
@@ -1044,7 +982,7 @@ struct DistSpring : public PotentialNode
 
     void set_box(float bx, float by, float bz) {
         box_x = bx; box_y = by; box_z = bz;
-        if(0.5f * sqrtf(box_x*box_x + box_y*box_y + box_z*box_z) > bond_reach) fit_bond_spline();
+        fit_bond_spline();
     }
 
     DistSpring(hid_t grp, CoordNode& pos_):
@@ -1058,26 +996,15 @@ struct DistSpring : public PotentialNode
         check_size(grp, "spring_const", n_elem);
 
         auto& p = params;
-        traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) {p[i].atom[j] = x;});
+        traverse_dset<2,int>  (grp, "id",           [&](size_t i, size_t j, int   x) {
+                if(x<0 || x>=pos.n_elem) throw string("dist_spring id outside its input");
+                p[i].atom[j] = x;});
         traverse_dset<1,float>(grp, "equil_dist",   [&](size_t i,           float x) {p[i].equil_dist = x;});
         traverse_dset<1,float>(grp, "spring_const", [&](size_t i,           float x) {p[i].spring_constant = x;});
 
-        // Read box dimensions
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else {
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        }
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
         if(!(box_x > 0.f && box_y > 0.f && box_z > 0.f))
             throw string("dist_spring requires a positive periodic box");
 
@@ -1097,7 +1024,7 @@ struct DistSpring : public PotentialNode
         VecArray pos_sens = pos.sens;
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
-        if(pot) *pot = 0.f;
+        double pot_sum = 0.;
 
         float coord_scale = float(n_knot - 1) / (bond_delta_max - bond_delta_min);
         for(int nt=0; nt<n_elem; ++nt) {
@@ -1116,12 +1043,13 @@ struct DistSpring : public PotentialNode
             // Canonical spline in delta-r: value delta^2/2 and its derivative per unit delta
             float result[2];
             bond_potential_spline.evaluate_value_and_deriv(result, 0, (dist - p.equil_dist - bond_delta_min) * coord_scale);
-            if(pot) *pot += p.spring_constant * result[1];
+            if(pot) pot_sum += p.spring_constant * result[1];
 
             auto deriv = (p.spring_constant * result[0] * coord_scale / dist) * disp;
             update_vec(pos_sens, p.atom[0],  deriv);
             update_vec(pos_sens, p.atom[1], -deriv);
         }
+        if(pot) *pot = float(pot_sum);
     }
     
 };
@@ -1164,26 +1092,17 @@ struct AngleSpring : public PotentialNode
         check_size(grp, "spring_const",    n_elem);
 
         auto& p = params;
-        traverse_dset<2,int>  (grp, "id",              [&](size_t i, size_t j, int   x) { p[i].atom[j] = x;});
+        traverse_dset<2,int>  (grp, "id",              [&](size_t i, size_t j, int   x) {
+                if(x<0 || x>=pos.n_elem) throw string("angle_spring id outside its input");
+                p[i].atom[j] = x;});
         traverse_dset<1,float>(grp, "equil_angle_deg", [&](size_t i,           float x) { p[i].equil_angle_deg = x;});
         traverse_dset<1,float>(grp, "spring_const",    [&](size_t i,           float x) { p[i].spring_constant = x;});
 
-        // Read box dimensions
-        if(attribute_exists(grp, ".", "x_len") && attribute_exists(grp, ".", "y_len") && attribute_exists(grp, ".", "z_len")) {
-            box_x = read_attribute<float>(grp, ".", "x_len");
-            box_y = read_attribute<float>(grp, ".", "y_len");
-            box_z = read_attribute<float>(grp, ".", "z_len");
-        } else {
-            float wall_xlo = read_attribute<float>(grp, ".", "wall_xlo");
-            float wall_xhi = read_attribute<float>(grp, ".", "wall_xhi");
-            float wall_ylo = read_attribute<float>(grp, ".", "wall_ylo");
-            float wall_yhi = read_attribute<float>(grp, ".", "wall_yhi");
-            float wall_zlo = read_attribute<float>(grp, ".", "wall_zlo");
-            float wall_zhi = read_attribute<float>(grp, ".", "wall_zhi");
-            box_x = wall_xhi - wall_xlo;
-            box_y = wall_yhi - wall_ylo;
-            box_z = wall_zhi - wall_zlo;
-        }
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
+        if(!(box_x > 0.f && box_y > 0.f && box_z > 0.f))
+            throw string("angle_spring requires a positive periodic box");
 
         float step = 4.f / float(n_knot - 1 - 2*n_pad);
         angle_delta_min = -2.f - n_pad*step;
@@ -1203,7 +1122,7 @@ struct AngleSpring : public PotentialNode
         VecArray pos_sens = pos.sens;
         auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
-        if(pot) *pot = 0.f;
+        double pot_sum = 0.;
 
         float coord_scale = float(n_knot - 1) / (angle_delta_max - angle_delta_min);
         for(int nt=0; nt<n_elem; ++nt) {
@@ -1225,13 +1144,10 @@ struct AngleSpring : public PotentialNode
 
             float norm1_sq = mag2(disp1);
             float norm2_sq = mag2(disp2);
-            if(norm1_sq == 0.f || norm2_sq == 0.f) continue;
-
             float norm1 = sqrtf(norm1_sq);
             float norm2 = sqrtf(norm2_sq);
             float dot_p = dot(disp1, disp2);
-            float dp = dot_p / (norm1 * norm2); // This is cos(theta)
-            dp = std::max(-1.0f, std::min(1.0f, dp)); // Clamp for safety
+            float dp = dot_p / (norm1 * norm2); // cos(theta); rounding can take it past +-1, inside the spline's range
 
             // V = 1/2 * k * (cos(theta) - cos(theta_0))^2
             // Convert equilibrium angle from degrees to radians, then to cosine
@@ -1242,7 +1158,7 @@ struct AngleSpring : public PotentialNode
             // Canonical spline in delta_cos: value delta_cos^2/2 and its derivative per unit delta_cos
             float result[2];
             angle_potential_spline.evaluate_value_and_deriv(result, 0, (delta_cos - angle_delta_min) * coord_scale);
-            if (pot) *pot += p.spring_constant * result[1];
+            if(pot) pot_sum += p.spring_constant * result[1];
 
             // Forces via chain rule: F = -dV/dx = -(dV/d(cos(theta))) * (d(cos(theta))/dx)
             float dV_dcos = p.spring_constant * result[0] * coord_scale;
@@ -1266,6 +1182,7 @@ struct AngleSpring : public PotentialNode
             update_vec(pos_sens, p.atom[1], grad_b);
             update_vec(pos_sens, p.atom[2], grad_c);
         }
+        if(pot) *pot = float(pot_sum);
     }
     
 };
@@ -1294,7 +1211,9 @@ struct PositionRestraint : public PotentialNode
         check_size(grp, "spring_const_xyz", n_elem, 3);
 
         auto& p = params;
-        traverse_dset<1,int>(grp, "restraint_indices", [&](size_t i, int x) {p[i].atom_index = x;});
+        traverse_dset<1,int>(grp, "restraint_indices", [&](size_t i, int x) {
+                if(x<0 || x>=pos.n_elem) throw string("restraint_position restraint_indices outside its input");
+                p[i].atom_index = x;});
         traverse_dset<2,float>(grp, "ref_pos", [&](size_t i, size_t j, float x) {
             if(j == 0) p[i].ref_pos.x() = x;
             else if(j == 1) p[i].ref_pos.y() = x;
@@ -1314,7 +1233,7 @@ struct PositionRestraint : public PotentialNode
         VecArray posc = pos.output;
         VecArray pos_sens = pos.sens;
         float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
-        if(pot) *pot = 0.f;
+        double pot_sum = 0.;
 
         for(int nt=0; nt<n_elem; ++nt) {
             auto& p = params[nt];
@@ -1325,7 +1244,7 @@ struct PositionRestraint : public PotentialNode
             // Harmonic potential with anisotropic force constants:
             // V = 0.5 * (kx*dx^2 + ky*dy^2 + kz*dz^2)
             if(pot) {
-                *pot += 0.5f * (
+                pot_sum += 0.5f * (
                     p.spring_const_xyz.x() * disp.x() * disp.x() +
                     p.spring_const_xyz.y() * disp.y() * disp.y() +
                     p.spring_const_xyz.z() * disp.z() * disp.z()
@@ -1340,6 +1259,7 @@ struct PositionRestraint : public PotentialNode
             );
             update_vec(pos_sens, p.atom_index, deriv);
         }
+        if(pot) *pot = float(pot_sum);
     }
 };
 static RegisterNodeType<PositionRestraint, 1> position_restraint_node("restraint_position");

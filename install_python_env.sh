@@ -8,11 +8,12 @@ source .venv/bin/activate
 pip install --upgrade pip setuptools wheel
 
 echo "Installing core scientific packages..."
-pip install h5py tables matplotlib mdtraj pymbar pandas ProDy scikit-learn jax pydssp
+# jax is pymbar's solver backend
+pip install numpy scipy h5py tables matplotlib mdtraj pymbar jax pandas ProDy biopython scikit-learn
 
 echo "Installing optional packages..."
-pip install colorcet pyhdx==0.4.3 "hdxms-datasets<0.2"
+pip install pyhdx==0.4.3 "hdxms-datasets<0.2"
 
 echo "Testing core imports..."
-python -c "import h5py, tables, matplotlib, mdtraj, pymbar, pandas, prody, sklearn, jax"
+python -c "import numpy, scipy, h5py, tables, matplotlib, mdtraj, pymbar, jax, pandas, prody, Bio, sklearn"
 echo "Setup complete! Run 'source .venv/bin/activate' to start working."

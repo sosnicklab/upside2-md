@@ -29,27 +29,50 @@ def _output_groups(t):
         yield t.get_node('/output')
 
 
+def _ca_indices(t):
+    """The protein CA atoms: by role in a hybrid file, every third atom (N, CA, C) in a protein-only one."""
+    if 'atom_roles' in t.root.input:
+        roles = np.array([x.decode().strip() for x in t.root.input.atom_roles[:]])
+        particle_class = np.array([x.decode().strip() for x in t.root.input.particle_class[:]])
+        return np.where((roles == 'CA') & (particle_class == 'PROTEIN'))[0]
+    return np.arange(1, t.root.input.pos.shape[0], 3)
+
+
 def _read_replica(path, cv_mode, cv_atoms):
     """Return (kT, energy[n], cv[n]) for one replica file."""
-    ener, pos_parts = [], []
+    ener, pos_parts, temps = [], [], []
     with tb.open_file(path) as t:
-        kT = float(t.root.output.temperature[0, 0])
+        ca = _ca_indices(t)
         for k, g in enumerate(_output_groups(t)):
             e = g.potential[:, 0]
             p = g.pos[:, 0]                       # (n, n_atom, 3)
             ener.append(e if k == 0 else e[1:])
             pos_parts.append(p if k == 0 else p[1:])
+            temps.append(g.temperature[:, 0] if k == 0 else g.temperature[1:, 0])
+    temps = np.concatenate(temps)
+    # MBAR gives every frame of the file one state, so the file must have been sampled at one temperature
+    if np.any(temps != temps[0]):
+        raise SystemExit('%s was sampled at temperatures %s, not at one temperature' % (
+            path, ', '.join('%g' % x for x in np.unique(temps))))
+    kT = float(temps[0])
     energy = np.concatenate(ener)
     pos = np.concatenate(pos_parts)
     if cv_mode == 'dist':
         i, j = cv_atoms
         cv = np.linalg.norm(pos[:, i] - pos[:, j], axis=1)
     elif cv_mode == 'rg':
-        c = pos - pos.mean(axis=1, keepdims=True)
+        c = pos[:, ca] - pos[:, ca].mean(axis=1, keepdims=True)
         cv = np.sqrt((c ** 2).sum(axis=2).mean(axis=1))
     else:
         raise ValueError('unknown cv mode ' + cv_mode)
     return kT, energy, cv
+
+
+def _free_energy(hist, kT):
+    """-kT ln p relative to its minimum; a bin no frame reached has no estimate and is +inf."""
+    with np.errstate(divide='ignore'):
+        fes = -kT * np.log(hist)
+    return fes - fes[np.isfinite(fes)].min()
 
 
 def main():
@@ -87,33 +110,35 @@ def main():
         print('  kT=%.4f  <E>=%.2f  <CV>=%.3f  (n=%d)' % (kT, e.mean(), cv.mean(), len(e)))
 
     target_kT = args.target_kT if args.target_kT else kTs.min()
+    if not np.float32(kTs.min()) <= np.float32(target_kT) <= np.float32(kTs.max()):
+        p.error('--target-kT %.4f lies outside the ladder %.4f-%.4f' % (target_kT, kTs.min(), kTs.max()))
     cv_all = np.concatenate(cvs)
     edges = np.linspace(cv_all.min(), cv_all.max(), args.bins + 1)
     ctr = 0.5 * (edges[:-1] + edges[1:])
 
-    fes = None
     try:
         from pymbar import MBAR
+    except ImportError as e:
+        MBAR = None
+        print('  (pymbar unavailable -> per-temperature histogram FES: %s)' % e)
+    if MBAR is not None:
         N_k = np.array([len(e) for e in energies])
         E = np.concatenate(energies)
+        # One reference shared by every state leaves MBAR exactly unchanged, and is required for a hybrid's
+        # coupled potential (~-2e4 E_up): without it exp(-u) overflows and f_k never leaves 0.
+        E = E - E.mean()
         u_kn = np.array([E / kT for kT in kTs])          # reduced potentials, all frames at each T
         mbar = MBAR(u_kn, N_k)
-        try:
-            w = mbar.weights()                           # pymbar >= 4: (N, K) sample weights per state
-        except AttributeError:
-            w = mbar.getWeights()                        # pymbar 3
-        k_target = int(np.argmin(np.abs(kTs - target_kT)))
-        wt = w[:, k_target]
-        hist = np.array([wt[(cv_all >= edges[b]) & (cv_all < edges[b + 1])].sum() for b in range(args.bins)])
-        hist = np.maximum(hist, 1e-12)
-        fes = -target_kT * np.log(hist); fes -= fes.min()
-        print('  MBAR FES at kT=%.4f reconstructed' % target_kT)
-    except Exception as e:
-        print('  (pymbar unavailable -> per-temperature histogram FES: %s)' % e)
+        log_w = mbar._computeUnnormalizedLogWeights(E / target_kT)
+        wt = np.exp(log_w - log_w.max())
+        wt /= wt.sum()
+        hist = np.histogram(cv_all, bins=edges, weights=wt)[0]   # the last bin closed, so the frame at the maximum counts
+        fes = _free_energy(hist, target_kT)
+        print('  MBAR FES at kT=%.4f reconstructed (ESS %.1f of %d frames)' % (target_kT, 1 / np.sum(wt * wt), wt.size))
+    else:
         k_target = int(np.argmin(np.abs(kTs - target_kT)))
         h, _ = np.histogram(cvs[k_target], bins=edges, density=True)
-        h = np.maximum(h, 1e-12)
-        fes = -kTs[k_target] * np.log(h); fes -= fes.min()
+        fes = _free_energy(h, kTs[k_target])
 
     np.save('%s_remd_fes.npy' % args.output_base, np.column_stack([ctr, fes]))
 

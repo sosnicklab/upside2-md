@@ -1,14 +1,12 @@
 #include "engine_c_library.h"
 #include "deriv_engine.h"
-#include "martini_internal.h"
-#include "martini_brownian.h"
+#include "martini.h"
 #include <algorithm>
-#include "spline.h"
 
 using namespace h5;
 using namespace std;
 
-DerivEngine* construct_deriv_engine(int n_atom, const char* potential_file, bool quiet) try {
+DerivEngine* construct_deriv_engine(int n_atom, const char* potential_file) try {
     H5Obj config = h5_obj(H5Fclose, H5Fopen(potential_file, H5F_ACC_RDONLY, H5P_DEFAULT));
     auto potential_group = open_group(config.get(), "/input/potential");
     
@@ -74,6 +72,12 @@ int evaluate_deriv(float* deriv, DerivEngine* engine, const float* pos) try {
         for(int d: range(3))
             deriv[na*3+d] = b(d,na);
     return 0;
+} catch(const char* e) {
+    fprintf(stderr, "\n\nERROR: %s\n", e);
+    return 1;
+} catch(const string& e) {
+    fprintf(stderr, "\n\nERROR: %s\n", e.c_str());
+    return 1;
 } catch(...) {
     return 1;
 }
@@ -218,86 +222,4 @@ try {
     return 1;
 } catch(...) {
     return 1;
-}
-
-int clamped_spline_solve(int N_coeff, float* bspline_coeff, const float* values) {
-    vector<double> temp(3*N_coeff);
-    vector<double> bspline_coeff_d(N_coeff);
-    vector<double> values_d(values, values+(N_coeff-2));
-
-    solve_clamped_1d_spline_for_bsplines(N_coeff, bspline_coeff_d.data(), values_d.data(), temp.data());
-    for(int i: range(N_coeff)) bspline_coeff[i] = bspline_coeff_d[i];
-    return 0;
-}
-
-
-int clamped_spline_value(int N, float* result, const float* bspline_coeff, int nx, float* x) {
-    const float* coeff_ptrs[4] = {bspline_coeff, bspline_coeff, bspline_coeff, bspline_coeff};
-    int i;
-    for(i=0; i<nx-3; i+=4) {
-        auto en = clamped_deBoor_value_and_deriv(coeff_ptrs, Float4(x+i, Alignment::unaligned), N);
-        en.x().store(result+i, Alignment::unaligned);
-    }
-
-    if(i<nx) {
-        // handle ragged end in non-multiple of 4 cases
-        alignas(16) float last_data[4] = {0.f,0.f,0.f,0.f};
-        for(int j=0; j<nx-i; ++j) last_data[j] = x[i+j];
-        auto en = clamped_deBoor_value_and_deriv(coeff_ptrs, Float4(last_data), N);
-        en.x().store(last_data);
-        for(int j=0; j<nx-i; ++j) result[i+j] = last_data[j];
-    }
-
-    return 0;
-}
-
-int get_clamped_value_and_deriv(int N, float* result, const float* bspline_coeff, int nx, float* x) {
-    for(int i: range(nx)) {
-        auto en = clamped_deBoor_value_and_deriv(bspline_coeff, x[i], N);
-        result[i*2+0] = en.x();
-        result[i*2+1] = en.y();
-    }
-    return 0;
-}
-
-
-int get_bounded_value_and_deriv_2d(int N, float* result, const float* bspline_coeff, int nx, const float* x) {
-    // this is a rather convoluted function because there is no scalar interface to the 2d splines
-    const float* p[4] = {bspline_coeff, bspline_coeff, bspline_coeff, bspline_coeff};
-
-    for(int i: range(0,nx,4)) {
-        alignas(16) float x4[4] = {0.f,0.f,0.f,0.f};
-        alignas(16) float y4[4] = {0.f,0.f,0.f,0.f};
-        for(int j=0; j<4; ++j) {
-            x4[j] = j<min(4,nx-i) ? x[2*(i+j)  ] : 1.f;
-            y4[j] = j<min(4,nx-i) ? x[2*(i+j)+1] : 1.f;
-
-            if((x4[j]<1.f)|(x4[j]>=float(N-2))|(y4[j]<1.f)|(y4[j]>=float(N-2))) return 1;
-        }
-
-        auto v = deBoor2d_value_and_deriv(N, p, Float4(x4), Float4(y4));
-
-        alignas(16) float val[4] = {0.f,0.f,0.f,0.f};
-        alignas(16) float der_x[4] = {0.f,0.f,0.f,0.f};
-        alignas(16) float der_y[4] = {0.f,0.f,0.f,0.f};
-        v[0].store(val);  
-        v[1].store(der_x);
-        v[2].store(der_y);
-
-        for(int j=0; j<min(4,nx-i); ++j) {
-            result[(i+j)*3+0] = val[j];
-            result[(i+j)*3+1] = der_x[j];
-            result[(i+j)*3+2] = der_y[j];
-        }
-    }
-    return 0;
-}
-
-int get_clamped_coeff_deriv(int N, float* result, const float* bspline_coeff, float x) {
-    int starting_bin;
-    float data[4];
-    clamped_deBoor_coeff_deriv(&starting_bin, data, x, N);
-    for(int i: range(N)) result[i] = 0.f;
-    for(int i: range(4)) result[starting_bin+i] = data[i];
-    return 0;
 }

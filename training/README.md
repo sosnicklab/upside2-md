@@ -20,9 +20,10 @@ re-includes just these files, so a run directory created here stays untracked.
 
 ```
 init_param/     environment.h5, bb_env.dat, sidechain.h5, hbond.h5, sheet   (parameters/ff_2.1;
-                for ff3.0 hbond.h5 carries glycine's three offsets, see What it trains)
+                a campaign training glycine's three H-bond offsets adds them, see What it trains)
 upside_input/   per protein: <code>.fasta, <code>.initial.pkl, <code>.chi
-                plus rama.dat (the fixed library the run reads) and rama_reference.pkl
+                plus rama.dat (the fixed library the run reads); the workers read the
+                reference-state correction from $UPSIDE_HOME/parameters/common/rama_reference.pkl
 pdb_list        copy from here
 env.sh          copy of this directory's env.sh, adjusted if the tree differs
 slurm.args      the cluster's sbatch flags, given on the command line of every submission:
@@ -31,8 +32,8 @@ slurm.args      the cluster's sbatch flags, given on the command line of every s
 
 `upside_input/` is ~265 MB and is **not** in the repo. Hardlink it from an existing run
 (`cp -al`) rather than copying, then replace `rama.dat` by a fresh copy (never edit a hardlinked
-file in place). For ff2.1's own library it is `parameters/common/rama.dat`; for ff3.0 it is
-`parameters/common/rama31.dat` (the BioEmu-fitted glycine row, up.md 2.8).
+file in place). For ff2.1's own library and the released ff3.0's start it is `parameters/common/rama.dat`;
+the ff30_bio line used `parameters/common/rama31.dat` (the BioEmu-fitted glycine row, up.md 2.8).
 
 ## Running
 
@@ -44,7 +45,15 @@ sbatch $(cat slurm.args) ../train_chain.sbatch . 76 13   # 4 epochs of 19 miniba
 
 `initialize` copies `ConDiv.py` into `run_output/`, and every later command runs that copy
 (`python3 run_output/ConDiv.py gate .`, `... extract <checkpoint> <out_dir>`), so a run is never
-continued, judged or extracted by later code.
+continued, judged or extracted by later code. The exception is the side-chain latent's layout,
+which the copy imports from the tree's `py/rotamer_parameter_estimation.py`, so the tree must not
+change under a campaign: since 2026-10-22 the latent has 31,334 coordinates (the 86 unused
+`rotscalar` ones removed), and a checkpoint written before then (31,420) is refused by `restart`
+and `extract` on a newer tree. It resumes only in the tree it started in.
+
+The trainer and `rotamer_parameter_estimation.py` use numpy only (the regulariser's and the
+latent's gradients in closed form), so the process loads one OpenMP runtime, the engine's, and the
+order in which it imports the engine does not matter; torch is not needed.
 
 **What happens at the target.** The link that reaches it runs `ConDiv.py gate` on the last full
 epoch (report in `gate_step<N>.txt`). The gate recovers each group's raw per-step gradients from the
@@ -60,7 +69,8 @@ for review. A failure of the gate itself stops the chain.
 
 Per protein, one replica-exchange run of 14 systems for 8000 time units, all starting from the
 native: a native-restrained replica, 12 free replicas at T = 0.8 to 1.1, and a self-avoiding
-random walk (SARW) with H-bond, side-chain burial and rotamer pair energies scaled to zero. From
+random walk (SARW) with H-bond, side-chain and backbone burial and rotamer pair energies scaled to zero
+(the SI's reference; until 2026-10-22 the backbone burial stayed on, as in Kleinmann's port). From
 the second half:
 
 * **NSE** = `<dV/da>_native - <dV/da>_free`, the free ensemble being the three coldest free
@@ -88,13 +98,14 @@ ff3.0 adds one group and damps one (findings 1.17):
   with the shared energies in the SARW replica. Without them, the shared energies can keep loop
   glycines left-handed only at the cost of every helical glycine's helix.
 * **`rot` at 0.025, 10x the port's smaller.** At the port's rate Adam's normalised step
-  random-walks the 31,420 pair coefficients, of which ~6% carry any signal, and the walk weakens
+  random-walks the 31,334 side-chain coordinates, of which ~6% carry any signal, and the walk weakens
   helices and folds; putting the epoch-0 table back restored them.
 
-**Not trained, as in ff2.1's own training**, because the engine returns no derivative: the
-backbone term's `center`, `sharpness` and `hbond_weight` (commented out in
-`BackboneSigmoidCoupling::get_param_deriv`, in master too) and `hbond.h5` entries 4-11, the rama
-boundaries and sharpnesses. Their learning rates are 0, so the gate does not test them.
+**Not trained, as in ff2.1's own training**: the backbone term's `center`, `sharpness` and
+`hbond_weight` and `hbond.h5` entries 4-11, the rama boundaries and sharpnesses. ff2.1's engine
+returned no derivative for them (master's are commented out); this one returns exact derivatives
+(findings 3.14, A29 and A30), so holding them is this trainer's choice. Their learning rates are 0,
+so the gate does not test them.
 
 **The Ramachandran library is fixed, not trained.** ff3.0's differs from ff2.1's only in the
 central-glycine row, taken from AWH on capped glycine dipeptides (GLY_sym.md §5): the

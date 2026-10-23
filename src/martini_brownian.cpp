@@ -2,6 +2,7 @@
 #include "martini.h"
 #include "random.h"
 #include "timing.h"
+#include <algorithm>
 #include <map>
 #include <vector>
 #include <memory>
@@ -48,6 +49,8 @@ void register_brownian_for_engine(DerivEngine* engine, hid_t config_root, uint32
 
     H5Obj grp_obj = open_group(config_root, "/input/brownian");
     hid_t grp = grp_obj.get();
+    if(!martini_masses::has_masses(engine))
+        throw string("/input/brownian needs the particle masses, /input/mass");
 
     vector<int> atom_index = read_int_dataset(grp, "atom_index");
     if(atom_index.empty())
@@ -70,22 +73,30 @@ void register_brownian_for_engine(DerivEngine* engine, hid_t config_root, uint32
             throw string("/input/brownian friction must be nonnegative");
         rt->friction[i] = value;
     });
-    rt->n_inner_steps = read_attribute<int>(config_root, "/input/brownian", "inner_steps", 1);
+    rt->n_inner_steps = read_attribute<int>(config_root, "/input/brownian", "inner_steps");
     if(rt->n_inner_steps < 1)
         throw string("/input/brownian inner_steps must be >= 1");
-    rt->reference_temperature = read_attribute<float>(
-            config_root, "/input/brownian", "reference_temperature_up", 0.f);
-    if(rt->reference_temperature < 0.f)
-        throw string("/input/brownian reference_temperature_up must be nonnegative");
+    rt->reference_temperature = read_attribute<float>(config_root, "/input/brownian", "reference_temperature_up");
+    if(!(rt->reference_temperature > 0.f))
+        throw string("/input/brownian reference_temperature_up must be positive");
     rt->random_seed = random_seed;
     int n_atom = engine->pos->n_atom;
     rt->stochastic_mask.assign(static_cast<size_t>(n_atom), 0);
+    // The integrator moves exactly the listed atoms, one update each: an atom listed twice would be stepped twice
+    // per substep, and a free atom left out would never move.
+    vector<unsigned char> listed(static_cast<size_t>(n_atom), 0);
     for(size_t i=0; i<atom_index.size(); ++i) {
         int idx = atom_index[i];
         if(idx < 0 || idx >= n_atom)
             throw string("/input/brownian atom_index out of range");
+        if(listed[static_cast<size_t>(idx)])
+            throw string("/input/brownian atom_index lists an atom twice");
+        listed[static_cast<size_t>(idx)] = 1;
         if(rt->friction[i] > 0.f) rt->stochastic_mask[static_cast<size_t>(idx)] = 1;
     }
+    for(int atom : martini_fix_rigid::get_fixed_atoms(*engine)) listed[static_cast<size_t>(atom)] = 1;
+    if(std::find(listed.begin(), listed.end(), 0) != listed.end())
+        throw string("/input/brownian atom_index must list every atom that is not fixed");
     runtime_map()[engine] = std::move(rt);
 }
 
@@ -126,12 +137,11 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
     const float kT = rt.temperature;
     // Hold the calibrated diffusion, not the calibrated drag: D = kT/alpha, so alpha must track the
     // running temperature for D to stay at the target the friction was built from.
-    const float friction_scale = rt.reference_temperature > 0.f ? kT/rt.reference_temperature : 1.f;
+    const float friction_scale = kT/rt.reference_temperature;
     const vector<int>& idx = rt.atom_index;
     size_t nb = idx.size();
     VecArray pos_out = engine->pos->output;
     VecArray sens    = engine->pos->sens;
-    const bool have_mass = martini_masses::has_masses(engine);
     vector<unsigned char> fixed_mask(static_cast<size_t>(engine->pos->n_atom), 0u);
     vector<unsigned char> z_fixed_mask(static_cast<size_t>(engine->pos->n_atom), 0u);
     for(int atom : martini_fix_rigid::get_fixed_atoms(*engine)) {
@@ -152,7 +162,7 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
                 continue;
             }
             const float alpha = rt.friction[i]*friction_scale;
-            const float m = have_mass ? martini_masses::get_mass(engine, atom) : 1.f;
+            const float m = martini_masses::get_mass(engine, atom);
             const float b = 1.f/(1.f + alpha*dt_i/(2.f*m));
             const float bnoise = sqrtf(2.f*alpha*kT*dt_i);
             RandomGenerator random(rt.random_seed, BROWNIAN_RANDOM_STREAM,
@@ -177,7 +187,7 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
             int atom = idx[i];
             if(fixed_mask[static_cast<size_t>(atom)]) continue;
             const float alpha = rt.friction[i]*friction_scale;
-            const float m = have_mass ? martini_masses::get_mass(engine, atom) : 1.f;
+            const float m = martini_masses::get_mass(engine, atom);
             const float half = alpha*dt_i/(2.f*m);
             const float b = 1.f/(1.f + half);
             const float a = (1.f - half)/(1.f + half);

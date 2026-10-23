@@ -45,6 +45,11 @@ if [ ! -f "$first_source_path" ]; then
     exit 1
 fi
 if [ -z "$HDX_T_UP" ]; then
+    # a ladder's replica 0 is its bottom rung, not the temperature the analysis is for
+    if [[ $HYBRID_SOURCE_PATTERN == *"$replica_token"* ]]; then
+        echo "A REMD ladder has no one temperature: set HDX_T_UP to the target (it must lie on the ladder)" >&2
+        exit 1
+    fi
     HDX_T_UP=$(python -c \
         'import sys, tables as tb; f = tb.open_file(sys.argv[1]); print(float(f.root.output.temperature[0, 0])); f.close()' \
         "$first_source_path")

@@ -7,8 +7,6 @@ import pickle as cp
 import numpy as np
 import mdtraj.core.element as el
 import mdtraj as md
-
-from mdtraj.formats.registry import FormatRegistry
 angstrom=0.1  # conversion to nanometer from angstrom
 
 aa_conv_dict = {"A": "ALA", "R": "ARG", "N": "ASN", "D": "ASP", "C": "CYS", "E": "GLU",
@@ -145,7 +143,6 @@ def traj_from_upside(seq, time, pos, chain_first_residue, chain_counts, add_extr
     # VERY IMPORTANT all distances must be in nanometers for MDTraj
     return md.Trajectory(xyz=xyz*angstrom, topology=topo, time=time)
 
-@FormatRegistry.register_loader('.up')
 def load_upside_traj(fname, top='', stride=1, external_pos=[], from_init=False, fasta_fn='', chain_breaks_fn='', target_pos_only=False, initial_pos_only=False, add_atoms=True):
     import tables as tb
 

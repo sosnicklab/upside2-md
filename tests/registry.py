@@ -28,14 +28,10 @@ STAMP = datetime.date.today().strftime('%Y%m%d')
 OUT_MD = os.path.join(AUDIT_DIR, 'registry_%s.md' % STAMP)
 OUT_JSON = os.path.join(AUDIT_DIR, 'registry_%s.json' % STAMP)
 
-# The fixtures named by the audit plan, then older single-purpose configs that carry the advanced_config and
-# hybrid nodes the four fixtures lack.  Those were written by the 2026-10-19/20 writers, so they are reader
-# evidence first; a writer-side difference against them may be the writer's later change.
-FIXTURES = (sorted(glob.glob(os.path.join(AUDIT_DIR, 'fixtures_w3', '*.up'))) +
-            [os.path.join(UPSIDE_HOME, 'scratchpad/bilayer_ref/upside_from_gmx_eq/1rkl_gmxeq/run/checkpoints/'
-                          '1rkl.stage_7.0.up')])
-SUPPLEMENTARY = [os.path.join(AUDIT_DIR, p) for p in
-                 ('writers_fix/tc.up', 'writers_fix/rg.up', 'lateral/1qhj_memb_lat.up', 'remd_check/nail.up')]
+# The audit fixtures (one config per writer option group) and the hybrid fixtures, both written by the current
+# writers.
+FIXTURES = (sorted(glob.glob(os.path.join(AUDIT_DIR, 'fixtures_w21', '*.up'))) +
+            [os.path.join(AUDIT_DIR, 'fixtures_hybrid_w6', '1rkl.stage_7.%d.up' % i) for i in (0, 1)])
 
 ENGINE_ATTRS = {'@arguments': True, '@integrator_level': False}   # read by initialize_engine_from_hdf5 for every node
 PYTABLES_ATTRS = {'CLASS', 'TITLE', 'VERSION', 'EXTDIM', 'FLAVOR', 'FILTERS', 'PYTABLES_FORMAT_VERSION'}
@@ -244,7 +240,7 @@ class CppSource:
 
 
 H5_HELPERS = ('traverse_dset', 'traverse_string_dset', 'check_size', 'get_dset_size', 'read_attribute',
-              'h5_exists', 'attribute_exists', 'attribute_exists_hybrid', 'read_string_attribute_or_default',
+              'h5_exists', 'attribute_exists', 'attribute_exists_hybrid', 'read_string_attribute',
               'open_group', 'read_int_dataset', 'H5Aexists', 'H5Dopen2')
 NOT_READERS = set(H5_HELPERS) | {'if', 'for', 'while', 'switch', 'return', 'sizeof', 'catch', 'group_name',
                                  'add_logger', 'string', 'to_string', 'h5_obj', 'logging', 'throw', 'get',
@@ -360,9 +356,9 @@ def collect_reads(cpp, code, gmap, fn, line0, reads, cls, tsubst, depth, seen):
             attr = c_literal(args[1])
             if attr: reads.probes.add(prefix.rstrip('/') + '@' + attr[0])
             continue
-        if helper == 'read_string_attribute_or_default':
+        if helper == 'read_string_attribute':
             attr = c_literal(args[1])
-            if attr: reads.attr(prefix.rstrip('/') + '@' + attr[0], args[2] if len(args) > 2 else '""', where)
+            if attr: reads.attr(prefix.rstrip('/') + '@' + attr[0], None, where)
             continue
         if helper == 'h5_exists':
             names = c_literal(args[1])
@@ -1137,8 +1133,7 @@ def report(rows, orphans, dyn):
          'probed for and did not find, `traced-not-in-static` a read the static pass missed.', '',
          'Traced: ' + ', '.join('`%s`%s' % (os.path.relpath(p, UPSIDE_HOME), '' if d['ok'] else ' (engine refused it)')
                                for p, d in dyn.items()) +
-         '. The first five are the audit fixtures; the others are earlier single-purpose configs that carry nodes '
-         'the fixtures lack.', '',
+         '. The audit fixtures, then the hybrid fixtures.', '',
          '## Registry', '',
          '| node prefix | reader (ctor `class`; arg count (arg names)) | reads | writers | writes | dynamic | status |',
          '|---|---|---|---|---|---|---|']
@@ -1183,7 +1178,7 @@ def main():
     cpp = CppSource()
     readers = reader_registry(cpp)
     writers = scan_writers()
-    dyn = dynamic_pass(FIXTURES + SUPPLEMENTARY) if os.path.exists(TRACE_LIB) else {}
+    dyn = dynamic_pass(FIXTURES) if os.path.exists(TRACE_LIB) else {}
     rows, orphans = analyse(readers, writers, dyn)
     lines = report(rows, orphans, dyn)
     # the hand-written Findings section of an earlier run survives a regeneration of the table

@@ -47,7 +47,7 @@ struct BackbonePairs : public PotentialNode
     vector<AffineParams> params;
     vector<RefPos> ref_pos;
     PairlistComputation<true> pairlist;
-    unique_ptr<int32_t[]> id;
+    unique_ptr<int32_t[]> sequence_id;
     float dist_cutoff;
 
     BackbonePairs(hid_t grp, CoordNode& alignment_):
@@ -55,7 +55,7 @@ struct BackbonePairs : public PotentialNode
         n_residue(get_dset_size(1, grp, "id")[0]), alignment(alignment_), 
         params(n_residue), ref_pos(n_residue),
         pairlist(n_residue, n_residue, (n_residue*(n_residue-1))/2),
-        id(new_aligned<int32_t>(n_residue,16))
+        sequence_id(new_aligned<int32_t>(n_residue,16))
     {
         check_elem_width(alignment, 7);
 
@@ -63,13 +63,18 @@ struct BackbonePairs : public PotentialNode
         check_size(grp, "n_atom",  n_residue);
         check_size(grp, "ref_pos", n_residue, 4, 3);
 
-        traverse_dset<1,int>(grp, "id",     [&](size_t nr, int x) {params[nr].residue = x; id[nr]=x;});
+        traverse_dset<1,int>(grp, "id",     [&](size_t nr, int x) {
+                if(x<0 || x>=alignment.n_elem) throw string("backbone_pairs id outside affine_alignment");
+                params[nr].residue = x;});
         // residues adjacent across a chain break are not bonded; sequence_id spaces chains apart for the exclusion
-        if(h5_exists(grp, "sequence_id")) {
-            check_size(grp, "sequence_id", n_residue);
-            traverse_dset<1,int>(grp, "sequence_id", [&](size_t nr, int x) {id[nr]=x;});
-        }
-        traverse_dset<1,int>(grp, "n_atom", [&](size_t nr, int x) {ref_pos[nr].n_atom = x;});
+        if(!h5_exists(grp, "sequence_id"))
+            throw string("backbone_pairs needs sequence_id, the residue number spaced at chain breaks by which "
+                    "it excludes sequence neighbours from its pairs (up.md 6)");
+        check_size(grp, "sequence_id", n_residue);
+        traverse_dset<1,int>(grp, "sequence_id", [&](size_t nr, int x) {sequence_id[nr]=x;});
+        traverse_dset<1,int>(grp, "n_atom", [&](size_t nr, int x) {
+                if(x<0 || x>4) throw string("backbone_pairs n_atom must lie in 0..4 (N, CA, C, CB)");
+                ref_pos[nr].n_atom = x;});
 
         traverse_dset<3,float>(grp, "ref_pos", [&](size_t nr, size_t na, size_t d, float x) {
                 ref_pos[nr].pos[na][d] = x;});
@@ -105,8 +110,8 @@ struct BackbonePairs : public PotentialNode
 
         // acceptable_backbone_pair checks that the sequence ids differ by at least 2
         pairlist.template find_edges<acceptable_backbone_pair>(dist_cutoff,
-                coords.x.get(), coords.row_width, id.get(),
-                coords.x.get(), coords.row_width, id.get());
+                coords.x.get(), coords.row_width, sequence_id.get(),
+                coords.x.get(), coords.row_width, sequence_id.get());
         int n_edge = pairlist.n_edge;
 
         for(int ne=0; ne<n_edge; ne++) {

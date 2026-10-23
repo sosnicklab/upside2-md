@@ -55,7 +55,9 @@ pdb_id=GlpG sim_id=Mt_500 n_rep=1 analysis_mode=uptake \
 pdb_id=GlpG sim_id=Mt_500 n_rep=1 analysis_mode=dg_summary \
     python 5.analyze_D_uptake.py
 
-hx_plot_prefix=glpg hx_plot_state=pd6 python 6.generate_hx_plots.py
+pdb_id=GlpG hx_plot_prefix=glpg hx_plot_state=pd6 hx_plot_temperature_k=296.0 hx_plot_pd_corr=9.0 \
+    hx_plot_residue_offset=66 hx_plot_dseq=-1 hx_plot_upside_temps=0.70,0.75,0.80,0.85,0.90 \
+    hx_plot_ss_ranges=29-47,82-102,106-126,135-151,162-175,183-207 python 6.generate_hx_plots.py
 ```
 
 ## Directory Layout
@@ -135,11 +137,11 @@ Set `runner=slurm` in `analysis.sh` and adjust `slurm_*` settings. The driver su
 - dG and stability plots, COF summaries
 - experiment-simulation comparison plots (if exp data available)
 
-## REMD and Metadynamics analysis
+## REMD analysis
 
-Two standalone helpers analyze enhanced-sampling runs (independent of the HX-MS pipeline):
+A standalone helper analyzes temperature-REMD runs (independent of the HX-MS pipeline):
 
-**Temperature-REMD** — `helpers/analyze_remd.py`. Upside REMD writes one `.up` per slot at a fixed
+`helpers/analyze_remd.py`. Upside REMD writes one `.up` per slot at a fixed
 temperature (`output/temperature`, in Upside units so kT equals that value in E_up). The tool reads all
 replicas, tabulates per-temperature observables, and reconstructs `F(CV)` at a target temperature by
 MBAR-reweighting the pooled samples (falls back to a per-temperature histogram if `pymbar` is absent).
@@ -150,16 +152,6 @@ python helpers/analyze_remd.py 'outputs/sim/prot.run.*.up' results/prot --cv dis
 ```
 
 Outputs `*_remd_obs.csv` (T, ⟨E⟩, ⟨CV⟩), `*_remd_fes.npy` (cv, F), `*_remd.png`.
-
-**Metadynamics** — `helpers/analyze_metadynamics.py`. Reconstructs the free-energy surface from the
-metadynamics node's logged bias. The last frame of `output/metadynamics_bias` is the converged bias
-`V(s)`; the FES is `-(γ/(γ-1))·V(s)` for well-tempered runs (γ = `bias_factor`), else `-V(s)`.
-
-```bash
-python helpers/analyze_metadynamics.py outputs/sim/prot.run.0.up results/prot --target-kT 0.8647
-```
-
-Outputs `*_fes.npy` (cv, F in E_up), `*_cv.npy` (CV time series), `*_metad.png`.
 
 ## Using Other MD Software
 

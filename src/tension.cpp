@@ -19,11 +19,13 @@ struct TensionPotential : public PotentialNode
         PotentialNode(),
         n_elem(get_dset_size(1, grp, "atom")[0]), pos(pos_), params(n_elem)
     {
-        check_size(grp, "atom", n_elem);
+        check_elem_width(pos, 3);
         check_size(grp, "tension_coeff", n_elem, 3);
 
         auto &p = params;
-        traverse_dset<1,int>  (grp,"atom",         [&](size_t i,         int   x){p[i].atom = x;});
+        traverse_dset<1,int>  (grp,"atom",         [&](size_t i,         int   x){
+                if(x<0 || x>=pos.n_elem) throw string("tension atom outside its input");
+                p[i].atom = x;});
         traverse_dset<2,float>(grp,"tension_coeff",[&](size_t i,size_t d,float x){p[i].tension_coeff[d] = x;});
     }
 

@@ -9,7 +9,6 @@
 #include <vector>
 #include <unordered_map>
 #include <algorithm>
-#include <limits>
 
 using namespace h5;
 using namespace std;
@@ -214,27 +213,7 @@ static inline bool is_env_po4_atom(const HybridRuntimeState& st, int atom) {
 }
 
 static inline bool active_sc_env_po4_z_hold_enabled(const HybridRuntimeState& st) {
-    return st.active &&
-           st.sc_env_po4_z_hold_steps > 0 &&
-           st.sc_env_transition_step < static_cast<uint64_t>(st.sc_env_po4_z_hold_steps);
-}
-
-void initialize_sc_env_po4_z_reference(
-        HybridRuntimeState& st,
-        VecArray pos,
-        int n_atom) {
-    if(!active_sc_env_po4_z_hold_enabled(st)) return;
-    if(st.sc_env_po4_z_reference_initialized &&
-       static_cast<int>(st.sc_env_po4_z_reference.size()) == n_atom) {
-        return;
-    }
-
-    st.sc_env_po4_z_reference.assign(static_cast<size_t>(n_atom), 0.f);
-    for(int i = 0; i < n_atom; ++i) {
-        if(!is_env_po4_atom(st, i)) continue;
-        st.sc_env_po4_z_reference[i] = pos(2, i);
-    }
-    st.sc_env_po4_z_reference_initialized = true;
+    return st.active && st.continues_trajectory && st.round < st.po4_z_hold_end_round;
 }
 
 static inline bool same_protein_membership_pair(const HybridRuntimeState& st, int i, int j) {
@@ -297,28 +276,31 @@ static std::string trim_h5_string(const std::string& in) {
     return in.substr(begin, end - begin);
 }
 
-std::string read_string_attribute_or_default(hid_t group, const char* attr_name, const std::string& fallback) {
-    if(!attribute_exists_hybrid(group, ".", attr_name)) return fallback;
+// A string attribute the configuration must give, refused when absent or empty
+std::string read_string_attribute(hid_t group, const char* attr_name) {
+    if(!attribute_exists_hybrid(group, ".", attr_name)) throw string("missing attribute @") + attr_name;
 
     auto attr = h5_obj(H5Aclose, H5Aopen(group, attr_name, H5P_DEFAULT));
+    auto space = h5_obj(H5Sclose, H5Aget_space(attr.get()));
+    if(H5Sget_simple_extent_npoints(space.get()) != 1) throw string("attribute @") + attr_name + " is not a scalar";
     auto dtype = h5_obj(H5Tclose, H5Aget_type(attr.get()));
+    std::string out;
     if(H5Tis_variable_str(dtype.get())) {
         char* raw = nullptr;
-        if(H5Aread(attr.get(), dtype.get(), &raw) < 0) return fallback;
-        std::string out = raw ? trim_h5_string(std::string(raw)) : fallback;
+        h5_noerr(H5Aread(attr.get(), dtype.get(), &raw));
+        if(raw) out = trim_h5_string(std::string(raw));
         if(raw) H5free_memory(raw);
-        return out.empty() ? fallback : out;
+    } else {
+        size_t nchar = H5Tget_size(dtype.get());
+        std::vector<char> data(nchar + 1, '\0');
+        h5_noerr(H5Aread(attr.get(), dtype.get(), data.data()));
+        out = trim_h5_string(std::string(data.data(), nchar));
     }
-    size_t nchar = H5Tget_size(dtype.get());
-    if(nchar == 0) return fallback;
-
-    std::vector<char> data(nchar + 1, '\0');
-    h5_noerr(H5Aread(attr.get(), dtype.get(), data.data()));
-    auto out = trim_h5_string(std::string(data.data(), nchar));
-    return out.empty() ? fallback : out;
+    if(out.empty()) throw string("attribute @") + attr_name + " is empty";
+    return out;
 }
 
-static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
+static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom, const std::string& stage) {
     HybridRuntimeState out;
 
     if(!h5_exists(root, "/input/hybrid_control")) {
@@ -327,15 +309,15 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     out.has_config = true;
 
     auto ctrl = open_group(root, "/input/hybrid_control");
-    out.activation_stage = read_string_attribute_or_default(ctrl.get(), "activation_stage", "production");
-    out.preprod_mode = read_string_attribute_or_default(ctrl.get(), "preprod_protein_mode", "rigid");
-    out.preprod_rigid = (out.preprod_mode == "rigid" || out.preprod_mode == "rigid_body");
-    out.sc_env_po4_z_hold_steps =
-        read_attribute<int>(ctrl.get(), ".", "sc_env_po4_z_hold_steps", out.sc_env_po4_z_hold_steps);
-    int transition_start = read_attribute<int>(ctrl.get(), ".", "sc_env_transition_step_start", 0);
-    out.sc_env_transition_step_start = static_cast<uint64_t>(std::max(0, transition_start));
-    out.sc_env_transition_step = out.sc_env_transition_step_start;
-    if(out.sc_env_po4_z_hold_steps < 0) out.sc_env_po4_z_hold_steps = 0;
+    out.activation_stage = read_string_attribute(ctrl.get(), "activation_stage");
+    if(stage == "production") {
+        if(!attribute_exists_hybrid(ctrl.get(), ".", "po4_z_hold_end_round"))
+            throw string("a production configuration needs /input/hybrid_control@po4_z_hold_end_round, the round of "
+                         "the prepared trajectory at which its PO4 height hold ends");
+        long hold_end = read_attribute<long>(ctrl.get(), ".", "po4_z_hold_end_round");
+        if(hold_end < 0) throw string("/input/hybrid_control@po4_z_hold_end_round must be nonnegative");
+        out.po4_z_hold_end_round = static_cast<uint64_t>(hold_end);
+    }
 
     if(!h5_exists(root, "/input/hybrid_bb_map")) {
         throw string("Hybrid control requires /input/hybrid_bb_map");
@@ -407,10 +389,10 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
     }
 
     // The roles name the protein carriers (N, CA, C) and the lipid phosphates (PO4).
+    std::vector<std::string> atom_roles;
     if(!out.protein_membership.empty()) {
         const char* role_dset = h5_exists(root, "/input/atom_roles") ? "/input/atom_roles" : "/input/atom_names";
         check_size(root, role_dset, n_atom);
-        std::vector<std::string> atom_roles;
         traverse_string_dset<1>(root, role_dset, [&](size_t i, const std::string& v) {
             atom_roles.push_back(normalize_role_token(v));});
 
@@ -419,7 +401,7 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             const std::string& role = atom_roles[i];
             if(out.protein_membership[i] < 0) {
                 if(role == "PO4") out.sc_env_po4_env_mask[i] = 1u;
-            } else if(out.preprod_rigid && (role == "N" || role == "CA" || role == "C")) {
+            } else if(role == "N" || role == "CA" || role == "C") {
                 out.preprod_fixed_atom_indices.push_back(i);
             }
         }
@@ -463,6 +445,21 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
             }
         }
 
+        // Every protein atom is one residue's N, CA or C carrier, its O slot or its BB proxy, under that role: the
+        // fixed slots, the rigid body and the BB-env pairs are all chosen by role
+        static const char* map_role[4] = {"N", "CA", "C", "O"};
+        std::vector<std::string> mapped_role(static_cast<size_t>(n_atom));
+        for(size_t k = 0; k < out.n_bb; ++k) {
+            for(int d = 0; d < 4; ++d)
+                if(out.atom_mask[k][d] != 0) mapped_role[out.atom_indices[k][d]] = map_role[d];
+            mapped_role[out.bb_atom_index[k]] = "BB";
+        }
+        for(int i = 0; i < n_atom; ++i) {
+            if(out.protein_membership[i] < 0 || mapped_role[i] == atom_roles[i]) continue;
+            throw string("protein atom ") + to_string(i) + " has role '" + atom_roles[i] + "' but /input/hybrid_bb_map " +
+                  (mapped_role[i].empty() ? string("does not map it") : "maps it as " + mapped_role[i]);
+        }
+
         out.bb_proxy_to_map_index.assign(static_cast<size_t>(n_atom), -1);
         for(size_t k = 0; k < out.n_bb; ++k) {
             int bb = out.bb_atom_index[k];
@@ -493,10 +490,11 @@ static HybridRuntimeState read_hybrid_settings(hid_t root, int n_atom) {
 // BB-env interface on:
 //   minimization        preparation (stages 6.x): protein N/CA/C move as one rigid body
 //   production_handoff  production minimization and burn-in (stage 7.0): protein rigid
-//   production          protein flexible; PO4 z held for the first sc_env_po4_z_hold_steps rounds
+//   production          protein flexible; PO4 z held before round po4_z_hold_end_round of the prepared trajectory
 // The lipids are free in the first two: the preparation restrains the phosphate heights with the harmonic
 // restraint_position node the stage file carries, as CHARMM-GUI does, never with a hard freeze.
 static void check_hybrid_stage(const HybridRuntimeState& st, const std::string& stage) {
+    if(stage.empty()) throw string("a hybrid configuration needs /input/stage_parameters@current_stage");
     bool preparation = st.activation_stage == "minimization" && stage == "minimization";
     bool production  = st.activation_stage == "production" &&
                        (stage == "production_handoff" || stage == "production");
@@ -505,30 +503,31 @@ static void check_hybrid_stage(const HybridRuntimeState& st, const std::string& 
               "' (minimization runs in minimization; production in production_handoff and production)";
 }
 
-static inline bool enforce_preprod_rigid_stage(
-        const HybridRuntimeState& st,
-        const std::string& stage) {
-    return st.preprod_rigid && (stage != "production");
+// the stages before production hold the protein carriers as one rigid body
+static inline bool rigid_protein_stage(const std::string& stage) {
+    return stage != "production";
 }
 
+// The stage's constraints, set once: the derived slots are fixed, and in the rigid stages the protein carriers are
+// one rigid body, which keeps the geometry it has at the run's first step as its reference for the whole run.
 static void apply_stage_fixing(
         DerivEngine& engine,
-        HybridRuntimeState& st,
+        const HybridRuntimeState& st,
         const std::string& stage) {
-    if(enforce_preprod_rigid_stage(st, stage)) {
-        martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(st));
-        martini_fix_rigid::set_dynamic_rigid_groups(engine, {st.preprod_fixed_atom_indices});
-        martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
-        return;
-    }
-
-    martini_fix_rigid::clear_dynamic_rigid_groups(engine);
     martini_fix_rigid::set_dynamic_fixed_atoms(engine, active_protein_proxy_fixed_atoms(st));
-    if(active_sc_env_po4_z_hold_enabled(st)) {
+    if(rigid_protein_stage(stage))
+        martini_fix_rigid::set_dynamic_rigid_groups(engine, {st.preprod_fixed_atom_indices});
+}
+
+// Production's PO4 height hold, the one constraint that changes during a run
+static void apply_po4_z_hold(
+        DerivEngine& engine,
+        const HybridRuntimeState& st,
+        const std::string& stage) {
+    if(!rigid_protein_stage(stage) && active_sc_env_po4_z_hold_enabled(st))
         martini_fix_rigid::set_dynamic_z_fixed_atoms(engine, st.sc_env_po4_z_hold_atom_indices);
-    } else {
+    else
         martini_fix_rigid::clear_dynamic_z_fixed_atoms(engine);
-    }
 }
 
 // Locate each residue's backbone O inside the infer_H_O node. That node emits donors first, then
@@ -569,10 +568,14 @@ void unregister_hybrid_for_engine(DerivEngine& engine) {
 
 void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
     unregister_hybrid_for_engine(engine);
-    auto parsed = read_hybrid_settings(config_root, engine.pos->n_elem);
-    resolve_bb_o_hbond_elements(config_root, parsed);
     auto current_stage = martini_stage_params::get_current_stage(&engine);
+    auto parsed = read_hybrid_settings(config_root, engine.pos->n_elem, current_stage);
+    resolve_bb_o_hbond_elements(config_root, parsed);
     if(parsed.has_config) check_hybrid_stage(parsed, current_stage);
+    else
+        for(auto& node : engine.nodes)
+            if(is_prefix("martini_hybrid_position", node.name) || is_prefix("martini_sc_table_1body", node.name))
+                throw string("node ") + node.name + " needs a hybrid configuration (/input/hybrid_control)";
     parsed.active = parsed.has_config;
 
     auto st = std::make_shared<HybridRuntimeState>(std::move(parsed));
@@ -586,20 +589,21 @@ void register_hybrid_for_engine(hid_t config_root, DerivEngine& engine) {
         if(coord) g_hybrid_state_by_coord[coord] = st;
     }
     apply_stage_fixing(engine, *st, current_stage);
+    apply_po4_z_hold(engine, *st, current_stage);
 }
 
-void refresh_transition_holds_for_engine(DerivEngine& engine) {
+// The PO4 height hold runs on the clock of the trajectory the preparation built: po4_z_hold_end_round is the round
+// 150 rounds after its rigid burn-in. A run started from positions alone begins a trajectory of its own at round 0
+// and holds nothing. Called with the round about to be integrated.
+void refresh_transition_holds_for_engine(DerivEngine& engine, uint64_t round, bool continues_trajectory) {
     std::lock_guard<std::mutex> lock(g_hybrid_mutex);
     auto it = g_hybrid_state.find(&engine);
     if(it == g_hybrid_state.end() || !it->second) return;
     auto st = it->second;
     std::string current_stage = martini_stage_params::get_current_stage(&engine);
-    if(!enforce_preprod_rigid_stage(*st, current_stage) &&
-       st->active &&
-       st->sc_env_transition_step < std::numeric_limits<uint64_t>::max()) {
-        st->sc_env_transition_step += 1;
-    }
-    apply_stage_fixing(engine, *st, current_stage);
+    st->round = round;
+    st->continues_trajectory = continues_trajectory;
+    apply_po4_z_hold(engine, *st, current_stage);
 }
 
 bool is_hybrid_enabled(const DerivEngine& engine) {

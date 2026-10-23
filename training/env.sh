@@ -8,6 +8,10 @@
 # run directory's copy.
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && until [ -f py/upside_config.py ] || [ "$PWD" = / ]; do cd ..; done; pwd)"
+if [ ! -f "$PROJECT_ROOT/py/upside_config.py" ]; then
+    echo "env.sh: no Upside tree (py/upside_config.py) above $(dirname "${BASH_SOURCE[0]}")" >&2
+    return 1
+fi
 
 if [ -f "$PROJECT_ROOT/.venv/bin/activate" ]; then
     source "$PROJECT_ROOT/.venv/bin/activate"

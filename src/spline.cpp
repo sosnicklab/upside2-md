@@ -75,41 +75,6 @@ void solve_periodic_tridiagonal_system(
     for(int i=0; i<n; ++i) solution[i] = y[i] - q_prefactor*q[i];
 }
 
-
-void evaluate_1d_spline(
-        double* y, // length nx
-        int n_knot, 
-        const double* coeff,  // length 4*n_knot
-        int nx,
-        const double* x)  // length nx
-{
-    // verified
-    for(int ix=0; ix<nx; ++ix) {
-        // if(x[ix]<0 || x[ix]>=nx) throw "impossible";
-        int x_bin = int(x[ix]);
-        double f = x[ix] - x_bin;
-        const double* c = coeff + 4*x_bin;
-        y[ix] = c[0] + c[1]*f + c[2]*(f*f) + (c[3]*f)*(f*f);
-    }
-}
-
-void evaluate_1d_spline_first_derivative(
-        double* dy, // length nx
-        int n_knot, 
-        const double* coeff,  // length 4*n_knot
-        int nx,
-        const double* x)  // length nx
-{
-    // verified
-    for(int ix=0; ix<nx; ++ix) {
-        // if(x[ix]<0 || x[ix]>=nx) throw "impossible";
-        int x_bin = int(x[ix]);
-        double f = x[ix] - x_bin;
-        const double* c = coeff + 4*x_bin;
-        dy[ix] = c[1] + 2.*c[2]*f + 3.*c[3]*(f*f);
-    }
-}
-
 // coefficients are valid only the range (0,1) reflecting the distance past the knot on the right
 constexpr const double bspline_coeffs[4][4] = {
     { 0./6., 0./6., 0./6., 1./6.},
@@ -292,38 +257,5 @@ void solve_periodic_2d_spline(
                 for(int power_x=0; power_x<4; ++power_x)
                     coefficients[ix*ny*16 + iy*16 + power_x*4 + power_y] = coeffs_temp[ix*4+power_x];
         }
-    }
-}
-
-
-
-
-void evaluate_2d_spline(
-        double* z, // length nx
-        int n_knot_x, int n_knot_y, 
-        const double* coeff,  // length 4*n_knot
-        int n_point,
-        const double* points)  // length nx*2
-{
-    // verified
-    for(int ip=0; ip<n_point; ++ip) {
-        float x = points[ip*2+0];
-        float y = points[ip*2+1];
-
-        // if(x<0. || x>=n_knot_x || y<0. || y>=n_knot_y) throw "impossible";
-        int x_bin = int(x);
-        int y_bin = int(y);
-
-        double fx = x - x_bin;
-        double fy = y - y_bin;
-
-        const double* c = coeff + x_bin*n_knot_y*16 + y_bin*16;
-        double fx2 = fx*fx; 
-        double fx3 = fx2*fx;
-
-        z[ip] = 1.f * (c[ 0] + fy*(c[ 1] + fy*(c[ 2] + fy*c[ 3]))) +
-                fx  * (c[ 4] + fy*(c[ 5] + fy*(c[ 6] + fy*c[ 7]))) +
-                fx2 * (c[ 8] + fy*(c[ 9] + fy*(c[10] + fy*c[11]))) +
-                fx3 * (c[12] + fy*(c[13] + fy*(c[14] + fy*c[15])));
     }
 }

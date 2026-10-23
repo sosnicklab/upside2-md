@@ -1,7 +1,7 @@
 Restart an Upside Simulation Properly
 
 # Procedures
-1. first run `0.run.py` for 1000 steps
+1. first run `0.run.py` for 1000 time units
 2. run `0.continue.py`, upside will correctly load the end configuration and the end momentum to properly restart the trajectory. (the only difference between `0.run.py` and `0.continue.py` is line 28 is changed to `continue_sim=True`).
 
 

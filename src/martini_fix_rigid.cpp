@@ -380,12 +380,6 @@ void set_dynamic_rigid_groups(DerivEngine& engine, const std::vector<std::vector
     rebuild_rigid_groups(engine);
 }
 
-void clear_dynamic_rigid_groups(DerivEngine& engine) {
-    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
-    g_dynamic_rigid_groups.erase(&engine);
-    g_rigid_groups.erase(&engine);
-}
-
 // Apply fix rigid constraints during minimization
 void apply_fix_rigid_minimization(DerivEngine& engine, VecArray pos, VecArray deriv) {
     std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
@@ -460,6 +454,16 @@ std::vector<int> get_z_fixed_atoms(const DerivEngine& engine) {
         return it->second;
     }
     return std::vector<int>();
+}
+
+// Atoms of each rigid group, which moves as one body with six degrees of freedom
+std::vector<std::vector<int>> get_rigid_groups(const DerivEngine& engine) {
+    std::lock_guard<std::mutex> lock(g_fix_rigid_mutex);
+    std::vector<std::vector<int>> groups;
+    auto it = g_rigid_groups.find(const_cast<DerivEngine*>(&engine));
+    if(it != g_rigid_groups.end())
+        for(const auto& group : it->second) groups.push_back(group.atom_indices);
+    return groups;
 }
 
 } // namespace martini_fix_rigid

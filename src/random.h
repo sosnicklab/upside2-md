@@ -54,6 +54,12 @@ struct RandomGenerator
                     r123::u01<float>(bits.v[3]));
         }
 
+        // a uniform in (0,1] at the 53-bit resolution of a double
+        double uniform_open_closed_double() {
+            threefry4x32_ctr_t bits = random_bits();
+            return r123::u01<double>((uint64_t(bits.v[0])<<32) | uint64_t(bits.v[1]));
+        }
+
         float4 normal() {
             threefry4x32_ctr_t bits = random_bits();
             r123::float2 n1 = r123::boxmuller(bits.v[0], bits.v[1]);

@@ -30,7 +30,11 @@ struct DistCoord : public CoordNode
     {
         int n_dep = 2;  // number of atoms that each term depends on 
         check_size(grp, "id", n_elem, n_dep);
-        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) {params[i].atom[j] = x;});
+        check_elem_width_lower_bound(pos1, 3);
+        check_elem_width_lower_bound(pos2, 3);
+        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) {
+                if(x<0 || x>=(j ? pos2 : pos1).n_elem) throw string("Distance3D id outside its input");
+                params[i].atom[j] = x;});
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -89,7 +93,11 @@ struct Dist2DCoord : public CoordNode
     {
         int n_dep = 2;  // number of atoms that each term depends on 
         check_size(grp, "id", n_elem, n_dep);
-        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) {params[i].atom[j] = x;});
+        for(int d: {dim1, dim2})
+            if(d<0 || d>=pos1.elem_width || d>=pos2.elem_width) throw string("Distance2D dim outside its inputs");
+        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) {
+                if(x<0 || x>=(j ? pos2 : pos1).n_elem) throw string("Distance2D id outside its input");
+                params[i].atom[j] = x;});
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -147,7 +155,10 @@ struct Dist1DCoord : public CoordNode
     {
         int n_dep = 2;  // number of atoms that each term depends on 
         check_size(grp, "id", n_elem, n_dep);
-        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) {params[i].atom[j] = x;});
+        if(dim1<0 || dim1>=pos1.elem_width || dim1>=pos2.elem_width) throw string("Distance1D dim1 outside its inputs");
+        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) {
+                if(x<0 || x>=(j ? pos2 : pos1).n_elem) throw string("Distance1D id outside its input");
+                params[i].atom[j] = x;});
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -205,7 +216,10 @@ struct AngleCoord : public CoordNode
     {
         int n_dep = 3;  // number of atoms that each term depends on 
         check_size(grp, "id",              n_elem, n_dep);
-        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) { params[i].atom[j] = x;});
+        check_elem_width_lower_bound(pos, 3);
+        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) {
+                if(x<0 || x>=pos.n_elem) throw string("Angle id outside its input");
+                params[i].atom[j] = x;});
     }
 
     virtual void compute_value(ComputeMode mode) {
@@ -242,72 +256,6 @@ struct AngleCoord : public CoordNode
 };
 static RegisterNodeType<AngleCoord,1> angle_coord_node("Angle");
 
-struct AngleCoord2 : public CoordNode
-{
-    //struct alignas(16) Jac {float d[3][4];}; // padding for vector load/store
-    struct Params { index_t atom[4];};
-
-    int n_elem;
-    CoordNode& pos;
-    vector<Params> params;
-    //unique_ptr<Jac[]> jac;
-    vector<float3> deriv1;
-    vector<float3> deriv2;
-    vector<float3> deriv3;
-    vector<float3> deriv4;
-
-    AngleCoord2(hid_t grp, CoordNode& pos_):
-        CoordNode(get_dset_size(2, grp, "id")[0], 1),
-        n_elem(get_dset_size(2, grp, "id")[0]), 
-	pos(pos_), 
-	params(n_elem),
-	deriv1(n_elem),
-	deriv2(n_elem),
-	deriv3(n_elem),
-	deriv4(n_elem)
-        //jac(new_aligned<Jac>(n_elem,1))
-    {
-        check_size(grp, "id", n_elem, 4);
-        traverse_dset<2,int> (grp, "id", [&](size_t i, size_t j, int x) { params[i].atom[j] = x;});
-    }
-
-    virtual void compute_value(ComputeMode mode) {
-        Timer timer(string("vector_angle"));
-        //float* posc = pos.output.x.get();
-        VecArray posc = pos.output;
-        for(int nt=0; nt<n_elem; ++nt) {
-            auto& p = params[nt];
-
-            auto atom1 = load_vec<3>(posc, p.atom[0]);
-            auto atom2 = load_vec<3>(posc, p.atom[1]);
-            auto atom3 = load_vec<3>(posc, p.atom[2]);
-            auto atom4 = load_vec<3>(posc, p.atom[3]);
-
-            auto x1 = atom1 - atom2; auto inv_d1 = inv_mag(x1); auto x1h = x1*inv_d1;
-            auto x2 = atom3 - atom4; auto inv_d2 = inv_mag(x2); auto x2h = x2*inv_d2;
-            auto dp = dot(x1h, x2h);
-	    output(0, nt) = dp;
-            deriv1[nt] = (x2h - x1h*dp) * inv_d1;
-            deriv3[nt] = (x1h - x2h*dp) * inv_d2;
-            deriv2[nt] = -deriv1[nt];
-            deriv4[nt] = -deriv3[nt];
-        }
-    }
-
-    virtual void propagate_deriv() {
-        Timer timer(string("vector_angle_deriv"));
-        VecArray pos_sens = pos.sens;
-        for(int nt=0; nt<n_elem; ++nt) {
-            auto& p = params[nt];
-            update_vec(pos_sens, p.atom[0], sens(0,nt)*deriv1[nt]);
-            update_vec(pos_sens, p.atom[1], sens(0,nt)*deriv2[nt]);
-            update_vec(pos_sens, p.atom[2], sens(0,nt)*deriv3[nt]);
-            update_vec(pos_sens, p.atom[3], sens(0,nt)*deriv4[nt]);
-        }
-    }
-};
-static RegisterNodeType<AngleCoord2,1> vector_angle_coord_node("VectorAngle");
-
 struct DihedralCoord : public CoordNode
 {
     struct alignas(16) Jac {float j[4][4];}; // padding for vector load/store
@@ -324,7 +272,11 @@ struct DihedralCoord : public CoordNode
         jac(new_aligned<Jac>(n_elem,1))
     {
         check_size(grp, "id", n_elem, 4);
-        traverse_dset<2,int>(grp, "id", [&](size_t nr, size_t na, int x) { params[nr].atom[na] = x;});
+        check_elem_width(pos, 3);
+        traverse_dset<2,int>(grp, "id", [&](size_t nr, size_t na, int x) {
+                bool dummy_slot = (na==0 || na==3) && x==-1;
+                if(!dummy_slot && (x<0 || x>=pos.n_elem)) throw string("Dihedral id outside its input");
+                params[nr].atom[na] = x;});
         for(auto& p: params) {
             // handle dummy angles uniformly (N-terminal phi and C-terminal psi)
             p.dummy_angle = p.atom[0] == index_t(-1) or p.atom[3] == index_t(-1);
@@ -396,9 +348,18 @@ struct PosCenter : public CoordNode {
 	scale(n_group),
         index_dim(n_dim)
     {
-        traverse_dset<1, int>(grp, "index_pos", [&](size_t np, int x) {index_pos[np] = x;});
+        check_size(grp, "border",    n_group+1);
+        check_size(grp, "index_dim", n_dim);
+        traverse_dset<1, int>(grp, "index_pos", [&](size_t np, int x) {
+                if(x<0 || x>=pos.n_elem) throw string("GroupCenter index_pos outside its input");
+                index_pos[np] = x;});
         traverse_dset<1, int>(grp, "border",    [&](size_t np, int x) {border[np]    = x;});
-        traverse_dset<1, int>(grp, "index_dim" ,[&](size_t ne, int x) {index_dim[ne] = x;});
+        traverse_dset<1, int>(grp, "index_dim" ,[&](size_t ne, int x) {
+                if(x<0 || x>=pos.elem_width) throw string("GroupCenter index_dim outside its input");
+                index_dim[ne] = x;});
+        if(border[0]!=0 || border[n_group]!=n_atom) throw string("GroupCenter border must run from 0 to the index_pos rows");
+        for(int i=0; i<n_group; ++i)
+            if(border[i+1]<=border[i]) throw string("GroupCenter group ") + to_string(i) + " is empty";
 
 	for (int i=0; i<n_group; ++i) {
             scale[i] = 1.f/(border[i+1]-border[i]);	

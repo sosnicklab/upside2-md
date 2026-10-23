@@ -20,6 +20,7 @@ struct RamaMapPot : public PotentialNode
     LayeredPeriodicSpline2D<1> rama_map_data;
     vector<float> residue_potential;
     bool log_pot; // if false, never log potential
+    vector<float> rama_pot; // the map values the spline is fitted to (the node's parameters)
 
     RamaMapPot(hid_t grp, CoordNode& rama_):
         PotentialNode(),
@@ -39,13 +40,18 @@ struct RamaMapPot : public PotentialNode
         check_size(grp, "rama_pot",    r.n_layer, r.nx, r.ny);
 
         if(r.nx != r.ny) throw string("must have same x and y grid spacing for Rama maps");
+        check_elem_width(rama, 2);
         vector<double> raw_data(r.n_layer * r.nx * r.ny);
 
-        traverse_dset<1,int>   (grp, "residue_id",  [&](size_t i, int x) {params[i].residue = x;});
-        traverse_dset<1,int>   (grp, "rama_map_id", [&](size_t i, int x) {params[i].rama_map_id = x;});
+        traverse_dset<1,int>   (grp, "residue_id",  [&](size_t i, int x) {
+                if(x<0 || x>=rama.n_elem) throw string("rama map residue_id outside its rama coordinate");
+                params[i].residue = x;});
+        traverse_dset<1,int>   (grp, "rama_map_id", [&](size_t i, int x) {
+                if(x<0 || x>=r.n_layer) throw string("rama map rama_map_id outside rama_pot");
+                params[i].rama_map_id = x;});
         traverse_dset<3,double>(grp, "rama_pot",    [&](size_t il, size_t ix, size_t iy, double x) {
                 raw_data[(il*r.nx + ix)*r.ny + iy] = x;});
-        r.fit_spline(raw_data.data());
+        set_param(vector<float>(raw_data.begin(), raw_data.end()));
 
         if(log_pot && logging(LOG_DETAILED))
             default_logger->add_logger<float>("rama_map_potential", {n_residue}, [&](float* buffer) {
@@ -81,13 +87,21 @@ struct RamaMapPot : public PotentialNode
         }
     }
 
-#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param() const override {return rama_pot;}
+
+    // the spline is fitted to the parameters as get_param returns them, so that set_param(get_param()) leaves
+    // the node as it was
     virtual void set_param(const std::vector<float>& new_param) override {
-        auto& r = rama_map_data;
-        vector<double> raw_data(r.n_layer * r.nx * r.ny);
-        if(raw_data.size() != new_param.size()) throw string("wrong number of parameters");
-        for(size_t i=0u; i<size_t(r.n_layer * r.nx * r.ny); ++i) raw_data[i] = new_param[i];
-        r.fit_spline(raw_data.data());
+        if(new_param.size() != size_t(rama_map_data.n_layer*rama_map_data.nx*rama_map_data.ny))
+            throw string("wrong number of parameters");
+        rama_pot = new_param;
+        vector<double> raw_data(rama_pot.begin(), rama_pot.end());
+        rama_map_data.fit_spline(raw_data.data());
+    }
+
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        throw string("the Ramachandran map parameter derivative is not implemented");
     }
 #endif
 };
@@ -100,8 +114,7 @@ struct RamaMapPot2 : public PotentialNode
     CoordNode& lambda;
     vector<RamaMapParams> params;
     LayeredPeriodicSpline2D<1> rama_map_data;
-    vector<float> residue_potential;
-    bool log_pot; // if false, never log potential
+    vector<float> rama_pot; // the map values the spline is fitted to (the node's parameters)
 
     RamaMapPot2(hid_t grp, CoordNode& rama_, CoordNode& lambda_):
         PotentialNode(),
@@ -112,9 +125,7 @@ struct RamaMapPot2 : public PotentialNode
         rama_map_data(
                 get_dset_size(3, grp, "rama_pot")[0], 
                 get_dset_size(3, grp, "rama_pot")[1], 
-                get_dset_size(3, grp, "rama_pot")[2]),
-        residue_potential(n_residue),
-        log_pot(read_attribute<int>(grp,".","log_pot",1))
+                get_dset_size(3, grp, "rama_pot")[2])
     {
         auto& r = rama_map_data;
         check_size(grp, "residue_id",  n_residue);
@@ -122,13 +133,22 @@ struct RamaMapPot2 : public PotentialNode
         check_size(grp, "rama_pot",    r.n_layer, r.nx, r.ny);
 
         if(r.nx != r.ny) throw string("must have same x and y grid spacing for Rama maps");
+        check_elem_width(rama, 2);
         vector<double> raw_data(r.n_layer * r.nx * r.ny);
 
-        traverse_dset<1,int>   (grp, "residue_id",  [&](size_t i, int x) {params[i].residue = x;});
-        traverse_dset<1,int>   (grp, "rama_map_id", [&](size_t i, int x) {params[i].rama_map_id = x;});
+        traverse_dset<1,int>   (grp, "residue_id",  [&](size_t i, int x) {
+                if(x<0 || x>=rama.n_elem) throw string("rama map residue_id outside its rama coordinate");
+                params[i].residue = x;});
+        traverse_dset<1,int>   (grp, "rama_map_id", [&](size_t i, int x) {
+                if(x<0 || x>=r.n_layer) throw string("rama map rama_map_id outside rama_pot");
+                params[i].rama_map_id = x;});
         traverse_dset<3,double>(grp, "rama_pot",    [&](size_t il, size_t ix, size_t iy, double x) {
                 raw_data[(il*r.nx + ix)*r.ny + iy] = x;});
-        r.fit_spline(raw_data.data());
+        set_param(vector<float>(raw_data.begin(), raw_data.end()));
+
+        // row nr of lambda weights map row nr
+        check_elem_width(lambda, 1);
+        if(lambda.n_elem != n_residue) throw string("RamaMap2 needs one lambda row per residue_id row");
     }
 
     virtual void compute_value(ComputeMode mode) override {
@@ -155,20 +175,28 @@ struct RamaMapPot2 : public PotentialNode
                     (r.v[0]+shift)*scale, (r.v[1]+shift)*scale);
 
 	    float energy = value*lambdac(0, nr);
-            if(pot) {*pot += energy; residue_potential[nr] = energy;}
+            if(pot) *pot += energy;
             rama_sens(0,p.residue) += dx * scale * lambdac(0, nr);
             rama_sens(1,p.residue) += dy * scale * lambdac(0, nr);
             lambda_sens(0,nr)      += value;
         }
     }
 
-#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param() const override {return rama_pot;}
+
+    // the spline is fitted to the parameters as get_param returns them, so that set_param(get_param()) leaves
+    // the node as it was
     virtual void set_param(const std::vector<float>& new_param) override {
-        auto& r = rama_map_data;
-        vector<double> raw_data(r.n_layer * r.nx * r.ny);
-        if(raw_data.size() != new_param.size()) throw string("wrong number of parameters");
-        for(size_t i=0u; i<size_t(r.n_layer * r.nx * r.ny); ++i) raw_data[i] = new_param[i];
-        r.fit_spline(raw_data.data());
+        if(new_param.size() != size_t(rama_map_data.n_layer*rama_map_data.nx*rama_map_data.ny))
+            throw string("wrong number of parameters");
+        rama_pot = new_param;
+        vector<double> raw_data(rama_pot.begin(), rama_pot.end());
+        rama_map_data.fit_spline(raw_data.data());
+    }
+
+#ifdef PARAM_DERIV
+    virtual std::vector<float> get_param_deriv() override {
+        throw string("the Ramachandran map parameter derivative is not implemented");
     }
 #endif
 };

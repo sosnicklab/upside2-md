@@ -775,52 +775,130 @@ User 10-19: "the fix only goes into upside 3. You can modify on current branch (
 'upside 3'. Later in the stage we should make it refuse to run ff2.1 (not yet ...). You can start the debug progress
 now, on this branch." Code concise, simple and logical, in master's style (never example 00's).
 
-**Resume here ("continue upside3 progress"; state at 2026-10-21 14:45, Mac with the scratchpad).** Working files
+**Resume here ("continue upside3 progress"; state at 2026-10-22 19:10, Mac with the scratchpad).** Working files
 (fixtures, baselines, build trees, reviewer outputs) are under the gitignored `scratchpad/upside3_audit/`.
-Running locally (detached, each ends by writing `DONE` to its results file; do not poll):
-* glpG seed replicates (item 3): `scratchpad/glpg_gate_20261021/replicates/` (`run.sh`, `results.txt`), on `obj/`.
-* 1rkl hybrid fixtures and D5's checks (item 4): `scratchpad/upside3_audit/fixtures_hybrid_w2/` (`run.sh`,
-  `results.txt`), on `d5_home`.
-* Two pass-2 reviewers (item 2), placement and config writers, in-session agents.
-1. [x] `obj/` holds A1-A101 (built 14:24; old binaries `obj/*.bak_20261021`); its regression equals `w36_hb` bitwise
-   (`w37_obj.npz`, 0 of 4073), the baseline now.
-2. [ ] Pass 2, placement and config writers, restarted 14:27 from `pass2/brief.md` (updated: ledger A1-A102,
-   baseline `w37_obj`, the report returned in the final message). Save each report as `pass2/<unit>/report.md`.
-   * Placement reported 15:10 (`pass2/placement/report.md`): D1 `house()`'s 1e-20 floor turns an exactly zero
-     column into a projection (frame wrong by pi at an exact 180-degree turn; `eig_house_reduced.patch`), D2
-     placement and alignment indices unchecked (`placement_bounds.patch`), D3 an uncentred `ref_geom` gives wrong
-     forces (`affine_ref_centred.patch`). To reproduce and apply one at a time after D5. D4, the rotamer-library
-     generators that do not build: delete or repair, the user's call.
-   * Config writers reported 15:40 (`pass2/writers/report.md`, 10 patches in `pass2/writers/patches/`), 15 defects,
-     14 in master. Engine-visible: 1 nail and group-nail anchors re-taken from `/input/pos` at every continuation
-     (2.0 A, 12.7 E_up off the continuous run); 2 the curvature changer's centre lost at continuation and unlogged
-     (needs an engine log and a restart write); 4 group numbers and 5 `--surface-included-residues` unchecked (ASan
-     heap overflows); 10 the random start chain's bonds shifted one atom (18.6 E_up strain). Writers: 3
-     `--fix-rotamer` chi2 period for ASP/PHE/TYR (53 of 68 states flip under equivalent names); 6 unrecorded chain
-     breaks bond chains silently (a 17.7 A C-N bond; the patch forces re-converting single-chain directories); 7
-     `--trans-cis` drops two options; 8 wall_type; 9 four advanced_config options dropped at exit 0; 11 MSE chi2; 12
-     `rotate_to_axis`; 13 `.chi` loses insertion codes (carry or refuse, the user's call); 14-15 dead or silent
-     restart helpers. Each to be reproduced before it is applied.
-   Every trained-node unit now has its second review. Then the P2 units, the closing criteria (upside3.md 2.2 item 5), and later refusing ff2.1.
-3. [ ] The glpG protocol validation (findings 8b). Measured 14:30 (`scratchpad/glpg_gate_20261021/compare/`,
-   `face_series.py`, the gate's own fractions per block): the first prep's lipid face reached 13% by 6.6's end
-   against 6% for the earlier prep's 6.6 continuation at the same step; production then heals it to 0.7% within
-   20,000 steps (1rkl healthy 0.4%), so the "36-42% of all belt sites" was the bundle interior. The two preps
-   share seeds 11/22 and step counts, but differ from the first minimisation (lipids up to 8.3 A) because A83
-   added 42 ALA/GLY rows to the side-chain node, so one run of each cannot separate seed noise from A83.
-   Replicates with seeds 12/23 and 13/24 running; then decide whether 60,000 steps of 6.6 is enough.
-4. [ ] Open fixes:
-   * D5, the MARTINI pair spline's end slope: applied in `src/` (not in `obj/`) and the stage writer, built in
-     `d5_home`. Reproducer `scratchpad/upside3_audit/d5_pair_ends/` passes (last 10 spacings 2.7e-2 to 1.5e-7
-     E_up/A; soft core 3.6e-5); fixtures_w6 regression unchanged (w38_d5, 0 of 4073). Waiting on the hybrid checks
-     above; then ledger A103 and install into `obj/` once the replicates are done. Hybrid configs prepared before
-     it lack `combined_energy_end_slopes` and are refused.
-   * D9 (design in `pass2/igraph/report.md`);
-   * BP D4 (rotamer log attribution);
-   * `HBondEnergy` input checks;
-   * the dead-code batch (C++, and `run_upside` `read_hb`/`read_constant_hb`/`compute_topology`);
-   * the hybrid fixtures, regenerated after A83 (running, with D5).
-5. Waiting on the user: `membranelateral_potential` as an energy or as an external force (item 4); `upside3.md` 7.
+Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 line 3): the Peng arms and the glpG chain.
+1. [x] `obj/` holds every fix to A231 (earlier binaries `obj/*.bak_a230`, `*.bak_a225`, `*.bak_a220`, `*.bak_a211`, `*.bak_a204`,
+   `*.bak_a196`, `*.bak_a182`, `*.bak_a174`, `*.bak_a163`, `*.bak_a158`, `*.bak_a155`, `*.bak_a149`, `*.bak_a148`,
+   `*.bak_a142`, `*.bak_a138`, `*.bak_a125`, `*.bak_a123`, `*.bak_a121`, `*.bak_a110`, `*.bak_a101`, `*.bak_20261021`).
+   Baselines `w56_obj.npz` on `fixtures_w21` (the writers' current set: fixtures_w20 plus A231's `sequence_id`; w55 on
+   fixtures_w20 was fixtures_w19 less A227's dead items, bitwise w54; older sets are refused in part: pre-A130 anchors, pre-A172 channel configs, pre-A222 pulling configs)
+   and `h53_obj.npz` on `fixtures_hybrid_w6` (fixtures_hybrid_w4 less A227's 13 items plus A231's 4 datasets; h53 is h52 moved at float32
+   rounding by A226's fast-math code generation. The w4 hybrids were regenerated 10-22 through the full prep with
+   A189-A192: minimisers run their budgets; KE/1.5kT 6.6 1.008, burn-in 1.000, production 1.007; peptide C-N mean
+   1.319, max 1.82 A; CA Rg 12.3-13.2 A; PO4 hold end 102150).
+2. [x] Pass 2: every unit has both reviews (`pass2/<unit>/report.md`, all 18 P1 and 7 P2 units). Fixed from pass 2:
+   placement and writers A108-A121, coordinate nodes A127-A132, engine graph A133-A138, dry-MARTINI engine (P2-01, -03,
+   -04) A139-A142, driver/REMD/thermostat (P1-10) A143-A149, local backbone (P1-08) A150-A155 (D3 decided for the user,
+   item 5), Monte Carlo (P1-11) A156-A158, hybrid coupling (P2-02) A159-A163, membrane and surface (P1-09) A164-A173
+   (its M2, M3 left for the membrane retraining: findings A173), shipped parameters (P1-18) A174 (its D1 and D7 for
+   the user, item 5), I/O and C API (P1-12) A175-A182, hybrid preparation (P2-05) A183-A188 (its D1, D6, D8 and the
+   membrane-thickness definition decided, item 6), ConDiv trainer (P2-07) A193-A196 (D1 decided by the user: the SI's
+   SARW), parameter glue (P1-14) A197-A199 and A204 (D1 and D6 decided for the user 10-22: torch replaced by
+   closed-form numpy gradients, so a process holds one OpenMP runtime; the 86 dead `rotscalar` coordinates removed,
+   which stops older checkpoints resuming in a newer tree, remote_jobs.md 0b), hybrid analysis (P2-06) A200-A203,
+   build (P1-17) A205-A213, analysis (P1-15) A214-A220, examples (P1-16) A221-A225.
+2a. [x] The closing criteria (upside3.md 2.2 item 5) on the final engine, met 10-22 (`scratchpad/upside3_audit/closing/`):
+   * invariance: every test passes (equipartition on chig and on the hybrid production state, pivot MC, REMD,
+     thermostat v / mv fast / mv slow; `closing/inv.summary`).
+   * node_fd: all 30 configs; every parameter derivative exact or "not implemented" (A29-A31); every flagged
+     direction, all in the rotamer node, line-integrates to noise (`closing/{fd,li,li2}.summary`, `gfix/li_75.log`),
+     the pair-table ones once `tests/line_integral.py` follows node_fd's tied direction (A230).
+   * sanitizers: an ASan + UBSan build, `tests/regress.py dump` on all 30 configs through the library and the binary:
+     every config exit 0, no report, 4260 arrays (`closing/san.summary`; the preload goes to Python.app, whose
+     `python3.11` launcher drops DYLD_*).
+   * registry (`registry_20261022.md`, on fixtures_w20 and fixtures_hybrid_w5): 44 of 50 node types matched; the 6
+     written-but-never-read rows hold only items read outside the engine's construction, each named in
+     `pass2/registry/report.md`; its fixes A226-A229.
+   ff2.1 stays usable (user 10-22: "keep ff2.1 useable for now"); refusing it waits.
+2b. [ ] Validation of the debug on midway2 (user 10-22: "fix D9 with (a). submit Peng 16 validation protein with ff2.1
+   and glpG hybrid simulation with ff2.1, on midway2, as a validation for our entire debug"):
+   1. [x] D9 by design (a), A231: a required per-element `sequence_id`, the exclusion key of every node that
+      excludes by sequence distance, written by every writer. `obj/` to A231 (`*.bak_a230`); baselines w56 on
+      fixtures_w21, h53 on fixtures_hybrid_w6 (bitwise); registry 44 of 50 matched as before.
+   2. [x] An Upside 3 tree on the cluster, `/beagle3/trsosnic/yinhan/upside3` (compute nodes of both clusters see
+      /beagle3). It is separate from the shared deployment because running campaigns read that tree for a week (the
+      released-ff2.1 Peng arms are this validation's control) and CLAUDE.md forbids deploying under them. Code
+      rsynced from the Mac working tree; built on the midway2 login node (GCC 10.1, the cluster CMake file of
+      A205-A206 checked there); its own `.venv` from the shared `pyrt/` with mdtraj, which the hybrid prep's DSSP
+      needs and the shared venv lacks; `env_upside3.sh`.
+   3. [ ] (submitted 22:26 10-22, ~a week) Peng: the 16 proteins x {native, denovo}, the benchmark's own protocol (`ff3_benchmark/bench_run.py`:
+      14-replica REMD on Table S2's ladders, dt 0.009, frame 100), ff_2.1, in
+      `/beagle3/trsosnic/yinhan/upside3_validation/peng/`; compared with the released-ff2.1 arms on the pre-audit
+      binary (`ff3_benchmark/runs/<prot>_<kind>_ff_2.1/`) and Peng's FF2 (Table S2, Fig S4).
+   4. [ ] (submitted 22:58 10-22 through `example/16.MARTINI/run.py`) glpG-RKRK-79HIS hybrid with ff2.1: the repo's job
+      script, rewritten for the Upside 3 core (A232; user 10-22: "the job scripts should also be updated to support
+      it"): the preparation as a job, then 4 REMD blocks of 48 replicas on T 0.70-0.90, each stopped at
+      `--time-limit` and queueing the next. `run_sim_1afo_full.sh` sources the Upside 3 tree too (A233). The campaign's
+      `run_remd.py` stays as it is under the running campaigns (Upside 2; it also carries a NaN-rollback guard).
+   Next after it: refusing ff2.1 (the step `upside3.md` names after the audit), then the open items below.
+   Open from the build review (`pass2/build/report.md`): the cluster binaries set flush-to-zero and
+   denormals-are-zero in every process that loads the library (U1, `set_fast_math` found by `nm` in both trees),
+   measured at the first midway2 build (remote_jobs.md 0b); `sse2neon.h` is an unpinned Homebrew header whose
+   defaults set the Mac's `_mm_rcp_ps` accuracy (U2). Its B9 decided for the user 10-22: `.devcontainer/` deleted
+   (A213); a container for Upside 3 is written when there is a runtime to test it on.
+   Open, performance only: the g-JF round evaluates the forces once more than it needs (MARTINI review U4, about
+   20% of a hybrid's cost); skipping it needs to know that nothing moved the coordinates since the last evaluation
+   (barostat, rigid fit, MC, exchange), so it waits until correctness work is done. U6, a hot rigid protein in 6.6,
+   is a transient.
+3. [x] The glpG protocol validation (findings 8b): the rigid-stage gate failed one healthy prep in three, and every
+   prep's flexible production closes the belt ends, so the gate measures production's steps 15,000-20,000 (A126,
+   user 10-21: option (a)); `run.py` starts REMD from the gated production's last frame. Not yet rerun end to end
+   through the workflow (the function is tested on recorded productions, `glpg_gate_20261021/gate_a/test.log`).
+4. [ ] Open fixes. Done 10-21 and in the ledger: D5 as A103 (installed in `obj/` 16:18 with A104-A110; A101's
+   binaries kept as `obj/*.bak_a101`), the four decisions below as A104-A107, placement D1-D3 as A108-A110, writers
+   items 1-5, 7-12 and 15 as A111-A121 (6 and 13 are A106-A107), the `HBondEnergy` input checks as A122, BP D4 as A123, the dead-code batch as A124, the reader preconditions as
+   A125 (all in `obj/`). The 1rkl hybrid fixtures are regenerated (`scratchpad/upside3_audit/
+   fixtures_hybrid_w2/1rkl.stage_7.{0,1}.up`); `tests/regress.py` now runs a hybrid's seeded REMD without pivot moves
+   (the engine refuses pivot moves with the PO4 hold's fixed atoms). Fixture baseline `fixtures_w14`. Left:
+   * D9 (design in `pass2/igraph/report.md`): the reviewer's sketch reads an optional `sequence_id`, falling back to
+     the ids, which the clean-slate rule discourages; a required dataset means regenerating every config. Only
+     chain ends in contact are affected. Kept for a session with the user.
+5. Decided 10-21 (user: "make decisions for me, do whatever test you need to"):
+   1. `membranelateral_potential` is deleted (node, `--membrane-lateral-potential`, the `run_upside` passthrough,
+      `main.cpp`'s z-centering list, index oracle entry, up.md, example 08's `2.lateral_pressure.run.py`,
+      `lateral.dat`, its readme lines). It has no energy to report: its forces do not sum to zero, which any
+      energy of the xy-uniform membrane must (`scratchpad/upside3_audit/lateral/net_force.py`, `.log`: 1qhj net
+      force up to 0.096 E_up/A of 1.4-2.8 total, z torque up to 1.27 E_up, closed rigid loop work up to 0.11 E_up;
+      1rkl 0.017, 0.15, 0.03). Each side's push is spread over its CBs at their own heights, so per z-slice the
+      sides do not cancel, where a pressure P(z) on a closed outline gives zero net force. So it is not physical,
+      and logged energy, pivot MC and replica exchange cannot see it. Only example 08 uses it. A lateral-pressure
+      term, if wanted, is a new energy, the integral of P(z) A(z) dz over the protein's cross-section (upside3.md
+      proposal).
+   2. The rotamer-library generators (`compute_rotamer_centers.cpp`, `compute_rotamer_pos.cpp`,
+      `generate_from_rotamer.{h,cpp}`, their CMake targets) are deleted: nothing builds or calls them, no Upside 3
+      plan rebuilds libraries from Dunbrack, and master keeps them as the libraries' provenance (noted in up.md).
+   3. Chain breaks: writers patch 6 applied as written. Every shipped workflow (tests/fixtures.py, examples 03-16)
+      converts with `--record-chain-breaks` just before configuring, so only a reused single-chain input directory
+      is affected, and it now fails loudly; re-run the converter.
+   4. Insertion codes are refused by `PDB_to_initial_structure.py` with a request to renumber: every consumer of
+      the PDB numbering (HDX peptide ranges, hybrid `bb_resseq`, plot labels, `martini_hdx_project`) is
+      integer-only, and none of the project's 46 PDBs has one.
+   Still with the user: `upside3.md` 7.
+   6. Decided by the user 10-22 09:05 (all four as recommended):
+      * the side-chain/environment table is rebuilt: each rotamer state's MARTINI beads from ideal-geometry heavy
+        atoms at its library (chi1, chi2) rows, chi3/chi4 sampled, mapped by martinize's martini22 centres, the table
+        averaged over those conformers (parameter review D1, prep review D1, confirmed against 1146 crystal side
+        chains: the old table put the beads on Upside's trained rotamer point and vector);
+      * its azimuthal average at the simulation temperature (0.8647 T_up), not 25 T_up (prep review U1);
+      * dead content deleted: `parameters/ff_2.0/`, `parameters/packing/`, `dryMARTINI/DDM.pdb`, and the unread
+        martini.h5 datasets (`rotamer_probability_fixed`, `type_charge`, `type_order`, `@coulomb_k_eup`) with the
+        prep's requirement of the first;
+      * the ion count uses the P-P thickness, the prep's fallback measuring it from the PO4 beads.
+      With them (user 10-22 09:20: "Use DSSP"), the backbone bead types by DSSP through martinize's
+      ssClassification (prep D8); it changes helical proteins too (glpG 84 of 210 residues: the old detector merged
+      helices across kinks). Done: A189 (dead content), A190 (P-P ion count), A191 (DSSP types), A192 (the table rebuilt
+      and installed 10:45, `martini.h5` md5 7496dd90; old one `martini.h5.bak_pre_martinize_beads_20261022`).
+      The hybrid fixtures re-prepared end to end on them (`fixtures_hybrid_w4/`, 10:50-11:55): healthy, the
+      hybrid baseline h52 (item 1). Then `martini.h5` is rebuilt (old one
+      backed up, overwritten), the hybrid fixtures re-prepared end to end, and the cluster's live hybrid files
+      re-prepared before Upside 3 is deployed there (remote_jobs.md 0b).
+   5. `--secstr-bias` (local backbone pass 2 D3; user 10-22: "make decision for me"): its windows were non-periodic
+      in phi, stepping by the full bias across +-180. Decided: one phi window for both basins, phi < 0 continued past
+      +-180 to +120 (the empty gap between beta and alpha_L, so the beta region, which crosses +-180, is biased
+      whole), and the psi windows on the same form; each window is the original pair of 10 degree edge sigmoids
+      summed over its periodic images, so it is periodic and smooth. A cosine-form window was rejected: on a 120
+      degree gap with 10 degree edges it leaves 3.5% of the bias on alpha_L (A155).
 6. Git is the user's. The commit should include `tests/` and `example/15.SpatialTransformation/calc_rmsd.py`.
 
 **Revised decisions** (CLAUDE.md Development Rules reworded to match, 10-19):
@@ -1144,7 +1222,8 @@ budget that ff2.1 has already had (findings 1.23). So:
     lipids 10% over their equilibrium area, glpG with an unhealed gap at its belt (Phase 24).
   * Fixed in the repo 10-20 (A70-A76): `parameters/ff_2.1/martini.h5` rebuilt (md5 `cc90a933...`; the old
     `2e612261...` kept as `martini.h5.bak_20261020`; ff_3.0 configs use it too). Every prepared hybrid `.up` must be
-    re-prepared; the patched engine refuses the old table. The cluster trees running the campaign are unchanged.
+    re-prepared; the patched engine refuses the old table, and since A103 (10-21) also any stage file without
+    `combined_energy_end_slopes`. The cluster trees running the campaign are unchanged.
 * **Hybrid HDX lipid accessibility made before 2026-10-20 is shifted by one residue** (findings 3.14 A61, fixed 10-20).
   glpG, numbered from 1, gave each amide its N-terminal neighbour's accessibility. To regenerate (on the cluster, by
   the campaign's drivers):

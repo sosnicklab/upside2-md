@@ -229,7 +229,7 @@ namespace {
 
         static void param_deriv(Vec<n_param> &d_param, const float* p,
                 const Vec<n_dim1> &x1, const Vec<n_dim2> &x2) {
-            for(int np: range(n_param)) d_param[np] = -1.f;
+            throw string("the protein_hbond parameter derivative is not implemented");
         }
 
         static bool is_compatible(const float* p1, const float* p2) {return true;};
@@ -471,7 +471,12 @@ struct HBondEnergy : public HBondCounter
         dPhi(n_res),
         dPsi(n_res)
     {
-        assert(n_donor+n_acceptor==n_virtual);
+        if(n_donor+n_acceptor != n_virtual)
+            throw string("hbond_energy donors and acceptors must be the rows of protein_hbond");
+        if(n_res != rama.n_elem)
+            throw string("hbond_energy rama_resid must have one row per rama_coord row");
+        traverse_dset<1, int>(grp, "rama_resid", [&](size_t i, int x) {
+                if(x != int(i)) throw string("hbond_energy rama_resid must be the rama_coord rows in order");});
         if(n_param < 12 || (n_param-12)%3)
             throw string("hbond_energy parameters must hold 12 values plus 3 per residue class");
         traverse_dset<1, float> (grp, "parameters",     [&](size_t i, float x) {params[i] = x;});
@@ -482,8 +487,13 @@ struct HBondEnergy : public HBondCounter
                     if(x<0 || x>=n_class) throw string("hbond_energy residue_class out of range");
                     res_class[i] = x;});
         }
-        traverse_dset<1, int>   (grp, "donor_resid",    [&](size_t i, int x)   {donor_resid[i] = x;    resid_donor.insert(pair<int, int>(x, (int)i));  });
-        traverse_dset<1, int>   (grp, "acceptor_resid", [&](size_t i, int x)   {acceptor_resid[i] = x; resid_acceptor.insert(pair<int, int>(x, (int)i));});
+        // a donor's N-H closes the peptide before its residue, an acceptor's C=O the one after it
+        traverse_dset<1, int>   (grp, "donor_resid",    [&](size_t i, int x)   {
+                if(x<1 || x>=n_res) throw string("hbond_energy donor_resid outside 1..n_res-1");
+                donor_resid[i] = x;    resid_donor.insert(pair<int, int>(x, (int)i));  });
+        traverse_dset<1, int>   (grp, "acceptor_resid", [&](size_t i, int x)   {
+                if(x<0 || x>=n_res-1) throw string("hbond_energy acceptor_resid outside 0..n_res-2");
+                acceptor_resid[i] = x; resid_acceptor.insert(pair<int, int>(x, (int)i));});
         E_alpha         = params[0];
         E_beta          = params[1];
         E_other         = params[2];

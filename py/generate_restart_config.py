@@ -37,26 +37,29 @@ def generate_config_for_restart(up_fname, up_fname_for_next_round, frame=-1):
             if 'mom' in in_H5.root.output:
                 out_H5.create_array(out_H5.root.input, 'mom', obj=in_H5.root.output.mom[frame, 0][:,:,None])
                 out_H5.root.input.mom._v_attrs.round = in_H5.root.output.round[frame]
+                if 'replica_index' in in_H5.root.output:
+                    # the replica the system held at the frame, from which replica exchange continues
+                    out_H5.root.input.mom._v_attrs.replica_index = in_H5.root.output.replica_index[frame, 0]
+            if 'box' in in_H5.root.output:
+                # the barostat's box at the frame, in every node that carries one
+                box = [float(v) for v in in_H5.root.output.box[frame]]
+                for node in out_H5.root.input.potential:
+                    if all(k in node._v_attrs for k in ('x_len', 'y_len', 'z_len')):
+                        node._v_attrs.x_len, node._v_attrs.y_len, node._v_attrs.z_len = box
+            if 'curvature_center' in in_H5.root.output:
+                # --curvature-changer-interval moves the centre of curvature; continue from the frame's
+                out_H5.root.input.potential.Const3D_curvature_center.value[:] = in_H5.root.output.curvature_center[frame]
             if 'tip_pos' in in_H5.root.output:
-                # the tip is at start_pos + velocities*time and its clock restarts at time_initial,
-                # so keep the tip's start and resume its clock
-                moving        = out_H5.root.input.potential.MovingConst3D
-                time_estimate = in_H5.root.output.time_estimate[frame][0]
-                start_pos     = in_H5.root.output.tip_pos[frame] - moving.velocities[:]*time_estimate
-                if 'start_pos' in moving:
-                    moving.start_pos._f_remove()
-                out_H5.create_array(moving, 'start_pos', obj=start_pos)
-                moving._v_attrs.initialized_by_coord = 0
-                moving._v_attrs.time_initial         = time_estimate
+                # the tip is at start_pos + velocities*(time_initial + time_step*steps): resume its step count
+                out_H5.root.input.potential.MovingConst3D._v_attrs.step_initial = in_H5.root.output.tip_step[frame, 0]
 
 def main():
+    if len(sys.argv) not in (3, 4):
+        raise SystemExit('usage: generate_restart_config.py CONFIG CONFIG_FOR_NEXT_ROUND [FRAME]')
     up_fname                = sys.argv[1]
     up_fname_for_next_round = sys.argv[2]
-    if len(sys.argv)==3:
-        generate_config_for_restart(up_fname, up_fname_for_next_round)
-    elif len(sys.argv)==4:
-        frame = int(sys.argv[3])
-        generate_config_for_restart(up_fname, up_fname_for_next_round, frame)
+    frame = int(sys.argv[3]) if len(sys.argv)==4 else -1
+    generate_config_for_restart(up_fname, up_fname_for_next_round, frame)
 
 if __name__ == '__main__':
     main()

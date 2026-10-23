@@ -1,6 +1,6 @@
 # Upside 3
 
-**Status: the engine audit (goal 1) is under way, plan.md Phase 24, ledger A1-A102 fixed and verified (`findings.md` 3.14); the other goals are proposals.** The user set five goals on 2026-10-19 (section 1). The protein-model work starts
+**Status: the engine audit (goal 1) has met its closing criteria (2.2 item 5; plan.md Phase 24 item 2a, 2026-10-22), ledger A1-A233 fixed and verified (`findings.md` 3.14); refusing ff2.1 is next; the other goals are proposals.** The user set five goals on 2026-10-19 (section 1). The protein-model work starts
 after the side-chain verdict, deterministic (no-BP) against probabilistic (BP) side chains at their converged epochs
 (plan.md Phase 21 item 7, findings 1.21), and is built on the model that wins. The measurement is in (10-20, findings
 1.21): at both fixed points BP folds 0.353 against no-BP's 0.241 on 89 held-out mdCATH domains (p 1e-5); the choice

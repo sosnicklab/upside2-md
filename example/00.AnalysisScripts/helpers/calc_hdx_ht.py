@@ -147,7 +147,9 @@ def residue_dg_profile_with_error(weights, temp_scale, plot_mode=False):
     dg_limit = 0.001987 * temp_scale * np.log(pf_bound / (1.0 - pf_bound))
 
     dG_mean = np.zeros(n_res)
-    dG_err = np.zeros(n_res)
+    # The error is the jackknife over replicas; where it is not computed (one replica, a sentinel) it is unknown,
+    # not zero.
+    dG_err = np.full(n_res, np.nan)
     censored = np.zeros(n_res, dtype=bool)
 
     for residue_index in range(n_res):
@@ -349,9 +351,9 @@ for t in T:
     Hb_reweight.append(np.sum(Hb_flatten * weights))
 
     hist, bins = np.histogram(Hb_flatten, 20, weights=weights)
-    hist = np.clip(hist, 1e-12, None)
     bc = (bins[1:] + bins[:-1]) * 0.5
-    g = -0.001987 * (t / 0.85 * 298.0) * np.log(hist)
+    with np.errstate(divide='ignore'):
+        g = -0.001987 * (t / 0.85 * 298.0) * np.log(hist)   # a bin no frame reached is +inf, a gap in the plot
     g -= np.min(g)
     dG_hbond.append(g)
 

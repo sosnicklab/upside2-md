@@ -3,7 +3,7 @@ This example shows how to perform pulling dynamics for membrane proteins.
 Under this folder, just run the following commands to generate a trajectory:
 
     source ../../source.sh
-    python run.py
+    python 0.run.py
 
 then run
 
@@ -16,6 +16,3 @@ There are two control files (1qhj_AFM.dat and 1qhj_AFM_auto_init.dat) for
 the pulling simulation. The difference between them is whether the initial 
 tip_pos is specified. If not (such as 1qhj_AFM_auto_init.dat), the pulled 
 atom position will be set to the initial tip_pos.
-
-
-TODO:

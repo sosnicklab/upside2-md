@@ -96,6 +96,9 @@ else:
 # legacy_T_range = np.array([0.84, 0.85, 0.92, 0.99, 1.1], dtype=float)
 
 T_search_range = (0.7, 1.2)
+# peptides starting at or before this PDB residue number are left out of the temperature fit (checkme: a
+# disordered expression tag); 0 fits every peptide
+T_fit_exclude_through = int(os.environ.get('T_fit_exclude_through', '0'))
 
 sim_T_data = np.array([0.7, 0.71, 0.73, 0.74, 0.76, 0.77, 0.79, 0.8, 0.82, 0.84, 0.85, 0.87, 0.89, 0.9, 0.92, 0.94, 0.96, 0.98, 1, 1.02, 1.04, 1.06, 1.08, 1.2])
 real_K_data = np.array([245.411765, 248.917647, 255.929412, 259.435294, 266.447059, 269.952941, 276.964706, 280.470588, 287.482353, 294.494118, 298, 305.011765, 312.023529, 315.529412, 322.541176, 329.552941, 336.564706, 343.576471, 350.588235, 357.6, 364.611765, 371.623529, 378.635294, 420.705882])
@@ -1076,7 +1079,7 @@ def calculate_total_error(T_target):
     D_norm_peps = hdx_data['D_norm_peps']
 
     for p in range(len(exp_pep_labels)):
-        if exp_pep_starts[p] <= 11:
+        if exp_pep_starts[p] <= T_fit_exclude_through:
             continue
 
         peptide_exp_data = exp_df[(exp_df['Start'] == exp_pep_starts[p]) & (exp_df['End'] == exp_pep_ends[p])]
@@ -1105,7 +1108,10 @@ def calculate_total_error(T_target):
 
 
 if not exp_df.empty and len(exp_pep_labels) > 0:
-    print('optimizing T (ignoring res 1-11)...')
+    if not np.any(np.asarray(exp_pep_starts) > T_fit_exclude_through):
+        raise SystemExit('every peptide starts at or before residue %d (T_fit_exclude_through): no data for the temperature fit'
+                         % T_fit_exclude_through)
+    print('optimizing T on the peptides starting after residue %d...' % T_fit_exclude_through)
 
     opt_result = minimize_scalar(
         calculate_total_error,

@@ -221,7 +221,7 @@ struct EnvironmentCoverage : public CoordNode {
         // accumulate for each cb
         for(int ne=0; ne<igraph.n_edge; ++ne) {
             int indices1 = igraph.edge_indices1[ne];
-            int id2      = igraph.edge_id2[ne];
+            int id2      = igraph.id2[igraph.edge_indices2[ne]];
             int type2    = aa_types[id2];
             output(0, indices1*n_aa+type2) += igraph.edge_value[ne];
         }
@@ -232,7 +232,7 @@ struct EnvironmentCoverage : public CoordNode {
 
         for(int ne: range(igraph.n_edge)) {
             int indices1 = igraph.edge_indices1[ne];
-            int id2      = igraph.edge_id2[ne];
+            int id2      = igraph.id2[igraph.edge_indices2[ne]];
             int type2    = aa_types[id2];
             igraph.edge_sensitivity[ne] = sens(0, indices1*n_aa+type2);
         }

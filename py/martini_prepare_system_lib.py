@@ -341,127 +341,25 @@ def _atom_xyz(atom):
     return np.array([float(atom["x"]), float(atom["y"]), float(atom["z"])], dtype=np.float64)
 
 
-def _dihedral_degrees(p0, p1, p2, p3):
-    b0 = p0 - p1
-    b1 = p2 - p1
-    b2 = p3 - p2
-    norm_b1 = np.linalg.norm(b1)
-    if norm_b1 < 1.0e-8:
-        return None
-    b1 = b1 / norm_b1
-    v = b0 - np.dot(b0, b1) * b1
-    w = b2 - np.dot(b2, b1) * b1
-    norm_v = np.linalg.norm(v)
-    norm_w = np.linalg.norm(w)
-    if norm_v < 1.0e-8 or norm_w < 1.0e-8:
-        return None
-    x = np.dot(v, w)
-    y = np.dot(np.cross(b1, v), w)
-    return float(np.degrees(np.arctan2(y, x)))
-
-
-def _same_chain_adjacent(prev_key, curr_key):
-    return curr_key[0] == prev_key[0] and curr_key[1] == prev_key[1] + 1
-
-
-def _raw_secondary_from_geometry(residue_order, residue_groups):
-    raw = {key: "C" for key in residue_order}
-    ca_pos = {key: _atom_xyz(residue_groups[key]["CA"]) for key in residue_order}
-    raw_list = ["C"] * len(residue_order)
-
-    for i, key in enumerate(residue_order):
-        helix_like = False
-        if 0 < i < len(residue_order) - 1:
-            prev_key = residue_order[i - 1]
-            next_key = residue_order[i + 1]
-            if _same_chain_adjacent(prev_key, key) and _same_chain_adjacent(key, next_key):
-                prev_group = residue_groups[prev_key]
-                curr_group = residue_groups[key]
-                next_group = residue_groups[next_key]
-                phi = _dihedral_degrees(
-                    _atom_xyz(prev_group["C"]),
-                    _atom_xyz(curr_group["N"]),
-                    _atom_xyz(curr_group["CA"]),
-                    _atom_xyz(curr_group["C"]),
-                )
-                psi = _dihedral_degrees(
-                    _atom_xyz(curr_group["N"]),
-                    _atom_xyz(curr_group["CA"]),
-                    _atom_xyz(curr_group["C"]),
-                    _atom_xyz(next_group["N"]),
-                )
-                if phi is not None and psi is not None and -100.0 <= phi <= -30.0 and -85.0 <= psi <= 15.0:
-                    helix_like = True
-
-        for offset in (-4, 4):
-            j = i + offset
-            if helix_like or j < 0 or j >= len(residue_order):
-                continue
-            other_key = residue_order[j]
-            if other_key[0] != key[0]:
-                continue
-            dist = float(np.linalg.norm(ca_pos[key] - ca_pos[other_key]))
-            if 4.8 <= dist <= 6.8:
-                helix_like = True
-
-        if helix_like:
-            raw_list[i] = "H"
-
-    for i in range(1, len(raw_list) - 1):
-        if (
-            raw_list[i] == "C"
-            and raw_list[i - 1] == "H"
-            and raw_list[i + 1] == "H"
-            and residue_order[i - 1][0] == residue_order[i][0] == residue_order[i + 1][0]
-        ):
-            raw_list[i] = "H"
-
-    i = 0
-    while i < len(raw_list):
-        if raw_list[i] != "H":
-            i += 1
-            continue
-        j = i + 1
-        while j < len(raw_list) and raw_list[j] == "H" and residue_order[j][0] == residue_order[i][0]:
-            j += 1
-        if j - i < 4:
-            for k in range(i, j):
-                raw_list[k] = "C"
-        i = j
-
-    for key, ss in zip(residue_order, raw_list):
-        raw[key] = ss
-    return raw
-
-
-def _apply_martinize_helix_labels(residue_order, raw_secondary):
-    labels = {key: raw_secondary.get(key, "C") for key in residue_order}
-    i = 0
-    while i < len(residue_order):
-        key = residue_order[i]
-        if raw_secondary.get(key, "C") != "H":
-            i += 1
-            continue
-        j = i + 1
-        while (
-            j < len(residue_order)
-            and residue_order[j][0] == residue_order[i][0]
-            and raw_secondary.get(residue_order[j], "C") == "H"
-        ):
-            j += 1
-        run_len = j - i
-        if run_len < 4:
-            for k in range(i, j):
-                labels[residue_order[k]] = "C"
-        else:
-            for offset, k in enumerate(range(i, j)):
-                if offset < min(4, run_len):
-                    labels[residue_order[k]] = "1"
-                elif run_len - offset <= 4:
-                    labels[residue_order[k]] = "2"
-                else:
-                    labels[residue_order[k]] = "H"
-        i = j
+def _martinize_secondary_structure(residue_order, residue_groups):
+    """Each residue's martinize secondary-structure class, as `martinize -dssp` assigns it: DSSP (mdtraj's
+    implementation) on each chain's backbone, translated and pattern-typed by martinize's own ssClassification
+    (helix starts and ends, strands E, turns, bends, coil)."""
+    import mdtraj
+    from martinize import ssClassification
+    labels = {}
+    for chain in dict.fromkeys(key[0] for key in residue_order):
+        keys = [key for key in residue_order if key[0] == chain]
+        top = mdtraj.Topology()
+        top_chain = top.add_chain()
+        xyz = []
+        for key in keys:
+            residue = top.add_residue(key[3], top_chain, resSeq=key[1])
+            for name in BB_COMPONENT_NAMES:
+                top.add_atom(name, mdtraj.element.get_by_symbol(name[0]), residue)
+                xyz.append(0.1 * _atom_xyz(residue_groups[key][name]))   # A to nm
+        dssp = mdtraj.compute_dssp(mdtraj.Trajectory(np.array(xyz)[None], top), simplified=False)[0]
+        labels.update(zip(keys, ssClassification("".join(dssp), "dssp")[1]))
     return labels
 
 
@@ -475,23 +373,19 @@ def _martinize_bb_type_for_residue(resname, secondary_structure):
 
 def map_backbone_types_from_structure(backbone_atoms):
     residue_order, residue_groups = _complete_backbone_residue_groups(backbone_atoms)
-    raw_secondary = _raw_secondary_from_geometry(residue_order, residue_groups)
-    secondary_by_residue = _apply_martinize_helix_labels(residue_order, raw_secondary)
+    secondary_by_residue = _martinize_secondary_structure(residue_order, residue_groups)
     type_by_residue = {}
     source_by_residue = {}
     for key in residue_order:
-        ss = secondary_by_residue[key]
-        type_by_residue[key] = _martinize_bb_type_for_residue(key[3], ss)
-        source_by_residue[key] = "structure_geometry" if ss in {"H", "1", "2", "3"} else "coil_geometry_fallback"
+        type_by_residue[key] = _martinize_bb_type_for_residue(key[3], secondary_by_residue[key])
+        source_by_residue[key] = "dssp"
 
     if residue_order:
         terminal_overrides = [(residue_order[0], "Qd"), (residue_order[-1], "Qa")]
         for i in range(1, len(residue_order)):
             prev = residue_order[i - 1]
             curr = residue_order[i]
-            chain_break = curr[0] != prev[0]
-            seq_break = curr[1] != (prev[1] + 1)
-            if chain_break or seq_break:
+            if curr[0] != prev[0]:
                 terminal_overrides.append((curr, "Qd"))
                 terminal_overrides.append((prev, "Qa"))
         for key, bb_type in terminal_overrides:
@@ -863,6 +757,8 @@ def derive_chain_break_metadata(bb_entries):
     if not bb_entries:
         return np.array([], dtype=np.int32), np.array([], dtype=np.int32)
 
+    # Each chain is one segment: a numbering gap inside a chain is refused, since its two ends are no termini and
+    # the missing residues belong in the model
     chain_first_residue = []
     chain_counts = [1]
     prev_chain = str(bb_entries[0].get("bb_chain", "")).strip() or " "
@@ -870,14 +766,12 @@ def derive_chain_break_metadata(bb_entries):
     for residue_index, entry in enumerate(bb_entries[1:], start=1):
         chain = str(entry.get("bb_chain", "")).strip() or " "
         resseq = int(entry.get("bb_resseq", residue_index))
-        chain_break = chain != prev_chain
-        seq_break = (not chain_break) and resseq != prev_resseq + 1
-        if chain_break or seq_break:
+        if chain != prev_chain:
             chain_first_residue.append(residue_index)
-            if chain_break:
-                chain_counts.append(1)
-            else:
-                chain_counts[-1] += 1
+            chain_counts.append(1)
+        elif resseq != prev_resseq + 1:
+            raise ValueError(f"chain {chain} skips from residue {prev_resseq} to {resseq}; model the missing "
+                             "residues before preparing a hybrid")
         prev_chain = chain
         prev_resseq = resseq
     return np.asarray(chain_first_residue, dtype=np.int32), np.asarray(chain_counts, dtype=np.int32)
@@ -898,7 +792,6 @@ def write_hybrid_mapping_h5(
 
         ctrl = inp.create_group("hybrid_control")
         ctrl.attrs["activation_stage"] = b"minimization"
-        ctrl.attrs["preprod_protein_mode"] = b"rigid_body"
 
         bb_grp = inp.create_group("hybrid_bb_map")
         bb_grp.create_dataset("bb_residue_index", data=np.array([b["bb_residue_index"] for b in bb_entries], dtype=np.int32))
@@ -1092,15 +985,21 @@ def _group_atoms_into_molecules(residue_ids, residue_names, atom_names, chain_id
     """Group atoms into molecules: one per protein chain, one per residue for everything else."""
     molecules = []
     current = None
+    protein_chains = {}
     for i, (resid, resname, atom_name) in enumerate(zip(residue_ids, residue_names, atom_names)):
         if resname in PROTEIN_RESIDUE_NAMES:
-            # PDB chain id first: all protein atoms share the segid PROA.
+            # PDB chain id first: all protein atoms share the segid PROA. The BB proxies follow every chain's
+            # N/CA/C/O, so a chain is one molecule wherever its atoms stand.
             key = ('PROTEIN', chain_ids[i] or seg_ids[i])
+            if key not in protein_chains:
+                protein_chains[key] = (key, [], [])
+                molecules.append(protein_chains[key])
+            current = protein_chains[key]
         else:
             key = (resname, resid)
-        if current is None or key != current[0]:
-            current = (key, [], [])
-            molecules.append(current)
+            if current is None or key != current[0]:
+                current = (key, [], [])
+                molecules.append(current)
         current[1].append(atom_name)
         current[2].append(i)
     molecules = [(key[0], names, indices) for key, names, indices in molecules]
@@ -1344,11 +1243,15 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
         residue_ids, residue_names, atom_names, chain_ids, seg_ids, n_atoms
     )
 
-    # Centre on the mean of all atoms and wrap into [-L/2, L/2). Every array that stores coordinates
-    # (positions and restraint references alike) uses this frame.
-    half_box = np.array([x_len/2, y_len/2, z_len/2])
+    # Centre on the mean of all atoms and wrap each molecule whole, by its centre, into [-L/2, L/2): the protein's
+    # Upside terms are not periodic, so a protein atom moved by a box length would be a bond one box long. Every
+    # array that stores coordinates (positions and restraint references alike) uses this frame.
+    box = np.array([x_len, y_len, z_len])
     centered_positions = initial_positions - np.mean(initial_positions, axis=0)
-    final_positions = (centered_positions + half_box) % (2*half_box) - half_box
+    final_positions = centered_positions.copy()
+    for _, _, indices in molecules:
+        centre = centered_positions[indices].mean(axis=0)
+        final_positions[indices] -= box * np.floor((centre + 0.5 * box) / box)
 
     (bonds_list, bond_lengths_list, bond_force_constants_list,
      angles_list, angle_equil_deg_list, angle_force_constants_list,
@@ -1601,10 +1504,8 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
 
         martini_potential = t.create_group(potential_grp, 'martini_potential')
         martini_potential._v_attrs.arguments = np.array([b'martini_hybrid_position'])
-        martini_potential._v_attrs.potential_type = b'lj_coulomb'
         martini_potential._v_attrs.cutoff = 12.0
         martini_potential._v_attrs.cache_buffer = 2.0   # Verlet-list skin; rebuild is O(N) cell list, so keep the active list lean
-        martini_potential._v_attrs.initialized = True
         martini_potential._v_attrs.x_len = x_len
         martini_potential._v_attrs.y_len = y_len
         martini_potential._v_attrs.z_len = z_len
@@ -1624,7 +1525,6 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
 
         bond_group = t.create_group(potential_grp, 'dist_spring')
         bond_group._v_attrs.arguments = np.array([b'pos'])
-        bond_group._v_attrs.initialized = True
         bond_group._v_attrs.x_len = x_len
         bond_group._v_attrs.y_len = y_len
         bond_group._v_attrs.z_len = z_len
@@ -1634,7 +1534,6 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
 
         angle_group = t.create_group(potential_grp, 'angle_spring')
         angle_group._v_attrs.arguments = np.array([b'pos'])
-        angle_group._v_attrs.initialized = True
         angle_group._v_attrs.x_len = x_len
         angle_group._v_attrs.y_len = y_len
         angle_group._v_attrs.z_len = z_len
@@ -1648,7 +1547,6 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
         if lipid_restraint_indices:
             restraint_group = t.create_group(potential_grp, 'restraint_position')
             restraint_group._v_attrs.arguments = np.array([b'pos'])
-            restraint_group._v_attrs.initialized = True
             t.create_array(
                 restraint_group, 'restraint_indices', obj=np.array(lipid_restraint_indices, dtype='i4')
             )
@@ -1693,12 +1591,8 @@ def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
         bb = require_group(inp, "hybrid_bb_map")
         env = require_group(inp, "hybrid_env_topology")
 
-        for attr in [
-            "activation_stage",
-            "preprod_protein_mode",
-        ]:
-            if attr not in ctrl.attrs:
-                raise ValueError(f"Missing hybrid_control attr: {attr}")
+        if "activation_stage" not in ctrl.attrs:
+            raise ValueError("Missing hybrid_control attr: activation_stage")
 
         bb_atom_idx = require_dataset(bb, "bb_atom_index")[:]
         bb_atom_map = require_dataset(bb, "atom_indices")[:]
@@ -1776,13 +1670,13 @@ def validate_hybrid_mapping(mapping_h5: Path, n_atom: int | None = None):
         print(f"  n_bb={n_bb}")
 
 
-def set_initial_position(input_file, output_file, continuation=False):
+def set_initial_position(input_file, output_file):
     """Hand the final state of `input_file` to `output_file`.
 
     Positions, the box and the momentum, with the round it was recorded at, come from the source's last
     output frame. A source that ran no MD (a minimisation) has no output momentum, so its own input momentum
-    and round pass through unchanged. A continuation also carries the PO4 hold clock, so a production run in
-    segments is the continuous run.
+    and round pass through unchanged. That is the whole restart state, so a production run in segments is the
+    continuous run.
     """
     with h5py.File(input_file, "r") as f:
         has_output = "/output/pos" in f and f["/output/pos"].shape[0] > 0
@@ -1801,11 +1695,6 @@ def set_initial_position(input_file, output_file, continuation=False):
             last_mom = f["/input/mom"][:]
             last_round = int(f["/input/mom"].attrs.get("round", 0))
             restart_valid = int(f["/input/mom"].attrs.get("restart_valid", 0))
-        transition_step = None
-        if continuation:
-            source_start_round = int(f["/input/mom"].attrs["round"]) if int(f["/input/mom"].attrs.get("restart_valid", 0)) else 0
-            transition_step = (int(f["/input/hybrid_control"].attrs.get("sc_env_transition_step_start", 0))
-                               + last_round - source_start_round)
 
     with h5py.File(output_file, "r+") as f:
         if f["/input/pos"].shape[0] != last_pos.shape[0]:
@@ -1817,8 +1706,6 @@ def set_initial_position(input_file, output_file, continuation=False):
         mom_ds = f.create_dataset("/input/mom", data=last_mom)
         mom_ds.attrs["restart_valid"] = np.int8(restart_valid)
         mom_ds.attrs["round"] = np.int64(last_round)
-        if transition_step is not None:
-            f["/input/hybrid_control"].attrs["sc_env_transition_step_start"] = np.int32(transition_step)
         set_potential_box(f, last_box)
 
 
@@ -1923,7 +1810,6 @@ def load_sidechain_rotamer_payload(sidechain_lib: Path, sequence, restype_to_ind
     count_by_n_rot = {}
     affine_residue = []
     layer_index = []
-    beadtype_seq = []
     bead_type_index = []
     id_seq = []
     row_rotamer_index = []
@@ -1958,7 +1844,6 @@ def load_sidechain_rotamer_payload(sidechain_lib: Path, sequence, restype_to_ind
                 raise ValueError(f"Missing bead '{bead_name}' in sidechain library bead_order")
             affine_residue.append(seq_idx)
             layer_index.append(lid)
-            beadtype_seq.append(bead_name)
             bead_type_index.append(bead_num[bead_name])
             id_seq.append(rot_idx + (base_id << N_BIT_ROTAMER))
             row_rotamer_index.append(rot_idx)
@@ -1973,7 +1858,6 @@ def load_sidechain_rotamer_payload(sidechain_lib: Path, sequence, restype_to_ind
         "pair_interaction": pair_interaction,
         "affine_residue": np.asarray(affine_residue, dtype=np.int32),
         "layer_index": np.asarray(layer_index, dtype=np.int32),
-        "beadtype_seq": np.asarray([np.bytes_(x) for x in beadtype_seq], dtype="S16"),
         "bead_type_index": np.asarray(bead_type_index, dtype=np.int32),
         "id_seq": np.asarray(id_seq, dtype=np.int32),
         "placement_data": rot_center_fixed,
@@ -2016,6 +1900,16 @@ def recreate_group(parent, name):
     return parent.create_group(name)
 
 
+def read_chain_first_residue(inp):
+    """The first residue of every chain after the first: /input/chain_break, else the chain ids of hybrid_bb_map."""
+    if "chain_break" in inp and "chain_first_residue" in inp["chain_break"]:
+        return inp["chain_break"]["chain_first_residue"][:].astype(np.int32)
+    if "hybrid_bb_map" in inp and "bb_chain_id" in inp["hybrid_bb_map"]:
+        bb_chain_ids = decode_string_array(inp["hybrid_bb_map"]["bb_chain_id"])
+        return derive_chain_break_metadata([{"bb_chain": chain_id} for chain_id in bb_chain_ids])[0]
+    return np.array([], dtype=np.int32)
+
+
 def load_upside_config(upside_home: Path):
     upside_config_py = upside_home / "py" / "upside_config.py"
     if not upside_config_py.exists():
@@ -2041,27 +1935,16 @@ def inject_backbone_nodes(
     up_file: Path,
     sequence,
     affine_atoms,
+    chain_first_residue,
     rama_library: Path,
     rama_sheet_mixing: Path,
     hbond_energy: Path,
     reference_state_rama: Path,
-    upside_home: Path,
+    uc,
 ):
-    uc = load_upside_config(upside_home)
     fasta_seq = np.asarray(sequence)
     ref_n_atom = 3 * len(sequence)
     spring_args = types.SimpleNamespace(bond_stiffness=48.0, angle_stiffness=175.0, omega_stiffness=30.0)
-    chain_first_residue = np.array([], dtype=np.int32)
-
-    with h5py.File(up_file, "r") as up:
-        inp = up["input"]
-        if "chain_break" in inp and "chain_first_residue" in inp["chain_break"]:
-            chain_first_residue = inp["chain_break"]["chain_first_residue"][:].astype(np.int32)
-        elif "hybrid_bb_map" in inp and "bb_chain_id" in inp["hybrid_bb_map"]:
-            bb_chain_ids = decode_string_array(inp["hybrid_bb_map"]["bb_chain_id"])
-            chain_first_residue, _ = derive_chain_break_metadata(
-                [{"bb_chain": chain_id} for chain_id in bb_chain_ids]
-            )
     n_chains = int(chain_first_residue.size) + 1
     chain_starts = np.append(np.array([0], dtype=np.int32), chain_first_residue) * 3
 
@@ -2152,8 +2035,11 @@ def published_pair_potential(r, eps, sig, qq, coulomb_k, r_cut):
 
 
 def soft_core_radius(r, sig, soft_core_lambda):
-    # written as r (1 + ...)^(1/6), so lambda = 0 gives r_sc = r exactly
-    return r * (1.0 + SOFT_CORE_ALPHA * soft_core_lambda ** SOFT_CORE_POWER * (sig / r) ** 6) ** (1.0 / 6.0)
+    # (sc_alpha sigma^6 lambda^2 + r^6)^(1/6), finite at r = 0; lambda = 0 is r itself
+    r = np.asarray(r, dtype=np.float64)
+    if soft_core_lambda == 0.0:
+        return r
+    return (SOFT_CORE_ALPHA * soft_core_lambda ** SOFT_CORE_POWER * sig ** 6 + r ** 6) ** (1.0 / 6.0)
 
 
 def soft_core_pair_potential(r, eps, sig, qq, coulomb_k, r_cut, soft_core_lambda):
@@ -2181,9 +2067,9 @@ def pair_table_end_slopes(r_ends, eps, sig, qq, coulomb_k, r_cut, soft_core_lamb
 def inject_particles_table(up_file: Path, martini_h5: Path, energy_conversion: float, length_conversion: float):
     """Copy the particle pair tables of `martini_h5` that the stage's coefficient rows use into the stage.
 
-    A soft-core stage replaces each row by the soft core of the published potential. Before that, every
-    row of the library is checked against the published form, so the soft core is built from the same
-    potential the library tabulates and lambda = 0 reproduces the library row.
+    A soft-core stage replaces each row by the soft core of the published potential, tabulated from r = 0, where
+    it is finite with zero slope. Before that, every row of the library is checked against the published form, so
+    the soft core is built from the same potential the library tabulates and lambda = 0 reproduces the library row.
     """
     up_file = Path(up_file).expanduser().resolve()
     martini_h5 = Path(martini_h5).expanduser().resolve()
@@ -2208,6 +2094,8 @@ def inject_particles_table(up_file: Path, martini_h5: Path, energy_conversion: f
     with h5py.File(up_file, "r+") as up:
         g = up["/input/potential/martini_potential"]
         soft_core_lambda = float(g.attrs["soft_core_lambda"])
+        # the published potential diverges at r = 0, so its table starts at the library's r_min; the soft core does not
+        r_lo = 0.0 if soft_core_lambda > 0.0 else r_min
         coeffs = g["coefficients"][:].astype(np.float64)
         rows = []
         for coeff_i, (eps, sig, q1, q2) in enumerate(coeffs[:, :4]):
@@ -2230,11 +2118,11 @@ def inject_particles_table(up_file: Path, martini_h5: Path, energy_conversion: f
                 raise ValueError(f"{martini_h5} row (eps={eps_arr[i]:g}, sig={sig_arr[i]:g}, qq={qq_arr[i]:g}) "
                                  f"departs from the published dry-MARTINI form by {deviation:.3e}")
             if soft_core_lambda > 0.0:
-                grids[i] = soft_core_pair_potential(r, eps_arr[i], sig_arr[i], qq_arr[i], coulomb_k, r_max,
-                                                    soft_core_lambda)
+                grids[i] = soft_core_pair_potential(np.linspace(r_lo, r_max, grid_n), eps_arr[i], sig_arr[i], qq_arr[i],
+                                                    coulomb_k, r_max, soft_core_lambda)
             if grids[i, -1] != 0.0 and abs(grids[i, -1]) > 1e-9 * max(abs(eps_arr[i]), 1.0):
                 raise ValueError(f"{up_file}: pair table row {i} is {grids[i, -1]:.3e} E_up at the {r_max:g} A cutoff")
-        end_slopes = np.array([pair_table_end_slopes([r_min, r_max], eps_arr[i], sig_arr[i], qq_arr[i], coulomb_k,
+        end_slopes = np.array([pair_table_end_slopes([r_lo, r_max], eps_arr[i], sig_arr[i], qq_arr[i], coulomb_k,
                                                      r_max, soft_core_lambda) for i in range(len(rows))])
 
         g.create_dataset("unique_eps_eup", data=eps_arr, dtype=np.float64)
@@ -2242,9 +2130,7 @@ def inject_particles_table(up_file: Path, martini_h5: Path, energy_conversion: f
         g.create_dataset("unique_charge_product", data=qq_arr, dtype=np.float64)
         g.create_dataset("combined_energy_grids", data=grids, dtype=np.float64)
         g.create_dataset("combined_energy_end_slopes", data=end_slopes, dtype=np.float64)
-        g.attrs["coefficient_indices_reference"] = "coefficients"
-        g.attrs["n_combined_triples"] = np.int32(len(rows))
-        g.attrs["r_min_ang"] = np.float32(r_min)
+        g.attrs["r_min_ang"] = np.float32(r_lo)
         g.attrs["r_max_ang"] = np.float32(r_max)
         g.attrs["n_points"] = np.int32(grid_n)
 
@@ -2283,7 +2169,6 @@ def inject_stage7_sc_table_nodes(
             "grid_ang",
             "theta_grid",
             "rotamer_count",
-            "rotamer_probability_fixed",
             "rotamer_full_energy_eup",
         ]
         missing_sc_datasets = [name for name in required_sc_datasets if name not in sc_grp]
@@ -2298,11 +2183,11 @@ def inject_stage7_sc_table_nodes(
         grid_ang = sc_grp["grid_ang"][:].astype(np.float32)
         theta_grid = sc_grp["theta_grid"][:].astype(np.float32)
         rotamer_count = sc_grp["rotamer_count"][:].astype(np.int32)
-        rotamer_probability_fixed = sc_grp["rotamer_probability_fixed"][:].astype(np.float32)
         rotamer_full_energy_eup = sc_grp["rotamer_full_energy_eup"][:].astype(np.float32)
 
     restype_to_index = {name: i for i, name in enumerate(restype_order)}
     target_to_index = {name: i for i, name in enumerate(target_order)}
+    uc = load_upside_config(upside_home)
 
     with h5py.File(up_file, "r+") as up:
         inp = up["input"]
@@ -2311,6 +2196,7 @@ def inject_stage7_sc_table_nodes(
 
         residue_ids, affine_atoms = build_affine_atoms(inp)
         sequence = resolve_sequence(inp, len(residue_ids))
+        chain_first_residue = read_chain_first_residue(inp)
         env_atom_index, env_target_index = build_env_rows(inp, target_to_index)
         rotamer_payload = load_sidechain_rotamer_payload(sidechain_lib, sequence, restype_to_index)
 
@@ -2331,13 +2217,9 @@ def inject_stage7_sc_table_nodes(
 
         g_sc_place = recreate_group(pot, "placement_fixed_point_vector_only")
         g_sc_place.attrs["arguments"] = np.asarray([np.bytes_("affine_alignment")])
-        g_sc_place.create_dataset("rama_residue", data=rotamer_payload["affine_residue"], dtype=np.int32)
         g_sc_place.create_dataset("affine_residue", data=rotamer_payload["affine_residue"], dtype=np.int32)
         g_sc_place.create_dataset("layer_index", data=rotamer_payload["layer_index"], dtype=np.int32)
         g_sc_place.create_dataset("placement_data", data=rotamer_payload["placement_data"], dtype=np.float32)
-        g_sc_place.create_dataset("beadtype_seq", data=rotamer_payload["beadtype_seq"])
-        g_sc_place.create_dataset("id_seq", data=rotamer_payload["id_seq"], dtype=np.int32)
-        g_sc_place.create_dataset("fix_rotamer", data=np.zeros((0, 2), dtype=np.int32), dtype=np.int32)
 
         g_pl = recreate_group(pot, "placement_scalar")
         g_pl.attrs["arguments"] = np.asarray([np.bytes_("affine_alignment"), np.bytes_("rama_coord")])
@@ -2367,6 +2249,9 @@ def inject_stage7_sc_table_nodes(
         )
         g_pair.create_dataset("type", data=rotamer_payload["bead_type_index"], dtype=np.int32)
         g_pair.create_dataset("id", data=rotamer_payload["id_seq"], dtype=np.int32)
+        g_pair.create_dataset(
+            "sequence_id", data=uc.sequence_id(rotamer_payload["affine_residue"], chain_first_residue), dtype=np.int32
+        )
 
         g_cb = recreate_group(pot, "placement_fixed_point_vector_only_CB")
         g_cb.attrs["arguments"] = np.asarray([np.bytes_("affine_alignment")])
@@ -2380,11 +2265,12 @@ def inject_stage7_sc_table_nodes(
         up_file=up_file,
         sequence=sequence,
         affine_atoms=affine_atoms,
+        chain_first_residue=chain_first_residue,
         rama_library=rama_library,
         rama_sheet_mixing=rama_sheet_mixing,
         hbond_energy=hbond_energy,
         reference_state_rama=reference_state_rama,
-        upside_home=upside_home,
+        uc=uc,
     )
 
     with h5py.File(up_file, "r+") as up:
@@ -2406,10 +2292,7 @@ def inject_stage7_sc_table_nodes(
         g_sc.create_dataset("grid_ang", data=grid_ang, dtype=np.float32)
         g_sc.create_dataset("theta_grid", data=theta_grid, dtype=np.float32)
         g_sc.create_dataset("rotamer_count", data=rotamer_count.astype(np.int32), dtype=np.int32)
-        g_sc.create_dataset("rotamer_probability_fixed", data=rotamer_probability_fixed, dtype=np.float32)
         g_sc.create_dataset("rotamer_full_energy_eup", data=rotamer_full_energy_eup, dtype=np.float32)
-        g_sc.create_dataset("restype_order", data=np.asarray([np.bytes_(x) for x in restype_order], dtype="S4"))
-        g_sc.create_dataset("target_order", data=np.asarray([np.bytes_(x) for x in target_order], dtype="S8"))
 
     print(
         f"Injected rotamer-weighted martini_sc_table_1body into {up_file}: "

@@ -22,13 +22,8 @@ void fill_n(std::unique_ptr<T[]> &ptr, int n_elem, const T& value) {
     std::fill_n(ptr.get(), n_elem, value);
 }
 
-template <typename T>
-static T&& message(const std::string& s, T&& x) {
-    printf("%s", s.c_str());
-    return std::forward<T>(x);
-}
 
-
+// The ids a pair list receives are the elements' sequence ids, the key acceptable_id_pair excludes by
 template <bool symmetric>
 struct PairlistComputation {
     typedef Int4(*acceptable_id_pair_t)(const Int4&,const Int4&);
@@ -36,7 +31,6 @@ struct PairlistComputation {
         const int n_elem1, n_elem2;
         const int max_n_edge;
         std::unique_ptr<int32_t[]>  edge_indices1, edge_indices2;
-        std::unique_ptr<int32_t[]>  edge_id1,      edge_id2;
         int n_edge;
 
     protected:
@@ -46,7 +40,6 @@ struct PairlistComputation {
         std::unique_ptr<float[]>    cache_pos1, cache_pos2;
         std::unique_ptr<int32_t[]>  cache_id1,  cache_id2;
         std::unique_ptr<int32_t[]>  cache_edge_indices1, cache_edge_indices2;
-        std::unique_ptr<int32_t[]>  cache_edge_id1,      cache_edge_id2;
         int cache_n_edge;
 
         template<acceptable_id_pair_t acceptable_id_pair>
@@ -146,7 +139,7 @@ struct PairlistComputation {
                         :                   near.cast_int());
                     int is_hit_bits = is_hit.movemask();
 
-                    // i2_vec and my_id2 is constant, so we don't have to left pack
+                    // i2_vec is constant, so we don't have to left pack
                     // left_pack requires a read, so do before the writes
 
                     // write out pairs; each store writes 4 entries
@@ -154,9 +147,7 @@ struct PairlistComputation {
                         throw std::string("pair list needs more than its max_n_edge of ") + std::to_string(max_n_edge);
                     int n_hit = popcnt_nibble(is_hit_bits);
                     i1_vec.left_pack(is_hit_bits).store(cache_edge_indices1+ne, Alignment::unaligned);
-                    my_id1.left_pack(is_hit_bits).store(cache_edge_id1     +ne, Alignment::unaligned);
                     i2_vec                       .store(cache_edge_indices2+ne, Alignment::unaligned);
-                    my_id2                       .store(cache_edge_id2     +ne, Alignment::unaligned);
                     ne += n_hit;
                 }
             }
@@ -179,8 +170,6 @@ struct PairlistComputation {
 
             edge_indices1(new_aligned<int32_t>(max_n_edge, 16)),
             edge_indices2(new_aligned<int32_t>(max_n_edge, 16)),
-            edge_id1     (new_aligned<int32_t>(max_n_edge, 16)),
-            edge_id2     (new_aligned<int32_t>(max_n_edge, 16)),
 
             n_edge(0),
 
@@ -192,8 +181,6 @@ struct PairlistComputation {
             cache_id2(new_aligned<int32_t>(round_up(n_elem2,16),4)),
             cache_edge_indices1(new_aligned<int32_t>(max_n_edge, 4)),
             cache_edge_indices2(new_aligned<int32_t>(max_n_edge, 4)),
-            cache_edge_id1     (new_aligned<int32_t>(max_n_edge, 4)),
-            cache_edge_id2     (new_aligned<int32_t>(max_n_edge, 4)),
             cache_n_edge(0)
         {
             for(int i=0; i<n_elem1; i+=4)
@@ -222,8 +209,6 @@ struct PairlistComputation {
             for(int i_edge=0; i_edge<cache_n_edge; i_edge+=4) {
                 auto i1 = Int4(cache_edge_indices1+i_edge);
                 auto i2 = Int4(cache_edge_indices2+i_edge);
-                auto eid1 = Int4(cache_edge_id1+i_edge);
-                auto eid2 = Int4(cache_edge_id2+i_edge);
 
                 Float4 x_diff[4];
                 #pragma unroll
@@ -236,16 +221,12 @@ struct PairlistComputation {
                     
                 acceptable = (dist2<cutoff2).movemask();
 
-                i1  .left_pack_inplace(acceptable);
-                i2  .left_pack_inplace(acceptable);
-                eid1.left_pack_inplace(acceptable);
-                eid2.left_pack_inplace(acceptable);
+                i1.left_pack_inplace(acceptable);
+                i2.left_pack_inplace(acceptable);
 
                 int n_acceptable = popcnt_nibble(acceptable);
-                i1  .store(edge_indices1+ne, Alignment::unaligned);
-                i2  .store(edge_indices2+ne, Alignment::unaligned);
-                eid1.store(edge_id1     +ne, Alignment::unaligned);
-                eid2.store(edge_id2     +ne, Alignment::unaligned);
+                i1.store(edge_indices1+ne, Alignment::unaligned);
+                i2.store(edge_indices2+ne, Alignment::unaligned);
                 ne += n_acceptable;
                 // FIXME it would nice to store the transposed positions for later
             }
@@ -304,7 +285,9 @@ struct InteractionGraph{
     int n_edge;
 
     std::unique_ptr<int32_t[]>  types1, types2; // pair type is type[0]*n_types2 + type[1]
-    std::unique_ptr<int32_t[]>  id1,    id2;    // used to avoid self-interaction
+    std::unique_ptr<int32_t[]>  id1,    id2;    // the node's own id of each element (a residue, or a packed rotamer)
+    // the residue number spaced at chain breaks (up.md 6); acceptable_id_pair excludes sequence neighbours by it
+    std::unique_ptr<int32_t[]>  sequence_id1, sequence_id2;
 
     // buffers to copy position data to ensure contiguity
     std::unique_ptr<float[]> pos1, pos2;
@@ -313,8 +296,6 @@ struct InteractionGraph{
     PairlistComputation<IType::symmetric> pairlist;
     int32_t* edge_indices1; // pointers to pairlist-maintained arrays
     int32_t* edge_indices2;  
-    int32_t* edge_id1;
-    int32_t* edge_id2;
     long long max_n_edge_deriv;
     std::unique_ptr<float[]>    edge_value;
     std::unique_ptr<float[]>    edge_deriv;  // this may become a SIMD-type vector
@@ -342,6 +323,7 @@ struct InteractionGraph{
 
         types1(new_aligned<int32_t>(n_elem1,16)), types2(new_aligned<int32_t>(n_elem2,16)),
         id1   (new_aligned<int32_t>(n_elem1,16)), id2   (new_aligned<int32_t>(n_elem2,16)),
+        sequence_id1(new_aligned<int32_t>(n_elem1,16)), sequence_id2(new_aligned<int32_t>(n_elem2,16)),
 
         pos1(new_aligned<float>(round_up(n_elem1,16)*n_dim1a,             align_bytes)),
         pos2(new_aligned<float>(round_up(symmetric?16:n_elem2,16)*n_dim2a, align_bytes)),
@@ -349,8 +331,6 @@ struct InteractionGraph{
         pairlist(n_elem1,n_elem2,max_n_edge),
         edge_indices1(pairlist.edge_indices1.get()),
         edge_indices2(pairlist.edge_indices2.get()),
-        edge_id1      (pairlist.edge_id1.get()),
-        edge_id2      (pairlist.edge_id2.get()),
         max_n_edge_deriv((long long) max_n_edge * (n_dim1+n_dim2)),
         edge_value      (new_aligned<float>  (max_n_edge,                  align_bytes)),
         edge_deriv      (new_aligned<float>  (max_n_edge_deriv,       align_bytes_long)),
@@ -388,20 +368,29 @@ struct InteractionGraph{
         check_size(grp, suffix1("index").c_str(), n_elem1); if(!s) check_size(grp, "index2", n_elem2);
         check_size(grp, suffix1("type").c_str(),  n_elem1); if(!s) check_size(grp, "type2",  n_elem2);
         check_size(grp, suffix1("id").c_str(),    n_elem1); if(!s) check_size(grp, "id2",    n_elem2);
+        auto check_sequence_id = [&](const std::string& nm, int n) {
+            if(!h5_exists(grp, nm.c_str()))
+                throw group_name(grp) + " needs " + nm + ", the residue number spaced at chain breaks by which "
+                    "it excludes sequence neighbours from its pairs (up.md 6)";
+            check_size(grp, nm.c_str(), n);};
+        check_sequence_id(suffix1("sequence_id"), n_elem1); if(!s) check_sequence_id("sequence_id2", n_elem2);
 
-        for(int i=0; i<round_up(n_elem1,16); ++i) id1[i] = 0;  // padding
+        for(int i=0; i<round_up(n_elem1,16); ++i) sequence_id1[i] = 0;  // padding
         traverse_dset<1,int>(grp,suffix1("index").c_str(),[&](size_t nr,int x){loc1.push_back(x);});
         traverse_dset<1,int>(grp,suffix1("type" ).c_str(),[&](size_t nr,int x){types1[nr]=x;});
         traverse_dset<1,int>(grp,suffix1("id"   ).c_str(),[&](size_t nr,int x){id1   [nr]=x;});
+        traverse_dset<1,int>(grp,suffix1("sequence_id").c_str(),[&](size_t nr,int x){sequence_id1[nr]=x;});
 
         if(!s) {
-            for(int i=0; i<round_up(n_elem2,16); ++i) id2[i] = 0;  // padding
+            for(int i=0; i<round_up(n_elem2,16); ++i) sequence_id2[i] = 0;  // padding
             traverse_dset<1,int>(grp,"index2",[&](size_t nr,int x){loc2.push_back(x);});
             traverse_dset<1,int>(grp,"type2", [&](size_t nr,int x){types2[nr]=x;});
             traverse_dset<1,int>(grp,"id2",   [&](size_t nr,int x){id2   [nr]=x;});
+            traverse_dset<1,int>(grp,"sequence_id2",[&](size_t nr,int x){sequence_id2[nr]=x;});
         } else {
             for(int nr: range(n_elem2)) types2[nr] = types1[nr];
             for(int nr: range(n_elem2)) id2   [nr] = id1   [nr];
+            for(int nr: range(n_elem2)) sequence_id2[nr] = sequence_id1[nr];
         }
 
         for(int nr: range(n_elem1)) if(loc1[nr]<0 || loc1[nr]>=pos_node1->n_elem || types1[nr]<0 || types1[nr]>=n_type1)
@@ -501,8 +490,8 @@ struct InteractionGraph{
         // First find all the edges
         {
             pairlist.template find_edges<IType::acceptable_id_pair>(cutoff,
-                                pos1.get(), n_dim1a, id1.get(),
-                                (symmetric?pos1:pos2).get(), n_dim2a, (symmetric?id1:id2).get());
+                                pos1.get(), n_dim1a, sequence_id1.get(),
+                                (symmetric?pos1:pos2).get(), n_dim2a, (symmetric?sequence_id1:sequence_id2).get());
             n_edge = pairlist.n_edge;
         }
         // printf("n_edge for n_dim1 %i n_dim2 %i n_elem1 %i n_elem2 %i is %i\n", n_dim1, n_dim2, n_elem1, n_elem2, n_edge);

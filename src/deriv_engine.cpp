@@ -1,5 +1,6 @@
 #include "deriv_engine.h"
 #include "martini.h"
+#include "thermostat.h"
 #include "timing.h"
 #include <map>
 #include <algorithm>
@@ -289,166 +290,82 @@ void DerivEngine::compute(ComputeMode mode, int integrator_level) {
 }
 
 
-void DerivEngine::integration_cycle(VecArray mom, float dt) {
-    // MARTINI configurations list every dynamic particle in the single-step g-JF integrator.
-    if(martini_brownian::has_brownian(this)) {
-        compute(DerivMode);
-        martini_brownian::apply_langevin_step(this, mom, dt);
-        return;
-    }
+// A kick of the momentum by -kick dV/dx and, unless drift is 0, a drift of the coordinates by drift p/m.
+// Fixed atoms keep zero momentum and z-fixed atoms none along z.
+static void leapfrog_step(DerivEngine& engine, VecArray mom, float kick, float drift,
+        const vector<unsigned char>& fixed_mask, const vector<unsigned char>& z_fixed_mask) {
+    Timer timer(string("integration"));
+    bool has_mass = martini_masses::has_masses(&engine);
+    for(int na=0; na < engine.pos->n_atom; ++na) {
+        if(fixed_mask[na]) {
+            store_vec(mom, na, make_zero<3>());
+            continue;
+        }
+        bool z_fixed = z_fixed_mask[na];
 
-    auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
-    bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
-    auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
-    bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
+        auto d = load_vec<3>(engine.pos->sens, na);
+        if(z_fixed) d.z() = 0.f;
+        auto p = load_vec<3>(mom, na) - kick*d;
+        if(z_fixed) p.z() = 0.f;
+        store_vec(mom, na, p);
+        if(drift == 0.f) continue;
 
-    for(int stage=0; stage<3; ++stage) {
-        compute(DerivMode);   // compute derivatives
-        Timer timer(string("integration"));
-
-        // Check if MARTINI masses are available and use mass-aware integrator
-        if(martini_masses::has_masses(this)) {
-            // Use MARTINI mass-aware integrator
-            for(int na=0; na < pos->n_atom; ++na) {
-                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
-                    store_vec(mom, na, make_zero<3>());
-                    continue;
-                }
-                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
-
-                // Get mass for this atom from MARTINI mass storage
-                float mass = martini_masses::get_mass(this, na);
-
-                auto d = load_vec<3>(pos->sens, na);
-                if(z_fixed) d.z() = 0.f;
-
-                auto p = load_vec<3>(mom, na) - dt*d;
-                if(z_fixed) p.z() = 0.f;
-                store_vec (mom, na, p);
-                float scale = dt/mass;
-                if(z_fixed) {
-                    update_vec(pos->output, na, make_vec3(scale*p.x(), scale*p.y(), 0.f));
-                } else {
-                    update_vec(pos->output, na, scale*p);
-                }
-            }
+        float scale = has_mass ? drift/martini_masses::get_mass(&engine, na) : drift;
+        if(z_fixed) {
+            update_vec(engine.pos->output, na, make_vec3(scale*p.x(), scale*p.y(), 0.f));
         } else {
-            // Use standard integrator (assumes unit mass)
-            for(int na=0; na < pos->n_atom; ++na) {
-                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
-                    store_vec(mom, na, make_zero<3>());
-                    continue;
-                }
-                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
-
-                auto d = load_vec<3>(pos->sens, na);
-                if(z_fixed) d.z() = 0.f;
-                auto p = load_vec<3>(mom, na) - dt*d;
-                if(z_fixed) p.z() = 0.f;
-                store_vec (mom,   na, p);
-                if(z_fixed) {
-                    update_vec(pos->output, na, make_vec3(dt*p.x(), dt*p.y(), 0.f));
-                } else {
-                    update_vec(pos->output, na, dt*p);
-                }
-            }
+            update_vec(engine.pos->output, na, scale*p);
         }
     }
 }
 
-void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step) {
-    // Brownian systems use g-JF Langevin; the VV-RESPA path below is not appropriate for them.
-    if(martini_brownian::has_brownian(this)) {
-        compute(DerivMode);
-        martini_brownian::apply_langevin_step(this, mom, dt);
-        return;
-    }
+// The thermostat step on the momentum at the coordinates. The stored momentum differs from it by lag, half a kick
+// of the forces there; the step on the stored momentum would damp that half kick too, which runs the configuration
+// cold by dt/(2 tau).
+static void thermostat_at_coordinates(OrnsteinUhlenbeckThermostat& thermostat, DerivEngine& engine, VecArray mom,
+        VecArray lag) {
+    int n_atom = engine.pos->n_atom;
+    for(int na=0; na<n_atom; ++na) update_vec(mom, na, -load_vec<3>(lag, na));
+    thermostat.apply(mom, n_atom, &engine);
+    for(int na=0; na<n_atom; ++na) update_vec(mom, na,  load_vec<3>(lag, na));
+}
+
+void DerivEngine::integration_cycle(VecArray mom, float dt, OrnsteinUhlenbeckThermostat* thermostat) {
     auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
-    bool has_fixed = std::any_of(fixed_mask.begin(), fixed_mask.end(), [](unsigned char v) { return v != 0; });
     auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
-    bool has_z_fixed = std::any_of(z_fixed_mask.begin(), z_fixed_mask.end(), [](unsigned char v) { return v != 0; });
 
+    for(int stage=0; stage<3; ++stage) {
+        compute(DerivMode);   // compute derivatives
+        if(!stage && thermostat) {
+            VecArrayStorage lag(3, pos->n_atom);
+            for(int na=0; na<pos->n_atom; ++na) store_vec(lag, na, 0.5f*dt*load_vec<3>(pos->sens, na));
+            thermostat_at_coordinates(*thermostat, *this, mom, lag);
+        }
+        leapfrog_step(*this, mom, dt, dt, fixed_mask, z_fixed_mask);
+    }
+}
+
+void DerivEngine::integration_cycle(VecArray mom, float dt, int inner_step, OrnsteinUhlenbeckThermostat* thermostat) {
+    auto fixed_mask = build_fixed_mask(*this, pos->n_atom);
+    auto z_fixed_mask = build_z_fixed_mask(*this, pos->n_atom);
+
+    // calculate acceleration, update velocity for slow level
     compute(DerivMode, 1);
+    // after the slow kick the stored momentum leads the one at the coordinates by half a slow kick and trails it
+    // by half a fast one
+    VecArrayStorage lag(3, pos->n_atom);
+    if(thermostat)
+        for(int na=0; na<pos->n_atom; ++na) store_vec(lag, na, -0.5f*inner_step*dt*load_vec<3>(pos->sens, na));
+    leapfrog_step(*this, mom, inner_step*dt, 0.f, fixed_mask, z_fixed_mask);
 
-    // Check if MARTINI masses are available and use mass-aware integrator
-    if(martini_masses::has_masses(this)) {
-        // Use MARTINI mass-aware integrator for slow level
-        for(int na=0; na < pos->n_atom; ++na) {
-            if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
-                store_vec(mom, na, make_zero<3>());
-                continue;
-            }
-            bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
-
-            auto d = load_vec<3>(pos->sens, na);
-            if(z_fixed) d.z() = 0.f;
-            auto p = load_vec<3>(mom, na) - inner_step*dt*d;
-            if(z_fixed) p.z() = 0.f;
-            store_vec (mom, na, p);
+    // calculate acceleration, update velocity for fast level
+    for(int i=0;i<inner_step;i++) {
+        compute(DerivMode, 0);
+        if(!i && thermostat) {
+            for(int na=0; na<pos->n_atom; ++na) update_vec(lag, na, 0.5f*dt*load_vec<3>(pos->sens, na));
+            thermostat_at_coordinates(*thermostat, *this, mom, lag);
         }
-        
-        // calculate acceleration, update velocity for fast level
-        for(int i=0;i<inner_step;i++) {
-            compute(DerivMode, 0);
-            for(int na=0; na < pos->n_atom; ++na) {
-                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
-                    store_vec(mom, na, make_zero<3>());
-                    continue;
-                }
-                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
-
-                float mass = martini_masses::get_mass(this, na);
-                auto d = load_vec<3>(pos->sens, na);
-                if(z_fixed) d.z() = 0.f;
-                auto p = load_vec<3>(mom, na) - dt*d;
-                if(z_fixed) p.z() = 0.f;
-                store_vec (mom, na, p);
-                float scale = dt/mass;
-                if(z_fixed) {
-                    update_vec(pos->output, na, make_vec3(scale*p.x(), scale*p.y(), 0.f));
-                } else {
-                    update_vec(pos->output, na, scale*p);
-                }
-            }
-        }
-    } else {
-        // Use standard integrator (assumes unit mass) for slow level
-        for(int na=0; na < pos->n_atom; ++na) {
-            if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
-                store_vec(mom, na, make_zero<3>());
-                continue;
-            }
-            bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
-
-            auto d = load_vec<3>(pos->sens, na);
-            if(z_fixed) d.z() = 0.f;
-            auto p = load_vec<3>(mom, na) - inner_step*dt*d;
-            if(z_fixed) p.z() = 0.f;
-            store_vec (mom,   na, p);
-        }
-        
-        // calculate acceleration, update velocity for fast level
-        for(int i=0;i<inner_step;i++) {
-            compute(DerivMode, 0);
-            for(int na=0; na < pos->n_atom; ++na) {
-                if(has_fixed && fixed_mask[static_cast<size_t>(na)]) {
-                    store_vec(mom, na, make_zero<3>());
-                    continue;
-                }
-                bool z_fixed = has_z_fixed && z_fixed_mask[static_cast<size_t>(na)];
-
-                auto d = load_vec<3>(pos->sens, na);
-                if(z_fixed) d.z() = 0.f;
-                auto p = load_vec<3>(mom, na) - dt*d;
-                if(z_fixed) p.z() = 0.f;
-                store_vec (mom,   na, p);
-                if(z_fixed) {
-                    update_vec(pos->output, na, make_vec3(dt*p.x(), dt*p.y(), 0.f));
-                } else {
-                    update_vec(pos->output, na, dt*p);
-                }
-            }
-        }
+        leapfrog_step(*this, mom, dt, dt, fixed_mask, z_fixed_mask);
     }
 }
 
@@ -489,7 +406,6 @@ DerivEngine initialize_engine_from_hdf5(int n_atom, hid_t potential_group)
 
     // using topo_order here ensures that a node is only parsed after all its arguments
     for(auto &nm : topo_order) {
-        // if(!quiet)  printf("initializing %-27s%s", nm.c_str(), nm=="pos" ? "\n" : ""); 
         if(nm=="pos") continue;  // pos node is added specially
         // some name in the node_creation_map must be a prefix of this name
         string node_type_name = "";

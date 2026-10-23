@@ -39,7 +39,7 @@ MAX_EPOCHS="${3:-0}"
 TRAIN_DIR="$(cd "$RUN_DIR/.." && pwd)"     # run dirs live directly under training/
 SLURM_ARGS=$(cat "$RUN_DIR/slurm.args")
 
-MB_PER_EPOCH=19            # 456 proteins / 24
+MB_PER_EPOCH=$(cat "$RUN_DIR/run_output/minibatches_per_epoch")   # written by ConDiv.py initialize
 STEPS_PER_LINK=54          # a step is ~36 min at dt 0.009 (5vhg's 1242 s at dt 0.015, scaled), so ~32 h in the 36 h wall
 
 cd "$RUN_DIR"
@@ -48,9 +48,8 @@ if [ -z "$CKPT" ]; then
     CKPT=run_output/initial_checkpoint.pkl
     STEP=0
 else
-    NAME=$(basename "$(dirname "$CKPT")")
-    [[ "$NAME" =~ ^epoch_([0-9]+)_minibatch_([0-9]+)$ ]] || { echo "unexpected checkpoint name $NAME" >&2; exit 1; }
-    STEP=$(( 10#${BASH_REMATCH[1]} * MB_PER_EPOCH + 10#${BASH_REMATCH[2]} + 1 ))
+    # every finished step leaves its own epoch_*_minibatch_*/checkpoint.pkl, whatever the epoch's length
+    STEP=$(find run_output -name checkpoint.pkl -path "*/epoch_*/checkpoint.pkl" | wc -l | tr -d ' ')
 fi
 
 echo "step $STEP of $TARGET, resuming from $CKPT"

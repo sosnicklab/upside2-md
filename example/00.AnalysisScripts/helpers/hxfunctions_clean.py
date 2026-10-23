@@ -2,6 +2,10 @@
 import numpy as np
 import pandas as pd
 from scipy.optimize import curve_fit
+from scipy.interpolate import interp1d
+
+# pKD of D2O against temperature (K), the table 4.calc_D_uptake.py takes the base-catalysed rate's [OD-] from
+pKD2O_at = interp1d([293, 298, 323, 348, 373], [15.05, 14.96, 14.18, 13.57, 13.11], kind='linear', fill_value='extrapolate')
 
 
 def numerical_derivative(x, y):
@@ -74,7 +78,7 @@ def getkchem(sequence, pD, T):
     Ea_glu = 1.083
     Ea_his = 7.5
 
-    Kw = 15.05
+    Kw = float(pKD2O_at(myT))
 
     D_plus = np.power(10, -pD_corr)
     OD_minus = np.power(10, pD_corr - Kw)

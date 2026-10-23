@@ -213,7 +213,6 @@ struct NodeHolder {
     const int n_elem;
 
     VecArrayStorage prob;
-    // VecArrayStorage energy_capping_deriv;
 
     VecArrayStorage cur_belief;
     VecArrayStorage old_belief;
@@ -224,7 +223,6 @@ struct NodeHolder {
         n_rot(n_rot_),
         n_elem(n_elem_),
         prob         (n_rot,n_elem),
-        // energy_capping_deriv(n_rot,n_elem),
         cur_belief   (n_rot,n_elem),
         old_belief   (n_rot,n_elem),
 
@@ -238,7 +236,7 @@ struct NodeHolder {
     void reset() { fill(prob, 0.f); } // prob array initially contains energy
     void swap_beliefs() { swap(cur_belief, old_belief); }
 
-    void convert_energy_to_prob(float e_cap, float e_cap_width) {
+    void convert_energy_to_prob() {
         // prob array should initially contain energy
         // prob array is not normalized at the end (one of the entries will be 1.),
         //   but should be sanely scaled to resist underflow/overflow
@@ -427,15 +425,6 @@ struct EdgeHolder {
             }
         }
 
-        // float max_deviation() {
-        //     FIX for padding;
-        //     float dev = 0.f;
-        //     for(int d: range(n_rot1+n_rot2)) 
-        //         for(int nn: range(nodes_to_edge.n_edge)) 
-        //             dev = max(cur_belief(d,nn)-old_belief(d,nn), dev);
-        //     return dev;
-        // }
-
         template<int N_ROT1, int N_ROT2>
         void calculate_marginals() {
             // FIXME ASSERT(n_rot1 == N_ROT1)
@@ -584,39 +573,6 @@ struct EdgeHolder {
 };
 
 
-// template<>
-// void EdgeHolder::calculate_marginals<3,3>() {
-//     int n_edge = nodes_to_edge.n_edge;
-//     for(int ne=0; ne<n_edge; ++ne) {
-//         auto b1 = Float4(nodes1.cur_belief.x + 4*edge_indices1[ne]);
-//         auto b2 = Float4(nodes2.cur_belief.x + 4*edge_indices2[ne]);
-// 
-//         // correct for self interaction
-//         auto bc1 = b1 * rcp(Float4(1e-10f) + Float4(cur_belief.x + 8*ne));
-//         auto bc2 = b2 * rcp(Float4(1e-10f) + Float4(cur_belief.x + 8*ne + 4));
-// 
-//         auto ep_row1 = Float4(prob.x + ne*4*3 + 0);
-//         auto ep_row2 = Float4(prob.x + ne*4*3 + 4);
-//         auto ep_row3 = Float4(prob.x + ne*4*3 + 8);
-// 
-//         // we want the element-wise product of ep and outer(bc1,bc2)
-//         auto marg_row1 = bc1.broadcast<0>() * (ep_row1 * bc2);
-//         auto marg_row2 = bc1.broadcast<1>() * (ep_row2 * bc2);
-//         auto marg_row3 = bc1.broadcast<2>() * (ep_row3 * bc2);
-//         
-//         // normalize marginal so that total probability is 1
-//         auto marg_scale = rcp((marg_row1 + marg_row2 + marg_row3).sum_in_all_entries());
-//         marg_row1 *= marg_scale;
-//         marg_row2 *= marg_scale;
-//         marg_row3 *= marg_scale;
-// 
-//         marg_row1.store(&marginal(0,ne), Alignment::  aligned);
-//         marg_row2.store(&marginal(3,ne), Alignment::unaligned);
-//         marg_row3.store(&marginal(6,ne), Alignment::unaligned);
-//     }
-// }
-
-
 template <typename BT>
 array<int,UPPER_ROT> calculate_n_elem(InteractionGraph<BT> &igraph) {
     array<int,UPPER_ROT> result; // 0-rot is included
@@ -655,15 +611,12 @@ struct RotamerSidechain: public PotentialNode {
     EdgeHolder* edge_holders_matrix[UPPER_ROT][UPPER_ROT];
     EdgeHolder edges11, edges13, edges16, edges33, edges36, edges66; // FIXME initialize these with sane max_n_edge
 
-    float energy_cap;
-    float energy_cap_width;
 
     float damping;
     int   max_iter;
     float tol;
     int   iteration_chunk_size;
 
-    bool energy_fresh_relative_to_derivative;
 
     long n_bad_solve;
 
@@ -687,18 +640,11 @@ struct RotamerSidechain: public PotentialNode {
         edges36(nodes3,nodes6, min(n_elem_rot[3]* n_elem_rot[6]      , max_n_edge) ),
         edges66(nodes6,nodes6, min(n_elem_rot[6]*(n_elem_rot[6]+1)/2 , max_n_edge) ),
 
-        // energy_cap      (read_attribute<float>(grp,"pair_interaction","energy_cap")),
-        // energy_cap_width(read_attribute<float>(grp,"pair_interaction","energy_cap_width")),
-
-        energy_cap      (-4.),
-        energy_cap_width( 1.),
-
         damping (read_attribute<float>(grp, ".", "damping")),
         max_iter(read_attribute<int  >(grp, ".", "max_iter")),
         tol     (read_attribute<float>(grp, ".", "tol")),
         iteration_chunk_size(read_attribute<int>(grp, ".", "iteration_chunk_size")),
 
-        energy_fresh_relative_to_derivative(false),
         n_bad_solve(0)
     {
         if(!(0.f <= damping && damping < 1.f)) throw string("rotamer damping must be in [0,1)");
@@ -851,13 +797,7 @@ struct RotamerSidechain: public PotentialNode {
         }
     }
 
-    void ensure_fresh_energy() {
-        if(!energy_fresh_relative_to_derivative) compute_value(PotentialAndDerivMode);
-    }
-
     virtual void compute_value(ComputeMode mode) override {
-        energy_fresh_relative_to_derivative = mode==PotentialAndDerivMode;
-
         fill_holders();
         auto solve_results = solve_for_marginals();
         if(!(solve_results.second <= tol))  // not converged, or NaN
@@ -872,7 +812,6 @@ struct RotamerSidechain: public PotentialNode {
     void fill_holders()
     {
         Timer timer(std::string("rotamer_fill"));
-        edges11.reset();
         for(int n_rot1: range(UPPER_ROT))
             for(int n_rot2: range(UPPER_ROT))
                 if(edge_holders_matrix[n_rot1][n_rot2])
@@ -906,8 +845,8 @@ struct RotamerSidechain: public PotentialNode {
 
         const unsigned selector = (1u<<n_bit_rotamer) - 1u;
         for(int ne=0; ne<igraph.n_edge; ++ne) {
-            int   id1  = igraph.edge_id1[ne];
-            int   id2  = igraph.edge_id2[ne];
+            int   id1  = igraph.id1[igraph.edge_indices1[ne]];
+            int   id2  = igraph.id2[igraph.edge_indices2[ne]];
 
             if((id1&(selector<<n_bit_rotamer)) > (id2&(selector<<n_bit_rotamer))) swap(id1,id2);
 
@@ -927,10 +866,11 @@ struct RotamerSidechain: public PotentialNode {
 
         for(int n_rot: range(1,UPPER_ROT))
             if(node_holders_matrix[n_rot])
-                node_holders_matrix[n_rot]->convert_energy_to_prob(energy_cap, energy_cap_width);
+                node_holders_matrix[n_rot]->convert_energy_to_prob();
+        // the moved 1xN edges keep their energies, which the per-residue logs split
         for(int n_rot1: range(UPPER_ROT))
             for(int n_rot2: range(UPPER_ROT))
-                if(edge_holders_matrix[n_rot1][n_rot2])
+                if(edge_holders_matrix[n_rot1][n_rot2] && !(n_rot1==1 && n_rot2>1))
                     edge_holders_matrix[n_rot1][n_rot2]->convert_energy_to_prob();
     }
 
@@ -948,6 +888,19 @@ struct RotamerSidechain: public PotentialNode {
         return en;
     }
 
+    // a 1xN edge was moved into its second node's energy, so half of its expected pair energy goes back to its
+    // first node, as every other edge is split between its two residues
+    template <int N_ROT2>
+    void split_moved_edge(vector<float>& e1, vector<float>& e2, EdgeHolder& edges, NodeHolder& nodes2) {
+        for(int ne: range(edges.nodes_to_edge.n_edge)) {
+            int nr = edges.edge_indices2[ne];
+            float en = 0.f;
+            for(int no: range(N_ROT2)) en += nodes2.cur_belief(no,nr) * edges.prob(no,ne);
+            e1[edges.edge_indices1[ne]] += 0.5*en;
+            e2[nr]                      -= 0.5*en;
+        }
+    }
+
     vector<float> residue_free_energies() {
         vector<float> e1(nodes1.n_elem, 0.f);
         vector<float> e3(nodes3.n_elem, 0.f);
@@ -962,6 +915,8 @@ struct RotamerSidechain: public PotentialNode {
             e1[edges11.edge_indices1[ne]] += 0.5*en;
             e1[edges11.edge_indices2[ne]] += 0.5*en;
         }
+        split_moved_edge<3>(e1, e3, edges13, nodes3);
+        split_moved_edge<6>(e1, e6, edges16, nodes6);
 
         for(int ne: range(edges33.nodes_to_edge.n_edge)) {
             float en = edges33.edge_free_energy<3,3>(ne);
@@ -1001,6 +956,8 @@ struct RotamerSidechain: public PotentialNode {
                 e1[edges11.edge_indices1[ne]] += 0.5*en;
                 e1[edges11.edge_indices2[ne]] += 0.5*en;
             }
+            split_moved_edge<3>(e1, e3, edges13, nodes3);
+            split_moved_edge<6>(e1, e6, edges16, nodes6);
         }
 
         for(int ne: range(edges33.nodes_to_edge.n_edge)) {
@@ -1101,7 +1058,6 @@ struct RotamerSidechain: public PotentialNode {
 
             for(int i: range(n_prob_nodes)) {
                 NodeHolder* nh = node_holders_matrix[n_rot];
-                // sens_1body[i](0,igraph.loc1[n]) += nh->energy_capping_deriv(rot,id) * nh->cur_belief(rot,id);
                 sens_1body[i](0,igraph.loc1[n]) += nh->cur_belief(rot,id);
             }
         }

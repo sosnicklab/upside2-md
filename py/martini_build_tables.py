@@ -12,6 +12,7 @@ import argparse
 import math
 import os
 import importlib.util
+import itertools
 import multiprocessing as mp
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -33,9 +34,6 @@ ENERGY_CONVERSION_KJ_PER_EUP = 2.914952774272
 LENGTH_CONVERSION_A_PER_NM = 10.0
 ANGSTROM_TO_NM = 0.1
 DEFAULT_PRODUCTION_TEMP_UPSIDE = 0.8647
-DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE = float(
-    os.environ.get("UPSIDE_MARTINI_TEMPERED_AVERAGE_TEMP_UPSIDE", "25.0")
-)
 PARTICLES_GRID_N = 1000
 # The grid starts above zero because the dry-MARTINI pair potential diverges at r = 0 and the table must
 # BE that potential, not a variant of it. 0.3 A is far inside anything reachable: the repulsive core there
@@ -54,10 +52,10 @@ NUMERICAL_DISTANCE_GUARD_NM = 1.0e-6
 # 9600 x 24 differs by 0.01 E_up at the 95th percentile.
 SC_TABLE_DIRECTION_COUNT = 2400
 SC_TABLE_BEAD_FRAME_COUNT = 24
-# The runtime evaluates the SC-particle table as a clamped cubic spline (zero end slopes, as the particle
-# tables) in the CB-target distance r and the angle theta between the CB vector and the CB-to-target
-# direction. Both clamped conditions hold exactly for the physical table: the azimuthal average is even in
-# theta about 0 and pi, and the radial grid runs past the reach of every side-chain bead (the largest
+# The runtime evaluates the SC-particle table as a clamped cubic spline with zero end slopes (the particle
+# tables take their analytic end slopes) in the CB-target distance r and the angle theta between the CB vector
+# and the CB-to-target direction. Both clamped conditions hold exactly for the physical table: the azimuthal
+# average is even in theta about 0 and pi, and the radial grid runs past the reach of every side-chain bead (the largest
 # bead-anchor distance plus the 1.2 nm pair cutoff), so its last nodes are exactly zero. In cos(theta) the
 # end slopes are not zero and a clamped spline would be wrong there. 37 theta nodes (5 degrees) represent
 # the table to 0.017 E_up at the 95th percentile (0.58 E_up at worst, beside steep walls) against a 73-node
@@ -71,10 +69,10 @@ CANONICAL_RESIDUES = (
     "SER", "THR", "TRP", "TYR", "VAL",
 )
 
-# N, CA, C, CB of the reference residue. The rotamer bead centres of sidechain.h5 are given in the
-# affine_alignment frame, whose origin is the centroid of N/CA/C, and the runtime places CB in that frame
-# (py/martini_prepare_system_lib.py CB_PLACEMENT), so the table's CB anchor is the CB relative to that
-# centroid. The CB vector is CB - CA, a difference, so the origin cancels there.
+# N, CA, C, CB of the reference residue, on which the side-chain conformers are built. The runtime places CB in
+# the affine_alignment frame, whose origin is the centroid of N/CA/C (py/martini_prepare_system_lib.py
+# CB_PLACEMENT), so the conformers and the table's CB anchor are taken relative to that centroid. The CB vector
+# is CB - CA, a difference, so the origin cancels there.
 _REFERENCE_N_CA_C_CB_ANG = np.array([
     [-1.19280531, -0.83127186, 0.0],
     [ 0.0,         0.0,        0.0],
@@ -84,6 +82,71 @@ _REFERENCE_N_CA_C_CB_ANG = np.array([
 CANONICAL_CB_POSITION_ANG = tuple(_REFERENCE_N_CA_C_CB_ANG[3] - _REFERENCE_N_CA_C_CB_ANG[:3].mean(axis=0))
 _cb_direction = _REFERENCE_N_CA_C_CB_ANG[3] - _REFERENCE_N_CA_C_CB_ANG[1]
 CANONICAL_CB_VECTOR_UNIT = tuple(_cb_direction / np.linalg.norm(_cb_direction))
+
+# Ideal side-chain heavy atoms, the geometry of master's src/generate_from_rotamer.cpp, with which Upside's rotamer
+# library was placed. Each atom d is placed from the atoms a, b, c by its bond length |cd| (A), bond angle bcd and
+# dihedral abcd (degrees), the dihedral being chi_k plus the offset, or the offset alone where k is 0.
+SIDECHAIN_HEAVY_ATOMS = {
+    "ARG": (("CG", "N", "CA", "CB", 1.52, 113.9, 1, 0.0), ("CD", "CA", "CB", "CG", 1.52, 111.7, 2, 0.0),
+            ("NE", "CB", "CG", "CD", 1.46, 111.7, 3, 0.0), ("CZ", "CG", "CD", "NE", 1.33, 124.7, 4, 0.0),
+            ("NH1", "CD", "NE", "CZ", 1.33, 120.7, 0, 0.0), ("NH2", "CD", "NE", "CZ", 1.33, 119.6, 0, -180.0)),
+    "ASN": (("CG", "N", "CA", "CB", 1.52, 112.7, 1, 0.0), ("OD1", "CA", "CB", "CG", 1.23, 120.9, 2, 0.0),
+            ("ND2", "CA", "CB", "CG", 1.33, 116.5, 2, 180.0)),
+    "ASP": (("CG", "N", "CA", "CB", 1.52, 113.0, 1, 0.0), ("OD1", "CA", "CB", "CG", 1.25, 119.2, 2, 0.0),
+            ("OD2", "CA", "CB", "CG", 1.25, 118.2, 2, -179.9)),
+    "CYS": (("SG", "N", "CA", "CB", 1.81, 113.8, 1, 0.0),),
+    "GLN": (("CG", "N", "CA", "CB", 1.52, 113.9, 1, 0.0), ("CD", "CA", "CB", "CG", 1.52, 112.8, 2, 0.0),
+            ("OE1", "CB", "CG", "CD", 1.23, 120.9, 3, 0.0), ("NE2", "CB", "CG", "CD", 1.33, 116.5, 3, -180.0)),
+    "GLU": (("CG", "N", "CA", "CB", 1.52, 113.9, 1, 0.0), ("CD", "CA", "CB", "CG", 1.52, 113.2, 2, 0.0),
+            ("OE1", "CB", "CG", "CD", 1.25, 119.0, 3, 0.0), ("OE2", "CB", "CG", "CD", 1.25, 118.1, 3, -180.0)),
+    "HIS": (("CG", "N", "CA", "CB", 1.50, 113.6, 1, 0.0), ("ND1", "CA", "CB", "CG", 1.38, 122.7, 2, 0.0),
+            ("CD2", "CA", "CB", "CG", 1.36, 131.0, 2, 179.9), ("CE1", "CB", "CG", "ND1", 1.32, 109.2, 0, 179.9),
+            ("NE2", "CB", "CG", "CD2", 1.37, 107.2, 0, -179.9)),
+    "ILE": (("CG1", "N", "CA", "CB", 1.53, 110.4, 1, 0.0), ("CG2", "N", "CA", "CB", 1.53, 110.7, 1, -123.2),
+            ("CD1", "CA", "CB", "CG1", 1.52, 114.0, 2, 0.0)),
+    "LEU": (("CG", "N", "CA", "CB", 1.53, 116.4, 1, 0.0), ("CD1", "CA", "CB", "CG", 1.53, 110.4, 2, 0.0),
+            ("CD2", "CA", "CB", "CG", 1.53, 110.6, 2, 122.9)),
+    "LYS": (("CG", "N", "CA", "CB", 1.52, 114.0, 1, 0.0), ("CD", "CA", "CB", "CG", 1.52, 111.5, 2, 0.0),
+            ("CE", "CB", "CG", "CD", 1.52, 111.6, 3, 0.0), ("NZ", "CG", "CD", "CE", 1.49, 111.8, 4, 0.0)),
+    "MET": (("CG", "N", "CA", "CB", 1.52, 113.9, 1, 0.0), ("SD", "CA", "CB", "CG", 1.81, 112.7, 2, 0.0),
+            ("CE", "CB", "CG", "SD", 1.79, 100.7, 3, 0.0)),
+    "PHE": (("CG", "N", "CA", "CB", 1.50, 113.8, 1, 0.0), ("CD1", "CA", "CB", "CG", 1.39, 120.7, 2, 0.0),
+            ("CD2", "CA", "CB", "CG", 1.39, 120.5, 2, -180.0), ("CE1", "CB", "CG", "CD1", 1.39, 120.8, 0, -180.0),
+            ("CE2", "CB", "CG", "CD2", 1.39, 120.8, 0, 180.0), ("CZ", "CG", "CD1", "CE1", 1.39, 119.9, 0, 0.0)),
+    "PRO": (("CG", "N", "CA", "CB", 1.50, 104.2, 1, 0.0), ("CD", "CA", "CB", "CG", 1.51, 104.9, 2, 0.0)),
+    "SER": (("OG", "N", "CA", "CB", 1.42, 110.8, 1, 0.0),),
+    "THR": (("OG1", "N", "CA", "CB", 1.43, 109.2, 1, 0.0), ("CG2", "N", "CA", "CB", 1.53, 111.1, 1, -120.4)),
+    "TRP": (("CG", "N", "CA", "CB", 1.50, 113.9, 1, 0.0), ("CD1", "CA", "CB", "CG", 1.37, 127.1, 2, 0.0),
+            ("CD2", "CA", "CB", "CG", 1.43, 126.6, 2, -179.7), ("NE1", "CB", "CG", "CD1", 1.38, 110.1, 0, -179.8),
+            ("CE2", "CB", "CG", "CD2", 1.41, 107.2, 0, 179.8), ("CE3", "CB", "CG", "CD2", 1.40, 133.9, 0, -0.2),
+            ("CZ2", "CG", "CD2", "CE2", 1.40, 122.4, 0, 180.0), ("CZ3", "CG", "CD2", "CE3", 1.39, 118.7, 0, -180.0),
+            ("CH2", "CD2", "CE2", "CZ2", 1.37, 117.5, 0, 0.0)),
+    "TYR": (("CG", "N", "CA", "CB", 1.51, 113.7, 1, 0.0), ("CD1", "CA", "CB", "CG", 1.39, 120.9, 2, 0.0),
+            ("CD2", "CA", "CB", "CG", 1.39, 120.8, 2, -179.9), ("CE1", "CB", "CG", "CD1", 1.39, 121.1, 0, -179.9),
+            ("CE2", "CB", "CG", "CD2", 1.39, 121.1, 0, 179.9), ("CZ", "CG", "CD1", "CE1", 1.38, 119.5, 0, 0.0),
+            ("OH", "CD1", "CE1", "CZ", 1.38, 119.8, 0, 180.0)),
+    "VAL": (("CG1", "N", "CA", "CB", 1.53, 110.7, 1, 0.0), ("CG2", "N", "CA", "CB", 1.53, 110.4, 1, 122.9)),
+}
+# chi3 and chi4, which the library's states leave open, sampled at their staggered wells: -60, 60 and 180 degrees
+# about an sp3-sp3 bond, -85, 85 and 180 about ARG's CD-NE bond into the planar guanidinium (Lovell et al. 2000),
+# and every 30 degrees for the carboxyl and amide chi3 of GLU and GLN, which have no wells.
+_STAGGERED_DEG = (-60.0, 60.0, 180.0)
+_EVERY_30_DEG = tuple(float(x) for x in range(-180, 180, 30))
+SIDECHAIN_CHI34_DEG = {
+    "ARG": (_STAGGERED_DEG, (-85.0, 85.0, 180.0)),
+    "GLN": (_EVERY_30_DEG,),
+    "GLU": (_EVERY_30_DEG,),
+    "LYS": (_STAGGERED_DEG, _STAGGERED_DEG),
+    "MET": (_STAGGERED_DEG,),
+}
+# Adjacent sp3-sp3 dihedrals (k, k+1) of opposite gauche signs are a syn-pentane: at these wells the atoms four
+# bonds apart come within a median 2.0-2.7 A of each other, inside their contact distance, so such a conformer is
+# left out.
+SIDECHAIN_SYN_PENTANE_CHI_PAIRS = {"ARG": ((2, 3),), "LYS": ((2, 3), (3, 4)), "MET": ((2, 3),)}
+# A half turn of chi2 leaves these side chains unchanged but swaps the names of their two ring or carboxyl branches,
+# and martinize maps by name (PHE SC1 is CB CG CD1). The PDB names the branch with |chi2| <= 90 degrees CD1 (OD1), so
+# chi2 is taken there.
+SIDECHAIN_HALF_TURN_CHI2 = ("ASP", "PHE", "TYR")
 
 SCHEMA_PARTICLES = "martini_particles_combined"
 SCHEMA_SC = "martini_sc_combined"
@@ -142,32 +205,22 @@ def _bead_frame_angles(count: int) -> np.ndarray:
 
 
 def _boltzmann_free_energy_kj_mol(
-    values_kj_mol: np.ndarray,
-    weights: np.ndarray,
-    sampled: np.ndarray,
-    temperature: float,
+    energy_kj_mol: np.ndarray,
+    sample_weight: np.ndarray,
+    conformer_weight: np.ndarray,
+    state_start: np.ndarray,
+    kbt_kj_mol: float,
 ) -> np.ndarray:
-    """Weighted Boltzmann free energy over the last axis, of the samples a bin was given (`sampled`).
-    It runs over the positive-weight samples, and is their weighted mean at temperature 0; a bin whose
-    samples all have weight 0 takes their plain mean."""
-    values, weights, sampled = np.broadcast_arrays(
-        np.asarray(values_kj_mol, dtype=np.float64), np.asarray(weights, dtype=np.float64), sampled
-    )
-    positive = weights > 0.0
-    weights = np.where(positive, weights, 0.0)
-    weight_sum = weights.sum(axis=-1)
-    norm = np.where(weight_sum > 0.0, weight_sum, 1.0)
-    if temperature <= 0.0:
-        free = (weights * np.where(positive, values, 0.0)).sum(axis=-1) / norm
-    else:
-        kbt = float(temperature) * ENERGY_CONVERSION_KJ_PER_EUP
-        emin = np.where(positive, values, np.inf).min(axis=-1)
-        emin = np.where(np.isfinite(emin), emin, 0.0)
-        shifted = np.where(positive, values - emin[..., None], 0.0)
-        z = (weights * np.exp(-shifted / kbt)).sum(axis=-1) / norm
-        free = emin - kbt * np.log(np.maximum(z, 1e-300))
-    plain_mean = np.where(sampled, values, 0.0).sum(axis=-1) / np.maximum(sampled.sum(axis=-1), 1)
-    return np.where(weight_sum > 0.0, free, plain_mean)
+    """Free energy of each rotamer state, -kT ln of the Boltzmann factor averaged over the state's conformers (rows
+    of `energy_kj_mol`, weighted by `conformer_weight`) and over each conformer's samples (columns, weighted by the
+    positive `sample_weight`). The states are the runs of rows starting at `state_start`. The factors are taken
+    relative to each state's lowest energy, which therefore has factor 1."""
+    state_index = np.repeat(np.arange(len(state_start)), np.diff(np.append(state_start, len(energy_kj_mol))))
+    emin = np.minimum.reduceat(energy_kj_mol.min(axis=1), state_start)
+    factor = (np.exp(-(energy_kj_mol - emin[state_index, None]) / kbt_kj_mol) * sample_weight).sum(axis=1)
+    factor /= sample_weight.sum()
+    z = np.add.reduceat(conformer_weight * factor, state_start) / np.add.reduceat(conformer_weight, state_start)
+    return emin - kbt_kj_mol * np.log(z)
 
 
 def _write_common_table_contract_attrs(
@@ -218,227 +271,116 @@ def _fibonacci_sphere(count: int) -> List[List[float]]:
 def _grid_bin_weights(
     coord_values: np.ndarray,
     grid: List[float],
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Linear binning of each sample's coordinate onto the uniform grid, as (weights, sampled), each
-    (n_sample, n_grid). A sample at or beyond an end node goes whole to it; an interior one is split
-    between its two nodes, and one on a node still reaches the next node, with weight 0."""
+) -> np.ndarray:
+    """Linear binning of each sample's coordinate onto the uniform grid, as weights (n_sample, n_grid). A sample
+    at or beyond an end node goes whole to it; an interior one is split between its two nodes."""
     coord_values = np.asarray(coord_values, dtype=np.float64)
     n_sample, n_grid = coord_values.size, len(grid)
     weights = np.zeros((n_sample, n_grid), dtype=np.float64)
-    sampled = np.zeros((n_sample, n_grid), dtype=bool)
     if n_grid == 1:
         weights[:, 0] = 1.0
-        sampled[:, 0] = True
-        return weights, sampled
+        return weights
     coord = (coord_values - grid[0]) / (grid[1] - grid[0])
     rows = np.arange(n_sample)
     for end, at_end in ((0, coord <= 0.0), (n_grid - 1, coord >= n_grid - 1)):
         weights[rows[at_end], end] = 1.0
-        sampled[rows[at_end], end] = True
     inner = (coord > 0.0) & (coord < n_grid - 1)
     lo = np.floor(coord[inner]).astype(np.int64)
     hi_weight = coord[inner] - lo
     weights[rows[inner], lo] = 1.0 - hi_weight
     weights[rows[inner], lo + 1] = hi_weight
-    sampled[rows[inner], lo] = True
-    sampled[rows[inner], lo + 1] = True
-    return weights, sampled
+    return weights
 
 
-def _load_sidechain_orientation_library(
+def _place_atom(a: np.ndarray, b: np.ndarray, c: np.ndarray, bond: float, angle: float, dihedral: float) -> np.ndarray:
+    """The atom d with |cd| = bond, bond angle bcd = angle and dihedral abcd = dihedral (radians)."""
+    bc = (c - b) / np.linalg.norm(c - b)
+    normal = np.cross(b - a, bc)
+    normal /= np.linalg.norm(normal)
+    return c + bond * (-math.cos(angle) * bc
+                       + math.sin(angle) * (math.cos(dihedral) * np.cross(normal, bc) + math.sin(dihedral) * normal))
+
+
+def _gauche_sign(angle: float) -> int:
+    """+1 for gauche+ [0, 120) degrees, -1 for gauche- [-120, 0), 0 for trans, as upside_config's chi1 states."""
+    angle = math.remainder(angle, 2.0 * math.pi)
+    if 0.0 <= angle < 2.0 * math.pi / 3.0:
+        return 1
+    if -2.0 * math.pi / 3.0 <= angle < 0.0:
+        return -1
+    return 0
+
+
+def _sidechain_conformers(
     sidechain_lib_path: Path,
-) -> Dict[str, Dict[str, Any]]:
-    if not sidechain_lib_path.exists():
-        raise RuntimeError(f"Sidechain orientation library not found: {sidechain_lib_path}")
-    with h5py.File(sidechain_lib_path, "r") as h5:
-        restype_order = [
-            x.decode("ascii") if isinstance(x, bytes) else str(x)
-            for x in h5["restype_order"][:]
-        ]
-        start_stop_bead = h5["rotamer_start_stop_bead"][:]
-        rotamer_center_fixed = h5["rotamer_center_fixed"][:, :6]
-        prob_weights = None
-        if "rotamer_prob_fixed" in h5:
-            prob_weights = [float(x) for x in h5["rotamer_prob_fixed"][:].reshape(-1)]
-
-        def _mean_over_prefix_axes(values):
-            shape = getattr(values, "shape", ())
-            if not shape:
-                return [float(values)]
-            if len(shape) == 1:
-                return [float(x) for x in values[:]]
-            total = 1
-            for dim in shape[:-1]:
-                total *= int(dim)
-            sums = [0.0] * int(shape[-1])
-            for prefix in _iter_index_prefix(tuple(int(x) for x in shape[:-1])):
-                row = values[prefix]
-                for i, val in enumerate(row):
-                    sums[i] += float(val)
-            return [v / float(total) for v in sums]
-
-        def _iter_index_prefix(shape):
-            if not shape:
-                yield ()
-                return
-            first, rest = shape[0], shape[1:]
-            for i in range(first):
-                for tail in _iter_index_prefix(rest):
-                    yield (i,) + tail
-
-        if prob_weights is None and "rotamer_prob" in h5:
-            prob_weights = _mean_over_prefix_axes(h5["rotamer_prob"])
-
-        residue_info: Dict[str, Dict[str, Any]] = {}
-        for residue_index, residue_name in enumerate(restype_order):
-            start, stop, n_bead = [int(x) for x in start_stop_bead[residue_index]]
-            if stop <= start or n_bead <= 0:
-                residue_info[residue_name] = {
-                    "center_nm": [], "vector_unit": [], "weight": [],
-                }
-                continue
-            n_row = stop - start
-            if n_row % n_bead != 0:
-                raise RuntimeError(
-                    f"Sidechain orientation rows not divisible by n_bead for {residue_name}"
-                )
-            n_rot = n_row // n_bead
-            block = rotamer_center_fixed[start:stop].reshape(n_rot, n_bead, 6)
-            centers_nm = [
-                [float(val) * ANGSTROM_TO_NM for val in row]
-                for row in block[:, :, :3].mean(axis=1)
-            ]
-            # Per-bead positions in nm for each rotamer: (n_rot, n_bead, 3)
-            bead_positions_nm = np.asarray(block[:, :, :3], dtype=np.float64) * ANGSTROM_TO_NM
-            vectors = []
-            for row in block[:, 0, 3:6]:
-                norm = math.sqrt(sum(float(x) * float(x) for x in row))
-                if norm <= 0.0:
-                    raise RuntimeError(
-                        f"Invalid zero sidechain vector for residue {residue_name}"
-                    )
-                vectors.append([float(x) / norm for x in row])
-            if prob_weights is None:
-                weights = [1.0 / float(n_rot)] * n_rot
-            else:
-                row_weights = prob_weights[start:stop:n_bead]
-                total = sum(max(0.0, float(x)) for x in row_weights)
-                weights = [max(0.0, float(x)) / total for x in row_weights] if total > 0 else [1.0 / float(n_rot)] * n_rot
-            residue_info[residue_name] = {
-                "center_nm": centers_nm,
-                "vector_unit": vectors,
-                "weight": weights,
-                "n_rotamer": n_rot,
-                "n_bead": n_bead,
-                "bead_positions_nm": bead_positions_nm,
-            }
-    return residue_info
-
-
-def _load_martini_sidechain_offsets_nm(
     martinize_path: Path,
-    forcefield_name: str,
-) -> Dict[str, np.ndarray]:
-    """Build MARTINI sidechain bead offsets centered on the CG sidechain point.
+    residues: List[str],
+) -> Dict[str, Dict[str, Any]]:
+    """The conformers of each rotamer state and their MARTINI side-chain beads.
 
-    The Upside rotamer library provides one center/vector per sidechain rotamer.
-    MARTINI can represent that sidechain by multiple beads; this helper derives
-    their local offsets from the MARTINI sidechain bonded geometry.
+    A state's conformers are the ideal-geometry side chains (SIDECHAIN_HEAVY_ATOMS) at its library (chi1, chi2) rows
+    (`restype_and_chi_and_state` of sidechain.h5, chi2 named as the PDB names it, SIDECHAIN_HALF_TURN_CHI2), each
+    with every chi3, chi4 of SIDECHAIN_CHI34_DEG that makes no syn-pentane, equally weighted. They are built on the
+    reference N, CA, CB with the origin at the N/CA/C centroid, so the CB is the canonical anchor, and each bead is
+    the mass-weighted centre of its atoms in martinize's martini22 mapping, with martinize's masses. Returns per
+    residue `bead_positions_nm` (n_conformer, n_bead, 3), `state` (n_conformer,) ascending over every library state,
+    and `weight` (n_conformer,).
     """
-    martinize_path = Path(martinize_path).expanduser().resolve()
-    spec = importlib.util.spec_from_file_location(
-        "martini_sidechain_geometry_runtime", martinize_path
-    )
+    spec = importlib.util.spec_from_file_location("martini_sidechain_mapping_runtime", martinize_path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Unable to load martinize module from {martinize_path}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    if not hasattr(module, forcefield_name):
-        raise RuntimeError(f"Forcefield '{forcefield_name}' not found in {martinize_path}")
-    ff = getattr(module, forcefield_name)()
+    martinize = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(martinize)
+    mapping = martinize.CoarseGrained.mapping
+    mass = martinize.CoarseGrained.mass
+    with h5py.File(sidechain_lib_path, "r") as h5:
+        restype_order = [x.decode("ascii") for x in h5["restype_order"][:]]
+        start_stop_bead = h5["rotamer_start_stop_bead"][:]
+        chi_rows = h5["restype_and_chi_and_state"][:]
+    reference = dict(zip(("N", "CA", "C", "CB"), _REFERENCE_N_CA_C_CB_ANG - _REFERENCE_N_CA_C_CB_ANG[:3].mean(axis=0)))
 
-    offsets: Dict[str, np.ndarray] = {}
-    for residue in CANONICAL_RESIDUES:
-        raw = ff.sidechains.get(residue, [])
-        bead_types = [str(tok).strip() for tok in raw[0]] if raw else []
-        bead_types = [tok for tok in bead_types if tok and tok != "D"]
-        n_bead = len(bead_types)
-        if n_bead == 0:
-            offsets[residue] = np.zeros((0, 3), dtype=np.float64)
-            continue
-        if n_bead == 1:
-            offsets[residue] = np.zeros((1, 3), dtype=np.float64)
-            continue
+    conformers: Dict[str, Dict[str, Any]] = {}
+    for residue in residues:
+        ires = restype_order.index(residue)
+        start, stop, n_bead = (int(x) for x in start_stop_bead[ires])
+        n_state = (stop - start) // n_bead
+        rows = chi_rows[chi_rows[:, 0] == ires]
+        built = {"CB"} | {atom[0] for atom in SIDECHAIN_HEAVY_ATOMS[residue]}
+        bead_atoms = [[name for name in group if name in built] for group in mapping[residue][1:]]
+        if sorted(sum(bead_atoms, [])) != sorted(built):
+            raise RuntimeError(f"martinize's {residue} mapping {bead_atoms} does not take each built atom once")
+        bead_masses = [[mass.get(name[0], 0) for name in names] for names in bead_atoms]
 
-        bonds = list(raw[1]) if len(raw) > 1 else []
-        connectivity = getattr(ff, "connectivity", {}).get(residue, [[]])
-        conn_bonds = list(connectivity[0]) if connectivity else []
-
-        def bond_length(a: int, b: int, default: float) -> float:
-            key = {int(a), int(b)}
-            for idx, pair in enumerate(conn_bonds):
-                if {int(pair[0]), int(pair[1])} == key and idx < len(bonds):
-                    return float(bonds[idx][0])
-            return float(default)
-
-        bb_sc = bond_length(0, 1, float(bonds[0][0]) if bonds else 0.32)
-        sc_sc = bond_length(1, 2, float(bonds[1][0]) if len(bonds) > 1 else 0.27)
-
-        if n_bead == 2:
-            pos = np.array(
-                [
-                    [0.0, 0.0, bb_sc],
-                    [0.0, 0.0, bb_sc + sc_sc],
-                ],
-                dtype=np.float64,
-            )
-        elif n_bead == 3:
-            half = 0.5 * sc_sc
-            axial = math.sqrt(max(sc_sc * sc_sc - half * half, 0.0))
-            pos = np.array(
-                [
-                    [0.0, 0.0, bb_sc],
-                    [half, 0.0, bb_sc + axial],
-                    [-half, 0.0, bb_sc + axial],
-                ],
-                dtype=np.float64,
-            )
-        elif n_bead == 4:
-            half = 0.5 * sc_sc
-            axial = math.sqrt(max(sc_sc * sc_sc - half * half, 0.0))
-            pos = np.array(
-                [
-                    [0.0, 0.0, bb_sc],
-                    [half, 0.0, bb_sc + axial],
-                    [-half, 0.0, bb_sc + axial],
-                    [0.0, 0.0, bb_sc + 2.0 * axial],
-                ],
-                dtype=np.float64,
-            )
-        else:
-            raise RuntimeError(
-                f"Unsupported MARTINI sidechain bead count for {residue}: {n_bead}"
-            )
-        offsets[residue] = pos - pos.mean(axis=0, keepdims=True)
-    return offsets
-
-
-def _expand_rotamer_sidechain_positions(
-    orientation: Dict[str, Any],
-    residue: str,
-    offsets_nm: np.ndarray,
-) -> List[np.ndarray]:
-    centers = [np.asarray(c, dtype=np.float64) for c in orientation["center_nm"]]
-    vectors = [np.asarray(v, dtype=np.float64) for v in orientation["vector_unit"]]
-    out = []
-    for irot, (center, vector) in enumerate(zip(centers, vectors)):
-        if center.shape != (3,):
-            raise RuntimeError(f"Invalid rotamer center for {residue} rotamer {irot}")
-        if vector.shape != (3,) or float(np.linalg.norm(vector)) <= 1.0e-12:
-            raise RuntimeError(f"Invalid sidechain vector for {residue} rotamer {irot}")
-        rot = _rotation_to_align_z_np(vector)
-        out.append(center[None, :] + (rot @ offsets_nm.T).T)
-    return out
+        beads, state = [], []
+        for s in range(n_state):
+            state_rows = rows[rows[:, 3] == s]
+            if len(state_rows) == 0:
+                raise RuntimeError(f"{sidechain_lib_path} has no chi row for {residue} state {s}")
+            for chi1, chi2 in state_rows[:, 1:3]:
+                if residue in SIDECHAIN_HALF_TURN_CHI2:
+                    chi2 = math.remainder(chi2, math.pi)
+                for chi34 in itertools.product(*SIDECHAIN_CHI34_DEG.get(residue, ())):
+                    chi = (float(chi1), float(chi2)) + tuple(math.radians(x) for x in chi34)
+                    if any(_gauche_sign(chi[i - 1]) * _gauche_sign(chi[j - 1]) < 0
+                           for i, j in SIDECHAIN_SYN_PENTANE_CHI_PAIRS.get(residue, ())):
+                        continue
+                    atoms = dict(reference)
+                    for name, a, b, c, bond, angle, k, offset in SIDECHAIN_HEAVY_ATOMS[residue]:
+                        dihedral = (chi[k - 1] if k else 0.0) + math.radians(offset)
+                        atoms[name] = _place_atom(atoms[a], atoms[b], atoms[c], bond, math.radians(angle), dihedral)
+                    beads.append([np.average([atoms[name] for name in names], axis=0, weights=masses)
+                                  for names, masses in zip(bead_atoms, bead_masses)])
+                    state.append(s)
+        state = np.asarray(state)
+        count = np.bincount(state, minlength=n_state)
+        if count.min() == 0:
+            raise RuntimeError(f"{residue} state {int(np.argmin(count))} has no conformer")
+        conformers[residue] = {
+            "bead_positions_nm": np.asarray(beads) * ANGSTROM_TO_NM,
+            "state": state,
+            "weight": 1.0 / count[state],
+        }
+    return conformers
 
 
 def _build_particles_group(
@@ -453,7 +395,6 @@ def _build_particles_group(
     if not active_types:
         active_types = list(atomtypes)
 
-    charges = np.asarray([infer_charge_from_atomtype(t) for t in atomtypes], dtype=np.float32)
     type_to_charge = {t: infer_charge_from_atomtype(t) for t in atomtypes}
 
     # Find unique (eps, sig) pairs for active types (pair with self and cross)
@@ -540,7 +481,6 @@ def _build_particles_group(
     g.attrs["n_points"] = PARTICLES_GRID_N
     g.attrs["r_min_ang"] = np.float32(PARTICLES_R_MIN_A)
     g.attrs["r_max_ang"] = np.float32(PARTICLES_R_MAX_A)
-    g.attrs["coulomb_k_eup"] = np.float32(coulomb_k_eup)
 
     eps_arr = np.asarray([t[0] for t in triples], dtype=np.float64)
     sig_arr = np.asarray([t[1] for t in triples], dtype=np.float64)
@@ -553,11 +493,6 @@ def _build_particles_group(
     g.create_dataset("unique_sig_ang", data=sig_arr, dtype=np.float64)
     g.create_dataset("unique_charge_product", data=qq_arr, dtype=np.float64)
     g.create_dataset("combined_energy_grids", data=combined, dtype=np.float64)
-    g.create_dataset(
-        "type_order",
-        data=np.asarray([np.bytes_(x) for x in atomtypes], dtype="S8"),
-    )
-    g.create_dataset("type_charge", data=charges, dtype=np.float32)
 
     print(
         f"  particles: {n_triples} combined (eps,sig,qq) triples, "
@@ -571,8 +506,9 @@ def _run_sc_task(
     sidechain_bead_charges: List[float],
     target_type: str,
     target_charge: float,
-    rotamer_bead_positions_nm: List[List[List[float]]],
-    rotamer_weights: List[float],
+    conformer_bead_positions_nm: np.ndarray,
+    conformer_state: np.ndarray,
+    conformer_weight: np.ndarray,
     pair_params: Dict[Tuple[str, str], Dict[str, float]],
     r_values: List[float],
     direction_vectors: List[List[float]],
@@ -580,18 +516,22 @@ def _run_sc_task(
     cb_anchor_nm: List[float],
     cb_vector_unit: List[float],
     sidechain_bead_frame_angles: List[float],
+    temperature: float,
     dist_min_nm: float = NUMERICAL_DISTANCE_GUARD_NM,
-    temperature: float = 0.0,
 ) -> Dict[str, Any]:
-    n_bead = len(sidechain_bead_types)
-    rotamer_positions = [np.asarray(pos, dtype=np.float64) for pos in rotamer_bead_positions_nm]
-    for irot, pos in enumerate(rotamer_positions):
-        if pos.shape != (n_bead, 3):
-            raise RuntimeError(
-                f"{residue} rotamer {irot} has bead geometry shape {pos.shape}, "
-                f"expected ({n_bead}, 3)"
-            )
-    n_rotamer = len(rotamer_positions)
+    """The table of every rotamer state of `residue` against one target: at each (r, theta) node the free energy at
+    `temperature` of the target over the state's conformers, the rotations of their beads about the CB vector, and
+    the target directions binned onto the theta node."""
+    positions = np.asarray(conformer_bead_positions_nm, dtype=np.float64)
+    n_conformer, n_bead = positions.shape[:2]
+    if positions.shape != (n_conformer, len(sidechain_bead_types), 3):
+        raise RuntimeError(f"{residue} conformer beads have shape {positions.shape}, "
+                           f"expected (n, {len(sidechain_bead_types)}, 3)")
+    state = np.asarray(conformer_state)
+    state_start = np.flatnonzero(np.diff(state, prepend=-1))
+    if not np.array_equal(state[state_start], np.arange(len(state_start))):
+        raise RuntimeError(f"{residue} conformers are not grouped by state 0, 1, ...: {state}")
+    weight = np.asarray(conformer_weight, dtype=np.float64)
     n_angle = len(theta_grid)
     n_radial = len(r_values)
 
@@ -609,56 +549,47 @@ def _run_sc_task(
     cb_vector_arr = np.asarray(cb_vector_unit, dtype=np.float64)
     cb_vector_arr /= max(float(np.linalg.norm(cb_vector_arr)), 1e-12)
     bead_frame_angles = [float(x) for x in sidechain_bead_frame_angles] or [0.0]
-    # every rotamer's beads in every bead frame: (n_rotamer, n_frame, n_bead, 3)
+    # every conformer's beads in every bead frame: (n_conformer, n_frame, n_bead, 3)
     framed_positions = np.stack([
         np.stack([
             _rotate_points_about_axis_np(pos, cb_vector_arr, angle, cb_anchor_arr)
             for angle in bead_frame_angles
         ])
-        for pos in rotamer_positions
+        for pos in positions
     ])
 
-    # theta is the angle between the CB vector and the CB-to-target direction: 0 on the side-chain side
+    # theta is the angle between the CB vector and the CB-to-target direction: 0 on the side-chain side. A theta
+    # node's samples are (bead frame, target direction) over the directions binned onto it, each direction carrying
+    # its bin weight in every frame.
     directions = np.asarray(direction_vectors, dtype=np.float64)
     theta = np.arccos(np.clip(directions @ cb_vector_arr, -1.0, 1.0))
-    bin_weight, bin_sampled = _grid_bin_weights(theta, theta_grid)
-    if not bin_sampled.any(axis=0).all():
-        raise RuntimeError(f"Theta bin empty for {residue} target {target_type}")
-    # A bin's samples run over (bead frame, target direction), each direction carrying its bin weight
-    # in every frame.
-    sample_weight = np.tile(bin_weight.T, (1, len(bead_frame_angles)))
-    sample_sampled = np.tile(bin_sampled.T, (1, len(bead_frame_angles)))
+    bin_weight = _grid_bin_weights(theta, theta_grid)
+    node_directions = [np.flatnonzero(bin_weight[:, k] > 0.0) for k in range(n_angle)]
+    if min(len(d) for d in node_directions) == 0:
+        raise RuntimeError(f"A theta node gets no target direction for {residue} target {target_type}")
+    node_weight = [np.tile(bin_weight[d, k], len(bead_frame_angles)) for k, d in enumerate(node_directions)]
+    kbt_kj_mol = float(temperature) * ENERGY_CONVERSION_KJ_PER_EUP
 
-    rotamer_energy = np.zeros((n_rotamer, n_radial, n_angle), dtype=np.float64)
+    state_energy = np.zeros((len(state_start), n_radial, n_angle), dtype=np.float64)
     for ir, r_nm in enumerate(r_values):
         target_pos_nm = cb_anchor_arr[None, :] + r_nm * directions
-        dist_nm = np.linalg.norm(
-            framed_positions[:, :, :, None, :] - target_pos_nm[None, None, None, :, :], axis=-1
-        )
         energy = sum(
-            _pair_energy_kj_mol(dist_nm[:, :, ib], *bead_params[ib], dist_min_nm=dist_min_nm)
+            _pair_energy_kj_mol(
+                np.linalg.norm(framed_positions[:, :, ib, None, :] - target_pos_nm[None, None], axis=-1),
+                *bead_params[ib], dist_min_nm=dist_min_nm,
+            )
             for ib in range(n_bead)
         )
-        samples = energy.reshape(n_rotamer, -1)
-        rotamer_energy[:, ir, :] = _boltzmann_free_energy_kj_mol(
-            samples[:, None, :], sample_weight[None], sample_sampled[None], temperature
-        )
+        for k, d in enumerate(node_directions):
+            state_energy[:, ir, k] = _boltzmann_free_energy_kj_mol(
+                energy[:, :, d].reshape(n_conformer, -1), node_weight[k], weight, state_start, kbt_kj_mol
+            )
 
     return {
         "residue": residue,
         "target_label": sc_target_label(target_type, target_charge),
-        "rotamer_count": n_rotamer,
-        "rotamer_probability_fixed": rotamer_weights,
-        "rotamer_full_energy_kj_mol": rotamer_energy,
-        "azimuthal_average": (
-            "energy_expectation"
-            if temperature <= 0.0
-            else (
-                "tempered_boltzmann_free_energy"
-                if abs(float(temperature) - DEFAULT_PRODUCTION_TEMP_UPSIDE) > 1e-8
-                else "boltzmann_free_energy"
-            )
-        ),
+        "rotamer_count": len(state_start),
+        "rotamer_full_energy_kj_mol": state_energy,
     }
 
 
@@ -670,10 +601,8 @@ def _build_sc_table_group(
     h5: h5py.File,
     residue_map: Dict[str, List[str]],
     pair_params: Dict[Tuple[str, str], Dict[str, float]],
-    sidechain_lib_path: Path,
-    active_residue_names: List[str],
+    conformers: Dict[str, Dict[str, Any]],
     active_targets: List[Tuple[str, float]],
-    martini_sidechain_offsets_nm: Dict[str, np.ndarray] | None = None,
     r_step_nm: float = SC_TABLE_R_STEP_NM,
     direction_count: int = SC_TABLE_DIRECTION_COUNT,
     bead_frame_count: int = SC_TABLE_BEAD_FRAME_COUNT,
@@ -681,59 +610,33 @@ def _build_sc_table_group(
     average_temperature: float = DEFAULT_PRODUCTION_TEMP_UPSIDE,
 ) -> None:
     """Write /sc_table for every (residue, environment target), a target being a bead type with its
-    topology charge (`active_targets` holds (type, charge) pairs)."""
-    orientation_map = _load_sidechain_orientation_library(sidechain_lib_path)
+    topology charge (`active_targets` holds (type, charge) pairs), from each residue's rotamer-state
+    conformers (`_sidechain_conformers`)."""
     direction_vectors = _fibonacci_sphere(direction_count)
     theta_grid = _linspace(0.0, math.pi, theta_count)
     cb_anchor_nm = [x * ANGSTROM_TO_NM for x in CANONICAL_CB_POSITION_ANG]
     cb_vector_unit = list(CANONICAL_CB_VECTOR_UNIT)
     sidechain_bead_frame_angles = [float(x) for x in _bead_frame_angles(bead_frame_count)]
 
-    # Determine residue-task and target-task lists
-    residue_tasks = []
-    for residue in active_residue_names:
-        if residue not in residue_map:
-            continue
-        bead_types = residue_map[residue]
-        if not bead_types:
-            continue
-        orientation = orientation_map.get(residue)
-        if not orientation or len(orientation.get("bead_positions_nm", [])) == 0:
-            raise RuntimeError(
-                f"Missing orientation geometry for residue {residue} in {sidechain_lib_path}"
-            )
-        offsets_nm = (
-            martini_sidechain_offsets_nm.get(residue)
-            if martini_sidechain_offsets_nm is not None
-            else None
-        )
-        if offsets_nm is not None:
-            bead_positions_nm = _expand_rotamer_sidechain_positions(
-                orientation, residue, np.asarray(offsets_nm, dtype=np.float64)
-            )
-        else:
-            bead_positions_nm = orientation["bead_positions_nm"]
-        bead_charges = [infer_charge_from_atomtype(bt) for bt in bead_types]
-        residue_tasks.append((residue, bead_types, bead_charges, orientation, bead_positions_nm))
-
-    if not residue_tasks:
-        print("  sc_table: no active residues with sidechains, skipping")
-        return
+    for residue, conformer in conformers.items():
+        if conformer["bead_positions_nm"].shape[1] != len(residue_map[residue]):
+            raise RuntimeError(f"{residue}: {conformer['bead_positions_nm'].shape[1]} mapped beads, "
+                               f"{len(residue_map[residue])} martini22 bead types")
 
     # Radial grid from the CB anchor out past the reach of every bead: a target farther than the largest
     # bead-anchor distance plus the pair cutoff interacts with no bead, so the last two nodes, and with
     # them the table's value and slope at its end, are exactly zero.
     bead_reach_nm = max(
-        float(np.linalg.norm(np.asarray(pos, dtype=np.float64) - np.asarray(cb_anchor_nm), axis=-1).max())
-        for _, _, _, _, positions in residue_tasks for pos in positions
+        float(np.linalg.norm(c["bead_positions_nm"] - np.asarray(cb_anchor_nm), axis=-1).max())
+        for c in conformers.values()
     )
     n_r = int(math.ceil((DRY_MARTINI_NONBONDED_CUTOFF_NM + bead_reach_nm) / r_step_nm)) + 2
     r_values = [r_step_nm * i for i in range(n_r)]
 
-    # Collect results
     by_residue: Dict[str, Dict[str, Dict[str, Any]]] = {}
     sc_tasks = []
-    for residue, bead_types, bead_charges, orientation, bead_positions_nm in residue_tasks:
+    for residue, conformer in conformers.items():
+        bead_types = residue_map[residue]
         for target_type, target_charge in active_targets:
             missing = [bt for bt in bead_types if (bt, target_type) not in pair_params]
             if missing:
@@ -744,11 +647,12 @@ def _build_sc_table_group(
                 {
                     "residue": residue,
                     "sidechain_bead_types": list(bead_types),
-                    "sidechain_bead_charges": list(bead_charges),
+                    "sidechain_bead_charges": [infer_charge_from_atomtype(bt) for bt in bead_types],
                     "target_type": target_type,
                     "target_charge": float(target_charge),
-                    "rotamer_bead_positions_nm": bead_positions_nm,
-                    "rotamer_weights": orientation["weight"],
+                    "conformer_bead_positions_nm": conformer["bead_positions_nm"],
+                    "conformer_state": conformer["state"],
+                    "conformer_weight": conformer["weight"],
                     "pair_params": pair_params,
                     "r_values": r_values,
                     "direction_vectors": direction_vectors,
@@ -756,14 +660,15 @@ def _build_sc_table_group(
                     "cb_anchor_nm": cb_anchor_nm,
                     "cb_vector_unit": cb_vector_unit,
                     "sidechain_bead_frame_angles": sidechain_bead_frame_angles,
-                    "dist_min_nm": NUMERICAL_DISTANCE_GUARD_NM,
                     "temperature": float(average_temperature),
+                    "dist_min_nm": NUMERICAL_DISTANCE_GUARD_NM,
                 }
             )
 
     print(
-        f"  sc_table direction-vector sampling: {direction_count} target directions, "
-        f"{len(sidechain_bead_frame_angles)} SC bead-frame sample(s), {n_r} radial x {theta_count} theta nodes"
+        f"  sc_table sampling: {sum(len(c['state']) for c in conformers.values())} conformers, "
+        f"{direction_count} target directions, {len(sidechain_bead_frame_angles)} SC bead-frame sample(s), "
+        f"{n_r} radial x {theta_count} theta nodes"
     )
     for result in _parallel_map_ordered("SC-particle table", _run_sc_task_from_dict, sc_tasks):
         by_residue.setdefault(result["residue"], {})[result["target_label"]] = result
@@ -774,15 +679,12 @@ def _build_sc_table_group(
     max_rot = max(int(by_residue[r][targets[0]]["rotamer_count"]) for r in residues)
 
     rc = np.zeros((len(residues),), dtype=np.float32)
-    rpf = np.zeros((len(residues), max_rot), dtype=np.float32)
     r_full = np.zeros((len(residues), max_rot, n_t, n_r, theta_count), dtype=np.float64)
     for ri, residue in enumerate(residues):
         for ti, target in enumerate(targets):
             e = by_residue[residue][target]
             n_rot = int(e["rotamer_count"])
-            if ti == 0:
-                rc[ri] = float(n_rot)
-                rpf[ri, :n_rot] = np.asarray(e["rotamer_probability_fixed"], dtype=np.float32)
+            rc[ri] = float(n_rot)
             r_full[ri, :n_rot, ti] = e["rotamer_full_energy_kj_mol"]
     tail = np.abs(r_full[:, :, :, -2:, :]).max()
     if tail != 0.0:
@@ -792,9 +694,9 @@ def _build_sc_table_group(
     _write_common_table_contract_attrs(
         g,
         table_family="SC-particle",
-        source_object="sidechain_rotamer_bead_ensemble",
+        source_object="martini22_beads_of_ideal_geometry_rotamer_state_conformers",
         target_object="dry_martini_particle_type_and_charge",
-        projection_ensemble="sidechain_rotamers_x_sidechain_bead_frame_x_target_direction_grid",
+        projection_ensemble="rotamer_state_conformers_x_sidechain_bead_frame_x_target_direction_grid",
         runtime_representation="clamped_cubic_spline_r_theta",
     )
     g.attrs["schema"] = SCHEMA_SC
@@ -803,8 +705,8 @@ def _build_sc_table_group(
     g.attrs["sidechain_bead_frame_count"] = np.int32(len(sidechain_bead_frame_angles))
     g.attrs["target_direction_count"] = np.int32(direction_count)
     g.attrs["orientation_sampling"] = "target_direction_vector_grid"
-    g.attrs["azimuthal_average"] = by_residue[residues[0]][targets[0]]["azimuthal_average"]
-    g.attrs["azimuthal_average_temperature_upside"] = np.float32(average_temperature)
+    g.attrs["average"] = "boltzmann_free_energy_over_conformers_and_azimuth"
+    g.attrs["average_temperature_upside"] = np.float32(average_temperature)
     g.attrs["excluded_area_source"] = "none_direct_dry_martini_sc_particle_table"
     g.attrs["attractive_control_source"] = "retained_direct_dry_martini_sc_particle_table"
     g.attrs["isotropic_background_source"] = "none_direct_dry_martini_sc_particle_table"
@@ -820,7 +722,6 @@ def _build_sc_table_group(
     g.create_dataset("grid_ang", data=np.asarray(r_values) * LENGTH_CONVERSION_A_PER_NM, dtype=np.float32)
     g.create_dataset("theta_grid", data=np.asarray(theta_grid), dtype=np.float32)
     g.create_dataset("rotamer_count", data=rc, dtype=np.float32)
-    g.create_dataset("rotamer_probability_fixed", data=rpf, dtype=np.float32)
     g.create_dataset("rotamer_full_energy_eup", data=r_full / ENERGY_CONVERSION_KJ_PER_EUP, dtype=np.float32)
 
     print(
@@ -912,18 +813,6 @@ def _rotate_points_about_axis_np(
     return org[None, :] + (rot @ (pts - org[None, :]).T).T
 
 
-def _rotation_to_align_z_np(dir_vec: np.ndarray) -> np.ndarray:
-    """Build rotation matrix that maps z-axis to dir_vec."""
-    z_axis = dir_vec / np.linalg.norm(dir_vec)
-    if abs(z_axis[0]) < 0.99:
-        x_axis = np.cross([1.0, 0.0, 0.0], z_axis)
-    else:
-        x_axis = np.cross([0.0, 1.0, 0.0], z_axis)
-    x_axis /= np.linalg.norm(x_axis)
-    y_axis = np.cross(z_axis, x_axis)
-    return np.array([x_axis, y_axis, z_axis]).T
-
-
 def _environment_targets(dry_ff_path: Path) -> List[Tuple[str, float]]:
     """Every (bead type, charge) of the environment molecule topologies beside the force field file: the
     side-chain table is built per target with its own charge, because a bead type does not fix the charge
@@ -954,8 +843,8 @@ def build_martini_h5(
     sidechain_lib_path = Path(sidechain_lib_path).expanduser().resolve()
     atomtypes, pair_params = parse_dry_forcefield(dry_ff_path)
     residue_map = load_martini_forcefield(martinize_path, forcefield_name)
-    martini_sidechain_offsets_nm = _load_martini_sidechain_offsets_nm(
-        martinize_path, forcefield_name
+    conformers = _sidechain_conformers(
+        sidechain_lib_path, martinize_path, [r for r in CANONICAL_RESIDUES if residue_map[r]]
     )
     environment_targets = _environment_targets(dry_ff_path)
 
@@ -964,13 +853,7 @@ def build_martini_h5(
         h5.attrs["schema_particles"] = SCHEMA_PARTICLES
         h5.attrs["schema_sc"] = SCHEMA_SC
         _build_particles_group(h5, atomtypes, pair_params, set(atomtypes))
-        _build_sc_table_group(
-            h5, residue_map, pair_params, sidechain_lib_path,
-            active_residue_names=list(CANONICAL_RESIDUES),
-            active_targets=environment_targets,
-            martini_sidechain_offsets_nm=martini_sidechain_offsets_nm,
-            average_temperature=DEFAULT_TEMPERED_AVERAGE_TEMP_UPSIDE,
-        )
+        _build_sc_table_group(h5, residue_map, pair_params, conformers, active_targets=environment_targets)
 
     _write_h5_atomically(output_path, _writer)
     print(f"Built {output_path}")

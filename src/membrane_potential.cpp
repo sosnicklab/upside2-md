@@ -13,212 +13,6 @@
 using namespace h5;
 using namespace std;
 
-struct MembranePotential : public PotentialNode
-{
-    struct ResidueParams {
-        // Logically the two residues are the same, but they may have different
-        // indices in the CB and Env outputs respectively
-        index_t cb_index;
-        index_t env_index;
-        int restype;
-    };
-
-    struct PotentialCBParams {
-        float cov_midpoint;
-        float cov_sharpness;
-    };
-
-    int n_elem;        // number of residues to process
-    int n_restype;
-    int n_donor, n_acceptor;
-
-    CoordNode& res_pos;  // CB atom
-    CoordNode& environment_coverage;
-    CoordNode& protein_hbond;
-
-    vector<ResidueParams>     res_params;
-    vector<PotentialCBParams> pot_params;
-    vector<float> weights;
-
-    LayeredClampedSpline1D<1> membrane_energy_cb_spline;
-    LayeredClampedSpline1D<1> membrane_energy_uhb_spline;
-
-    // shift and scale to convert z coordinates to spline coordinates
-    float cb_z_shift, cb_z_scale;
-    float uhb_z_shift, uhb_z_scale;
-
-    MembranePotential(hid_t grp, CoordNode& res_pos_,
-                                 CoordNode& environment_coverage_,
-                                 CoordNode& protein_hbond_):
-        PotentialNode(),
-
-        n_elem    (get_dset_size(1, grp,             "cb_index")[0]),
-        n_restype (get_dset_size(2, grp,            "cb_energy")[0]),
-        n_donor   (get_dset_size(1, grp,    "donor_residue_ids")[0]),
-        n_acceptor(get_dset_size(1, grp, "acceptor_residue_ids")[0]),
-
-        res_pos(res_pos_),
-        environment_coverage(environment_coverage_),
-        protein_hbond(protein_hbond_),
-
-        res_params(n_elem),
-        pot_params(n_restype),
-        weights(get_dset_size(1, grp, "weights")[0]),
-
-        membrane_energy_cb_spline(
-                get_dset_size(2, grp, "cb_energy")[0],
-                get_dset_size(2, grp, "cb_energy")[1]),
-
-        membrane_energy_uhb_spline(
-                get_dset_size(2, grp, "uhb_energy")[0],
-                get_dset_size(2, grp, "uhb_energy")[1]),
-
-        cb_z_shift(-read_attribute<float>(grp, "cb_energy", "z_min")),
-        cb_z_scale((membrane_energy_cb_spline.nx-1)/(read_attribute<float>(grp, "cb_energy", "z_max")+cb_z_shift)),
-
-        uhb_z_shift(-read_attribute<float>(grp, "uhb_energy", "z_min")),
-        uhb_z_scale((membrane_energy_uhb_spline.nx-1)/(read_attribute<float>(grp, "uhb_energy", "z_max")+uhb_z_shift))
-    {
-        check_elem_width_lower_bound(res_pos, 3);
-        check_elem_width_lower_bound(environment_coverage, 1);
-
-        check_size(grp,      "cb_index",    n_elem);
-        check_size(grp,     "env_index",    n_elem);
-        check_size(grp,  "residue_type",    n_elem);
-        check_size(grp,  "cov_midpoint", n_restype);
-        check_size(grp, "cov_sharpness", n_restype);
-        check_size(grp,     "cb_energy", n_restype, membrane_energy_cb_spline.nx);
-        check_size(grp,    "uhb_energy",         2, membrane_energy_uhb_spline.nx); // type 0 for unpaired donor, type 1 for unpaired acceptor
-
-        traverse_dset<1,  int>(grp,      "cb_index", [&](size_t nr,   int  x) {res_params[nr].cb_index  = x;});
-        traverse_dset<1,  int>(grp,     "env_index", [&](size_t nr,   int  x) {res_params[nr].env_index = x;});
-        traverse_dset<1,  int>(grp,  "residue_type", [&](size_t nr,   int rt) {res_params[nr].restype   = rt;});
-        traverse_dset<1,float>(grp,  "cov_midpoint", [&](size_t rt, float bc) {pot_params[rt].cov_midpoint  = bc;});
-        traverse_dset<1,float>(grp, "cov_sharpness", [&](size_t rt, float bw) {pot_params[rt].cov_sharpness = bw;});
-        traverse_dset<1,float>(grp,       "weights", [&](size_t n,  float x)  {weights[n]=x;});
-
-        vector<double> cb_energy_data;
-        traverse_dset<2,double>(grp, "cb_energy", [&](size_t rt, size_t z_index, double value) {
-                cb_energy_data.push_back(value);});
-        membrane_energy_cb_spline.fit_spline(cb_energy_data.data());
-
-        vector<double> uhb_energy_data;
-        traverse_dset<2,double>(grp, "uhb_energy", [&](size_t rt, size_t z_index, double value) {
-                uhb_energy_data.push_back(value);});
-        membrane_energy_uhb_spline.fit_spline(uhb_energy_data.data());
-    }
-
-    virtual void compute_value(ComputeMode mode) {
-        Timer timer(string("membrane_potential"));
-
-        VecArray cb_pos       = res_pos.output;
-        VecArray cb_pos_sens  = res_pos.sens;
-        VecArray env_cov      = environment_coverage.output;
-        VecArray env_cov_sens = environment_coverage.sens;
-        VecArray hb_pos       = protein_hbond.output;
-        VecArray hb_sens      = protein_hbond.sens;
-
-        potential = 0.f;
-
-        for(int nr=0; nr<n_elem; ++nr) {
-            auto &p = res_params[nr];
-            float cb_z = cb_pos(2, p.cb_index);
-
-            float result[2];    // deriv then value
-            membrane_energy_cb_spline.evaluate_value_and_deriv(result, p.restype,
-                    (cb_z + cb_z_shift) * cb_z_scale);
-            float spline_value = result[1];
-            float spline_deriv = result[0]*cb_z_scale; // scale to get derivative in *unnormalized* coordinates
-
-            auto& pp = pot_params[p.restype];
-
-            float bl = 0.0;
-            for(int aa: range(20)) 
-                bl += weights[aa] * env_cov(0, p.env_index*20+aa);
-
-            auto cover_sig = compact_sigmoid(bl-pp.cov_midpoint, pp.cov_sharpness);
-
-            potential                    += spline_value*cover_sig.x();
-            cb_pos_sens (2, p.cb_index)  += spline_deriv*cover_sig.x();
-
-            auto d_pot  = spline_value*cover_sig.y();
-            for(int aa: range(20)) 
-                env_cov_sens(0, p.env_index*20+aa) +=  weights[aa] * d_pot;
-        }
-
-        int n_virtual = n_donor+n_acceptor;
-        for(int nv=0; nv<n_virtual; ++nv) {
-            float hb_z    = hb_pos(2, nv);
-            float hb_prob = hb_pos(6, nv);  // probability that his virtual participates in any HBond
-
-            float result[2];
-            membrane_energy_uhb_spline.evaluate_value_and_deriv(result, int(nv>=n_donor),
-                    (hb_z + uhb_z_shift) * uhb_z_scale);
-            float spline_value = result[1];
-            float spline_deriv = result[0]*uhb_z_scale;
-
-            float uhb_prob  = 1.f-hb_prob;
-
-            potential      += spline_value*sqr(uhb_prob);
-            hb_sens(2, nv) += spline_deriv*sqr(uhb_prob);
-            hb_sens(6, nv) += -2.f*spline_value*uhb_prob; 
-        }
-    }
-
-    virtual std::vector<float> get_param() const override {
-        vector<float> params(40, 0.f);
-        for(int n=0;n<20;n++) {
-            auto& pp = pot_params[n];
-            params[n] = pp.cov_midpoint;
-            params[20+n] = pp.cov_sharpness;
-        }
-        return params;
-    }
-
-    virtual void set_param(const std::vector<float>& new_params) override {
-        for(int n=0;n<20;n++) {
-            auto& pp = pot_params[n];
-            pp.cov_midpoint = new_params[n];
-            pp.cov_sharpness = new_params[20+n];
-        }
-    }
-
-#ifdef PARAM_DERIV
-    virtual std::vector<float> get_param_deriv() override {
-        vector<float> deriv(40, 0.f);
-
-        VecArray cb_pos  = res_pos.output;
-        VecArray env_cov = environment_coverage.output;
-
-        for(int nr=0; nr<n_elem; ++nr) {
-            auto &p = res_params[nr];
-            float cb_z = cb_pos(2, p.cb_index);
-
-            float result[2]; // deriv then value
-            membrane_energy_cb_spline.evaluate_value_and_deriv(result, p.restype, (cb_z + cb_z_shift) * cb_z_scale);
-            float spline_value = result[1];
-
-            float bl = 0.0;
-            for(int aa: range(20)) 
-                bl += weights[aa] * env_cov(0, p.env_index*20+aa);
-
-            auto& pp        = pot_params[p.restype];
-            auto  env_coord = bl-pp.cov_midpoint;
-            auto cover_sig  = compact_sigmoid(env_coord, pp.cov_sharpness);
-
-            deriv[p.restype]    += -spline_value * cover_sig.y();
-            deriv[p.restype+20] +=  spline_value * env_coord/pp.cov_sharpness * cover_sig.y();
-        }
-
-        return deriv;
-    }
-#endif
-
-};
-
-static RegisterNodeType<MembranePotential, 3> membrane_potential_node("membrane_potential");
-
-
 struct MembraneCBPotential : public PotentialNode
 {
     int n_elem;        // number of residues to process
@@ -239,7 +33,6 @@ struct MembraneCBPotential : public PotentialNode
     float left_right_sharpness;
 
     bool  use_curvature;
-    float curvature_radius;
     float curvature_sign;
 
     int n_node;
@@ -266,7 +59,6 @@ struct MembraneCBPotential : public PotentialNode
         left_right_node     (read_attribute<float>(grp, ".", "left_right_node" )),
         left_right_sharpness(read_attribute<float>(grp, ".", "left_right_sharpness" )),
         use_curvature       (read_attribute<int>  (grp, ".", "use_curvature" )),
-        curvature_radius    (read_attribute<float>(grp, ".", "curvature_radius" )),
         curvature_sign      (read_attribute<float>(grp, ".", "curvature_sign" )),
         n_node              (get_dset_size(3, grp, "coeff")[2]),
         zstart              (read_attribute<float>(grp, ".", "z_start" )),
@@ -280,9 +72,15 @@ struct MembraneCBPotential : public PotentialNode
         check_size(grp, "bl_nodes", n_bl-1);
         check_size(grp, "coeff",    n_restype, n_bl, n_node);
 
-        traverse_dset<1, float>(grp, "cb_index",  [&](size_t n, float x) {cb_index[n] = x;});
-        traverse_dset<1, int>  (grp, "res_type",  [&](size_t n, int x)   {res_type[n] = x;});
+        traverse_dset<1, int>  (grp, "cb_index",  [&](size_t n, int x) {
+                if(x<0 || x>=res_pos.n_elem || (x+1)*n_restype>environment_coverage.n_elem)
+                    throw string("cb_membrane_potential cb_index outside its CB or environment_coverage input");
+                cb_index[n] = x;});
+        traverse_dset<1, int>  (grp, "res_type",  [&](size_t n, int x) {
+                if(x<0 || x>=n_restype) throw string("cb_membrane_potential res_type outside coeff");
+                res_type[n] = x;});
         traverse_dset<1, float>(grp, "weights",   [&](size_t n, float x) {weights[n]  = x;});
+        if(int(weights.size()) < n_restype) throw string("cb_membrane_potential needs one weight per residue type");
         traverse_dset<1, float>(grp, "bl_nodes",  [&](size_t n, float x) {bl_nodes[n] = x;});
 
         traverse_dset<3, float>(grp, "coeff",[&](size_t n, size_t l, size_t c, float x) 
@@ -306,11 +104,9 @@ struct MembraneCBPotential : public PotentialNode
         vector<float> bl_score(n_bl);
         vector<float> d_bl_score(n_bl);
 
-        vector<float> fs(n_bl);
-        vector<float> dfs(n_bl);
 
         auto ccenter = load_vec<3>(center_of_curvature.output, 0);
-        curvature_radius = ccenter.z()*-1.f*curvature_sign;
+        float curvature_radius = ccenter.z()*-1.f*curvature_sign;
 
         for(int nr=0; nr<n_elem; ++nr) {
             int rt = res_type[nr];
@@ -431,7 +227,7 @@ struct MembraneCBPotential : public PotentialNode
         vector<float> d_bl_score(n_bl);
 
         auto ccenter = load_vec<3>(center_of_curvature.output, 0);
-        curvature_radius = ccenter.z()*-1.f*curvature_sign;
+        float curvature_radius = ccenter.z()*-1.f*curvature_sign;
 
         for(int nr=0; nr<n_elem; ++nr) {
             int rt = res_type[nr];
@@ -502,7 +298,6 @@ struct MembraneHBPotential : public PotentialNode
     float left_right_sharpness;
 
     bool  use_curvature;
-    float curvature_radius;
     float curvature_sign;
 
     vector<float> coeff;      // length n_restype*n_coeff
@@ -520,14 +315,18 @@ struct MembraneHBPotential : public PotentialNode
         left_right_node     (read_attribute<float>(grp, ".", "left_right_node" )),
         left_right_sharpness(read_attribute<float>(grp, ".", "left_right_sharpness" )),
         use_curvature       (read_attribute<int>  (grp, ".", "use_curvature" )),
-        curvature_radius    (read_attribute<float>(grp, ".", "curvature_radius" )),
         curvature_sign      (read_attribute<float>(grp, ".", "curvature_sign" )),
         coeff               (2*2*n_node)
     {
+        check_elem_width_lower_bound(protein_hbond, 7);
         check_size(grp, "hb_type",  n_elem);
         check_size(grp, "coeff",  2, 2, n_node);
-        traverse_dset<1, float>( grp, "hb_index", [&](size_t n, float x) {hb_index[n] = x;} );
-        traverse_dset<1, int>  ( grp, "hb_type",  [&](size_t n, int x)   {hb_type[n]  = x;} );
+        traverse_dset<1, int>  ( grp, "hb_index", [&](size_t n, int x) {
+                if(x<0 || x>=protein_hbond.n_elem) throw string("hb_membrane_potential hb_index outside protein_hbond");
+                hb_index[n] = x;} );
+        traverse_dset<1, int>  ( grp, "hb_type",  [&](size_t n, int x) {
+                if(x<0 || x>1) throw string("hb_membrane_potential hb_type must be 0 (donor) or 1 (acceptor)");
+                hb_type[n]  = x;} );
 
         traverse_dset<3, float>(grp, "coeff",[&](size_t n, size_t l, size_t c, float x) 
                         { coeff[(n*2+l)*n_node + c] = x;} );
@@ -542,7 +341,7 @@ struct MembraneHBPotential : public PotentialNode
         potential = 0.f;
 
         auto ccenter = load_vec<3>(center_of_curvature.output, 0);
-        curvature_radius = ccenter.z()*-1.f*curvature_sign;
+        float curvature_radius = ccenter.z()*-1.f*curvature_sign;
 
         for(int nv=0; nv<n_elem; ++nv) {
 
@@ -629,7 +428,7 @@ struct MembraneHBPotential : public PotentialNode
         VecArray hb_pos = protein_hbond.output;
 
         auto ccenter = load_vec<3>(center_of_curvature.output, 0);
-        curvature_radius = ccenter.z()*-1.f*curvature_sign;
+        float curvature_radius = ccenter.z()*-1.f*curvature_sign;
 
         for(int nv=0; nv<n_elem; ++nv) {
 
@@ -682,7 +481,6 @@ struct MembraneSurfCBPotential : public PotentialNode
     CoordNode& res_pos;  // CB atom
     CoordNode& environment_coverage;
     CoordNode& surface;
-    CoordNode& center_of_curvature;
 
     vector<float> weights;
 
@@ -691,10 +489,6 @@ struct MembraneSurfCBPotential : public PotentialNode
     float bl_range_sharpness;
     float left_right_node;
     float left_right_sharpness;
-
-    bool  use_curvature;
-    float curvature_radius;
-    float curvature_sign;
 
     int n_node;
     float zstart;
@@ -706,8 +500,7 @@ struct MembraneSurfCBPotential : public PotentialNode
 
     MembraneSurfCBPotential(hid_t grp, CoordNode& res_pos_,
                                        CoordNode& environment_coverage_,
-                                       CoordNode& surface_,
-                                       CoordNode& center_of_curvature_):
+                                       CoordNode& surface_):
         PotentialNode(),
         n_elem               (get_dset_size(1, grp, "cb_index")[0]),
         n_restype            (get_dset_size(3, grp, "coeff")[0]),
@@ -716,16 +509,12 @@ struct MembraneSurfCBPotential : public PotentialNode
         res_pos              (res_pos_),
         environment_coverage (environment_coverage_),
         surface              (surface_),
-        center_of_curvature  (center_of_curvature_),
         weights              (get_dset_size(1, grp, "weights")[0]),
         n_bl                 (get_dset_size(3, grp, "coeff")[1]),
         bl_nodes             (n_bl-1),
         bl_range_sharpness   (read_attribute<float>(grp, ".", "bl_range_sharpness" )),
         left_right_node      (read_attribute<float>(grp, ".", "left_right_node" )),
         left_right_sharpness (read_attribute<float>(grp, ".", "left_right_sharpness" )),
-        use_curvature        (read_attribute<int>  (grp, ".", "use_curvature" )),
-        curvature_radius     (read_attribute<float>(grp, ".", "curvature_radius" )),
-        curvature_sign       (read_attribute<float>(grp, ".", "curvature_sign" )),
         n_node               (get_dset_size(3, grp, "coeff")[2]),
         zstart               (read_attribute<float>(grp, ".", "z_start" )),
         zscale               (read_attribute<float>(grp, ".", "z_scale" )),
@@ -741,9 +530,15 @@ struct MembraneSurfCBPotential : public PotentialNode
         check_size(grp, "coeff",       n_restype, n_bl, n_node);
         check_size(grp, "coeff_inner", n_restype, n_node);
 
-        traverse_dset<1, float>(grp, "cb_index", [&](size_t n, float x) {cb_index[n] = x;});
-        traverse_dset<1, int>  (grp, "res_type", [&](size_t n, int x)   {res_type[n] = x;});
+        traverse_dset<1, int>  (grp, "cb_index", [&](size_t n, int x) {
+                if(x<0 || x>=res_pos.n_elem || x>=surface.n_elem || (x+1)*n_restype>environment_coverage.n_elem)
+                    throw string("cb_surf_membrane_potential cb_index outside its CB, environment_coverage or surface input");
+                cb_index[n] = x;});
+        traverse_dset<1, int>  (grp, "res_type", [&](size_t n, int x) {
+                if(x<0 || x>=n_restype) throw string("cb_surf_membrane_potential res_type outside coeff");
+                res_type[n] = x;});
         traverse_dset<1, float>(grp, "weights",  [&](size_t n, float x) {weights[n]  = x;});
+        if(int(weights.size()) < n_restype) throw string("cb_surf_membrane_potential needs one weight per residue type");
         traverse_dset<1, float>(grp, "bl_nodes", [&](size_t n, float x) {bl_nodes[n] = x;});
 
         traverse_dset<3, float>(grp, "coeff",    [&](size_t n, size_t l, size_t c, float x) 
@@ -772,11 +567,7 @@ struct MembraneSurfCBPotential : public PotentialNode
         vector<float> bl_score(n_bl);
         vector<float> d_bl_score(n_bl);
 
-        vector<float> fs(n_bl);
-        vector<float> dfs(n_bl);
 
-        auto ccenter = load_vec<3>(center_of_curvature.output, 0);
-        curvature_radius = ccenter.z()*-1.f*curvature_sign;
 
         for(int nr=0; nr<n_elem; ++nr) {
             int rt = res_type[nr];
@@ -807,15 +598,6 @@ struct MembraneSurfCBPotential : public PotentialNode
 
             // z
             float cb_z = cb_pos(2, ri);
-            float dist = 0.f;
-            float r_dist = 1.f;
-            auto xyz = load_vec<3>(cb_pos, ri) - ccenter;   // from the centre of curvature
-
-            if (use_curvature) {
-                dist = mag( xyz );
-                r_dist = 1.f/dist;
-                cb_z = curvature_sign* ( dist - curvature_radius );
-            }
 
             auto sig_left = compact_sigmoid(cb_z-left_right_node, left_right_sharpness);
             float ll  = sig_left.x();
@@ -826,8 +608,6 @@ struct MembraneSurfCBPotential : public PotentialNode
             auto coord_left  = ( cb_z-zstart)*zscale;
             auto coord_right = (-cb_z-zstart)*zscale;
 
-            float df_dx  = 0.0;
-            float df_dy  = 0.0;
             float df_dz  = 0.0;
             float df_dbl = 0.0;
             float surfv  = 0.0;
@@ -864,20 +644,9 @@ struct MembraneSurfCBPotential : public PotentialNode
 
                 potential +=   bl_score[i] *  fs;
                 df_dbl    += d_bl_score[i] *  fs;
-                if (use_curvature) {
-                    float sen_d = curvature_sign * bl_score[i] * dfs * r_dist; 
-                    df_dx += sen_d * xyz.x();
-                    df_dy += sen_d * xyz.y();
-                    df_dz += sen_d * xyz.z();
-                }
-                else
-                    df_dz += bl_score[i] * dfs;
+                df_dz += bl_score[i] * dfs;
             }
 
-            if (use_curvature) {
-                cb_pos_sens (0, ri)  += df_dx;
-                cb_pos_sens (1, ri)  += df_dy;
-            }
             cb_pos_sens (2, ri)  += df_dz;
             for(int aa: range(n_restype)) 
                 env_cov_sens(0, ri*n_restype+aa) += weights[aa] * df_dbl;
@@ -916,8 +685,6 @@ struct MembraneSurfCBPotential : public PotentialNode
         vector<float> bl_score(n_bl);
         vector<float> d_bl_score(n_bl);
 
-        auto ccenter = load_vec<3>(center_of_curvature.output, 0);
-        curvature_radius = ccenter.z()*-1.f*curvature_sign;
 
         for(int nr=0; nr<n_elem; ++nr) {
             int rt = res_type[nr];
@@ -938,11 +705,6 @@ struct MembraneSurfCBPotential : public PotentialNode
             bl_score[n_bl-1]  = bl_score2[n_bl-2];
 
             float cb_z     = cb_pos(2, ri);
-            if (use_curvature) {
-                auto xyz = load_vec<3>(cb_pos, ri);
-                float dist = mag( xyz - ccenter );
-                cb_z = curvature_sign* ( dist - curvature_radius );
-            }
 
             auto  sig_left = compact_sigmoid(cb_z-left_right_node, left_right_sharpness);
             float ll       = sig_left.x();
@@ -984,7 +746,7 @@ struct MembraneSurfCBPotential : public PotentialNode
 #endif
 };
 
-static RegisterNodeType<MembraneSurfCBPotential, 4> membrane_surf_cb_potential_node("cb_surf_membrane_potential");
+static RegisterNodeType<MembraneSurfCBPotential, 3> membrane_surf_cb_potential_node("cb_surf_membrane_potential");
 
 struct MembraneSurfHBPotential : public PotentialNode
 {
@@ -998,7 +760,6 @@ struct MembraneSurfHBPotential : public PotentialNode
     CoordNode& protein_hbond;
     CoordNode& environment_coverage;
     CoordNode& surface;
-    CoordNode& center_of_curvature;
     vector<float> weights;
 
     int   n_node;
@@ -1008,17 +769,12 @@ struct MembraneSurfHBPotential : public PotentialNode
     float left_right_node;
     float left_right_sharpness;
 
-    bool  use_curvature;
-    float curvature_radius;
-    float curvature_sign;
-
     vector<float> coeff;
     vector<float> coeff_inner;
 
     MembraneSurfHBPotential(hid_t grp, CoordNode& protein_hbond_, 
                                CoordNode& environment_coverage_,
-                               CoordNode& surface_,
-                               CoordNode& center_of_curvature_):
+                               CoordNode& surface_):
         PotentialNode(),
         n_elem               (get_dset_size(1, grp, "hb_index")[0]),
         n_restype            (get_dset_size(1, grp, "weights")[0]),
@@ -1028,7 +784,6 @@ struct MembraneSurfHBPotential : public PotentialNode
         protein_hbond        (protein_hbond_),
         environment_coverage (environment_coverage_),
         surface              (surface_),
-        center_of_curvature  (center_of_curvature_),
         weights              (n_restype),
         n_node               (get_dset_size(3, grp, "coeff")[2]),
         zstart               (read_attribute<float>(grp, ".", "z_start" )),
@@ -1036,20 +791,26 @@ struct MembraneSurfHBPotential : public PotentialNode
         half_thickness       (read_attribute<float>(grp, ".", "half_thickness" )),
         left_right_node      (read_attribute<float>(grp, ".", "left_right_node" )),
         left_right_sharpness (read_attribute<float>(grp, ".", "left_right_sharpness" )),
-        use_curvature        (read_attribute<int>  (grp, ".", "use_curvature" )),
-        curvature_radius     (read_attribute<float>(grp, ".", "curvature_radius" )),
-        curvature_sign       (read_attribute<float>(grp, ".", "curvature_sign" )),
         coeff                (2*2*n_node),
         coeff_inner          (2*2*n_node)
     {
+        check_elem_width_lower_bound(protein_hbond, 7);
+        check_elem_width_lower_bound(environment_coverage, 1);
         check_size(grp, "hb_type", n_elem);
         check_size(grp, "hb_res",  n_elem);
         check_size(grp, "coeff",       2, 2, n_node);
         check_size(grp, "coeff_inner", 2, 2, n_node);
 
-        traverse_dset<1, int> ( grp, "hb_index", [&](size_t n, int x) {hb_index[n] = x;} );
-        traverse_dset<1, int> ( grp, "hb_type",  [&](size_t n, int x) {hb_type[n]  = x;} );
-        traverse_dset<1, int> ( grp, "hb_res",   [&](size_t n, int x) {hb_res[n]   = x;} );
+        traverse_dset<1, int> ( grp, "hb_index", [&](size_t n, int x) {
+                if(x<0 || x>=protein_hbond.n_elem) throw string("hb_surf_membrane_potential hb_index outside protein_hbond");
+                hb_index[n] = x;} );
+        traverse_dset<1, int> ( grp, "hb_type",  [&](size_t n, int x) {
+                if(x<0 || x>1) throw string("hb_surf_membrane_potential hb_type must be 0 (donor) or 1 (acceptor)");
+                hb_type[n]  = x;} );
+        traverse_dset<1, int> ( grp, "hb_res",   [&](size_t n, int x) {
+                if(x<0 || x>=surface.n_elem || (x+1)*n_restype>environment_coverage.n_elem)
+                    throw string("hb_surf_membrane_potential hb_res outside its environment_coverage or surface input");
+                hb_res[n]   = x;} );
 
         traverse_dset<1, float> ( grp, "weights", [&](size_t n, float x) {weights[n] = x;} );
 
@@ -1075,8 +836,6 @@ struct MembraneSurfHBPotential : public PotentialNode
         float comb_f  = 0.f;
         float comb_df = 0.f;
 
-        auto ccenter = load_vec<3>(center_of_curvature.output, 0);
-        curvature_radius = ccenter.z()*-1.f*curvature_sign;
 
         for(int nv=0; nv<n_elem; ++nv) {
 
@@ -1087,14 +846,6 @@ struct MembraneSurfHBPotential : public PotentialNode
             float hb_z        = hb_pos(2, ri);
             float hb_prob     = hb_pos(6, ri);  // probability that his virtual participates in any HBond
 
-            float dist = 0.f;
-            float r_dist = 1.f;
-            auto xyz = load_vec<3>(hb_pos, ri) - ccenter;   // from the centre of curvature
-            if (use_curvature) {
-                dist = mag( xyz );
-                r_dist = 1.f/dist;
-                hb_z = curvature_sign* ( dist - curvature_radius );
-            }
 
             // burial level
             float bl = 0.0;
@@ -1168,14 +919,7 @@ struct MembraneSurfHBPotential : public PotentialNode
                 dZ         +=  sqr_hb_prob *   inner * comb_df;
             }
 
-            if (use_curvature) {
-                float sen_d = curvature_sign * dZ * r_dist; 
-                hb_sens(0, ri) += sen_d * xyz.x();
-                hb_sens(1, ri) += sen_d * xyz.y();
-                hb_sens(2, ri) += sen_d * xyz.z();
-            }
-            else
-                hb_sens(2, ri) += dZ;
+            hb_sens(2, ri) += dZ;
 
             hb_sens(6, ri) += dHB;
 
@@ -1211,8 +955,6 @@ struct MembraneSurfHBPotential : public PotentialNode
         VecArray surf   = surface.output;
         VecArray env_cov = environment_coverage.output;
 
-        auto ccenter = load_vec<3>(center_of_curvature.output, 0);
-        curvature_radius = ccenter.z()*-1.f*curvature_sign;
 
         for(int nv=0; nv<n_elem; ++nv) {
 
@@ -1221,12 +963,6 @@ struct MembraneSurfHBPotential : public PotentialNode
             int   rr          = hb_res[nv];
 
             float hb_z        = hb_pos(2, ri);
-            float dist = 0.f;
-            if (use_curvature) {
-                auto xyz = load_vec<3>(hb_pos, ri);
-                dist = mag( xyz - ccenter );
-                hb_z = curvature_sign* ( dist - curvature_radius );
-            }
 
             float surfv       = surf(0, rr);
             if (hb_z > half_thickness or hb_z < -half_thickness)
@@ -1263,99 +999,5 @@ struct MembraneSurfHBPotential : public PotentialNode
 #endif
 };
 
-static RegisterNodeType<MembraneSurfHBPotential, 4> membrane_surf_hb_potential_node("hb_surf_membrane_potential");
-
-struct MembraneLateralPotential : public PotentialNode
-{
-    int n_residue;        // number of residues to process
-    int n_restype;        // number of residues to process
-    CoordNode& pos;     // CB atom
-    CoordNode& BL;      // burial level
-    CoordNode& surface; // surface score
-    vector<int> cb_index;
-    vector<int> cb_restype;
-    vector<float> weights;
-    vector<float> cov_midpoint;
-    vector<float> cov_sharpness;
-    float min_z, max_z, inv_dz;
-    int n_knot;
-    float half_thickness;
-    vector<float> params;
-
-    MembraneLateralPotential(hid_t grp, CoordNode& pos_,
-                                        CoordNode& environment_coverage_,
-                                        CoordNode& surface_):
-        PotentialNode(),
-        n_residue (get_dset_size(1, grp,  "cb_index")[0]),
-        n_restype (N_AMINO_ACID_TYPE),
-        pos(pos_),
-        BL(environment_coverage_),
-        surface(surface_),
-        cb_index(n_residue),
-        cb_restype(n_residue),
-        weights(N_AMINO_ACID_TYPE),
-        cov_midpoint(n_restype),
-        cov_sharpness(n_restype),
-        min_z(read_attribute<float>(grp, ".","min_z")),
-        max_z(read_attribute<float>(grp, ".","max_z")),
-        inv_dz(read_attribute<float>(grp, ".","inv_dz")),
-        n_knot(read_attribute<int>(grp, ".", "n_knot")),
-        half_thickness(read_attribute<float>(grp, ".", "half_thickness" )),
-        params(n_knot)
-    {
-        check_elem_width_lower_bound(pos, 3);
-        check_elem_width_lower_bound(BL, 1);
-        check_elem_width_lower_bound(surface, 3);
-
-        check_size(grp,      "restypes", n_residue);
-        check_size(grp,  "cov_midpoint", n_restype);
-        check_size(grp, "cov_sharpness", n_restype);
-        check_size(grp,       "weights", N_AMINO_ACID_TYPE);
-        check_size(grp,        "params", n_knot);
-        traverse_dset<1,float>(grp,      "cb_index", [&](size_t n,   float x) {cb_index[n] = x;});
-        traverse_dset<1,  int>(grp,      "restypes", [&](size_t nr,   int rt) {cb_restype[nr]    = rt;});
-        traverse_dset<1,float>(grp,       "weights", [&](size_t rt, float bw) {weights[rt]       = bw;});
-        traverse_dset<1,float>(grp,  "cov_midpoint", [&](size_t rt, float bc) {cov_midpoint[rt]  = bc;});
-        traverse_dset<1,float>(grp, "cov_sharpness", [&](size_t rt, float bs) {cov_sharpness[rt] = bs;});
-        traverse_dset<1,float>(grp,        "params", [&](size_t rt, float pv) {params[rt]        = pv;});
-    }
-
-    virtual void compute_value(ComputeMode mode) {
-        Timer timer(string("membrane_lateral_potential"));
-
-        VecArray surf    = surface.output;
-        VecArray bl      = BL.output;
-        //VecArray bl_sens = BL.sens; // FIXME calcu the sens of bl
-        VecArray cb_pos  = pos.output;
-        VecArray cb_sens = pos.sens;
-
-        potential = 0.f;
-
-        float* pp = &params[0];
-        for(int i=0; i<n_residue; ++i) {
-            int nr = cb_index[i];
-
-            float weighted_bl = 0.f;
-            for(int aa: range(N_AMINO_ACID_TYPE))
-                weighted_bl += weights[aa] * bl(0, nr*N_AMINO_ACID_TYPE+aa);
-
-            float surfv = surf(0, nr);
-            if (cb_pos(2, nr) > half_thickness or cb_pos(2, nr) < -half_thickness)
-                surfv = 1.0;
-
-            int rtype = cb_restype[i];
-            auto cover_sig = compact_sigmoid(weighted_bl-cov_midpoint[rtype], cov_sharpness[rtype]);
-
-            if(surfv<=0 or cover_sig.x() ==0 ) continue;
-
-            float           coord = (cb_pos(2, nr)-min_z)*inv_dz + 1.f;  // the spline's first sample is at 1
-            auto   lateral_spline = clamped_deBoor_value_and_deriv(pp, coord, n_knot);
-            float force_magnitude = surfv*lateral_spline.x();
-            cb_sens (0, nr)      -= force_magnitude*cover_sig.x()*surf(1, nr);
-            cb_sens (1, nr)      -= force_magnitude*cover_sig.x()*surf(2, nr);
-        }
-    }
-};
-
-static RegisterNodeType<MembraneLateralPotential, 3> membrane_lateral_potential_node("membranelateral_potential");
+static RegisterNodeType<MembraneSurfHBPotential, 3> membrane_surf_hb_potential_node("hb_surf_membrane_potential");
 

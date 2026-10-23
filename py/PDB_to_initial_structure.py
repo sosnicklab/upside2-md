@@ -65,6 +65,10 @@ def read_residues(chain):
             ignored_restypes[restype] = ignored_restypes.get(restype,0) + 1
             continue  # not an amino acid: water, ion or ligand
 
+        if res.getIcode():
+            raise RuntimeError('Residue %i%s (chain %s) has an insertion code, which the integer residue numbers of '
+                    'the .chi file cannot hold; renumber the PDB sequentially' % (res.getResnum(), res.getIcode(), chain.getChid()))
+
         try:
             phi = prody.calcPhi(res)*deg
         except ValueError:
@@ -80,7 +84,9 @@ def read_residues(chain):
         except ValueError:
             omega = np.nan
 
-        adict   = dict((a.getName(),a.getCoords()) for a in res.iterAtoms())
+        # selenomethionine's SE stands where methionine has SD
+        adict   = dict(('SD' if (res.getResname(), a.getName()) == ('MSE', 'SE') else a.getName(), a.getCoords())
+                       for a in res.iterAtoms())
         cg_list = [v for k,v in adict.items() if re.match("[^H]G1?$",k)]
         cd_list = [v for k,v in adict.items() if re.match("[^H]D1?$",k)]
         if len(cg_list) not in (0,1):
@@ -177,7 +183,7 @@ def main():
                         unexpected_chain_breaks = True
                         chain_counts[-1] += 1
 
-                    if args.record_chain_breaks: chain_first_residue.append(len(coords)/3)
+                    chain_first_residue.append(len(coords)//3)
                     if i and args.rl_chains:
                         if len(chain_counts)-1 < rl_chains_actual[0]:
                             rl_chains[0] += 1
@@ -200,11 +206,14 @@ def main():
                 '(--allow-unexpected-chain-breaks to suppress this error at your own risk)', file=sys.stderr)
         sys.exit(1)
 
+    if chain_first_residue and not args.record_chain_breaks:
+        print('ERROR: chain breaks at residues %s; without --record-chain-breaks and upside_config '
+              '--chain-break-from-file the chains would be bonded across them'
+              % ' '.join(str(i) for i in chain_first_residue), file=sys.stderr)
+        sys.exit(1)
+
     fasta_seq = ''.join(one_letter_aa[s] for s in sequence)
 
-    #with open(args.basename + '.initial.pkl','wb') as f:
-    #    cPickle.dump(coords[...,None], f, -1)
-    #    f.close()
     np.save('{}.initial.npy'.format(args.basename), coords) 
 
     with open(args.basename+'.fasta','w') as f:
@@ -216,18 +225,11 @@ def main():
     with open(args.basename+'.chi','w') as f:
         print ('residue restype  chain  resnum      chi1     chi2', file=f)
         for nr,restype in enumerate(sequence):
-            # if np.isnan(chi[nr]): continue  # no chi1 data to write
-
-            # # PRO is a special case since it only has two states
-            # # the PRO state 1 is the state from -120 to 0
-            # chi1_state = 1
-            # if    0.*deg <= chi[nr] < 120.*deg: chi1_state = 0
-            # if -120.*deg <= chi[nr] <   0.*deg and restype not in ('PRO','CPR'): chi1_state = 2
-
             print ('% 7i %7s %5s   %6s  % 8.3f % 8.3f' % (
                     nr, restype, chain_resnum[nr][0], chain_resnum[nr][1], chi[nr,0]/deg, chi[nr,1]/deg), file=f)
 
-    if chain_first_residue:
+    if args.record_chain_breaks:
+        # written for a single chain too: upside_config refuses a --chain-break-from-file that does not exist
         with open(args.basename+'.chain_breaks','w') as f:
             print (' '.join([str(int(i)) for i in chain_first_residue]), file=f)
             print (' '.join([str(int(i)) for i in chain_counts]), file=f)

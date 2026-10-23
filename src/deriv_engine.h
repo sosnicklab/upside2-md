@@ -129,6 +129,8 @@ struct Pos : public CoordNode
 };
 
 
+struct OrnsteinUhlenbeckThermostat;
+
 //! Main class to represent differentiable computational graph
 struct DerivEngine
 {
@@ -137,7 +139,7 @@ struct DerivEngine
     {
         std::string name; //!< HDF5 name of the group for the node
         std::unique_ptr<DerivComputation> computation; //!< underlying DerivComputation for calculations
-        int integrator_level;//
+        int integrator_level = 2; //!< 0 fast, 1 slow, -1 both (build_integrator_levels); 2 until assigned
         std::vector<size_t> parents;  //!< list of indices for parent nodes (a.k.a. inputs)
         std::vector<size_t> children; //!< list of indices for child nodes (a.k.a. consumers of output)
 
@@ -233,9 +235,10 @@ struct DerivEngine
     void build_exec_levels();
     void build_integrator_levels(bool print_info, float dt, int inner_step);
 
-    //! \brief Perform a full integration cycle (3 time steps)
-    void integration_cycle(VecArray mom, float dt);
-    void integration_cycle(VecArray mom, float dt, int inner_step);
+    //! \brief Perform a leapfrog integration cycle: 3 Verlet time steps, or a slow kick and inner_step fast steps;
+    //! a thermostat, if given, takes its step at the start on the momentum at the coordinates
+    void integration_cycle(VecArray mom, float dt, OrnsteinUhlenbeckThermostat* thermostat);
+    void integration_cycle(VecArray mom, float dt, int inner_step, OrnsteinUhlenbeckThermostat* thermostat);
 };
 
 //! \brief Count the number hbonds for a system
@@ -243,7 +246,6 @@ double get_n_hbond(DerivEngine &engine);
 
 //! \brief Construct DerivEngine from potential group
 DerivEngine initialize_engine_from_hdf5(int n_atom, hid_t potential_group);
-//DerivEngine initialize_engine_from_hdf5(int n_atom, hid_t potential_group, bool quiet=false);
 
 //! \brief Vector of non-null CoordNode pointers
 typedef std::vector<CoordNode*> ArgList;

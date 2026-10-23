@@ -18,15 +18,17 @@ static std::mutex g_baro_mutex;
 static std::map<DerivEngine*, BarostatState> g_baro_state;
 static std::atomic<NodeBoxUpdater> g_node_box_updater{nullptr};
 
-// Attempt to read barostat settings from H5 config
+// Every setting is required: the target pressures, the rounds between applications and the largest step of each move
 static BarostatSettings read_barostat_settings(hid_t root) {
     BarostatSettings s;
     auto grp = open_group(root, "/input/barostat");
-    s.target_p_xy = read_attribute<float>(grp.get(), ".", "target_p_xy", s.target_p_xy);
-    s.target_p_z = read_attribute<float>(grp.get(), ".", "target_p_z", s.target_p_z);
-    s.interval = read_attribute<int>(grp.get(), ".", "interval", s.interval);
-    s.mc_dmax_xy = read_attribute<float>(grp.get(), ".", "mc_dmax_xy", s.mc_dmax_xy);
-    s.mc_dmax_z  = read_attribute<float>(grp.get(), ".", "mc_dmax_z",  s.mc_dmax_z);
+    s.target_p_xy = read_attribute<float>(grp.get(), ".", "target_p_xy");
+    s.target_p_z  = read_attribute<float>(grp.get(), ".", "target_p_z");
+    s.interval    = read_attribute<int>  (grp.get(), ".", "interval");
+    s.mc_dmax_xy  = read_attribute<float>(grp.get(), ".", "mc_dmax_xy");
+    s.mc_dmax_z   = read_attribute<float>(grp.get(), ".", "mc_dmax_z");
+    if(s.interval < 1) throw std::string("/input/barostat@interval must be at least 1");
+    if(!(s.mc_dmax_xy >= 0.f && s.mc_dmax_z >= 0.f)) throw std::string("/input/barostat@mc_dmax_* must be nonnegative");
     return s;
 }
 
@@ -39,11 +41,9 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine, uint32
     if(!h5_exists(config_root, "/input/barostat")) return;
     BarostatSettings s = read_barostat_settings(config_root);
 
-    const char* box_node = h5_exists(config_root, "/input/potential/periodic_boundary_potential")
-        ? "/input/potential/periodic_boundary_potential" : "/input/potential/martini_potential";
-    if(!h5_exists(config_root, box_node))
+    if(!h5_exists(config_root, "/input/potential/martini_potential"))
         throw std::string("the barostat needs a periodic box (x_len, y_len, z_len on martini_potential)");
-    auto grp = open_group(config_root, box_node);
+    auto grp = open_group(config_root, "/input/potential/martini_potential");
     float bx = read_attribute<float>(grp.get(), ".", "x_len");
     float by = read_attribute<float>(grp.get(), ".", "y_len");
     float bz = read_attribute<float>(grp.get(), ".", "z_len");
@@ -71,7 +71,6 @@ void register_barostat_for_engine(hid_t config_root, DerivEngine& engine, uint32
     for(int a = 0; a < n_atom; ++a)
         st.mc_mol_atoms[static_cast<size_t>(mol_id[a])].push_back(a);
     st.mc_seed = random_seed;
-    st.mc_init = true;
 }
 
 void register_node_box_updater(NodeBoxUpdater updater) {
@@ -100,8 +99,11 @@ static std::vector<unsigned char> hybrid_derived_slots(const DerivEngine& engine
 // the exact NPT weight exp(-beta[dU + P*dV]) * (V'/V)^(N+1): one factor V'/V for each of the N scaled
 // centres and one because the proposal is uniform in ln V. A molecule holding a fixed atom (other than a
 // derived hybrid slot) is not scaled; one holding a z-fixed atom is scaled laterally but not by the normal move.
+// A molecule's centre is taken over its own particles. The derived slots move with their molecule but do not place
+// it: the integrator never moves them, so their stored positions are stale, and counting them would make the
+// centre's scaling a map whose Jacobian is not the V'/V the acceptance assumes.
 static void apply_mc_barostat(BarostatState& st, DerivEngine& engine, int n_atom, float kT) {
-    if(!st.mc_init || st.mc_mol_atoms.empty() || kT <= 0.f) return;
+    if(kT <= 0.f) return;
     auto& s = st.settings;
     VecArray pos = engine.pos->output;
 
@@ -136,16 +138,21 @@ static void apply_mc_barostat(BarostatState& st, DerivEngine& engine, int n_atom
             bool held = false;
             for(int a : atoms) if(fixed[a] || (axis == 1 && z_fixed[a])) { held = true; break; }
             if(held) continue;
-            // centre of the molecule made whole: each atom taken at its minimum image from the first
-            int a0 = atoms[0];
+            // centre of the molecule made whole: each of its particles taken at its minimum image from the first
+            auto first = std::find_if(atoms.begin(), atoms.end(), [&](int a) { return !derived[a]; });
+            if(first == atoms.end()) throw std::string("a molecule of /input/molecule_ids holds only derived hybrid slots");
+            int a0 = *first;
             float x0 = pos(0,a0), y0 = pos(1,a0), z0 = pos(2,a0);
             double cx = 0, cy = 0, cz = 0;
+            int n_centre = 0;
             for(int a : atoms) {
+                if(derived[a]) continue;
                 float dx = pos(0,a) - x0, dy = pos(1,a) - y0, dz = pos(2,a) - z0;
                 minimum_image_scalar(dx, dy, dz, bx0, by0, bz0);
                 cx += dx; cy += dy; cz += dz;
+                ++n_centre;
             }
-            double inv = 1.0 / atoms.size();
+            double inv = 1.0 / n_centre;
             cx = x0 + cx*inv; cy = y0 + cy*inv; cz = z0 + cz*inv;
             // An atom stored n box lengths from its place in the whole molecule moves by (s-1)(centre + n box):
             // the scaled configuration is the same whichever periodic images the atoms are stored in.

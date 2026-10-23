@@ -15,18 +15,18 @@ struct PivotSampler : public MonteCarloSampler {
     int n_pivot_loc;
 
     std::vector<PivotLocation> pivot_loc;
-    std::vector<float>         proposal_pot;
-    std::vector<float>         proposal_prob_cdf;
+    std::vector<double>        proposal_pot;       // -log of the probability with which each bin is drawn
+    std::vector<double>        proposal_prob_cdf;
 
     PivotSampler(): MonteCarloSampler(), n_layer(0), n_bin(0), n_pivot_loc(0) {} // Default constructor definition
 
-    PivotSampler(const std::string& grp_name, hid_t grp, H5Logger& logger); // Constructor declaration
+    PivotSampler(const std::string& grp_name, hid_t grp, H5Logger& logger, int n_atom); // Constructor declaration
 
     void propose_random_move(float* delta_lprob, 
         RandomGenerator& random, VecArray pos) const;
 };
 
-PivotSampler::PivotSampler(const std::string& name, hid_t grp, H5Logger& logger): // Constructor definition
+PivotSampler::PivotSampler(const std::string& name, hid_t grp, H5Logger& logger, int n_atom): // Constructor definition
     MonteCarloSampler(name, PIVOT_MOVE_RANDOM_STREAM, logger),
     n_layer(h5::get_dset_size(3, grp, "proposal_pot")[0]), 
     n_bin  (h5::get_dset_size(3, grp, "proposal_pot")[1]),
@@ -46,9 +46,13 @@ PivotSampler::PivotSampler(const std::string& name, hid_t grp, H5Logger& logger)
     traverse_dset<2,int>(grp, "pivot_range",   [&](size_t np, size_t j,  int x) {pivot_loc[np].pivot_range[j]=x;});
     traverse_dset<1,int>(grp, "pivot_restype", [&](size_t np,            int x) {pivot_loc[np].restype =x;});
 
+    if(!n_pivot_loc) throw std::string("pivot_moves has no pivot locations");
     for(auto &p: pivot_loc) {
         if(p.restype<0 || p.restype>=n_layer) throw std::string("invalid pivot restype");
+        if(p.pivot_range[0]<0 || p.pivot_range[0]>p.pivot_range[1] || p.pivot_range[1]>n_atom)
+            throw std::string("pivot_range outside the system");
         for(int na=0; na<5; ++na) {
+            if(p.rama_atom[na]<0 || p.rama_atom[na]>=n_atom) throw std::string("pivot_atom outside the system");
             if(p.pivot_range[0] <= p.rama_atom[na] && p.rama_atom[na] < p.pivot_range[1])
                 throw std::string("pivot_range cannot contain any atoms in pivot_atom ") + 
                     std::to_string(p.pivot_range[0]) + " <= " + std::to_string(p.rama_atom[na]) + 
@@ -58,22 +62,20 @@ PivotSampler::PivotSampler(const std::string& name, hid_t grp, H5Logger& logger)
 
     traverse_dset<3,float>(grp, "proposal_pot", [&](size_t nl, size_t nx, size_t ny, float x) {proposal_pot.push_back(x);});
 
+    // A bin is drawn with the probability of its step in the cdf, and a move is scored with that same probability,
+    // so that bins whose probability is below the cdf's resolution are not proposed at one rate and scored at another
     for(int nl=0; nl<n_layer; ++nl) {
+        double* cdf = proposal_prob_cdf.data() + nl*n_bin*n_bin;
         double sum_prob = 0.;
         for(int i=0; i<n_bin*n_bin; ++i) {
             sum_prob += exp(-proposal_pot[nl*n_bin*n_bin + i]);
-            proposal_prob_cdf[nl*n_bin*n_bin + i] = sum_prob;
+            cdf[i] = sum_prob;
         }
+        for(int i=0; i<n_bin*n_bin; ++i) cdf[i] /= sum_prob;
+        cdf[n_bin*n_bin-1] = 1.;  // ensure no rounding error here
 
-        // normalize both the negative log probability and the cdf
-        double inv_sum_prob = 1./sum_prob;
-        double lsum_prob = log(sum_prob);
-        for(int i=0; i<n_bin*n_bin; ++i) {
-            proposal_prob_cdf[nl*n_bin*n_bin + i] *= inv_sum_prob;
-            proposal_pot[nl*n_bin*n_bin + i]      += lsum_prob;
-        }
-        
-        proposal_prob_cdf[(nl+1)*n_bin*n_bin-1] = 1.f;  // ensure no rounding error here
+        for(int i=0; i<n_bin*n_bin; ++i)
+            proposal_pot[nl*n_bin*n_bin + i] = -log(cdf[i] - (i ? cdf[i-1] : 0.));
     }
 }
 
@@ -87,14 +89,14 @@ void PivotSampler::propose_random_move(float* delta_lprob,
     if(loc == n_pivot_loc) loc--;  // this may occur due to rounding
     auto p = pivot_loc[loc];
 
-    // select a bin
-    float cdf_value = random_values.w();
+    // select a bin, at the resolution of the double cdf
+    double cdf_value = random.uniform_open_closed_double();
 
     int pivot_bin = std::lower_bound(
             proposal_prob_cdf.data()+ p.restype   *n_bin*n_bin, 
             proposal_prob_cdf.data()+(p.restype+1)*n_bin*n_bin,
             cdf_value) - (proposal_prob_cdf.data()+p.restype*n_bin*n_bin);
-    float new_lprob = proposal_pot[p.restype*n_bin*n_bin + pivot_bin];
+    double new_lprob = proposal_pot[p.restype*n_bin*n_bin + pivot_bin];
 
     int phi_bin = pivot_bin/n_bin;
     int psi_bin = pivot_bin%n_bin;
@@ -120,7 +122,7 @@ void PivotSampler::propose_random_move(float* delta_lprob,
     int old_psi_bin = (old_rama.y()+M_PI_F) * (0.5f/M_PI_F) * n_bin + 0.5f;
     old_phi_bin = old_phi_bin>=n_bin ? 0 : old_phi_bin;  // enforce periodicity
     old_psi_bin = old_psi_bin>=n_bin ? 0 : old_psi_bin;
-    float old_lprob = proposal_pot[(p.restype*n_bin + old_phi_bin)*n_bin + old_psi_bin];
+    double old_lprob = proposal_pot[(p.restype*n_bin + old_phi_bin)*n_bin + old_psi_bin];
 
     // apply rotations
     float3 phi_origin = CA;
@@ -164,19 +166,17 @@ struct JumpSampler : public MonteCarloSampler {
 
     int n_jump_chains;
     std::vector<JumpChain> jump_chains;
-    float prob_mod;
 
-    JumpSampler(const std::string& grp_name, hid_t grp, H5Logger& logger); // Constructor declaration
+    JumpSampler(const std::string& grp_name, hid_t grp, H5Logger& logger, int n_atom); // Constructor declaration
 
     void propose_random_move(float* delta_lprob, 
         RandomGenerator& random, VecArray pos) const;
 };
 
-JumpSampler::JumpSampler(const std::string& name, hid_t grp, H5Logger& logger): // Constructor definition
+JumpSampler::JumpSampler(const std::string& name, hid_t grp, H5Logger& logger, int n_atom): // Constructor definition
     MonteCarloSampler(name, JUMP_MOVE_RANDOM_STREAM, logger),
     n_jump_chains(h5::get_dset_size(2, grp, "atom_range")[0]),
-    jump_chains(n_jump_chains),
-    prob_mod(h5::read_attribute<float>(grp, ".", "prob_mod", 0.f))
+    jump_chains(n_jump_chains)
 {
     using namespace h5;
     check_size(grp, "atom_range",  n_jump_chains, 2);
@@ -198,6 +198,11 @@ JumpSampler::JumpSampler(const std::string& name, hid_t grp, H5Logger& logger): 
     traverse_dset<1,float>(grp, "sigma_rot",   [&](size_t ns, float x) {
         printf("%.3f\n", x); 
         jump_chains[ns].sigma_rot = x; });
+
+    if(!n_jump_chains) throw std::string("jump_moves has no chains");
+    for(auto &j: jump_chains)
+        if(j.first_atom<0 || j.first_atom>=j.next_first || j.next_first>n_atom)
+            throw std::string("jump_moves atom_range must be a nonempty range of the system's atoms");
 }
 
 void JumpSampler::propose_random_move(float* delta_lprob, 
@@ -247,7 +252,8 @@ void JumpSampler::propose_random_move(float* delta_lprob,
         }       
     }
     
-    *delta_lprob = prob_mod; //0.f;
+    // both moves are drawn from distributions symmetric under inversion, so the proposal ratio is 1
+    *delta_lprob = 0.f;
 }
 
 // ===[Monte Carlo Sampler Definitions]===
@@ -310,7 +316,7 @@ void MultipleMonteCarloSampler::execute(uint32_t seed, uint64_t round, const flo
     for (auto& s: samplers) s->monte_carlo_step(seed, round, temperature, engine, mom, half_kick, slow_half_kick);
 }
 
-MultipleMonteCarloSampler::MultipleMonteCarloSampler(hid_t sampler_group, H5Logger& logger) {
+MultipleMonteCarloSampler::MultipleMonteCarloSampler(hid_t sampler_group, H5Logger& logger, int n_atom) {
 	using namespace h5;
 	
         std::string name;
@@ -318,12 +324,12 @@ MultipleMonteCarloSampler::MultipleMonteCarloSampler(hid_t sampler_group, H5Logg
         name = "pivot";
 	if(h5_exists(sampler_group, (name + "_moves").c_str()))
 		samplers.emplace_back(
-                        new PivotSampler(name.c_str(), open_group(sampler_group, (name + "_moves").c_str()).get(), logger));
+                        new PivotSampler(name.c_str(), open_group(sampler_group, (name + "_moves").c_str()).get(), logger, n_atom));
 		
         name = "jump";
 	if(h5_exists(sampler_group, (name + "_moves").c_str()))
 		samplers.emplace_back(
-                        new JumpSampler(name.c_str(), open_group(sampler_group, (name + "_moves").c_str()).get(), logger));
+                        new JumpSampler(name.c_str(), open_group(sampler_group, (name + "_moves").c_str()).get(), logger, n_atom));
 }
 
 

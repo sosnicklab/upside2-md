@@ -44,6 +44,7 @@ skip_experiment_data=${skip_experiment_data:-false}
 hxms_method=${hxms_method:-stretch_exp}
 protein_state=${protein_state:-pd9}
 exp_data_file=${exp_data_file:-GlpG psWT Sub final peptides up sum 11192024.csv}
+T_fit_exclude_through=${T_fit_exclude_through:-11} # glpG's construct starts with an 11-residue tag
 
 # checkme: optional legacy HX plot step. Use auto to run only when the legacy inputs are present.
 hx_plot_enabled=${hx_plot_enabled:-auto} # auto, true, or false
@@ -54,6 +55,13 @@ hx_plot_fitdata_file=${hx_plot_fitdata_file:-}
 hx_plot_dg_file=${hx_plot_dg_file:-}
 hx_plot_resid_file=${hx_plot_resid_file:-}
 hx_plot_output_dir=${hx_plot_output_dir:-}
+# checkme: the experiment the legacy HX plots compare against (glpG pd9 here)
+hx_plot_temperature_k=${hx_plot_temperature_k:-296.0}
+hx_plot_pd_corr=${hx_plot_pd_corr:-9.0}
+hx_plot_residue_offset=${hx_plot_residue_offset:-66}
+hx_plot_dseq=${hx_plot_dseq:--1}
+hx_plot_ss_ranges=${hx_plot_ss_ranges:-29-47,82-102,106-126,135-151,162-175,183-207}
+hx_plot_upside_temps=${hx_plot_upside_temps:-0.70,0.75,0.80,0.85,0.90}
 
 #----------------------------------------------------------------------
 ## Slurm settings
@@ -80,6 +88,7 @@ workflow_env=(
     "HXMS_method=$hxms_method"
     "protein_state=$protein_state"
     "exp_data_file=$exp_data_file"
+    "T_fit_exclude_through=$T_fit_exclude_through"
     "trajectory_mode=$trajectory_mode"
     "hybrid_source_dir=$hybrid_source_dir"
     "hybrid_source_pattern=$hybrid_source_pattern"
@@ -332,6 +341,12 @@ run_hx_plot_step() {
         hx_plot_fitdata_path=$fitdata_path \
         hx_plot_dg_path=$dg_path \
         hx_plot_resid_path=$resid_path \
+        hx_plot_temperature_k=$hx_plot_temperature_k \
+        hx_plot_pd_corr=$hx_plot_pd_corr \
+        hx_plot_residue_offset=$hx_plot_residue_offset \
+        hx_plot_dseq=$hx_plot_dseq \
+        hx_plot_ss_ranges=$hx_plot_ss_ranges \
+        hx_plot_upside_temps=$hx_plot_upside_temps \
         python $script_dir/6.generate_hx_plots.py
 }
 

@@ -46,6 +46,10 @@ struct RamaPlacement {
 
         traverse_dset<1,int>(grp, "layer_index",    [&](size_t np, int x){params[np].layer_idx  = x;});
         traverse_dset<1,int>(grp, "rama_residue",   [&](size_t np, int x){params[np].rama_residue  = x;});
+        for(auto& p: params) {
+            if(p.layer_idx<0 || p.layer_idx>=spline.n_layer) throw string("layer_index outside placement_data");
+            if(p.rama_residue<0 || p.rama_residue>=rama.n_elem) throw string("rama_residue outside the rama coordinate");
+        }
 
         {
             vector<double> all_data_to_fit;
@@ -128,6 +132,7 @@ struct FixedPlacement {
 
         traverse_dset<1,int>(grp, "layer_index",    [&](size_t np, int x){params[np].layer_idx  = x;});
         traverse_dset<2,float>(grp, "placement_data", [&](size_t nl, size_t d, double x) {data(d,nl) = x;});
+        for(auto& p: params) if(p.layer_idx<0 || p.layer_idx>=n_layer) throw string("layer_index outside placement_data");
     }
 
     void reset() {
@@ -250,6 +255,7 @@ struct PlacementNode: public CoordNode
         // static_assert(n_pos_dim == decltype(placement_data.evaluate(0)), "inconsistent n_pos_dim");
         check_size(grp, "affine_residue", n_elem);
         traverse_dset<1,int>(grp, "affine_residue", [&](size_t np, int x){affine_residue[np] = x;});
+        for(auto r: affine_residue) if(r<0 || r>=alignment.n_elem) throw string("affine_residue outside affine_alignment");
 
         if(logging(LOG_EXTENSIVE)) {
             default_logger->add_logger<float>(group_name(grp).c_str(), {n_elem, n_pos_dim}, [&](float* buffer) {

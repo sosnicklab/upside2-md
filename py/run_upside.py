@@ -1,13 +1,8 @@
 ''' Very opinionated convenience script for running upside jobs on midway '''
-import os, sys
-import collections
+import os
 import subprocess as sp
 import numpy as np
-import tables as tb
-import json,uuid
 import time
-
-from upside_config import chain_endpts
 
 import upside_engine as ue
 
@@ -50,7 +45,7 @@ def upside_config(fasta,
                   target_structure='',
                   spatial_transform_from_table='',
                   chain_break_from_file='',
-                  intensive_memory= False,
+                  intensive_memory=None,
 
                   bond_stiffness=None,
                   angle_stiffness=None,
@@ -87,7 +82,6 @@ def upside_config(fasta,
                   channel_membrane_potential='',
                   membrane_thickness=0.,
                   membrane_exclude_residues='',
-                  membrane_lateral_potential='',
                   use_curvature=False,
                   curvature_radius=1000.,
                   curvature_sign=1,
@@ -106,8 +100,8 @@ def upside_config(fasta,
         args.append('--target-structure=%s'%target_structure)
     if spatial_transform_from_table:
         args.append('--spatial-transform-from-table=%s'%spatial_transform_from_table)
-    if intensive_memory:
-        args.append('--intensive-memory')
+    if intensive_memory is not None:  # None leaves upside_config's choice by size (on above 1000 residues)
+        args.append('--intensive-memory' if intensive_memory else '--no-intensive-memory')
 
     if bond_stiffness is not None:
         args.append('--bond-stiffness=%s'%bond_stiffness)
@@ -195,13 +189,6 @@ def upside_config(fasta,
             args.append('--use-curvature')
             args.append('--curvature-radius=%f'%curvature_radius)
             args.append('--curvature-sign=%d'%curvature_sign)
-
-    if membrane_lateral_potential:
-        if not surface:
-            raise ValueError('Must supply --surface if using membrane_lateral_potential')
-        if not channel_membrane_potential and not membrane_potential:
-            raise ValueError('Must supply --channel-membrane-potential or --membrane-potential if using membrane_lateral_potential')
-        args.append('--membrane-lateral-potential=%s'%membrane_lateral_potential)
 
     if hb_scale != 1.:
         args.append('--hb-scale=%s'%hb_scale)
@@ -293,10 +280,6 @@ def advanced_config(config,
     return ' '.join(args) + '\n' + sp.check_output(args).decode('ASCII')
 
 
-def compile():
-    return sp.check_output(['/bin/bash', '-c', 'cd %s; make -j4'%obj_dir])
-
-
 class UpsideJob(object):
     def __init__(self,job,config,output, timer_object=None):
         self.job = job
@@ -370,7 +353,7 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
         env = os.environ.copy()
         env['OMP_NUM_THREADS'] = str(n_threads)
         output_file = open(output_path,'w')
-        job = sp.Popen(upside_args, stdout=output_file, stderr=output_file)
+        job = sp.Popen(upside_args, stdout=output_file, stderr=output_file, env=env)
 
         if minutes is not None:
             # FIXME in Python 3.3+, subprocess supports job timeout directly
@@ -416,135 +399,6 @@ def run_upside(queue, config, duration, frame_interval, time_limit=None, n_threa
 
     return UpsideJob(job,config,output_path, timer_object=timer_object)
 
-def continue_sim( configs, partition='', duration=0, frame_interval=0, **upside_kwargs):
-    upside_kwargs = dict(upside_kwargs)
-    temps = []
-
-    for fn in configs:
-        with tb.open_file(fn,'a') as t:
-            i = 0
-            while 'output_previous_%i'%i in t.root:
-                i += 1
-            new_name = 'output_previous_%i'%i
-            if 'output' in t.root:
-                n = t.root.output
-            else:
-                n = t.get_node('/output_previous_%i'%(i-1))
-
-            t.root.input.pos[:,:,0] = n.pos[-1,0]
-            temps.append(n.temperature[-1,0])
-
-            if 'output' in t.root:
-                t.root.output._f_rename(new_name)
-            # print (fn, temps[-1])
-
-    if partition :
-        upside_kwargs[ 'temperature'] = temps
-        return run_upside( partition, configs, duration, frame_interval, **upside_kwargs)
-
-def read_output(t, output_name, stride):
-    """Read output from continued Upside h5 files."""
-    def output_groups():
-        i=0
-        while 'output_previous_%i'%i in t.root:
-            yield t.get_node('/output_previous_%i'%i)
-            i += 1
-        if 'output' in t.root: 
-            yield t.get_node('/output')
-            i += 1
-
-    start_frame = 0
-    total_frames_produced = 0
-    output = []
-    time = []
-    for g_no, g in enumerate(output_groups()):
-        # take into account that the first frame of each output is the same as the last frame before restart
-        # attempt to land on the stride
-        sl = slice(start_frame,None,stride)
-        output.append(g._f_get_child(output_name)[sl,:])
-        total_frames_produced += g._f_get_child(output_name).shape[0]-(1 if g_no else 0)  # correct for first frame
-        start_frame = 1 + stride*(total_frames_produced%stride>0) - total_frames_produced%stride
-    output = np.concatenate(output,axis=0)
-    return output
-
-def compute_com_dist(config_fn):
-    """Compute center of mass distance between receptor and ligand."""
-    with tb.open_file(config_fn) as t:
-        n_res = len(t.root.input.sequence[:])
-        try:
-            xyz = read_output(t, "pos", 1)[:,0,:,:] 
-        except ValueError:
-            print ("No output for %s" % config_fn)
-            sys.exit(1)
-        else:
-            chain_first_residue = t.root.input.chain_break.chain_first_residue[:]
-            rl_chains = t.root.input.chain_break.rl_chains[:]
-
-    n_chains = len(chain_first_residue) + 1
-
-    # receptor com
-    first_res = chain_endpts(n_res, chain_first_residue, 0)[0]
-    next_first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0]-1)[1]
-    r_com = xyz[:,first_res*3:next_first_res*3].mean(axis=1)
-
-    # ligand com
-    first_res = chain_endpts(n_res, chain_first_residue, rl_chains[0])[0]
-    next_first_res = chain_endpts(n_res, chain_first_residue, n_chains-1)[1]
-    l_com = xyz[:,first_res*3:next_first_res*3].mean(axis=1)
-
-    com_dist = vmag(r_com - l_com)
-    return com_dist
-
-def status(job):
-    try:
-        job_state = sp.check_output(['/usr/bin/env', 'squeue', '-j', job.job, '-h', '-o', '%t']).strip()
-    except sp.CalledProcessError:
-        job_state = 'FN'
-        
-    if job_state == 'PD':
-        status = ''
-    else:
-        status = sp.check_output(['/usr/bin/env','tail','-n','%i'%1, job.output])[:-1]
-    return '%s %s' % (job_state, status)
-
-
-def read_hb(tr):
-    n_res = tr.root.input.pos.shape[0]//3
-    don_res =  tr.root.input.potential.infer_H_O.donors.id[:,1] // 3
-    acc_res = (tr.root.input.potential.infer_H_O.acceptors.id[:,1]-2) // 3
-    
-    n_hb = tr.root.output.hbond.shape[1]
-    hb_raw   = tr.root.output.hbond[:]
-    hb = np.zeros((hb_raw.shape[0],n_res,2,2))
-
-    hb[:,don_res,0,0] =    hb_raw[:,:len(don_res)]
-    hb[:,don_res,0,1] = 1.-hb_raw[:,:len(don_res)]
-
-    hb[:,acc_res,1,0] =    hb_raw[:,len(don_res):]
-    hb[:,acc_res,1,1] = 1.-hb_raw[:,len(don_res):]
-    
-    return hb
-
-def read_constant_hb(tr, n_res):
-    don_res = tr.root.input.potential.infer_H_O.donors.residue[:]
-    acc_res = tr.root.input.potential.infer_H_O.acceptors.residue[:]
-    
-    n_hb = tr.root.output.hbond.shape[2]
-    hb_raw   = tr.root.output.hbond[:,0]
-
-    hb = np.zeros((hb_raw.shape[0],n_res,2,3))
-
-    hb[:,don_res,0,0] = hb_raw[:,:len(don_res),0]
-    hb[:,don_res,0,1] = hb_raw[:,:len(don_res),1]
-    hb[:,don_res,0,2] = 1.-hb_raw[:,:len(don_res)].sum(axis=-1)
-
-    hb[:,acc_res,1,0] = hb_raw[:,len(don_res):,0]
-    hb[:,acc_res,1,1] = hb_raw[:,len(don_res):,1]
-    hb[:,acc_res,1,2] = 1.-hb_raw[:,len(don_res):].sum(axis=-1)
-    
-    return hb
-
-
 def rmsd_transform(target, model):
     assert target.shape == model.shape == (model.shape[0],3)
     base_shift_target = target.mean(axis=0)
@@ -571,67 +425,6 @@ def structure_rmsd(a,b):
 def traj_rmsd(traj, native):
     return np.array([structure_rmsd(x,native) for x in traj])
 
-
-def vmag(x):
-    assert x.shape[-1] == 3
-    return np.sqrt(x[...,0]**2 + x[...,1]**2 + x[...,2]**2)
-
-
-def vhat(x):
-    return x / vmag(x)[...,None]
-
-
-def compact_sigmoid(x, sharpness):
-    y = x*sharpness;
-    result = 0.25 * (y+2) * (y-1)**2
-    result = np.where((y< 1), result, np.zeros_like(result))
-    result = np.where((y>-1), result, np.ones_like (result))
-    return result
-
-
-def compute_topology(t):
-    seq = t.root.input.sequence[:]
-    infer = t.root.input.potential.infer_H_O
-    n_donor = infer.donors.id.shape[0]
-    n_acceptor = infer.acceptors.id.shape[0]
-    id = np.concatenate((infer.donors.id[:],infer.acceptors.id[:]), axis=0)
-    bond_length = np.concatenate((infer.donors.bond_length[:],infer.acceptors.bond_length[:]),axis=0)
-    
-    def augment_pos(pos, id=id, bond_length=bond_length):
-        prev = pos[id[:,0]]
-        curr = pos[id[:,1]]
-        nxt  = pos[id[:,2]]
-        
-        virtual = curr + bond_length[:,None] * vhat(vhat(curr-nxt) + vhat(curr-prev))
-        new_pos = np.concatenate((pos,virtual), axis=0)
-        return json.dumps(new_pos.tolist())  # convert to json form
-    
-    n_atom = 3*len(seq)
-    backbone_names = ['N','CA','C']
-    
-    backbone_atoms = [dict(name=backbone_names[i%3], residue_num=i//3, element=backbone_names[i%3][:1])
-                      for i in range(n_atom)]
-    virtual_atoms  = [dict(name=('H' if i<n_donor else 'O'), residue_num=int(id[i,1]/3), 
-                           element=('H' if i<n_donor else 'O'))
-                     for i in range(n_donor+n_acceptor)]
-    backbone_bonds = [[i,i+1] for i in range(n_atom-1)]
-    virtual_bonds  = [[int(id[i,1]), n_atom+i] for i in range(n_donor+n_acceptor)]
-    
-    topology = json.dumps(dict(
-        residues = [dict(resname=s.decode('ASCII'), resid=i) for i,s in enumerate(seq)],
-        atoms = backbone_atoms + virtual_atoms,
-        bonds = backbone_bonds + virtual_bonds,
-    ))
-    
-    return topology, augment_pos
-
-
-def display_structure(topo_aug, pos, size=(600,600)):
-    import IPython.display as disp
-    id_string = uuid.uuid4()
-    return disp.Javascript(lib='/files/js/protein-viewer.js', 
-                    data='render_structure(element, "%s", %i, %i, %s, %s);'%
-                       (id_string, size[0], size[1], topo_aug[0], topo_aug[1](pos))), id_string
 
 def swap_table2d(nx,ny):
     idx = lambda xy: xy[0]*ny + xy[1]

@@ -4,28 +4,13 @@
 #include "vector_math.h"
 #include "spline.h"
 
-// Due to a cascade of requirements because I made n_param essentially a template parameter
-// of InteractionGraph (as a constexpr member of IType), I have to switch out the number of 
-// knots for the various splines using the preprocessor defines.  This is poor practice
-// FIXME Make n_param and the various n_knots proper runtime flags, probably by making sure
-// that InteractionGraph receives an IType object rather than just using it as a namespace.
-#if defined(PARAM_7A_CUTOFF)
-    #define N_KNOT_SC_SC   9
-    #define N_KNOT_SC_BB   7
-    #define N_KNOT_ANGULAR 8
-    #define KNOT_SPACING   1.f
-#elif defined(PARAM_10A_CUTOFF)
-    #define N_KNOT_SC_SC   12
-    #define N_KNOT_SC_BB   12
-    #define N_KNOT_ANGULAR 8
-    #define KNOT_SPACING   1.f
-#else
-    #define N_KNOT_SC_SC   12
-    #define N_KNOT_SC_BB   10
-    #define N_KNOT_ANGULAR 15
-    #define KNOT_SPACING    0.7f
-    #define KNOT_SPACING_BB 0.625f
-#endif
+// n_param is a constexpr member of each interaction type, which InteractionGraph takes as a template parameter,
+// so the knot counts of the side-chain splines are compile-time constants
+#define N_KNOT_SC_SC   12
+#define N_KNOT_SC_BB   10
+#define N_KNOT_ANGULAR 15
+#define KNOT_SPACING    0.7f
+#define KNOT_SPACING_BB 0.625f
 
 namespace {
     // Spline coordinate of the cosine between two unit vectors.  Rounding can carry the cosine just past
@@ -145,54 +130,6 @@ namespace {
         }
 
     constexpr static const int n_bit_rotamer = 4; // max number of rotamers is 2**n_bit_rotamer
-
-    struct PosDistSplineInteraction {
-        // spline-based distance interaction
-        // n_param is the number of basis splines (including those required to get zero
-        //   derivative in the clamped spline)
-        // spline is constant over [0,dx] to avoid funniness at origin
-        // spline should be clamped at zero at the large end for cutoffs
-
-        constexpr static float inv_dx = 1.f/0.50f;  // half-angstrom bins
-        constexpr static bool  symmetric = true;
-        constexpr static int   n_param=N_KNOT_SC_SC, n_dim1=3, n_dim2=3, simd_width=1;  // 8 angstrom cutoff
-
-        static float cutoff(const float* p) {
-            return (n_param-2-1e-6)/inv_dx;  // 1e-6 just insulates us from round-off error
-        }
-
-        static bool is_compatible(const float* p1, const float* p2) {
-            for(int i: range(n_param)) if(p1[i]!=p2[i]) return false;
-            return true;
-        }
-
-        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
-            return id1.srl(n_bit_rotamer) != id2.srl(n_bit_rotamer);
-        }
-
-        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
-                const Vec<n_dim1,Float4> &x1, const Vec<n_dim2,Float4> &x2) {
-            auto disp       = x1-x2;
-            auto dist2      = mag2(disp);
-            auto inv_dist   = rsqrt(dist2+Float4(1e-7f));  // 1e-7 is divergence protection
-            auto dist_coord = dist2*(inv_dist*inv_dx);
-
-            auto en = clamped_deBoor_value_and_deriv(p, dist_coord, n_param);
-            d1 = disp*(inv_dist*inv_dx*en.y());
-            d2 = -d1;
-            return en.x();
-        }
-
-        static void param_deriv(Vec<n_param> &d_param, const float* p,
-                const Vec<n_dim1> &x1, const Vec<n_dim2> &x2) {
-            auto dist_coord = inv_dx*mag(x1-x2);
-
-            int starting_bin;
-            float result[4];
-            clamped_deBoor_coeff_deriv(&starting_bin, result, dist_coord, n_param);
-            for(int i: range(4)) d_param[starting_bin+i] = result[i];
-        }
-    };
 }
 
     struct PosQuadSplineInteraction {
@@ -209,7 +146,7 @@ namespace {
         }
 
         static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
-            return id1.srl(n_bit_rotamer) != id2.srl(n_bit_rotamer);
+            return id1 != id2;  // sequence ids: the beads of one residue do not pair
         }
 
         static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],

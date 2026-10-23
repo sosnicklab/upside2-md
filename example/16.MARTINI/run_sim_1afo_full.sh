@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh
+source /beagle3/trsosnic/yinhan/upside3/env_upside3.sh   # the Upside 3 tree; env_shared.sh is the pre-audit engine
 export UPSIDE_SKIP_SOURCE_SH=1
 export PYTHONUNBUFFERED=1
 
