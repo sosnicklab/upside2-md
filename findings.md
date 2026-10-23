@@ -2497,6 +2497,37 @@ sampling, not how two trainings of one design differ.
   0.9791, 0.9786, 0.9783, 0.9783, 0.9784. Width 0.5: the ff3.0 start's minimum and within 3e-4 of the ff2.1 start's,
   the curve flat beyond it. One round then moves glycine's shared alpha_L +0.185 from ff2.1 and +0.035 from ff3.0's
   map, the second consistent with 1.34's finding that the data have little left to pull there.
+- **At step 76 the pooled prior moves glycine's map; the per-map prior did not** (10-23; `ff311_depths_only` and
+  `ff321_depths_only`, every other group held at ff2.1; libraries `rama_round_04.dat`, md5 `c0244f91`, `5286b7e0`;
+  `scratchpad/gly_rama_pooled_maps.py`, figures `~/Downloads/gly_rama_ff311_nonhelix_zero.png`, `..._ff321_...`).
+  ff3.1.1's shared glycine alpha_L went +0.157, +0.217, +0.293, +0.358 over rounds 1-4, still rising ~0.065 an epoch:
+  1.29's +0.35 to +0.40. Its pooled glycine map on the non-helical zero: alpha_L -3.022 (ff2.1) to -2.611, alpha_R
+  -1.562 to -1.551, PII -0.616 to -0.581, P(phi > 0) 0.647 to 0.606; trained alpha_L - alpha_R per GLY|X map +0.400
+  (+0.171 to +0.582). ff3.1, the same data under per-map priors, moved alpha_L to -2.952 only. ff3.2.1 stays at
+  ff3.0's map: alpha_L -2.505 to -2.490, alpha_R -1.669 to -1.624, largest pooled-map change 0.16, shared alpha_L
+  +0.039 to +0.021 over the rounds.
+- **The two starts meet, except glycine's alpha_L, which is still closing** (10-23, user: "check other rama map terms
+  and other parameters"; `checks/ff311_20261021/compare_pooled_runs.py` and `.txt`, the depth state of rounds 0-4 from
+  the checkpoints in `rama_state_pooled.npz`). Every other group is bitwise ff2.1's in both at step 76, by
+  construction (rates 0; `compare_params_step76.txt`), so the library is the only test. In one frame (NDRD plus
+  offsets; ff3.0 is NDRD plus one pair on the 37 GLY|X maps, alpha_R -0.1068, alpha_L +0.5169; rebuilt step-76 maps
+  equal the libraries to 2e-6), over the depths the data reach: the 801 non-glycine maps start equal and end apart
+  by rms 0.067, 0.078, 0.087, 0.092 over rounds 1-4 (by basin mean within +/-0.02), the two runs' own noise;
+  the glycine maps start apart by rms 0.209 and end at 0.093, that floor. Per basin on glycine: alpha_R -0.101 to
+  -0.015; the four minor basins open from 0 to +0.03-0.09, noise size; alpha_L +0.490 to +0.152. The shared glycine
+  alpha_L gap goes 0.517, 0.398, 0.339, 0.256, 0.179, closing 0.06-0.08 a round, mostly by ff3.1.1 rising (ff3.2.1
+  +0.517 to +0.537): within the other residues' shared-offset spread (rms 0.092, max 0.279 for SER alpha_L) by size,
+  but systematic by trend, so the meeting point is not reached at step 76. Basin populations per map, largest |ln
+  ratio| between the runs: glycine maps median 0.356 at the start, 0.104 at step 76; non-glycine maps 0.094 (95th
+  percentile 0.263). **Movement from ff2.1** (user: "check how much other AA's rama map moved from ff2.1"):
+  non-glycine maps, read-weighted mean ln(P/P_ff2.1) alpha_R +0.068 / +0.061 (ff3.1.1 / ff3.2.1), alpha_L +0.074 /
+  +0.059, beta -0.033 / -0.033, pPII -0.052 / -0.047; per-map largest basin change median 0.128 / 0.097, 95th
+  percentile 0.355 / 0.365; alpha_R up most on ALA, GLN, PRO, TYR, VAL (+0.10 to +0.15), alpha_L (sparse) most on
+  GLU and LYS (+0.24 to +0.45), the runs apart on SER and LEU alpha_L; glycine maps median 0.30 / 0.36. Their rms
+  movement grew 0.08, 0.11, 0.13, 0.14 over the rounds, slowing, against the runs' noise of 0.09. Both runs continue
+  to agreement and are merged (plan.md Phase 30).
+  A basin fit fixes a map's six offsets only up to one shared constant ('other' is nearly empty on the grid,
+  condition 1.5e7): compare trained runs by their recorded offsets, and fitted libraries only by contrasts or maps.
 
 ### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; the defective chains' cold-rung glycine flips are absent from the corrected chains' block 1 (2026-10-14/18)
 
@@ -6742,6 +6773,14 @@ dirs' `results/`) and the script that made them, and reproduce that format with 
 post-equilibration data pooled** (here blocks 2-3 through the pipeline as one range); a comparison the format lacks
 (block 2 against block 3) goes in text, not in more figures, unless the user asks for it. The SciencePlots rule
 governs new figures, not a format the user names.
+
+### 10.37 For runs from different starts, "converged" means they agree with each other (2026-10-23)
+
+User, on ff3.1.1 and ff3.2.1: "by converge I mean ff3.1.1 and 3.2.1 have similar rama map, while have different
+starting point for GLY". I had begun the single-run fixed-point tests of 1.36 (gate, `depth_pull.py`). **When the
+user asks whether runs that differ only in their start "converged", the test is between the runs:** the gap at the
+start against the gap at the end, term by term, read against the gap of the terms that started equal (the runs'
+own noise). The fixed-point gate is a different question; say which one is being answered before running either.
 
 ---
 

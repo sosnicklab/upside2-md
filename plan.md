@@ -1175,6 +1175,10 @@ as in ff3.1, so the pooled prior is the only change. Decisions:
 4. [x] Built and initialised `ff311_depth_pooled` and `ff321_depth_pooled`: equal to their sources in every field
    but the pooled depth state; submitted 13:34 10-21 (remote_jobs.md §1).
 5. [ ] At step 76: maps against their sources (`plot_gly_rama_*_nonhelix_zero.py`), `depth_data_vs_prior.py`, panels.
+   Both runs reached step 76 10-23. Glycine maps done 10-23 for the user's review (findings 1.34: ff3.1.1's alpha_L
+   +0.41 from ff2.1, ff3.2.1 at ff3.0's map); panels and the per-step checks wait on it, since their collector died
+   on its first pass (remote_jobs.md §1 line 2). Two-start comparison done 10-23 (findings 1.34): every map but
+   glycine's alpha_L agrees to the runs' noise; that gap went 0.517 to 0.179 and still closes ~0.07 an epoch.
 
 **Revised decision (10-21 13:40, user: "besides rama map not moving bug, try to resolve the accuracy lost bug as well
 in this run").** The first chains (`ff311_depth_pooled`, `ff321_depth_pooled`, every group trained) were cancelled 3
@@ -1188,8 +1192,33 @@ budget that ff2.1 has already had (findings 1.23). So:
   takes ff2.1's; the two runs differ only in the starting map, and share ff3.1's rerun's minibatch order and
   held-out set.
 - **Runs** `ff311_depths_only` and `ff321_depths_only` (`build_depths_only.sh`), tags `p311_EE`, `p321_EE`.
-- **The test of the fix** is the epoch-0 panel (`p311_00`, `p321_00`) against `ff21_released` on the 44 domains.
-6. [ ] Epoch-0 panels: folding at ff2.1's level means the loss is resolved.
+- **The test of the fix** was to be the epoch-0 panel (`p311_00`, `p321_00`) against `ff21_released`.
+6. [x] Superseded 10-23 by Phase 30 (user): the per-run panels are not run; the two runs train on until they agree,
+   and the merged force field is what gets validated.
+
+### Phase 30 - merge ff3.1.1 and ff3.2.1 into ff3.1 and validate it (STARTED 2026-10-23, user)
+User 10-23: "train 3.1.1 and 3.2.1 further until they agree, then we can merge them into one (overwrite 3.1) and run
+validation on it"; chosen: glpG hybrid included in the validation, merge by averaging. At step 76 every term agrees
+between the runs to their own noise except glycine's alpha_L, whose shared-offset gap closes ~0.07 an epoch
+(findings 1.34). Decisions:
+- **Agreement rule, fixed before the data:** at one round, (a) glycine's alpha_L shared-offset gap is no larger than
+  the rms of the other trainable shared-offset gaps (the runs' noise, 0.092 at round 4), and (b) the glycine maps'
+  gap rms over the data-reached depths is no larger than the non-glycine maps'. Train in epoch pairs: 114, then 133;
+  at 152 stop and report.
+- **Merge:** the mean of the two runs' offsets per (map, basin) in the common frame (NDRD plus offsets, ff3.2.1's
+  including ff3.0's pair), written by `rama_basin.write_library`; the other five files are ff2.1's.
+- **Release as ff3.1:** overwrite `parameters/ff_3.1_depth_data` (backups) through `validate_ff.sh`, its third
+  argument extended to take a ready force-field directory; the old ff3.1's glpG chains, seeds and Peng scores move
+  aside as `.bak_pre_merge_<date>`, after the running chains' block 5 ends.
+- **Validation:** released ff2.1's three soluble tests on the same binaries and protocols (44-domain and mdCATH
+  panels at dt 0.009 with TM comparisons against `ff21_released`, Peng's 32 arms) and validate_ff.sh's four glpG
+  REMD chains (TM4 at each block end, HDX on block 2).
+1. [x] Dropped p311/p321 from `submit_new.sh` (backup `.bak_pre_phase30_20261023`); both runs continued to step 114,
+   49451890 / 49451891, 15:33 10-23 (remote_jobs.md §1 line 2).
+2. [ ] At 114: KE scan, `check_step.py`, the agreement rule (`compare_pooled_runs.py` over every round); extend if
+   not met.
+3. [ ] Merge, check, glycine figure to ~/Downloads; move the old ff3.1 results aside; release by `validate_ff.sh`.
+4. [ ] Panels, TM jobs and the Peng collector (`checks/ff31_merged_<date>/submit.sh`); read each as it finishes.
 
 ## Known Errors / Blockers
 

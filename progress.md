@@ -1468,3 +1468,24 @@ to 10-07 12:00 is in git history.
   concatenated on the GPU). Resubmitted as 10 seeds of 1,000 (61328353, `phase1_heeh_seeds.sbatch`). The Boltz dG
   figures will use `plot_ref_style.py` unchanged (findings 10.36). Files: remote_jobs.md, diffusion_dynamics.md,
   findings.md 10.14, progress.md; new `scratchpad/boltz_hdx/phase1_heeh_seeds.sbatch`.
+- 10-23 14:50-15:15, remote jobs (user: "check remote job status", then "resubmit Boltz job" and the glycine maps of
+  ff3.1.1 / ff3.2.1 "for me to review first"). Read-only pass on both clusters: ff3.1.1 / ff3.2.1 reached step 76,
+  but their collector died on its first pass (a `set -e` exit on a `while` pipeline), so no panels exist; released
+  ff2.1's mdCATH TM 0.727 against 0.702 / 0.667; glpG block 4 clean, block 5 running; Upside 3 prep done, REMD
+  block 1 running; Boltz 61328353 timed out with 5 of 10 seeds. Boltz script made resumable in place and continued
+  as 61368734. This computer's plotting venv (2024, Python 3.12, interpreter gone) moved aside and rebuilt per
+  `manage.sh` (Python 3.15.0, matplotlib 3.11.2). Glycine maps: ff3.1.1's alpha_L +0.41 from ff2.1, ff3.2.1 at
+  ff3.0's. Then the two-start comparison (user: "check other rama map terms and other parameters"): other groups
+  bitwise ff2.1 in both; every map agrees to the runs' noise (rms 0.09) but glycine alpha_L, whose gap closed
+  0.517 to 0.179 and is still closing (findings 1.34). A first pass misread a basin fit's free constant as a frame
+  mismatch; fixed by rebuilding maps from the recorded offsets. Files: remote_jobs.md, findings.md 1.34, plan.md
+  Phase 29, diffusion_dynamics.md, progress.md; `scratchpad/gly_rama_pooled_maps.py`,
+  `plot_gly_rama_pooled_nonhelix_zero.py`, `compare_pooled_runs.py`, `ff_3.1.1/`, `ff_3.2.1/`, `pooled_rounds/`;
+  cluster `$B/phase1_heeh_seeds.sbatch`, `WATCH_STATUS.md`, `checks/ff311_20261021/{compare_params,dump_rama_state,
+  compare_pooled_runs}.*`.
+- 10-23 15:20-15:35, Phase 30 planned and started (user: "train 3.1.1 and 3.2.1 further until they agree, then we can
+  merge them into one (overwrite 3.1) and run validation on it"; chosen: glpG included, merge by averaging; also
+  "check how much other AA's rama map moved from ff2.1": non-glycine maps read-weighted alpha_R +6-7%, pPII -5%, beta
+  -3%, per-map largest basin change median 10-14%, slowing; glycine most). Agreement rule fixed before the data
+  (plan.md Phase 30). `submit_new.sh` drops p311/p321; both runs continued 76 -> 114 (49451890, 49451891). Files:
+  plan.md Phases 29-30, remote_jobs.md, progress.md; cluster `ff3_selection/submit_new.sh`.

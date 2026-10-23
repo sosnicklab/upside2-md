@@ -254,6 +254,8 @@ HDX:
       because Boltz's confidence step keeps every sample's PAE and PDE logits on the GPU and concatenates them; a
       run's sample count is bounded by its length, about 2 x N x L^2 x 256 bytes plus the copy. Rerun as 10 runs of
       1,000 at seeds 3-12, which share one input and pool into one set (61328353, `$B/phase1_heeh_seeds.sbatch`).
+      It reached its 4 h wall with seeds 3-7 done (764-6,991 s each); 61368734 (12 h) continues it in the same
+      directory, keeping the finished seeds and running 8-12.
 
 mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibrium only:
 - [ ] Test set: 8 to 12 domains from the 89-domain panel (`ff3_selection/` on the cluster; `plan.md` Phase 19), over

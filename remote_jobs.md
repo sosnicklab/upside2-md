@@ -1,8 +1,10 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-21 13:50).** No watch runs (the owner of record is the Mac Studio, idle since its 21:50 10-18
+**Current state (2026-10-23 15:00).** No watch runs (the owner of record is the Mac Studio, idle since its 21:50 10-18
 pass). The running jobs look after themselves: each line of work below has a collector job or a dependency chain that
 writes its own result file, so nothing needs polling, and `submit_new.sh` is idempotent if a watch also runs it.
+**Exception: ff3.1.1 / ff3.2.1's collector died on its first pass (10-21 17:00), so their epoch-end panels were never
+submitted (§1 line 2).**
 `WATCH_STATUS.md` on the cluster is newer than this file whenever a pass ran after it. Job ids, logs and data paths
 are in §1.
 
@@ -10,25 +12,27 @@ The user's four lines of work (10-21), and what each has on the clusters:
 1. **Deterministic vs probabilistic side chain** (plan.md Phases 20-27; findings 1.21, 1.37). Both trainings are
    finished and converged; the deterministic side chain folds less on every held-out test, and both retrained
    force fields fold less than released ff2.1. **Running:** released ff2.1 on the same three tests, to decide whether
-   ff2.1 itself stays: the 44 domains are done, mdCATH reads out ~20:00 10-21, Peng's 30 arms in about a week. The
-   email to Tobin and John waits on these numbers.
-2. **Ramachandran map training** (plan.md Phases 14-17, 21, 28-29; findings 1.34, 1.37). **Running:** ff3.1.1 and
-   ff3.2.1, ff2.1 with only its basin depths trained under the pooled prior (from NDRD's and ff3.0's map); the first
-   test of the accuracy fix is their epoch-0 panels (~02:00 10-22); step 76 ~10-23. **Finished, awaiting review:**
+   ff2.1 itself stays: the 44 domains and mdCATH are done (released ff2.1 ahead of both on each), Peng's 30 arms in
+   about a week (8 of 32 scored 10-23). The email to Tobin and John waits on these numbers.
+2. **Ramachandran map training** (plan.md Phases 14-17, 21, 28-29; findings 1.34, 1.37). **Finished 10-23 at step
+   76:** ff3.1.1 and ff3.2.1, ff2.1 with only its basin depths trained under the pooled prior (from NDRD's and ff3.0's
+   map); the first test of the accuracy fix, their epoch-0 panels, was never submitted because their collector
+   failed (§1 line 2). **Finished, awaiting review:**
    the ff3.1 and ff3.2 reruns on the fixed engine, whose maps barely moved and which, as every run trained from
    ff2.1 with all terms free, fold 0.15-0.24 less than ff2.1. **Also running in this line:** the 8 glpG REMD chains
-   on the released ff3.0 and ff3.1 (block 4 of 5), the TM4 and HDX validation.
+   on the released ff3.0 and ff3.1 (block 5 of 5), the TM4 and HDX validation.
 3. **Upside 3 design, debug stage** (upside3.md; plan.md Phase 24 and its "Resume here"). The audit's closing criteria
    are met locally (ledger A1-A231). **Running since 22:26 10-22 (midway2):** its validation, Peng's 16 proteins and
    the glpG hybrid with ff2.1 on the Upside 3 tree `/beagle3/trsosnic/yinhan/upside3` (§1 line 3).
 4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phase 0 is done. Phase 1 has 1,000 `md` samples per protein
    (EHEE from 61254153, ubiquitin from the rerun 61279169 after a fix to Boltz's sample batching; §1 "Finished
-   runs") and their dG profiles, and Ub psWT's 1,000 samples (61298446). Queued: 61328353, HEEH_rd4_0097 at 10^4
-   samples as 10 seeds for a rank-order test, after one run of 10^4 ran out of GPU memory (§1 line 4).
+   runs") and their dG profiles, and Ub psWT's 1,000 samples (61298446). 61328353, HEEH_rd4_0097 at 10^4 samples as
+   10 seeds for a rank-order test (after one run of 10^4 ran out of GPU memory), hit its 4 h wall with 5 of the 10
+   seeds done; 61368734 (queued 10-23) finishes the other five in the same directory (§1 line 4).
 
 Open and not in the user's list:
-- The 8 glpG chains run force fields that carry the retraining loss; block 3 closed by 01:33 10-22 and
-  block 4 runs; whether to stop them is the user's. Their TM4 check at block 2's end is owed, and ff3.1's HDX; ff3.0's
+- The 8 glpG chains run force fields that carry the retraining loss; block 4 closed by 11:27 10-23 and
+  block 5, the last, runs. Their TM4 checks at the ends of blocks 2-4 are owed, and ff3.1's HDX; ff3.0's
   HDX on blocks 2 and 3 is done (findings 5.6).
 - Large-protein de novo folding (plan.md Phase 22) is done; its proposal (compact misfolds as negative examples,
   training past 150 residues, replica exchange for the large-protein benchmarks) awaits the user.
@@ -675,9 +679,11 @@ keeps the link; plain `cp` copies the text, which then drifts).
 
 ## 1. Current jobs
 
-Snapshot **2026-10-21 13:50 CDT, verified live against `squeue` on midway2** (MacBook Pro; no watch runs). 46 jobs on
-midway2: released ff2.1's 30 Peng arms, its mdCATH panel and TM job and its collector; ff3.1.1 and ff3.2.1's two links,
-their successors and their collector; the 8 glpG chains. midway3: nothing known to run (socket closed this pass).
+Snapshot **2026-10-23 14:50 CDT, verified live against `squeue` on midway2 and midway3** (MacBook Pro; read only, no
+watch runs, nothing submitted). 66 jobs on midway2: released ff2.1's 23 unfinished Peng arms and its collector; the
+8 glpG chains (block 5); Upside 3's 32 Peng arms and its glpG hybrid REMD block 1. midway3: none queued at 14:50, then Boltz 61368734 submitted 15:05 (sacct still
+lists 53233848 and 53233852 RUNNING from 08-11, stale accounting entries absent from `squeue`). `/project/trsosnic`
+649 G free (1.4 T at 11:10 10-21; the 12 kept HDX work dirs hold 417 G); `/beagle3/trsosnic` 1.2 T.
 
 **Line 1: deterministic vs probabilistic side chain**
 - **Released ff2.1 on the three side-chain tests** (user 10-21: "run validation with released ff2.1 so we know if
@@ -687,12 +693,15 @@ their successors and their collector; the 8 glpG chains. midway3: nothing known 
   - 44 domains: `p44_ff21_released` 49438695 and its TM job 49438697 done 12:59. Released ff2.1 folds 0.603 against
     the control's fixed point 0.430 and no-BP's 0.363; mean TM 0.681 / 0.650 / 0.623 (`p44_dt009_folded.txt`,
     `tm_p44_*.txt`).
-  - mdCATH: `mdc_ff21_released` **49438694** R (log `ff3_selection/logs/ff3sel_mdc_49438694.out`, runs
-    `runs_mdcath/mdc_ff21_released/`, ~6 h), then **49438696** (afterok) writes
-    `tm_mdcath_mdc_ff21_released_vs_<mdc_ctrl_03|mdc_nobp_03>.txt`.
+  - mdCATH: `mdc_ff21_released` 49438694 and its TM job 49438696 done 18:44 10-21 (runs
+    `runs_mdcath/mdc_ff21_released/`). On 89 domains released ff2.1's mean TM is 0.727 against the control's 0.702
+    (+0.025 [+0.018, +0.033], p 6e-09; higher on 70 domains) and no-BP's 0.667 (+0.060, p 3.5e-14; higher on 80);
+    TM > 0.5 0.972 / 0.946 / 0.920 (`tm_mdcath_mdc_ff21_released_vs_<mdc_ctrl_03|mdc_nobp_03>.txt`).
   - Peng: 30 arms `b_ff_2.1_<prot>_<kind>` (first chunks 49438698-49438727, each resubmitting itself in 10.5 h chunks;
     logs `ff3_benchmark/logs/<prot>_<kind>_ff_2.1_<id>.out`, runs `ff3_benchmark/runs/<prot>_<kind>_ff_2.1/`; lambda's
-    two arms of 10-04 reused), about a week. Collector `ff21_collect` (every 6 h, queued **49438731**): scores each
+    two arms of 10-04 reused), about a week. 14:50 10-23: 8 of 32 scored (BBA x2, BBL_native, NTL9_native, WWdomain
+    x2, lambda x2), gpW_native finished 13:35 and waits for the next pass, 23 in their chunks 49449415-49449438.
+    Collector `ff21_collect` (every 6 h, queued **49450442**): scores each
     finished arm into `ff21_nobp_dt009/setup/score/ff_2.1/` and, with all 32, writes
     `checks/ff21_released_20261021/peng_ff21.txt` ending DONE: released ff2.1 against the control, no-BP, ff3.0 and
     ff3.1 (all scored), beside Peng's published FF2.
@@ -708,11 +717,25 @@ their successors and their collector; the 8 glpG chains. midway3: nothing known 
   `trainer/rama_basin.py` the repo's with MODE `pooled` (md5 `54816673...`, shared width 0.5); every Adam rate zero
   (`freeze_groups.py`; the trained rates kept as `initial_checkpoint.pkl.trained_rates`); ff3.1's rerun's minibatch
   order and held-out set; `compare_init_pooled.py`: equal to the source in every other field. Target 76, no gate,
-  stop for the user; step 76 ~02:00-10:00 10-23. Logs `<run>/condiv-train_<id>.out`. Collector `pooled_collect`
-  **49439400** (first pass 16:42, then every 4 h): `check_step.py` per step into `checks/ff311_20261021/<run>_steps.txt`,
-  the steric check into `checks/ff31_steric/<run>_<step>.txt`, the epoch-end panels by `submit_new.sh`, and
-  `checks/ff311_20261021/status.txt`, ending DONE at step 76. **First read: the epoch-0 panels `p311_00` and
-  `p321_00` against `ff21_released`** (~02:00 10-22), the test of the accuracy fix.
+  stop for the user. Logs `<run>/condiv-train_<id>.out`. Steps 0-75 ran 13:42 10-21 to 09:23 10-23 (49439398 /
+  49439401, 49439399 / 49439407).
+  - Their collector `pooled_collect` 49439400 FAILED on its first pass (17:00 10-21) and is not resubmitted: under
+    `set -eo pipefail` its `last=$(... | while read d; do [ -f $d/checkpoint.pkl ] && basename $d; done | ...)`
+    returns 1 while the newest step runs, and so would its `grep -l "STERIC FLAG"` with no flag. Per-step checks exist
+    for ff3.1.1's steps 0-4 only; no per-epoch panel was ever submitted.
+  - Step 76's library is each run's `run_output/rama_round_04.dat`; glycine figures
+    `~/Downloads/gly_rama_ff311_nonhelix_zero.png`, `..._ff321_...`; two-start comparison
+    `checks/ff311_20261021/compare_pooled_runs.{py,txt}` (findings 1.34): every term agrees to the runs' noise except
+    glycine's alpha_L, gap 0.179 and closing ~0.07 an epoch.
+  - **Continued to step 114 (plan.md Phase 30, user 10-23: train until they agree, merge into ff3.1, validate):**
+    ff3.1.1 **49451890**, ff3.2.1 **49451891**, submitted 15:33 10-23 from each run dir by `sbatch $(cat slurm.args)
+    ../train_chain.sbatch <run> 114`, PD (Resources); each queues its successor when it starts and cancels it at 114
+    (~22 h of running). `submit_new.sh` no longer lists p311/p321 (backup `.bak_pre_phase30_20261023`): their epoch
+    ends get no panels; the merge is what gets validated.
+  - **At 114** (plan.md Phase 30 step 2): KE scan of steps 76-113 and `check_step.py`; extend `dump_rama_state.py`
+    and `compare_pooled_runs.py` to every round; the agreement rule fixed in Phase 30 decides merge or extension to
+    133. The merge and release wait for the 8 glpG chains' block 5 to end (10-24 ~23:30), since the release moves
+    the old ff3.1 chains' directories aside.
 - **Finished, awaiting the user's review:** the fixed-engine reruns `ff31_depth_data_angfix` (`a31_EE`) and
   `ff32_depth_data_angfix` (`a32_EE`), step 76 10:35 / 10:43 10-21: margins +0.109 and -0.002 at step 75; a `STERIC
   FLAG` on both from the free beta' + pPII' alone (0.0052, 0.0053 against steps 0-18's 0.0045), clash ratios small;
@@ -720,16 +743,19 @@ their successors and their collector; the 8 glpG chains. midway3: nothing known 
   against ff2.1's 0.615 (findings 1.37).
 - **The 8 corrected glpG chains** (plan.md Phase 18, findings 4.17), each on its own node; logs
   `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out`, run dirs `popepopg_REMD_mdw2/<V>.<ff>/`, seeds
-  `seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Blocks 1, 2 and 3 closed 18:52-20:39 10-18,
-  07:55-14:56 10-20 and 17:03 10-21 to 01:33 10-22 (block 1's TM4 in findings 1.35). **Block 4/5, all R**, read 18:30
-  10-22 from midway3 (files only, no `squeue`): ff3.0 79HIS 49442271, 79HIS_S115T 49440731, 79ALA 49440812,
-  79ALA_S115T 49442553; ff3.1 79HIS 49442421, 79HIS_S115T 49442481, 79ALA 49442285, 79ALA_S115T 49442356. ff3.0's logs
-  clean (no ROLLBACK, no NaN; KE/1.5kT 0.982-1.013 in blocks 2-4). These are the ff3.0 glpG data on the repaired seeds
-  and the pre-Upside-3 engine (`$P/obj`, md5 `7136d99a...`). Groups in `run.<r>.up` (each block opens with its
+  `seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Blocks 1-4 closed 18:52-20:39 10-18,
+  07:55-14:56 10-20, 17:03 10-21 to 01:33 10-22, and 03:30-11:27 10-23 (block 1's TM4 in findings 1.35). Block 4's
+  logs clean in all eight (no ROLLBACK, DESTROYED or NaN; final KE/1.5kT 0.989-1.013 across the 28 replicas). **Block
+  5/5, the last, all R** (14:50 10-23; ends ~36 h after each start, 10-24 ~15:00-23:30): ff3.0 79HIS 49450019,
+  79HIS_S115T 49449200, 79ALA 49449265, 79ALA_S115T 49450132; ff3.1 79HIS 49450109, 79HIS_S115T 49450110, 79ALA
+  49450340, 79ALA_S115T 49450408. At the block ends the T 0.70 slot's protein potential still falls (ff3.0 79HIS
+  -1357, -1453, -1531, -1681; ff3.1 79ALA -1399, -1485, -1565, -1691) at steady Rg 19-21 A; one slot's instantaneous
+  value, read beside findings 5.6's block 2 / block 3 disagreement. These are the ff3.0 glpG data on the repaired
+  seeds and the pre-Upside-3 engine (`$P/obj`, md5 `7136d99a...`). Groups in `run.<r>.up` (each block opens with its
   287-frame calibration group ending at t 18.0; checked in `run.0.up` by `checks/glpg_groups_20261022.py`), block 2 /
   block 3: ff3.0 79HIS 19-37 / 38-56, 79HIS_S115T 18-36 / 37-54, 79ALA 19-37 / 38-55, 79ALA_S115T 19-37 / 38-56. They
-  run force fields that carry the retraining loss (findings 1.37); stopping them is the user's. Owed: the TM4 check at
-  block 2's end.
+  run force fields that carry the retraining loss (findings 1.37); block 5 started on its own before the user decided
+  whether to stop them. Owed: the TM4 check at the ends of blocks 2, 3 and 4.
 - **HDX dG on the four ff3.0 chains, block 2 and block 3 apart, done 19:12 10-22** (user 10-22: "generate delta G
   plot into ~/Downloads, and I will see if we need longer run"; midway2's venvs lack mdtraj, pymbar and
   matplotlib, checked 10-22, so midway3 caslake). Readout findings 5.6: the blocks disagree well beyond their
@@ -765,7 +791,8 @@ hybrid simulation with ff2.1, on midway2, as a validation for our entire debug";
   `/beagle3/trsosnic/yinhan/upside3_validation/peng/` (logs `logs/<prot>_<kind>_ff_2.1_<id>.out`, runs
   `runs/<prot>_<kind>_ff_2.1/`, ids `submitted.log`; `submit_peng.sh` is idempotent). Smoke test before submission
   (`preflight.py`, WWdomain 14 x 20 time units): finite, C-N max 1.51 A, KE/1.5kT 0.87-1.07, every `sequence_id`
-  present. The control is released ff2.1 on the pre-audit binary, line 1's arms in `ff3_benchmark/runs/`.
+  present. The control is released ff2.1 on the pre-audit binary, line 1's arms in `ff3_benchmark/runs/`. All 32
+  first chunks COMPLETED 08:57 10-23 (10.5 h); second chunks 49449888-49449919 R.
 - glpG-RKRK-79HIS hybrid, ff2.1, through the repo's own job script (A232): `upside3_validation/glpg/run.py` is the
   tree's `example/16.MARTINI/run.py` with only its three input paths set to the cluster copies (md5-equal to the
   Mac's). Submitted 22:58 10-22 by `python3 run.py` on the login node: prep **49448466** (log
@@ -775,11 +802,20 @@ hybrid simulation with ff2.1, on midway2, as a validation for our entire debug";
   Re-running `python3 run.py` there submits the next block or reports the count; raise `n_blocks` to extend.
   Its submission printed numpy's "smallest subnormal is zero" warning: loading the cluster libupside.so sets
   flush-to-zero in the Python process (0b's `set_fast_math`), now seen in practice.
-- Next action: when the prep finishes, read its gate and stage logs (KE/1.5kT per stage, C-N, the solvation gate);
-  each REMD block, read KE per class, C-N, TM helicity against findings' ff2.1 glpG numbers; when the Peng arms
-  finish (~a week), score them as line 1's collector does and compare with the control and Peng's FF2.
+  **The prep COMPLETED 02:54 10-23** (4 h 08 min): KE/1.5kT 0.997 and 0.976 in the stage 6.0 / 6.1 minimisations;
+  0.586, 0.659, 0.730, 0.771 over the four 500-step MD stages 6.2-6.5 (each 4.5 time units against the thermostat's
+  5.0, so the KE recovers from the minimised start across stages); 1.002 in stage 6.6, 1.018 in the 7.0 burn-in, 1.005
+  in 7.0. Core checks' largest pair energy 1.97-5.52 kT (limit ~32 kT); stage-7.0 solvation gate passed (0.0% of 39
+  belt sites without an environment bead, 0.4% without an acyl-tail bead within 8 A; limit 10%); box 100.1 x 100.1 x
+  123.7 A, 260 lipids. C-N not read yet. **REMD block 1 49448467 R** from 02:55 10-23 (14:50: step 82,214, t 740; no
+  NaN, ROLLBACK or error in `REMD/glpG-RKRK-79HIS.remd_block1.log`). Backbone H-bonds at T 0.70 87 at step 0 and
+  93-96 now, Rg 19.2 A; the pre-audit ff3.x chains above start at 195 at T 0.70. Engine, force field and preparation
+  all differ, so this is no comparison, but block 1's TM helicity check must account for it.
+- Next action: at each REMD block end read KE per class, C-N, TM helicity (DSSP) against findings' ff2.1 glpG
+  numbers; when the Peng arms finish (~a week), score them as line 1's collector does and compare with the control
+  and Peng's FF2.
 
-**Line 4: Boltz-2 HDX sampler (midway3).** No running jobs; Phase 0's tests and Phase 1's two jobs are in "Finished
+**Line 4: Boltz-2 HDX sampler (midway3).** 61368734 queued (below); Phase 0's tests and Phase 1's two jobs are in "Finished
 runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; local copies of the sets are
 `scratchpad/boltz_hdx/flags/samples/<name>_md_s10_n1000.npz`).
 - **Phase 1, Ub psWT and HEEH_rd4_0097** (user 10-22, "decide the two questions for me"; `diffusion_dynamics.md`
@@ -793,10 +829,20 @@ runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; loca
   `$B/runs/boltz_phase1_heeh_pswt_v100_61298446/`.
 - **Phase 1, HEEH rerun as 10 seeds**: **61328353** `boltz_phase1_heeh_seeds_v100`, submitted 01:05 10-23 from
   midway3-login5 with `--partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1 --time=04:00:00
-  --constraint=v100`; PD, `--test-only` estimate 10-24 23:28. Script `$B/phase1_heeh_seeds.sbatch` (md5
-  `cbb0914f...`, local copy `scratchpad/boltz_hdx/`): 10 runs of 1,000 `md` samples at seeds 3-12 under
-  `heeh_md_s10/s<seed>/`, which `check_samples.py` reads as one set; about 2.2 V100-hours. Log
-  `$B/logs/boltz_phase1_heeh_seeds_v100_61328353.out`; data `$B/runs/boltz_phase1_heeh_seeds_v100_61328353/`.
+  --constraint=v100`. Script `$B/phase1_heeh_seeds.sbatch` (md5 `cbb0914f...`, local copy `scratchpad/boltz_hdx/`):
+  10 runs of 1,000 `md` samples at seeds 3-12 under `heeh_md_s10/s<seed>/`, which `check_samples.py` reads as one set.
+  Log `$B/logs/boltz_phase1_heeh_seeds_v100_61328353.out`; data `$B/runs/boltz_phase1_heeh_seeds_v100_61328353/`
+  (279 M). **TIMEOUT at its 4 h wall** (midway3-0279, 01:20-05:20 10-23): **5 of 10 seeds finished** (s3-s7, `ok`,
+  peak GPU 5,668 MiB each), s8 cut off mid-run. Walls 764, 908, 1,719, 6,991 and 2,010 s: the 2.2 V100-hour estimate
+  was wrong, and s6 alone ran 3.5-9x the others at the same memory (cause not read); s8 had 760 of its 1,000 models
+  written when killed.
+  **Continued as 61368734** (user 10-23: "resubmit Boltz job"; submitted 15:05 from midway3-login5, same flags but
+  `--time=12:00:00`; PD Priority). The script now takes an existing run directory as its one argument and keeps a
+  seed whose log reports no failed example and whose 1,000 models are written (md5 `c9536b21...`; the old one is
+  `phase1_heeh_seeds.sbatch.bak_pre_resume_20261023`, `cbb0914f...`). Given
+  `runs/boltz_phase1_heeh_seeds_v100_61328353`, it keeps s3-s7 (dry run of the loop on the login node), reruns s8
+  with `--override` and runs s9-s12 there, then `check_samples.py` over all 10. Log
+  `$B/logs/boltz_phase1_heeh_seeds_v100_61368734.out`; data stay in the 61328353 directory.
   **Next:** check the pooled set (Rg, C-N, CA-RMSD to the design model); copy `ubqps_md_s10.npz` from 61298446 and
   `heeh_md_s10.npz` from this job to `scratchpad/boltz_hdx/flags/samples/` as `ubqps_md_s10_n1000.npz` and
   `heeh_md_s10_n10000.npz`, extend `run_flags.sh`, `samples_to_traj.py` and `dg_phase1.py` to them (HEEH at 278 K
@@ -812,21 +858,20 @@ runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; loca
 - Disk: `/project/trsosnic` 1.4 T free at 11:10 10-21 (1.6 T at 10:24 10-19; "Disk" below); `/beagle3/trsosnic`
   1.2 T at 22:30 10-20.
 - **What happens next** (estimates; Slurm's start times move):
-  - glpG block 4 closes ~05:00-06:00 10-23 (ff3.0 79HIS_S115T, 79ALA) and ~12:30-13:30 10-23 (the other six); block
-    5, the last, ~36 h later.
-  - Released ff2.1's mdCATH TM comparison ~20:00 10-21.
-  - ff3.1.1 / ff3.2.1: epoch 0 ends ~23:00 10-21; its panels are submitted by the collector's next pass and read
-    ~02:00 10-22; step 76 ~10-23.
-  - Released ff2.1's Peng table (`peng_ff21.txt`) in about a week.
+  - glpG block 5, the last, closes 10-24 ~15:00 (ff3.0 79HIS_S115T, 79ALA) to ~23:30 (the other six).
+  - ff3.1.1 / ff3.2.1 reach step 114 ~10-24 afternoon if they start soon; then the agreement check (line 2).
+  - Upside 3 glpG REMD block 1 ends at its 35.75 h wall, ~14:40 10-24, and queues block 2.
+  - Released ff2.1's Peng table (`peng_ff21.txt`) and Upside 3's Peng arms in about a week.
 
 Finished and cancelled rows are deleted; their lessons are in §8 and "Finished runs".
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **49448368-49448399 (Peng arms, resubmitting), 49448466 (glpG prep), 49448467 PD afterok (glpG REMD block 1)** (midway2) | **Upside 3 validation of the debug** (plan.md Phase 24 2b): Peng's 16 proteins x {native, denovo} and the glpG-RKRK-79HIS hybrid with ff2.1 on `/beagle3/trsosnic/yinhan/upside3` | submitted 22:26 10-22 | §1 line 3 |
-| **block 4: 49440731, 49440812, 49442271, 49442285, 49442356, 49442421, 49442481, 49442553 R** (midway2; block 1 49411315-49411322 R 09:58 10-17 to 20:39 10-18; block 2 49417749-49418152 to 14:56 10-20; block 3 49428215-49432786 to 01:33 10-22; 49411323-49411324 stopped 08:33 10-18) | **The corrected glpG REMD chains** (user 10-17: "fix the bug and rerun the affected simulations"; plan.md Phase 18; findings 4.17): the side-chain placement fixed in the preparation and every live seed, and the 10 chains rerun from block 1, 28 replicas T 0.70-0.90, five 36 h blocks (`submit_remd.sh`). ff_3.0_gdepth: 79HIS 49411315, 79HIS_S115T 49411316, 79ALA 49411317, 79ALA_S115T 49411318; ff_3.1_depth_data: 79HIS 49411319, 79HIS_S115T 49411320, 79ALA 49411321, 79ALA_S115T 49411322; 79HIS ff_2.1_ctrl38 49411323 and ff_2.1_nobp 49411324 (the deterministic side chain, `single_state.py`: one row per side-chain residue at the kept state, 1-body 0) were stopped by the user 08:33 10-18 (STOP files first, directories kept): their step-37 releases are superseded (plan.md Phase 21). Seeds `popepopg_REMD_mdw2/seeds/<V>.<ff>.up`: base seeds repaired (`fix_placement.py`), per-force-field seeds by `patch_glpg.py` on the repaired base as `validate_ff.sh` makes them (each equal to its old seed repaired); built and verified in `checks/placefix_20261017/` (placement at `rcf[li]` to 3.6e-6 A, 1-body exact, side-chain/lipid rows on, only the intended datasets changed). Logs `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out` | Block 1 closed in all eight 18:52-20:39 10-18 (KE/1.5kT 0.989-1.008; TM4 read 21:40, findings 1.35: TM4 holds, no glycine at phi > 0 at T 0.70); block 2 queued at once, all carrying the law. **First chunks healthy** (read 10:40): calibration 615-682 ms/step (the old chains 645-694; nobp fastest, 615); at chunk 1 step ~1,500-1,950 replicas 0, 13, 27 at Rg 20.0-21.8 A, backbone H-bonds 184-221, protein potential -731 to -855 (T 0.70), -589 to -750 (0.79), -471 to -610 (0.90), nobp least negative (-731, -589, -471); logs clean. Block 2 closed in all eight 07:55-14:56 10-20 (KE/1.5kT 0.989-1.011), block 3 17:03 10-21 to 01:33 10-22; block 4 R, ff3.0's logs clean at 18:30 10-22 | the watch: KE/1.5kT at each chunk end, then first chunks (calibration, replicas 0, 13, 27: Rg, protein potential, KE against the old chains'), then each block end; TM4 under every force field at each block end (`tm4_ff31.py`, `gly_flip_rungs.py`, DSSP) and the HDX on block 2 (recipe below) |
-| **49438694 R, 49438696 PD; Peng arms resubmitting (first chunks 49438698-49438727); collector 49438731** (midway2) | **Released ff2.1 on the three side-chain tests** (plan.md Phase 27): the mdCATH and 44-domain panels at dt 0.009 and Peng's benchmark, on the same protocols, binaries and domains as the retrained arms, to decide whether to keep ff2.1 itself | submitted 11:43 10-21; 44 domains done 12:59 | read `checks/ff21_released_20261021/tm_mdcath_*.txt` (~20:00 10-21) and `peng_ff21.txt` (DONE, ~a week); then plan.md Phase 27 step 4 |
-| **49439398, 49439399 R; successors afterany; collector 49439400** (midway2) | **ff311_depths_only and ff321_depths_only (ff3.1.1, ff3.2.1)**: ff2.1 with only its basin depths trained under the pooled prior, from NDRD's and ff3.0's map (plan.md Phase 29) | first links R from 13:42 10-21 | the epoch-0 panels `p311_00` / `p321_00` against `ff21_released` (~02:00 10-22); `checks/ff311_20261021/status.txt`; at step 76 the maps and `depth_data_vs_prior.py`; stop for the user |
+| **Peng arms resubmitting (second chunks 49449888-49449919 R); 49448467 R (glpG REMD block 1)** (midway2) | **Upside 3 validation of the debug** (plan.md Phase 24 2b): Peng's 16 proteins x {native, denovo} and the glpG-RKRK-79HIS hybrid with ff2.1 on `/beagle3/trsosnic/yinhan/upside3` | submitted 22:26 10-22; prep 49448466 COMPLETED 02:54 10-23, gate passed | §1 line 3 |
+| **block 5: 49449200, 49449265, 49450019, 49450109, 49450110, 49450132, 49450340, 49450408 R** (midway2; block 1 49411315-49411322 10-17 to 20:39 10-18; block 2 49417749-49418152 to 14:56 10-20; block 3 49428215-49432786 to 01:33 10-22; block 4 49440731-49442553 to 11:27 10-23) | **The corrected glpG REMD chains** (user 10-17: "fix the bug and rerun the affected simulations"; plan.md Phase 18; findings 4.17): the side-chain placement fixed in the preparation and every live seed, 28 replicas T 0.70-0.90, five 36 h blocks (`submit_remd.sh`), ff_3.0_gdepth and ff_3.1_depth_data x {79HIS, 79HIS_S115T, 79ALA, 79ALA_S115T}; 79HIS ff_2.1_ctrl38 49411323 and ff_2.1_nobp 49411324 stopped by the user 08:33 10-18. Seeds `popepopg_REMD_mdw2/seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Logs `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out` | Blocks 1-4 closed clean (block 4: KE/1.5kT 0.989-1.013, no ROLLBACK or NaN); block 5 R, ends 10-24 ~15:00-23:30 | TM4 at the ends of blocks 2-5 (`tm4_ff31.py`, `gly_flip_rungs.py`, DSSP); HDX on ff3.1's chains (recipe below) |
+| **Peng arms resubmitting (chunks 49449415-49449438); collector 49450442** (midway2) | **Released ff2.1 on the three side-chain tests** (plan.md Phase 27): the mdCATH and 44-domain panels at dt 0.009 and Peng's benchmark, on the same protocols, binaries and domains as the retrained arms, to decide whether to keep ff2.1 itself | 44 domains and mdCATH done; Peng 8 of 32 scored, 23 running | `peng_ff21.txt` (DONE, ~a week); then plan.md Phase 27 step 4 |
+| **49451890, 49451891 PD** (midway2; successors queued at start) | **ff311_depths_only and ff321_depths_only (ff3.1.1, ff3.2.1)** continued 76 -> 114: ff2.1 with only its basin depths trained under the pooled prior, from NDRD's and ff3.0's map (plan.md Phases 29-30) | submitted 15:33 10-23 | at 114: KE scan, `check_step.py`, the agreement rule (plan.md Phase 30); then merge into ff3.1 and validate, or extend to 133 |
+| **61368734 PD** (midway3 gpu, V100, 12 h) | **Boltz-2 HEEH_rd4_0097, seeds 8-12 of the 10 x 1,000 set** (`diffusion_dynamics.md` Phase 1), continuing 61328353 in its own directory | submitted 15:05 10-23 | read its log's `[run]` lines and `check_samples.py` over all 10 seeds; then §1 line 4 "Next" |
 
 ### TM4 HDX on ff_3.1_depth_data: the recipe (done 10-17, findings 5.5; user 10-14 02:10, "Do the analysis on ff3.1 as well")
 
