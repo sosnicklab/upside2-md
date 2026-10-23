@@ -1226,3 +1226,9 @@ to 10-07 12:00 is in git history.
   rejected a new layout, then as one figure per variant from blocks 2-3 pooled (4 more midway3 jobs, 28/28; lesson
   findings 10.36). Files modified: findings.md 5.6 and 10.36, plan.md Phase 18, remote_jobs.md;
   new `checks/hdx_ff30_placefix_20261022/` on the cluster.
+- 10-23 01:00-01:10, the Boltz-2 HDX sampler: 61298446 read. Ub psWT's 1,000 samples match the wild type's
+  statistics; HEEH's single 10^4-sample run ran out of GPU memory in Boltz's confidence step after 1 h 52 min, and
+  the wrapper's new check reported FAIL. Cause traced to `confidencev2.py:121-143` (every sample's PAE/PDE logits
+  concatenated on the GPU). Resubmitted as 10 seeds of 1,000 (61328353, `phase1_heeh_seeds.sbatch`). The Boltz dG
+  figures will use `plot_ref_style.py` unchanged (findings 10.36). Files: remote_jobs.md, diffusion_dynamics.md,
+  findings.md 10.14, progress.md; new `scratchpad/boltz_hdx/phase1_heeh_seeds.sbatch`.

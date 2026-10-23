@@ -6324,6 +6324,12 @@ is ff30_glyhb. Two corrections from the user on the same day:
   `max_parallel_samples`, and the job wrappers fail a run whose log lacks "Number of failed examples: 0". Chunking
   does not change the samples: at a fixed seed, chunks of 10 against one batch of 100 move no backbone atom by more
   than 0.001 A, PDB precision (61279169).
+* **Boltz-2's confidence step bounds the samples one run can hold (2026-10-23).** With `run_confidence_sequentially`
+  (always on in `predict_step`), `confidencev2.py:121-143` keeps every sample's output on the GPU and
+  `torch.cat`s them at the end, including PAE and PDE logits of L x L x 64 float32 each. A 10^4-sample run of the
+  43-residue HEEH_rd4_0097 died on that 4.7 GB allocation after 1 h 52 min of diffusion (61298446), and the same sum
+  gives the 8.2 GB peak of 1,000 ubiquitin samples. Budget about 4 x N x L^2 x 256 bytes per run and split larger
+  sets across seeds.
 * **`pkill -f <pattern>` over ssh kills the ssh command's own shell** when the pattern is in the command
   line, ending the call with exit 255 before it reaches the target. Kill by PID.
 * **An isolated Upside engine without touching the repo's `obj/` (2026-10-21).** `py/upside_engine.py` loads

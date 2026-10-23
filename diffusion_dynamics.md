@@ -2,7 +2,8 @@
 
 **Status: Phase 0 done (2026-10-21). Phase 1's first dG profiles (2026-10-22): from 1,000 samples Boltz-2 resolves
 nothing above about 4 kcal/mol, below every measured amide, and opens 2 of 39 measured amides against Upside's 11; rank
-order is not testable at this sample count (Phase 1).** `step_scale` 1.0, the unscaled sampler, gives
+order is not testable at this sample count. Ub psWT is sampled; HEEH_rd4_0097 at 10^4 samples, the rank-order test,
+is queued (Phase 1).** `step_scale` 1.0, the unscaled sampler, gives
 bond-length scatter 2 to 4x the crystal spread, but the scatter leaves the HDX protection flags unchanged, so Phase 1
 uses `md` at 1.0 (Phase 0). midway2 has no GPU that can run Boltz-2 (Phase 0). Jobs are recorded in `remote_jobs.md` §1.
 Every number below comes from reading code, docs and papers on 2026-10-21, or from the dated measurements in
@@ -240,15 +241,19 @@ HDX:
     peaks) and 12 ubiquitin amides that have no reported dG, and the paper does not say why they are missing.
 - [ ] Ubiquitin psWT (F45W/H68N) ensemble, so the ubiquitin comparison is like for like: 1,000 `md` samples at seed
       3, with its own ColabFold MSA. Reference: 1UBQ with residues 45 and 68 renamed and cut to backbone and CB
-      (no psWT structure is used anywhere in Peng 2022, whose Upside runs also start from 1UBQ). Submitted
-      2026-10-22 with HEEH below (61298446, `$B/phase1_heeh_pswt.sbatch`).
+      (no psWT structure is used anywhere in Peng 2022, whose Upside runs also start from 1UBQ). Sampled
+      2026-10-22 (61298446): CA-RMSD to the reference median 1.56 A, pairwise 1.90 A, Rg 11.34 +- 0.16 A, C-N
+      1.343 +- 0.055 A, the wild type's statistics (1.49, 1.88, 11.35, 1.343 +- 0.055). Flags and dG are next.
 - [ ] Rank order on HEEH_rd4_0097, the third Peng 2022 protein (decided 2026-10-22, delegated by the user). Its 20
       measured amides lie at 2.2 to 4.3 kcal/mol (Table S6; HX at 278 K, pD_read 4.6), so 10^4 samples (bound
       5.09 kcal/mol) resolve all of them, and Upside FF2's agreement is published (Table S14, 0 M: Pearson 0.185,
       Spearman 0.317, RMSE 1.06 kcal/mol; its per-residue Table S9 is a copy error). Sequence: the 43-residue
       design that Table S6 numbers from D1; reference the design model Peng simulated,
       `/project2/trsosnic/share/HEEH_rd4_0097.pdb`. Taking ubiquitin and EHEE to 10^6 samples instead would cost
-      hundreds of V100-hours for 8.5 kcal/mol. Submitted 2026-10-22 (61298446), about 2 V100-hours.
+      hundreds of V100-hours for 8.5 kcal/mol. One run of 10^4 (61298446) ran out of GPU memory after its diffusion,
+      because Boltz's confidence step keeps every sample's PAE and PDE logits on the GPU and concatenates them; a
+      run's sample count is bounded by its length, about 2 x N x L^2 x 256 bytes plus the copy. Rerun as 10 runs of
+      1,000 at seeds 3-12, which share one input and pool into one set (61328353, `$B/phase1_heeh_seeds.sbatch`).
 
 mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibrium only:
 - [ ] Test set: 8 to 12 domains from the 89-domain panel (`ff3_selection/` on the cluster; `plan.md` Phase 19), over

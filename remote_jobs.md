@@ -21,8 +21,8 @@ The user's four lines of work (10-21), and what each has on the clusters:
 3. **Upside 3 design, debug stage** (upside3.md; plan.md Phase 24 and its "Resume here"). Local work, no cluster jobs.
 4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phase 0 is done. Phase 1 has 1,000 `md` samples per protein
    (EHEE from 61254153, ubiquitin from the rerun 61279169 after a fix to Boltz's sample batching; §1 "Finished
-   runs") and their dG profiles. Running: 61298446, Ub psWT to match the experiment and HEEH_rd4_0097 at 10^4
-   samples for a rank-order test (§1 line 4).
+   runs") and their dG profiles, and Ub psWT's 1,000 samples (61298446). Queued: 61328353, HEEH_rd4_0097 at 10^4
+   samples as 10 seeds for a rank-order test, after one run of 10^4 ran out of GPU memory (§1 line 4).
 
 Open and not in the user's list:
 - The 8 glpG chains run force fields that carry the retraining loss; block 3 closed by 01:33 10-22 and
@@ -735,21 +735,25 @@ their successors and their collector; the 8 glpG chains. midway3: nothing known 
 runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; local copies of the sets are
 `scratchpad/boltz_hdx/flags/samples/<name>_md_s10_n1000.npz`).
 - **Phase 1, Ub psWT and HEEH_rd4_0097** (user 10-22, "decide the two questions for me"; `diffusion_dynamics.md`
-  Phase 1): **61298446** `boltz_phase1_heeh_pswt_v100`, submitted 12:35 10-22 from midway3-login5 with
-  `--partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1 --time=05:00:00 --constraint=v100`; running
-  from 16:05 10-22 on midway3-0277 (limit 21:05). `ubqps_md_s10` finished 16:26 (1,241 s, peak 8.2 GB); HEEH
-  predicting from 16:27, GPU at 100% at 18:09; Boltz writes its PDBs only at the end. Script `$B/phase1_heeh_pswt.sbatch` (md5 `51073c54...`, local copy
-  `scratchpad/boltz_hdx/`), seed 3, chunks of 100: `ubqps_md_s10` (1,000 `md` samples of Ub F45W/H68N) and
-  `heeh_md_s10` (10^4 samples), about 2.5 V100-hours. Inputs from `$B/prep.py` (md5 `0ebd8a5f...`; log
-  `$B/logs/prep_phase1.log`): `inputs/{ubqps,heeh}.yaml`, MSAs `inputs/msa/{ubqps,heeh}_0.csv` (16,384 and 4
-  sequences), references `inputs/1UBQ_psWT_ref.pdb` and `inputs/HEEH_rd4_0097_ref.pdb`. `check_samples.py` (md5
-  `59c1d633...`) now takes pairwise CA-RMSD over a fixed subset of 1,000 in larger sets; its output on sets of 1,000
-  or fewer is unchanged (checked on `ehee_c1a`). Log `$B/logs/boltz_phase1_heeh_pswt_v100_61298446.out`; data
-  `$B/runs/boltz_phase1_heeh_pswt_v100_61298446/`. **Next:** check the samples as before (Rg, C-N, CA-RMSD to the
-  reference); copy `ubqps_md_s10.npz` and `heeh_md_s10.npz` to `scratchpad/boltz_hdx/flags/samples/` as
-  `ubqps_md_s10_n1000.npz` and `heeh_md_s10_n10000.npz`, extend `run_flags.sh`, `samples_to_traj.py` and
-  `dg_phase1.py` to them (HEEH at 278 K against `reference/heeh_experiment.csv` and Table S14's Upside numbers),
-  and compare.
+  Phase 1): **61298446** `boltz_phase1_heeh_pswt_v100` (midway3-0277, 16:05-18:20 10-22, COMPLETED;
+  `$B/phase1_heeh_pswt.sbatch`, md5 `51073c54...`). **Ub psWT's set** `ubqps_md_s10`: 1,000 samples, 1,241 s,
+  peak 8.2 GB. HEEH's single run of 10^4 ran out of memory at its end (findings 10.14) and wrote no models. Inputs
+  from `$B/prep.py` (md5 `0ebd8a5f...`; log `$B/logs/prep_phase1.log`): `inputs/{ubqps,heeh}.yaml`, MSAs
+  `inputs/msa/{ubqps,heeh}_0.csv` (16,384 and 4 sequences), references `inputs/1UBQ_psWT_ref.pdb` and
+  `inputs/HEEH_rd4_0097_ref.pdb`. `check_samples.py` (md5 `59c1d633...`) takes pairwise CA-RMSD over a fixed subset
+  of 1,000 in larger sets. Log `$B/logs/boltz_phase1_heeh_pswt_v100_61298446.out`; data
+  `$B/runs/boltz_phase1_heeh_pswt_v100_61298446/`.
+- **Phase 1, HEEH rerun as 10 seeds**: **61328353** `boltz_phase1_heeh_seeds_v100`, submitted 01:05 10-23 from
+  midway3-login5 with `--partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1 --time=04:00:00
+  --constraint=v100`; PD, `--test-only` estimate 10-24 23:28. Script `$B/phase1_heeh_seeds.sbatch` (md5
+  `cbb0914f...`, local copy `scratchpad/boltz_hdx/`): 10 runs of 1,000 `md` samples at seeds 3-12 under
+  `heeh_md_s10/s<seed>/`, which `check_samples.py` reads as one set; about 2.2 V100-hours. Log
+  `$B/logs/boltz_phase1_heeh_seeds_v100_61328353.out`; data `$B/runs/boltz_phase1_heeh_seeds_v100_61328353/`.
+  **Next:** check the pooled set (Rg, C-N, CA-RMSD to the design model); copy `ubqps_md_s10.npz` from 61298446 and
+  `heeh_md_s10.npz` from this job to `scratchpad/boltz_hdx/flags/samples/` as `ubqps_md_s10_n1000.npz` and
+  `heeh_md_s10_n10000.npz`, extend `run_flags.sh`, `samples_to_traj.py` and `dg_phase1.py` to them (HEEH at 278 K
+  against `reference/heeh_experiment.csv` and Table S14's Upside numbers), and draw each system's profile with
+  `plot_ref_style.py` unchanged (findings 10.36), comparisons in text.
 
 **Shared**
 - **The engine fix** (findings 3.12; plan.md Phase 21): `$P/obj/upside` and `libupside.so` from
