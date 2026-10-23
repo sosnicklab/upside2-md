@@ -17,7 +17,7 @@ The user's four lines of work (10-21), and what each has on the clusters:
    test of the accuracy fix is their epoch-0 panels (~02:00 10-22); step 76 ~10-23. **Finished, awaiting review:**
    the ff3.1 and ff3.2 reruns on the fixed engine, whose maps barely moved and which, as every run trained from
    ff2.1 with all terms free, fold 0.15-0.24 less than ff2.1. **Also running in this line:** the 8 glpG REMD chains
-   on the released ff3.0 and ff3.1 (block 3 of 5), the TM4 and HDX validation.
+   on the released ff3.0 and ff3.1 (block 4 of 5), the TM4 and HDX validation.
 3. **Upside 3 design, debug stage** (upside3.md; plan.md Phase 24 and its "Resume here"). Local work, no cluster jobs.
 4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phase 0 is done. Phase 1 has 1,000 `md` samples per protein
    (EHEE from 61254153, ubiquitin from the rerun 61279169 after a fix to Boltz's sample batching; §1 "Finished
@@ -25,8 +25,9 @@ The user's four lines of work (10-21), and what each has on the clusters:
    samples for a rank-order test (§1 line 4).
 
 Open and not in the user's list:
-- The 8 glpG chains run force fields that carry the retraining loss; whether to stop them when block 3 closes
-  (~18:00 10-21 to ~01:30 10-22) is the user's. Their TM4 check at block 2's end and the HDX on block 2 are owed.
+- The 8 glpG chains run force fields that carry the retraining loss; block 3 closed by 01:33 10-22 and
+  block 4 runs; whether to stop them is the user's. Their TM4 check at block 2's end is owed, and ff3.1's HDX; ff3.0's
+  HDX on blocks 2 and 3 is done (findings 5.6).
 - Large-protein de novo folding (plan.md Phase 22) is done; its proposal (compact misfolds as negative examples,
   training past 150 residues, replica exchange for the large-protein benchmarks) awaits the user.
 - The BP validation deck for Tobin (§0c) is not sent.
@@ -110,7 +111,7 @@ findings.md (pulled from git) and on the cluster.
    ("Starting the watch"), and rewrite `WATCH_STATUS.md` with this computer as owner.
 7. **Open questions for the user.** Nothing is blocking. Awaiting the user's word, not to be done
    without it:
-   - Whether to stop the 8 glpG chains when block 3 closes (they run ff3.0 and ff3.1, which carry the retraining
+   - Whether to stop the 8 glpG chains before block 5 (they run ff3.0 and ff3.1, which carry the retraining
      loss; findings 1.37).
    - The large-protein de novo proposal (plan.md Phase 22 review).
    - The large directories still on `/project/trsosnic` (§1 "Disk": popepopg_REMD variant dirs 355 G with
@@ -696,12 +697,37 @@ their successors and their collector; the 8 glpG chains. midway3: nothing known 
   against ff2.1's 0.615 (findings 1.37).
 - **The 8 corrected glpG chains** (plan.md Phase 18, findings 4.17), each on its own node; logs
   `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out`, run dirs `popepopg_REMD_mdw2/<V>.<ff>/`, seeds
-  `seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Blocks 1 and 2 closed 18:52-20:39 10-18 and
-  07:55-14:56 10-20 (KE/1.5kT 0.989-1.011; block 1's TM4 in findings 1.35). **Block 3/5, all R**, logs clean at 11:10
-  10-21 (KE/1.5kT 0.988-1.014): ff3.0 79HIS_S115T 49428215 from 07:55 10-20, 79ALA 49428473 from 08:23; ff3.1 79HIS
-  49432319 from 14:29; from 14:36 ff3.1 79ALA_S115T 49432546, 79ALA 49432586, ff3.0 79ALA_S115T 49432556, 79HIS
-  49432585; ff3.1 79HIS_S115T 49432786 from 14:56. They run force fields that carry the retraining loss (findings
-  1.37); stopping them at block 3's end is the user's. Owed: the TM4 check at block 2's end and the HDX on block 2.
+  `seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Blocks 1, 2 and 3 closed 18:52-20:39 10-18,
+  07:55-14:56 10-20 and 17:03 10-21 to 01:33 10-22 (block 1's TM4 in findings 1.35). **Block 4/5, all R**, read 18:30
+  10-22 from midway3 (files only, no `squeue`): ff3.0 79HIS 49442271, 79HIS_S115T 49440731, 79ALA 49440812,
+  79ALA_S115T 49442553; ff3.1 79HIS 49442421, 79HIS_S115T 49442481, 79ALA 49442285, 79ALA_S115T 49442356. ff3.0's logs
+  clean (no ROLLBACK, no NaN; KE/1.5kT 0.982-1.013 in blocks 2-4). These are the ff3.0 glpG data on the repaired seeds
+  and the pre-Upside-3 engine (`$P/obj`, md5 `7136d99a...`). Groups in `run.<r>.up` (each block opens with its
+  287-frame calibration group ending at t 18.0; checked in `run.0.up` by `checks/glpg_groups_20261022.py`), block 2 /
+  block 3: ff3.0 79HIS 19-37 / 38-56, 79HIS_S115T 18-36 / 37-54, 79ALA 19-37 / 38-55, 79ALA_S115T 19-37 / 38-56. They
+  run force fields that carry the retraining loss (findings 1.37); stopping them is the user's. Owed: the TM4 check at
+  block 2's end.
+- **HDX dG on the four ff3.0 chains, block 2 and block 3 apart, done 19:12 10-22** (user 10-22: "generate delta G
+  plot into ~/Downloads, and I will see if we need longer run"; midway2's venvs lack mdtraj, pymbar and
+  matplotlib, checked 10-22, so midway3 caslake). Readout findings 5.6: the blocks disagree well beyond their
+  error bars, so one block does not converge the dG. Scripts, prechecks, ladder travel and job ids in
+  `C2=/project/trsosnic/yinhan/checks/hdx_ff30_placefix_20261022/` (`submitted.txt`): `hdx_block.sbatch` is the 10-14
+  recipe's `hdx_block2.sbatch` with BLOCK a parameter, `extract_block.py` writes each log line in one call (md5
+  `cede3aed`; the old `print` interleaved and failed 61313663 at 27/28, rerun as 61314113), the rest md5-equal to
+  `hdx_ff30_20261014/`; `/beagle3` analysis scripts unchanged since 08-29. 8 jobs COMPLETED 18:47-19:12, 6-11 min
+  each, every log 28/28 copies and replicas, `HDX DONE`. Work dirs `<V>.ff_3.0_gdepth/hdx_sc600x12_ff_3.0_gdepth_block<k>/`
+  (28-29 G each).
+  **Pooled blocks 2-3, done 19:44 10-22** (user: "only 4 figures, one for each protein variant"): the same pipeline
+  over each chain's groups FIRST(block 2)..LAST(block 3) as one range, BLOCK=2-3, 61315027-61315030 COMPLETED in
+  10-14 min, 28/28, frames per rung equal to block 2's plus block 3's (11,021-11,554); resolution limit at T 0.85
+  6.25-6.29. Work dirs `.../hdx_sc600x12_ff_3.0_gdepth_block2-3/`, logs `$C2/hdx_glpG-RKRK-<V>_block2-3_<id>.out`.
+  **The four figures** `glpG-RKRK-<V>_POPEPOPG_dG_vs_residue.png`, PS through the pipeline's `plot_ref_style.py`
+  unchanged (md5 `fad2166e`, `--temperatures 0.75,0.80,0.85`: the user's 09-04 format), are in
+  `~/Downloads/glpG_HDX_ff3.0_blocks_20261022/` on the MacBook Pro with `ref_style_stats.txt`, `summary.txt` (block 2
+  against block 3) and `remd_mixing.txt`; **the same 7 files are in `$C2/figures/`** (user 10-22: "make sure there is
+  a copy of these figures on midway2. I will work on them on another computer tomorrow"; md5 checked from midway2
+  login1). Each figure's source is its work dir's `results/glpG-RKRK-<V>_dG_profiles.npz`. **Keep every HDX work dir**
+  (user 10-22: "do not cleanup for now"): the 12 hold 417 G, 389 G of it block copies and joined trajectories.
 
 **Line 3: Upside 3 design (debug stage).** No cluster jobs; local work (plan.md Phase 24 "Resume here", upside3.md).
 
@@ -734,7 +760,8 @@ runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; loca
 - Disk: `/project/trsosnic` 1.4 T free at 11:10 10-21 (1.6 T at 10:24 10-19; "Disk" below); `/beagle3/trsosnic`
   1.2 T at 22:30 10-20.
 - **What happens next** (estimates; Slurm's start times move):
-  - glpG block 3 closes ~18:00-19:00 10-21 (ff3.0 79HIS_S115T, 79ALA) and ~00:00-01:30 10-22 (the other six).
+  - glpG block 4 closes ~05:00-06:00 10-23 (ff3.0 79HIS_S115T, 79ALA) and ~12:30-13:30 10-23 (the other six); block
+    5, the last, ~36 h later.
   - Released ff2.1's mdCATH TM comparison ~20:00 10-21.
   - ff3.1.1 / ff3.2.1: epoch 0 ends ~23:00 10-21; its panels are submitted by the collector's next pass and read
     ~02:00 10-22; step 76 ~10-23.
@@ -744,7 +771,7 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **block 3: 49428215, 49428473, 49432319, 49432546, 49432556, 49432585, 49432586, 49432786 R** (midway2; block 1 49411315-49411322 R 09:58 10-17 to 20:39 10-18; block 2 49417749-49418152 to 14:56 10-20; 49411323-49411324 stopped 08:33 10-18) | **The corrected glpG REMD chains** (user 10-17: "fix the bug and rerun the affected simulations"; plan.md Phase 18; findings 4.17): the side-chain placement fixed in the preparation and every live seed, and the 10 chains rerun from block 1, 28 replicas T 0.70-0.90, five 36 h blocks (`submit_remd.sh`). ff_3.0_gdepth: 79HIS 49411315, 79HIS_S115T 49411316, 79ALA 49411317, 79ALA_S115T 49411318; ff_3.1_depth_data: 79HIS 49411319, 79HIS_S115T 49411320, 79ALA 49411321, 79ALA_S115T 49411322; 79HIS ff_2.1_ctrl38 49411323 and ff_2.1_nobp 49411324 (the deterministic side chain, `single_state.py`: one row per side-chain residue at the kept state, 1-body 0) were stopped by the user 08:33 10-18 (STOP files first, directories kept): their step-37 releases are superseded (plan.md Phase 21). Seeds `popepopg_REMD_mdw2/seeds/<V>.<ff>.up`: base seeds repaired (`fix_placement.py`), per-force-field seeds by `patch_glpg.py` on the repaired base as `validate_ff.sh` makes them (each equal to its old seed repaired); built and verified in `checks/placefix_20261017/` (placement at `rcf[li]` to 3.6e-6 A, 1-body exact, side-chain/lipid rows on, only the intended datasets changed). Logs `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out` | Block 1 closed in all eight 18:52-20:39 10-18 (KE/1.5kT 0.989-1.008; TM4 read 21:40, findings 1.35: TM4 holds, no glycine at phi > 0 at T 0.70); block 2 queued at once, all carrying the law. **First chunks healthy** (read 10:40): calibration 615-682 ms/step (the old chains 645-694; nobp fastest, 615); at chunk 1 step ~1,500-1,950 replicas 0, 13, 27 at Rg 20.0-21.8 A, backbone H-bonds 184-221, protein potential -731 to -855 (T 0.70), -589 to -750 (0.79), -471 to -610 (0.90), nobp least negative (-731, -589, -471); logs clean. Block 2 closed in all eight 07:55-14:56 10-20 (KE/1.5kT 0.989-1.011), block 3 queued at once, R, logs clean at 22:30 10-20 | the watch: KE/1.5kT at each chunk end, then first chunks (calibration, replicas 0, 13, 27: Rg, protein potential, KE against the old chains'), then each block end; TM4 under every force field at each block end (`tm4_ff31.py`, `gly_flip_rungs.py`, DSSP) and the HDX on block 2 (recipe below) |
+| **block 4: 49440731, 49440812, 49442271, 49442285, 49442356, 49442421, 49442481, 49442553 R** (midway2; block 1 49411315-49411322 R 09:58 10-17 to 20:39 10-18; block 2 49417749-49418152 to 14:56 10-20; block 3 49428215-49432786 to 01:33 10-22; 49411323-49411324 stopped 08:33 10-18) | **The corrected glpG REMD chains** (user 10-17: "fix the bug and rerun the affected simulations"; plan.md Phase 18; findings 4.17): the side-chain placement fixed in the preparation and every live seed, and the 10 chains rerun from block 1, 28 replicas T 0.70-0.90, five 36 h blocks (`submit_remd.sh`). ff_3.0_gdepth: 79HIS 49411315, 79HIS_S115T 49411316, 79ALA 49411317, 79ALA_S115T 49411318; ff_3.1_depth_data: 79HIS 49411319, 79HIS_S115T 49411320, 79ALA 49411321, 79ALA_S115T 49411322; 79HIS ff_2.1_ctrl38 49411323 and ff_2.1_nobp 49411324 (the deterministic side chain, `single_state.py`: one row per side-chain residue at the kept state, 1-body 0) were stopped by the user 08:33 10-18 (STOP files first, directories kept): their step-37 releases are superseded (plan.md Phase 21). Seeds `popepopg_REMD_mdw2/seeds/<V>.<ff>.up`: base seeds repaired (`fix_placement.py`), per-force-field seeds by `patch_glpg.py` on the repaired base as `validate_ff.sh` makes them (each equal to its old seed repaired); built and verified in `checks/placefix_20261017/` (placement at `rcf[li]` to 3.6e-6 A, 1-body exact, side-chain/lipid rows on, only the intended datasets changed). Logs `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out` | Block 1 closed in all eight 18:52-20:39 10-18 (KE/1.5kT 0.989-1.008; TM4 read 21:40, findings 1.35: TM4 holds, no glycine at phi > 0 at T 0.70); block 2 queued at once, all carrying the law. **First chunks healthy** (read 10:40): calibration 615-682 ms/step (the old chains 645-694; nobp fastest, 615); at chunk 1 step ~1,500-1,950 replicas 0, 13, 27 at Rg 20.0-21.8 A, backbone H-bonds 184-221, protein potential -731 to -855 (T 0.70), -589 to -750 (0.79), -471 to -610 (0.90), nobp least negative (-731, -589, -471); logs clean. Block 2 closed in all eight 07:55-14:56 10-20 (KE/1.5kT 0.989-1.011), block 3 17:03 10-21 to 01:33 10-22; block 4 R, ff3.0's logs clean at 18:30 10-22 | the watch: KE/1.5kT at each chunk end, then first chunks (calibration, replicas 0, 13, 27: Rg, protein potential, KE against the old chains'), then each block end; TM4 under every force field at each block end (`tm4_ff31.py`, `gly_flip_rungs.py`, DSSP) and the HDX on block 2 (recipe below) |
 | **49438694 R, 49438696 PD; Peng arms resubmitting (first chunks 49438698-49438727); collector 49438731** (midway2) | **Released ff2.1 on the three side-chain tests** (plan.md Phase 27): the mdCATH and 44-domain panels at dt 0.009 and Peng's benchmark, on the same protocols, binaries and domains as the retrained arms, to decide whether to keep ff2.1 itself | submitted 11:43 10-21; 44 domains done 12:59 | read `checks/ff21_released_20261021/tm_mdcath_*.txt` (~20:00 10-21) and `peng_ff21.txt` (DONE, ~a week); then plan.md Phase 27 step 4 |
 | **49439398, 49439399 R; successors afterany; collector 49439400** (midway2) | **ff311_depths_only and ff321_depths_only (ff3.1.1, ff3.2.1)**: ff2.1 with only its basin depths trained under the pooled prior, from NDRD's and ff3.0's map (plan.md Phase 29) | first links R from 13:42 10-21 | the epoch-0 panels `p311_00` / `p321_00` against `ff21_released` (~02:00 10-22); `checks/ff311_20261021/status.txt`; at step 76 the maps and `depth_data_vs_prior.py`; stop for the user |
 

@@ -1215,3 +1215,14 @@ to 10-07 12:00 is in git history.
   61298446 submitted. Files: ~/.claude/CLAUDE.md, diffusion_dynamics.md (Phase 1), remote_jobs.md, findings.md 11b,
   progress.md; `scratchpad/boltz_hdx/{prep.py,check_samples.py,phase1_heeh_pswt.sbatch}`,
   `flags/reference/heeh_experiment.csv`, `flags/pdb/{ubqps,heeh}.pdb`.
+
+- 10-22 18:20-19:20, glpG ff3.0 HDX (user: "check if we have a glpG simulation result on midway2 with ff3.0 after
+  martini repaired"; then "generate delta G plot into ~/Downloads"). The four ff_3.0_gdepth chains on the 10-17
+  repaired seeds exist, blocks 1-3 closed, block 4 running, logs clean. midway2's venvs lack mdtraj/pymbar/matplotlib,
+  so HDX ran on midway3 caslake: block 2 and block 3 apart, 8 jobs, all 28/28 (one rerun after an interleaved
+  log line in `extract_block.py`, fixed). Block 3 against block 2 disagrees by RMS 0.65-0.91 kcal/mol against
+  jackknife sigma ~0.1, with helix-wide shifts and no ladder round trip (findings 5.6). Figures in
+  `~/Downloads/glpG_HDX_ff3.0_blocks_20261022/`, redrawn in the project's `plot_ref_style.py` format after the user
+  rejected a new layout, then as one figure per variant from blocks 2-3 pooled (4 more midway3 jobs, 28/28; lesson
+  findings 10.36). Files modified: findings.md 5.6 and 10.36, plan.md Phase 18, remote_jobs.md;
+  new `checks/hdx_ff30_placefix_20261022/` on the cluster.

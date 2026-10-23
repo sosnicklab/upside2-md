@@ -5178,6 +5178,32 @@ protein with no bilayer contact.
   TM4 (4.4). The one core parameter that acts on TM4 specifically is glycine's map (3 Gly; 3.10c), the
   ff3.0 target, which is the same in both models.
 
+### 5.6 One REMD block does not converge glpG's dG: block 2 against block 3 on the placement-fixed ff3.0 chains (2026-10-22)
+
+User 10-22: the ff3.0 glpG dG plot, "and I will see if we need longer run". The four ff_3.0_gdepth chains on the
+repaired seeds (4.17), block 2 and block 3 each through the 10-14 pipeline on its own (5,370-5,777 frames per
+rung; remote_jobs.md §1 for jobs, groups and scripts). The figures are blocks 2-3 pooled through the same pipeline,
+one per variant in the project's format (`plot_ref_style.py`, T 0.75 / 0.80 / 0.85, PS), with `summary.txt` (the
+block numbers below) in `~/Downloads/glpG_HDX_ff3.0_blocks_20261022/` on the MacBook Pro.
+- Mixing (`checks/hdx_ff30_placefix_20261022/`): KE/1.5kT per slot 0.997-1.004, swap acceptance 0.33-0.52, no
+  0 -> 27 -> 0 round trip in any block. Over blocks 2-3 together 1-2 of 28 walkers per variant cross the ladder
+  once; the median walker spans 15 of 27 slots.
+- PS at 298 K (bound 5.81-5.88): 63-74 amides, the TM cores, are censored in both blocks and 14-19 in one only.
+  Of the 113-124 resolved in both, block 3 - block 2 has RMS 0.68-0.91 kcal/mol (max 2.3-3.8, mean -0.07 to
+  +0.15), while the combined jackknife sigma has median 0.11-0.14, so 57-76% of them differ by more than 2 sigma.
+  PS_protein: 191-196 resolved in both, RMS 0.65-0.88, 59-74% beyond 2 sigma.
+- Outside the TM helices the difference averages to zero (-0.12 to +0.18; RMS 0.44-0.66). Under PS_protein whole
+  helices move together: 79ALA TM1, TM2, TM3, TM6 -0.43 to -0.65, 79ALA_S115T TM3 -0.60, 79HIS TM2 -0.53.
+- Read: the jackknife over the 28 slots understates the per-block uncertainty about 6 times; one block's
+  per-amide uncertainty is about RMS / sqrt(2), 0.46-0.64 kcal/mol, and the helix-wide shifts with no ladder
+  round trip say the blocks are not independent samples of one equilibrium. One block cannot resolve a variant
+  difference under ~1 kcal/mol at an amide. The censoring bound rises only as RT ln(ESS), 0.41 kcal/mol per
+  doubling: if ESS grows with frames, two blocks reach ~6.3 (the pooled run: 6.25-6.29) and four ~6.7, while TM4 140-144's HXMS 6.1-7.4
+  (5.5) needs ~14 blocks' worth for its upper end.
+- `extract_block.py`'s `print` wrote its line and newline separately under `PYTHONUNBUFFERED=1`, so two of 16
+  parallel replicas shared one line of `extract.log` and the `verified$` count failed a correct copy (79HIS_S115T
+  block 2, 61313663). It now writes each line in one call; the check is unchanged.
+
 ---
 
 ## 6. Reusable diagnostic procedures
@@ -6551,6 +6577,19 @@ through a pointer and two ternaries, carried two derivative functions where one 
 trailing space it never meant to touch. **After every fix, read `git diff` before any verification run and cut it to
 the smallest change that reads as written in one pass: keep the original author's words where they still hold,
 one function per quantity, no incidental whitespace.** Verify the trimmed code, not the draft.
+
+### 10.36 Draw a quantity the project already plots in the project's own format (2026-10-22)
+
+User, on the glpG ff3.0 dG figures: "it should be in same format as glpG-RKRK-79ALA_S115T_POPEPOPG_dG_vs_residue.png.
+your format is completely wrong". I had designed a new layout (blocks overlaid, censored triangles, a scatter) when the
+project draws residue dG with `example/00.AnalysisScripts/helpers/plot_ref_style.py`, the pipeline writes that figure
+itself, and the user keeps the 09-04 set in `~/Downloads` (T 0.75 / 0.80 / 0.85, 3000 x 2000). **Before drawing a
+figure of a quantity the project already plots, find the user's existing figures of it (`~/Downloads`, the work
+dirs' `results/`) and the script that made them, and reproduce that format with that script unchanged.** Then,
+"there should be only 4 figures, one for each protein variant": **one figure per system, from all its
+post-equilibration data pooled** (here blocks 2-3 through the pipeline as one range); a comparison the format lacks
+(block 2 against block 3) goes in text, not in more figures, unless the user asks for it. The SciencePlots rule
+governs new figures, not a format the user names.
 
 ---
 

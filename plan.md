@@ -621,8 +621,9 @@ the 4 variants, and 79HIS under ff_2.1_nobp and its matched control ff_2.1_ctrl3
    at once).
 7. [ ] Records: findings 4.17 (done), remote_jobs.md, WATCH_STATUS.md; the watch reads the new chains' first
    blocks (calibration, replicas 0, 13, 27), and the TM4 checks and HDX are redone on them. Block 1 closed in all
-   eight 18:52-20:39 10-18 and its TM4 read is done (findings 1.35: TM4 holds, no glycine at phi > 0 at T 0.70);
-   owed: TM4 at each later block end, HDX on block 2.
+   eight 18:52-20:39 10-18 and its TM4 read is done (findings 1.35: TM4 holds, no glycine at phi > 0 at T 0.70).
+   HDX on ff3.0's blocks 2 and 3, all four variants, done 10-22 (findings 5.6: the blocks disagree beyond their
+   error bars, so a longer run is the user's decision); owed: TM4 at each later block end, ff3.1's HDX.
 
 ### Phase 19 - a second native-state panel from mdCATH (DONE 2026-10-17, user)
 The Peng benchmark's 16 natives and the 44-domain panel (60 proteins) do not resolve ff_2.1_nobp from its control;
