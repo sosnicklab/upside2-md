@@ -1,10 +1,9 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-23 15:00).** No watch runs (the owner of record is the Mac Studio, idle since its 21:50 10-18
+**Current state (2026-10-24 09:40).** No watch runs (the owner of record is the Mac Studio, idle since its 21:50 10-18
 pass). The running jobs look after themselves: each line of work below has a collector job or a dependency chain that
 writes its own result file, so nothing needs polling, and `submit_new.sh` is idempotent if a watch also runs it.
-**Exception: ff3.1.1 / ff3.2.1's collector died on its first pass (10-21 17:00), so their epoch-end panels were never
-submitted (§1 line 2).**
+ff3.1.1 / ff3.2.1's collector, dead since its first pass 10-21, was fixed and resubmitted 19:39 10-23 (§1 line 2).
 `WATCH_STATUS.md` on the cluster is newer than this file whenever a pass ran after it. Job ids, logs and data paths
 are in §1.
 
@@ -13,11 +12,11 @@ The user's four lines of work (10-21), and what each has on the clusters:
    finished and converged; the deterministic side chain folds less on every held-out test, and both retrained
    force fields fold less than released ff2.1. **Running:** released ff2.1 on the same three tests, to decide whether
    ff2.1 itself stays: the 44 domains and mdCATH are done (released ff2.1 ahead of both on each), Peng's 30 arms in
-   about a week (8 of 32 scored 10-23). The email to Tobin and John waits on these numbers.
-2. **Ramachandran map training** (plan.md Phases 14-17, 21, 28-29; findings 1.34, 1.37). **Finished 10-23 at step
-   76:** ff3.1.1 and ff3.2.1, ff2.1 with only its basin depths trained under the pooled prior (from NDRD's and ff3.0's
-   map); the first test of the accuracy fix, their epoch-0 panels, was never submitted because their collector
-   failed (§1 line 2). **Finished, awaiting review:**
+   about a week (23 of 32 scored 09:35 10-24; the 9 left are de novo arms). The email to Tobin and John waits on these numbers.
+2. **Ramachandran map training** (plan.md Phases 14-17, 21, 28-30; findings 1.34, 1.37). **Queued to continue 76 ->
+   114:** ff3.1.1 and ff3.2.1, ff2.1 with only its basin depths trained under the pooled prior (from NDRD's and ff3.0's
+   map), trained until they agree and then merged into ff3.1, which is what gets validated (Phase 30, in place of
+   per-run panels); their collector runs the per-step checks (§1 line 2). **Finished, awaiting review:**
    the ff3.1 and ff3.2 reruns on the fixed engine, whose maps barely moved and which, as every run trained from
    ff2.1 with all terms free, fold 0.15-0.24 less than ff2.1. **Also running in this line:** the 8 glpG REMD chains
    on the released ff3.0 and ff3.1 (block 5 of 5), the TM4 and HDX validation.
@@ -28,12 +27,20 @@ The user's four lines of work (10-21), and what each has on the clusters:
    (EHEE from 61254153, ubiquitin from the rerun 61279169 after a fix to Boltz's sample batching; §1 "Finished
    runs") and their dG profiles, and Ub psWT's 1,000 samples (61298446). 61328353, HEEH_rd4_0097 at 10^4 samples as
    10 seeds for a rank-order test (after one run of 10^4 ran out of GPU memory), hit its 4 h wall with 5 of the 10
-   seeds done; 61368734 (queued 10-23) finishes the other five in the same directory (§1 line 4).
+   seeds done; 61368734 finished the other five 06:35 10-24. The HEEH and Ub psWT readouts are done locally
+   (`diffusion_dynamics.md` Phase 1). **Queued since 14:40 10-24:** EHEE and Ub psWT at 10^5 samples each, the test
+   of whether Boltz-2 ranks amides whose exchange is local (user 10-24: "Submit the jobs for next steps"; §1 line 4).
+   The first submission filled `/beagle3`'s group inode quota and failed; the outputs are now packed one tar per seed,
+   and all 20 jobs are submitted (22:17 10-24; 9 of EHEE's 10 done). **Running since 21:19 10-24 as 61445028:** a side
+   test of BioEmu2's weights for HDX (user: "Lift it, side test only"; `diffusion_dynamics.md` section 7), one V100 job
+   on `/project/trsosnic/yinhan/bioemu2_hdx` (§1 line 4).
 
 Open and not in the user's list:
 - The 8 glpG chains run force fields that carry the retraining loss; block 4 closed by 11:27 10-23 and
-  block 5, the last, runs. Their TM4 checks at the ends of blocks 2-4 are owed, and ff3.1's HDX; ff3.0's
-  HDX on blocks 2 and 3 is done (findings 5.6).
+  block 5, the last, runs. Their TM4 checks at the ends of blocks 2-4 are owed; ff3.0's
+  HDX on blocks 2 and 3 is done (findings 5.6), and ff3.1's was dropped by the user 10-23. Its TM4 re-read with the A61 accessibility shift undone (10-23)
+  agrees with HXMS on peptide 140-144 in 79ALA, and the user closed the TM4 HDX question 22:15 10-23 (plan.md
+  Phase 16); the fraying turn and Val145 and the weak protein protection are read on Upside 3's glpG run (§1 line 3).
 - Large-protein de novo folding (plan.md Phase 22) is done; its proposal (compact misfolds as negative examples,
   training past 150 residues, replica exchange for the large-protein benchmarks) awaits the user.
 - The BP validation deck for Tobin (§0c) is not sent.
@@ -102,9 +109,6 @@ findings.md (pulled from git) and on the cluster.
      0.80 rung, both force fields; FIRST LAST are the block's `output_previous_` groups, block 1 was 1-17), then
      `python tm4_dssp_block1.py bb_dssp_<block>.npz` on a computer with mdtraj (the repo `.venv` has it), and
      upload the output beside the others. Block 2 closed on all eight 07:55-14:56 10-20; block 3 ends ~36 h after.
-   - **TM4 HDX on the corrected chains' block 2** (the user's 10-14 requests: ff_3.0_gdepth and
-     ff_3.1_depth_data, 79ALA then 79HIS): §1 "TM4 HDX on ff_3.1_depth_data: the recipe" with each chain's
-     own group counts. Block 2 has closed.
 5. **Find the owner** ("Handoff" below): `cat` the cluster's
    `checks/r4_epochs/tm4_local/WATCH_STATUS.md`. **Planned move (user, 21:55 10-18: "expect me to run the
    monitoring on another computer tomorrow"):** the user's opening the session on the next computer on 10-19 is
@@ -311,9 +315,10 @@ to expand it so that metric no longer matters and no longer needs to be tested l
 holds TM4 on the fixed side-chain/lipid table (findings 4.15), so new epoch ends are not extracted,
 patched or queued for it. The tools stay in `scratchpad/ff3_local_test/` (`run_glpg.sh`,
 `tm4_queue.sh`, `tm4_compare.py`; method in findings 1.25 and 4.15) and every set's logs and
-tables are in `tm4_local/runs_cov/` (the trajectories were deleted 10-18). **TM4 HDX is not retired** (user 23:15: "Whether the delta g of tm4 should go to
-infinity or not is still not resolved"): ff_3.0_gdepth's block 2 is done and ff_3.1_depth_data's is owed
-(§1 "TM4 HDX on ff_3.1_depth_data: the recipe"; the ff2.1_sc chain was cancelled by the user 10-14 01:11).
+tables are in `tm4_local/runs_cov/` (the trajectories were deleted 10-18). **The TM4 HDX question is closed** (user 22:15 10-23: "Ok. Close the question"; opened 10-11 23:15: "Whether the
+delta g of tm4 should go to infinity or not is still not resolved"). On the placement-fixed chains ff3.0's blocks 2-3,
+re-read with the A61 accessibility shift undone, agree with HXMS on peptide 140-144 (plan.md Phase 16; findings 5.6).
+HDX on ff_3.1_depth_data's repaired chains was dropped with it (user 22:50 10-23: "Yes. Drop it").
 4. **A panel or a gate.**
    - A panel whose `ff3_selection/runs/<tag>/` holds 176 npz: run `panel.py select aa domains runs
      ff21_released ff21_awh gdepth_start <tags>` with the run's env (70 s, 300 MB; bio_start was
@@ -679,11 +684,14 @@ keeps the link; plain `cp` copies the text, which then drifts).
 
 ## 1. Current jobs
 
-Snapshot **2026-10-23 14:50 CDT, verified live against `squeue` on midway2 and midway3** (MacBook Pro; read only, no
-watch runs, nothing submitted). 66 jobs on midway2: released ff2.1's 23 unfinished Peng arms and its collector; the
-8 glpG chains (block 5); Upside 3's 32 Peng arms and its glpG hybrid REMD block 1. midway3: none queued at 14:50, then Boltz 61368734 submitted 15:05 (sacct still
-lists 53233848 and 53233852 RUNNING from 08-11, stale accounting entries absent from `squeue`). `/project/trsosnic`
-649 G free (1.4 T at 11:10 10-21; the 12 kept HDX work dirs hold 417 G); `/beagle3/trsosnic` 1.2 T.
+Snapshot **2026-10-24 09:35 CDT, verified live against `squeue` on midway2 and midway3** (Mac Studio; read only, no
+watch runs). 53 jobs on midway2: released ff2.1's 9 running Peng arms and its collector's next pass; ff3.1.1's
+training (R from 08:51) and ff3.2.1's (PD) with a successor, their collector's next pass; the 8 glpG chains (block 5);
+Upside 3's Peng arms (29 R, 1 PD, 2 finished) and its glpG hybrid REMD block 1. Every log read is clean (no error,
+NaN, ROLLBACK or DESTROYED line). midway3: Boltz 61368734 COMPLETED 06:35 (line 4); at 22:17 the gpu QOS held 12 jobs, the Boltz 10^5 sets (9 of EHEE's 10 COMPLETED, 61430344 FAILED and continued as 61450268; Ub psWT 4 R, 6 PD) and BioEmu2's 61445028 (R), nothing left to submit (line 4) (sacct still lists
+53233848 and 53233852 RUNNING from 08-11, stale accounting entries absent from `squeue`). `/project/trsosnic` 608 G
+free (the 12 kept HDX work dirs hold 417 G); `/beagle3/trsosnic` 1.2 T, and **inodes 133,359 free (91% used) at
+14:30**, after the Boltz 10^5 jobs filled them 12:20-14:20 (line 4).
 
 **Line 1: deterministic vs probabilistic side chain**
 - **Released ff2.1 on the three side-chain tests** (user 10-21: "run validation with released ff2.1 so we know if
@@ -699,9 +707,11 @@ lists 53233848 and 53233852 RUNNING from 08-11, stale accounting entries absent 
     TM > 0.5 0.972 / 0.946 / 0.920 (`tm_mdcath_mdc_ff21_released_vs_<mdc_ctrl_03|mdc_nobp_03>.txt`).
   - Peng: 30 arms `b_ff_2.1_<prot>_<kind>` (first chunks 49438698-49438727, each resubmitting itself in 10.5 h chunks;
     logs `ff3_benchmark/logs/<prot>_<kind>_ff_2.1_<id>.out`, runs `ff3_benchmark/runs/<prot>_<kind>_ff_2.1/`; lambda's
-    two arms of 10-04 reused), about a week. 14:50 10-23: 8 of 32 scored (BBA x2, BBL_native, NTL9_native, WWdomain
-    x2, lambda x2), gpW_native finished 13:35 and waits for the next pass, 23 in their chunks 49449415-49449438.
-    Collector `ff21_collect` (every 6 h, queued **49450442**): scores each
+    two arms of 10-04 reused), about a week. 09:35 10-24: 23 of 32 scored (every native arm and BBA, WWdomain,
+    lambda, alpha3d, homeodomain, proteinB and top7 de novo; the 05:03 pass 49453783's 14 scoring jobs
+    49454583-49454596 and gpW_native's 49453782 all COMPLETED, logs clean). The 9 left are de novo arms (BBL, cspA,
+    gpW, hyp, NTL9, NuG2, proteinG, proteinL, ubiquitin), R in their next chunks after the 10.5 h wall 09:13-09:23.
+    Collector `ff21_collect` (every 6 h, next pass **49454597**, begins 11:03 10-24): scores each
     finished arm into `ff21_nobp_dt009/setup/score/ff_2.1/` and, with all 32, writes
     `checks/ff21_released_20261021/peng_ff21.txt` ending DONE: released ff2.1 against the control, no-BP, ff3.0 and
     ff3.1 (all scored), beside Peng's published FF2.
@@ -719,18 +729,47 @@ lists 53233848 and 53233852 RUNNING from 08-11, stale accounting entries absent 
   order and held-out set; `compare_init_pooled.py`: equal to the source in every other field. Target 76, no gate,
   stop for the user. Logs `<run>/condiv-train_<id>.out`. Steps 0-75 ran 13:42 10-21 to 09:23 10-23 (49439398 /
   49439401, 49439399 / 49439407).
-  - Their collector `pooled_collect` 49439400 FAILED on its first pass (17:00 10-21) and is not resubmitted: under
-    `set -eo pipefail` its `last=$(... | while read d; do [ -f $d/checkpoint.pkl ] && basename $d; done | ...)`
-    returns 1 while the newest step runs, and so would its `grep -l "STERIC FLAG"` with no flag. Per-step checks exist
-    for ff3.1.1's steps 0-4 only; no per-epoch panel was ever submitted.
+  - Their collector `pooled_collect`, `checks/ff311_20261021/collect_pooled.sbatch`: its first pass 49439400 FAILED
+    17:00 10-21 after ff3.1.1's steps 0-4 (findings 10.14: `set -eo pipefail` and a `while` pipeline). **Fixed and
+    resubmitted 19:39 10-23 as 49453078** (md5 `91ec1e46`; the old script `.bak_pre_fix_20261023`): steps counted in
+    the loop, target 114, no panels (Phase 30), each step's entry written whole, 24 h wall since a pass may face ~220
+    unchecked steps at ~3.5 min each; tested on login1 in a /tmp sandbox with the two checks stubbed (76 entries per
+    run, a second pass adds none, a failing check exits 1 with its output in the log). Each pass writes
+    `checks/ff311_20261021/status.txt` (steps finished, the newest step's summary, the largest KE/1.5kT, steric flags)
+    and requeues itself 4 h on, until both runs have 114 checked steps (DONE). It started 01:02 10-24 (49453078 R,
+    ~3.3 min a step); by 02:33 ff3.1.1's steps 0-31 were checked, KE/1.5kT at most 1.015. Logs
+    `checks/ff311_20261021/logs/` (empty until the pass ends: its output goes to `status.txt`).
+    **The pass COMPLETED 08:49 10-24**: steps 0-75 of both runs checked, 24 of 24 proteins at every step, KE/1.5kT
+    at most 1.016 (ff3.1.1) and 1.018 (ff3.2.1); next pass **49455905**, begins 12:49. ff3.2.1 raises no steric flag
+    (free beta' + pPII' at most 0.0049 against steps 0-18's 0.0050; at step 75 training residues' mean side-chain clash
+    x1.038 of the start, coil maps at most x1.37, none above 2x). At step 75 ff3.1.1's is x1.034, maps at most x1.42.
+    **ff3.1.1 raises a `STERIC FLAG`** (told the user 02:40 10-24): free non-glycine beta' + pPII' 0.0049 at steps 33 and
+    39 against steps 0-18's 0.0043, from the free ensembles alone; clash ratios small (coil maps at most x1.13
+    side chain, x1.08 backbone, none above 2x; training residues' mean side chain x1.009). Each step's steric file
+    carries the whole run's free table as it stands when checked, so every file written this pass shows the flag
+    and the old `status.txt` line, "STERIC FLAG in 71 steps", counted files, not flagged steps. **Fixed 23:17 10-24**
+    (user: "fix it"; md5 `560cc098`, old script `.bak_pre_status_20261024`; sandbox on login1's `/tmp` with copies of
+    the real files and a stub `sbatch`, also with a clash flag written into one copied file of each run): the line
+    now gives the newest step's verdict, the steps above steps 0-18's maximum from its table, and the steps whose
+    own clash ratios flag. The pending pass 49458021 runs the old script (Slurm's copy); the pass it queues runs
+    this one.
+  - **Training continued:** ff3.1.1 49451890 R from 08:51 10-24, ff3.2.1 49451891 R from 19:14 10-24, both from step
+    76 at ~33 min a step; successors 49455911 and 49457569 PD (dependency). At 23:07 10-24 (live `squeue`): ff3.1.1
+    on step 102 (`epoch_05_minibatch_07`), ff3.2.1 on step 83 (`epoch_04_minibatch_07`); collector pass 2 49457238
+    ended 22:27 (ff3.1.1 100 steps checked, ff3.2.1 82; KE/1.5kT at most 1.016 and 1.018; 24 of 24 proteins at every
+    step), next pass 49458021 at 02:27 10-25. Glycine's alpha_L shared offset, common frame, by round 0-5: ff3.1.1
+    0, +0.157, +0.217, +0.293, +0.358, +0.367; ff3.2.1 +0.517, +0.555, +0.556, +0.549, +0.537 (round 5 at its step
+    95). ff3.1.1's steric flag: steps 33, 39, 71, 77, 90 and 96 above steps 0-18's maximum 0.0043 (free beta' +
+    pPII', at most 0.0049), every one minibatch 1 or 14, which read 0.0043-0.0050 in every epoch of both runs; ff3.2.1
+    has 7 of 63 steps above the same line and no flag because its own step 1 read 0.0050 (findings 1.33).
   - Step 76's library is each run's `run_output/rama_round_04.dat`; glycine figures
     `~/Downloads/gly_rama_ff311_nonhelix_zero.png`, `..._ff321_...`; two-start comparison
     `checks/ff311_20261021/compare_pooled_runs.{py,txt}` (findings 1.34): every term agrees to the runs' noise except
     glycine's alpha_L, gap 0.179 and closing ~0.07 an epoch.
   - **Continued to step 114 (plan.md Phase 30, user 10-23: train until they agree, merge into ff3.1, validate):**
     ff3.1.1 **49451890**, ff3.2.1 **49451891**, submitted 15:33 10-23 from each run dir by `sbatch $(cat slurm.args)
-    ../train_chain.sbatch <run> 114`, PD (Resources); each queues its successor when it starts and cancels it at 114
-    (~22 h of running). `submit_new.sh` no longer lists p311/p321 (backup `.bak_pre_phase30_20261023`): their epoch
+    ../train_chain.sbatch <run> 114`, PD (Priority; Slurm's start estimate 16:36 / 16:42 10-24 at 19:25 10-23); each
+    queues its successor when it starts and cancels it at 114 (~22 h of running). `submit_new.sh` no longer lists p311/p321 (backup `.bak_pre_phase30_20261023`): their epoch
     ends get no panels; the merge is what gets validated.
   - **At 114** (plan.md Phase 30 step 2): KE scan of steps 76-113 and `check_step.py`; extend `dump_rama_state.py`
     and `compare_pooled_runs.py` to every round; the agreement rule fixed in Phase 30 decides merge or extension to
@@ -777,6 +816,17 @@ lists 53233848 and 53233852 RUNNING from 08-11, stale accounting entries absent 
   a copy of these figures on midway2. I will work on them on another computer tomorrow"; md5 checked from midway2
   login1). Each figure's source is its work dir's `results/glpG-RKRK-<V>_dG_profiles.npz`. **Keep every HDX work dir**
   (user 10-22: "do not cleanup for now"): the 12 hold 417 G, 389 G of it block copies and joined trajectories.
+  **Their membrane term carries the A61 accessibility shift** (plan.md Known Errors; the shared deployment's
+  `martini_hdx_membrane_accessibility.py`, md5 `ca115325`), found 10-23 in the TM4 double check (findings 5.6).
+  **61383990** `hdx_accfix` (midway3 caslake, 4 CPUs; R 19:46, COMPLETED 20:00 10-23, exit 0, 14 min) re-ran only
+  the dG step on blocks 2-3 with the shift undone: `$C2/accfix_ps.py` (md5 `b5186e2d`) writes
+  `<work dir>/acc_shift_corrected/results/` from the stored arrays, then the pipeline's own `4.calc_D_uptake.py`;
+  `$C2/accfix_readout.py` (`27be5c1c`) writes `$C2/tm4_accfix_blocks2-3.txt`, TM4 134-151 at T 0.75/0.80/0.85
+  under PS as plotted, PS corrected and PS_protein. Log `$C2/hdx_accfix_61383990.out`, ending `ACCFIX DONE`.
+  Readout findings 5.6 (PDB numbers; the table's are labels, PDB - 1): peptide 140-144's amides 142-144 stay censored
+  at 298 K in 79ALA and 79ALA_S115T, Val145 comes down to 4.02 (79ALA). Corrected npz in
+  `<work dir>/acc_shift_corrected/results/`; its seven amides before a proline or the chain end (labels 13 27 58 61
+  127 151 209) keep the shifted value, so no figure is drawn from it.
 
 **Line 3: Upside 3 validation of the debug (midway2; user 10-22: "submit Peng 16 validation protein with ff2.1 and glpG
 hybrid simulation with ff2.1, on midway2, as a validation for our entire debug"; plan.md Phase 24 2b).**
@@ -792,7 +842,11 @@ hybrid simulation with ff2.1, on midway2, as a validation for our entire debug";
   `runs/<prot>_<kind>_ff_2.1/`, ids `submitted.log`; `submit_peng.sh` is idempotent). Smoke test before submission
   (`preflight.py`, WWdomain 14 x 20 time units): finite, C-N max 1.51 A, KE/1.5kT 0.87-1.07, every `sequence_id`
   present. The control is released ff2.1 on the pre-audit binary, line 1's arms in `ff3_benchmark/runs/`. All 32
-  first chunks COMPLETED 08:57 10-23 (10.5 h); second chunks 49449888-49449919 R.
+  first chunks COMPLETED 08:57 10-23 (10.5 h); second chunks 49449888-49449919 COMPLETED 19:28 10-23 at the 10.5 h
+  wall (exit 0); third chunks 49453008-49453053 from 23:02 10-23. **BBA_native and BBL_native COMPLETE** (04:23,
+  07:27 10-24: target 2.89 M and 2.08 M time units, exit 0); 09:35 10-24: 29 R, 1 PD (homeodomain_denovo's next chunk
+  49455982), no error line in the 40 newest logs. No collector scores these arms; they are scored by hand when all
+  32 finish.
 - glpG-RKRK-79HIS hybrid, ff2.1, through the repo's own job script (A232): `upside3_validation/glpg/run.py` is the
   tree's `example/16.MARTINI/run.py` with only its three input paths set to the cluster copies (md5-equal to the
   Mac's). Submitted 22:58 10-22 by `python3 run.py` on the login node: prep **49448466** (log
@@ -807,16 +861,17 @@ hybrid simulation with ff2.1, on midway2, as a validation for our entire debug";
   5.0, so the KE recovers from the minimised start across stages); 1.002 in stage 6.6, 1.018 in the 7.0 burn-in, 1.005
   in 7.0. Core checks' largest pair energy 1.97-5.52 kT (limit ~32 kT); stage-7.0 solvation gate passed (0.0% of 39
   belt sites without an environment bead, 0.4% without an acyl-tail bead within 8 A; limit 10%); box 100.1 x 100.1 x
-  123.7 A, 260 lipids. C-N not read yet. **REMD block 1 49448467 R** from 02:55 10-23 (14:50: step 82,214, t 740; no
-  NaN, ROLLBACK or error in `REMD/glpG-RKRK-79HIS.remd_block1.log`). Backbone H-bonds at T 0.70 87 at step 0 and
-  93-96 now, Rg 19.2 A; the pre-audit ff3.x chains above start at 195 at T 0.70. Engine, force field and preparation
+  123.7 A, 260 lipids. C-N not read yet. **REMD block 1 49448467 R** from 02:55 10-23 (09:33 10-24: step 208,868, t 1,880; T 0.70 H-bonds 74, Rg 18.9 A;
+  the run files flush every 100 frames, 1,000 time units, last 18:52 10-23, next at t 2,000; earlier, 19:21: step 113,322, t 1,020;
+  no NaN, ROLLBACK or error in `REMD/glpG-RKRK-79HIS.remd_block1.log`). Backbone H-bonds at T 0.70 87 at step 0,
+  93-96 at 14:50 and 88 at 19:21 (one slot's instantaneous value), Rg 19.1-19.2 A; the pre-audit ff3.x chains above start at 195 at T 0.70. Engine, force field and preparation
   all differ, so this is no comparison, but block 1's TM helicity check must account for it.
 - Next action: at each REMD block end read KE per class, C-N, TM helicity (DSSP) against findings' ff2.1 glpG
-  numbers; when the Peng arms finish (~a week), score them as line 1's collector does and compare with the control
+  numbers, and TM4's protein protection at 298 K by HDX through the fixed analysis code (plan.md Phase 24 2b 4); when the Peng arms finish (~a week), score them as line 1's collector does and compare with the control
   and Peng's FF2.
 
-**Line 4: Boltz-2 HDX sampler (midway3).** 61368734 queued (below); Phase 0's tests and Phase 1's two jobs are in "Finished
-runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; local copies of the sets are
+**Line 4: Boltz-2 HDX sampler (midway3).** The 10^5 sets of EHEE and Ub psWT and the BioEmu2 side test (the last
+two items); 61368734 COMPLETED 06:35 10-24 (below). Phase 0's tests and Phase 1's two jobs are in "Finished runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; local copies of the sets are
 `scratchpad/boltz_hdx/flags/samples/<name>_md_s10_n1000.npz`).
 - **Phase 1, Ub psWT and HEEH_rd4_0097** (user 10-22, "decide the two questions for me"; `diffusion_dynamics.md`
   Phase 1): **61298446** `boltz_phase1_heeh_pswt_v100` (midway3-0277, 16:05-18:20 10-22, COMPLETED;
@@ -837,17 +892,103 @@ runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; loca
   was wrong, and s6 alone ran 3.5-9x the others at the same memory (cause not read); s8 had 760 of its 1,000 models
   written when killed.
   **Continued as 61368734** (user 10-23: "resubmit Boltz job"; submitted 15:05 from midway3-login5, same flags but
-  `--time=12:00:00`; PD Priority). The script now takes an existing run directory as its one argument and keeps a
+  `--time=12:00:00`; PD Priority, Slurm estimate 10-25 14:36 at 02:40 10-24; s3-s7 hold 1,000 models each, s8
+  760; script md5 `c9536b21` checked). The script now takes an existing run directory as its one argument and keeps a
   seed whose log reports no failed example and whose 1,000 models are written (md5 `c9536b21...`; the old one is
   `phase1_heeh_seeds.sbatch.bak_pre_resume_20261023`, `cbb0914f...`). Given
   `runs/boltz_phase1_heeh_seeds_v100_61328353`, it keeps s3-s7 (dry run of the loop on the login node), reruns s8
   with `--override` and runs s9-s12 there, then `check_samples.py` over all 10. Log
   `$B/logs/boltz_phase1_heeh_seeds_v100_61368734.out`; data stay in the 61328353 directory.
-  **Next:** check the pooled set (Rg, C-N, CA-RMSD to the design model); copy `ubqps_md_s10.npz` from 61298446 and
-  `heeh_md_s10.npz` from this job to `scratchpad/boltz_hdx/flags/samples/` as `ubqps_md_s10_n1000.npz` and
-  `heeh_md_s10_n10000.npz`, extend `run_flags.sh`, `samples_to_traj.py` and `dg_phase1.py` to them (HEEH at 278 K
-  against `reference/heeh_experiment.csv` and Table S14's Upside numbers), and draw each system's profile with
-  `plot_ref_style.py` unchanged (findings 10.36), comparisons in text.
+  **COMPLETED 06:35 10-24** (midway3-0281, R from 05:32, 1 h 03 min): s3-s7 kept, s8 rerun and s9-s12 run, each `ok` in
+  719-768 s at peak GPU 5,668 MiB; every seed holds 1,000 models. `check_samples.py` on the pooled `heeh_md_s10.npz`
+  (31 MB in the run directory): 10,000 samples of 43 residues; CA-RMSD to the design model median 1.70 A (0.57-10.46);
+  pairwise mean 1.10 A (max 6.51); Rg 9.47 +- 0.12 A (reference 9.27); peptide C-N 1.340 +- 0.048 A (0.888-2.614);
+  6,679 samples with a heavy-atom pair under 2.5 A (at most 10); CA RMSF at most 2.12 A, at residue 43. The C-N scatter
+  matches the earlier `md` sets at `step_scale` 1.0 (sd 0.054-0.059; `diffusion_dynamics.md` Phase 1).
+  **Read out locally 10-24:** `ubqps_md_s10.npz` and `heeh_md_s10.npz` copied (md5 `48099541`, `c6d4a5fa`) to
+  `scratchpad/boltz_hdx/flags/samples/` as `ubqps_md_s10_n1000.npz` and `heeh_md_s10_n10000.npz`; flags, dG and one
+  `plot_ref_style.py` figure per system in `flags/dg/`; results in `diffusion_dynamics.md` Phase 1.
+- **Phase 1, EHEE_rd2_0005 and Ub psWT at 10^5 samples each** (user 10-24, "Submit the jobs for next steps", after
+  HEEH: does Boltz-2 rank the amides whose exchange is local? At 10^5 the bound is 6.82 kcal/mol for EHEE at 298 K and
+  6.25 for Ub psWT at 273 K, resolving 9 of 15 and 12 of 24 measured amides; `diffusion_dynamics.md` Phase 1).
+  10 jobs per protein of 10 seeds each, seeds 13-112 (independent of the seed-3 sets), each seed a Boltz run of 1,000
+  `md` samples. **The first submission failed** (11:27 and 13:09 10-24; 61424051-61424062, 61428012-61428019): Boltz
+  writes 5 files per sample (model `.pdb`, `confidence_*.json`, `pae_`/`pde_`/`plddt_*.npz`), so 10^5 samples are
+  500,000 inodes per protein, and the jobs filled the trsosnic group's `/beagle3` inode quota by 12:20 (13:10:
+  1,394,586 of 1,394,800 used, file creation refused with 214 still shown free, 1.2 T of space free; the plan
+  checked space and not inodes, findings 10.39). Every job after that died at its first file. No midway2 job failed
+  (`sacct` 12:00-13:10).
+  **Fixed 14:20-14:40 10-24** (user: "Fix the problem for me"):
+  * `$B/pack_predictions.sh` (md5 `27f92f37` since 22:16 10-24, below; first version `377289de`,
+    `.bak_pre_compare_20261024`; local copy `scratchpad/boltz_hdx/`) packs a `predictions/<name>` directory into
+    `<name>.tar` beside it and removes the directory once `tar --compare` finds every member equal to its file and the
+    tar lists every file (sandbox: round trip identical; an unreadable file stops it with the directory kept). The
+    first version, which checked only the file count, was run over all 48 Boltz prediction
+    directories (list and log `$B/logs/pack_predictions_20261024.{dirs,log}`; the first, HEEH s3, packed by hand
+    through the login node's `/tmp` because the quota refused even the `.part` file). 133,247 files became 48 tars
+    (1.3 G); `df -i` 14:30: 133,359 free, 91% used.
+  * `$B/check_samples.py` (md5 `19712477`; old one `.bak_pre_pack_20261024`, `59c1d633`) reads the models from those
+    tars in the old path order. On Phase 1's packed EHEE set (61254153) it writes the same npz as the old reader on
+    the unpacked copy, byte for byte, and the cluster's own npz's `backbone`, `rg` and `n_clash` exactly (`rmsd_ref`
+    and `rmsf` within 3e-15, the SVD of another machine).
+  * `$B/phase1_seeds.sbatch` (md5 `7d7cad15`; old one `.bak_pre_pack_20261024`, `2bb287ef`): `NAME FIRST LAST
+    [OUT]`, the HEEH script's loop, now packing each seed as soon as it ends and keeping a seed whose log reports no
+    failed example and whose tar holds 1,000 models; then `check_samples.py` over the job's directory. A running job
+    holds at most one seed unpacked (~5,000 inodes). Sandbox on the login node's `/tmp` with `boltz` and
+    `nvidia-smi` stubbed: new directory, continued in place (a failed seed rerun, finished ones kept), and a seed of
+    the old script packed and then kept.
+  * Ledger `$B/submitted_1e5.txt` (old one `.bak_pre_pack_20261024`): `NAME FIRST LAST STATE [OUT]`, STATE `pending`
+    or the job id. `$B/submit_1e5.sh` (md5 `e58db4c0`, replaces `submit_refused_1e5.sh`) submits pending lines while
+    the gpu QOS (MaxSubmitPU 12; MaxWall 36 h, 16 GPUs per user) holds fewer than 12 jobs, with `--partition=gpu
+    --qos=gpu --account=pi-trsosnic --gres=gpu:1 --constraint=v100`, `--time=06:00:00` (EHEE, ~650 s a seed) and
+    `10:00:00` (Ub psWT, ~1,240 s); sandboxed with stub `sbatch`/`squeue` (stops at 12, never submits a line twice).
+    EHEE 13-22, 23-32 and 33-42 continue 61424051-61424053's directories (their 11 finished seeds kept), Ub psWT
+    33-42 continues 61428012's (no finished seed).
+  **Submitted 14:40 10-24:** EHEE **61430339-61430348** (seeds 13-112), Ub psWT **61430349** (13-22) and **61430350**
+  (23-32), all PD (Priority); **19:21 10-24:** Ub psWT **61445029** (33-42, in 61428012's directory) and **61445030**
+  (43-52), from the Mac Studio session's hourly cron `7585738b`, which ran `submit.sh` and `submit_1e5.sh` and ended
+  once everything was submitted. **61430344 (EHEE 63-72) FAILED 19:28 10-24** (midway3-0279, exit 1 after 1 h 17
+  min): s63-s69 ran `ok`, but packing s69 stopped at `tar: ehee: file changed as we read it`, GNU tar 1.30's exit 1,
+  and `set -e` ended the job before s70-s72. The files' own timestamps show the last write at 19:28:30.78, 3 s before
+  tar ran (19:28:33.6-34.1), nothing newer than the tar, and all 5,000 files in its `.part`: what changed was the
+  `/beagle3` (GPFS) directory's own timestamps, most likely settling after tar's first stat (not proven; findings
+  10.39). 62 other packs passed. **Fixed 22:16 10-24** (user: "decide that for me"): `pack_predictions.sh` now
+  leaves tar's exit 1 to `tar --compare` plus the file count, which together require the tar to equal the
+  directory (sandbox with a stub `tar` forcing exit 1, exit 2, a file grown after archiving, a file added, and the
+  directory touched: only exit 1 and the touched directory pack, with round trips identical); swapped in by `mv`, so
+  running jobs pick it up at their next seed. s69's complete directory was packed with it on the login node (compare
+  passed, 1,000 models). Ledger line set to `ehee 63 72 pending <61430344's directory>` (old ledger
+  `.bak_pre_cont61430344`), so its job keeps s63-s69 and runs s70-s72. **Submitted 22:17 10-24 by `submit_1e5.sh`:**
+  EHEE **61450268** (63-72, in 61430344's directory), Ub psWT **61450269**, **61450270**, **61450272-61450275**
+  (53-112). Nothing is pending; at 22:17 EHEE's other 9 jobs were COMPLETED, Ub psWT 61430349, 61430350,
+  61445029 and 61445030 R.
+  Data: OUT where the ledger gives one, else `$B/runs/boltz_phase1_<name>_1e5_v100_<id>/`, each with its
+  `<name>_md_s10.npz` (10^4 samples); log `$B/logs/boltz_phase1_<name>_1e5_v100_<id>.out`. **Next:** when all 20 are
+  done, check every log's `[run]` lines, pool each protein's 10 npz locally as
+  `flags/samples/<name>_md_s10_n100000.npz`, and run `run_flags.sh` and `dg_phase1.py` on them.
+- **BioEmu2 HDX side test** (user 10-24: "Set up another job to test whether we can use bioemu2 ... to get hdx
+  results", and on the section-1 rule against BioEmu weights, "Lift it, side test only"; `diffusion_dynamics.md`
+  section 7, kept apart from the Boltz work). `$E = /project/trsosnic/yinhan/bioemu2_hdx` (on `/project` for its
+  inodes; 690,951 free there at 18:10). BioEmu2 at `06be369`; weights `microsoft/bioemu2` revision `dd4b0c1b`,
+  `checkpoints/bioemu2-preview` (2,047,661,181 bytes) in `$E/cache/hf`; `$E/ckpt_full/` links that checkpoint with a
+  `config.yaml` differing only in `trimul_variant: full` (cueq's Triton kernel is untested on sm_70).
+  `$E/install.sh` (md5 `a1828bb5`): uv's managed CPython 3.13.17 (the `python/3.13.11` module lacks `_ctypes`, so
+  torch cannot import; that first venv was removed, log `logs/install_module313_noctypes.log`), `.[cuda12]`, torch
+  2.13.0+cu126 with sm_70; 37,859 files. `$E/prep.py` (md5 `e69279b1`, log `logs/prep.log`): system YAMLs, the
+  three references (md5-equal to Boltz's), and MSAs through BioEmu2's own ColabFold call into `$E/cache/msa` (EHEE 2
+  rows, query only; Ub psWT 21,123; HEEH 4). `$E/sample.sbatch` (md5 `dfb98dc6`): `NAME:N ... [OUT]`, one
+  `bioemu2 sample-equilibrium` run per protein (sampler `edm`, 200 steps, `--batch-size 100 --seed 1 --precision
+  32-true`, offline), a finished run kept and an unfinished one resumed from BioEmu2's `partial/` batches, then
+  `$E/bioemu2_samples.py` (md5 `e29336b5`): CA-RMSD, Rg, C-N, clashes, RMSF and `<name>_n<N>.npz` with `backbone`.
+  Checked: a 4-sample EHEE run on the Mac CPU (fp32, `full`; 3.6 min; all 4 pass BioEmu2's physicality check;
+  CA-RMSD 0.61-0.73 A, C-N 1.337 +- 0.029 A), the converter on it in the cluster venv (same numbers), the job loop
+  sandboxed with `bioemu2` stubbed (a failed run does not stop the job; continuing keeps finished runs).
+  **Submitted 19:21 10-24 as 61445028**, R from 21:19 on midway3-0279, `ehee:1000 ubqps:1000 heeh:10000`, 12 h, V100, by `$E/submit.sh` (md5
+  `09e95e1a`; `--test-only` passed first; id in `$E/submitted.txt`) from the hourly cron above, at the first free gpu
+  slot and ahead of the Boltz Ub psWT lines. Log
+  `$E/logs/bioemu2_hdx_v100_<id>.out`; data `$E/runs/bioemu2_hdx_v100_<id>/<name>_n<N>/` (5 files per run) and
+  `<name>_n<N>.npz`. **Next:** read the `[run]` lines and physical checks, copy the npz locally, and run the flags
+  and dG as Phase 1, against experiment and Upside's published values.
 
 **Shared**
 - **The engine fix** (findings 3.12; plan.md Phase 21): `$P/obj/upside` and `libupside.so` from
@@ -859,7 +1000,8 @@ runs". Their dG profiles are done locally (`diffusion_dynamics.md` Phase 1; loca
   1.2 T at 22:30 10-20.
 - **What happens next** (estimates; Slurm's start times move):
   - glpG block 5, the last, closes 10-24 ~15:00 (ff3.0 79HIS_S115T, 79ALA) to ~23:30 (the other six).
-  - ff3.1.1 / ff3.2.1 reach step 114 ~10-24 afternoon if they start soon; then the agreement check (line 2).
+  - ff3.1.1 and ff3.2.1 (R from 08:51 and 19:14 10-24, ~33 min a step) reach step 114 ~05:45 and ~16:00 10-25;
+    the collector checks new steps every 4 h; then the agreement check (line 2).
   - Upside 3 glpG REMD block 1 ends at its 35.75 h wall, ~14:40 10-24, and queues block 2.
   - Released ff2.1's Peng table (`peng_ff21.txt`) and Upside 3's Peng arms in about a week.
 
@@ -867,11 +1009,12 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **Peng arms resubmitting (second chunks 49449888-49449919 R); 49448467 R (glpG REMD block 1)** (midway2) | **Upside 3 validation of the debug** (plan.md Phase 24 2b): Peng's 16 proteins x {native, denovo} and the glpG-RKRK-79HIS hybrid with ff2.1 on `/beagle3/trsosnic/yinhan/upside3` | submitted 22:26 10-22; prep 49448466 COMPLETED 02:54 10-23, gate passed | §1 line 3 |
-| **block 5: 49449200, 49449265, 49450019, 49450109, 49450110, 49450132, 49450340, 49450408 R** (midway2; block 1 49411315-49411322 10-17 to 20:39 10-18; block 2 49417749-49418152 to 14:56 10-20; block 3 49428215-49432786 to 01:33 10-22; block 4 49440731-49442553 to 11:27 10-23) | **The corrected glpG REMD chains** (user 10-17: "fix the bug and rerun the affected simulations"; plan.md Phase 18; findings 4.17): the side-chain placement fixed in the preparation and every live seed, 28 replicas T 0.70-0.90, five 36 h blocks (`submit_remd.sh`), ff_3.0_gdepth and ff_3.1_depth_data x {79HIS, 79HIS_S115T, 79ALA, 79ALA_S115T}; 79HIS ff_2.1_ctrl38 49411323 and ff_2.1_nobp 49411324 stopped by the user 08:33 10-18. Seeds `popepopg_REMD_mdw2/seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Logs `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out` | Blocks 1-4 closed clean (block 4: KE/1.5kT 0.989-1.013, no ROLLBACK or NaN); block 5 R, ends 10-24 ~15:00-23:30 | TM4 at the ends of blocks 2-5 (`tm4_ff31.py`, `gly_flip_rungs.py`, DSSP); HDX on ff3.1's chains (recipe below) |
-| **Peng arms resubmitting (chunks 49449415-49449438); collector 49450442** (midway2) | **Released ff2.1 on the three side-chain tests** (plan.md Phase 27): the mdCATH and 44-domain panels at dt 0.009 and Peng's benchmark, on the same protocols, binaries and domains as the retrained arms, to decide whether to keep ff2.1 itself | 44 domains and mdCATH done; Peng 8 of 32 scored, 23 running | `peng_ff21.txt` (DONE, ~a week); then plan.md Phase 27 step 4 |
-| **49451890, 49451891 PD** (midway2; successors queued at start) | **ff311_depths_only and ff321_depths_only (ff3.1.1, ff3.2.1)** continued 76 -> 114: ff2.1 with only its basin depths trained under the pooled prior, from NDRD's and ff3.0's map (plan.md Phases 29-30) | submitted 15:33 10-23 | at 114: KE scan, `check_step.py`, the agreement rule (plan.md Phase 30); then merge into ff3.1 and validate, or extend to 133 |
-| **61368734 PD** (midway3 gpu, V100, 12 h) | **Boltz-2 HEEH_rd4_0097, seeds 8-12 of the 10 x 1,000 set** (`diffusion_dynamics.md` Phase 1), continuing 61328353 in its own directory | submitted 15:05 10-23 | read its log's `[run]` lines and `check_samples.py` over all 10 seeds; then §1 line 4 "Next" |
+| **Peng arms resubmitting (29 R, 1 PD; BBA_native and BBL_native complete); 49448467 R (glpG REMD block 1)** (midway2) | **Upside 3 validation of the debug** (plan.md Phase 24 2b): Peng's 16 proteins x {native, denovo} and the glpG-RKRK-79HIS hybrid with ff2.1 on `/beagle3/trsosnic/yinhan/upside3` | submitted 22:26 10-22; prep 49448466 COMPLETED 02:54 10-23, gate passed | §1 line 3 |
+| **block 5: 49449200, 49449265, 49450019, 49450109, 49450110, 49450132, 49450340, 49450408 R** (midway2; block 1 49411315-49411322 10-17 to 20:39 10-18; block 2 49417749-49418152 to 14:56 10-20; block 3 49428215-49432786 to 01:33 10-22; block 4 49440731-49442553 to 11:27 10-23) | **The corrected glpG REMD chains** (user 10-17: "fix the bug and rerun the affected simulations"; plan.md Phase 18; findings 4.17): the side-chain placement fixed in the preparation and every live seed, 28 replicas T 0.70-0.90, five 36 h blocks (`submit_remd.sh`), ff_3.0_gdepth and ff_3.1_depth_data x {79HIS, 79HIS_S115T, 79ALA, 79ALA_S115T}; 79HIS ff_2.1_ctrl38 49411323 and ff_2.1_nobp 49411324 stopped by the user 08:33 10-18. Seeds `popepopg_REMD_mdw2/seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Logs `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out` | Blocks 1-4 closed clean (block 4: KE/1.5kT 0.989-1.013, no ROLLBACK or NaN); block 5 R, ends 10-24 ~15:00-23:30 | TM4 at the ends of blocks 2-5 (`tm4_ff31.py`, `gly_flip_rungs.py`, DSSP) |
+| **9 de novo Peng arms R; collector 49454597 PD** (midway2) | **Released ff2.1 on the three side-chain tests** (plan.md Phase 27): the mdCATH and 44-domain panels at dt 0.009 and Peng's benchmark, on the same protocols, binaries and domains as the retrained arms, to decide whether to keep ff2.1 itself | 44 domains and mdCATH done; Peng 23 of 32 scored, 9 running | `peng_ff21.txt` (DONE, ~a week); then plan.md Phase 27 step 4 |
+| **EHEE: 61430339-61430343, 61430345-61430348 COMPLETED, 61450268 PD (continues 61430344, FAILED in a pack); Ub psWT: 61430349-61430350, 61445029-61445030 R, 61450269-61450275 PD (22:17 10-24)** (midway3 gpu, V100) | **Boltz-2 EHEE_rd2_0005 and Ub psWT, 10^5 `md` samples each** (`diffusion_dynamics.md` Phase 1): does Boltz-2 rank amides whose exchange is local | resubmitted 14:40 10-24, each seed packed into one tar (the first submission filled `/beagle3`'s inodes) | all 20 submitted; when they finish, check the logs' `[run]` lines, pool and read out locally (line 4) |
+| **61445028 R from 21:19 10-24** (midway3-0279, V100) | **BioEmu2 HDX side test** (`diffusion_dynamics.md` section 7; user: "Lift it, side test only"): EHEE_rd2_0005 and Ub psWT 10^3, HEEH_rd4_0097 10^4 samples | set up 18:10 10-24; submitted 19:21 10-24 | `[run]` lines and physical checks in its log (line 4); then read out locally |
+| **49451890 R (step 102), 49451891 R (step 83), successors 49455911, 49457569 PD; collector 49458021 PD** (midway2; 23:07 10-24) | **ff311_depths_only and ff321_depths_only (ff3.1.1, ff3.2.1)** continued 76 -> 114: ff2.1 with only its basin depths trained under the pooled prior, from NDRD's and ff3.0's map (plan.md Phases 29-30) | submitted 15:33 10-23; collector's first full pass 01:02-08:49 10-24, steps 0-75 checked; ff3.1.1 steric flag (line 2) | at 114: the collector's `status.txt` (KE, `check_step.py`, steric), the agreement rule (plan.md Phase 30); then merge into ff3.1 and validate, or extend to 133 |
 
 ### TM4 HDX on ff_3.1_depth_data: the recipe (done 10-17, findings 5.5; user 10-14 02:10, "Do the analysis on ff3.1 as well")
 

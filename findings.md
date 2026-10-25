@@ -2438,6 +2438,15 @@ Phase 14 step 5).
   19:28) reads 0.0047 / 0.0042, at the threshold and not above: over the four epochs 0.0047, 0.0042,
   0.0050, 0.0047 free. Step 39 reads as this minibatch's step-to-step scatter about ~0.0047, not a
   trend with the library.
+- **ff3.1.1 and ff3.2.1, steps 0-99 and 0-81 (10-24 23:10): the beta' + pPII' flag is minibatch composition.**
+  Both runs share one minibatch order, and grouped by minibatch their free non-glycine beta' + pPII' is flat
+  across epochs: minibatches 1 and 14 read 0.0043-0.0050 in every epoch, epoch 0 on NDRD included, minibatches 0 and
+  2 about 0.0022. Against one line, 0.0043, ff3.1.1 has 6 of 81 steps after 18 above it (33, 39, 71, 77, 90, 96, all
+  minibatch 1 or 14) and ff3.2.1 7 of 63, both means 0.0032 before and after step 18. ff3.1.1 is flagged and
+  ff3.2.1 is not only because ff3.2.1's step 1 read 0.0050 and ff3.1.1's 0.0043. A maximum over a growing number of
+  draws set against one draw per minibatch will cross by chance; a per-minibatch comparison against epoch 0 would
+  separate a real shift from this. The threshold is not changed (the user's call). Until 10-24 the collector's
+  status line counted the files carrying the flag (each file judges every step so far), not flagged steps.
 
 ### 1.34 The ff3.1 review at the target: `all` is worse, `data` ties ff3.0 (2026-10-13)
 
@@ -5228,13 +5237,21 @@ nothing changed).** The protection rule and the dG profile (`calc_hdx_ht.py`, `p
 **TM4: protein-buried, finite in experiment, and more protected than the hybrid says (user question,
 2026-10-11).** The user's concern: implicit TM4 runs off-scale, hybrid TM4 does not, and TM4 is buried in the
 protein with no bilayer contact.
+
+**Correction (2026-10-23, 10.38): the residue numbers this part takes from HDX outputs (dG, `pp_fail`, `acc`) are the
+outputs' labels, 0-based Upside indices, one below the PDB numbering the HXMS peptides and the crystal use.** Peptide
+140-144 ALMGY is labels 139-143 and reports labels 141-143. So the pre-fix "142-144 at 4.1-4.4" below is PDB 143-145,
+and every comparison of labels 142-144 with the peptide is one residue off.
 * **TM4 is mostly protein-buried, but not sealed.** In the OPM-oriented E. coli structure in the lab folder
   (`glpg.pdb`, 91-271), relative SASA of construct 131-145 is <=0.05 (146-150: 0.09-0.56). Probe centres a
   2.35 A tail-sized probe can reach in |z| < 13 A sit 4.1-6.3 A from the backbone N of 142, 143, 144, 146,
   147 and 7.2-10.8 A from the rest of TM4, so the crystal predicts that ~5 TM4 amides register a tail contact
-  under the 7 A rule, the same ones the hybrid shields (5.3: `acc` ~0 at 143, 144, 146, 147). The hybrid's
-  lipid term on TM4 matches the crystal; it is not lipid intrusion. (The exterior/cavity split used a crude
-  radial ray test, which put 4488 of 4498 probe centres outside.)
+  under the 7 A rule, the ones the hybrid shields. 5.3's `acc` ~0 at 143, 144, 146, 147 came from the pre-A61
+  script, which stored PDB residue d's value in the column labelled d, so read as PDB numbers they name the right
+  residues; on the placement-fixed ff3.0 chains at the 298 K rung (5.6), PDB 143, 144, 146 and 147 have a tail
+  contact in 87-100% of frames, 142 in 72-97%, and 145 and 148 in 28-77%. The hybrid's lipid term on TM4 follows
+  the crystal; it is not lipid intrusion. (The exterior/cavity split used a crude radial ray test, which put 4488
+  of 4498 probe centres outside.)
 * **The off-scale implicit TM4 is not lipid.** The implicit analysis applied no membrane term (5.3b), so its
   TM4 is off-scale because H-bond or protein burial held in every frame: TM4 never opened, dG >5.4.
 * **The finite pre-fix hybrid TM4 is protein protection failing, not lipid.** Two pre-fix sources, which
@@ -5363,6 +5380,42 @@ block numbers below) in `~/Downloads/glpG_HDX_ff3.0_blocks_20261022/` on the Mac
   difference under ~1 kcal/mol at an amide. The censoring bound rises only as RT ln(ESS), 0.41 kcal/mol per
   doubling: if ESS grows with frames, two blocks reach ~6.3 (the pooled run: 6.25-6.29) and four ~6.7, while TM4 140-144's HXMS 6.1-7.4
   (5.5) needs ~14 blocks' worth for its upper end.
+- **TM4** (user 10-23: "it looks like the TM4 issue is resolved according to plots glpG_HDX_ff3.0_blocks_20261022
+  ... Double check"). Residues here are PDB numbers, the HDX outputs' label + 1 (10.38). The figures draw
+  `dG_unclipped`: their 11-19 kcal/mol TM4 points lie above RT ln(ESS) and are lower bounds (`plot_ref_style.py`),
+  so they read as the npz's censored values do. At 298 K, pooled, PS:
+  - 141-144 are censored above 6.25-6.29 in all four variants, as at T 0.75 and 0.80 and in each block alone, and
+    145, 147 and 148 too, except 79ALA's 145 (5.68) and 79ALA_S115T's 148 (5.62). The HXMS peptide 140-144 reports
+    142-144 at 6.1-7.4 (5.5), so the model agrees with it.
+  - The N-terminal turn resolves: 138 at 3.71 / 5.09 / 4.43 / 4.81 and 140 at 4.80 / censored / 3.82 / 5.13
+    (79HIS, 79HIS_S115T, 79ALA, 79ALA_S115T), and 79ALA_S115T's 146 at 4.76. On the misplaced-bead chains (5.5)
+    they were censored or at the bound, so plan.md Phase 16's rule (labels 137-147, PDB 138-148, censored above
+    ~5.1) now fails at 138 and 140 in 79HIS and 79ALA. 149-152 read 1.3-4.6 where resolved.
+  - The core is off-scale only through the membrane term. Under PS_protein 79ALA's 141-145 resolve at 1.77-4.56
+    (the peptide's 142-144 at 2.65, 1.77, 4.56); at the 0.853 rung their protein protection breaks in 0.05-3.7% of
+    frames (79ALA_S115T's 141-142: 8-11%), and in 141-144 every such frame is lipid-shielded.
+  - That term's accessibility is the pre-A61 one (the shared deployment's script, md5 `ca115325`): each amide
+    carried its N-terminal neighbour's value. Undone from the stored arrays at the 0.853 rung, 141-144 still
+    exchange in 0-4 of ~11,000 frames, but Val145 goes from 0-2 to 0 / 3 / 18 / 11 (79HIS, 79HIS_S115T, 79ALA,
+    79ALA_S115T), and 79ALA_S115T's 139 from 0 to 44 and its 148 from 1 to 9. The undoing is exact wherever the
+    next residue is a donor, all of TM4 135-151: the run is NVT, so the box is the input one, and the radius stays
+    each replica's own (7.00 A; 6.88 or 7.12 on 1-4 of 28).
+  - Reweighted on those arrays (`hdx_accfix.sbatch`, 61383990; `$C2/tm4_accfix_blocks2-3.txt`, in labels), at
+    298 K: the peptide's 142-144 stay censored in 79ALA, the experiment's variant (E. coli H145A), and in
+    79ALA_S115T; in the 79HIS variants 143-144 do and 142 resolves (5.43, 4.00). 146-148 stay censored but for
+    79ALA_S115T's 148 (4.49). **Val145 comes down**: 4.02 in 79ALA, 4.14 in 79ALA_S115T, 5.00 in 79HIS_S115T,
+    censored in 79HIS; its protein protection breaks as before (PS_protein 3.1-3.3), and with the shift undone it
+    has no tail contact in 23-72% of frames. No HXMS peptide isolates 145: 143-154 reports 145-152 and 154 at once
+    (10.2% D at 10 min, 15.4% at 1 h, 19.7% at 6 h, 31% at 48 h, 46% at 20 d, not back-exchange corrected), and the
+    model's 150-152 at 1.5-2.9 would exchange in minutes. Phase 16's rule fails in every variant: 79HIS at 138
+    (4.13), 79HIS_S115T at 142 and 145, 79ALA at 140 (4.06) and 145, 79ALA_S115T at 138, 139, 145 and 148 (4.1-4.7).
+    The dG code is not touched by A62 (its residue kT is 0.001987 x 298 K at T 0.85; the 0.593 sits in the
+    free-energy surface plot only).
+  - Read: in the experiment's variant the hybrid under ff3.0 agrees with HXMS on TM4's one isolated peptide, with
+    or without the accessibility fix. What it frays (the 138-140 turn, Val145, the C-terminal end) no peptide
+    resolves. The core holds by lipid shielding while its protein protection breaks far more than in the implicit
+    model, on an engine without A83's ALA and GLY side chains (plan.md Known Errors; TM4 135-151 has four). The user
+    closed the TM4 HDX question on this reading 10-23; the protein protection is read next on Upside 3's glpG run.
 - `extract_block.py`'s `print` wrote its line and newline separately under `PYTHONUNBUFFERED=1`, so two of 16
   parallel replicas shared one line of `extract.log` and the `verified$` count failed a correct copy (79HIS_S115T
   block 2, 61313663). It now writes each line in one call; the check is unchanged.
@@ -6359,6 +6412,24 @@ is ff30_glyhb. Two corrections from the user on the same day:
 
 ### 10.14 Other cluster and tooling lessons
 
+* **midway3's `python/3.13.11+gcc-12.2.0` module has no `_ctypes` (2026-10-24).** A venv from it installs torch
+  and then fails at `import torch`. For a Python above 3.11 there, use uv's managed CPython (uv from PyPI as a static
+  binary, `UV_PYTHON_INSTALL_DIR` on shared storage), as the BioEmu2 venv does; the `python/3.11.9` module is sound.
+* **`sbatch --test-only` counts against the gpu QOS's 12-job limit (2026-10-24).** With 12 jobs queued it fails with
+  `QOSMaxSubmitJobPerUserLimit` like a real submission, so check a new job's shape when a slot is free, just before
+  submitting it.
+* **`pgrep -f` / `pkill -f` match the ssh command that runs them (2026-10-24).** A remote
+  `while pgrep -f pack_predictions.sh; do sleep 10; done` never ended, because the loop's own `bash -c` line holds
+  that string, and `pkill -f "while pgrep"` then killed the ssh session issuing it. Match with a bracket pattern
+  (`ps -u $USER -o pid,args | grep "[p]ack_predictions"`) or wait on a PID.
+* **`timeout` around `ssh <host> <cmd>` stops only the local client (2026-10-23).** The remote command runs on: a
+  sandbox test cut at 100 s kept writing on login1 while its retry ran in the same directory, and the two duplicated
+  entries. After a timeout, check `ps` on that host and stop the leftover before retrying.
+* **A collector under `set -eo pipefail` dies on a pipeline whose last stage reports nothing (2026-10-23).**
+  `x=$(ls | while read d; do [ -f $d/f ] && basename $d; done | tail -1)` returns 1 when the final directory lacks
+  the file, and `grep -l ... | sed` returns 1 when nothing matches; either kills the job silently with an empty log
+  (`pooled_collect`, 10-21). Count in the loop itself, and give `grep` an explicit `|| true` where no match is a
+  valid answer.
 * **caslake rejects an `--exclude` that names midway2 nodes (2026-10-05).** `sbatch` there ends
   with "allocation failure: Invalid node name specified", so a script carrying `#SBATCH
   --exclude=midway2-[...]` (`ff3_benchmark/bench.sbatch`) runs on caslake only when the command line
@@ -6750,7 +6821,9 @@ selected. **No BioEmu weights, samples, training data or benchmarks enter the di
 comparator.** BioEmu2's code may be used (user, 2026-10-21): it is MIT-licensed and itself adapted from Boltz, so
 Phase 3 ports its lag conditioning (`diffusion_dynamics.md`). The objection is to BioEmu's data, which the code does
 not carry. When a plan document names a base model, check it against the user's stated goal before evaluating or
-running it.
+running it. **One exception (user, 2026-10-24, "Lift it, side test only"):** a side test of whether BioEmu2's
+weights give HDX results, kept as its own record (`diffusion_dynamics.md` section 7) and never used as a baseline or
+comparator in the Boltz work.
 
 ### 10.35 Read the fix's diff as master's author would before verifying it (2026-10-21)
 
@@ -6772,7 +6845,9 @@ dirs' `results/`) and the script that made them, and reproduce that format with 
 "there should be only 4 figures, one for each protein variant": **one figure per system, from all its
 post-equilibration data pooled** (here blocks 2-3 through the pipeline as one range); a comparison the format lacks
 (block 2 against block 3) goes in text, not in more figures, unless the user asks for it. The SciencePlots rule
-governs new figures, not a format the user names.
+governs new figures, not a format the user names. "Unchanged" means its format: the repo's copy crashed on every input from 10-21 (its legend reused
+the name `labels`, which the tick formatter reads when the figure is laid out) and was fixed 10-24 by renaming the
+legend's list; the cluster's older copy (md5 `fad2166e`), which drew the 10-22 glpG figures, never had the clash.
 
 ### 10.37 For runs from different starts, "converged" means they agree with each other (2026-10-23)
 
@@ -6781,6 +6856,32 @@ starting point for GLY". I had begun the single-run fixed-point tests of 1.36 (g
 user asks whether runs that differ only in their start "converged", the test is between the runs:** the gap at the
 start against the gap at the end, term by term, read against the gap of the terms that started equal (the runs'
 own noise). The fixed-point gate is a different question; say which one is being answered before running either.
+
+### 10.38 Name an HDX residue from the sequence before comparing it with experiment (2026-10-23)
+
+The HDX outputs (`resid_*.txt`, the npz `res`, the cluster `plot_ref_style.py` axis, `readout.py`) label each amide
+by its 0-based Upside index, the donors' residue; glpG's PDB, construct, variant names and HXMS peptides count from
+1, so label = PDB - 1. Since 10-11 the TM4 readouts set labels 142-144 against peptide 140-144's amides 142-144, and
+on 10-23 I told the user that label 144, Val145, was in that peptide and too labile. **Before comparing an HDX
+residue with a peptide, a crystal contact or a variant, print its residue name from the HDX topology's sequence and
+check it against the peptide's sequence** (ALMGY is labels 139-143). The repo's `plot_ref_style.py` labels its axis
+with `pdb_resnum`; the cluster copy does not.
+
+### 10.39 Count a fleet's files against the inode quota before submitting it (2026-10-24)
+
+The 20 Boltz-2 jobs for 10^5 samples per protein (remote_jobs.md §1 line 4) were checked against `/beagle3`'s free
+space (1.2 T) and not its inodes. Boltz writes 5 files per sample, so the fleet needed 1,000,000 inodes of a group
+fileset with ~60,000 free; it filled them within an hour (12:20 10-24, `df -i` 214 of 1,394,800 free), every job
+after that died at its first file, and the quota is the group's, so every trsosnic job creating a file on
+`/beagle3` failed with them. **Before a fleet that writes many small files, multiply files per unit by units and
+check it against `df -i` on the fileset as well as `df -h`;** a sampler that writes a file per sample packs them
+inside the job, one tar per run, as `phase1_seeds.sbatch` now does through `pack_predictions.sh`. GPFS refused file
+creation with 214 inodes still shown free, so even a tar could not be started in place; the first one was written
+to the login node's `/tmp` and moved in after its directory was removed. **Judge such a tar by comparing it with
+its directory (`tar --compare` and a file count) before removing anything, not by tar's exit status:** GNU tar 1.30
+exits 1 ("file changed as we read it") when a directory's timestamps move during the read, and on `/beagle3` it did
+so for a directory Boltz had finished writing 3 s earlier, every file intact (1 pack of 63; under `set -e` it ended
+61430344 three seeds early).
 
 ---
 

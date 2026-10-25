@@ -134,11 +134,11 @@ def main():
     axis.grid(True, color="0.85", linewidth=0.8)
     axis.set_axisbelow(True)
     axis.tick_params(labelsize=20)
-    handles, labels = axis.get_legend_handles_labels()
+    handles, names = axis.get_legend_handles_labels()
     # Lower left, not the reference figure's upper left. On this axis nothing falls below -1 kcal/mol, so the
     # bottom corner is the one region guaranteed to be empty; the reference's own corner sits under the
     # excursions off helix 1 here.
-    axis.legend(handles, labels, fontsize=22, loc="lower left", framealpha=1.0)
+    axis.legend(handles, names, fontsize=22, loc="lower left", framealpha=1.0)
     figure.tight_layout()
     figure.savefig(args.out, dpi=200)
     print("wrote %s" % args.out)

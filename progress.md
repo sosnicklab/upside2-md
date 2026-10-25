@@ -1489,3 +1489,74 @@ to 10-07 12:00 is in git history.
   -3%, per-map largest basin change median 10-14%, slowing; glycine most). Agreement rule fixed before the data
   (plan.md Phase 30). `submit_new.sh` drops p311/p321; both runs continued 76 -> 114 (49451890, 49451891). Files:
   plan.md Phases 29-30, remote_jobs.md, progress.md; cluster `ff3_selection/submit_new.sh`.
+- 10-23 19:20-20:40, remote jobs, the ff3.1.1 / ff3.2.1 collector and the TM4 question (user: "check remote job status",
+  "also check boltz job on midway3", then "fix the ff3.1.1, 3.2.1 job" and "it looks like the TM4 issue is resolved
+  ... Double check and mark it as resolved"). Status: released ff2.1's 23 Peng chunks reached their wall and
+  resubmitted; glpG block 5 clean; Upside 3 Peng and glpG REMD clean; Boltz 61368734 pending. Collector
+  `collect_pooled.sbatch` rewritten (loop-counted steps, target 114, no panels, whole-entry writes, 24 h wall),
+  sandbox-tested on login1, resubmitted as 49453078. TM4 (PDB numbers): the 10-22 figures' core 141-144 is censored at
+  298 K in every variant and block, but by Phase 16's 10-14 rule 138 and 140 now fail in 79HIS and 79ALA, the core holds only
+  through the membrane term, and that term carries the A61 accessibility shift (the shared deployment's script);
+  undone and reweighted (61383990, 20:00), peptide 140-144's amides stay censored in 79ALA, the experiment's
+  variant, and Val145 comes down to 4.02. First reported label 144 as a peptide amide: HDX labels are PDB - 1, which
+  every TM4-vs-HXMS comparison since 10-11 missed (findings 10.38); corrected and told the user, with A83 (ALA/GLY
+  side chains absent in the running chains' seeds, checked) as the simulation defect bearing on TM4. 22:15: the user
+  closed the TM4 HDX question; its protein protection is read on Upside 3's glpG run. 22:50: HDX on ff3.1's
+  repaired chains dropped (user). Files: remote_jobs.md, plan.md Phases 16, 18, 24, 29, 30 and
+  Known Errors, findings.md 5.5, 5.6, 10.14, 10.38, progress.md; cluster `checks/ff311_20261021/collect_pooled.sbatch`,
+  `checks/hdx_ff30_placefix_20261022/{accfix_ps.py,accfix_readout.py,hdx_accfix.sbatch}`.
+- 10-24 02:30-11:00, status passes and the Boltz Phase 1 readout (user: "check status", "check boltz jobs as well",
+  "proceed to next step for Boltz job"). Status: all logs clean; ff3.1.1 / ff3.2.1's collector checked steps 0-75 of
+  both (ff3.1.1 steric flag from the free beta' + pPII' alone, reported; ff3.2.1 none), ff3.1.1's training resumed
+  08:51; released ff2.1's Peng 23 of 32 scored; Upside 3 Peng 2 of 32 complete; Boltz 61368734 COMPLETED 06:35 (10^4
+  HEEH samples). Boltz readout, local: HEEH and Ub psWT copied (md5 checked) and run through `run_flags.sh` and
+  `dg_phase1.py`, both extended to the two sets (the old flags and dG tables reproduce byte for byte). HEEH at 278 K:
+  halves agree (Fisher p >= 0.125), 4 of 20 measured amides never open where experiment has 3.2-3.8, Spearman 0.04
+  against experiment (Upside FF2 0.32); Ub psWT below the censored experiment at 1 of 24 (Upside 7). Fixed
+  `plot_ref_style.py`'s name clash (crashed on every input since 10-21) and drew one figure per system. Files:
+  remote_jobs.md, diffusion_dynamics.md, findings.md 10.36, progress.md, `example/00.AnalysisScripts/helpers/
+  plot_ref_style.py`; scratchpad `boltz_hdx/flags/{run_flags.sh,samples_to_traj.py,dg_phase1.py}`.
+- 10-24 11:00-11:40, Boltz next step (user: "What do you think we can do to fix boltz", then, after the point that
+  Upside also trains on PDB only, "Submit the jobs for next steps"). HEEH diagnosis measured locally: no sample over
+  35% of donors open, 6 of 10^4 beyond 8 A, hairpin open fractions 25-35x below experiment's. Wrote
+  `phase1_seeds.sbatch` (the HEEH seed loop with NAME FIRST LAST [OUT]), dry-run on the midway3 login node, test-only,
+  then submitted EHEE 61424051-61424060 and Ub psWT 61424061-61424062 (10^5 samples each, seeds 13-112); 8 Ub psWT
+  jobs refused by the gpu QOS's 12-job limit, to submit as slots free. Files: remote_jobs.md, diffusion_dynamics.md,
+  progress.md; cluster `boltz_hdx/{phase1_seeds.sbatch,submitted_1e5.txt}`. 11:40 (user: "Set up an hourly check"):
+  `submit_refused_1e5.sh` (idempotent, sandbox-tested) and session cron `178a2dc4` at :07 to submit the 8 as slots free.
+- 10-24 13:09-14:45, Boltz 10^5 jobs filled `/beagle3`'s inodes; fixed (user: "Fix the problem for me"). The hourly
+  check submitted the last 8 at 13:09 and showed the first 12 FAILED: Boltz's 5 files per sample filled the group's
+  inode quota by 12:20 (214 of 1,394,800 shown free; the plan had checked space only). All 20 failed, no midway2 job
+  did. Fix: `pack_predictions.sh` (tar per predictions directory, removed only once the tar lists every file) packed
+  all 48 Boltz directories, 133,247 files, leaving 133,359 inodes free; `check_samples.py` reads the tars (on the
+  packed Phase 1 EHEE set, the old reader's npz byte for byte); `phase1_seeds.sbatch` packs each seed as it ends;
+  ledger and `submit_1e5.sh` replace `submit_refused_1e5.sh`. Sandbox-tested on the login node's `/tmp`, test-only,
+  then resubmitted 14:40: 61430339-61430350 PD, 8 Ub psWT lines pending for the new hourly cron `33324cbc` (which
+  stops on a failed job or under 30,000 free inodes). Files: remote_jobs.md, diffusion_dynamics.md, findings.md
+  10.14, 10.39, progress.md; scratchpad and cluster `boltz_hdx/{pack_predictions.sh,check_samples.py,
+  phase1_seeds.sbatch,submit_1e5.sh,submitted_1e5.txt}`.
+- 10-24 15:00-18:15, BioEmu2 HDX side test set up (user: "Set up another job to test whether we can use bioemu2 ...
+  to get hdx results"; asked about the 10-21 rule against BioEmu weights, chose "Lift it, side test only"). Rule
+  exception recorded (findings 10.34, the memory, diffusion_dynamics.md sections 1 and 7). Repo read at `06be369`
+  by an agent (install, weights, MSA route, output of 5 files per run; training includes MD of Tsuboyama systems,
+  relatives of the test proteins but not them). Mac sandbox: install, a 4-sample EHEE run with `trimul_variant: full`
+  and fp32, and the converter. midway3 `/project/trsosnic/yinhan/bioemu2_hdx`: the `python/3.13.11` module lacks
+  `_ctypes`, so the venv uses uv's managed CPython 3.13.17; weights, MSAs and references prepared on the login node;
+  job loop and submitter sandboxed. One V100 job (EHEE and Ub psWT 10^3, HEEH 10^4) waits for a gpu slot; the hourly
+  cron is now `7585738b`, which submits it first and then the Boltz lines. Files: remote_jobs.md,
+  diffusion_dynamics.md, findings.md 10.14, 10.34, progress.md, memory `feedback_boltz_not_bioemu.md`; scratchpad
+  and cluster `bioemu2_hdx/{install.sh,prep.py,sample.sbatch,submit.sh,bioemu2_samples.py}`.
+- 10-24 19:21-22:17, gpu submissions finished. The hourly cron submitted BioEmu2 61445028 (R from 21:19) and Ub psWT
+  61445029-30. 61430344 (EHEE 63-72) FAILED when packing s69: GNU tar's exit 1, "file changed as we read it", on a
+  GPFS directory whose files were all complete. Fix (user: "decide that for me"): `pack_predictions.sh` lets that
+  exit through to `tar --compare` and the file count (stub-`tar` sandbox: six cases), deployed by `mv` with a backup;
+  s69 packed with it; the ledger line continued in place as 61450268, and Ub psWT 53-112 went in as
+  61450269-61450275. Nothing is pending, so cron `7585738b` was deleted. Files: remote_jobs.md, findings.md 10.39,
+  progress.md; scratchpad and cluster `boltz_hdx/{pack_predictions.sh,submitted_1e5.txt}`.
+- 10-24 23:00-23:20, ff3.1.1 / ff3.2.1 status (midway2 socket reopened). Both R at ~33 min a step (102 and 83),
+  KE/1.5kT at most 1.018, glycine's alpha_L gap 0.179 at round 4 with ff3.1.1 moving +0.009 in round 5. The
+  collector's status line (user: "fix it") now counts flagged steps from the newest steric file's table and clash
+  flags per file (sandboxed on copies of the real files; deployed by `mv`, md5 `560cc098`). Its first output
+  corrected my earlier summary: ff3.1.1 has six steps above the threshold, not two, all minibatch 1 or 14, the
+  minibatches that read high in every epoch of both runs. Files: remote_jobs.md, findings.md 1.33, progress.md;
+  cluster `checks/ff311_20261021/{collect_pooled.sbatch,submitted.log}`.

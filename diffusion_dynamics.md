@@ -1,9 +1,10 @@
 # A modified Boltz-2 to replace Upside's sampling for HDX
 
-**Status: Phase 0 done (2026-10-21). Phase 1's first dG profiles (2026-10-22): from 1,000 samples Boltz-2 resolves
-nothing above about 4 kcal/mol, below every measured amide, and opens 2 of 39 measured amides against Upside's 11; rank
-order is not testable at this sample count. Ub psWT is sampled; HEEH_rd4_0097 at 10^4 samples, the rank-order test,
-is queued (Phase 1).** `step_scale` 1.0, the unscaled sampler, gives
+**Status: Phase 0 done (2026-10-21). Phase 1's HDX readout (2026-10-22 and 10-24): from 1,000 samples Boltz-2
+resolves nothing above about 4 kcal/mol, below every measured amide of ubiquitin and EHEE, and opens 2 of 39 measured
+amides (1 of 24 on Ub psWT, the experiment's variant) against Upside's 11. On HEEH_rd4_0097 at 10^4 samples, where every
+measured amide is resolvable, Boltz-2 does not rank them (Spearman 0.04 against experiment; Upside FF2 0.32) and never
+opens 4 that experiment puts at 3.2-3.8 kcal/mol (Phase 1). The mdCATH half of Gate 1 is not started.** `step_scale` 1.0, the unscaled sampler, gives
 bond-length scatter 2 to 4x the crystal spread, but the scatter leaves the HDX protection flags unchanged, so Phase 1
 uses `md` at 1.0 (Phase 0). midway2 has no GPU that can run Boltz-2 (Phase 0). Jobs are recorded in `remote_jobs.md` §1.
 Every number below comes from reading code, docs and papers on 2026-10-21, or from the dated measurements in
@@ -19,7 +20,8 @@ time on a fine-tune.
 **Built on Boltz, not BioEmu** (user, 2026-10-21): Jumper does not accept BioEmu because its data are selected. No
 BioEmu weights, samples, training data or benchmarks are used (findings 10.34). BioEmu2's code may be used (user,
 2026-10-21): it is MIT-licensed, and its layer, denoising and steering code is itself adapted from Boltz (its
-`NOTICES.md`), so it ports onto Boltz's modules directly. Phase 3 takes its lag conditioning from there.
+`NOTICES.md`), so it ports onto Boltz's modules directly. Phase 3 takes its lag conditioning from there. The one
+exception is section 7's side test of BioEmu2's weights for HDX (user, 2026-10-24), kept separate from this work.
 
 ## 2. Background
 
@@ -222,8 +224,13 @@ HDX:
       2.89 A). The samples stay unfiltered with uniform weights.
 - [x] Protection flags from every sample's N/CA/C through the repo's protection-state code, uniform weights; dG per
       residue against experiment and against Upside. An amide with p = 1 is censored at RT ln(N), not a value.
-      Done 2026-10-22 on the two 1,000-sample sets (`scratchpad/boltz_hdx/flags/`: `run_flags.sh`, `dg_phase1.py`,
-      figure `dg/dg_phase1.png`). Rerunning the pipeline reproduced Phase 0's flags byte for byte.
+      Done 2026-10-22 on the two 1,000-sample sets (`scratchpad/boltz_hdx/flags/`: `run_flags.sh`, `dg_phase1.py`),
+      and 2026-10-24 on Ub psWT and HEEH. Rerunning the pipeline reproduced Phase 0's flags byte for byte both times,
+      and the 10-22 dG tables too. One figure per system, `dg/<name>_<set>_dG_vs_residue.png`, from
+      `example/00.AnalysisScripts/helpers/plot_ref_style.py` (findings 10.36) on `dg/<name>_<set>_dG_profiles.npz`,
+      the pipeline's layout with the experiment's temperature in K as its one temperature; the 10-22
+      `dg/dg_phase1.png` was a layout of its own and is superseded. Comparisons with experiment and Upside are in
+      `dg/dg_phase1.log` and below, not in the figures.
   * References: Peng 2022 SI Tables S5 and S7 (NMR HX, 0 M urea) and S8 and S10 (Upside FF2), in
     `flags/reference/`; findings 11b. RT is the experiment's, 298 K for EHEE and 273 K for ubiquitin, so the bound
     RT ln(1000) is 4.09 and 3.75 kcal/mol. The ubiquitin data are for Ub psWT (F45W/H68N); our samples are wild type.
@@ -239,12 +246,15 @@ HDX:
     6.4 x 10^6 at 273 K; 10^4 samples reach 5.5 and 5.0.
   * Over-protection cannot be tested. Boltz never opens 6 EHEE amides (Y4 D8 E11 E18 A20 H27, all with assigned NMR
     peaks) and 12 ubiquitin amides that have no reported dG, and the paper does not say why they are missing.
-- [ ] Ubiquitin psWT (F45W/H68N) ensemble, so the ubiquitin comparison is like for like: 1,000 `md` samples at seed
+- [x] Ubiquitin psWT (F45W/H68N) ensemble, so the ubiquitin comparison is like for like: 1,000 `md` samples at seed
       3, with its own ColabFold MSA. Reference: 1UBQ with residues 45 and 68 renamed and cut to backbone and CB
       (no psWT structure is used anywhere in Peng 2022, whose Upside runs also start from 1UBQ). Sampled
       2026-10-22 (61298446): CA-RMSD to the reference median 1.56 A, pairwise 1.90 A, Rg 11.34 +- 0.16 A, C-N
-      1.343 +- 0.055 A, the wild type's statistics (1.49, 1.88, 11.35, 1.343 +- 0.055). Flags and dG are next.
-- [ ] Rank order on HEEH_rd4_0097, the third Peng 2022 protein (decided 2026-10-22, delegated by the user). Its 20
+      1.343 +- 0.055 A, the wild type's statistics (1.49, 1.88, 11.35, 1.343 +- 0.055). Flags and dG 2026-10-24:
+      36 of 72 donors never open (wild type 34), 2 never protected; of the 24 measured amides Boltz-2 falls below
+      min(experiment, bound) only at L56, by less than 0.001 kcal/mol (one open sample of 1,000), where the wild type fell below
+      at R54 and Y59; Upside FF2 falls below at 7. The mutations at 45 and 68 do not change the picture.
+- [x] Rank order on HEEH_rd4_0097, the third Peng 2022 protein (decided 2026-10-22, delegated by the user). Its 20
       measured amides lie at 2.2 to 4.3 kcal/mol (Table S6; HX at 278 K, pD_read 4.6), so 10^4 samples (bound
       5.09 kcal/mol) resolve all of them, and Upside FF2's agreement is published (Table S14, 0 M: Pearson 0.185,
       Spearman 0.317, RMSE 1.06 kcal/mol; its per-residue Table S9 is a copy error). Sequence: the 43-residue
@@ -254,8 +264,51 @@ HDX:
       because Boltz's confidence step keeps every sample's PAE and PDE logits on the GPU and concatenates them; a
       run's sample count is bounded by its length, about 2 x N x L^2 x 256 bytes plus the copy. Rerun as 10 runs of
       1,000 at seeds 3-12, which share one input and pool into one set (61328353, `$B/phase1_heeh_seeds.sbatch`).
-      It reached its 4 h wall with seeds 3-7 done (764-6,991 s each); 61368734 (12 h) continues it in the same
-      directory, keeping the finished seeds and running 8-12.
+      It reached its 4 h wall with seeds 3-7 done (764-6,991 s each); 61368734 finished seeds 8-12 (719-768 s each)
+      2026-10-24. The pooled 10^4: CA-RMSD to the design model median 1.70 A (max 10.46), pairwise 1.10 A, Rg 9.47 +-
+      0.12 A (model 9.27), C-N 1.340 +- 0.048 A, the other `md` sets' spread. Readout 2026-10-24 at 278 K, bound
+      5.09 kcal/mol, 40 donors (`dg/dg_phase1.log`):
+      * Sampling is not the limit: the two halves of the seeds agree donor by donor (smallest Fisher p 0.125, mean
+        |dp| 0.001), and their dG at the measured amides differ by 0.40 kcal/mol rms (Pearson 0.88 between halves).
+      * 16 of the 20 measured amides resolve, at 1.49-5.09 kcal/mol against experiment's 2.16-4.28. The other 4 are
+        never open: V12, L13, V35 and L39 at >= 5.09, where experiment has 3.75, 3.15, 3.84 and 3.68.
+      * No rank order: Spearman 0.042 over all 20 (censored ranked at the bound; p 0.86), 0.092 over the 16 resolved
+        (Pearson 0.214, RMSE 0.95, mean offset +0.14 kcal/mol); RMSE over all 20 at least 1.09. Upside FF2's
+        published agreement is Pearson 0.185, Spearman 0.317, RMSE 1.06 (Table S14); at 20 amides neither Spearman
+        differs from zero or from the other.
+      * Where it goes wrong: the hairpin's V19 and W21, experiment's least stable amides (2.16, 2.34), read 3.94 and
+        4.32; T24 (2.54) reads 1.49 and E4 (4.18) 2.68. Boltz-2's protected hairpin amides (V19, W21, Y26, D28: 3.9 to
+        >= 5.09) sit as high as the helices', where experiment puts the hairpin lowest.
+      * No unfolded state: no sample has more than 35% of its donors open (median 17.5%, the loops), and 6 of 10^4
+        lie beyond 8 A of the design model. Open fractions against experiment's exp(-dG/RT): the hairpin's V19 and
+        W21 0.0008 and 0.0004 against 0.020 and 0.014, T24 0.063 against 0.010, the helices 0 to 0.008 against
+        0.0004 to 0.0047. The helices' amides sit close together at 3.5-4.3 kcal/mol, as exchange through whole-
+        protein unfolding would put them; the urea dependence in Table S6 that would confirm it is not read.
+      * For Gate 1 this is the "too narrow" outcome on HDX (censored dG where experiment is finite), with some amides
+        too open as well; the gate's mdCATH half is not measured. Phases 2 and 3 as written target time order and
+        dynamics, not populations, so neither addresses this failure (assessment 2026-10-24); a revision is the
+        user's call.
+- [ ] Local exchange (user 2026-10-24, after HEEH): does Boltz-2 rank amides whose exchange comes from fluctuations
+      of the folded state? HEEH's helices probably exchange through whole-protein unfolding, which Boltz-2 never
+      samples, so the no-training route is tested where it can still work. EHEE_rd2_0005 and Ub psWT at 10^5 `md`
+      samples each (bound 6.82 kcal/mol at 298 K and 6.25 at 273 K), which resolves 9 of EHEE's 15 and 12 of Ub
+      psWT's 24 measured amides (4.0-6.8 kcal/mol). 100 runs of 1,000 per protein at seeds 13-112, 10 V100 jobs each
+      (`$B/phase1_seeds.sbatch`, submitted 2026-10-24; `remote_jobs.md` §1 line 4), about 20 and 35 V100-hours.
+      Readout: Spearman against experiment over the resolved amides and with censored ones ranked at the bound, the
+      halves of the seeds against each other, and the open fractions against exp(-dG/RT). If Boltz-2 ranks them,
+      the no-training route holds where exchange is local; if not, it is closed and the training question is next.
+      * The first submission filled `/beagle3`'s group inode quota within an hour and all 20 jobs failed (Boltz
+        writes 5 files per sample; `remote_jobs.md` §1 line 4, findings 10.39). Repaired 2026-10-24 (user, "Fix
+        the problem for me"):
+        - [x] `pack_predictions.sh` packs a `predictions/<name>` directory into `<name>.tar` and removes it once
+              the tar lists every file (sandbox-tested); all 48 Boltz prediction directories packed, 133,247 files
+              into 48 tars, leaving 133,359 inodes free.
+        - [x] `check_samples.py` reads the models from those tars in the old path order. On Phase 1's packed EHEE
+              set it writes the old reader's npz byte for byte, and the cluster's `backbone` exactly.
+        - [x] `phase1_seeds.sbatch` packs each seed as soon as it ends and keeps a seed whose tar holds 1,000 models
+              (sandbox-tested with `boltz` stubbed).
+        - [x] Resubmitted through the ledger `submitted_1e5.txt` (the 11 finished seeds of 61424051-61424053
+              kept); 12 jobs queued, the other 8 submitted hourly as the 12-job QOS frees slots.
 
 mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibrium only:
 - [ ] Test set: 8 to 12 domains from the 89-domain panel (`ff3_selection/` on the cluster; `plan.md` Phase 19), over
@@ -350,5 +403,44 @@ Gate 1:
 * Plainer et al. 2025, Consistent Sampling and Simulation: https://arxiv.org/abs/2506.17139 (code: noegroup/ScoreMD)
 * Jing et al. 2024, AlphaFlow: https://arxiv.org/abs/2402.04845
 * Schreiner et al. 2023, Implicit Transfer Operator Learning (NeurIPS 2023)
-* BioEmu2 code (MIT, used for code only): https://github.com/microsoft/bioemu2 at `f99e0d8`
+* BioEmu2 (MIT): https://github.com/microsoft/bioemu2 at `f99e0d8` (code only) and `06be369` (section 7)
 * Engh and Huber 1991, Acta Cryst. A47, 392 (peptide bond geometry)
+
+## 7. Side test: BioEmu2's weights for HDX (separate record)
+
+User 2026-10-24: "Set up another job to test whether we can use bioemu2 ... to get hdx results"; asked about the
+rule of section 1, "Lift it, side test only". Nothing here is a baseline or comparator for the Boltz work; it is
+judged against experiment and Upside's published values only, through the same estimator as Phase 1.
+
+BioEmu2 at `06be369` (2026-10-23; the install, checkpoint and CLI code are unchanged since `f99e0d8`):
+* Python >= 3.12; `.[cuda12]` with the cu126 index (torch 2.13.0+cu126, the CUDA 12 build that keeps sm_70).
+  Weights `microsoft/bioemu2` on Hugging Face, `checkpoints/bioemu2-preview/` (2.0 GB, MIT, not gated).
+* Input: a system YAML with the sequence, and always an MSA, from ColabFold through BioEmu2's `get_msa`, cached in
+  `BIOEMU2_MSA_CACHE` and reused offline. No temperature, denaturant or pH input; the equilibrium mode is the `md`
+  method token. Sampler `edm` (unsteered), 200 steps.
+* Output: 5 files per run whatever N (`samples.xtc` of independent samples, `topology.cif`, all heavy atoms).
+* Its model card says sample frequencies are not calibrated Boltzmann probabilities, and no HDX evaluation exists.
+* **Training data overlap.** MD set `MSR_megasim_merge` is 170 of MegaSim's 271 systems, MD of Tsuboyama 2023
+  wild types folded and unfolded. The 271 include Rocklin designs (EHEE_rd1-4, HEEH_rd3_0223, HEEH_rd4_0094, ...)
+  and four ubiquitin mutants, but not EHEE_rd2_0005, HEEH_rd4_0097 or wild-type ubiquitin; which 170 were used is
+  not published. Close relatives of all three test proteins, unfolded states included, may be in training.
+
+Two settings depart from the defaults, for the V100: `trimul_variant: full` in a copy of the checkpoint's
+`config.yaml`, the variant BioEmu2's own size tiers give up to 200 tokens (`triangle_multiplication.py`; the default
+`cueq` is a Triton kernel untested on sm_70, and Boltz turns its cuEquivariance kernels off below sm_80); and
+`--precision 32-true`, which affects only the trunk (denoising runs in fp32 regardless; bf16 is emulated on Volta).
+
+- [x] Local sandbox on the Mac (CPU, 2026-10-24): installed, the edited config loads, and a 4-sample EHEE run (fp32,
+      3.6 min) writes the 5 files, all 4 passing BioEmu2's physicality check (CA-RMSD to the design 0.61-0.73 A,
+      C-N 1.337 +- 0.029 A). `bioemu2_samples.py` turns a run into `<name>_n<N>.npz` with `backbone` (N, CA, C, A)
+      and the Phase 1 checks; its batched Kabsch equals `check_samples.py`'s exactly.
+- [x] midway3, `/project/trsosnic/yinhan/bioemu2_hdx` (`/beagle3`'s inodes are kept for Boltz): uv's managed
+      CPython 3.13.17, because the cluster's `python/3.13.11` module has no `_ctypes` and torch cannot import;
+      torch 2.13.0+cu126 with sm_70. Weights and MSAs fetched on the login node (Ub psWT 21,123 sequences, EHEE and
+      HEEH 2 and 4, as Boltz's). The job loop and its submitter sandboxed with stubs. `--test-only` waits for a
+      free gpu slot, because the 12-job limit refuses it too; `submit.sh` runs it before submitting.
+- [ ] One V100 job: EHEE_rd2_0005 10^3, Ub psWT 10^3, then HEEH_rd4_0097 10^4 (its measured amides lie below the
+      10^4 bound, so it is the direct test), with the physical checks of Phase 1 (CA-RMSD, Rg, C-N, clashes).
+      Waits for the first free gpu slot (`remote_jobs.md` §1 line 4).
+- [ ] Readout: flags and dG as Phase 1, against experiment and Upside's published values; one `plot_ref_style.py`
+      figure per protein.

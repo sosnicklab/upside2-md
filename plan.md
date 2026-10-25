@@ -39,7 +39,8 @@ and deleted, and ff3.1 (Phase 14) extends the depth training to every residue. T
 H-bond-frozen arms, polygly (stopped) and the local TM4 glycine-flip test (retired) went the same
 day, and the BioEmu line and the frozen arms were deleted with their inputs and derived products
 (10-11 23:45, user; remote_jobs.md §1 "Finished runs"): on the fixed side-chain/lipid table ff2.1 holds TM4 (findings
-4.15). TM4 HDX has the local readout only; its REMD test was cancelled 10-14 (Phase 16).
+4.15). TM4 HDX is closed (user, 10-23): on the placement-fixed ff3.0 chains TM4 agrees with HXMS's one isolated
+peptide (Phase 16).
 
 ## Architecture and Key Decisions
 
@@ -409,8 +410,7 @@ coordinates at its full rate).
    `data`'s step 39, shown to be scatter (findings 1.33). The choice is the user's. The local glpG TM4 glycine-flip test was
    retired by the user 10-11 23:10 (ff2.1 holds TM4 on the fixed table, findings 4.15; "we have a
    working ff and we are trying to expand it"), after fa_00_sc and fd_00_sc. Whether TM4's HDX dG
-   should be effectively infinite is unresolved (user, 23:15); its REMD test was cancelled 10-14
-   (Phase 16).
+   should be effectively infinite (user, 23:15) was closed by the user 10-23 (Phase 16).
 5. [x] **Steric watch** (user, 10-10 21:10, after Jumper: a moving map may open conformations where
    the side chain and backbone clash; findings 1.33). Upside has no excluded volume between a
    residue's CB and its neighbours' backbone, so the map is what keeps them apart.
@@ -462,7 +462,7 @@ average and grids, at 600 target directions x 12 side-chain bead frames instead 
    alike, and none of the three released candidates is resolved from its start (findings 4.15).
    Each later epoch end is patched with the new tool and compared with its `_sc` start and twin.
 
-### Phase 16 - glpG TM4 HDX on the fixed table (local readout done; ff2.1 REMD cancelled; ff3.0 REMD readout done 2026-10-14; ff3.1 REMD readout done 2026-10-17)
+### Phase 16 - glpG TM4 HDX on the fixed table (local readout done; ff2.1 REMD cancelled; ff3.0 REMD readout done 2026-10-14; ff3.1 REMD readout done 2026-10-17; placement-fixed ff3.0 check 2026-10-23 agrees with HXMS; CLOSED by the user 2026-10-23)
 
 The only hybrid HDX set (ff2.1, 09-04) gives TM4 3.5-4.9 kcal/mol against the H145A peptide
 140-144's 6.1-7.4, through protein protection failing (`pp_fail` 0.032 on 135-151 at the T 0.85
@@ -508,7 +508,7 @@ ahead and run this session's job first", ahead of the TM4 queue.
   share inputs. 28 replicas over T 0.70-0.90, not the pre-fix set's 48, so rungs are compared by
   temperature. One block resolves the pre-fix 4.1-4.4 (censored bound ~5.0 kcal/mol at one 298 K
   rung) but not the HXMS 6.1-7.4.
-- [ ] ff3.0 REMD readout (user 10-14 01:19: "check if you have enough data from ff3.0 or ff3.1 ...
+- [x] ff3.0 REMD readout (user 10-14 01:19: "check if you have enough data from ff3.0 or ff3.1 ...
   Check if the TM4 still stretched down from infinity now"). ff_3.0_gdepth block 2 is whole in all
   four chains (17-18 chunks, ~5,100-5,400 frames per replica, bound ~5.1 kcal/mol at one 298 K
   rung); ff_3.1_depth_data has block 1 only until ~10-16. 79ALA then 79HIS, the spec of the ff2.1
@@ -552,6 +552,24 @@ ahead and run this session's job first", ahead of the TM4 queue.
     block as arguments (the ff3.0 run's copies kept as `*.ff30_run_20261014`; the refactored pre-check
     reproduces its output exactly). The 10-14 session moved this phase's tools off its scratchpad onto
     the cluster (`plot_tm4.py` beside the launcher).
+- [x] **The question on the placement-fixed ff3.0 chains** (Phase 18; user 10-23: "it looks like the TM4 issue is
+  resolved according to plots glpG_HDX_ff3.0_blocks_20261022 ... Double check and mark it as resolved"). The readouts
+  above ran on the misplaced-bead chains (findings 4.17); blocks 2-3 of the repaired ones replace them. This phase's
+  residue numbers are HDX labels, PDB - 1 (findings 10.38): its rule's 137-147 is PDB 138-148, and the HXMS peptide's
+  amides 142-144 are labels 141-143. Double check (findings 5.6, in PDB numbers), at 298 K:
+  - The peptide's 142-144 are censored above 6.25 in 79ALA, the experiment's variant, and in 79ALA_S115T, in the
+    10-22 figures and with the A61 accessibility shift undone (`hdx_accfix.sbatch`, 61383990): the model agrees with
+    HXMS's 6.1-7.4. In the 79HIS variants 142 resolves at 5.43 and 4.00 once the shift is undone.
+  - This phase's rule fails in every variant once the shift is undone: the 138-140 turn, Val145 (4.02 in 79ALA) and
+    148. No HXMS peptide isolates those residues (143-154 mixes nine amides).
+  - The core is censored only through the membrane term (PS_protein: 79ALA's 142-144 at 1.8-4.6), on an engine
+    without A83's ALA and GLY side chains.
+  **Closed by the user 22:15 10-23** ("Ok. Close the question"), after being told (and after a first misreport of
+  label 144 as a peptide amide) that TM4's dG is not expected to come down and on the measured peptide does not.
+  The rule's fraying and the weak protein protection move to the Upside 3 glpG run (Phase 24 2b 4), which has A83
+  and the other hybrid fixes. No corrected figures are drawn: the 10-22 set carries the A61 shift, and its seven
+  amides before a proline or the chain end would need their accessibility recomputed. HDX on ff3.1's repaired chains,
+  owed since the 10-14 request, was dropped by the user 22:50 10-23 ("Yes. Drop it").
 
 ### Phase 17 - ff3.2: ff3.1's depth training started from ff3.0 (STOPPED 2026-10-18 in step 69; rerun in Phase 21)
 The user's word (10-15): "same as ff3.1, except that it starts with ff3.0 instead of ff2.1". It is
@@ -623,7 +641,9 @@ the 4 variants, and 79HIS under ff_2.1_nobp and its matched control ff_2.1_ctrl3
    blocks (calibration, replicas 0, 13, 27), and the TM4 checks and HDX are redone on them. Block 1 closed in all
    eight 18:52-20:39 10-18 and its TM4 read is done (findings 1.35: TM4 holds, no glycine at phi > 0 at T 0.70).
    HDX on ff3.0's blocks 2 and 3, all four variants, done 10-22 (findings 5.6: the blocks disagree beyond their
-   error bars, so a longer run is the user's decision); owed: TM4 at each later block end, ff3.1's HDX.
+   error bars, so a longer run is the user's decision); its membrane term carries the A61 accessibility shift, and
+   TM4 re-read with the shift undone 10-23 agrees with HXMS on peptide 140-144, and the user closed the TM4 HDX question
+   (Phase 16), and dropped HDX on ff3.1's chains (22:50 10-23); owed: TM4 at each later block end.
 
 ### Phase 19 - a second native-state panel from mdCATH (DONE 2026-10-17, user)
 The Peng benchmark's 16 natives and the 44-domain panel (60 proteins) do not resolve ff_2.1_nobp from its control;
@@ -831,6 +851,8 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
       it"): the preparation as a job, then 4 REMD blocks of 48 replicas on T 0.70-0.90, each stopped at
       `--time-limit` and queueing the next. `run_sim_1afo_full.sh` sources the Upside 3 tree too (A233). The campaign's
       `run_remd.py` stays as it is under the running campaigns (Upside 2; it also carries a NaN-rollback guard).
+      At its block ends, besides KE, C-N and TM helicity: TM4's protein protection at 298 K (`pp_fail`, dG under
+      PS_protein) with HDX through the fixed analysis code (A61 fixed), the follow-up of Phase 16's closed question.
    Next after it: refusing ff2.1 (the step `upside3.md` names after the audit), then the open items below.
    Open from the build review (`pass2/build/report.md`): the cluster binaries set flush-to-zero and
    denormals-are-zero in every process that loads the library (U1, `set_fast_math` found by `nm` in both trees),
@@ -1176,8 +1198,9 @@ as in ff3.1, so the pooled prior is the only change. Decisions:
    but the pooled depth state; submitted 13:34 10-21 (remote_jobs.md §1).
 5. [ ] At step 76: maps against their sources (`plot_gly_rama_*_nonhelix_zero.py`), `depth_data_vs_prior.py`, panels.
    Both runs reached step 76 10-23. Glycine maps done 10-23 for the user's review (findings 1.34: ff3.1.1's alpha_L
-   +0.41 from ff2.1, ff3.2.1 at ff3.0's map); panels and the per-step checks wait on it, since their collector died
-   on its first pass (remote_jobs.md §1 line 2). Two-start comparison done 10-23 (findings 1.34): every map but
+   +0.41 from ff2.1, ff3.2.1 at ff3.0's map); the panels were dropped by Phase 30, and the per-step checks, stopped
+   at ff3.1.1's step 4 when the collector died on its first pass, run again in the collector fixed 10-23
+   (remote_jobs.md §1 line 2). Two-start comparison done 10-23 (findings 1.34): every map but
    glycine's alpha_L agrees to the runs' noise; that gap went 0.517 to 0.179 and still closes ~0.07 an epoch.
 
 **Revised decision (10-21 13:40, user: "besides rama map not moving bug, try to resolve the accuracy lost bug as well
@@ -1215,8 +1238,8 @@ between the runs to their own noise except glycine's alpha_L, whose shared-offse
   REMD chains (TM4 at each block end, HDX on block 2).
 1. [x] Dropped p311/p321 from `submit_new.sh` (backup `.bak_pre_phase30_20261023`); both runs continued to step 114,
    49451890 / 49451891, 15:33 10-23 (remote_jobs.md §1 line 2).
-2. [ ] At 114: KE scan, `check_step.py`, the agreement rule (`compare_pooled_runs.py` over every round); extend if
-   not met.
+2. [ ] At 114: KE scan and `check_step.py` of every step (the collector's `status.txt`, remote_jobs.md §1 line 2),
+   the agreement rule (`compare_pooled_runs.py` over every round); extend if not met.
 3. [ ] Merge, check, glycine figure to ~/Downloads; move the old ff3.1 results aside; release by `validate_ff.sh`.
 4. [ ] Panels, TM jobs and the Peng collector (`checks/ff31_merged_<date>/submit.sh`); read each as it finishes.
 
@@ -1253,10 +1276,15 @@ between the runs to their own noise except glycine's alpha_L, whose shared-offse
     `2e612261...` kept as `martini.h5.bak_20261020`; ff_3.0 configs use it too). Every prepared hybrid `.up` must be
     re-prepared; the patched engine refuses the old table, and since A103 (10-21) also any stage file without
     `combined_energy_end_slopes`. The cluster trees running the campaign are unchanged.
-* **Hybrid HDX lipid accessibility made before 2026-10-20 is shifted by one residue** (findings 3.14 A61, fixed 10-20).
-  glpG, numbered from 1, gave each amide its N-terminal neighbour's accessibility. To regenerate (on the cluster, by
-  the campaign's drivers):
-  * `/project/trsosnic/yinhan/popepopg_REMD/<V>/hdx*/results/<V>_popg_remd_<i>_ACC.npy`;
+* **Hybrid HDX lipid accessibility from the pre-audit `martini_hdx_membrane_accessibility.py` is shifted by one
+  residue** (findings 3.14 A61, fixed in the repo 10-20). glpG, numbered from 1, gave each amide its N-terminal
+  neighbour's accessibility. The shared deployment's copy (`/beagle3/trsosnic/yinhan/upside2-md/py`, md5 `ca115325`)
+  is that version, so every hybrid HDX run through it carries the shift whatever its date: the 10-14 and 10-17 TM4
+  readouts and the 10-22 ff3.0 block figures too (findings 5.6). To regenerate (on the cluster, by the campaign's
+  drivers):
+  * `/project/trsosnic/yinhan/popepopg_REMD/<V>/hdx*/results/<V>_popg_remd_<i>_ACC.npy`, and the same arrays in
+    `popepopg_REMD_mdw2/<V>.<ff>*/hdx_sc600x12_*/results/` (for the 10-22 set, `acc_shift_corrected/` undoes the
+    shift from the stored arrays for every amide whose next residue is a donor);
   * the combined `_PS.npy` (`_PS_protein.npy` stays valid);
   * every calc_hdx_ht output in those directories (`_dG_profiles.npz`, `.csv`, `_ranked.csv`, `_<T>.csv`, PNGs);
   * anything `scratchpad/local_popg_79HIS/acc.sh` produced; findings 5.3's `acc` values.
