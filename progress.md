@@ -1617,3 +1617,34 @@ to 10-07 12:00 is in git history.
   "Handoff" and "The watch" rewritten for 10-26 with both cron prompts verbatim; CLAUDE.md names "continue
   monitoring"; bundle `checks/handoff_20261026/` on the cluster (record copies, working-tree patch, cron prompts,
   readout tools, memory). Files: remote_jobs.md, CLAUDE.md, progress.md.
+- 10-26 12:25-12:40 (user: "generate a PDF file with all rama maps (all amino acids), each row ... ff2.1 ... ff3.1",
+  in gly_rama_ff321_nonhelix_zero.png's form). `~/Downloads/rama_all_ff21_ff31.pdf`, 9 pages, one central residue per
+  row (20 + cis-proline): the pooled coil map, ff2.1 = NDRD's X|right|ALL, ff3.1 = that plus the mean change of X's 39
+  pool maps (rama_basin.py's membership; every change checked to be a sum of basin offsets), non-helical zero, basin
+  minima labelled. Glycine on the old 37-map set reads -2.568 / -1.504 / -0.575 at the reference cells against
+  findings 1.34's -2.574 / -1.510 / -0.579, not traced (`scratchpad/ff31_merge/` is on the other Mac). Then (user:
+  "the GLY rama map ... is quite different with what i have in ~/Downloads"): drawn with the old figures' code, the
+  PDF's ff2.1 GLY array is pixel-identical to `gly_rama_bias_nonhelix_zero.png`, and the retired ff3.1
+  (`ff_3.1_depth_data`, md5 4b6a9aaf) to `gly_rama_ff31_nonhelix_zero.png`; only the labels differ (basin minima, PII
+  -1.37 at (-65,150), against the old fixed cell (-75,150), -0.62), and the merged ff3.1's alpha_L is -2.58 against
+  the retired one's -2.95. Page 1 added: ranking by basin dG = -ln(P_3.1/P_2.1) under the map alone, and overall by
+  the share of probability that changes basin (GLY 10.0%, GLN 8.1%, LYS 6.0%). Page 2 added (user: "how many data
+  we used to train each amino acid"): native sites by basin from both runs' initial checkpoints on midway2 (identical
+  to 6e-15; 410 training proteins, 46 of 456 held out, 44,330 sites), read by `ff31_training_counts_remote.py` into
+  `ff31_training_counts.json`; a basin with no trainable offset is hollow on pages 1-2, and in every pooled map those
+  basins were checked to carry one common offset in the ff3.1 file (ILE, VAL, TYR, THR alpha_L among them). The notes
+  on every page removed (user). Files: scratchpad `ff31_training_counts_remote.py`, `ff31_training_counts.json`,
+  `rama_all_pooled_maps.py` (PyTables) -> `rama_all_pooled_maps.npz` -> `plot_rama_all_pooled.py`. Why untrained
+  alpha_L bars (ILE, TYR, VAL, THR) rank above trained ones (user): an untrained basin's dG is the residue's shared
+  shift, the trained basins moving as a group (alpha_L dG equals pPII''s to 0.001: ILE +0.198/+0.199, TYR
+  +0.121/+0.121, VAL +0.110/+0.111, THR -0.129/-0.128); its sign follows the free-minus-native gap of the untrained
+  basins summed over both runs' 114 steps (`ff31_training_gap_remote.py` -> `ff31_training_gap.json`; ILE +0.10/+0.09,
+  TYR +0.10/+0.09, VAL +0.04/+0.02, THR -0.07/-0.03 points per residue); trained alpha_L dG is its own offset plus that
+  shift, which can cancel (ARG -0.15 + 0.08). The untrained populations move at most 0.7 points (TYR 6.0 to 5.3%).
+  Page 1's basin panels then ranked by the population change in percentage points instead of dG (user: "use fix 1"):
+  GLY alpha_L -10.0 first, the untrained alpha_L bars below 0.7. TYR's untrained alpha_L (-0.69, a 6% basin) still
+  ranked among the trained (user: "it still exist"): an untrained basin's population change is real, so no ranking
+  by change separates the classes; the untrained bars were ranked on their own below a dashed line. Then (user):
+  page 1 all solid, ranked by length; its basin panels show the change of basin depth (the minimum on the
+  non-helical zero, as the map labels), blue deeper, red shallower; overall stays the probability that changes
+  basin; page 2 keeps its hollow bars, ranked by length.
