@@ -2143,6 +2143,7 @@ def inject_stage7_sc_table_nodes(
     rama_sheet_mixing: Path,
     hbond_energy: Path,
     reference_state_rama: Path,
+    sidechain_lib: Path,
 ):
     up_file = Path(up_file).expanduser().resolve()
     martini_h5 = Path(martini_h5).expanduser().resolve()
@@ -2151,7 +2152,7 @@ def inject_stage7_sc_table_nodes(
     rama_sheet_mixing = Path(rama_sheet_mixing).expanduser().resolve()
     hbond_energy = Path(hbond_energy).expanduser().resolve()
     reference_state_rama = Path(reference_state_rama).expanduser().resolve()
-    sidechain_lib = (upside_home / "parameters" / "ff_2.1" / "sidechain.h5").resolve()
+    sidechain_lib = Path(sidechain_lib).expanduser().resolve()
 
     if not up_file.exists():
         raise SystemExit(f"ERROR: stage file not found: {up_file}")

@@ -853,6 +853,9 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
       `run_remd.py` stays as it is under the running campaigns (Upside 2; it also carries a NaN-rollback guard).
       At its block ends, besides KE, C-N and TM helicity: TM4's protein protection at 298 K (`pp_fail`, dG under
       PS_protein) with HDX through the fixed analysis code (A61 fixed), the follow-up of Phase 16's closed question.
+      Block 1 read 10-26 (findings 3.15): KE, C-N and five of six TM helices as Upside 2's hybrid, but TM4 is lost
+      (DSSP alpha 0.44 at T 0.70 against 0.93-0.96), already in preparation stage 7.0. Its HDX readout waits on the
+      cause (Known Errors).
    Next after it: refusing ff2.1 (the step `upside3.md` names after the audit), then the open items below.
    Open from the build review (`pass2/build/report.md`): the cluster binaries set flush-to-zero and
    denormals-are-zero in every process that loads the library (U1, `set_fast_math` found by `nm` in both trees),
@@ -1238,12 +1241,27 @@ between the runs to their own noise except glycine's alpha_L, whose shared-offse
   REMD chains (TM4 at each block end, HDX on block 2).
 1. [x] Dropped p311/p321 from `submit_new.sh` (backup `.bak_pre_phase30_20261023`); both runs continued to step 114,
    49451890 / 49451891, 15:33 10-23 (remote_jobs.md §1 line 2).
-2. [ ] At 114: KE scan and `check_step.py` of every step (the collector's `status.txt`, remote_jobs.md §1 line 2),
-   the agreement rule (`compare_pooled_runs.py` over every round); extend if not met.
-3. [ ] Merge, check, glycine figure to ~/Downloads; move the old ff3.1 results aside; release by `validate_ff.sh`.
-4. [ ] Panels, TM jobs and the Peng collector (`checks/ff31_merged_<date>/submit.sh`); read each as it finishes.
+2. [x] At 114 (10-26): both runs reached 114 (KE/1.5kT at most 1.019, 24 of 24 proteins at every step). Round 6:
+   (a) met (0.072 against 0.084), (b) not (0.092 against 0.084), short only by the constant +0.063 shift of ff3.0's
+   fitted pair, which the data cannot move (findings 1.34). The user merged on that (10-26: "merge into ff3.1 now").
+3. [x] Merged and released 10-26 as `ff_3.1` (`scratchpad/ff31_merge/`; `checks/ff31_merged_20261026/release.sh`):
+   rama.dat `5b66c78a`, the other five ff_2.1's; glycine figure to ~/Downloads; the old ff3.1 and ff3.2 sets and
+   their results moved aside as `.bak_pre_merge_20261026` (user: "from now on ff3.1 refers to the merged version").
+   Not through `validate_ff.sh`: it extracts a checkpoint and patches Upside 2 glpG seeds, and the glpG validation
+   runs on Upside 3 instead (user's choice).
+4. [ ] (submitted 10:03 10-26) Panels mdc_ff31 and p44_ff31, their TM jobs against released ff2.1 and the control,
+   Peng's 32 arms and the collector (`checks/ff31_merged_20261026/submit.sh`); glpG on Upside 3 with ff3.1
+   (Phase 24 2b.4, Known Errors); read each as it finishes (remote_jobs.md §1 lines 2-3).
 
 ## Known Errors / Blockers
+
+* **Upside 3's glpG hybrid with ff2.1 loses TM4 in preparation stage 7.0** (findings 3.15, 10-26): every other
+  helix, KE and C-N read as on Upside 2's hybrid. First test (user 10-26, "first double check if it is because you
+  run it with ff2.1"): the same preparation with ff3.1 (A234 lets the hybrid take a force field;
+  `upside3_validation/glpg_ff31`, submitted 10:11 10-26). TM4 held through stage 7.0 means the loss was ff2.1's;
+  lost again means an Upside 3 cause, then which audit change (NC3 charge in the side-chain/lipid table, A83's
+  ALA/GLY rows, A72's rotamer 1-body, or something new) moves TM4's energy. Until then no Upside 3 hybrid HDX result
+  is read.
 
 * **Every hybrid dry-MARTINI result so far carries these defects** (audit 10-20; fixes in preparation, plan.md Phase 24).
   * The side-chain/lipid interface table treats the choline bead NC3 (+1) as neutral: the builder takes charge from

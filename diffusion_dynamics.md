@@ -355,7 +355,8 @@ HDX:
       The test: Ub psWT at 10^5 in EHEE's regime, `inputs/ubqps_nomsa.yaml` with `inputs/msa/ubqps_nomsa_0.csv`
       (EHEE's form, the header and the query twice), at the MSA set's seeds 13-112, 10 jobs through
       `submitted_1e5.txt` (`remote_jobs.md` §1 line 4), about 34 V100-hours; job 1 61496120 submitted 2026-10-25
-      12:12, the other nine held. Gate before the other nine jobs: job 1's
+      12:12, the other nine held. Gate passed 2026-10-26: job 1's 10^4 samples have CA-RMSD to the reference median
+      1.54 A and Rg 11.34 A, the MSA set's statistics (1.52 A, 11.34 A); the nine released. Gate before the other nine jobs: job 1's
       samples must be a folded ubiquitin (CA-RMSD to the reference median below 4 A, Rg within 15% of 11.49 A), or
       the answer is that Boltz-2 needs the MSA to fold it. Readout fixed before the data: if the censored Spearman's
       block-bootstrap 95% interval excludes the MSA set's -0.21 and reaches Upside FF2's 0.43, MSA depth is the

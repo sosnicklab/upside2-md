@@ -2538,6 +2538,26 @@ sampling, not how two trainings of one design differ.
   to agreement and are merged (plan.md Phase 30).
   A basin fit fixes a map's six offsets only up to one shared constant ('other' is nearly empty on the grid,
   condition 1.5e7): compare trained runs by their recorded offsets, and fitted libraries only by contrasts or maps.
+- **At step 114 (round 6) the glycine gap is down to the noise except for a constant the data cannot see** (10-26,
+  user: "is ff3.1.1 and ff3.2.1 currently equivalent?"; the same script over rounds 0-6, `dump_rama_state.py` now
+  taking every epoch end both runs reached; rounds 0-4 of the new dump equal the old one key for key, rebuilt round-6
+  maps equal both libraries to 2e-6). Phase 30's rule: (a) glycine's alpha_L shared gap 0.517, 0.398, 0.339, 0.256,
+  0.179, 0.136, 0.072 against the other residues' shared-gap rms 0.000, 0.067, 0.077, 0.086, 0.092, 0.116, 0.084, met
+  first at round 6; (b) the glycine maps' gap rms 0.209, 0.160, 0.139, 0.110, 0.093, 0.088, 0.092 against the other
+  maps' 0.000, 0.067, 0.078, 0.087, 0.092, 0.116, 0.084, met at round 5 only. Every round the glycine maps' gap carries a
+  shared shift of +0.063 to +0.064 across their basins, unchanged from round 0: it is the shared component of ff3.0's
+  pair as the basin fit placed it (alpha_R -0.107, alpha_L +0.517, the four minor basins set to 0), a direction the
+  fit cannot fix and the data cannot move. Without it the glycine maps' gap is 0.198, 0.146, 0.122, 0.088, 0.065,
+  0.059, 0.064 against the other maps' 0.000, 0.046, 0.042, 0.051, 0.070, 0.084, 0.063, and in basin populations the
+  glycine maps' largest |ln ratio| per map is median 0.094, 95th percentile 0.162 at round 6 against the other maps'
+  0.068 and 0.237. So the runs agree to their noise in everything the data constrain; rule (b) as written measures
+  that constant too and cannot be met by more training. The user merged on this (10-26): ff3.1 is the mean of the two
+  runs' round-6 offsets, `ff_3.1` (rama.dat `5b66c78a`; `scratchpad/ff31_merge/merge_ff31.txt`): the 84 untrained
+  maps NDRD's byte for byte, the 840 trained ones NDRD plus the merged offsets to 9.5e-7, 38 of 5,880 basin
+  populations outside the two runs' range by at most 1e-4 (the mean is taken in energy, not probability); the other
+  five files are ff2.1's, which both step-114 checkpoints extract to within 2.2e-16. Pooled glycine map on the
+  non-helical zero: alpha_L -2.574, alpha_R -1.510, PII -0.579 (ff2.1 -3.022, -1.562, -0.616; ff3.0 -2.505, -1.669,
+  -0.616).
 
 ### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; the defective chains' cold-rung glycine flips are absent from the corrected chains' block 1 (2026-10-14/18)
 
@@ -3980,6 +4000,7 @@ Effects on ff2.1 are not measured (upside3.md section 1).
 | A231 | `interaction_graph.h`, `bead_interaction.h`, `rotamer.cpp`, `environment.cpp`, `backbone_steric.cpp`; `upside_config.py`, `martini_prepare_system_lib.py`; `tests/index_oracle.py`; up.md 6 | yes | the pair lists excluded sequence neighbours by the elements' residue ids, so residues 1-2 apart across a chain break were excluded as if bonded (D9; decided by the user 10-22, design (a)) | on 1dfn: `protein_hbond` 1 pair, `hbond_coverage` 33, `hbond_coverage_hydrophobe` 72, `environment_coverage_sc` 24, `environment_coverage_hb` 33, `hb_environment_coverage_hn`/`_oc` 3 each, all among residues 28-29 against 30-31, missing from every multi-chain run | every node excluding by sequence distance reads a required `sequence_id` (`sequence_id1/2` when asymmetric), the residue number plus 2 per chain break before it (A53's convention, one `upside_config.sequence_id` shared with the hybrid preparation; the widest window is 2), and the pair list carries only that key, the payload ids gathered by edge; a config without it refused by name. fixtures_w21 (w20 plus the datasets) and fixtures_hybrid_w6 (w5 plus 4): single-chain records bitwise, only 1dfn's and 1dfn_cavity's seeded runs move (static records bitwise; w56); hybrid bitwise (h53); the index oracle on the three 1dfn configs 7 mismatches to 0; node_fd on 1dfn as before, clean with the chains in contact (`scratchpad/upside3_audit/d9/`, `d9fix/`) |
 | A232 | `example/16.MARTINI/run.py`, readme 2-3 | no | Stage 2 was one Slurm job asking 48 replicas for 200,000 time units under a 35:45 wall, about 170 days at the measured ~28 time units per hour, with no chunking; Stage 1 ran the whole preparation (hours of hybrid dynamics) in the calling process, a login node on the cluster; `swap_table2d` returns one swap set for two replicas and the script indexed a second; the readme described caslake (user 10-22: "as we changed the upside core, the job scripts should also be updated to support it") | the documented REMD could never finish, and was killed at the wall without a clean last frame | `run.py` submits jobs: the preparation, then REMD blocks that stop at `--time-limit` before the wall and queue the next up to `n_blocks`, run.py's continuation between blocks, a block counted only once its engine run succeeds, every swap set passed, each job sourcing `job_env_file`; `continue_sim` and `duration` gone (raise `n_blocks` to extend); `frame_interval` 10 for ~100 frames per block. Two blocks of 1rkl run locally: each stops at the limit, block 2 starts every slot at block 1's last frame with its walker and temperature (`scratchpad/upside3_audit/runpy_test2/`); glpG submitted through it on midway2 |
 | A233 | `example/16.MARTINI/run_sim_1afo_full.sh` | no | the batch job sourced the shared deployment's `env_shared.sh`, the pre-audit engine | an Upside 3 job script ran Upside 2 | sources the Upside 3 tree's `env_upside3.sh` |
+| A234 | `martini_prepare_system.py` (`--force-field`, `normalize_hybrid_workflow_args`, `validate_hybrid_workflow_args`), `martini_prepare_system_lib.py` `inject_stage7_sc_table_nodes`; `example/16.MARTINI/run.py`, `run_sim_hybrid.sh`, readme | no | the hybrid preparation could run only ff2.1: it hard-coded `common/rama.dat` and ff_2.1's sheet, hbond.h5 and sidechain.h5 (user 10-26: run glpG with ff3.1) | no other force field could be tested on the corrected hybrid, TM4's loss among them (3.15) | a required `--force-field` (`FORCE_FIELD`) under `parameters/`: its rama.dat if it ships one (the benchmark's rule), else common's; its sheet, hbond.h5 and sidechain.h5, the last passed into the injection; martini.h5 stays ff_2.1's, built from ff_2.1's side chains, and a force field with other side chains is refused. The old and new injection on one stripped glpG stage file: ff_2.1 identical in all 614 `/input` entries; ff_3.1 differs only in `rama_map_pot/rama_pot` (`scratchpad/ff31_merge/test_force_field.py`) |
 
 Deliberately not changed: the H-bond radial cutoff of 3.5 A truncates the factor at 3.4e-4, which is below the
 1e-4-scale energy noise BP already carries. Moving it to 4.0 A would cut the jump to 6e-6, at about 1.5x the
@@ -3988,6 +4009,42 @@ donor-acceptor pairs in a node that takes 13-19% of runtime.
 Every parameter derivative in Upside 3 is exact or raises "not implemented" (A29-A31). Refuted 10-21: `--use-heavy-atom-coverage`
 writes a node no potential reads, but `get_protection_state.py` reads its output for HDX, so it is not dead. Which parameters ConDiv
 trains is decided in its learning-rate table. Open items are in plan.md Phase 24.
+
+### 3.15 Upside 3's glpG hybrid with ff2.1 loses TM4 when the protein is first released (2026-10-26; OPEN)
+
+The validation run of plan.md Phase 24 2b.4 (`upside3_validation/glpg`, remote_jobs.md §1 line 3), read against
+Upside 2's hybrid with the same code (`upside3_validation/glpg/glpg_u3_block1.py`, `glpg_u3_prep_tm4.py`; outputs
+`glpg_u3_vs_u2_block1.txt`, `glpg_u3_prep_tm4.txt`). Upside 2's reference is the pre-audit ff3.0 79HIS chain's block 1
+(groups 1-17, every other one) and the recorded ff2.1 numbers on the fixed table (1.35: the cancelled `ff2.1_sc`
+REMD chain, whose files are deleted, and 4.15's local seeds).
+* **Same in both engines:** KE/1.5kT 1.00 for protein and lipid on every rung; peptide C-N 1.312 +- 0.120 A (Upside 3)
+  against 1.333 +- 0.118 A (Upside 2), 0.78-1.94 A in both, so the backbone's bond scatter is the hybrid's on either
+  engine; TM1 30-48 dihedral-box helix fraction 0.986 / 0.956 at T 0.70; the other helices by DSSP alpha 0.76-0.93
+  against 0.70-0.98.
+* **TM4 is not:** DSSP alpha of 135-151 over block 1 is 0.44 at T 0.70 and 0.39 at T 0.795 (Upside 2's ff3.0 chain 0.96
+  and 0.93; ff2.1's REMD 0.93 at T 0.80, its 12 local seeds 0.94 at T 0.85), and its dihedral-box fraction 0.76 and
+  0.69 (Upside 2 1.00 and 0.99; ff2.1 0.98). Every TM4 residue is below 0.8 at T 0.70.
+* **It goes in preparation stage 7.0**, the first in which the protein moves: TM4 DSSP alpha is 1.00 at the input and
+  every frame of stages 6.0-6.6 (the protein is rigid there: H-bond count 97.3 and Rg 20.4 A throughout), then falls
+  from 1.00 to 0.24 over stage 7.0's 401 frames (60,000 steps, about 540 time units at T 0.8647) while TM1 stays at
+  1.00. Upside 2's ff2.1 held TM4 at T 0.85 for 4,000 time units in 12 seeds.
+* The log's "hbonds" column reads 97 for the rigid crystal-like protein against Upside 2's 195; the per-frame
+  `hbond` score summed is comparable (174 against 195 at block 1's first frame), so the column's definition differs,
+  not the protein.
+* **Cause not established.** TM4 is the glycine-dense helix (3 in 17) and was the first casualty of the subsystem
+  temperature mismatch (3.10) and of a mismatched coverage table (3.11). The audit changed the hybrid in places that
+  reach it: the side-chain/lipid table now charges NC3, ALA and GLY keep their rotamer rows and H-bond coverage (A83),
+  and the rotamer 1-body is ff2.1's phi/psi-dependent term (A72), each a fix. Whether the loss is a fix revealing
+  ff2.1's own TM4 in a correct hybrid, or a new defect, needs a measurement of which change moves TM4's energy.
+* The stage-7.0 course under ff2.1, TM4 DSSP alpha by tenth of its 401 frames: 1.00 0.99 0.98 0.98 0.93 0.82 0.91
+  0.85 0.59 0.41. First test (user 10-26): the same preparation with ff3.1, same seeds (A234;
+  `upside3_validation/glpg_ff31`, remote_jobs.md §1 line 3).
+* The Upside 3 Peng arms on released ff2.1 against the same arms on the pre-audit binary (10-26,
+  `upside3_validation/peng/score/compare_u3_u2.txt`; `score_compare.py` reproduces released ff2.1's scores exactly):
+  native, 16 proteins, mean TM 0.564 against 0.552 (+0.012 [-0.001, +0.028], p 0.56), the engines agree; de novo, the
+  6 finished, 0.435 against 0.473 (-0.038 [-0.072, -0.011], lower in 6 of 6), led by top7 (-0.108) and alpha3d
+  (-0.071), both still rising between run halves. The de novo sample is the 6 fastest of 16; read again when all
+  finish.
 
 ## 4. What the hybrid gets wrong, and what is still open
 
@@ -6425,6 +6482,11 @@ is ff30_glyhb. Two corrections from the user on the same day:
   $files"` with `$files` empty reads stdin and waits forever: give remote commands `< /dev/null`. zsh does not
   split an unquoted `$C` into words, so `C="ssh -S ..."; $C cmd` runs a command named "ssh -S ..." and fails; write
   the ssh command out.
+* **Check a file for a credential by count, never by printing lines (2026-10-26).** A `grep -n "password" ... |
+  grep -v <patterns>` meant to show that `scratchpad/mdw2_master.exp` reads its password from `~/.bin/ssh_mdw3`
+  printed the password line into the session transcript: the script holds it inline, and the filter missed it. Use
+  `grep -c` or `grep -l` (file names only), or `grep -F -f <(extract the secret)` piped to `wc -l`, and never copy
+  the `.exp` scripts anywhere.
 * **A poll that looks back a fixed window misses what ended while polls were skipped (2026-10-25).** The watch
   probe lists jobs that left the queue in the last 80 minutes; three passes skipped while the session was busy hid
   ff3.2.1's NODE_FAIL for four hours. Sweep from the last recorded pass (`sacct -S <last pass>`), not a fixed window.

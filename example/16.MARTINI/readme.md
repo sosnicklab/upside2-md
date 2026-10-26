@@ -116,6 +116,7 @@ production, call the workflow directly:
 ```bash
 python ../../py/martini_prepare_system.py run-hybrid-workflow \
   --pdb-id glpG-RKRK-79HIS \
+  --force-field ff_2.1 \
   --protein-aa-pdb ~/Downloads/glpG-RKRK-79HIS.pdb \
   --lipid-name POPE,POPG \
   --charmm-gui-dir ~/Downloads/charmm-gui-<jobid> \
@@ -124,6 +125,11 @@ python ../../py/martini_prepare_system.py run-hybrid-workflow \
 ```
 
 Without `--opm-reference` the stage-7.0 solvation gate cannot run (the belt is undefined) and says so.
+
+`--force-field` (or `FORCE_FIELD`; `run.py`'s `force_field`) names the protein force field, a directory under
+`parameters/`: `ff_2.1`, or `ff_3.1` (ff2.1 with its trained Ramachandran library). A force field that ships its own
+`rama.dat` uses it, the others `common/rama.dat`. The side-chain/lipid table in `martini.h5` is built from ff_2.1's
+`sidechain.h5`, so the preparation refuses a force field with other side chains.
 
 Common knobs (CLI flags or the matching `UPPER_CASE` environment variables): `--salt-molar`,
 `--protein-pbc-margin`, `--eq-6*-nsteps`, `--prod-70-nsteps`, `--temperature`, `--prep-seed`, `--seed`.

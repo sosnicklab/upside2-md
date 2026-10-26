@@ -40,6 +40,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 PDB_ID="${PDB_ID:-1rkl}"
+# Protein force field, a directory under parameters/ (ff_3.1: ff2.1 with its trained Ramachandran library)
+FORCE_FIELD="${FORCE_FIELD:-ff_2.1}"
 # dry-MARTINI is parameterised at 303.15 K = 0.8647 T_up
 TEMPERATURE="${TEMPERATURE:-0.8647}"
 
@@ -155,6 +157,7 @@ ensure_martini_parameter_files
 workflow_args=(
     run-hybrid-workflow
     --pdb-id "${PDB_ID}"
+    --force-field "${FORCE_FIELD}"
     --runtime-pdb-id "${RUNTIME_PDB_ID}"
     --upside-home "${UPSIDE_HOME}"
     --run-dir "${RUN_DIR}"

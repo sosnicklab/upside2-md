@@ -16,6 +16,7 @@ from martini_prepare_system import stage_seed, promote_md_output_state_to_input,
 #----------------------------------------------------------------------
 
 pdb_id             = "glpG-RKRK-79HIS"
+force_field        = "ff_2.1"                                                     # protein force field under parameters/
 protein_aa_pdb     = os.path.expanduser("~/Downloads/glpG-RKRK-79HIS.pdb")        # all-atom protein
 lipid_name         = "POPE,POPG"                                                  # bilayer moleculetypes in dryMARTINI_itp/
 charmm_gui_dir     = os.path.expanduser("~/Downloads/charmm-gui-8662225279")      # CHARMM-GUI Martini POPE/POPG membrane
@@ -112,6 +113,7 @@ if job_stage == "prep":
     prep_cmd = [
         sys.executable, str(upside_utils_dir / "martini_prepare_system.py"), "run-hybrid-workflow",
         "--pdb-id", pdb_id,
+        "--force-field", force_field,
         "--upside-home", str(upside_path),
         "--run-dir", str(prep_dir),
         "--protein-aa-pdb", str(Path(protein_aa_pdb).expanduser().resolve()),

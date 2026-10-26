@@ -2,6 +2,7 @@
 
 import argparse
 import contextlib
+import filecmp
 import json
 import os
 import random
@@ -1137,6 +1138,7 @@ def inject_hybrid_interface_nodes(args, target_file: Path, current_stage: str, a
         rama_sheet_mixing=args.upside_rama_sheet_mixing,
         hbond_energy=args.upside_hbond_energy,
         reference_state_rama=args.upside_reference_state_rama,
+        sidechain_lib=args.upside_sidechain,
     )
     assert_hybrid_stage_active(
         target_file,
@@ -1513,10 +1515,17 @@ def normalize_hybrid_workflow_args(args):
     args.venv_python = args.upside_home / ".venv" / "bin" / "python"
     args.martinize_script = PY_DIR / "martinize.py"
     args.itp_dir = args.upside_home / "example" / "16.MARTINI" / "dryMARTINI_itp"
+    # The protein force field: a directory under parameters/ (ff_2.1; ff_3.1 is ff2.1 with its trained library). A
+    # force field whose training changed the Ramachandran library ships its own rama.dat, as the benchmark reads it.
+    # martini.h5's side-chain/lipid table is built from ff_2.1's sidechain.h5 (martini_build_tables.py), so the
+    # force field must carry those side chains (validate_hybrid_workflow_args).
+    ff_dir = args.upside_home / "parameters" / args.force_field
     args.martini_h5 = args.upside_home / "parameters" / "ff_2.1" / "martini.h5"
-    args.upside_rama_library = args.upside_home / "parameters" / "common" / "rama.dat"
-    args.upside_rama_sheet_mixing = args.upside_home / "parameters" / "ff_2.1" / "sheet"
-    args.upside_hbond_energy = args.upside_home / "parameters" / "ff_2.1" / "hbond.h5"
+    args.upside_rama_library = (ff_dir / "rama.dat" if (ff_dir / "rama.dat").exists()
+                                else args.upside_home / "parameters" / "common" / "rama.dat")
+    args.upside_rama_sheet_mixing = ff_dir / "sheet"
+    args.upside_hbond_energy = ff_dir / "hbond.h5"
+    args.upside_sidechain = ff_dir / "sidechain.h5"
     args.upside_reference_state_rama = args.upside_home / "parameters" / "common" / "rama_reference.pkl"
     args.npt_interval = DEFAULT_NPT_INTERVAL
     args.npt_mc_dmax_xy = DEFAULT_NPT_MC_DMAX_XY
@@ -1536,6 +1545,8 @@ def normalize_hybrid_workflow_args(args):
 
 def add_hybrid_workflow_arguments(parser):
     parser.add_argument("--pdb-id", default=Config.text("PDB_ID", None))
+    parser.add_argument("--force-field", default=Config.text("FORCE_FIELD", None),
+                        help="Protein force field, a directory under parameters/ (e.g. ff_2.1 or ff_3.1)")
     parser.add_argument("--runtime-pdb-id", default=Config.text("RUNTIME_PDB_ID", None))
     parser.add_argument("--upside-home", default=Config.text("UPSIDE_HOME", str(REPO_ROOT)))
     parser.add_argument("--run-dir", default=Config.text("RUN_DIR", None))
@@ -1599,6 +1610,8 @@ def parse_hybrid_workflow_args(argv):
     args = parser.parse_args(argv)
     if not args.pdb_id or not str(args.pdb_id).strip():
         raise ValueError("A PDB id is required (--pdb-id or PDB_ID, e.g. 1rkl or glpG-RKRK-79HIS)")
+    if not args.force_field or not str(args.force_field).strip():
+        raise ValueError("A protein force field is required (--force-field or FORCE_FIELD, e.g. ff_2.1)")
     if args.run_dir is None:
         args.run_dir = f"outputs/martini_{args.pdb_id}_hybrid"
     if args.runtime_pdb_id is None:
@@ -1636,7 +1649,9 @@ def validate_hybrid_workflow_args(args):
         args.martinize_script,
         args.martini_h5,
         args.upside_rama_library,
+        args.upside_rama_sheet_mixing,
         args.upside_hbond_energy,
+        args.upside_sidechain,
         args.upside_reference_state_rama,
         args.extract_vtf_script,
     ]
@@ -1645,6 +1660,10 @@ def validate_hybrid_workflow_args(args):
     for path in required:
         if not path.exists():
             raise FileNotFoundError(path)
+    table_sidechain = args.upside_home / "parameters" / "ff_2.1" / "sidechain.h5"
+    if not filecmp.cmp(args.upside_sidechain, table_sidechain, shallow=False):
+        raise ValueError(f"{args.upside_sidechain} differs from {table_sidechain}, the side chains martini.h5's "
+                         f"side-chain/lipid table is built from; {args.force_field} needs its own table")
     require_bilayer_lipids(args.upside_home, args.lipid_name)
     lipid_diffusion_targets(active_lipid_names())
     # The belt is the protein's published hydrophobic band, so it only exists if an OPM reference was

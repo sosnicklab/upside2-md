@@ -1594,3 +1594,26 @@ to 10-07 12:00 is in git history.
   BioEmu2 HEEH 0.14 to 0.35. Files: diffusion_dynamics.md, remote_jobs.md (header, watch, §1 line 4, table),
   findings.md 10.14, progress.md; scratchpad `boltz_hdx/{submit_1e5.sh,submitted_1e5.txt,inputs/,flags/dg_phase1.py,
   flags/pool_seeds.py}`, `bioemu2_hdx/{sample.sbatch,submit_1e5.sh,submitted_1e5.txt}`.
+- 10-26 00:50-01:20, the two questions (user: "is ff3.1.1 and ff3.2.1 currently equivalent?", "check if current upside 3
+  result is consistent with upside 2 result"). The agreement check over rounds 0-6 (`dump_rama_state.py` to every
+  epoch end; `compare_pooled_runs.py` with the runs' own `rama_basin.py`): (a) met at round 6, (b) short only by a
+  constant the data cannot move. Upside 3's glpG block 1 against Upside 2 with the same code: KE, C-N and five
+  helices match, TM4 is lost in prep stage 7.0 (findings 3.15). 44 Peng scoring jobs submitted for the engine
+  comparison. Files: findings.md 1.34, 3.15, plan.md, remote_jobs.md, progress.md.
+- 10-26 09:40-10:25 (user: "merge into ff3.1 now and run validation. Remove any existing ff3.1, ff3.2 ... 2. diagnose
+  upside3 ... first double check if it is because you run it with ff2.1"; plan approved: retire released sets and
+  results, glpG on Upside 3 only). Sockets reopened after an idle night (two Duo pushes). Merge written and checked
+  (`scratchpad/ff31_merge/`), released to four trees and the old ff3.1/ff3.2 sets and results moved aside (104
+  moves, `checks/ff31_merged_20261026/release.sh`); soluble validation submitted (2 panels, 2 TM jobs, 32 Peng arms,
+  collector). Upside 3: A234, the hybrid prep takes `--force-field` (old and new injection identical for ff_2.1, only
+  `rama_pot` differs for ff_3.1), deployed to the Upside 3 tree; glpG with ff3.1 submitted (prep 49573353, block 1
+  49573354). Peng engine comparison read: natives agree, the 6 finished de novo arms lower on Upside 3. Watch probe
+  and cron updated for the new jobs (`357a758a`). Files: findings.md 1.34, 3.14 (A234), 3.15, plan.md Phase 30 and
+  Known Errors, remote_jobs.md, progress.md, memory; repo `parameters/ff_3.1/`, `py/martini_prepare_system{,_lib}.py`,
+  `example/16.MARTINI/{run.py,run_sim_hybrid.sh,readme.md}`.
+- 10-26 10:29-10:55. Watch pass 10:29: nothing failed; BioEmu2 EHEE 3 of 10 jobs done, every frame physical; released
+  ff2.1 Peng 26 of 32 scored, Upside 3 Peng 23 of 32. Handoff prepared (user: "be prepared to be shut down and
+  continue this session on another computer ... pick up with 'continue monitoring'"): remote_jobs.md "Resume here",
+  "Handoff" and "The watch" rewritten for 10-26 with both cron prompts verbatim; CLAUDE.md names "continue
+  monitoring"; bundle `checks/handoff_20261026/` on the cluster (record copies, working-tree patch, cron prompts,
+  readout tools, memory). Files: remote_jobs.md, CLAUDE.md, progress.md.

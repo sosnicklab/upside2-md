@@ -186,8 +186,8 @@ bash "$UPSIDE_HOME/example/16.MARTINI/<workflow>.sh"
 
 ### Remote Job Records
 
-**"continue jobs":** a session asked to continue the jobs starts at `remote_jobs.md` "Resume here,
-from any computer" and follows its checklist in order.
+**"continue jobs" / "continue monitoring":** a session asked to continue the jobs or the monitoring starts at
+`remote_jobs.md` "Resume here, from any computer" and follows its checklist in order.
 
 **"continue upside3 progress":** a session asked to continue the Upside 3 work starts at `plan.md` Phase 24
 "Resume here" and follows its checklist in order; the method is `upside3.md` 2.2, the defect ledger
