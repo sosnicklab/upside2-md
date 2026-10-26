@@ -210,6 +210,7 @@ static inline bool is_dry_martini_term_name(const std::string& name) {
     return is_prefix("martini_potential", name) ||
            is_prefix("dist_spring", name) ||
            is_prefix("angle_spring", name) ||
+           is_prefix("dihedral_spring", name) ||
            is_prefix("restraint_position", name);
 }
 

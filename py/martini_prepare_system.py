@@ -2,7 +2,6 @@
 
 import argparse
 import contextlib
-import filecmp
 import json
 import os
 import random
@@ -1517,8 +1516,8 @@ def normalize_hybrid_workflow_args(args):
     args.itp_dir = args.upside_home / "example" / "16.MARTINI" / "dryMARTINI_itp"
     # The protein force field: a directory under parameters/ (ff_2.1; ff_3.1 is ff2.1 with its trained library). A
     # force field whose training changed the Ramachandran library ships its own rama.dat, as the benchmark reads it.
-    # martini.h5's side-chain/lipid table is built from ff_2.1's sidechain.h5 (martini_build_tables.py), so the
-    # force field must carry those side chains (validate_hybrid_workflow_args).
+    # martini.h5's side-chain/lipid table is built from the rotamer library of ff_2.1's sidechain.h5
+    # (martini_build_tables.py), so the force field must carry that library (validate_hybrid_workflow_args).
     ff_dir = args.upside_home / "parameters" / args.force_field
     args.martini_h5 = args.upside_home / "parameters" / "ff_2.1" / "martini.h5"
     args.upside_rama_library = (ff_dir / "rama.dat" if (ff_dir / "rama.dat").exists()
@@ -1639,6 +1638,19 @@ def parse_hybrid_workflow_args(argv):
     return args
 
 
+# The datasets of sidechain.h5 that martini_build_tables.py builds martini.h5's side-chain/lipid table from: the
+# rotamer library's residue order, bead counts and per-state chi rows. Training changes the library's energies and
+# bead placement, not these.
+SIDECHAIN_TABLE_DATASETS = ("restype_order", "rotamer_start_stop_bead", "restype_and_chi_and_state")
+
+
+def rotamer_library_differences(sidechain_path, table_sidechain_path):
+    import h5py
+
+    with h5py.File(sidechain_path, "r") as h5, h5py.File(table_sidechain_path, "r") as table_h5:
+        return [name for name in SIDECHAIN_TABLE_DATASETS if not np.array_equal(h5[name][:], table_h5[name][:])]
+
+
 def validate_hybrid_workflow_args(args):
     if not args.upside_executable.exists():
         raise FileNotFoundError(args.upside_executable)
@@ -1661,9 +1673,11 @@ def validate_hybrid_workflow_args(args):
         if not path.exists():
             raise FileNotFoundError(path)
     table_sidechain = args.upside_home / "parameters" / "ff_2.1" / "sidechain.h5"
-    if not filecmp.cmp(args.upside_sidechain, table_sidechain, shallow=False):
-        raise ValueError(f"{args.upside_sidechain} differs from {table_sidechain}, the side chains martini.h5's "
-                         f"side-chain/lipid table is built from; {args.force_field} needs its own table")
+    differing = rotamer_library_differences(args.upside_sidechain, table_sidechain)
+    if differing:
+        raise ValueError(f"{args.upside_sidechain} differs from {table_sidechain} in {', '.join(differing)}, the "
+                         f"rotamer library martini.h5's side-chain/lipid table is built from; {args.force_field} "
+                         f"needs its own table")
     require_bilayer_lipids(args.upside_home, args.lipid_name)
     lipid_diffusion_targets(active_lipid_names())
     # The belt is the protein's published hydrophobic band, so it only exists if an OPM reference was

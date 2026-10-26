@@ -885,7 +885,9 @@ def _load_martini_topology(ff_path, stage_lipidhead_fc):
     if not martini_table:
         raise ValueError(f"Could not read MARTINI parameters from '{martini_param_file}'")
 
-    lipid_preproc_defs = {}
+    # Upside has no constraint solver, so a topology's constraints are taken in its own FLEXIBLE form: the
+    # harmonic bonds GROMACS's -DFLEXIBLE selects (DDM's maltose head, k 30000 kJ/mol/nm^2).
+    lipid_preproc_defs = {'FLEXIBLE': 1}
     if stage_lipidhead_fc > 0.0:
         lipid_preproc_defs['BILAYER_LIPIDHEAD_FC'] = stage_lipidhead_fc
 
@@ -904,16 +906,26 @@ def _load_martini_topology(ff_path, stage_lipidhead_fc):
         lipid_topology = parse_itp_file(lipid_param_file, lipid_molecule, preprocessor_defines=lipid_preproc_defs)
         if not lipid_topology['bonds'] or not lipid_topology['angles']:
             raise ValueError(f"{lipid_name} in '{lipid_param_file}' has no bonds or no angles")
+        if lipid_topology['constraints']:
+            raise ValueError(f"{lipid_name} in '{lipid_param_file}' keeps {len(lipid_topology['constraints'])} "
+                             f"constraints under FLEXIBLE; Upside holds no constraint, so they need a FLEXIBLE form")
+        torsion_types = sorted({d['func'] for d in lipid_topology['dihedrals']} - {1})
+        if torsion_types:
+            raise ValueError(f"{lipid_name} in '{lipid_param_file}' has dihedral types {torsion_types}; "
+                             f"dihedral_spring is GROMACS type 1 only")
         lipids[lipid_molecule.upper()] = {
             'atom_names': [atom['atom'].upper() for atom in lipid_topology['atoms']],
             'atom_to_type': {atom['atom'].upper(): atom['type'] for atom in lipid_topology['atoms']},
             'atom_to_charge': {atom['atom'].upper(): atom['charge'] for atom in lipid_topology['atoms']},
             'bonds': [(b['i'], b['j'], b['r0'], b['k']) for b in lipid_topology['bonds']],
             'angles': [(a['i'], a['j'], a['k'], a['theta0'], a['force_k']) for a in lipid_topology['angles']],
+            'dihedrals': [(d['i'], d['j'], d['k'], d['l'], d['phi0'], d['force_k'], d['mult'])
+                          for d in lipid_topology['dihedrals']],
             'position_restraints': lipid_topology.get('position_restraints', []),
         }
         print(f"Read {lipid_molecule} topology from {lipid_param_file}: {len(lipid_topology['atoms'])} beads, "
-              f"{len(lipid_topology['bonds'])} bonds, {len(lipid_topology['angles'])} angles")
+              f"{len(lipid_topology['bonds'])} bonds, {len(lipid_topology['angles'])} angles, "
+              f"{len(lipid_topology['dihedrals'])} dihedrals")
 
     ion_topology = parse_itp_file(ff_file("dry_martini_v2.1_ions.itp"))
     ions = {}
@@ -1022,8 +1034,9 @@ def _group_atoms_into_molecules(residue_ids, residue_names, atom_names, chain_id
     return molecules, molecule_ids, protein_sequence, lipid_count
 
 
-def _build_bonded_terms(molecules, topo, reference_positions, bond_conversion, angle_conversion):
-    """Lipid bonds, angles and head-group position restraints.
+def _build_bonded_terms(molecules, topo, reference_positions, bond_conversion, angle_conversion,
+                        dihedral_conversion):
+    """Lipid bonds, angles, dihedrals and head-group position restraints.
 
     Each ITP term names its beads by ITP index; the index is resolved to the bead's NAME and the name to the
     molecule's PDB atom, so the terms do not depend on the order the coordinates list the beads in. A
@@ -1033,6 +1046,7 @@ def _build_bonded_terms(molecules, topo, reference_positions, bond_conversion, a
     lipids = topo['lipids']
     bonds, bond_lengths, bond_k = [], [], []
     angles, angle_equil_deg, angle_k = [], [], []
+    dihedrals, dihedral_phi_s_deg, dihedral_k, dihedral_mult = [], [], [], []
     restraint_indices, restraint_ref_pos, restraint_spring_xyz = [], [], []
 
     active_lipids = set(active_lipid_names())
@@ -1058,6 +1072,11 @@ def _build_bonded_terms(molecules, topo, reference_positions, bond_conversion, a
             angles.append([atom(i), atom(j), atom(k)])
             angle_equil_deg.append(theta0_deg)
             angle_k.append(k_kj * angle_conversion)
+        for i, j, k, l, phi_s_deg, k_kj, mult in rec['dihedrals']:
+            dihedrals.append([atom(i), atom(j), atom(k), atom(l)])
+            dihedral_phi_s_deg.append(phi_s_deg)
+            dihedral_k.append(k_kj * dihedral_conversion)
+            dihedral_mult.append(mult)
         for restraint in rec['position_restraints']:
             atom_idx = atom(restraint['i'])
             restraint_indices.append(atom_idx)
@@ -1066,9 +1085,10 @@ def _build_bonded_terms(molecules, topo, reference_positions, bond_conversion, a
                                          restraint['fy'] * bond_conversion,
                                          restraint['fz'] * bond_conversion])
 
-    print(f"Created {len(bonds)} {active_lipid_name()} bonds, {len(angles)} angles and "
+    print(f"Created {len(bonds)} {active_lipid_name()} bonds, {len(angles)} angles, {len(dihedrals)} dihedrals and "
           f"{len(restraint_indices)} head-group restraints across {len(lipid_molecules)} lipids")
     return (bonds, bond_lengths, bond_k, angles, angle_equil_deg, angle_k,
+            dihedrals, dihedral_phi_s_deg, dihedral_k, dihedral_mult,
             restraint_indices, restraint_ref_pos, restraint_spring_xyz)
 
 
@@ -1229,6 +1249,7 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
         raise ValueError("UPSIDE_MARTINI_ENERGY_CONVERSION and UPSIDE_MARTINI_LENGTH_CONVERSION must be positive")
     bond_conversion = 1.0 / (energy_conversion * length_conversion ** 2)
     angle_conversion = 1.0 / energy_conversion
+    dihedral_conversion = 1.0 / energy_conversion
     print(f"Unit conversions: energy={energy_conversion:g} kJ/mol per E_up, length={length_conversion:g} A/nm")
 
     (initial_positions, atom_types, charges, residue_ids, atom_names,
@@ -1255,8 +1276,9 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
 
     (bonds_list, bond_lengths_list, bond_force_constants_list,
      angles_list, angle_equil_deg_list, angle_force_constants_list,
+     dihedrals_list, dihedral_phi_s_deg_list, dihedral_force_constants_list, dihedral_multiplicity_list,
      lipid_restraint_indices, lipid_restraint_ref_pos, lipid_restraint_spring_xyz) = _build_bonded_terms(
-        molecules, topo, final_positions, bond_conversion, angle_conversion,
+        molecules, topo, final_positions, bond_conversion, angle_conversion, dihedral_conversion,
     )
 
     particle_class = np.empty(n_atoms, dtype='S10')
@@ -1541,6 +1563,18 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
         t.create_array(angle_group, 'equil_angle_deg', obj=np.array(angle_equil_deg_list, dtype='f4'))
         t.create_array(angle_group, 'spring_const', obj=np.array(angle_force_constants_list, dtype='f4'))
 
+        # Proper dihedrals, V = k (1 + cos(n phi - phi_s)) (GROMACS type 1), of the molecules whose ITP has them.
+        if dihedrals_list:
+            dihedral_group = t.create_group(potential_grp, 'dihedral_spring')
+            dihedral_group._v_attrs.arguments = np.array([b'pos'])
+            dihedral_group._v_attrs.x_len = x_len
+            dihedral_group._v_attrs.y_len = y_len
+            dihedral_group._v_attrs.z_len = z_len
+            t.create_array(dihedral_group, 'id', obj=np.array(dihedrals_list, dtype=int))
+            t.create_array(dihedral_group, 'equil_angle_deg', obj=np.array(dihedral_phi_s_deg_list, dtype='f4'))
+            t.create_array(dihedral_group, 'spring_const', obj=np.array(dihedral_force_constants_list, dtype='f4'))
+            t.create_array(dihedral_group, 'multiplicity', obj=np.array(dihedral_multiplicity_list, dtype='i4'))
+
         # Head-group height restraint of CHARMM-GUI's 6.2-6.6 ramp (BILAYER_LIPIDHEAD_FC in the lipid ITP).
         # Its reference is the assembled membrane in the stage file's own frame, as gmx grompp -r
         # step5_charmm2gmx.pdb uses the assembly.
@@ -1564,6 +1598,7 @@ def convert_stage(pdb_id, stage, run_dir, runtime_pdb):
         f.write(f"Box dimensions: {x_len:.3f} x {y_len:.3f} x {z_len:.3f} A\n")
         f.write(f"Total bonds: {len(bonds_list)}\n")
         f.write(f"Total angles: {len(angles_list)}\n")
+        f.write(f"Total dihedrals: {len(dihedrals_list)}\n")
         f.write(f"{active_lipid_name()} molecules: {lipid_count}\n")
         f.write(f"1-2 exclusions (nrexcl=1): {excluded_12_count}\n")
 

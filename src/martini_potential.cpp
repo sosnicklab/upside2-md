@@ -1188,6 +1188,132 @@ struct AngleSpring : public PotentialNode
 };
 static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
 
+// Periodic proper dihedral, V = k (1 + cos(n phi - phi_s)) (GROMACS dihedral type 1), evaluated from one canonical
+// spline of 1 + cos(u) in u = n phi - phi_s, reduced into [-pi, pi). phi is GROMACS's angle between the planes
+// (i, j, k) and (j, k, l): with r_ij = x_i - x_j, r_kj = x_k - x_j, r_kl = x_k - x_l (minimum images),
+// m = r_ij x r_kj and n = r_kj x r_kl, phi = atan2(|r_kj| r_ij.n, m.n), zero when i and l are cis. The fit runs
+// n_pad knots past both ends of [-pi, pi], so the zero end slopes of the clamped fit stay outside the range, and
+// at 1000 knots the cubic spline of the cosine is exact to float round-off.
+struct DihedralSpring : public PotentialNode
+{
+    struct Params {
+        index_t atom[4];
+        float equil_angle_deg;   // phi_s
+        float spring_constant;   // k
+        int   multiplicity;      // n
+    };
+
+    static constexpr int n_knot = 1000;
+    static constexpr int n_pad = 24;
+
+    int n_elem;
+    CoordNode& pos;
+    vector<Params> params;
+
+    // Box dimensions for minimum image
+    float box_x, box_y, box_z;
+
+    LayeredClampedSpline1D<1> dihedral_potential_spline;
+    float u_min, u_max; // fitted u domain, padded past [-pi, pi]
+
+    DihedralSpring(hid_t grp, CoordNode& pos_):
+        PotentialNode(),
+        n_elem(get_dset_size(2, grp, "id")[0]), pos(pos_), params(n_elem),
+        dihedral_potential_spline(1, n_knot)
+    {
+        int n_dep = 4;  // number of atoms that each term depends on
+        check_size(grp, "id",              n_elem, n_dep);
+        check_size(grp, "equil_angle_deg", n_elem);
+        check_size(grp, "spring_const",    n_elem);
+        check_size(grp, "multiplicity",    n_elem);
+
+        auto& p = params;
+        traverse_dset<2,int>  (grp, "id",              [&](size_t i, size_t j, int   x) {
+                if(x<0 || x>=pos.n_elem) throw string("dihedral_spring id outside its input");
+                p[i].atom[j] = x;});
+        traverse_dset<1,float>(grp, "equil_angle_deg", [&](size_t i,           float x) { p[i].equil_angle_deg = x;});
+        traverse_dset<1,float>(grp, "spring_const",    [&](size_t i,           float x) { p[i].spring_constant = x;});
+        traverse_dset<1,int>  (grp, "multiplicity",    [&](size_t i,           int   x) {
+                if(x<1) throw string("dihedral_spring multiplicity must be positive");
+                p[i].multiplicity = x;});
+
+        box_x = read_attribute<float>(grp, ".", "x_len");
+        box_y = read_attribute<float>(grp, ".", "y_len");
+        box_z = read_attribute<float>(grp, ".", "z_len");
+        if(!(box_x > 0.f && box_y > 0.f && box_z > 0.f))
+            throw string("dihedral_spring requires a positive periodic box");
+
+        float step = float(2.*M_PI) / float(n_knot - 1 - 2*n_pad);
+        u_min = -float(M_PI) - n_pad*step;
+        u_max =  float(M_PI) + n_pad*step;
+        std::vector<double> dihedral_pot_data(n_knot);
+        for(int i = 0; i < n_knot; ++i) {
+            double u = u_min + i * double(u_max - u_min) / (n_knot - 1);
+            dihedral_pot_data[i] = 1. + cos(u);
+        }
+        dihedral_potential_spline.fit_spline(dihedral_pot_data.data());
+    }
+
+    virtual void compute_value(ComputeMode mode) {
+        Timer timer(string("dihedral_spring"));
+
+        VecArray posc = pos.output;
+        VecArray pos_sens = pos.sens;
+        auto hybrid_state = martini_hybrid::get_state_for_coord(pos);
+        float* pot = mode==PotentialAndDerivMode ? &potential : nullptr;
+        double pot_sum = 0.;
+
+        float coord_scale = float(n_knot - 1) / (u_max - u_min);
+        for(int nt=0; nt<n_elem; ++nt) {
+            auto& p = params[nt];
+            if(hybrid_state && !martini_hybrid::allow_multibody_term_if_active(*hybrid_state, p.atom, 4)) {
+                continue;
+            }
+
+            auto xi = load_vec<3>(posc, p.atom[0]);
+            auto xj = load_vec<3>(posc, p.atom[1]);
+            auto xk = load_vec<3>(posc, p.atom[2]);
+            auto xl = load_vec<3>(posc, p.atom[3]);
+
+            auto r_ij = simulation_box::minimum_image(xi - xj, box_x, box_y, box_z);
+            auto r_kj = simulation_box::minimum_image(xk - xj, box_x, box_y, box_z);
+            auto r_kl = simulation_box::minimum_image(xk - xl, box_x, box_y, box_z);
+
+            auto m = cross(r_ij, r_kj);
+            auto n = cross(r_kj, r_kl);
+            float m2 = mag2(m);
+            float n2 = mag2(n);
+            float rkj2 = mag2(r_kj);
+            float rkj = sqrtf(rkj2);
+            float phi = atan2f(rkj * dot(r_ij, n), dot(m, n));
+
+            float u = p.multiplicity * phi - p.equil_angle_deg * float(M_PI / 180.);
+            u -= float(2.*M_PI) * floorf((u + float(M_PI)) * float(0.5/M_PI));
+
+            // Canonical spline in u: value 1 + cos(u) and its derivative per unit u
+            float result[2];
+            dihedral_potential_spline.evaluate_value_and_deriv(result, 0, (u - u_min) * coord_scale);
+            if(pot) pot_sum += p.spring_constant * result[1];
+
+            // dV/dphi, then the gradient of phi on the four atoms (GROMACS do_dih_fup, as gradients)
+            float dV_dphi = p.spring_constant * p.multiplicity * result[0] * coord_scale;
+            auto grad_i = ( dV_dphi * rkj / m2) * m;
+            auto grad_l = (-dV_dphi * rkj / n2) * n;
+            float p_proj = dot(r_ij, r_kj) / rkj2;
+            float q_proj = dot(r_kl, r_kj) / rkj2;
+            auto s = p_proj * grad_i - q_proj * grad_l;
+
+            update_vec(pos_sens, p.atom[0], grad_i);
+            update_vec(pos_sens, p.atom[1], s - grad_i);
+            update_vec(pos_sens, p.atom[2], -grad_l - s);
+            update_vec(pos_sens, p.atom[3], grad_l);
+        }
+        if(pot) *pot = float(pot_sum);
+    }
+
+};
+static RegisterNodeType<DihedralSpring, 1> dihedral_spring_node("dihedral_spring");
+
 // Position restraint potential for restraining atoms to reference positions
 // Applies harmonic penalty: V = 0.5 * k * (r - r_ref)^2
 struct PositionRestraint : public PotentialNode
@@ -1275,6 +1401,8 @@ void update_martini_node_boxes(DerivEngine& engine, float box_x, float box_y, fl
         } else if(auto* node = dynamic_cast<DistSpring*>(n.computation.get())) {
             node->set_box(box_x, box_y, box_z);
         } else if(auto* node = dynamic_cast<AngleSpring*>(n.computation.get())) {
+            node->box_x = box_x; node->box_y = box_y; node->box_z = box_z;
+        } else if(auto* node = dynamic_cast<DihedralSpring*>(n.computation.get())) {
             node->box_x = box_x; node->box_y = box_y; node->box_z = box_z;
         }
     }

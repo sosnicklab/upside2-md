@@ -168,6 +168,11 @@ pos
 | `martini_sc_table_1body` | `env_atom_index`, `env_target_index`, `row_*`, `grid_ang`, `theta_grid`, `rotamer_count`, `rotamer_full_energy_eup`, `@x_len/y_len/z_len`; optional `@cache_buffer` (default 1 A, not written by the preparation) | Side-chain/environment energy per rotamer row from the `/sc_table` of `martini.h5` (2.6): a clamped cubic spline in r and theta, cut off at the last radial node; each environment atom maps to the target of its bead type and charge |
 | `dist_spring` | `id (N,2)`, `equil_dist (N,)`, `spring_const (N,)`, `@x_len/y_len/z_len` | Intra-lipid bond springs, V = k/2 (r - r0)^2 from a canonical spline that spans every minimum-image length |
 | `angle_spring` | `id (N,3)` (vertex in the middle), `equil_angle_deg (N,)`, `spring_const (N,)`, `@x_len/y_len/z_len` | Intra-lipid angles, V = k/2 (cos(theta) - cos(theta0))^2 (GROMACS type 2) from a canonical spline in cos(theta) - cos(theta0) over [-2, 2] |
+| `dihedral_spring` | `id (N,4)`, `equil_angle_deg (N,)` (phi_s), `spring_const (N,)`, `multiplicity (N,)` int32, `@x_len/y_len/z_len` | Intra-molecule proper dihedrals, V = k (1 + cos(n phi - phi_s)) (GROMACS type 1), phi GROMACS's (zero cis, sign of r_ij . (r_kj x r_kl)), from a canonical spline of 1 + cos(u) over [-pi, pi]; written only for molecules whose ITP has `[ dihedrals ]` (DDM's head) |
+
+The ITPs are read with `FLEXIBLE` defined: Upside holds no constraint, so a topology's constraints enter as its own
+`-DFLEXIBLE` harmonic bonds (DDM's five maltose-head bonds, k 30000 kJ/mol/nm^2), and a constraint left active under
+`FLEXIBLE` is refused.
 
 #### Hybrid protein+MARTINI extra nodes
 

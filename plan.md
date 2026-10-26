@@ -1253,15 +1253,52 @@ between the runs to their own noise except glycine's alpha_L, whose shared-offse
    Peng's 32 arms and the collector (`checks/ff31_merged_20261026/submit.sh`); glpG on Upside 3 with ff3.1
    (Phase 24 2b.4, Known Errors); read each as it finishes (remote_jobs.md §1 lines 2-3).
 
+### Phase 31 - glpG in a DDM micelle with ff3.1 on Upside 3 (STARTED 2026-10-26, user)
+User 10-26: "setup a DMM simulation for glpG, which we did experiment on ... DMM should be single layer instead of
+bilayer ... run it with ff3.1"; "I will build a DDM micelle with charmm-Gui (without protein in it), but you will
+provide me the radius and number of DDM molecules"; "you should implement the missing dihedral that is needed".
+Decisions:
+- **The single layer is a micelle.** A planar DDM layer cannot cover glpG's 28.2 A belt: one C12 tail under a
+  maltose head gives a lamellar core of 11-14 A (findings 7.1, readme section 5), and the old DDM slab unfolded TM4.
+- **DDM is the official Martini 2 topology**, cgmartini `martini_v2.0_DDM_01.itp` (Bjorling and Westenhoff; md5
+  `0d587b39`): its three proper dihedrals (GROMACS type 1) are implemented in Upside 3, and its five head
+  constraints are carried as the file's own `-DFLEXIBLE` harmonic bonds, Upside having no constraint solver.
+- **Sizes from measurement.** Empty DDM micelle (Oliver et al. 2013, SAXS): aggregation number 135-155, oblate core
+  semi-axes 15.7-16.1 and 27.9-28.3 A, head shell 5.4-5.8 A, monomer 698 A^3. glpG's belt (oriented CG, |z| <= 14.1
+  A) has effective radius 15-18.5 A and reaches 26 A, so the empty micelle's core cannot hold it; a 16 A tail annulus
+  around the belt holds 150 (rounded rim) to 200 (square rim) DDM. Told to the user: build N 140, head radius ~26 A.
+1. [x] **The dihedral term** `dihedral_spring` (findings 3.14 A236, 10-26), beside `dist_spring` and `angle_spring`:
+   V = k (1 + cos(n phi - phi_s)), phi GROMACS's, from one canonical spline of 1 + cos(u); the preparation writes it
+   from the ITP's `[ dihedrals ]`, the ITPs read under `FLEXIBLE`; the DDM ITP is the official file. Equal to
+   GROMACS's energies and forces on 600 DDM dihedrals, `node_fd` clean, `regress` bitwise unchanged, `index_oracle`
+   clean. Built locally only (`obj_dihedral/`); the cluster's Upside 3 tree takes it at step 4, built on midway2.
+   Still owed with step 3: DDM in the hybrid's own integration (KE/1.5kT, bond lengths, dihedral distributions
+   against GROMACS on the same complex).
+2. [ ] **The glpG-DDM complex, built locally by self-assembly** (user 10-26: "charmm-gui fails to build micelle this
+   size. Let's build it locally"). The empty micelle is skipped: its core cannot hold glpG. GROMACS 2026.4 on the
+   Mac, the potential Upside reproduces (findings 8: reaction field eps_r 15, potential-shifted LJ to 1.2 nm, `sd`
+   at 303.15 K), NVT: the prep's oriented CG glpG held fixed, 200 official-topology DDM started in a shell around its
+   belt, run until the number bound and the belt coverage stop changing. Free detergent is then removed and the
+   complex is the environment the preparation takes. `scratchpad/ddm_micelle/`.
+3. [ ] **The preparation's micelle path.** It is bilayer-only today: `require_bilayer_lipids` refuses a single-tail
+   detergent, and the xy barostat, tiling and ion slab assume a bilayer. A micelle runs NVT; DDM needs its own
+   diffusion target for the friction calibration, from a measurement; the belt solvation gate applies as it is.
+4. [ ] **glpG-DDM with ff3.1 on Upside 3**: preparation and REMD, read as the POPE/POPG run is (KE, C-N, DSSP per TM
+   helix, TM4).
+
 ## Known Errors / Blockers
 
 * **Upside 3's glpG hybrid with ff2.1 loses TM4 in preparation stage 7.0** (findings 3.15, 10-26): every other
-  helix, KE and C-N read as on Upside 2's hybrid. First test (user 10-26, "first double check if it is because you
-  run it with ff2.1"): the same preparation with ff3.1 (A234 lets the hybrid take a force field;
-  `upside3_validation/glpg_ff31`, submitted 10:11 10-26). TM4 held through stage 7.0 means the loss was ff2.1's;
-  lost again means an Upside 3 cause, then which audit change (NC3 charge in the side-chain/lipid table, A83's
-  ALA/GLY rows, A72's rotamer 1-body, or something new) moves TM4's energy. Until then no Upside 3 hybrid HDX result
-  is read.
+  helix, KE and C-N read as on Upside 2's hybrid. No Upside 2 ff2.1 run shares its corrected side-chain placement
+  (findings 3.15, 10.40), so the ff2.1 numbers are no reference. Two tests, the same preparation and seeds, each read
+  at the end of stage 7.0:
+  - ff3.1 (user 10-26, "first double check if it is because you run it with ff2.1"; A234;
+    `upside3_validation/glpg_ff31`, submitted 10:11 10-26): ff2.1 with only its map trained, so it tests the map.
+  - **ff3.0, the matched test** (user 10-26, "do submit ff3.0"; A235; `upside3_validation/glpg_ff30`, submitted 14:13
+    10-26): its placement-fixed Upside 2 chains hold TM4 (DSSP 0.96 at T 0.70). Lost on Upside 3 means an Upside 3
+    cause, then which audit change (NC3 charge in the side-chain/lipid table, A83's ALA/GLY rows, A72's rotamer 1-body,
+    or something new) moves TM4's energy; held means the loss is ff2.1's own with correct placement.
+  Until then no Upside 3 hybrid HDX result is read.
 
 * **Every hybrid dry-MARTINI result so far carries these defects** (audit 10-20; fixes in preparation, plan.md Phase 24).
   * The side-chain/lipid interface table treats the choline bead NC3 (+1) as neutral: the builder takes charge from

@@ -1648,3 +1648,23 @@ to 10-07 12:00 is in git history.
   page 1 all solid, ranked by length; its basin panels show the change of basin depth (the minimum on the
   non-helical zero, as the map labels), blue deeper, red shallower; overall stays the probability that changes
   basin; page 2 keeps its hollow bars, ranked by length.
+- 10-26 13:55-14:25, MacBook Pro (user on Upside 3's TM4: "upside2 did unfold TM4 ... before a bug fix", then "did you
+  run both ff3.1 and ff3.0 ... we want to run it", "do submit ff3.0"). The Upside 2 ff2.1 TM4 references all predate the
+  10-17 placement fix: findings 3.15 corrected, lesson 10.40. A235: the hybrid preparation's side-chain check compares
+  the three `sidechain.h5` datasets the side-chain/lipid table is built from, not the whole file, so ff3.0 (which
+  differs only in trained energies and placement) runs; ff_2.1, ff_3.0, ff_3.1 pass, copies with one chi row or bead
+  count changed are refused; deployed to the Upside 3 tree (md5 `802e1a90`, imports checked). Submitted Upside 3 glpG
+  with ff3.0 (`upside3_validation/glpg_ff30`: prep 49589828, REMD block 1 49589829). Files: py/martini_prepare_system.py,
+  findings.md (3.14 A235, 3.15, 10.40), plan.md Known Errors, remote_jobs.md.
+- 10-26 14:50-15:40, MacBook Pro (Phase 31: user "charmm-gui fails to build micelle this size. Let's build it
+  locally", "you should implement the missing dihedral that is needed"). Micelle sizes from Oliver 2013 SAXS and
+  glpG's measured belt (N 140 empty; 150-200 around glpG). glpG-DDM self-assembly started in GROMACS 2026.4 on the Mac
+  (`scratchpad/ddm_micelle/`: frozen oriented CG glpG, 200 official-topology DDM, the potential Upside reproduces,
+  200 ns NVT, detached `run.sh` -> `results.txt` DONE); at 12 ns all 200 bound, ~150 in the belt, ~50 capping,
+  maltose heads nearest at 56% of the belt core's exposed beads against 0% in POPE/POPG (to read at 200 ns). A236:
+  `dihedral_spring` (GROMACS type 1), the reader's dihedral key bug, ITPs under FLEXIBLE, the official DDM ITP;
+  equal to GROMACS on 600 dihedrals, node_fd clean, regress 0 of 4260 arrays differ, index_oracle clean; local obj/
+  replaced (backups `.bak_pre_A236_20261026`). The repo .venv's python@3.11 is gone from Homebrew (tests ran in a
+  scratch 3.13 venv). Files: src/martini_potential.cpp, src/main.cpp, py/martini_itp_reader.py,
+  py/martini_prepare_system_lib.py, example/16.MARTINI/dryMARTINI_itp/dry_martini_v2.1_DDM.itp, up.md,
+  tests/index_oracle.py, findings.md, plan.md.

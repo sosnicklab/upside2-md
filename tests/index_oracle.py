@@ -910,9 +910,10 @@ def check_advanced(f, pot, L, adv):
 # ------------------------------------------------------------------------------------------------------------------
 
 def read_itp(paths):
-    # a minimal GROMACS reader: #define macros, #ifdef/#ifndef/#else/#endif with nothing defined, the sections the
+    # a minimal GROMACS reader: #define macros, #ifdef/#ifndef/#else/#endif with only FLEXIBLE defined (Upside takes
+    # a topology's constraints in their FLEXIBLE harmonic form, up.md "MARTINI-specific nodes"), the sections the
     # checks need
-    defines, top = {}, dict(atomtypes={}, nonbond={}, molecules={})
+    defines, top = {'FLEXIBLE': []}, dict(atomtypes={}, nonbond={}, molecules={})
     for path in paths:
         live, mol, section = [True], None, None
         for raw in open(path):
@@ -936,13 +937,17 @@ def read_itp(paths):
             elif section == 'nonbond_params':
                 top['nonbond'][(tok[0], tok[1])] = (float(tok[3]), float(tok[4]))   # sigma nm, epsilon kJ/mol
             elif section == 'moleculetype':
-                mol = top['molecules'][tok[0].upper()] = dict(nrexcl=int(tok[1]), atoms=[], bonds=[], angles=[])
+                mol = top['molecules'][tok[0].upper()] = dict(nrexcl=int(tok[1]), atoms=[], bonds=[], angles=[],
+                                                              dihedrals=[])
             elif section == 'atoms':
                 mol['atoms'].append((tok[4].upper(), tok[1], float(tok[6])))
             elif section == 'bonds':
                 mol['bonds'].append((int(tok[0])-1, int(tok[1])-1, float(tok[3]), float(tok[4])))
             elif section == 'angles':
                 mol['angles'].append((int(tok[0])-1, int(tok[1])-1, int(tok[2])-1, float(tok[4]), float(tok[5])))
+            elif section == 'dihedrals':
+                # type 1: i j k l funct phi_s k n
+                mol['dihedrals'].append(tuple(int(x)-1 for x in tok[:4]) + (float(tok[5]), float(tok[6]), int(tok[7])))
     return top
 
 def env_molecules(inp, start):
@@ -982,7 +987,7 @@ def check_hybrid(f, L, lib, sc):
     atype, charge, mass = strings(inp['type']), inp['charges'][:], inp['mass'][:]
     pclass, molid = strings(inp['particle_class']), inp['molecule_ids'][:]
     exp_type, exp_q, exp_m, exp_cls = list(atype[:5*n]), list(charge[:5*n]), list(mass[:5*n]), ['PROTEIN']*(5*n)
-    bonds, angles, mol_of, exp_names, got_names = [], [], np.zeros(N, int), [], []
+    bonds, angles, dihedrals, mol_of, exp_names, got_names = [], [], [], np.zeros(N, int), [], []
     for k, (mname, atoms) in enumerate(mols):
         mt = top['molecules'][mname]
         by_name = dict((a[0], a) for a in mt['atoms'])
@@ -1001,6 +1006,8 @@ def check_hybrid(f, L, lib, sc):
                 bonds.append((at[i], at[j], 10.*b0, kb/E_UP_KJ/100.))       # nm -> A, kJ/mol/nm^2 -> E_up/A^2
             for i, j, k3, th, kt in mt['angles']:
                 angles.append((at[i], at[j], at[k3], th, kt/E_UP_KJ))
+            for i, j, k3, l, phi_s, kd, n in mt['dihedrals']:
+                dihedrals.append((at[i], at[j], at[k3], at[l], phi_s, kd/E_UP_KJ, n))
             if mt['nrexcl'] != 1:
                 note('%s has nrexcl %d; the pair check excludes bonded neighbours only' % (mname, mt['nrexcl']))
     compare('/input', 'bead names of each environment molecule (= its itp moleculetype)', np.array(exp_names),
@@ -1017,6 +1024,7 @@ def check_hybrid(f, L, lib, sc):
     compare('/input', 'molecule_ids partition (protein, then one id per environment molecule)',
             canonical_labels(mol_of), canonical_labels(molid))
     bonds, angles = np.array(bonds).reshape(-1, 4), np.array(angles).reshape(-1, 5)
+    dihedrals = np.array(dihedrals).reshape(-1, 7)
 
     if 'dist_spring' in pot:
         # martini_potential.cpp:1052-1054, 1100-1110: id (i, j), equil_dist A, spring_const E_up/A^2
@@ -1034,6 +1042,15 @@ def check_hybrid(f, L, lib, sc):
                 else g['id'][:])
         compare('angle_spring', 'equil_angle_deg', angles[:, 3], g['equil_angle_deg'][:], 1e-4)
         compare('angle_spring', 'spring_const', angles[:, 4], g['spring_const'][:], 1e-6*max(1., angles[:, 4].max()))
+    # martini_potential.cpp DihedralSpring: id (i, j, k, l) in the ITP's order, phi_s deg, k E_up, n; written only
+    # when some environment molecule's ITP has [ dihedrals ]
+    compare('dihedral_spring', 'present exactly when the ITPs give dihedrals', len(dihedrals) > 0, 'dihedral_spring' in pot)
+    if 'dihedral_spring' in pot and len(dihedrals):
+        g = pot['dihedral_spring']
+        compare('dihedral_spring', 'id (ITP order)', dihedrals[:, :4].astype(int), g['id'][:])
+        compare('dihedral_spring', 'equil_angle_deg', dihedrals[:, 4], g['equil_angle_deg'][:], 1e-4)
+        compare('dihedral_spring', 'spring_const', dihedrals[:, 5], g['spring_const'][:], 1e-6*max(1., dihedrals[:, 5].max()))
+        compare('dihedral_spring', 'multiplicity', dihedrals[:, 6].astype(int), g['multiplicity'][:])
     if 'martini_potential' in pot:
         check_martini_pairs(pot['martini_potential'], L, top, bonds, atype, charge)
     if 'martini_sc_table_1body' in pot and sc is not None:

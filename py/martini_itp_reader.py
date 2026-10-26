@@ -165,6 +165,7 @@ def _empty_topology() -> Dict[str, Any]:
     return {
         "atoms": [],
         "bonds": [],
+        "constraints": [],
         "angles": [],
         "dihedrals": [],
         "position_restraints": [],
@@ -276,6 +277,7 @@ def parse_itp_file(
                 current_mol_data = {
                     "atoms": [],
                     "bonds": [],
+                    "constraints": [],
                     "angles": [],
                     "dihedrals": [],
                     "position_restraints": [],
@@ -328,6 +330,19 @@ def parse_itp_file(
                 except (ValueError, IndexError):
                     continue
 
+            elif current_section == "constraints" and len(parts) >= 4:
+                try:
+                    constraint = {
+                        "i": int(parts[0]) - 1,
+                        "j": int(parts[1]) - 1,
+                        "func": int(parts[2]),
+                        "r0": _macro_value(parts[3], macros, 0),
+                    }
+                    current_mol_data["constraints"].append(constraint)
+                    topology["constraints"].append(constraint)
+                except (ValueError, IndexError):
+                    continue
+
             elif current_section == "angles" and len(parts) >= 5:
                 try:
                     angle = {
@@ -357,8 +372,8 @@ def parse_itp_file(
                         "k": int(parts[2]) - 1,
                         "l": int(parts[3]) - 1,
                         "func": int(parts[4]),
-                        "phi0": float(parts[5]) if len(parts) >= 7 else 0.0,
-                        "k": float(parts[6]) if len(parts) >= 7 else 0.0,
+                        "phi0": _macro_value(parts[5], macros, 0) if len(parts) >= 7 else 0.0,
+                        "force_k": _macro_value(parts[6], macros, 1) if len(parts) >= 7 else 0.0,
                         "mult": int(parts[7]) if len(parts) >= 8 else 1,
                     }
                     current_mol_data["dihedrals"].append(dihedral)
@@ -396,6 +411,7 @@ def parse_itp_file(
         return {
             "atoms": mol_data["atoms"],
             "bonds": mol_data["bonds"],
+            "constraints": mol_data["constraints"],
             "angles": mol_data["angles"],
             "dihedrals": mol_data["dihedrals"],
             "position_restraints": mol_data["position_restraints"],

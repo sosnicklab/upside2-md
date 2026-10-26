@@ -4001,6 +4001,8 @@ Effects on ff2.1 are not measured (upside3.md section 1).
 | A232 | `example/16.MARTINI/run.py`, readme 2-3 | no | Stage 2 was one Slurm job asking 48 replicas for 200,000 time units under a 35:45 wall, about 170 days at the measured ~28 time units per hour, with no chunking; Stage 1 ran the whole preparation (hours of hybrid dynamics) in the calling process, a login node on the cluster; `swap_table2d` returns one swap set for two replicas and the script indexed a second; the readme described caslake (user 10-22: "as we changed the upside core, the job scripts should also be updated to support it") | the documented REMD could never finish, and was killed at the wall without a clean last frame | `run.py` submits jobs: the preparation, then REMD blocks that stop at `--time-limit` before the wall and queue the next up to `n_blocks`, run.py's continuation between blocks, a block counted only once its engine run succeeds, every swap set passed, each job sourcing `job_env_file`; `continue_sim` and `duration` gone (raise `n_blocks` to extend); `frame_interval` 10 for ~100 frames per block. Two blocks of 1rkl run locally: each stops at the limit, block 2 starts every slot at block 1's last frame with its walker and temperature (`scratchpad/upside3_audit/runpy_test2/`); glpG submitted through it on midway2 |
 | A233 | `example/16.MARTINI/run_sim_1afo_full.sh` | no | the batch job sourced the shared deployment's `env_shared.sh`, the pre-audit engine | an Upside 3 job script ran Upside 2 | sources the Upside 3 tree's `env_upside3.sh` |
 | A234 | `martini_prepare_system.py` (`--force-field`, `normalize_hybrid_workflow_args`, `validate_hybrid_workflow_args`), `martini_prepare_system_lib.py` `inject_stage7_sc_table_nodes`; `example/16.MARTINI/run.py`, `run_sim_hybrid.sh`, readme | no | the hybrid preparation could run only ff2.1: it hard-coded `common/rama.dat` and ff_2.1's sheet, hbond.h5 and sidechain.h5 (user 10-26: run glpG with ff3.1) | no other force field could be tested on the corrected hybrid, TM4's loss among them (3.15) | a required `--force-field` (`FORCE_FIELD`) under `parameters/`: its rama.dat if it ships one (the benchmark's rule), else common's; its sheet, hbond.h5 and sidechain.h5, the last passed into the injection; martini.h5 stays ff_2.1's, built from ff_2.1's side chains, and a force field with other side chains is refused. The old and new injection on one stripped glpG stage file: ff_2.1 identical in all 614 `/input` entries; ff_3.1 differs only in `rama_map_pot/rama_pot` (`scratchpad/ff31_merge/test_force_field.py`) |
+| A236 | `martini_potential.cpp` `DihedralSpring` (`dihedral_spring`) and the box updater; `main.cpp` dry-MARTINI terms; `martini_itp_reader.py` `[ dihedrals ]`, `[ constraints ]`; `martini_prepare_system_lib.py` `_load_martini_topology`, `_build_bonded_terms`, the writer; `dryMARTINI_itp/dry_martini_v2.1_DDM.itp`; up.md; `tests/index_oracle.py` | no (a new path) | the engine had no dihedral term, so the repo's DDM ITP dropped the three head dihedrals (GROMACS type 1) of the published topology; the reader's dihedral entry wrote its force constant over its third atom (key `k` twice), and `[ constraints ]` were skipped without notice (user 10-26: "you should implement the missing dihedral that is needed") | DDM's maltose head would have run without its torsions, off the published model | `dihedral_spring`: V = k (1 + cos(n phi - phi_s)) from one canonical spline of 1 + cos(u), phi GROMACS's; the ITPs read with `FLEXIBLE` defined (constraints enter as their FLEXIBLE bonds; an active constraint, or a dihedral of another type, is refused); the DDM ITP is cgmartini's `martini_v2.0_DDM_01.itp` verbatim (md5 `0d587b39`). Against GROMACS 2026.4 on 5 frames of 200 DDM (600 dihedrals over phi -180 to 180): dihedral, bond and angle energies equal to 1.2e-6, 3.1e-6 and 7.8e-7 relative, dihedral forces to 1.3e-5, all bonded forces to 1.2e-4, and a float64 evaluation of GROMACS's phi equal; `node_fd` 0 bad of 320 directions per frame (median 2.3e-3, as the bond and angle nodes); `regress` 0 of 4260 arrays differ on `fixtures_w21` and `fixtures_hybrid_w6` between fresh builds of HEAD and the change; `index_oracle` on 1rkl stage 7.0 0 of 120 mismatch (`scratchpad/ddm_micelle/dihedral_check/`) |
+| A235 | `martini_prepare_system.py` `validate_hybrid_workflow_args`, `rotamer_library_differences` | no | A234's check compared the whole `sidechain.h5` with ff_2.1's, but `martini_build_tables.py` builds the side-chain/lipid table from three of its datasets, `restype_order`, `rotamer_start_stop_bead` and `restype_and_chi_and_state` (user 10-26: "do submit ff3.0") | ff3.0 was refused though ff_2.1's table is exactly the one its side chains build: its retraining changed `pair_interaction`, `coverage_interaction`, `hydrophobe_interaction`, `hydrophobe_placement` and `rotamer_center_fixed`, none of which the builder reads; so the TM4 test against Upside 2's placement-fixed ff3.0 chains (3.15) could not run | the check compares those three datasets (`SIDECHAIN_TABLE_DATASETS`) and names any that differ: ff_2.1, ff_3.0 and ff_3.1 pass, locally and in the Upside 3 tree; a copy of ff_2.1's with one chi row or one bead count changed is refused, naming that dataset |
 
 Deliberately not changed: the H-bond radial cutoff of 3.5 A truncates the factor at 3.4e-4, which is below the
 1e-4-scale energy noise BP already carries. Moving it to 4.0 A would cut the jump to 6e-6, at about 1.5x the
@@ -4016,18 +4018,24 @@ The validation run of plan.md Phase 24 2b.4 (`upside3_validation/glpg`, remote_j
 Upside 2's hybrid with the same code (`upside3_validation/glpg/glpg_u3_block1.py`, `glpg_u3_prep_tm4.py`; outputs
 `glpg_u3_vs_u2_block1.txt`, `glpg_u3_prep_tm4.txt`). Upside 2's reference is the pre-audit ff3.0 79HIS chain's block 1
 (groups 1-17, every other one) and the recorded ff2.1 numbers on the fixed table (1.35: the cancelled `ff2.1_sc`
-REMD chain, whose files are deleted, and 4.15's local seeds).
+REMD chain, whose files are deleted, and 4.15's local seeds). **No ff2.1 reference shares Upside 3's side-chain
+placement** (user, 10-26): both ff2.1 sets ran with the placement defect (4.17, fixed 10-17), the local seeds on 10-10
+and the `ff2.1_sc` chain from a 10-11 seed never repaired. The defect misplaced the beads read by the rotamer pair
+term and the side-chain/backbone H-bond coverage, the protein-internal packing that holds a helix buried in the bundle,
+which TM4 is; on the old side-chain/lipid table ff2.1 lost TM4 on Upside 2 (0.610, 9 of 12 seeds unwound; 4.15). Only
+ff3.0 and the old ff3.1 have placement-fixed Upside 2 runs, and they differ from ff2.1 in every retrained term.
 * **Same in both engines:** KE/1.5kT 1.00 for protein and lipid on every rung; peptide C-N 1.312 +- 0.120 A (Upside 3)
   against 1.333 +- 0.118 A (Upside 2), 0.78-1.94 A in both, so the backbone's bond scatter is the hybrid's on either
   engine; TM1 30-48 dihedral-box helix fraction 0.986 / 0.956 at T 0.70; the other helices by DSSP alpha 0.76-0.93
   against 0.70-0.98.
 * **TM4 is not:** DSSP alpha of 135-151 over block 1 is 0.44 at T 0.70 and 0.39 at T 0.795 (Upside 2's ff3.0 chain 0.96
-  and 0.93; ff2.1's REMD 0.93 at T 0.80, its 12 local seeds 0.94 at T 0.85), and its dihedral-box fraction 0.76 and
+  and 0.93; ff2.1's REMD 0.93 at T 0.80, its 12 local seeds 0.94 at T 0.85, both placement-defective), and its dihedral-box fraction 0.76 and
   0.69 (Upside 2 1.00 and 0.99; ff2.1 0.98). Every TM4 residue is below 0.8 at T 0.70.
 * **It goes in preparation stage 7.0**, the first in which the protein moves: TM4 DSSP alpha is 1.00 at the input and
   every frame of stages 6.0-6.6 (the protein is rigid there: H-bond count 97.3 and Rg 20.4 A throughout), then falls
   from 1.00 to 0.24 over stage 7.0's 401 frames (60,000 steps, about 540 time units at T 0.8647) while TM1 stays at
-  1.00. Upside 2's ff2.1 held TM4 at T 0.85 for 4,000 time units in 12 seeds.
+  1.00. Upside 2's ff2.1 held TM4 at T 0.85 for 4,000 time units in 12 seeds, with the placement defect; with correct
+  placement it has not been run, so whether ff2.1 itself loses TM4 once packing is correct is unmeasured.
 * The log's "hbonds" column reads 97 for the rigid crystal-like protein against Upside 2's 195; the per-frame
   `hbond` score summed is comparable (174 against 195 at block 1's first frame), so the column's definition differs,
   not the protein.
@@ -4038,7 +4046,14 @@ REMD chain, whose files are deleted, and 4.15's local seeds).
   ff2.1's own TM4 in a correct hybrid, or a new defect, needs a measurement of which change moves TM4's energy.
 * The stage-7.0 course under ff2.1, TM4 DSSP alpha by tenth of its 401 frames: 1.00 0.99 0.98 0.98 0.93 0.82 0.91
   0.85 0.59 0.41. First test (user 10-26): the same preparation with ff3.1, same seeds (A234;
-  `upside3_validation/glpg_ff31`, remote_jobs.md §1 line 3).
+  `upside3_validation/glpg_ff31`, remote_jobs.md §1 line 3). ff3.1 is ff2.1 with only its rama.dat trained, so it
+  tests the Ramachandran map alone.
+* **The matched test is ff3.0** (user 10-26: "do submit ff3.0"; A235; `upside3_validation/glpg_ff30`, the same
+  preparation and seeds): ff3.0 is the one current force field with a fully fixed Upside 2 run (the old ff3.1's are
+  retired), the placement-fixed chains whose
+  TM4 DSSP alpha is 0.96 at T 0.70, so between it and Upside 3 only the engine and the preparation change. TM4 lost on
+  Upside 3 with ff3.0 means an Upside 3 cause; held means the ff2.1 run's loss is ff2.1's own once its packing is
+  correct.
 * The Upside 3 Peng arms on released ff2.1 against the same arms on the pre-audit binary (10-26,
   `upside3_validation/peng/score/compare_u3_u2.txt`; `score_compare.py` reproduces released ff2.1's scores exactly):
   native, 16 proteins, mean TM 0.564 against 0.552 (+0.012 [-0.001, +0.028], p 0.56), the engines agree; de novo, the
@@ -6961,6 +6976,16 @@ with no log (exit 0:53), so a log scan never sees it; `sacct -X -S <start>` does
 own progress (`run.py`'s `block_count`) does not queue its successor, and rerunning its stage without that file would
 redo block 1 over block 1's data: restore the progress file to what the finished step would have written, then
 resubmit by the script's own path.
+
+### 10.40 A reference run is valid only if it carries every fix the run it judges carries (2026-10-26)
+
+User correction. Asked whether Upside 3's glpG TM4 loss was Upside 3's or ff2.1's, I answered from "Upside 2 with ff2.1
+held TM4" (0.944 in 12 seeds, 0.93 in REMD) without checking those runs' dates against the defect ledger: both
+predate the 10-17 side-chain placement fix (4.17), which reaches exactly the protein-internal packing a buried helix
+depends on, so they are not a reference for a placement-fixed Upside 3 run. **Before citing a run as the reference
+for another, list the hybrid defects fixed between them (3.10, 3.11, 4.15, 4.17 and the audit ledger 3.14) and state
+which the reference carried; if it carries one the judged run does not, it is no reference, and the matched control
+is owed instead.**
 
 ---
 
