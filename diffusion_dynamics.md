@@ -4,7 +4,9 @@
 resolves nothing above about 4 kcal/mol, below every measured amide of ubiquitin and EHEE, and opens 2 of 39 measured
 amides (1 of 24 on Ub psWT, the experiment's variant) against Upside's 11. On HEEH_rd4_0097 at 10^4 samples, where every
 measured amide is resolvable, Boltz-2 does not rank them (Spearman 0.04 against experiment; Upside FF2 0.32) and never
-opens 4 that experiment puts at 3.2-3.8 kcal/mol (Phase 1). The mdCATH half of Gate 1 is not started.** `step_scale` 1.0, the unscaled sampler, gives
+opens 4 that experiment puts at 3.2-3.8 kcal/mol (Phase 1). At 10^5 samples (2026-10-25) it ranks EHEE's amides
+(Spearman 0.74, Upside FF2 0.61 on the same censored comparison) but not Ub psWT's (-0.21; Upside 0.43), where it never
+opens four of experiment's six least stable amides. The mdCATH half of Gate 1 is not started.** `step_scale` 1.0, the unscaled sampler, gives
 bond-length scatter 2 to 4x the crystal spread, but the scatter leaves the HDX protection flags unchanged, so Phase 1
 uses `md` at 1.0 (Phase 0). midway2 has no GPU that can run Boltz-2 (Phase 0). Jobs are recorded in `remote_jobs.md` §1.
 Every number below comes from reading code, docs and papers on 2026-10-21, or from the dated measurements in
@@ -272,7 +274,8 @@ HDX:
         |dp| 0.001), and their dG at the measured amides differ by 0.40 kcal/mol rms (Pearson 0.88 between halves).
       * 16 of the 20 measured amides resolve, at 1.49-5.09 kcal/mol against experiment's 2.16-4.28. The other 4 are
         never open: V12, L13, V35 and L39 at >= 5.09, where experiment has 3.75, 3.15, 3.84 and 3.68.
-      * No rank order: Spearman 0.042 over all 20 (censored ranked at the bound; p 0.86), 0.092 over the 16 resolved
+      * No rank order: Spearman 0.042 over all 20 (censored ranked at the bound; p 0.86; bootstrap over the 10 seeds
+        -0.055 to 0.166, added 10-25), 0.092 over the 16 resolved
         (Pearson 0.214, RMSE 0.95, mean offset +0.14 kcal/mol); RMSE over all 20 at least 1.09. Upside FF2's
         published agreement is Pearson 0.185, Spearman 0.317, RMSE 1.06 (Table S14); at 20 amides neither Spearman
         differs from zero or from the other.
@@ -288,7 +291,7 @@ HDX:
         too open as well; the gate's mdCATH half is not measured. Phases 2 and 3 as written target time order and
         dynamics, not populations, so neither addresses this failure (assessment 2026-10-24); a revision is the
         user's call.
-- [ ] Local exchange (user 2026-10-24, after HEEH): does Boltz-2 rank amides whose exchange comes from fluctuations
+- [x] Local exchange (user 2026-10-24, after HEEH): does Boltz-2 rank amides whose exchange comes from fluctuations
       of the folded state? HEEH's helices probably exchange through whole-protein unfolding, which Boltz-2 never
       samples, so the no-training route is tested where it can still work. EHEE_rd2_0005 and Ub psWT at 10^5 `md`
       samples each (bound 6.82 kcal/mol at 298 K and 6.25 at 273 K), which resolves 9 of EHEE's 15 and 12 of Ub
@@ -309,6 +312,55 @@ HDX:
               (sandbox-tested with `boltz` stubbed).
         - [x] Resubmitted through the ledger `submitted_1e5.txt` (the 11 finished seeds of 61424051-61424053
               kept); 12 jobs queued, the other 8 submitted hourly as the 12-job QOS frees slots.
+      * All 20 jobs finished by 2026-10-25 07:10, every seed `ok`. Readout 2026-10-25: each protein's 10 job sets
+        copied (md5-equal) and pooled in seed order by `flags/pool_seeds.py` into `samples/<name>_md_s10_n100000.npz`,
+        then `run_flags.sh`, `dg_phase1.py` (one `readout()` for every set; the earlier flags, tables, figures and
+        log lines reproduce byte for byte) and one figure each, `dg/{ehee,ubqps}_md_s10_n100000_dG_vs_residue.png`.
+        - The pooled sets match the 10^3 ones: CA-RMSD to the reference median 0.94 and 1.52 A, Rg 9.22 and 11.34 A,
+          C-N 1.338 and 1.343 +- 0.05 A; no sample repeats; 47 and 131 of 10^5 have a C-N bond over 2 A.
+        - Sampling is not the limit. The halves (seeds 13-62 against 63-112) agree donor by donor (smallest Fisher
+          p 0.019 and 0.064). The measured amides open in few samples, EHEE's in 0-63 of 10^5 and Ub psWT's in 0-80,
+          most in 1-10, so a value carries counting noise of about RT/sqrt(k) (0.4 kcal/mol at k = 2); EHEE's halves
+          differ by 0.46 kcal/mol rms at its measured amides, Ub psWT's by 0.12.
+        - The openings are not broken chains: of the samples that open a measured amide, 4 of 134 (EHEE) and 0 of
+          109 (Ub psWT) have a C-N bond over 2 A. Many lie 4-7 A from the reference, and Ub psWT's I3, F4 and V5 open
+          together in the same 2 samples.
+        - EHEE_rd2_0005 (298 K, bound 6.82 kcal/mol) is ranked. 14 of 15 measured amides resolve, at 4.36-6.82
+          against experiment's 4.02-8.41 (A15 never opens). Spearman 0.735 (p 0.003) over the 14 and 0.741 over all
+          15 with experiment, Boltz-2 and Upside censored at the bound (seed bootstrap 95% 0.51-0.86); Upside FF2 on
+          the same comparison 0.609 (p 0.02), below Boltz-2 in 84% of the resamples, so the two do not differ.
+          Pearson 0.736; Boltz-2 sits 0.91 kcal/mol below experiment on average, its open fractions mostly 2-36x
+          experiment's (W19 equal, R40 4x lower).
+        - Ub psWT (273 K, bound 6.25) is not ranked: Spearman 0.173 (p 0.57) over the 13 resolved, -0.206 over all
+          24 censored (bootstrap -0.39 to 0.10); Upside FF2 0.566 and 0.432 (p 0.03). Boltz-2 never opens 11 measured
+          amides, among them four of experiment's six least stable, V70, W45, I13 and L67 (4.88-5.27 kcal/mol, open
+          fractions 6e-5 to 1.2e-4), and opens D21 (7.73) at 1.2e-4, 180x experiment, and strand 1's I3, F4 and V5
+          (about 8) at 2e-5, 50x. With the halves this close, the misplaced openings are the model's ensemble.
+        - For Gate 1: the no-training route ranks one of the two proteins, as well as Upside FF2, and fails on the
+          other, where it opens the wrong parts. Whether EHEE's amides exchange locally or through global unfolding
+          (the urea dependence in Table S5) is not read. What follows is the user's call.
+- [ ] MSA control on Ub psWT (user 2026-10-25, "propose and apply fix", chose the controlled 10^5 tests). Diagnosis
+      of the 10^5 sets first, from their raw flags:
+      * Protection is burial-dominated. At the measured amides the backbone H-bond breaks in 1-95% of samples (Ub
+        psWT's N25 95%, T55 all), but Upside's burial term (BurialLevel > 5; medians 7-22) keeps the amide protected,
+        so an amide opens only in the rare samples where it is both unbonded and exposed, the 4-7 A excursions above.
+        The dG therefore measure how often a model samples partially unfolded states.
+      * The seeds are exchangeable: the per-seed dispersion index of each donor's H-bond and protection counts is
+        0.95-1.06 (median; at most 1.4, none significant at p 0.001) for both proteins, so the 1,024 MSA rows Boltz
+        subsamples per run do not move the ensemble.
+      * The errors are in the model's distribution, and HEEH's missing unfolded state cannot be fixed by a setting;
+        Boltz-2 training code is not released and mdCATH holds no unfolding. One input differed in kind between the
+        protein Boltz-2 ranks and the one it fails: EHEE's ColabFold MSA is the query alone (HEEH's three sequences),
+        Ub psWT's 16,383 sequences.
+      The test: Ub psWT at 10^5 in EHEE's regime, `inputs/ubqps_nomsa.yaml` with `inputs/msa/ubqps_nomsa_0.csv`
+      (EHEE's form, the header and the query twice), at the MSA set's seeds 13-112, 10 jobs through
+      `submitted_1e5.txt` (`remote_jobs.md` §1 line 4), about 34 V100-hours; job 1 61496120 submitted 2026-10-25
+      12:12, the other nine held. Gate before the other nine jobs: job 1's
+      samples must be a folded ubiquitin (CA-RMSD to the reference median below 4 A, Rg within 15% of 11.49 A), or
+      the answer is that Boltz-2 needs the MSA to fold it. Readout fixed before the data: if the censored Spearman's
+      block-bootstrap 95% interval excludes the MSA set's -0.21 and reaches Upside FF2's 0.43, MSA depth is the
+      defect on Ub psWT and Phase 1 takes the query-only regime for every protein; otherwise MSA depth is ruled out
+      and the no-training route stays closed on Ub psWT. HEEH's missing unfolded state stands either way.
 
 mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibrium only:
 - [ ] Test set: 8 to 12 domains from the 89-domain panel (`ff3_selection/` on the cluster; `plan.md` Phase 19), over
@@ -439,8 +491,36 @@ Two settings depart from the defaults, for the V100: `trimul_variant: full` in a
       torch 2.13.0+cu126 with sm_70. Weights and MSAs fetched on the login node (Ub psWT 21,123 sequences, EHEE and
       HEEH 2 and 4, as Boltz's). The job loop and its submitter sandboxed with stubs. `--test-only` waits for a
       free gpu slot, because the 12-job limit refuses it too; `submit.sh` runs it before submitting.
-- [ ] One V100 job: EHEE_rd2_0005 10^3, Ub psWT 10^3, then HEEH_rd4_0097 10^4 (its measured amides lie below the
+- [x] One V100 job: EHEE_rd2_0005 10^3, Ub psWT 10^3, then HEEH_rd4_0097 10^4 (its measured amides lie below the
       10^4 bound, so it is the direct test), with the physical checks of Phase 1 (CA-RMSD, Rg, C-N, clashes).
-      Waits for the first free gpu slot (`remote_jobs.md` §1 line 4).
-- [ ] Readout: flags and dG as Phase 1, against experiment and Upside's published values; one `plot_ref_style.py`
-      figure per protein.
+      61445028, finished 2026-10-25 04:11 (1,880, 3,204 and 19,614 s; `remote_jobs.md` "Finished runs"). Every sample
+      passes BioEmu2's physicality check. CA-RMSD to the reference median 0.74, 2.22 and 1.75 A; Rg 9.25, 11.31 and
+      9.57 A (references 9.02, 11.49, 9.27); C-N 1.337-1.340 +- 0.03 A. 3 of EHEE's 1,000 and 8 of HEEH's 10^4 lie
+      beyond 8 A of the reference, extended chains with Rg up to 20.4 and 25.9 A; none of Ub psWT's.
+- [x] Readout 2026-10-25: flags and dG as Phase 1, against experiment and Upside's published values; one
+      `plot_ref_style.py` figure per protein. In `scratchpad/bioemu2_hdx/readout/` (`readout.sh`: Phase 1's
+      protection-state code, `write_traj` and `readout()` on BioEmu2's own samples, which stay in that directory;
+      `dg/dg_bioemu2.log`, `dg/<name>_bioemu2_n<N>_dG_vs_residue.png`). Each set's halves are its independent draw.
+      * HEEH_rd4_0097 (278 K, bound 5.09): all 20 measured amides resolve (0.97-5.09 kcal/mol). Against experiment
+        Spearman 0.239 (p 0.31; bootstrap over 10 blocks of 1,000, 0.136 to 0.352), Pearson 0.258, RMSE 1.04, mean
+        offset +0.20; Upside FF2's published 0.317, 0.185, 1.06, inside that interval. Neither Spearman differs from
+        zero at 20 amides. The halves agree (Pearson 0.98 at 18 amides).
+      * HEEH's unfolded state is sampled, rarely: 4 of 10^4 samples have more than half their donors open, and the
+        helix amides open at mostly 3-8e-4, that population, against experiment's 4e-4 to 3e-3. The errors are
+        elsewhere: the hairpin's V19 and W21 open at 7e-4 and 6e-4 where experiment has 0.020 and 0.014, T24 at 0.15
+        against 0.010, E4 at 0.028 against 5e-4.
+      * EHEE (298 K, bound 4.09) and Ub psWT (273 K, bound 3.75) at 10^3 test only over-opening: BioEmu2 falls below
+        min(experiment, bound) at 9 of 15 EHEE amides (Upside FF2 at 4) and at none of 24 Ub psWT amides (Upside 7).
+      * Ub psWT's halves differ at T9 (protected 0.36 against 0.25, Fisher p 1.5e-4, below 0.05/72; blocks of 100
+        read 0.21-0.43): the sample order is not fully exchangeable there. No other donor differs.
+      * Close relatives of all three proteins may be in BioEmu2's training data (above), so even an agreement would
+        not be a held-out test.
+- [ ] EHEE and Ub psWT at 10^5 (user 2026-10-25, the controlled tests): the resolving test BioEmu2 has not had,
+      at its default settings and MSAs. 10 jobs of one run of 10^4 per protein, seeds 1000, 1100, ..., 1900:
+      BioEmu2 seeds batch i of a run with SEED + i, so runs of 100 batches need seeds 100 apart, and these are
+      independent of 61445028's seed 1. `$E/sample.sbatch` takes `NAME:N:SEED`; `$E/submitted_1e5.txt` and
+      `$E/submit_1e5.sh` share the 12-job QOS with Boltz; about 52 and 89 V100-hours. Submitted from 2026-10-25
+      12:12 (EHEE all 10, Ub psWT 1 of 10; the rest hourly). Readout fixed before the
+      data: the Boltz-2 10^5 statistics (resolved Pearson and Spearman, censored Spearman with a block bootstrap,
+      Upside FF2 on the same comparison, halves, open fractions, shortfall below min(experiment, bound)); with HEEH
+      this decides whether BioEmu2 ranks these proteins' HDX, and the training overlap above still holds.

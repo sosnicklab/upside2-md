@@ -1560,3 +1560,37 @@ to 10-07 12:00 is in git history.
   corrected my earlier summary: ff3.1.1 has six steps above the threshold, not two, all minibatch 1 or 14, the
   minibatches that read high in every epoch of both runs. Files: remote_jobs.md, findings.md 1.33, progress.md;
   cluster `checks/ff311_20261021/{collect_pooled.sbatch,submitted.log}`.
+- 10-24 23:45-23:58, watch started (user: "continue monitoring midway2 and midway3"; midway2 socket reopened at the
+  user's word). First pass found the 8 glpG chains' block 5 COMPLETED clean, and casualties of the 12:20-14:30
+  `/beagle3` inode exhaustion missed by the 13:10 check: Upside 3's REMD block 1 job (block finished, `block_count`
+  write refused, block 2 never queued; 48 replica files checked intact) and four Peng chunks (FAILED in 9 s, no log).
+  Resubmitted at the user's word: `block_count` restored to 1 and `run.py` submitted block 2 49458255;
+  `submit_peng.sh` submitted the four arms 49458251-49458254. New read-only probe `~/watch_probe/watch_mdw2.sh`
+  (md5 `67fbd731`), hourly cron `f048ff03`. Files: remote_jobs.md (header, "The watch", §1 lines 2-4, table),
+  findings.md 10.39, progress.md; cluster `WATCH_STATUS.md` (backup `.bak_pre_watch_20261024`), `REMD/block_count`.
+- 10-25 00:51-08:51, watch passes hourly. EHEE's 10^5 set finished 00:17, BioEmu2 04:11, Ub psWT's 07:10, every seed
+  `ok`. ff3.1.1 reached step 114 at 04:56; its successor was cancelled by its chain as designed. The fixed collector
+  status line added flagged steps 109 (ff3.1.1) and 90 (ff3.2.1, its first), both minibatch 14; the restrained runs of
+  those minibatches read as high. The trainer's round line counts "|c| > 0.1" over every offset against the trainable
+  depths only, so it can exceed its total. Files: remote_jobs.md, findings.md 1.33, cluster `WATCH_STATUS.md`.
+- 10-25 09:00-10:10, Boltz and BioEmu2 readouts (user: "Work on boltz and bioemu2 job"). 23 npz copied (md5-equal);
+  `pool_seeds.py` pooled each protein's 10 jobs; `samples_to_traj.py` and `dg_phase1.py` made importable, the
+  readout one function for every set with the model named (the old flags, tables, log lines and figures reproduce
+  byte for byte). Boltz-2 at 10^5: EHEE ranked (Spearman 0.74, bootstrap 0.51-0.86; Upside FF2 0.61), Ub psWT not
+  (-0.21; Upside 0.43); the openings are rare large excursions, not broken chains. BioEmu2, in its own directory:
+  HEEH Spearman 0.24 (Upside 0.32), its unfolded state sampled at ~4e-4 but the hairpin overprotected; EHEE over-open
+  at 9 of 15 amides at 10^3. Files: diffusion_dynamics.md (status, Phase 1, section 7), remote_jobs.md (line 4 moved
+  to "Finished runs", rows deleted, watch step 3), findings.md 10.14, progress.md; scratchpad
+  `boltz_hdx/flags/{pool_seeds.py,samples_to_traj.py,dg_phase1.py}` and `bioemu2_hdx/readout/`.
+- 10-25 10:30-12:25, controlled 10^5 tests (user: "propose and apply fix"; plan approved, "Controlled 10^5 tests").
+  Diagnosis from the raw flags: protection is burial-dominated (H-bonds break in 1-95% of samples at the measured
+  amides, but burial keeps them protected, so only rare excursions open them); seeds and BioEmu2 batches are
+  exchangeable (dispersion ~1.0). Pre-registered and submitted on midway3: Boltz-2 Ub psWT with EHEE's query-only MSA
+  (job 1 61496120, nine held for a fold gate) and BioEmu2 EHEE and Ub psWT at 10^5 (seeds 1000-1900, 100 apart).
+  New: `inputs/ubqps_nomsa.yaml` and its MSA, BioEmu2 `submit_1e5.sh` and ledger; changed: Boltz `submit_1e5.sh`
+  (names with `_`, `hold`) and ledger, BioEmu2 `sample.sbatch` (`NAME:N:SEED`); stub sandbox passed, backups kept.
+  Crons: submitter `de2823f0`, watch `8a2288f6` (replaced `f048ff03`). Readout: `dg_phase1.py` gained a block
+  bootstrap line (reproduces the ad hoc EHEE interval exactly; old tables byte-identical): Boltz-2 HEEH -0.06 to 0.17,
+  BioEmu2 HEEH 0.14 to 0.35. Files: diffusion_dynamics.md, remote_jobs.md (header, watch, §1 line 4, table),
+  findings.md 10.14, progress.md; scratchpad `boltz_hdx/{submit_1e5.sh,submitted_1e5.txt,inputs/,flags/dg_phase1.py,
+  flags/pool_seeds.py}`, `bioemu2_hdx/{sample.sbatch,submit_1e5.sh,submitted_1e5.txt}`.

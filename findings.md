@@ -2438,14 +2438,15 @@ Phase 14 step 5).
   19:28) reads 0.0047 / 0.0042, at the threshold and not above: over the four epochs 0.0047, 0.0042,
   0.0050, 0.0047 free. Step 39 reads as this minibatch's step-to-step scatter about ~0.0047, not a
   trend with the library.
-- **ff3.1.1 and ff3.2.1, steps 0-99 and 0-81 (10-24 23:10): the beta' + pPII' flag is minibatch composition.**
+- **ff3.1.1 and ff3.2.1, steps 0-113 and 0-101 (10-25 08:27): the beta' + pPII' flag is minibatch composition.**
   Both runs share one minibatch order, and grouped by minibatch their free non-glycine beta' + pPII' is flat
-  across epochs: minibatches 1 and 14 read 0.0043-0.0050 in every epoch, epoch 0 on NDRD included, minibatches 0 and
-  2 about 0.0022. Against one line, 0.0043, ff3.1.1 has 6 of 81 steps after 18 above it (33, 39, 71, 77, 90, 96, all
-  minibatch 1 or 14) and ff3.2.1 7 of 63, both means 0.0032 before and after step 18. ff3.1.1 is flagged and
-  ff3.2.1 is not only because ff3.2.1's step 1 read 0.0050 and ff3.1.1's 0.0043. A maximum over a growing number of
-  draws set against one draw per minibatch will cross by chance; a per-minibatch comparison against epoch 0 would
-  separate a real shift from this. The threshold is not changed (the user's call). Until 10-24 the collector's
+  across epochs: minibatches 1 and 14 read 0.0041-0.0051 in every epoch, epoch 0 on NDRD included, minibatches 0 and
+  2 about 0.0022. The restrained simulations of the same minibatches read as high (0.0038-0.0058), so the excess is
+  in those minibatches' proteins, not the trained maps. Each run is flagged against its own steps 0-18 maximum:
+  ff3.1.1 (0.0043) at steps 33, 39, 71, 77, 90, 96 and 109, ff3.2.1 (0.0050, its step 1) at step 90 (0.0051 free,
+  0.0041 restrained), every one minibatch 1 or 14; both means 0.0032 before and after step 18. A maximum over a
+  growing number of draws set against one draw per minibatch will cross by chance; a per-minibatch comparison
+  against epoch 0 would separate a real shift from this. The threshold is not changed (the user's call). Until 10-24 the collector's
   status line counted the files carrying the flag (each file judges every step so far), not flagged steps.
 
 ### 1.34 The ff3.1 review at the target: `all` is worse, `data` ties ff3.0 (2026-10-13)
@@ -6418,6 +6419,15 @@ is ff30_glyhb. Two corrections from the user on the same day:
 * **`sbatch --test-only` counts against the gpu QOS's 12-job limit (2026-10-24).** With 12 jobs queued it fails with
   `QOSMaxSubmitJobPerUserLimit` like a real submission, so check a new job's shape when a slot is free, just before
   submitting it.
+* **In the Mac's zsh, never name a shell variable `path` (2026-10-25).** zsh ties `path` to `PATH`, so
+  `while read tag path; do scp ...` set `PATH` to a remote file name and every `scp` was "command not found"; use
+  another name (`src`). Also, macOS `paste -s` needs a file argument (`paste -sd' ' -`), and an `ssh host "md5sum
+  $files"` with `$files` empty reads stdin and waits forever: give remote commands `< /dev/null`. zsh does not
+  split an unquoted `$C` into words, so `C="ssh -S ..."; $C cmd` runs a command named "ssh -S ..." and fails; write
+  the ssh command out.
+* **A poll that looks back a fixed window misses what ended while polls were skipped (2026-10-25).** The watch
+  probe lists jobs that left the queue in the last 80 minutes; three passes skipped while the session was busy hid
+  ff3.2.1's NODE_FAIL for four hours. Sweep from the last recorded pass (`sacct -S <last pass>`), not a fixed window.
 * **`pgrep -f` / `pkill -f` match the ssh command that runs them (2026-10-24).** A remote
   `while pgrep -f pack_predictions.sh; do sleep 10; done` never ended, because the loop's own `bash -c` line holds
   that string, and `pkill -f "while pgrep"` then killed the ssh session issuing it. Match with a bracket pattern
@@ -6882,6 +6892,13 @@ its directory (`tar --compare` and a file count) before removing anything, not b
 exits 1 ("file changed as we read it") when a directory's timestamps move during the read, and on `/beagle3` it did
 so for a directory Boltz had finished writing 3 s earlier, every file intact (1 pack of 63; under `set -e` it ended
 61430344 three seeds early).
+**After a quota incident, sweep every job of every line over the whole window, up to the moment the quota was freed,
+and look at the jobs that start in it:** the check at 13:10 found no midway2 failure, but Upside 3's REMD block 1 and
+four of its Peng chunks failed 13:12-14:11, found only at 23:50. A job whose log cannot be created fails in seconds
+with no log (exit 0:53), so a log scan never sees it; `sacct -X -S <start>` does. A chained job that dies writing its
+own progress (`run.py`'s `block_count`) does not queue its successor, and rerunning its stage without that file would
+redo block 1 over block 1's data: restore the progress file to what the finished step would have written, then
+resubmit by the script's own path.
 
 ---
 
