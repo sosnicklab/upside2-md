@@ -1280,6 +1280,17 @@ Decisions:
    at 303.15 K), NVT: the prep's oriented CG glpG held fixed, 200 official-topology DDM started in a shell around its
    belt, run until the number bound and the belt coverage stop changing. Free detergent is then removed and the
    complex is the environment the preparation takes. `scratchpad/ddm_micelle/`.
+   **Ran 200 ns (15:12-19:12 10-26; `results.txt`, `contacts_profile.py`), steady over 100-200 ns:** all 200 DDM
+   bound, no free micelle; tails within 0.94 nm of 95% of the belt's exposed beads; 128 DDM with tails in the belt
+   and 72 outside it, 64 on the +z face (L1 loop 47-63, W130, F176-G180). **But maltose heads lie against the belt:**
+   a polar maltose bead within 0.6 nm of 56% of the exposed beads at |z| < 0.5 nm (tails 62%), 67% at 0.5-1.0 nm,
+   84% at 1.0-1.41 nm; A37, V41, V122, A190, V194, A197, M198 and V201 are touched by heads only. POPE/POPG around
+   the same glpG puts no head at the belt core. TM4 is tail-covered (W146 tail 1.00). Not a clean detergent ring, so
+   **not yet used**. The first question is the model's own: whether dry Martini gives DDM alone a micelle with a
+   tail core and a head shell at the SAXS size: **it does** (findings 7.5): 140 DDM alone form a micelle of 124, tail
+   core semi-axes 14.5 / 25.3 / 29.3 A against 15.7-16.1 / 27.9-28.3, heads 99.5% outside. The coat around glpG is
+   therefore the protein-detergent contact of GROMACS's Martini glpG or the excess detergent; the side-chain/lipid
+   table covers DDM's bead types, so the arrangement to judge is the one Upside relaxes to (step 3).
 3. [ ] **The preparation's micelle path.** It is bilayer-only today: `require_bilayer_lipids` refuses a single-tail
    detergent, and the xy barostat, tiling and ion slab assume a bilayer. A micelle runs NVT; DDM needs its own
    diffusion target for the friction calibration, from a measurement; the belt solvation gate applies as it is.

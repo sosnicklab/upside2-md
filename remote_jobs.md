@@ -696,13 +696,14 @@ keeps the link; plain `cp` copies the text, which then drifts).
 
 ## 1. Current jobs
 
-Snapshot **2026-10-26 14:32 CDT, verified live against `squeue` and `sacct` on midway2 and midway3** (MacBook Pro,
-the watch). midway2: released ff2.1's cspA de novo arm COMPLETE 13:55, 4 de novo arms in their chunks (27 of 32 scored) and
-its collector; ff3.1's validation (submitted 10:03: panels and TM jobs PD, 32 Peng arms 31 R and 1 PD, collector;
+Snapshot **2026-10-26 22:32 CDT, verified live against `squeue` and `sacct` on midway2 and midway3** (MacBook Pro,
+the watch). midway2: released ff2.1's proteinG and hyp de novo arms COMPLETE 22:07-22:29 (28 of 32 scored), 2 de novo
+arms in their chunks and its collector; ff3.1's validation (submitted 10:03: panels and TM jobs PD, 32 Peng arms in their second chunks from 20:35, collector pass 2 (22:06) scored 0 of 32, next 49611657;
 line 2); Upside 3's Peng arms (23 complete, 6 R, 3 PD), its ff2.1 glpG REMD block 2 COMPLETED 12:59 and block 3 PD,
 the ff3.1 glpG prep PD and the ff3.0 glpG prep 49589828 submitted 14:13 (line 3). midway3 (line 4): Boltz-2 Ub psWT query-only MSA 61547814-61547817,
-61553907-61553908 and 61555721-61555722 (13:39) PD, one pending; BioEmu2 EHEE 7 COMPLETED, 1 R, 2 PD, Ub psWT's first PD and nine pending.
-Nothing failed since 00:35. `/project/trsosnic` 584 G free; `/beagle3/trsosnic` 127,887 inodes free.
+61553907-61553908 and 61555721-61555722 (13:39), 61547814-61547816 COMPLETED 21:01-21:41, 61547817, 61553907-61553908, 61555721-61555722 and 61571531 R; BioEmu2 EHEE all 10
+COMPLETED (readout owed), Ub psWT 61496134 and 61581080-61581081 R, 61584278-61584280 submitted 22:39, four pending. Nothing failed since 00:35. `/project/trsosnic` 584 G free;
+`/beagle3/trsosnic` 127,616 inodes free.
 
 **Line 1: deterministic vs probabilistic side chain**
 - **Released ff2.1 on the three side-chain tests** (user 10-21: "run validation with released ff2.1 so we know if
@@ -724,9 +725,11 @@ Nothing failed since 00:35. `/project/trsosnic` 584 G free; `/beagle3/trsosnic` 
     BBL de novo (14:30 10-25) and gpW de novo (02:57 10-26), each scored by the collector: 26 of 32. NuG2 de novo
     COMPLETE 11:58 10-26 (49538073; final frames finite, KE/1.5kT 1.003-1.006 over 14 replicas), its score
     `sc_ff21_NuG2_denovo` 49581561 (submitted by pass 49550085) COMPLETED 12:43: 27 of 32. cspA de novo COMPLETE 13:55
-    (49538121; final frames finite, KE/1.5kT 1.003-1.007 over 14 replicas), scored by the collector's next pass. The 4
-    left are de novo arms (hyp, proteinG, proteinL, ubiquitin), in their chunks.
-    Collector `ff21_collect` (every 6 h, next pass **49581562**, begins 18:15 10-26): scores each
+    (49538121; final frames finite, KE/1.5kT 1.003-1.007 over 14 replicas), its score `sc_ff21_cspA_denovo` 49604876
+    (submitted by pass 49581562, 18:16) COMPLETED 18:47: 28 of 32. proteinG de novo COMPLETE 22:07 (49590203) and
+    hyp de novo 22:29 (49590359), final frames finite, KE/1.5kT 1.000-1.006; scored by the collector's 00:16 pass. The
+    2 left are proteinL and ubiquitin de novo, in their chunks.
+    Collector `ff21_collect` (every 6 h, next pass **49604877**, begins 00:16 10-27): scores each
     finished arm into `ff21_nobp_dt009/setup/score/ff_2.1/` and, with all 32, writes
     `checks/ff21_released_20261021/peng_ff21.txt` ending DONE: released ff2.1 against the control, no-BP, ff3.0 and
     ff3.1 (all scored), beside Peng's published FF2.
@@ -755,8 +758,8 @@ Nothing failed since 00:35. `/project/trsosnic` 584 G free; `/beagle3/trsosnic` 
     submit.sh`, ids in `submitted.log`; 10:03 10-26): mdCATH panel `mdc_ff31` **49572918**, 44-domain `p44_ff31`
     **49572919**, their TM jobs **49572920** / **49572921** afterok (`tm_ff31.sbatch`, against `*_ff21_released` and
     `*_ctrl_03`; outputs `tm_<panel>_<tag>_vs_<ref>.txt`), 32 Peng arms `b_ff_3.1_<prot>_<kind>` (runs
-    `ff3_benchmark/runs/<prot>_<kind>_ff_3.1/`, logs `ff3_benchmark/logs/`), collector `ff31_collect` **49572955**
-    (every 6 h; scores into `score/ff_3.1/`, writes `peng_ff31.txt`, ff3.1 against released ff2.1 and ff3.0, ending
+    `ff3_benchmark/runs/<prot>_<kind>_ff_3.1/`, logs `ff3_benchmark/logs/`), collector `ff31_collect` (pass 1 16:05, pass 2 49597005 22:06 10-26, 0 of
+    32 scored; next **49611657**) (every 6 h; scores into `score/ff_3.1/`, writes `peng_ff31.txt`, ff3.1 against released ff2.1 and ff3.0, ending
     DONE). The glpG validation runs on Upside 3 only (user's choice; line 3).
 - **ff3.1.1 and ff3.2.1: ff2.1 with only its depths trained** (user 10-21: "apply the fix and train ff3.1.1 and
   ff3.2.1", then "try to resolve the accuracy lost bug as well in this run"; plan.md Phase 29 and its revised
@@ -1004,7 +1007,9 @@ Phase 1 "MSA control on Ub psWT" and section 7 "EHEE and Ub psWT at 10^5"):
   (9.77-13.21); the MSA set's were 1.52 A and 11.34 A. The nine `hold` lines released (ledger backup
   `.bak_pre_release_20261025`); submitted 10:20 10-26: **61547814-61547817** (seeds 23-62); 12:45 10-26 by the
   MacBook Pro's take-over pass: **61553907-61553908** (seeds 63-82); 13:39 10-26 by cron `0fd74c14`:
-  **61555721-61555722** (seeds 83-102), one pending (seeds 103-112).
+  **61555721-61555722** (seeds 83-102); 18:39 10-26: **61571531** (seeds 103-112), the last; all 10 submitted.
+  **61547814-61547815 COMPLETED 21:01-21:10 10-26** (seeds 23-42), 10 seeds `ok` each, no error line, CA-RMSD to the
+  reference median 1.54 A in both; **61547816 COMPLETED 21:41** (seeds 43-52, 10 `ok`, median 1.55 A): 4 of 10 done.
   **Gate** before the other nine, which are `hold`: job 1's samples folded (CA-RMSD to the reference median below
   4 A, Rg mean 9.77-13.21 A); applied by the submitter cron, which releases them on a pass. Log
   `$B/logs/boltz_phase1_ubqps_nomsa_1e5_v100_<id>.out`; data `$B/runs/boltz_phase1_ubqps_nomsa_1e5_v100_<id>/`.
@@ -1021,7 +1026,11 @@ Phase 1 "MSA control on Ub psWT" and section 7 "EHEE and Ub psWT at 10^5"):
   check, CA-RMSD to the reference median 0.74 A (max 21.5-30.3 A), Rg mean 9.25-9.26 A (reference 9.02), peptide C-N
   1.337 +- 0.028 A; no error line. **61496126-61496127 COMPLETED 11:54-12:03 10-26** (seeds 1300-1400; `[run] ok`,
   walls 17,971-18,291 s, peak 4,416 MiB; 10,000 of 10,000 frames physical each); **61496128-61496129 COMPLETED
-  12:47-13:00 10-26** (seeds 1500-1600; `[run] ok`, walls 18,028-18,159 s; 10,000 of 10,000 physical each): 7 of 10.
+  12:47-13:00 10-26** (seeds 1500-1600; `[run] ok`, walls 18,028-18,159 s; 10,000 of 10,000 physical each); **61496130
+  COMPLETED 18:23 10-26** (seed 1700; `[run] ok`, wall 18,153 s; 10,000 of 10,000 physical): 8 of 10. Ub psWT 61496134 R from
+  17:42 10-26; 21:39 10-26 by cron `0fd74c14`: **61581080-61581081** (seeds 1100-1200); 22:39: **61584278-61584280** (seeds 1300-1500), four pending. **61496131-61496132
+  COMPLETED 22:24-22:28 10-26** (seeds 1800-1900; `[run] ok`, walls 17,979-18,013 s; 10,000 of 10,000 physical each):
+  **EHEE all 10 COMPLETED**; its copy, pooling and readout are owed (Next, below).
 - Submitter cron `0fd74c14` (hourly at :37; the Mac Studio's `de2823f0` until 10:20 10-26): applies the gate, runs both submitters, records ids, deletes itself when
   no line is pending or held. About 175 V100-hours in all.
 - **Next:** when a set's 10 jobs are COMPLETED, copy the npz (md5), pool with `scratchpad/boltz_hdx/flags/
@@ -1047,12 +1056,12 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **61496120 COMPLETED 02:19 10-26, gate passed; 61547814-61547817 PD (seeds 23-62), 61553907-61553908 PD (seeds 63-82), 61555721-61555722 PD (seeds 83-102); one pending** (midway3 gpu, V100; 13:39 10-26) | **Boltz-2 Ub psWT with EHEE's query-only MSA, 10^5 `md` samples** (`diffusion_dynamics.md` Phase 1, MSA control) | submitted 12:12 10-25 | the rest by cron `0fd74c14`; when all 10 are COMPLETED, pool and read out against the pre-registered rule (line 4) |
-| **EHEE 61496122-61496124, 61496126-61496129 COMPLETED 06:49-13:00 10-26 (physicality 10,000 of 10,000 each), 1 R, 2 PD; Ub psWT 61496134 PD, nine pending** (midway3 gpu, V100; 13:30 10-26) | **BioEmu2 side test, EHEE and Ub psWT at 10^5** (`diffusion_dynamics.md` section 7) | submitted 12:12 10-25 | the rest by cron `0fd74c14`; per job `[run]` and physicality; then the readout (line 4) |
+| **61496120 COMPLETED 02:19 10-26, gate passed; 61547814-61547816 COMPLETED 21:01-21:41 10-26 (seeds 23-52; CA-RMSD median 1.54-1.55 A), 61547817, 61553907-61553908, 61555721-61555722 and 61571531 R (seeds 53-112): 4 of 10 done** (midway3 gpu, V100; 22:32 10-26) | **Boltz-2 Ub psWT with EHEE's query-only MSA, 10^5 `md` samples** (`diffusion_dynamics.md` Phase 1, MSA control) | submitted 12:12 10-25 | the rest by cron `0fd74c14`; when all 10 are COMPLETED, pool and read out against the pre-registered rule (line 4) |
+| **EHEE all 10 COMPLETED 06:49-22:28 10-26 (physicality 10,000 of 10,000 each; readout owed); Ub psWT 61496134, 61581080-61581081 R, 61584278-61584280 PD (22:39), four pending** (midway3 gpu, V100; 22:39 10-26) | **BioEmu2 side test, EHEE and Ub psWT at 10^5** (`diffusion_dynamics.md` section 7) | submitted 12:12 10-25 | the rest by cron `0fd74c14`; per job `[run]` and physicality; then the readout (line 4) |
 | **Peng arms 23 complete, 6 R, 3 PD; glpG REMD block 2 49458255 COMPLETED 12:59 10-26 (KE/1.5kT 0.996-1.003, no error line), block 3 49584589 PD** (midway2; 13:30 10-26) | **Upside 3 validation of the debug** (plan.md Phase 24 2b): Peng's 16 proteins x {native, denovo} and the glpG-RKRK-79HIS hybrid with ff2.1 on `/beagle3/trsosnic/yinhan/upside3` | submitted 22:26 10-22; prep 49448466 COMPLETED 02:54 10-23, gate passed; REMD block 1 done (its job FAILED writing `block_count` on the quota, line 3); block 2 done | block 2's readout (C-N, DSSP); HDX waits on the TM4 cause; §1 line 3 |
 | **finished: block 5 49449200-49450408 COMPLETED 12:36-21:13 10-24** (midway2; blocks 1-4 10-17 to 11:27 10-23) | **The corrected glpG REMD chains** (user 10-17: "fix the bug and rerun the affected simulations"; plan.md Phase 18; findings 4.17): the side-chain placement fixed in the preparation and every live seed, 28 replicas T 0.70-0.90, five 36 h blocks (`submit_remd.sh`), ff_3.0_gdepth and the old ff3.1 (ff_3.1_depth_data; its four chains and seeds retired 10-26 as `*.bak_pre_merge_20261026`) x {79HIS, 79HIS_S115T, 79ALA, 79ALA_S115T}; 79HIS ff_2.1_ctrl38 49411323 and ff_2.1_nobp 49411324 stopped by the user 08:33 10-18. Seeds `popepopg_REMD_mdw2/seeds/<V>.<ff>.up` (built and verified in `checks/placefix_20261017/`). Logs `popepopg_REMD_mdw2/logs/remd.<V>.<ff>.<jobid>.out` | All five blocks closed clean (block 5: KE/1.5kT 0.986-1.009, no error line) | ff3.0's four chains: TM4 at the ends of blocks 2-5 (`tm4_ff31.py`, `gly_flip_rungs.py`, DSSP) |
-| **4 de novo Peng arms in their chunks, 27 of 32 scored, cspA de novo COMPLETE 13:55 10-26 (unscored); collector `ff21_collect` every 6 h, next 49581562** (midway2; 14:32 10-26) | **Released ff2.1 on the three side-chain tests** (plan.md Phase 27): the mdCATH and 44-domain panels at dt 0.009 and Peng's benchmark, on the same protocols, binaries and domains as the retrained arms, to decide whether to keep ff2.1 itself | 44 domains and mdCATH done; Peng 27 of 32 scored, 1 to score, 4 running | `peng_ff21.txt` (DONE, ~a week); then plan.md Phase 27 step 4 |
-| **panels 49572918 (mdc_ff31), 49572919 (p44_ff31); TM 49572920-49572921 afterok; 32 Peng arms `b_ff_3.1_*`; collector 49572955** (midway2; 14:32 10-26: panels and TM PD, 31 arms R, 1 PD) | **ff3.1 (the merge of ff3.1.1 and ff3.2.1) on the soluble tests** (plan.md Phase 30), the protocols and pre-audit binaries of released ff2.1's | submitted 10:03 10-26 | read the TM files after the panels (~24 h) and `peng_ff31.txt` when DONE (~a week); line 2 |
+| **2 de novo Peng arms in their chunks, 28 of 32 scored, proteinG and hyp de novo COMPLETE 22:07-22:29 10-26 (to score); collector `ff21_collect` every 6 h, next 49604877** (midway2; 22:32 10-26) | **Released ff2.1 on the three side-chain tests** (plan.md Phase 27): the mdCATH and 44-domain panels at dt 0.009 and Peng's benchmark, on the same protocols, binaries and domains as the retrained arms, to decide whether to keep ff2.1 itself | 44 domains and mdCATH done; Peng 28 of 32 scored, 2 to score, 2 running | `peng_ff21.txt` (DONE, ~a week); then plan.md Phase 27 step 4 |
+| **panels 49572918 (mdc_ff31), 49572919 (p44_ff31); TM 49572920-49572921 afterok; 32 Peng arms `b_ff_3.1_*`; collector 49611657** (midway2; 22:32 10-26: panels and TM PD, 32 arms in their second chunks from 20:35, 0 scored) | **ff3.1 (the merge of ff3.1.1 and ff3.2.1) on the soluble tests** (plan.md Phase 30), the protocols and pre-audit binaries of released ff2.1's | submitted 10:03 10-26 | read the TM files after the panels (~24 h) and `peng_ff31.txt` when DONE (~a week); line 2 |
 | **prep 49573353 PD, REMD block 1 49573354 afterok** (midway2; 10:13 10-26) | **Upside 3 glpG-RKRK-79HIS hybrid with ff3.1** (`upside3_validation/glpg_ff31`; findings 3.15, A234): the TM4 test against the ff2.1 run, and ff3.1's glpG validation | submitted 10:11 10-26 | when the prep ends, `glpg_u3_prep_tm4.py` on its checkpoints: TM4 at the end of stage 7.0, whether the map rescues it (line 3) |
 | **prep 49589828 PD, REMD block 1 49589829 afterok** (midway2; 14:13 10-26) | **Upside 3 glpG-RKRK-79HIS hybrid with ff3.0** (`upside3_validation/glpg_ff30`; findings 3.15, A235): the matched TM4 test against Upside 2's placement-fixed ff3.0 chains | submitted 14:13 10-26 | when the prep ends, `glpg_u3_prep_tm4.py` on its checkpoints: TM4 at the end of stage 7.0 decides between ff2.1's own loss and an Upside 3 cause (line 3) |
 

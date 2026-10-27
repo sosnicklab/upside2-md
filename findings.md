@@ -5764,6 +5764,26 @@ premise; `build_system` now asserts exact charge neutrality and zero salt pairs 
 and rejects a box too small for the complex, all negative-tested. The 200 A box is itself too small for the
 states the model visits (two orientations exceeded it at Rg 152 and 206 A) and the box is near-vacuum, so
 enlarging it costs almost nothing.
+
+### 7.5 Dry Martini forms the SAXS DDM micelle; around a frozen Martini glpG its maltose heads coat the belt (2026-10-26)
+
+plan.md Phase 31 step 2; GROMACS 2026.4 on the Mac with the potential Upside reproduces (section 8: reaction field eps_r
+15, potential-shifted LJ to 1.2 nm, `sd` at 303.15 K), cgmartini's DDM topology, NVT, 200 ns each
+(`scratchpad/ddm_micelle/`).
+* **DDM alone is right.** 140 DDM from random placement form a micelle of 124 (plus one of 16) within 20 ns, steady
+  to 200 ns; its tail core's semi-axes are 14.5, 25.3 and 29.3 A against SAXS's oblate 15.7-16.1 and 27.9-28.3 A
+  (Oliver et al. 2013, Table 2), and 99.5% of the maltose beads lie outside the tail core. The model represents a
+  DDM micelle.
+* **Around glpG the heads do not stay out.** 200 DDM around the prep's oriented CG glpG, held frozen: all 200 bind,
+  tails within 0.94 nm of 95% of the belt's exposed beads, 128 molecules in the belt and 64 on the +z face (L1 loop
+  47-63, W130, F176-G180). But a polar maltose bead is within 0.6 nm of 56% of the exposed belt beads at |z| < 0.5
+  nm, 67% at 0.5-1.0 nm and 84% at 1.0-1.41 nm, and A37, V41, V122, A190, V194, A197, M198 and V201 are touched by
+  heads only; POPE/POPG around the same glpG puts no head at the belt core. TM4 is tail-covered (W146).
+* So the coat comes from the detergent meeting this protein surface, in GROMACS's Martini 2.2 representation of glpG,
+  or from the 200 molecules exceeding what the belt holds; which one is not measured. Production does not use that
+  representation: the hybrid's protein meets the environment through its BB bead and the side-chain/lipid table,
+  which covers every DDM bead type (C1, Na, P1, P2, P4 among its 13 targets), so the arrangement that matters is the
+  one Upside itself relaxes to.
 ---
 
 ## 8. Bilayer physics measured with this force field

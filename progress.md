@@ -1668,3 +1668,22 @@ to 10-07 12:00 is in git history.
   scratch 3.13 venv). Files: src/martini_potential.cpp, src/main.cpp, py/martini_itp_reader.py,
   py/martini_prepare_system_lib.py, example/16.MARTINI/dryMARTINI_itp/dry_martini_v2.1_DDM.itp, up.md,
   tests/index_oracle.py, findings.md, plan.md.
+- 10-26 15:45-16:10, MacBook Pro (user: "fix the python environment, and transit everything to python 3.15 if
+  possible", then "if python 3.15 do not work, you can use python 3.14 then python3.13"). Homebrew had removed
+  python@3.11, the repo .venv's interpreter, at 12:27. The dead venv is kept as `.venv.bak_py311_20261026`; `.venv`
+  rebuilt on Homebrew Python 3.15.1 with every package the code imports (numpy 2.5.4, scipy 1.18.1, h5py 3.16.0,
+  tables 3.11.1, mdtraj 1.11.2, pymbar 4.0.3 with jax 0.12, ProDy, Biopython, scikit-learn, PeptideBuilder,
+  tmtools, python-pptx, pymupdf, pypdf). No 3.15 wheels: torch (2.14.1 stops at 3.14), so pydssp, and pyhdx 0.4.3
+  through scikit-image 0.26; no live code needs them (torch only in old scratchpad copies; pyhdx's apply_cmap has
+  its fallback in 5.analyze_D_uptake.py). Verified under 3.15: regress record equal to the 3.13 one (0 of 4260),
+  node_fd, the GROMACS dihedral check and index_oracle clean. install_python_env.sh now builds this on 3.15.
+  ~/.virtualenvs/matplotlib was already 3.15.
+- 10-26 19:12-19:35, MacBook Pro (Phase 31 step 2). The glpG-DDM self-assembly finished 200 ns: all 200 DDM bound,
+  95% belt coverage, 128 in the belt and 72 outside (64 on the +z L1-loop face); maltose heads within 0.6 nm of 56%
+  of the belt core's exposed beads (0% in POPE/POPG), so the complex is not used yet. Launched the model check: 140
+  DDM alone in the same dry-Martini potential, 200 ns, read against the SAXS micelle
+  (`scratchpad/ddm_micelle/empty_micelle/`, detached `run.sh` -> `results.txt` DONE). Files: plan.md.
+- 10-26 22:30, MacBook Pro (Phase 31 step 2). The dry-Martini DDM check: 140 DDM alone form the SAXS micelle (124
+  molecules, tail core 14.5/25.3/29.3 A against 15.7-16.1/27.9-28.3, heads 99.5% outside), so the glpG complex's head
+  coat is the protein-detergent contact of the frozen Martini glpG or the excess detergent; the side-chain/lipid table
+  covers DDM's bead types (C1, Na, P1, P2, P4). Findings 7.5. Files: findings.md, plan.md.
