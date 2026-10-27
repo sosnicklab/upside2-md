@@ -234,8 +234,9 @@ Candidates on record:
 
 * **Parameters that already exist but cannot be trained:** H-bond entries 4-11 and backbone desolvation's centre and
   sharpness (section 2.1). These need derivatives, not new terms.
-* **From goal 4, only if training changes leave a gap (section 5.6, B3):** the surface balance of backbone
-  desolvation, and a cooperativity term.
+* **From goal 4 (section 5.7, planned as Phase B3):** one table of burial and pairing for the backbone polar groups,
+  contacts that depend on their surroundings, burial weights by who covers a residue, the secondary-structure
+  balance in compact states, and temperature-dependent burial.
 * **The glycine context term** (`architecture.md`), only if its trigger fires.
 * **The side-chain model's own parameters,** which follow the verdict.
 
@@ -439,31 +440,174 @@ It did not help here, and the large test proteins fold in vitro without one.
    * This answers 5.2's two open questions:
      * if the globules beat the native in free energy, the energy ranking must change;
      * if the native wins but coils never reach it, the funnel shape is the target.
-4. [ ] Repeat 5.2 under the chosen side-chain model. The globule's side-chain energy fraction, and the Rama and
-   desolvation preference for globules, are Phase B's targets.
+4. [ ] **Repeat 5.2 and 5.7 with ff3.1, once its validation is in** (plan.md Phase 30 item 4; user 10-27). 5.2 and
+   5.7 are ff_2.1's, so no 5.7 change is trained before this.
+   * The same four proteins and protocol (`sim/landscape.py`: native x3, bulk x6, vectorial x6 at T 0.80, 60,000 tu,
+     then quench), on the audited engine with configs from the current writer.
+   * The 5.2 energy-by-term table, then the six 5.7 scripts, the engine-reading two with the current
+     `py/upside_engine.py` in place of `eng_1019`.
+   * Each 5.7 row is read against ff_2.1's. A design candidate keeps its place in 5.7's order only if its target still
+     holds. The globule's side-chain energy fraction, and the Rama and desolvation preference for globules, are
+     Phase B's targets.
 
-**Phase B: training changes, one at a time, each scored on A2 and on the native panels (44-domain, mdCATH).**
+**Phase B: training and force-field changes, one at a time, each scored on A2 and on the native panels (44-domain,
+mdCATH).** User 10-26: the fix must include a change in the force field's design, not only in its training. Both
+kinds are planned; B1 and B2 combine with any change of B3.
 
-1. [ ] **Compact misfolds as negative examples.** Make decoys by collapsing each training protein from coil at T 0.80
-   (the bulk protocol, then quench), regenerated from the current force field each epoch. Two forms:
-   * start some free replicas from decoys, which keeps ConDiv's objective and fixes the sampling bias Jumper 2018
-     names;
-   * add an explicit native-against-decoy gap term next to the SARW term.
-
-   The first is the smaller change. Targets:
-   * the native-globule gap per residue;
-   * the globule's side-chain energy fraction (now 0.87-0.93);
-   * Rama plus desolvation favouring globules (now 24-47 E_up in the large proteins).
-2. [ ] **Train past 150 residues.**
-   * Add mdCATH domains of 150-250 residues, kept apart from the panel's held-out domains.
-   * Normalise each protein's contrast per residue.
-   * Space large proteins' replica ladders by 1/sqrt(N).
-3. [ ] Only if B1-B2 leave a gap: the new parameters of section 4.
+1. [ ] **Compact misfolds as negative examples, through a replay buffer.**
+   * Each training protein keeps a buffer of its own states: globules collapsed from coil under the current force
+     field (the bulk protocol at T 0.80, then quench), and the end states of its free replicas from earlier visits.
+   * Some of the 12 free replicas start from the buffer instead of the native. The buffer refreshes itself from
+     their end states, so the decoys are made once, not every epoch.
+   * This keeps ConDiv's objective and reduces the short-run bias Jumper 2018 names: free replicas started at the
+     native explore only its well. It is the standard remedy in energy-based model training (persistent CD,
+     Tieleman 2008; replay buffer, Du and Mordatch 2019; Nijkamp et al. 2020).
+   * The share of buffer starts is the knob, set on held-out proteins.
+   * The alternative form is an explicit native-against-decoy gap term next to the SARW term.
+   * Targets: the native-globule gap per residue; the globule's side-chain energy fraction (now 0.87-0.93); Rama plus
+     desolvation favouring globules (now 24-47 E_up in the large proteins).
+   * Hypothesis, not tested: findings 1.37's loss (training buys nothing on its own proteins while held-out folding
+     falls) may come from the same bias, since a native-started 8,000 tu run carries little folding information.
+2. [ ] **Train past 150 residues, on crops in a frozen context.**
+   * AlphaFold2 trains on 256-residue crops and fine-tunes at 384 (AlphaFold3 adds spatial crops), so the cost of a
+     training example does not grow with the chain. This is the physical version.
+   * Add mdCATH domains of 150-400 residues, kept apart from the panel's held-out domains.
+   * For each, a crop of 60-90 residues moves, contiguous or a compact subdomain (a foldon). The rest is frozen at
+     the native through `/input/fix_rigid/atom_indices` (`src/martini_fix_rigid.cpp:316`), which any config can
+     carry. The native-restrained replica restrains the crop as now.
+   * The crop sees large-protein cores and subdomain interfaces: the share of residues above the burial window
+     rises from 5.3% to 10% with size (`code_audit/audit.md` 1a). On the hotter rungs it can partly unfold and
+     repack, so the trainer also sees local misfolds in a native context. How far a crop moves in 8,000 tu is to be
+     measured; the 54-residue control does not refold in 60,000 tu (5.2).
+   * Each step still costs a whole-protein evaluation, but runs need not get longer. Replica acceptance should follow
+     the crop's size; this is to be measured. The SARW replica needs a crop form, or is skipped for crops.
+   * Normalise each protein's contrast per residue (`training/ConDiv.py:396`), and space each ladder by 1/sqrt(N) of
+     its moving residues.
+3. [ ] **Force-field changes (5.7),** each trained as the only change against a control, in the order A3 sets
+   (5.7, Order).
 
 **Phase C: validation.**
 * The native panels must not lose, and the de novo benchmark must gain.
 * Re-check the hybrid (glpG), which runs on the protein force field.
 * Calibrate Upside 3's temperature scale (section 3.3).
+
+### 5.7 The force field term by term (2026-10-26)
+
+User 10-26: review every term and every possible design change, not one term. Each term below is read on the T 0.80
+quenched end states of 5.2 (ff_2.1; native x3, bulk x6 and vectorial x6 per protein). "Globule" means the bulk and
+vectorial end states, and ranges are over the three large proteins (2RN2, 2LZM, 1YOB). Scripts and their
+`*_T080.txt` outputs are in `scratchpad/large_protein_20261019/analysis/`.
+
+**Every number in this section is ff_2.1's.** The runs were made on the 10-19 engine, before the audit's fixes, from
+configs written before findings 3.13's fix. They are repeated with ff3.1 on the audited engine at Phase A4 (user
+10-27), and the candidates below are re-ranked on those numbers before any is trained. ff3.1 differs from ff2.1 only
+in its Ramachandran library (the other five files are ff2.1's), so the Ramachandran row and D3 are the most likely to
+move. The engine fixes can move any row.
+
+**What the trap is.** The native is 150-180 E_up below the globules, so the globule wins on entropy if it wins at all.
+It is stable against the unfolded chain, and the chain does not leave it. A design change can act in one of two ways:
+* **widen the native's lead,** which is needed if A3 finds the globules ahead in free energy;
+* **make non-native compact states less stable relative to the unfolded chain, while the native keeps its
+  stability,** which is needed if the native wins but coils do not reach it. The trap's depth is the side-chain
+  energy a globule collects without native structure.
+
+**Every term, globule against native.** The term gaps are 5.2's (bulk and vectorial); everything else was measured on
+10-26.
+
+| term (node) | form | globule minus native | what the end states show |
+|---|---|---|---|
+| H-bond (`hbond_energy`) | one energy per bond by its residue's Rama class (-1.96, -1.95, -1.77), plus a bias on the per-peptide count; no dependence on burial or on neighbouring bonds | +115 to +160 | the globules form 0.36-0.62 of the native start's helical bonds; 2LZM's form 1.5-5x the crystal's nonlocal, sheet-type bonds |
+| side-chain free energy (`rotamer`, with its pair table, rotamer 1-body, `hbond_coverage` and `hbond_coverage_hydrophobe`) | BP over one-bead rotamers; pair splines in r and two angles, to about 7 A | +23 to +42 | with burial, the bulk globules keep 0.90-0.93 of the native's side-chain energy, at 0.54-0.72 of its hydrophobic/polar segregation (CB counts within 8 A) |
+| side-chain burial (`sigmoid_coupling_environment`) | per residue, a sigmoid of the type-weighted side-chain count within 9 A; 20 weights shared by every centre type | +13 to +20 | all from hydrophobic residues, whose coverage is 3.4-3.6 against 4.1-4.7; polar residues' burial energy is equal within 3.1 E_up; the hydrophobic share of a hydrophobic residue's coverage is 0.57-0.62 against 0.61-0.70 |
+| backbone desolvation (`bb_sigmoid_coupling_environment`) | per NH/CO, -0.30 x sigmoid(side-chain coverage + 2 x pairing - 2) | -15 to -19 | the globules have 0.33-0.48 more unpaired groups per residue, mostly exposed; buried and paired groups are 0.41-0.47 per residue against 0.74-0.80; buried and unpaired 0.17-0.21 against 0.09-0.16 |
+| Ramachandran (`rama_map_pot`, `rama_map_pot_ref`, sheet mixing) | per residue, a neighbour-dependent coil-library map at kT_ref, with trained basin offsets (ff3.1) | -7 to -32 | native-helical residues spend 0.44-0.49 of globule frames in the strand/PPII basin; by type the order follows Chou-Fasman (Spearman +0.64 over 15 types, p 0.01; ILE, VAL 0.62-0.64), but even GLU, ALA and LYS spend 0.34-0.49 |
+| backbone sterics, covalent springs | walls between N, CA, C and CB; bond, angle and omega springs | small | not a design question |
+| absent: electrostatics beyond the pair table | | | Debye-Huckel between charged CBs beyond 7 A (eps_r 80, Debye length 10 A): native and globule within 1 E_up, inside the globules' own spread of 0.8-2.7 |
+| absent: burial beyond 9 A | | | hydrophobic/polar segregation at 14 A: the bulk globules keep 0.56-0.72 of the native's, as at 8 A (0.59-0.72); vectorial ones 0.48-0.55 against 0.54-0.61 |
+
+Kinetics, from the bulk runs: the chain does not collapse before forming helices. For the first 2,000-5,000 tu it
+stays at 1.5-2.0x the native Rg with 0.12-0.40 of its helical bonds. It then collapses, to 1.1-1.3x by 20,000 tu,
+with 0.32-0.54.
+
+**What the forms cannot express.**
+* Burial and pairing are interchangeable in backbone desolvation. A buried H-bond gains 0.3 E_up over an exposed one,
+  and a buried unpaired group pays nothing beyond the lost exposure reward.
+* No side-chain energy depends on how dense a contact's surroundings are. The burial term counts side chains, but not
+  which ones.
+* No term couples neighbouring residues' conformations. The maps condition only on the neighbours' identity, so
+  helix nucleation and propagation come only from the H-bond geometry.
+* No energy depends on temperature, except through the kT_ref terms (3.1). The hydrophobic effect's heat capacity,
+  which grows with N, is absent.
+
+**Design candidates.** Each is a spline table or the parameters of one, with exact parameter derivatives through the
+audit harness before any training (section 4).
+
+1. **D1. Backbone polar groups: one table of burial and pairing.**
+   * A 2D spline E(side-chain coverage, pairing) per NH/CO replaces backbone desolvation's sigmoid of a sum. It gives
+     the H-bond a dependence on burial, and it sets the four corners (exposed or buried, paired or unpaired)
+     separately.
+   * Physics: backbone H-bonds in nonpolar surroundings are worth more than exposed ones (amide-to-ester mutations:
+     Deechongkit et al. 2004, Nature 430:101; Gao et al. 2009, Nat Struct Mol Biol 16:684).
+   * Target: buried paired groups, 0.74-0.80 per residue in the native against 0.41-0.47, the largest structural
+     contrast measured. The buried-unpaired corner alone does little: it differs by at most 0.11 per residue, and by
+     0.01-0.02 in 1YOB.
+   * The same table answers 5.3's third mechanism (desolvation as a surface term whose pull grows with N). It is the
+     soluble side of the hybrid's TM1 opening (findings 4.7).
+   * Effect: mainly widens the native's lead. It also rewards the globules' non-native ladders, so it is judged on 2LZM.
+2. **D2. Contacts that depend on their surroundings.**
+   * This is the force-field form of AlphaFold2's triangle updates: a pair's energy depends on the third bodies
+     around it. The established version is AWSEM's density-switched contacts (Papoian et al. 2004, PNAS 101:3352;
+     Davtyan et al. 2012), whose energy moves between a low-density and a high-density value with the local density
+     of both residues.
+   * In Upside: each side-chain pair energy is scaled by a spline of the two residues' `environment_coverage_sc`.
+     That coverage uses the rotamer prior, not the BP solution (`code_audit/audit.md` 1a), so it is fixed before BP
+     runs and adds no circular dependence.
+   * Target: the 0.90-0.93 side-chain energy at 0.54-0.72 segregation. The globules' hydrophobic contacts sit at
+     coverage 3.4-3.6 against 4.1-4.7.
+   * Effect: makes the trap shallower, because a contact made at core density counts more than one made in a loose
+     globule.
+3. **D2b. Who covers a residue.**
+   * The burial node already reads 400 weights (`number_independent_weights` 400); ff_2.1 trains 20 shared ones.
+     Untying them by centre class needs no engine change.
+   * Backbone desolvation keeps its own 20 weights, since its writer refuses unequal rows.
+   * Target: modest, the hydrophobic share of 0.57-0.62 against 0.61-0.70.
+4. **D3. Secondary-structure balance in compact states.**
+   * The order by type is right, but the offset toward strand/PPII is not.
+   * Two forms:
+     * a nearest-neighbour term on consecutive residues' helix scores (the `hbond_energy` basin sigmoids), a
+       Lifson-Roig-like nucleation and propagation that no current term can express;
+     * per-type alpha/beta energies through `hbond.h5`'s residue-class offsets, which the engine already reads
+       (2.2 of `up.md`) and no file uses.
+   * Before training, it needs a reference for the right offset: the helicity of these proteins' isolated helix
+     peptides, or all-atom compact states (mdCATH high-temperature frames).
+5. **D4. Temperature-dependent burial.**
+   * A heat-capacity coefficient per type on the burial and pair energies.
+   * It bears on the size dependence of T_m and on replica ladders (lit/review.md 1), less on the trap at fixed T.
+   * It belongs with the temperature calibration (3.3 item 5); there is no measurement here.
+
+**Not taken, by measurement:**
+* a penalty for buried unpaired NH/CO alone, which would add 0.01-0.11 groups per residue;
+* burial beyond 9 A, which separates no better at 14 A than at 8 A;
+* long-range electrostatics, within 1 E_up beyond 7 A;
+* a desolvation barrier in the pair table, whose purpose is to slow collapse: collapse does not outrun helix formation
+  here.
+
+**Not testable on end states, and large changes:**
+* more beads per side chain, for packing finer than one bead;
+* a backbone frame-frame orientation term (AlphaFold2's residue frames). The side-chain beads' angular pair term
+  already carries residue orientation, and 2LZM's non-native ladders are the only hint.
+
+**Not taken: structure priors.** MSA or language-model contacts are what keeps AlphaFold2 accurate on large proteins,
+but they would make Upside a structure predictor and bias its pathways. Diffusion samplers (Boltz) as Monte Carlo moves
+have no proposal density for the acceptance test, and they import a structure prior too.
+
+**Order.**
+* First, A4 re-measures this section with ff3.1. The rules below apply to its numbers, not to ff_2.1's.
+* If A3 finds the globules ahead in free energy: D1 first (the largest contrast), then D2b.
+* If the native wins but coils do not reach it: D2 first (the trap's depth), then D3.
+* Either way, D4 goes with the temperature calibration.
+* The changes are made one at a time, each against the control, and scored as in Phase B. Every training so far has
+  lost 0.13-0.23 folded fraction on leaving ff2.1 (findings 1.37). Each change is judged against that loss.
 
 ## 6. GPU (goal 5)
 
@@ -606,7 +750,8 @@ Still open:
    * the route (b with c, prototype first);
    * which GPUs: midway3 `gpu` under which account; beagle3 once its billing is clear;
    * whether the hybrid's d2 is in scope.
-3. B1's form (goal 4).
+3. Goal 4: B1's form (5.6: the replay buffer proposed, the gap term the alternative); which 5.7 change goes first is
+   set by A3.
 4. Items in the running Upside 2 campaign that await a NO GUARDS ruling:
    * the `run_remd.py` rollback;
    * the HDX items (2.1);
@@ -632,3 +777,4 @@ Still open:
 | `runs_T080`, `runs_T088`, `runs_T095` | trajectories |
 | `envfix/` | the fix's builds (pre and fixed), `coverage_test.py`, `compare.py`, `fd_test.py`, `dyn_check.py`, `input_diff.py` |
 | `lit/review.md`, `code_audit/audit.md` | literature review, code audit |
+| `analysis/{buried_unpaired,burial_composition,longrange_burial,electrostatics,helix_to_strand,collapse_vs_helix}.py`, `analysis/*_T080.txt` | the term-by-term review (5.7); the first two need `analysis/eng_1019/`, the engine binding that matches the 10-19 `obj/` build |
