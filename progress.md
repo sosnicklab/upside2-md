@@ -1687,3 +1687,24 @@ to 10-07 12:00 is in git history.
   molecules, tail core 14.5/25.3/29.3 A against 15.7-16.1/27.9-28.3, heads 99.5% outside), so the glpG complex's head
   coat is the protein-detergent contact of the frozen Martini glpG or the excess detergent; the side-chain/lipid table
   covers DDM's bead types (C1, Na, P1, P2, P4). Findings 7.5. Files: findings.md, plan.md.
+- 10-27 12:00-13:20, Mac Studio (user: "just deleted python@3.11 from the system. Check if we can migrate to 3.15
+  here", then "check if we use 3.14 or 3.13 that can make everything work", then "transit to 3.14 then").
+  `.venv` is now Homebrew Python 3.14.10, built by `install_python_env.sh`, which moves from 3.15 to 3.14 and
+  installs the old 3.11 venv's full set again: on 3.15 torch (so pydssp), pyhdx 0.4.3 and scikit-image have no
+  wheels; 3.14 and 3.13 (uv 3.13.9) install all of it with the same core versions (numpy 2.5.4, scipy 1.18.1,
+  mdtraj 1.11.2), plus torch 2.14.1, pydssp 0.9.1, pyhdx 0.4.3, hdxms-datasets 0.1.5, colorcet. `pyhdx.plot`
+  imports under no version, the old 3.11 venv included: it needs proplot, an optional extra that pins matplotlib
+  3.4, so 5.analyze_D_uptake.py has always used its own `apply_cmap`. The dead 3.11 venv is kept as
+  `.venv.bak_py311_20261027`. This machine's `obj/` (10-19) predated `get_param_size`, and its local `source.sh`
+  predated the 10-23 `source_arm` (python@3.10 on PATH, `EIGEN_HOME` on Eigen 5, which needs C++14): `source.sh`
+  regenerated from `source_arm` (backup `source.sh.bak_pre_py315_20261027`), engine rebuilt against `eigen@3` and
+  installed into `obj/` (backups `.bak_pre_rebuild_20261027`). Verified against the old package set, revived on a
+  temporary uv Python 3.11.14 (removed afterwards), with the same new build, for 3.15, 3.14 and 3.13 alike: the 28
+  fixtures equal but for the output paths in `/input/args` and `/input/adv_args`, regress 0 of 4064 arrays differ;
+  for 3.15 and the final 3.14 `.venv`, mdtraj DSSP of 1rkl and 1AFO equal, index oracle and node_fd output identical
+  (node_fd's probes come from one RNG across all configs, so logs compare only over the same config list in the
+  same order). Flags present under every stack, not investigated: index oracle 6 datasets
+  (`hb_surf_membrane_potential` and `hb_membrane_potential` index lengths in 1rkl_surface and 1rkl_channel_m0,
+  `rama_map_pot/rama_pot` rows 1, 4, 8 in chig_rama); node_fd one bad entry in each of 6 checks over 1dfn_cavity,
+  1qhj_memb, 1rkl_channel, 1ubq_rotamer, chig_hbbb. The 1rkl hybrid fixtures exist only on the MacBook and were
+  not rerun. Files: install_python_env.sh, progress.md.
