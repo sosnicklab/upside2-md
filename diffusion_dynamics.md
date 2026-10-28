@@ -430,17 +430,53 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
         0.20, below Upside's 0.43.
       * Local CPU sandbox, 2026-10-27 (`scratchpad/boltz_hdx/addon/sandbox/`: the midway3 Boltz tree, torch 2.14.1,
         the same weights): the parity check passes (8 samples, seed 7, coordinates equal), and the steered path runs
-        end to end. The first opening potential (`opening.py`, Boltz's own N and O atoms) left Upside's H-bond at V70 in
-        place (0.43-0.98): the estimator infers H and O from N, CA and C, so the potential has to act through that
-        geometry and through the coverage burial, which the surrogate of E3 needs anyway.
+        end to end. The first opening potential (Boltz's own N and O atoms) left Upside's H-bond at V70 in place
+        (0.43-0.98): the estimator infers H and O from N, CA and C, so the potential has to act through that geometry
+        and through the coverage burial.
+      * The estimator's geometry in torch, 2026-10-28 (user: "run E1"). Every quantity the estimator thresholds is a
+        function of N, CA and C alone: the side-chain beads are fixed in each residue's frame and weighted by
+        exp(-E(phi, psi)) from a spline table, with no belief propagation. `protection.py` repeats the engine's nodes
+        (infer_H_O, protein_hbond, affine_alignment, the bead placement and weights, hbbb_coverage,
+        environment_coverage_hb) from the protein's `-HDX.up`, exported to an npz since the midway3 venv has neither
+        PyTables nor h5py. `check_protection.py` on 400 frames each of Ub psWT's 10^5 and HEEH's 10^4 sets, half with
+        some amide's burial within 2 of the criterion: every node within float32 rounding of the engine (burial within
+        4.4e-5), no protection flag differs (0 of 28,800 and 0 of 16,000), and the autograd gradients match central
+        differences to 4e-8.
+      * The potential (`opening.py`): kappa times the target amide's excess over the three criteria in burial units,
+        (burial - 5)+ + 4 (H-bond - 0.01)+ + 4.6 (ASP/GLU coverage - 0.05)+, zero exactly where the estimator calls
+        the amide open. Burial carries it because burial is what keeps amides closed: in the 10^5 set an amide whose
+        burial is at most 5 is open 91-100% of the time, except where ASP/GLU coverage holds it (Q2, D21, K27, A28).
+      * Two sampler changes (`sampler.py`, 2026-10-28; parity unaffected, as both act only when steering). The
+        guidance shift enters the weight correction centered, since the step's centering of the coordinates removes
+        its mean before the noise is drawn. And before each resampling the log of the particles' mean weight is
+        accumulated into log_z, the Feynman-Kac estimate of the tilt's normalizing constant, so the open fraction
+        has a second estimate, exp(log_z) times the mean of w times the open flag, that needs no closed particle at
+        the end; the self-normalized estimate needs the tilted particles to keep Boltz-2's closed states, which no
+        tilt strong enough to open V70 (about 1e-7) can do with 1,024 particles. Fixed before the data: both checks
+        read the Feynman-Kac estimate, the same estimator on calibration and support, with N_eff over the open
+        particles; "+-50%" means each seed's estimate within 50% of the two seeds' mean. The self-normalized estimate
+        is reported alongside.
+      * CPU test of the steered path (V70, 4 particles, kappa 1): it runs; the stored final energy equals the one
+        recomputed from the final backbone; one particle reaches V70 burial 16.2, beyond the unguided 1% quantile
+        (15.7).
       * What the support check is up against, from the 10^5 unguided flags: an amide is open only with H-bond <= 0.01
         and burial <= 5, and V70, I13 and L67 never come below burial 10.2 (0.001% quantile; 0-1 of 10^5 below 9), W45
         below 6.4. Their tails fall a decade per 1.5-2.5 burial units, so Boltz-2's own open fraction there extrapolates
         to about 1e-7 to 1e-8 before the H-bond condition, against experiment's 6e-5 to 1.2e-4. Amides that do open have
         heavy tails (Y59 88 samples below 5, D21 12). Extrapolated, not measured: E1 measures it.
-      * Status: the GPU pilot 61663101 (the parity check on the GPU and 64 unguided samples) is queued on midway3
-        (`remote_jobs.md` §1 line 4). Next is the user's: an opening potential through the estimator's own geometry,
-        then E1's calibration and support runs (recommended), or the route closed.
+      * GPU pilot 61663101, 2026-10-28 (`remote_jobs.md` §1 line 4): the parity check passes on the V100 (8 samples,
+        seed 7, coordinates equal), and 64 unguided samples through the wrapper match the pooled 10^5 flags (852
+        openings over the 41 amides the pool opens at least 10 times, against 854.5 expected; no amide off by a
+        two-sided binomial test at p < 0.05; longest C-N at most 1.56 A). Readout in
+        `scratchpad/boltz_hdx/addon/runs/boltz_addon_e1_pilot_ubqps_v100_61663101/readout.txt`.
+      * Tuning 61701305 (`remote_jobs.md` §1 line 4): 256 particles, seed 1, kappa 0.5-4 and guidance weight 0.01
+        and 0.05 on V70 and I61. Rule fixed before the data (`addon/e1_tune_ubqps.txt`): E1 uses the setting
+        that gives V70 the most open particles among those whose I61 run has a Feynman-Kac N_eff of at least 25;
+        agreement with the unguided frequency is not used.
+      * E1 proper, at that setting, 1,024 particles, seeds 1 and 2. Calibration: Ub psWT D21 (12 of 10^5 open
+        unguided), E34 (35), Q41 (12), Y59 (80) and I61 (38); HEEH T24 (629 of 10^4) and Q5 (36).
+        Support: Ub psWT I13, W45, L67, V70.
+      * Status: tuning queued.
 - [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).

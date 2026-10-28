@@ -1,12 +1,12 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-10-27 23:10).** Owner: none since 21:55 10-27, when the MacBook Pro's session (owner from 12:46
+**Current state (2026-10-27 23:10; midway3 read 10:50 10-28 from the MacBook Pro).** Owner: none since 21:55 10-27, when the MacBook Pro's session (owner from 12:46
 10-26) handed off and quit ("Handoff"); no watch runs. A Mac Studio session is active; the user's "continue
 monitoring" there takes the jobs ("Resume here"). ff3.1 means the merge of ff3.1.1 and ff3.2.1, released 10-26 as
 `ff_3.1` and under validation; the old ff3.1 and ff3.2 sets are retired (`.bak_pre_merge_20261026`; §1 line 2).
 Running on midway2: released ff2.1's last Peng arm, ff3.1's other 29 Peng arms, the ff3.1 training debug (from 23:05
 10-27), Upside 3's validation (7 Peng de novo arms, the 8 Peng seed replicates, the glpG hybrid with ff2.1, ff3.1 and
-ff3.0) and two collectors. Queued on midway3: the Boltz-2 E1 pilot 61663101. Each line of work has a collector, a
+ff3.0) and two collectors. Queued on midway3: the Boltz-2 E1 tuning job 61701305 (the pilot 61663101 passed). Each line of work has a collector, a
 dependency chain or an item under "Owed by hand". `WATCH_STATUS.md` on the cluster is newer than this file whenever a
 pass ran after it. Job ids, logs and data paths are in §1.
 
@@ -28,7 +28,8 @@ The user's four lines of work (10-21), and what each has on the clusters:
    complete), the Peng seed replicates, and the glpG hybrid with ff2.1 (REMD block 3), ff3.1 and ff3.0 (block 1 each).
    The TM4 test is answered (10-27, findings 3.15): TM4's loss under ff2.1 is ff2.1's own.
 4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phases 0 and 1, the BioEmu2 side test and the controlled 10^5
-   tests are finished and read out (§1 "Finished runs"). Phase 2's E1 pilot is queued on midway3 (§1 line 4).
+   tests are finished and read out (§1 "Finished runs"). Phase 2's E1 pilot passed 10-28; E1 runs (user 10-28 "run
+   E1"), its tuning job queued on midway3 (§1 line 4).
 
 Open and not in the user's list:
 - ff3.0's four Upside 2 glpG chains: TM4 at the ends of blocks 2-5 is owed (§1 line 2). ff3.0's HDX on blocks 2-3 is
@@ -94,13 +95,11 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
    - Upside 3's Peng de novo arms: rescore against Upside 2 as they finish (`peng/score/submit_scores.sh`, idempotent).
    - The Peng seed replicates (49634596-49634603): when all 8 are COMPLETE, score them and read the seed spread against
      the engine gap (§1 line 3).
-   - ff3.1 and ff3.2 on the fixed native target, 49635325 and 49635326 (target 76): the step-0 gate when each step 0
-     ends, then each round end (§1 line 2; plan.md Phase 33).
+   - ff3.2 and ff3.1 on the fixed native target (target 76; ff3.2 first): links 49635669 and 49635327 PD, released
+     10:58 10-28; nice 10 on ff3.1's next insurance link when it starts; each round end (§1 line 2; plan.md Phase 33).
    - The ff3.1 training debug, 49634971 and 49634972 (target 76): at each round end, glycine's pair against ff3.0's
      by plan.md Phase 32's rule (§1 line 2).
    - ff3.0's four Upside 2 glpG chains: TM4 at the ends of blocks 2-5 (§1 line 2).
-   - The E1 pilot 61663101 when it ends: the GPU parity line, then the 64 unguided samples to the computer with the
-     readout's scratch engine and `e1_readout.sh` on them (diffusion_dynamics.md Phase 2 E1; §1 line 4).
    - Read by the collectors and reported when they appear: ff3.1's `peng_ff31.txt` (3 of 32 scored 22:12 10-27) and
      released ff2.1's `peng_ff21.txt` (31 of 32).
 5. **Find the owner** ("Handoff"): `cat` the cluster's `checks/r4_epochs/tm4_local/WATCH_STATUS.md`. A move between
@@ -111,15 +110,16 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
 6. **Take the jobs:** start the watch ("Starting the watch"; no submitter is needed), then rewrite `WATCH_STATUS.md`
    with this computer as owner.
 7. **Open questions for the user.** Nothing is blocking. Awaiting the user's word, not to be done without it:
-   - **Boltz Phase 2 (diffusion_dynamics.md Phase 2 E1):** build an opening potential that acts through the HDX
-     estimator's own geometry (H and O inferred from N, CA and C, the coverage burial; also E3's surrogate) and run E1
-     (about 7 V100-hours; recommended), or close the Boltz route. Requesting the Ferrari et al. data (the user only)
-     matters only if E1 passes.
+   - **Boltz Phase 2:** requesting the Ferrari et al. data (the user only) matters only if E1 passes (E1 runs since
+     10-28, §1 line 4).
    - The force field for the Upside 3 hybrid HDX (findings 3.15), and the DDM micelle route (plan.md Phase 31).
    - The large-protein de novo proposal (plan.md Phase 22 review).
    - The large directories still on `/project/trsosnic` (§1 "Disk").
    - The deferred HDX post-processing fixes (plan.md Known Errors; findings 5.5).
    - The BP validation deck for Tobin (§0c), unsent.
+   - **Upside 3 training terms** (`upside3.md` 4.1; plan.md Phase 23 item 5): M1 is done (findings 5.7); M2-M6 and T1
+     are planned and run later (user 10-28: "record the plannings. We will run it later"). M2 is ready once ff3.1's
+     ubiquitin benchmark arms are COMPLETE, but it also waits for the user's word.
 
 ### Handoff: two computers, one owner (2026-10-26)
 
@@ -165,8 +165,9 @@ authoritative copies are on the cluster:
   Mac Studio's 10-26 copies of the same, its uncommitted working tree as `repo_working_tree.patch` (against `b1e70d0`)
   and the MacBook Pro's as `repo_working_tree_macbook_20261027.patch` (against `3005a3fd`); the cron prompts (the 10-27
   `cron_watch.txt`); the git-ignored readout tools (`scratchpad/`, scripts and small inputs; in `scratchpad/boltz_hdx/`
-  the Phase 2 add-on `addon/` without the MacBook's CPU sandbox, and `flags/urea_classes.py` with its log); Claude's
-  memory directories (`memory/`, `memory_macbook_pro_20261027/`).
+  the Phase 2 add-on `addon/` without the MacBook's CPU sandbox, and `flags/urea_classes.py` with its log; in
+  `scratchpad/hdx_term_20261028/` M1's scripts and readout, `upside3.md` 4.1); Claude's memory directories (`memory/`,
+  `memory_macbook_pro_20261027/`).
 - `/project/trsosnic/yinhan/ff3_selection/`: the panel tools (`panel.py`, `panel.sbatch`, `submit_new.sh`,
   `slurm.args`).
 - Under `/project/trsosnic/yinhan/checks/`: `r4_epochs/<tag>` (extracted checkpoints); `r4_epochs/tm4_local`
@@ -205,7 +206,8 @@ the training and validation runs (§1). No submitter is needed: the last one (cr
 
 **Starting the watch on a computer** (set up as in "Handoff"): CronCreate hourly at `23 * * * *` with the watch prompt
 below, its owner in step 4 replaced with this computer. The prompt is also the handoff bundle's `cron_watch.txt`
-(10-27, md5 `9969518a`; the Mac Studio's 10-26 prompt is `cron_watch.txt.bak_mac_studio_20261026`). Its midway2 half
+(10-27, md5 `9969518a`; the Mac Studio's 10-26 prompt is `cron_watch.txt.bak_mac_studio_20261026`), except step 3,
+which there still reads the finished E1 pilot 61663101; use the step 3 below. Its midway2 half
 is one read-only probe, `~/watch_probe/watch_mdw2.sh` on midway2 (md5 `0098c032` since 10-26, old
 `.bak_pre_ff31_20261026`): the queue by job name (Peng arms of every force field grouped), every job that left it in
 the last 80 minutes (each Peng chunk with its `[bench] resubmitted` or `COMPLETE` line), two of the three Upside 3 glpG
@@ -222,7 +224,7 @@ reads every job that left the queue since. On 10-25 three skipped passes (10:51-
 "Hourly watch of midway2 and midway3 (user 10-24 23:45: "continue monitoring midway2 and midway3"; remote_jobs.md "The watch"). Job ids, logs and next actions are in remote_jobs.md §1 and its job table. READ ONLY: never submit, cancel, resubmit or change a job, never edit a cluster file other than WATCH_STATUS.md and the handoff bundle's records/, and never run mdw2_master.exp / mdw3_master.exp (each launch sends a Duo push). Always pass -o BatchMode=yes and check a socket before each call through it. Run cluster Python from our own directories with python3 -I, never from /tmp (findings 10.41).
 1. Sockets: `ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock -O check yinhanw@midway2.rcc.uchicago.edu` and the same with ~/.ssh/cm-mdw3.sock and midway3.rcc.uchicago.edu. If one is dead, tell the user, skip that cluster, and do not reconnect (/beagle3 and /project stay readable through the other).
 2. midway2: `ssh -o BatchMode=yes -S ~/.ssh/cm-mdw2.sock yinhanw@midway2.rcc.uchicago.edu 'bash ~/watch_probe/watch_mdw2.sh' < /dev/null` (read-only probe, md5 0098c032). The probe lists only the last 80 minutes: if the "Last pass" line of /project/trsosnic/yinhan/checks/r4_epochs/tm4_local/WATCH_STATUS.md is older than that, also run `sacct -X -n -P -u yinhanw -S <that last-pass time> -o JobID,JobName,State,End,ExitCode` on midway2 and read every job that left the queue since. Look for: any job that left the queue not COMPLETED (read its log tail: Peng arms /beagle3/trsosnic/yinhan/upside3_validation/peng/logs/<prot>_<kind>_ff_2.1_<id>.out for u3_*, /beagle3/trsosnic/yinhan/upside3_validation/peng_seeds/logs/upside<3|2>_<prot>_denovo_ff_2.1_seed<S>_<id>.out for the seed replicates u3s*/u2s*, /beagle3/trsosnic/yinhan/ff3_benchmark/logs/<prot>_<kind>_<ff>_<id>.out for b_ff_2.1_* and b_ff_3.1_*; collectors /project/trsosnic/yinhan/checks/ff31_merged_20261026/logs/ and checks/ff21_released_20261021/; Upside 3 glpG REMD logs /beagle3/trsosnic/yinhan/upside3_validation/<glpg|glpg_ff31|glpg_ff30>/outputs/martini_glpG-RKRK-79HIS_hybrid/REMD/glpG-RKRK-79HIS.remd_block<k>.log); a Peng chunk COMPLETED without a "[bench] resubmitted" or "[bench] COMPLETE" line; on "[bench] COMPLETE", the arm's final frames (`source /beagle3/trsosnic/yinhan/upside2-md/env_shared.sh; export HDF5_USE_FILE_LOCKING=FALSE; nice python3 -I ~/watch_probe/final_frames.py <run dir>`: every coordinate finite, KE/1.5kT near 1.00); error lines in the newest REMD block log of each of the three glpG runs (the probe reads glpg and glpg_ff31; for glpg_ff30 `grep -ciE "error|nan|traceback|abort"` on its newest block log); a REMD block ending (block_count rising, or a block job leaving the queue: ff2.1 block 3 49584589, ff3.1 block 1 49573354, ff3.0 block 1 49589829 with block 2 49634605 queued behind it): report it; its readout is owed by hand (remote_jobs.md §1 line 3: TM4 DSSP, KE and C-N at T 0.70, against Upside 2's ff3.0 0.96); peng_ff21.txt or peng_ff31.txt existing (report its table); /project/trsosnic under 200G free.
-3. midway3: `ssh -o BatchMode=yes -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu 'df -i /beagle3/trsosnic | tail -1; sacct -X -n -j 61663101 -o JobID,JobName%40,State%11,Start,End; squeue -h -j 61663101 -o "%T %S %r"' < /dev/null`. 61663101 is the E1 pilot of diffusion_dynamics.md Phase 2 (Boltz-2 Ub psWT on one V100: the sampler parity check and 64 unguided samples). When it has ended, read /beagle3/trsosnic/yinhan/boltz_hdx/logs/boltz_addon_e1_pilot_ubqps_v100_61663101.out: the `[check]` line must say "equal", and an `[e1]` line reports 64 unguided samples; report both (the npz copy and readout are owed by hand, remote_jobs.md §1 line 4). If it FAILED, TIMEOUT, OOM, NODE_FAIL or CANCELLED, report its log tail. Report IFree under 30000.
+3. midway3: `ssh -o BatchMode=yes -S ~/.ssh/cm-mdw3.sock yinhanw@midway3.rcc.uchicago.edu 'df -i /beagle3/trsosnic | tail -1; squeue -h -u yinhanw -o "%i %j %T %S %r"' < /dev/null`. The live midway3 jobs are the E1 jobs of remote_jobs.md §1 line 4 (job table); when one leaves the queue, report its State and the `[e1] ... FAILED` lines of its log /beagle3/trsosnic/yinhan/boltz_hdx/logs/<job name>_<id>.out (the readout is owed by hand on the MacBook Pro). Report IFree under 30000.
 4. Record: when a job finished, failed or changed state, update remote_jobs.md §1 (the line it belongs to and the job table; snapshot time) briefly, and set the "Last pass" line of /project/trsosnic/yinhan/checks/r4_epochs/tm4_local/WATCH_STATUS.md on midway2 to this pass's time (owner <this computer>, watch cron in this session). Do not record unchanged state. After any record change, refresh the handoff bundle's copies from the repo root so a session on another computer reads them (remote_jobs.md "Resume here"): `rsync -a -e "ssh -o BatchMode=yes -S $HOME/.ssh/cm-mdw2.sock" remote_jobs.md plan.md findings.md progress.md diffusion_dynamics.md yinhanw@midway2.rcc.uchicago.edu:/project/trsosnic/yinhan/checks/handoff_20261026/records/`.
 5. Reply: if nothing needs the user, one line (time; midway2 queue counts; midway3 states; disk and inodes). Otherwise a short report of what changed and what is owed. Name runs by what they are, with the tag in parentheses."
 
@@ -628,9 +630,14 @@ was not reopened). Owner none since the MacBook Pro's handoff 21:55 ("Handoff").
   `train_chain.sbatch` (15 nodes a link; Slurm's start estimate 10:23 10-30). Run dirs `$P/training/<run>`, logs
   `<run>/condiv-train_<id>.out`. Scripts, `build.log` and the static check `/project/trsosnic/yinhan/checks/ff31_fix_20261028/`
   (`ConDiv.py`, `check_restraint.py`, `set_start.py`, `compare_start.py`, `native_fidelity.py`, `submitted.log`).
-  **When step 0 of each finishes, run the gate first:** `native_fidelity.py <run> 0 0` from the run's env; glycine beta'
-  natives >= 0.75 and alpha_R natives >= 0.95 in the native replica, else cancel both chains and report. Then read
-  each round end as plan.md Phase 33 lists.
+  **Gate read 10:50 10-28: FAIL as written** (glycine beta' natives 0.656 in ff3.2, 0.660 in ff3.1, need 0.75; alpha_R
+  0.998), but an ideal 20 deg spring gives those glycines 0.726 at most (`gate_ceiling.py`; findings 1.34), so the
+  threshold cannot be met. Both first links FAILED 10:41 10-28 when every worker's srun lost the Slurm controller
+  ("Unable to contact slurm controller"), ff3.2 in step 11 and ff3.1 in step 16, from checkpoints of steps 10 and 15;
+  the successor links 49635669 (ff3.2) and 49635327 (ff3.1, nice 10) were held, then released 10:58 10-28 on the
+  user's "proceed with your best decision" (plan.md Phase 33 item 4). ff3.2 has priority over ff3.1 and over the
+  debug chains (user 10-28; those at nice 10): when a link starts, give the insurance link it submits the same nice.
+  Then read each round end as plan.md Phase 33 lists.
 - **The ff3.1 training debug** (user 10-27: "setup your debug for ff3.1 training"; plan.md Phase 32; findings 1.34):
   ff3.1.1 as built (`build_depths_only.sh`, every Adam group held) with glycine parameterised as ff3.0 is, its shared
   alpha_R and alpha_L only (`restrict_gly.py`); expected, if the training is sound, to reach ff3.0's pair (alpha_R
@@ -771,20 +778,27 @@ BioEmu2 job and the controlled 10^5 tests (user 10-25: "propose and apply fix"),
 MSA and BioEmu2 EHEE and Ub psWT ("Finished runs"; results in `diffusion_dynamics.md` Phase 1 and section 7). Now
 Phase 2 (user 10-27: no retraining of Boltz, small trained add-ons allowed), a learned tilt sampled through Boltz-2's
 own steering. `$B` = `/beagle3/trsosnic/yinhan/boltz_hdx`.
-- **E1 pilot, `boltz_addon_e1_pilot_ubqps_v100` 61663101** (midway3 gpu, V100, 1:30, submitted 17:20 10-27; PD, start
-  est. 02:18 10-28): `$B/addon/e1.sbatch` running `e1_rare.py` (with `sampler.py`, `opening.py`) once per line of
-  `$B/addon/e1_pilot_ubqps.txt` on Ub psWT's processed input
-  (`runs/boltz_phase1_ubqps_1e5_v100_61428012/ubqps_md_s10/s42/boltz_results_ubqps/processed`): the sampler parity check
-  (steering off against Boltz's own sampler, 8 samples, coordinates must be equal) and 64 unguided samples. Its steered
-  lines were removed 19:05 10-27 (the first opening potential moved Boltz's O atoms, not the estimator's inferred
-  H-bond; `diffusion_dynamics.md` Phase 2 E1). The parity check already passed in the MacBook Pro's CPU sandbox
-  (`scratchpad/boltz_hdx/addon/sandbox/`, on that computer only: a Python 3.12 uv venv, a copy of `$B/boltz`,
-  `$B/cache`'s weights and CCD molecules, and the processed input; another computer rebuilds it from those).
-  `$B/addon/` and the MacBook Pro's `addon/` were md5-equal at 22:00 10-27; the job reads the Python files at start, so
-  fixes go into `$B/addon/` before then. Log `$B/logs/boltz_addon_e1_pilot_ubqps_v100_61663101.out`; outputs
-  `$B/addon/runs/boltz_addon_e1_pilot_ubqps_v100_61663101/<stem>.npz`; ledger `$B/addon/submitted.log`. Next: the npz
-  to the Mac, flags through `run_flags.sh`'s recipe, then E1's calibration and support runs (`diffusion_dynamics.md`
-  Phase 2).
+- **E1 pilot, `boltz_addon_e1_pilot_ubqps_v100` 61663101** (midway3 gpu, V100; COMPLETED 03:11-03:15 10-28 on
+  midway3-0279, read out 10:50 10-28): `$B/addon/e1.sbatch` running `e1_rare.py` (with `sampler.py`, `opening.py`)
+  once per line of `$B/addon/e1_pilot_ubqps.txt` on Ub psWT's processed input
+  (`runs/boltz_phase1_ubqps_1e5_v100_61428012/ubqps_md_s10/s42/boltz_results_ubqps/processed`). The sampler parity
+  check on the GPU says "equal" (steering off against Boltz's own sampler, 8 samples, seed 7; 132 s), as it did in the
+  MacBook Pro's CPU sandbox (`scratchpad/boltz_hdx/addon/sandbox/`, on that computer only: a Python 3.12 uv venv, a
+  copy of `$B/boltz`, `$B/cache`'s weights and CCD molecules, and the processed input; another computer rebuilds it
+  from those). The 64 unguided samples (106 s) agree with the pooled 10^5 flags: 852 openings over the 41 amides
+  the pool opens at least 10 times, against 854.5 expected, and no amide's count is off by a two-sided binomial test
+  at p < 0.05; longest C-N at most 1.56 A. Log `$B/logs/boltz_addon_e1_pilot_ubqps_v100_61663101.out`; output
+  `$B/addon/runs/boltz_addon_e1_pilot_ubqps_v100_61663101/unguided64.npz` (md5 `753ac79f`), local copy and
+  `readout.txt` in `scratchpad/boltz_hdx/addon/runs/<same>/`; ledger `$B/addon/submitted.log`. The pilot's code is
+  kept in `$B/addon/pilot_61663101/`.
+- **E1 tuning, `boltz_addon_e1_tune_ubqps_v100` 61701305** (midway3 gpu, V100, 2:30; submitted 11:11 10-28, user
+  10-28 "run E1"): the same `e1.sbatch` on the same input with `$B/addon/e1_tune_ubqps.txt`, 12 steered runs of 256
+  particles (V70 and residue 61, kappa 0.5-4, guidance 0.01 and 0.05), through the estimator-faithful potential
+  (`protection.py`, `opening.py`; `diffusion_dynamics.md` Phase 2 E1). Code and `inputs/{ubqps,heeh}_protection.npz`
+  md5-equal with the MacBook Pro's `addon/` at 11:10 10-28; fixes go into `$B/addon/` only between jobs. Log
+  `$B/logs/boltz_addon_e1_tune_ubqps_v100_61701305.out`; outputs `$B/addon/runs/boltz_addon_e1_tune_ubqps_v100_61701305/`.
+  Next: the npz to the MacBook Pro, `e1_readout.sh` on them, the setting by the task file's rule, then E1's calibration
+  and support runs at 1,024 particles and two seeds.
 - The readout tools are git-ignored, `scratchpad/boltz_hdx/flags/` and `scratchpad/bioemu2_hdx/readout/`, copied into
   the bundle's `scratchpad/` (scripts and small inputs; the large samples are on the cluster). The flag code's scratch
   engine is built on the MacBook Pro (`scratchpad/boltz_hdx/flags/upside_tree/`: `src`, `parameters/common`,
@@ -801,14 +815,14 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **61663101** (midway3 gpu V100) | Boltz-2 Phase 2 E1 pilot: sampler parity on the GPU and 64 unguided samples on Ub psWT (line 4) | PD, start est. 02:18 10-28 | parity line in the log; npz to the Mac, flags, then E1 proper |
+| **61701305** (midway3 gpu V100) | Boltz-2 Phase 2 E1 tuning: 12 steered runs of 256 particles on Ub psWT V70 and residue 61 (line 4) | PD from 11:11 10-28 | readout on the MacBook Pro, the setting by `e1_tune_ubqps.txt`'s rule, then E1 proper |
 | **49584589** (midway2) | Upside 3 glpG hybrid with ff2.1, REMD block 3 of 4 (`upside3_validation/glpg`; line 3) | R from 10:24 10-27 | block 2's readout (C-N, DSSP) owed; HDX waits on the user's choice of force field |
 | **49573354** | Upside 3 glpG with ff3.1, REMD block 1 (`glpg_ff31`); TM4 lost in prep, `n_blocks` stays 1 | R from 18:03 10-27 | readout when it ends: TM4, KE, C-N at T 0.70 |
 | **49589829**, **49634605** | Upside 3 glpG with ff3.0, REMD blocks 1 and 2 (`glpg_ff30`); TM4 held in prep, `n_blocks` 3 | 49589829 R from 18:04 10-27; 49634605 PD afterok | block 1's TM4 at T 0.70 against Upside 2's 0.96. Never run its `run.py` before block 1 ends; if block 1 fails, cancel 49634605 |
 | cspA 49629882, gpW 49630880, hyp 49630574, NuG2 49630879, proteinG 49629732, proteinL 49630878, ubiquitin 49631645 (`u3_<prot>_denovo`) | Upside 3 Peng arms with ff2.1, the 7 de novo left (`upside3_validation/peng`; line 3) | R, 10.5 h chunks resubmitting themselves | rescore against Upside 2 as each finishes |
 | **49634596-49634603** (`u<3\|2>s<seed>_<prot>_denovo`) | Peng seed replicates: top7 and alpha3d de novo, seeds 101 and 202, both engines (`upside3_validation/peng_seeds`; line 3) | R from 20:32 10-27 | all 8 COMPLETE: score with the seed-1 arms; seed spread against the engine gap |
-| **49635325, 49635326 PD** (midway2; 02:26 10-28) | **ff3.1 and ff3.2 on the fixed native target** (plan.md Phase 33): `ff31_nativefix` (depths only) and `ff32_nativefix` (every term), from the released ff3.1 | submitted 02:26 10-28, target 76 | the step-0 gate (`native_fidelity.py <run> 0 0`), then each round end (line 2) |
-| **49634971** (successor **49634973**), **49634972** (successor **49635107**) (`condiv-train`) | The ff3.1 training debug, `ff311_glypair` and `ff311_glypair_mb2` (plan.md Phase 32; line 2) | 49634971 R from 23:05 10-27, 49634972 R from ~23:30, successors PD afterany; 01:32 10-28: steps 5 and 2 of 76 | each round end: glycine's pair, its pull and -ln(P_aL/P_aR) against ff3.0's |
+| **49635669 (ff3.2), 49635327 (ff3.1) PD** (midway2) | **ff3.2 and ff3.1 on the fixed native target** (plan.md Phase 33): `ff32_nativefix` (every term; priority over ff3.1, user 10-28) and `ff31_nativefix` (depths only), from the released ff3.1 | first links 49635326/49635325 FAILED 10:41 10-28 in a Slurm controller outage (ff3.2 after step 10, ff3.1 after step 15); successor links held 10:50 and released 10:58 10-28 (user: "proceed with your best decision"), ff3.1's at nice 10; PD (Resources), partition full | when each starts, give the insurance link it submits the same nice (ff3.1's 10, ff3.2's 0); then each round end (line 2) |
+| **49634973**, **49635107** R (successors **49636476**, **49636479** PD afterany; all nice 10) (`condiv-train`) | The ff3.1 training debug, `ff311_glypair` and `ff311_glypair_mb2` (plan.md Phase 32; line 2), on the old native target | first links 49634971/49634972 FAILED 10:41 10-28 in the same outage; second links R from 10:58:56 10-28 from their last checkpoints; ranked behind ff3.2 | each round end: glycine's pair, its pull and -ln(P_aL/P_aR) against ff3.0's |
 | **49630881** (`b_ff_2.1_ubiquitin_denovo`), collector **49633770** (`ff21_collect`) | Released ff2.1's last Peng arm (31 of 32 scored) and its collector (plan.md Phase 27; line 1) | arm R; collector PD, 00:47 10-28 | `peng_ff21.txt` (DONE); then Phase 27 step 4 |
 | 29 `b_ff_3.1_<prot>_<kind>` chunks (ids in line 2), collector **49634812** (`ff31_collect`) | ff3.1's Peng arms (3 of 32 scored) and their collector (plan.md Phase 30; line 2) | arms R; collector PD, 04:07 10-28 | `peng_ff31.txt` when DONE |
 

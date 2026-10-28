@@ -166,6 +166,239 @@ Candidates on record:
   and temperature-dependent burial.
 * **The glycine context term** (`architecture.md`), only if its trigger fires.
 * **The side-chain model's own parameters,** which follow the verdict.
+* **Training terms for HDX, large proteins and IDRs** (4.1); what disordered regions need (4.2).
+
+### 4.1 Training terms for HDX, then large proteins, then IDRs (2026-10-28)
+
+User 10-28: change what the training fits, with HDX first, large-protein performance second and IDR sequences third.
+The energy's functional form stays spline tables. The change is in the objective: terms added to ConDiv's contrast.
+
+**Why ConDiv does not fit HDX.** An amide's dG_HX is the free energy of the state in which it is open,
+-RT ln K_op. ConDiv's objective holds no free energy. NSE asks that free replicas started at the native stay where the
+native-restrained replica is, and DSE asks that unfolded frames match a chain with no attractions. Neither sets how
+stable the fold is or which part of it opens first, so HDX agreement is whatever that fixed point leaves (Upside FF2
+on Peng's three proteins: censored Spearman 0.61, 0.43 and 0.32).
+
+**The terms.** Each is built from the per-frame dV/da the engine already returns (`ConDiv.py` `compute_divergence`):
+* HDX, per measured amide i at the experiment's temperature, with MBAR weights over the replica ladder:
+  d dG_i / da = <dV/da>_open,i - <dV/da>_closed,i, a contrast of the same kind as NSE. The loss is
+  sum_i (dG_i - dG_i,exp)^2; an amide the model censors enters one-sided. Global stability is the same contrast between
+  unfolded and folded frames.
+* IDR size: d<Rg>/da = -(<Rg dV/da> - <Rg><dV/da>) / T (4.2, I1).
+* Large proteins: B1 and B2 of 5.6 already change the training (decoys through a replay buffer; crops past 150
+  residues).
+
+Each is trained as the only change against a control (section 4).
+
+**Conditions, from M1** (ubiquitin, findings 5.7):
+1. **Its own sampling.** One ConDiv step (12 x 8000 tu) is 1/319 of the REMD that resolves ubiquitin's amides to
+   5.6 kcal/mol at 273 K. Each HDX protein therefore gets its own REMD, reused across updates by reweighting to the
+   new parameters while its ESS holds (DiffTRe, Thaler and Zavadlav 2021; CALVADOS, Tesei et al. 2021), and is rerun
+   when the ESS falls.
+2. **Signal only below the bound.** Resolving experiment's 8.5 kcal/mol at 273 K would take about 200 such runs. The
+   term acts on local and subglobal openings, and on small, marginally stable domains (HEEH_rd4_0097 at 2.2-4.3
+   kcal/mol; the 28-64-residue domains of Ferrari et al.).
+3. **A fixed temperature mapping.** Peng reads FF2 at 300 K against an experiment at 273 K, at the temperature where
+   the model's global stability matches. A term trained at a chosen temperature therefore learns nothing about
+   stability. The mapping is fixed with the units (section 3) before any HDX training.
+4. **A frozen definition of open.** The estimator reads the trained burial weights. ff2.1 to ff3.0 moves dG by
+   0.12 kcal/mol RMS through the definition alone. The estimator keeps ff2.1's tables, so training cannot redefine
+   "open" instead of changing the ensemble.
+5. **A ladder that mixes.** Each protein's ladder spans its own measured transition, with walkers making round trips
+   across it. ff3.0's ubiquitin ladder makes 3 round trips and its dG is not converged.
+
+**What the term has to move, by M1.**
+* ff2.1 opens the seven amides experiment assigns to global unfolding by fluctuations of the folded state
+  (3.5-7.0 kcal/mol, against 7.7-8.5).
+* ff3.0's ubiquitin melts about 0.06 T_up lower than ff2.1's, which the benchmark's bottom-rung TM-score hides.
+
+So the term must raise the folded state's opening free energies at those amides while holding global stability.
+
+Steps (user 10-28: "record the plannings. We will run it later"; none starts without the user's word):
+- [x] M1 (10-28): ubiquitin on the Peng-benchmark REMD; findings 5.7, `scratchpad/hdx_term_20261028/` (section 8).
+- [ ] M2: M1's readout on ff3.1's ubiquitin arms (`/beagle3/trsosnic/yinhan/ff3_benchmark/runs/ubiquitin_{native,
+  denovo}_ff_3.1`, running 10-28) once both hold a COMPLETE file. No new run.
+  * Replace the arm and force-field names in `fetch.sh`, `build_inputs.sh`, `flags.sh`, `run.sh` and `analyze.py`
+    (`ARMS`, `DENOVO`). The HDX topology takes `parameters/ff_3.1`. Then run `fetch.sh` and `run.sh`.
+  * Keep M1's rules unchanged, and read against M1's ff2.1.
+- [ ] M3: Upside 3 REMD of EHEE_rd2_0005, HEEH_rd4_0097 and Ub psWT, each under ff2.1 and the base force field
+  (after plan.md Phase 33), from the native, on the Upside 3 tree (`env_upside3.sh`) through midway2. Read with M1's
+  rules at each experiment's temperature (EHEE 298 K, HEEH 278 K, Ub 273 K) and at Peng's comparison temperatures.
+  * **Protocol: Peng's for FF2** (SI pp. 12-13; Table S3).
+    * EHEE and HEEH: 14 replicas on 0.80-0.995, 4,000,000 tu, the first 500 frames dropped.
+    * Ub: three independent runs, 14 replicas on 0.80-1.02, at least 2,400,000 tu each, the first half dropped.
+    * Frames every 100 tu in all of them.
+    * The ladder changes only if a force field's transition leaves the range, and the change is recorded.
+  * **Inputs.**
+    * Peng's design models: `/project2/trsosnic/share/HEEH_rd4_0097.pdb` and
+      `/project/trsosnic/yinhan/bioemu2_hdx/inputs/EHEE_rd2_0005_ref.pdb`.
+    * Ub psWT: `/project/trsosnic/yinhan/bioemu2_hdx/inputs/1UBQ_psWT_ref.pdb`, 1UBQ with residues 45 and 68 renamed,
+      as Peng started from 1UBQ.
+  * **Cost, estimated from M1's arm.** That arm (one node, 14 CPUs, 55 us per system-step) took six 10.5 h chunks for
+    2.43M tu. So each Ub run is about 60 node-hours, and EHEE and HEEH about 50 each at half the size and 1.6 times
+    the length. That makes about 280 node-hours per force field, about 570 for both.
+  * Run through the benchmark's `bench_run.py` chunking, or an equivalent driver, with the jobs recorded in
+    `remote_jobs.md`.
+  * This gives the baseline a trained term must beat, and the three proteins stay held out of training.
+  * No Upside run of EHEE or HEEH exists on either cluster.
+- [ ] M4: training data. Ferrari et al. 2025: opening free energies of 5,778 domains, requested by the user through
+  the authors' form, as for `diffusion_dynamics.md` Phase 2 E2. Tsuboyama et al. 2023 for global stability. Families
+  are checked against M3's test set.
+- [ ] M5 (large proteins): A3 of 5.6 as written.
+  * The benchmark's homeodomain arms cannot stand in. Their ladder (0.87-1.00) is above the transition: native-start
+    TM-score 0.19-0.31 at the bottom rung.
+  * Ubiquitin under ff3.0 is the small-protein case of the same search failure: de novo never below 4.4 A in 7.2M tu,
+    while the native start refolds.
+- [ ] M6 (IDRs): Rg of IDPs with published SAXS Rg under ff2.1 and the base force field, at each experiment's
+  temperature on the calibrated scale; the scaling exponent from intrachain distances; the Rg statistical
+  inefficiency measured, so the mean is read over many decorrelation times. Running on the Mac since 10-28 with ff2.1
+  and ff3.1 (4.2, B0); the base force field follows plan.md Phase 33.
+- [ ] T1: the HDX term in the trainer, after M3 and the temperature mapping.
+  * It must reach censored Spearman at least FF2's on M3's three proteins, with a block bootstrap
+    (`diffusion_dynamics.md` Phase 2 E4's rule), and the native panels must not lose.
+  * The Boltz add-on of that Phase 2 uses the same data and test, and both routes are read on one rule.
+
+### 4.2 Disordered regions (2026-10-28)
+
+User 10-28: "for upside3, investigate the possibility of enhancing intrinsic disordered region simulation accuracy";
+then "record everything in upside3.md. We will implement this later." IDRs are third in 4.1's order. Literature:
+`lit/review.md` (section 8), with the basis of every claim marked.
+
+**What a disordered chain gets from the model.**
+* **Training never sees one.** The 456 proteins are folded. NSE contrasts native-started free replicas with the
+  restrained native. DSE (lambda 0.3) contrasts a near-Tm replica's unfolded frames (Rg above 0.67 Rg_coldest +
+  0.33 Rg_hottest) with a SARW replica: Upside with the H-bond, burial, H-bond coverage and side-chain pair energies
+  scaled to 0 (`training/ConDiv.py` `zero_for_sarw`), at the ladder's hottest temperature. The SARW's only excluded
+  volume is the backbone's, and its only sequence dependence is the Ramachandran maps. Peng 2022 calls the DSE a
+  regularizer giving "the minimum interaction energy that can still generate both a stable NSE and a disordered DSE".
+* **The SARW is the high-denaturant end.** PNt is 51.3 A in water and 62.0 A in 4 M Gdn, which equals
+  1.9 A x 334^0.6 (Riback 2017); FhuA's plug and reduced RNase A sit 12% and 7% below their 2 M Gdn sizes. The DSE acts
+  only on near-Tm frames, so how far it shapes a disordered chain at 298 K is measured in B0, not assumed.
+* **Electrostatics are implicit in the trained terms; there is no explicit electrostatic term and no ionic-strength
+  input** (user 10-28). Charge effects are carried by the trained terms, among them the side-chain pair table to about
+  7 A. **No explicit electrostatic term is added** (user 10-28): it would count the trained terms' electrostatics
+  twice. So salt dependence is outside the model, and a charge-dependent error is fixed through the trained terms and
+  the objective.
+* **Local structure** comes from the NDRD coil-library maps (loop segments of folded proteins; per-map depths trained
+  in ff3.1) and the H-bond energies, both fitted on folded proteins.
+
+**Prior work with Upside.** No paper compares Upside with an IDP's SAXS or NMR data in water.
+* Jumper 2018: thermally unfolded training proteins against 1.9 A N^0.6, 15% smaller at the heat-capacity peak and
+  10% larger at high temperature.
+* Riback 2019: the folding model by REMD at 280-320 K on PNt and five other unfolded proteins gives nu 0.4-0.6 with
+  temperature and Rg proportional to Ree; PNt's measured Rg is not compared.
+* Jeon et al. 2026 (PNAS 123:e2518125123): Upside2 REMD frames pooled over T 0.7-1.1 were the best single library for
+  chemical-shift reweighting of 413 BMRB IDRs, and carried transient helices that CALVADOS2's lacked. Pooled over
+  temperatures, this shows that Upside reaches the conformations, not that its weights at 298 K are right.
+
+**What made other models right for IDPs** (`lit/review.md` section 2).
+1. **The protein-solvent balance,** the first-order error in all-atom, Martini and residue-level models alike, and
+   almost always over-compaction. In the a99SB-disp benchmark, force fields changed on the water side had mean IDP Rg
+   errors of 9-13% against 22-36% for the rest, and a99SB-disp 6%. a03ws scales protein-water LJ by 1.10, Martini 3
+   protein-water by 1.10. In Upside this balance sits in the burial, backbone desolvation and side-chain pair
+   attraction.
+2. **Local backbone statistics, which couple to collapse.** Martini3-IDP cut its Rg error from 1.06 to 0.39 nm through
+   bonded terms alone. In a99SB-disp and ff19SB, helicity and compaction compensate each other. C36m removed spurious
+   alpha_L.
+3. **Residue specificity,** such as Arg against Lys and Tyr against Phe (HPS-Urry, Mpipi, CALVADOS's per-residue
+   lambda).
+4. Debye-Huckel at the experiment's ionic strength, in every residue-level model with good Rg: not open to Upside
+   (above).
+
+How folded proteins were protected:
+* Residue-level models hold folded domains by restraints or rigid bodies. That is not open to Upside, which folds de
+  novo with one energy.
+* a99SB-disp's water change melted helices and folded proteins until the backbone carbonyl-amide LJ and the torsions
+  were refit.
+* SOP-IDP needs folded-protein energy scales 1.7-4.6 times its IDP ones.
+
+So an IDR change is trained in the same objective as the native terms, and judged on the native panels as well.
+
+Fitting to ensemble data has two precedents:
+* FB-HPS (Dannenhoffer-Lafage and Best 2021) fitted 20 lambda by gradient descent on d<Rg>/dlambda =
+  -(<Rg dU/dlambda> - <Rg><dU/dlambda>)/kT, with an L2 prior toward its start. That is the estimator of 4.1's IDR
+  term.
+* CALVADOS fits by Bayesian reweighting. It reuses frames while their effective fraction stays above 60%, under a
+  prior over 70 hydrophobicity scales.
+
+**B0, the baseline (4.1 M6).** Mac, `scratchpad/idp_20261028/`, launched 10-28 12:10.
+* **Panel** (`panel.fasta`; table, sources and flags in `lit/review.md` 3.1-3.2): 16 SAXS entries of 24-441 residues,
+  14 distinct sequences and conditions. They span net charge -43 to +15, kappa 0.08-0.78, proline 0-15% and aromatics
+  0-15%:
+  * Hst5, ACTR, Ash1;
+  * p27 Cv14 and Cv78: same composition, 29.4 and 22.1 A;
+  * PTMA;
+  * A1-LCD* at 50 and 500 mM;
+  * A1-LCD WT-NLS, -12F+12Y, WT+NLS and +7K+12D;
+  * alpha-synuclein, CoRNID, PNt and tau 2N4R.
+
+  Seven constructs are CALVADOS 2's curation, not checked against their primary papers.
+* **Runs.** Constant T = T_K / 350.588 (the Peng calibration; mapping 278-298 K linearly is unproven), from a
+  random-dihedral chain, pivot MC every 5 tu, dt 0.009, 30,000 tu per seed, t < 5,000 dropped. Stage A is ff2.1 x 6
+  seeds and the SARW x 3; stage B is ff3.1 x 6. The two A1-LCD* entries share one set of runs.
+* **Readout.**
+  * `results.txt`: CA sqrt(<Rg^2>), the quantity a Guinier or MFF fit estimates, with the seed SE and both halves; nu
+    from R(|i-j|) for |i-j| > 5; per-residue helicity (inside four or more consecutive alpha residues) and PPII.
+  * `stat_ineff.txt`: the Rg autocorrelation time and n_eff.
+  * CA Rg sits a few percent below an all-atom Rg, unmeasured here.
+* **Pilot** (alpha-synuclein, 35.5 +- 1.0 A measured):
+  * ff2.1: 35.6 and 31.0 A in two seeds, tau 340-1,300 tu, 2,500 tu block means 24-40 A.
+  * SARW: 40.1 A, tau 110 tu.
+* **Reading rules, fixed before the data.**
+  * **Summary set.** The summary statistics use the 14 entries other than A1-LCD*. A1-LCD* is out of scope for salt
+    and reported apart.
+  * **Global offset:** the geometric-mean ratio Rg/Rg_exp, with a bootstrap over entries. It is called an offset if
+    its 95% interval excludes 1.
+  * **Sequence dependence beyond length:** Pearson r of log(Rg/N^0.6), model against experiment, and the rms log
+    error after the offset is removed.
+  * **Pairs,** against the measured ratios:
+    * Cv78/Cv14: 0.753.
+    * +7K+12D / WT+NLS: 1.131.
+    * -12F+12Y / WT-NLS: 0.943.
+    * WT+NLS / WT-NLS: 0.936.
+
+    A pair is reproduced if its ratio lies on the measured side of 1 and within 2 combined SE.
+  * **SARW:** its ratio places each force field between the training's DSE target and experiment.
+  * **ACTR helicity:** read per region against the NMR helices. A number is compared only once the wild type's
+    helicity is taken from Iesmantavicius 2014 Fig. 1.
+  * **Convergence** follows findings 10.37: the seeds of one entry must agree. An entry whose seed spread exceeds its
+    distance from experiment is reported as unresolved.
+* **Routing.**
+  * An offset with good sequence dependence points to the protein-solvent balance: I1, and I2 if the error leans
+    toward the SARW.
+  * Wrong pairs or a poor r point to residue specificity in the trained terms: I1 with variants in its training set.
+  * Wrong helicity points to I3.
+
+**Candidates.** Each changes what training fits or an existing trained term, never adds a term, and follows
+section 4's rules.
+* **I1. An IDR size term in ConDiv's contrast** (4.1).
+  * The loss is sum_k (<Rg>_k - Rg_exp,k)^2 / sigma_k^2, with the gradient above from the per-frame dV/da that
+    `compute_divergence` already returns.
+  * Each training IDP needs its own sampling, since its Rg decorrelates over 10^2-10^3 tu and one step's 8,000 tu is
+    too short. The sampling is reused by reweighting while the effective fraction holds (CALVADOS's 60%) and rerun
+    when it falls.
+  * An L2 prior holds the parameters toward the start (FB-HPS).
+  * The training IDPs span composition, patterning and length, since FB-HPS found that a missing class biases the
+    fit, and they are kept apart from B0's test entries.
+  * The native terms stay in the same contrast.
+  * Intrachain distances (PRE) can be added to the loss later.
+* **I2. The DSE target.** The SARW pulls near-Tm unfolded frames toward high-denaturant dimensions. It is also the
+  Sosnick lab's picture of an expanded denatured state with minimal residual structure, and it serves HDX (Peng 2022).
+  B0 decides whether it is a suspect:
+  * If ff2.1 sits at SAXS in water, the SARW is not hurting disordered chains.
+  * If disordered chains come out expanded toward the SARW, the target is weighed against I1. A target from
+    measurements in water is the alternative, but the DSE is an ensemble contrast and SAXS gives one number per
+    protein, so that form is still to be designed.
+* **I3. Local backbone balance.** Helicity of IDRs comes from the map depths, which ff3.1 trains, and the H-bond
+  energies. B0's ff2.1 against ff3.1 is its first test. Its design is shared with 5.7's D3.
+  * Targets: ACTR's helix-1 series (23-69% helicity over wild type and eight mutants at 277 K; Iesmantavicius 2014).
+  * Per-residue helix and strand populations from BMRB chemical shifts, reweighted as in Jeon 2026.
+* **Not taken:** an explicit electrostatic term (user 10-28, double counting); restraints on folded parts.
+
+**Steps** (recorded 10-28; implemented later, on the user's word).
+- [ ] B0: the baseline above. Read `results.txt` and `stat_ineff.txt` with the rules, and record the result here.
+- [ ] B0 on the base force field (plan.md Phase 33), once released.
+- [ ] I1-I3: designs and the training IDP set, after B0 and in 4.1's order (after HDX and large proteins).
 
 ## 5. Large proteins (goal 4)
 
@@ -556,6 +789,9 @@ Still open:
    set by A3.
 4. Items in the running Upside 2 campaign that await a NO GUARDS ruling: the `run_remd.py` rollback; the HDX analysis
    items of 2.1; three checks in the hybrid code.
+5. Training terms (4.1): the base force field for M3 and T1; the HDX temperature mapping, decided with item 1; the
+   request for Ferrari et al.'s data, which only the user can make.
+6. Disordered regions (4.2), after B0: which of I1-I3 to design, and whether the SARW stays the DSE target.
 
 ## 8. Files
 
@@ -566,6 +802,25 @@ Still open:
 | `audit_report.md`, `audit_work/` | defect inventory, audit units, writer/reader registry (`registry.txt`), warning, cppcheck and sanitizer logs, the parameter-derivative prototype (`harness/param_fd2.py`), the finite-math probe (`probe/fm.cpp`) |
 | `units_report.md`, `units_work/` | every unit site with file:line, the parameter-file table, options and verification |
 | `gpu_report.md`, `gpu_work/` | profile scripts and logs, replica scaling, the hybrid profile, `web_notes.md` with the sources of every documentation claim |
+
+`scratchpad/hdx_term_20261028/` (this MacBook Pro; 4.1 M1):
+
+| path | what |
+|---|---|
+| `fetch.sh`, `run.sh`, `build_inputs.sh`, `meta.py`, `flags.sh`, `analyze.py`, `fig.py` | copy of the arms from midway2; driver; HDX topologies from `1.config.py`; per-frame energy, walker and CA-RMSD; the stock estimator per replica; MBAR readout with its rules in the docstring; figure |
+| `results/results.txt`, `results/ubq_dG_measured.png`, `results/summary.npz` | the readout of findings 5.7 |
+| `data/` (4.4 G), `results/*__top_*` (2.0 G) | the three arms (`/beagle3/trsosnic/yinhan/ff3_benchmark/runs/`), copied by `fetch.sh`; flags and raw estimator arrays, regenerated by `run.sh` |
+
+Copies of the scripts and the readout: `/project/trsosnic/yinhan/checks/handoff_20261026/scratchpad/hdx_term_20261028/`.
+
+`scratchpad/idp_20261028/` (this MacBook Pro; 4.2):
+
+| path | what |
+|---|---|
+| `lit/review.md`, `lit/panel.fasta`, `lit/make_panel.py`, `lit/dl*/` | literature review with the basis of each claim; the panel's sequences and SAXS values; its builder (`python make_panel.py lit`); the full texts, the CALVADOS 2 tables and Bremer 2022's SI it read |
+| `run_idp.py`, `panel_run.py`, `stat_ineff.py` | one run from a sequence (ff directory or the ConDiv SARW); the panel driver with its analysis (two stages); the Rg statistical inefficiency |
+| `panel.fasta`, `results.txt`, `results.npz`, `stat_ineff.txt`, `panel.log` | the panel as run; B0's readout and per-residue arrays; the driver's log |
+| `runs/`, `pilot/` | trajectories (one directory per sequence); the alpha-synuclein pilot (`conv_pilot.py`, `pilot.txt`) |
 
 `scratchpad/large_protein_20261019/` (the Mac Studio):
 

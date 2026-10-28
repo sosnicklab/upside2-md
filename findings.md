@@ -1630,6 +1630,16 @@ every width.
     0.371 and the free 0.272 to 0.304: the gap stayed -0.070 to -0.067, so the depth cannot close it and drifts at the
     damped step until the prior stops it. The 55 such glycines in the held-out proteins show the same gap (-0.06 to
     -0.12), so it is neither noise nor too few data. The fix (plan.md Phase 33) holds phi/psi in the native replica.
+  * **The fix's step 0** (10-28; `ff32_nativefix`, `ff31_nativefix`, the same 24 proteins as ff3.1.1's step 0; the
+    ceiling from `gate_ceiling.py` in `checks/ff31_fix_20261028/` and the repo's `scratchpad/`). The native replica now
+    holds each basin close to what a 20 deg spring can: glycine beta' 0.656 (old target 0.356) against an ideal 20 deg
+    Gaussian about each native's 0.726; over ff3.2's steps 0-10 (n 211) 0.754 against 0.769; glycine pPII' 0.829 against
+    0.816, non-glycine beta 0.885 against 0.818, pPII' 0.879 against 0.876, alpha_R 0.997 against 0.987 (the force
+    field's own well adds to the spring). The free-native gap on glycine beta' is now -0.343 (was -0.070), a pull the
+    depth can act on. The one class the springs do not hold is non-glycine beta' (n 18): 0.071 against 0.582, the map
+    at phi 100-180 outweighing the spring. The gate's 0.75 for glycine beta' was set before this ceiling was computed
+    and is above it at step 0 (half these glycines sit within a spring width of a basin edge), so its FAIL measures
+    the basin's edge, not the springs.
 
 ### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; the cold-rung glycine flip is absent from the corrected chains (2026-10-14/18)
 
@@ -3880,6 +3890,47 @@ below) in `~/Downloads/glpG_HDX_ff3.0_blocks_20261022/` on the MacBook Pro.
   replicas shared one line of `extract.log` and the `verified$` count failed a correct copy. It now writes each line in
   one call; the check is unchanged.
 
+### 5.7 What Upside REMD on ubiquitin gives an HDX training term (M1, 2026-10-28)
+
+User 10-28: HDX first, then large proteins, then IDRs, as terms in the training (`upside3.md` 4.1); "check if you can do
+analysis with" the midway2 results. Data: the Peng-benchmark arms `ubiquitin_native_ff_2.1` and
+`ubiquitin_native_ff_3.0_gdepth` (14 rungs 0.800-0.940, 2,429,200 tu, frames every 100 tu, 24,287 per rung; WT 1UBQ,
+where experiment is Ub psWT F45W/H68N) and `ubiquitin_denovo_ff_3.0_gdepth` (8,028,200 tu), run by the Upside 2 engine;
+the stock estimator (`get_protection_state.py`, topology from `1.config.py` with each arm's own force-field files,
+md5-equal to the shared deployment's) on Upside 3's writer and engine; MBAR on the Mac. Rules fixed before the data
+(`analyze.py` docstring): first 10% dropped; targets 273 K (experiment) and 300 K (Peng's FF2 Table S10) at
+T_up = 0.85 T / 298 K; censored at RT ln(ESS), Kish ESS; folded below 5 A CA-RMSD over 2-73. Everything in
+`scratchpad/hdx_term_20261028/` (`fetch.sh`, then `run.sh`; `results/results.txt`, `results/ubq_dG_measured.png`).
+* **The pipeline reproduces Peng's FF2.** ff2.1 at 300 K against Table S10: Spearman 0.90 over the 24 measured amides;
+  against experiment, censored Spearman 0.515 and Pearson 0.460 over 22 resolved, where the published values give
+  0.492 and 0.455 (Table S14: 0.455).
+* **Resolution.** 3.06e7 replica-tu give a Kish ESS of 3.1-3.3e4 at 273 K, bound 5.6 kcal/mol, with 14 (ff2.1) and 15
+  (ff3.0) of the 24 measured amides resolved; experiment spans 4.9-8.5. At 300 K the bound is 6.9-7.3 and 22-24
+  resolve. The rung-0 open count decorrelates in 2.3 (ff2.1) and 13.7 (ff3.0) frames, the rung-0 RMSD in 1,057 and 639,
+  so the Kish ESS is an upper bound for anything slower than a local opening. Resolving 8.5 kcal/mol at 273 K needs ESS
+  6.4e6, about 200 times this run; one ConDiv step (12 x 8000 tu) is 1/319 of it.
+* **ff2.1 opens the globally exchanging amides locally.** Of every amide's open weight at 300 K, 0.81-1.00 comes from
+  frames under 5 A, and 0.96-1.00 for the seven experiment assigns to global unfolding by their urea slope (I3, F4, V5,
+  L15, D21, K27, I30 at 0.70-0.92 of m_global; `scratchpad/boltz_hdx/flags/dg/urea_classes.log`). The model opens them
+  by fluctuations of the folded state at 3.5-7.0 kcal/mol (K27 censored at 7.3) where experiment needs global
+  unfolding at 7.7-8.5, the failure Boltz-2 showed on the same protein (`diffusion_dynamics.md` Phase 1 urea item). The global unfolding itself is censored at 273 K (P(RMSD >= 5 A)
+  2.0e-6, dG >= 5.64; experiment's Table S4 dG_global 8.556).
+* **ff3.0's ubiquitin melts about 0.06 T_up lower than ff2.1's.** Folded fraction per rung: ff2.1 1.00 to 0.899, 0.99
+  at 0.910, then 0.91, 0.34, 0.08; ff3.0 0.90 at 0.857 and 0.23 at 0.867, 0.00 from 0.910. A native start biases toward folded, so
+  ff3.0's transition lies at or below about 0.865. The bottom-rung TM-score the benchmark reports (0.697 against
+  ff2.1_ctrl38's 0.742, `checks/ff21_released_20261021/peng_trained.txt`) does not show it. ff3.0's ladder makes 3 round
+  trips against ff2.1's 806, and its dG halves drift by 0.52 kcal/mol (ff2.1 0.00), so its per-amide values are not
+  converged; at 300 K all 24 read 1.0-2.1 kcal/mol, opened by global unfolding (folded share at most 0.1 for 18 of 24).
+  The cause is not measured; findings 1.37's folding loss under retraining is the candidate.
+* **Search fails at 76 residues.** ff3.0's de novo arm makes 4,102 round trips in 7.2M tu and never comes below 4.4 A,
+  while its native start refolds below 3 A eight times after passing 8 A.
+* **The estimator's definition moves with the force field, by little here.** It reads the trained burial weights
+  (`sigmoid_coupling_environment.weights`), which differ by up to 0.20 between ff2.1 and ff3.0; on the same ff3.0
+  frames 0.39% of flags change and dG moves 0.12 kcal/mol RMS at 273 K (0.03 at 300 K).
+* **The comparison temperature carries the stability error.** Peng reads FF2 at 300 K against an experiment at 273 K,
+  the temperature chosen where the model's global stability matches (SI Table S4 and p. 15). At 273 K ff2.1's censored
+  Spearman is 0.394, with 10 amides censored.
+
 ---
 
 ## 6. Reusable diagnostic procedures
@@ -4842,6 +4893,15 @@ place of the standard library's `inspect` (the current directory is first on `sy
 our account until its fourth line failed on a permission error. **Run cluster Python from our own directory (`$B`, `$E`,
 the run directory) and with `python -I`, which drops the current directory and the user site from `sys.path`; never
 from `/tmp`, `/scratch` or any directory others can write.**
+
+### 10.42 A trained force field carries physics it has no explicit term for (2026-10-28)
+
+User correction: I wrote that Upside has no electrostatics and that charge-dependent IDP entries (charge patterning,
+net-charge expansion) would fail by construction. Upside's core has electrostatics baked into its trained terms; what
+it lacks is an explicit electrostatic term, and an ionic-strength input. **Say "no explicit X term", never "no X", for
+a trained model; and predict failure by construction only where no term can respond at all (here salt, since nothing
+reads an ionic strength). Whether the implicit physics is enough is a measurement, not a deduction from the term
+list.**
 
 ---
 

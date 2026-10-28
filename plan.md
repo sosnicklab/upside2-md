@@ -382,6 +382,15 @@ every input and output); GPU (6). Decided 10-19: Upside 3 is a new release, so n
 on ff2.1 is published; each fix is proven correct, but none is measured against ff2.1 or master, and ff2.1 is not
 re-validated on the audited engine (the user's 10-22 validation of the debug runs ff2.1 on it, Phase 24 2b).
 4. [ ] The user's decisions (`upside3.md` 7); the audit is Phase 24.
+5. [ ] **Training objective terms for HDX, then large proteins, then IDRs** (user 10-28, in that priority; design and
+   steps in `upside3.md` 4.1). Terms added to ConDiv's contrast from the per-frame dV/da the engine already returns; the
+   energy's functional form stays spline tables.
+   - [x] M1, the one measurement the midway2 data allow (10-28, findings 5.7): ubiquitin on the Peng-benchmark REMD.
+     The pipeline reproduces Peng's FF2. A full benchmark REMD resolves 14-15 of the 24 measured amides at 273 K, and
+     ff2.1 opens the globally exchanging amides within the folded state. ff3.0's ubiquitin melts about 0.06 T_up below
+     ff2.1's.
+   - [ ] M2-M6 and T1 (`upside3.md` 4.1). M2 waits only on ff3.1's ubiquitin arms finishing; M3-M6 need new runs or
+     data; T1 waits on M3 and the temperature mapping (`upside3.md` 7 item 5).
 
 ### Phase 24 - Upside 3 audit: find and fix every bug (STARTED 2026-10-19, user)
 User 10-19: "the fix only goes into upside 3. You can modify on current branch (martini-dev) as this will be the
@@ -783,8 +792,31 @@ target, the Phase 32 runs kept.
    merge's few untrainable deviations (at most 1e-7, the basin fit's rounding of ff3.0's pair) kept as fixed parts of
    the map; rates zero (`ff31_nativefix`) and the trainer's (`ff32_nativefix`); every other field ff3.1.1's
    (`compare_start.py`). The gate script on ff3.1.1's own step 0 reads glycine beta' 0.356: FAIL, as the old target.
-3. [x] Submitted 02:26 10-28 to 76: 49635325, 49635326 (remote_jobs.md §1 line 2). [ ] The step-0 gate.
-4. [ ] Read at each round end.
+3. [x] Submitted 02:26 10-28 to 76: 49635325, 49635326 (remote_jobs.md §1 line 2).
+4. [x] **The step-0 gate, read 10:50 10-28: FAIL as written, and the threshold is out of reach** (findings 1.34).
+   Glycine beta' natives (n 21) 0.656 in ff3.2, 0.660 in ff3.1 (old target on the same proteins 0.356); alpha_R
+   0.998. An ideal 20 deg Gaussian about each native gives these glycines 0.726 at most, since half sit within a
+   spring width of a basin edge, so no 20 deg spring can reach 0.75. Over epoch 0 so far (ff3.2 steps 0-10, n 211)
+   0.754 against that ceiling's 0.769. Both chains died 10:41 10-28 in a Slurm controller outage (ff3.2 in step 11,
+   ff3.1 in step 16; no code error). User 10-28 "proceed with your best decision": both continue, since the springs
+   hold each basin at a 20 deg spring's ceiling and the 0.75 was set above it; the threshold is not changed, the
+   decision rests on the measured ceiling. Links 49635669 (ff3.2) and 49635327 (ff3.1, nice 10) released 10:58 10-28,
+   ff3.2 first; the debug chains (Phase 32) at nice 10 behind ff3.2.
+5. **ff3.2 has priority over ff3.1** (user 10-28, after Jumper's and Peng's statements that ConDiv trains all
+   interaction parameters jointly: Jumper thesis p. 42-43, 65-66; Peng 2022 p. 551, SI p. 3). On every scheduling or
+   reading conflict ff3.2 goes first.
+6. [ ] Read at each round end.
+
+### Phase 34 - disordered regions in Upside 3: how accurate, and what could improve them (STARTED 2026-10-28, user)
+User 10-28: "for upside3, investigate the possibility of enhancing intrinsic disordered region simulation accuracy";
+then "record everything in upside3.md. We will implement this later." The record is `upside3.md` 4.2 (what the model
+gives a disordered chain, the literature, B0 and its reading rules, candidates I1-I3); this phase tracks only status.
+Decided by the user 10-28: no explicit electrostatic term (the trained terms already carry electrostatics, so it
+would count them twice); salt dependence is outside the model.
+1. [x] Literature and the SAXS panel (`scratchpad/idp_20261028/lit/`).
+2. [ ] B0 on the Mac (4.1 M6): ff2.1 and the SARW as stage A, ff3.1 as stage B (`panel_run.py`, launched 10-28
+   12:10, about 5.5 h on 11 cores; `results.txt` ends in DONE). Read with 4.2's rules and record the result there.
+3. [ ] I1-I3: after B0, in 4.1's order, on the user's word.
 
 ## Known Errors / Blockers
 

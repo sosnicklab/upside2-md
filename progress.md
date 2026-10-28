@@ -314,3 +314,35 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   (8 Peng seed replicates; ff3.0 glpG `n_blocks` 1 -> 3). The midway3 socket master ended about 21:40.
   Handoff: watch cron deleted, owner none, the watch prompt rewritten for the live jobs, the bundle
   given the MacBook Pro's records, working-tree patch, memory and git-ignored Phase 2 tools.
+* **10-28 10:45-11:00, ff3.2's priority and the beta' fix** (user: "ff3.2 should be kept at a higher priority than
+  ff3.1. Check if we have the beta issue addressed in ff3.2"). Both nativefix chains, and the debug's, had died
+  10:41 in a Slurm controller outage. The step-0 gate, never run since submission, reads FAIL as written (glycine
+  beta' 0.656 against 0.75; old target 0.356); `scratchpad/gate_ceiling.py` shows a 20 deg spring gives at most
+  0.726 there, and the replica sits near that ceiling in every basin but non-glycine beta' (n 18). Links 49635669
+  (ff3.2) and 49635327 (ff3.1, nice 10) held, then released 10:58 on "proceed with your best decision"; the debug
+  chains restarted 10:58 on their own and were put at nice 10 behind ff3.2. Files: plan.md Phase 33, findings.md
+  1.34, remote_jobs.md.
+* **10-28 11:10-11:50, MacBook Pro, training terms for HDX, large proteins and IDRs** (after the PINN paper was
+  judged no help; user: "the highest priority is HDX. The one following it is large protein performance, then by IDR
+  sequences"; "check if you can do analysis with [midway2 results]. if not, write it for later plan"). Survey:
+  ubiquitin's Peng-benchmark
+  REMD is usable; no Upside EHEE/HEEH run, no RNase HI REMD, no IDP run, no kept ConDiv step trajectories, and the
+  benchmark homeodomain ladder sits above its transition. M1 on the Mac (`scratchpad/hdx_term_20261028/`): the stock
+  estimator on ff2.1 and ff3.0 native arms, MBAR to 273 and 300 K. ff2.1 reproduces Peng's FF2 (Spearman 0.90); 14-15
+  of 24 measured amides resolve at 273 K (bound 5.6); ff2.1 opens the globally exchanging amides within the folded
+  state; ff3.0's ubiquitin melts about 0.06 T_up lower, with 3 ladder round trips; the definition shift is 0.12
+  kcal/mol. Files: findings.md 5.7, upside3.md 4.1 (design and steps M2-M6, T1) and 7 item 5, plan.md Phase 23
+  item 5. No cluster job submitted; three arms copied to the Mac read-only. Then "record the plannings. We will run
+  it later": M2, M3 (Peng's FF2 protocol from SI pp. 12-13, about 570 node-hours) and M6 specified in upside3.md
+  4.1, the item added to remote_jobs.md "Resume here" step 7, `fetch.sh` added, and the handoff bundle's records
+  and M1 tools refreshed (old records in `records.bak_20261028_1150/`).
+* **10-28 11:05-13:00, MacBook Pro, disordered regions** (user: "for upside3, investigate the possibility of
+  enhancing intrinsic disordered region simulation accuracy"; then "record everything in upside3.md. We will
+  implement this later"). Code: training never sees a disordered chain; the DSE target is ConDiv's SARW (backbone
+  excluded volume, Rama only). Literature by sub-agent (`scratchpad/idp_20261028/lit/review.md`): no Upside-IDP
+  comparison with experiment exists; a 16-entry SAXS panel. User corrections: Upside's electrostatics are implicit in
+  the trained terms (findings 10.42), and no explicit electrostatic term is added (double counting). B0 launched on
+  the Mac 12:10 (ff2.1 x 6 and SARW x 3, then ff3.1 x 6; 30,000 tu from random coil); alpha-synuclein pilot: ff2.1
+  35.6 and 31.0 A against 35.5 measured, SARW 40.1, Rg tau 340-1,300 tu. Files: upside3.md 4.2 (with 4.1 M6, 7
+  item 6, 8), plan.md Phase 34, findings.md 10.42. The literature sub-agent once sent the user's email in a Crossref
+  User-Agent header, against its instructions.
