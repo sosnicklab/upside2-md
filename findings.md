@@ -4012,7 +4012,7 @@ Every parameter derivative in Upside 3 is exact or raises "not implemented" (A29
 writes a node no potential reads, but `get_protection_state.py` reads its output for HDX, so it is not dead. Which parameters ConDiv
 trains is decided in its learning-rate table. Open items are in plan.md Phase 24.
 
-### 3.15 Upside 3's glpG hybrid with ff2.1 loses TM4 when the protein is first released (2026-10-26; OPEN)
+### 3.15 Upside 3's glpG hybrid with ff2.1 loses TM4 when the protein is first released (2026-10-26; answered 10-27: ff2.1's own, not Upside 3's)
 
 The validation run of plan.md Phase 24 2b.4 (`upside3_validation/glpg`, remote_jobs.md §1 line 3), read against
 Upside 2's hybrid with the same code (`upside3_validation/glpg/glpg_u3_block1.py`, `glpg_u3_prep_tm4.py`; outputs
@@ -4039,21 +4039,33 @@ ff3.0 and the old ff3.1 have placement-fixed Upside 2 runs, and they differ from
 * The log's "hbonds" column reads 97 for the rigid crystal-like protein against Upside 2's 195; the per-frame
   `hbond` score summed is comparable (174 against 195 at block 1's first frame), so the column's definition differs,
   not the protein.
-* **Cause not established.** TM4 is the glycine-dense helix (3 in 17) and was the first casualty of the subsystem
+* **Two readings were open.** TM4 is the glycine-dense helix (3 in 17) and was the first casualty of the subsystem
   temperature mismatch (3.10) and of a mismatched coverage table (3.11). The audit changed the hybrid in places that
   reach it: the side-chain/lipid table now charges NC3, ALA and GLY keep their rotamer rows and H-bond coverage (A83),
-  and the rotamer 1-body is ff2.1's phi/psi-dependent term (A72), each a fix. Whether the loss is a fix revealing
-  ff2.1's own TM4 in a correct hybrid, or a new defect, needs a measurement of which change moves TM4's energy.
+  and the rotamer 1-body is ff2.1's phi/psi-dependent term (A72), each a fix. The loss was either a fix revealing
+  ff2.1's own TM4 in a correct hybrid or a new defect; the force-field tests below decide it for the first.
 * The stage-7.0 course under ff2.1, TM4 DSSP alpha by tenth of its 401 frames: 1.00 0.99 0.98 0.98 0.93 0.82 0.91
   0.85 0.59 0.41. First test (user 10-26): the same preparation with ff3.1, same seeds (A234;
   `upside3_validation/glpg_ff31`, remote_jobs.md §1 line 3). ff3.1 is ff2.1 with only its rama.dat trained, so it
   tests the Ramachandran map alone.
+* **ff3.1 loses TM4 too** (prep 49573353, ended 13:37 10-27): TM4 DSSP alpha 1.00 at the input and through stages
+  6.0-6.6, then by tenth of stage 7.0's 401 frames 1.00 0.97 0.94 0.82 0.83 0.70 0.60 0.50 0.43 0.36 (last frame
+  0.59, mean 0.72, dihedral-box fraction 0.83 at the last frame), while TM1 stays at 1.00. The trained map alone does
+  not hold TM4 on Upside 3: it falls below 0.8 from the sixth tenth (ff2.1 from the ninth) to the same end level, so
+  ff3.1's run stays at one block.
 * **The matched test is ff3.0** (user 10-26: "do submit ff3.0"; A235; `upside3_validation/glpg_ff30`, the same
   preparation and seeds): ff3.0 is the one current force field with a fully fixed Upside 2 run (the old ff3.1's are
   retired), the placement-fixed chains whose
   TM4 DSSP alpha is 0.96 at T 0.70, so between it and Upside 3 only the engine and the preparation change. TM4 lost on
   Upside 3 with ff3.0 means an Upside 3 cause; held means the ff2.1 run's loss is ff2.1's own once its packing is
   correct.
+* **ff3.0 holds TM4** (prep 49589828, ended 14:38 10-27): TM4 DSSP alpha by tenth of stage 7.0's 401 frames 0.99
+  0.99 0.91 0.96 0.84 0.84 0.79 0.81 0.82 0.82 (last frame 0.88, mean 0.88, dihedral-box fraction 0.94 at the last
+  frame; TM1 0.95). It settles near 0.82 by the fifth tenth and stays there, where ff2.1 and ff3.1 keep falling. By
+  the rule set before the run TM4 is held, so on the same engine, preparation and seeds the loss under ff2.1 is
+  ff2.1's own once side-chain placement is correct, not an Upside 3 defect. ff3.1 differs from ff2.1 only in its map
+  and loses TM4, so what holds it lies in ff3.0's other retrained terms. One seed and 540 time units at T 0.8647;
+  REMD block 1 (49589829) gives TM4 at T 0.70, against Upside 2's ff3.0 chains' 0.96.
 * The Upside 3 Peng arms on released ff2.1 against the same arms on the pre-audit binary (10-26,
   `upside3_validation/peng/score/compare_u3_u2.txt`; `score_compare.py` reproduces released ff2.1's scores exactly):
   native, 16 proteins, mean TM 0.564 against 0.552 (+0.012 [-0.001, +0.028], p 0.56), the engines agree; de novo, the
@@ -7006,6 +7018,14 @@ depends on, so they are not a reference for a placement-fixed Upside 3 run. **Be
 for another, list the hybrid defects fixed between them (3.10, 3.11, 4.15, 4.17 and the audit ledger 3.14) and state
 which the reference carried; if it carries one the judged run does not, it is no reference, and the matched control
 is owed instead.**
+
+### 10.41 Never run Python from a shared directory on a cluster (2026-10-27)
+
+Own mistake. A stdin script run with `cd /tmp` on the midway3 login node imported another user's `/tmp/inspect.py`
+in place of the standard library's `inspect` (the current directory is first on `sys.path` for `python -`), and it ran
+under our account until its fourth line failed on a permission error; its first lines were only imports. **Run cluster
+Python from our own directory (`$B`, `$E`, the run directory) and with `python -I`, which drops the current directory
+and the user site from `sys.path`; never from `/tmp`, `/scratch` or any directory others can write.**
 
 ---
 

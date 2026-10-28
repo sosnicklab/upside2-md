@@ -6,7 +6,13 @@ amides (1 of 24 on Ub psWT, the experiment's variant) against Upside's 11. On HE
 measured amide is resolvable, Boltz-2 does not rank them (Spearman 0.04 against experiment; Upside FF2 0.32) and never
 opens 4 that experiment puts at 3.2-3.8 kcal/mol (Phase 1). At 10^5 samples (2026-10-25) it ranks EHEE's amides
 (Spearman 0.74, Upside FF2 0.61 on the same censored comparison) but not Ub psWT's (-0.21; Upside 0.43), where it never
-opens four of experiment's six least stable amides. The mdCATH half of Gate 1 is not started.** `step_scale` 1.0, the unscaled sampler, gives
+opens four of experiment's six least stable amides. Sampled with EHEE's query-only MSA (2026-10-27), Ub psWT is still
+not ranked (-0.06, bootstrap -0.25 to 0.09), so MSA depth is ruled out and the no-training route stays closed on it. By experiment's urea dependence (2026-10-27)
+EHEE's measured amides exchange through subglobal openings, HEEH's helices by global unfolding and Ub psWT's amides
+below the bound locally: Boltz-2 ranks EHEE's subglobal openings but lacks HEEH's global and subglobal states and Ub
+psWT's local ones. Gate 1's HDX half ends in its "wrong states" outcome; the mdCATH half is not run. Revised
+2026-10-27 (user: no retraining of Boltz, small trained add-ons allowed): Phase 2 is a trained add-on that tilts frozen
+Boltz-2's ensemble, and no fine-tune is planned.** `step_scale` 1.0, the unscaled sampler, gives
 bond-length scatter 2 to 4x the crystal spread, but the scatter leaves the HDX protection flags unchanged, so Phase 1
 uses `md` at 1.0 (Phase 0). midway2 has no GPU that can run Boltz-2 (Phase 0). Jobs are recorded in `remote_jobs.md` §1.
 Every number below comes from reading code, docs and papers on 2026-10-21, or from the dated measurements in
@@ -22,7 +28,7 @@ time on a fine-tune.
 **Built on Boltz, not BioEmu** (user, 2026-10-21): Jumper does not accept BioEmu because its data are selected. No
 BioEmu weights, samples, training data or benchmarks are used (findings 10.34). BioEmu2's code may be used (user,
 2026-10-21): it is MIT-licensed, and its layer, denoising and steering code is itself adapted from Boltz (its
-`NOTICES.md`), so it ports onto Boltz's modules directly. Phase 3 takes its lag conditioning from there. The one
+`NOTICES.md`), so it ports onto Boltz's modules directly. The one
 exception is section 7's side test of BioEmu2's weights for HDX (user, 2026-10-24), kept separate from this work.
 
 ## 2. Background
@@ -99,10 +105,11 @@ transfer operator, Schreiner et al. 2023).
    be ported (section 1).
 2. **Phase 1: independent `md`-tagged Boltz-2 ensembles through the HDX estimator, with no training.** This is the
    reference every modification has to beat.
-3. **Phase 2: a renoise-denoise chain on Boltz-2, with no training,** for time-ordered samples with a clock that is
-   not calibrated.
-4. **Phase 3: a frozen-trunk, lag-conditioned fine-tune of Boltz-2,** only if Phases 1 and 2 fail in a way that MD
-   lag data could fix.
+3. **Phase 2: a small trained add-on tilts frozen Boltz-2's ensemble** (user 2026-10-27), sampled through Boltz-2's
+   own steering and trained on experimental HDX-MS. The errors are site-specific inside the folded ensemble, so a
+   global term cannot fix them, and experiment is the only teacher whose ceiling is above Upside (Phase 2).
+4. **No fine-tune of Boltz-2** (user 2026-10-27: no compute for it). The renoise-denoise chain and the lag-conditioned
+   fine-tune of the 10-21 plan are dropped; both targeted time order, not populations (assessment 2026-10-24).
 5. **No Arts-style score-as-force dynamics on Boltz** (section 2.4).
 
 ## 4. Phases
@@ -286,13 +293,12 @@ HDX:
         lie beyond 8 A of the design model. Open fractions against experiment's exp(-dG/RT): the hairpin's V19 and
         W21 0.0008 and 0.0004 against 0.020 and 0.014, T24 0.063 against 0.010, the helices 0 to 0.008 against
         0.0004 to 0.0047. The helices' amides sit close together at 3.5-4.3 kcal/mol, as exchange through whole-
-        protein unfolding would put them; the urea dependence in Table S6 that would confirm it is not read.
+        protein unfolding would put them; Table S6's urea dependence confirms that mechanism (the urea item below).
       * For Gate 1 this is the "too narrow" outcome on HDX (censored dG where experiment is finite), with some amides
-        too open as well; the gate's mdCATH half is not measured. Phases 2 and 3 as written target time order and
-        dynamics, not populations, so neither addresses this failure (assessment 2026-10-24); a revision is the
-        user's call.
+        too open as well; the gate's mdCATH half is not measured. The 10-21 plan's Phases 2 and 3 targeted time order
+        and dynamics, not populations (assessment 2026-10-24); the revised Phase 2 targets populations.
 - [x] Local exchange (user 2026-10-24, after HEEH): does Boltz-2 rank amides whose exchange comes from fluctuations
-      of the folded state? HEEH's helices probably exchange through whole-protein unfolding, which Boltz-2 never
+      of the folded state? HEEH's helices exchange through whole-protein unfolding (the urea item below), which Boltz-2 never
       samples, so the no-training route is tested where it can still work. EHEE_rd2_0005 and Ub psWT at 10^5 `md`
       samples each (bound 6.82 kcal/mol at 298 K and 6.25 at 273 K), which resolves 9 of EHEE's 15 and 12 of Ub
       psWT's 24 measured amides (4.0-6.8 kcal/mol). 100 runs of 1,000 per protein at seeds 13-112, 10 V100 jobs each
@@ -337,9 +343,9 @@ HDX:
           fractions 6e-5 to 1.2e-4), and opens D21 (7.73) at 1.2e-4, 180x experiment, and strand 1's I3, F4 and V5
           (about 8) at 2e-5, 50x. With the halves this close, the misplaced openings are the model's ensemble.
         - For Gate 1: the no-training route ranks one of the two proteins, as well as Upside FF2, and fails on the
-          other, where it opens the wrong parts. Whether EHEE's amides exchange locally or through global unfolding
-          (the urea dependence in Table S5) is not read. What follows is the user's call.
-- [ ] MSA control on Ub psWT (user 2026-10-25, "propose and apply fix", chose the controlled 10^5 tests). Diagnosis
+          other, where it opens the wrong parts. EHEE's measured amides exchange through subglobal openings and Ub psWT's
+          through local ones (the urea item below).
+- [x] MSA control on Ub psWT (user 2026-10-25, "propose and apply fix", chose the controlled 10^5 tests). Diagnosis
       of the 10^5 sets first, from their raw flags:
       * Protection is burial-dominated. At the measured amides the backbone H-bond breaks in 1-95% of samples (Ub
         psWT's N25 95%, T55 all), but Upside's burial term (BurialLevel > 5; medians 7-22) keeps the amide protected,
@@ -362,6 +368,46 @@ HDX:
       block-bootstrap 95% interval excludes the MSA set's -0.21 and reaches Upside FF2's 0.43, MSA depth is the
       defect on Ub psWT and Phase 1 takes the query-only regime for every protein; otherwise MSA depth is ruled out
       and the no-training route stays closed on Ub psWT. HEEH's missing unfolded state stands either way.
+      * All 10 jobs finished by 2026-10-27 03:55, every seed `ok`. Readout 2026-10-27 (MacBook Pro): the 10 job sets
+        copied (md5-equal) and pooled in ledger order into `samples/ubqps_nomsa_md_s10_n100000.npz`, with EHEE's and Ub
+        psWT's MSA sets rebuilt from their jobs the same way. The scratch engine rebuilt at 6d295b0 reproduces the
+        earlier flags, and with them the whole 10-25 `dg_phase1.log`, tables and profiles, byte for byte. Figure
+        `dg/ubqps_nomsa_md_s10_n100000_dG_vs_residue.png`.
+        - The set is the MSA set's folded ubiquitin: CA-RMSD to the reference median 1.54 A (MSA 1.52), 7 of 10^5
+          beyond 8 A (none), Rg 11.34 +- 0.17 A, C-N 1.342 +- 0.054 A, 124 samples with a C-N bond over 2 A (131); no
+          sample repeats. The halves agree (smallest Fisher p 0.057; 0.32 kcal/mol rms at 15 measured amides).
+        - Without the MSA, Boltz-2 opens Ub psWT more often. 4 donors never open (MSA 14), 21 of the 24 measured
+          amides resolve (13), and the measured amides open 201 times against 119, a third of them in samples beyond
+          4 A of the reference (8% with the MSA). No sample has more than a third of its donors open, so these are
+          partial excursions, not an unfolded state.
+        - The added openings are not in experiment's order: Spearman -0.196 (p 0.40) over the 21 resolved, Pearson
+          -0.109, 1.01 kcal/mol below experiment on average; over all 24 censored at the bound -0.062 (bootstrap 95%
+          -0.245 to 0.089), against Upside FF2's 0.432. Experiment's least stable V70, W45 and I13 open at 1-2e-5
+          against 0.7-1.2e-4, while strand 1's I3, F4 and V5 open at 1-1.6e-4, about 300x experiment, D21 at 1.4e-4
+          (200x) and Y59 at 8.5e-4 (20x).
+        - By the rule fixed before the data: the interval contains the MSA set's -0.21 and does not reach 0.43, so MSA
+          depth is ruled out as the defect on Ub psWT and the no-training route stays closed there.
+- [x] Which opening each measured amide exchanges through (2026-10-27): experiment's dG against urea (Peng 2022 SI
+      Tables S5-S7), each amide's slope as a fraction of Table S4's global m-value (EHEE 0.607, HEEH 0.871, Ub 1.270
+      kcal/mol/M, fitted on the most stable amides), near zero for a local opening and near one for global unfolding
+      (Peng 2022, p. 554). `flags/urea_classes.py`, output `dg/urea_classes.log`; the slope is a straight line over
+      the reported concentrations, where the paper's per-residue values come from a two-state fit.
+      * Ub psWT exchanges locally below the bound. V70, I13, L69, Y59, W45 and L67 (4.9-5.5 kcal/mol) have 0.01-0.23
+        of m_global; the amides at 7.7-8.5 (I3, F4, V5, L15, D21, I30, K27) 0.70-0.92, global (L15 and K27 are Table
+        S4's pair). Boltz-2 never opens four of the local exchangers (V70, I13, W45, L67) and opens the global ones in
+        a few samples (I3, F4, V5 and L15 in 2 of 10^5, D21 in 12). Its error grows the more local the opening
+        (Spearman of error against m fraction -0.43 over 23 amides; L50's slope rests on two concentrations and is not
+        read): Boltz-2's folded ubiquitin lacks the real one's local fluctuations, and its rare excursions open
+        strands that experiment opens only on global unfolding.
+      * No measured EHEE amide is local. The 9 below the bound have 0.29-0.62 of m_global, subglobal openings; A12,
+        R13, E36 and T29 0.94-1.00, global (A12 and R13 are Table S4's). Boltz-2's ranking of EHEE is a ranking of
+        its subglobal openings, and its error does not follow the class (+0.20).
+      * HEEH exchanges by global unfolding in its helices (16 of 17 helix amides at 0.72-1.10 of m_global; Table S4
+        fits m_global on 8 of them) and by a subglobal opening in its hairpin (V19 and W21 0.63, T24 0.46). Boltz-2,
+        with no unfolded state, spreads the helix amides from 2.7 to >= 5.09 kcal/mol where global unfolding holds
+        experiment's at 3.2-4.3, and leaves V19 and W21 1.8-2.0 kcal/mol too protected (error against class -0.12).
+      * The 10^5 test was framed as local exchange on both proteins, but EHEE's is subglobal. Boltz-2 ranks one
+        protein's subglobal openings and fails on another's local ones and a third's global and subglobal ones.
 
 mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibrium only:
 - [ ] Test set: 8 to 12 domains from the 89-domain panel (`ff3_selection/` on the cluster; `plan.md` Phase 19), over
@@ -377,75 +423,113 @@ mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibr
 
 Gate 1:
 * dG tracks experiment at least as well as Upside, and the mdCATH distributions match: equilibrium needs no
-  training. Phase 2 only if decorrelation or the EX1/EX2 question needs time order.
-* Ensembles too narrow (censored dG where experiment is finite, RMSF below MD): Phase 2, then Phase 3.
+  training.
+* Ensembles too narrow (censored dG where experiment is finite, RMSF below MD): Phase 2.
 * Ensembles in the wrong states, not only too narrow: reconsider the approach before training.
+* **Verdict on the HDX half (2026-10-27): wrong states.** Boltz-2 ranks EHEE (Spearman 0.74, Upside FF2 0.61), but
+  HEEH lacks its global and subglobal openings (too narrow) and Ub psWT its local fluctuations, while opening strands
+  that exchange only globally (the urea item above). By this rule the approach is reconsidered before any training,
+  and the mdCATH half waits on that. The user's choice, 2026-10-27: no retraining of Boltz-2, a small trained add-on
+  on the frozen model (Phase 2).
 
-### Phase 2 (optional): renoise-denoise chain on Boltz-2, no training
+### Phase 2: a trained add-on that tilts frozen Boltz-2's ensemble (2026-10-27)
 
-- [ ] New sampler loop, each step:
-      `y = x_k + sigma_j * eps`; run the reverse sampler from `sigma_j` to 0 with the `md` tag and
-      `step_scale=1.0`; Kabsch-align the result to `x_k`. Compute the trunk once and reuse it.
-      Code hooks: `AtomDiffusion.sample`, `preconditioned_network_forward`, `sample_schedule` (section 2.2).
-- [ ] Keep the reverse step stochastic below 1 A. Boltz switches its noise off below `gamma_min=1.0`, and the
-      stochastic step is what gives detailed balance:
-      `p(x) K(x'|x) = integral p_sigma(y) p(x|y) p(x'|y) dy` is symmetric in x and x'. A deterministic step
-      keeps the distribution stationary but is not guaranteed reversible.
-- [ ] Sweep `sigma_j` (0.5, 1, 2, 4, 8 A) and the number of reverse steps. Check that the chain's distribution
-      matches Phase 1's independent samples.
-- [ ] Dynamics against mdCATH with a fitted clock: a Markov state model on MD TICA clusters, per-row JS divergence
-      of the transition matrices at matched lag (Arts' metric), implied timescales up to one scale factor, a
-      Chapman-Kolmogorov check, and the physicality pass rate along the chain.
-- Limit: the clock is arbitrary, and the chain only visits states Boltz-2 already samples.
+User 2026-10-27: "You are not allowed to retrain boltz, as we do not have the computation resources for that. But you
+can train small models as addons to make it work." Plan approved the same day.
 
-### Phase 3 (conditional on Gate 1): frozen-trunk, lag-conditioned fine-tune of Boltz-2
+Why this form. Mixing Boltz-2's ensembles with experiment's own global unfolding population (Table S4's dG_global, the
+best any global add-on could do) leaves every Spearman as it was (EHEE 0.74, HEEH 0.04, Ub psWT -0.19): an unfolded
+state adds the same open fraction to every amide. The errors are site-specific inside the folded ensemble (Phase 1's
+urea item), so the add-on has to change where Boltz-2 opens, during sampling. What-if substitutions (rescored in
+memory, about +-0.05): Ub psWT reaches about 0.48 if V70, I13, W45 and L67 open at experiment's values and about 0.73
+if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed and 0.70 with the hairpin too.
 
-- [ ] Blocker: no Boltz-2 training code. Either wait for its release or write a training loop for the diffusion
-      module only. The EDM loss weight and noise distribution are already in `diffusionv2.py` lines 532 to 542.
-- [ ] Lag conditioning (Schreiner et al. 2023), ported from BioEmu2 at `f99e0d8` (`github.com/microsoft/bioemu2`,
-      MIT; code only, section 1). Paths relative to its `src/bioemu2/`, read 2026-10-21:
-  * `x_0` projection into the atom queries: `cond_to_q_trans = LinearNoBias(3, atom_s)`
-    (`biomoa/modules/encoders.py:160`, applied at 314). Initialize it to zero here, so the fine-tune starts from
-    Boltz-2 unchanged;
-  * a gate on `x_0` that decreases with lag, so long lags fall back to the equilibrium distribution:
-    `g(tau) = sum_k softplus(w_k) exp(-tau/tau_k)`, `MultiExponentialTimeEmbedding` (`biomoa/modules/time.py`),
-    weights initialized to 1/n (`encoders.py:163-166`, 318-320);
-  * the lag embedding in the single conditioning: `DampedHarmonicTimeEmbedding` (`time.py`; 32 log-spaced
-    timescales from 1 ps to 1 ms, each with 4 oscillation frequencies), projected and added at
-    `biomoa/modules/diffusion.py:417-418`, 450-455;
-  * a per-sample flag `is_dynamics_conditioned` that zeroes both inputs, so lagged and unconditioned examples train
-    together (`encoders.py:322-324`, `diffusion.py:452`);
-  * the same random rotation and translation applied to `x_0` and to the noisy coordinates at every denoising step
-    (`denoising/edm.py:136-149`), and endpoints aligned to `x_0` (`propagation.py:471`).
+* Target p(x) proportional to p_Boltz(x) exp(-U_phi(x; T)), sampled by Boltz-2's own steering with its weights frozen:
+  `model/potentials/potentials.py` (`Potential`, `get_potentials`) and `diffusionv2.py` `AtomDiffusion.sample`
+  (gradient guidance on the denoised x0; Feynman-Kac resampling with the guided/unguided correction `ll_difference`).
+* U_phi = -sum_s mu_s O_s(x) - sum_i lambda_i o_i(x). o_i is a differentiable per-amide open score from N, CA and C, a
+  small surrogate trained to reproduce `get_protection_state.py`'s H-bond and burial flags on non-test frames; O_s is
+  its mean over secondary-structure element s. mu and lambda come from a small network on the frozen `s_trunk` and the
+  temperature, lambda_i shrunk toward zero so the order inside an element stays Boltz-2's, which is what ranks EHEE.
+  This is the maximum-entropy form: the smallest change to Boltz-2's distribution that moves the open fractions.
+* A global term: a small network for dG_unf, entering as p_open,i = (1 - f_U) p_open,i(folded) + f_U. It sets
+  absolute values and the crossover to global exchange, never the order.
+* Two sampler changes, in our wrapper (subclass or patch at import; nothing in Boltz's tree or a venv): every final
+  particle kept with its weight, since the sampler draws one per group at the last step (`torch.multinomial(..., 1)`),
+  which biases events near 1e-4; and guidance only where the reverse step is stochastic, since noise is off below
+  `gamma_min` and `ll_difference` does not apply there.
+* Readout: weighted flags, p a weighted mean and the bound RT ln(N_eff). `dg_phase1.readout()` gains weights; uniform
+  weights must reproduce its present output byte for byte.
+* Training signal: Ferrari et al. (Rocklin lab; bioRxiv 2025.03.20.644235, PMC11974690, published in Nature),
+  multiplexed HDX-MS of 5,778 domains of 28-64 residues (3,590 stable) at 20 C, pH 6 and 9, each with an unassigned
+  set of opening free energies, 13 also with site-resolved HDX-NMR. Data through the authors' form
+  (https://forms.gle/RwJwvfw6WN4gjXaD9); raw spectra PRIDE PXD061702. Experiment is the only teacher whose ceiling is
+  above Upside: Upside REMD caps the add-on at Upside, and mdCATH's 1 ns frames cannot resolve 1e-4 openings.
+* Loss per domain: the 1-D Wasserstein distance between the estimator's dG set and the measured set, plus dG_unf
+  regression, on a fixed library of 10^3 unguided and 10^3 element-steered samples per domain with path weights and
+  precomputed flags, so no gradient passes through Boltz. Held out: the three test proteins, the EHEE and HEEH
+  topologies and beta-grasp domains; the 13 NMR domains validate the residue assignment.
+* Code in `scratchpad/boltz_hdx/addon/` (git-ignored) and `$B/addon/` on midway3.
 
-  BioEmu2 releases no training code either, so the blocker above stands.
-- [ ] Data: mdCATH at 320 K (5,398 domains, 5 replicas of up to about 500 ns, 1 ns frames) gives lags from 1 ns to
-      a few hundred ns, and the learned kinetics inherit CHARMM22*/TIP3P. Map frames to Boltz's heavy-atom order.
-      Hold out the Phase 1 domains and their CATH superfamilies.
-- [ ] MSAs for all domains (ColabFold server; days of CPU or wall time, no GPU).
-- [ ] Precompute trunk embeddings, one pass per domain: tens of GPU-hours (*estimate*). Storage at 128 bf16 pair
-      channels is about 6 MB at 150 residues and 23 MB at 300, 50 to 150 GB in total.
-- [ ] Pilot on about 200 domains: one 4-GPU node, one 35.5 h job, about 150 GPU-hours. Check that the loss depends
-      on `x_0` and the lag (ablate each at evaluation) and measure seconds per step.
-- [ ] Full run: 100 to 1,000 GPU-hours (*estimate*), that is 1 to 7 chained 36 h jobs on one node, with
-      checkpoint/restart chaining like `upside2-md/training/train_chain.sbatch`. Re-estimate after the pilot.
-- [ ] Evaluate with the Phase 1 and Phase 2 metrics, against Phase 1's untrained Boltz-2 on the same domains.
+- [ ] E1, the falsifier (about 7 V100-hours, no training): untrained Boltz-2's own rare open fractions by particle
+      resampling, one amide at a time, with an opening potential whose bias is undone in the weights; 1,024
+      particles per amide, two seeds.
+      * First, the wrapper with the add-on off reproduces plain Boltz-2's samples for the same seed, coordinates
+        equal.
+      * Calibration: on amides the unguided sets open at least 10 times (Ub psWT D21 at 12 of 10^5, HEEH T24, the
+        others by count) the estimate lies within a factor of 2 of the unguided frequency, with N_eff >= 50.
+      * Support: V70, I13, W45 and L67 get open samples with no C-N bond over 2 A and the rest within 3 A CA-RMSD,
+        and finite estimates (+-50%).
+      * Either failing stops the route: the local class cannot be fixed by a Boltz add-on, and Ub psWT tops out
+        near 0.20, below Upside's 0.43.
+      * 2026-10-27, in a local CPU sandbox (`scratchpad/boltz_hdx/addon/sandbox/`: the midway3 Boltz tree, torch
+        2.14.1, the same weights): the parity check passes (8 samples, seed 7, coordinates equal), and the steered path
+        runs end to end. The first opening potential (`opening.py`, Boltz's own N and O atoms) left Upside's H-bond at
+        V70 in place (0.43-0.98): the estimator infers H and O from N, CA and C, so the potential has to act through
+        that geometry and through the coverage burial, the surrogate E3 needs anyway. The GPU pilot keeps only the
+        parity check and an unguided reference until then.
+      * What the support check is up against, from the 10^5 unguided flags: an amide is open only with H-bond <= 0.01
+        and burial <= 5, and V70, I13 and L67 never come below burial 10.2 (0.001% quantile; 0-1 of 10^5 below 9), W45
+        below 6.4. Their tails fall a decade per 1.5-2.5 burial units, so Boltz-2's own open fraction there extrapolates
+        to about 1e-7 to 1e-8 before the H-bond condition, against experiment's 6e-5 to 1.2e-4. Amides that do open
+        have heavy tails (Y59 88 samples below 5, D21 12). Extrapolated, not measured: E1 measures it.
+      * Status at the 10-27 handoff: the GPU pilot 61663101 (parity, 64 unguided) is queued (remote_jobs.md §1 line
+        4). Next is the user's: an opening potential through the estimator's own geometry, then E1's calibration and
+        support runs (recommended), or the route closed.
+- [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours;
+      the full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the
+      library's domain list (its Table S1).
+- [ ] E3, training: the surrogate (per-flag accuracy on held-out frames reported), then the tilt and the global term
+      (CPU or under 10 GPU-hours), selected on the 13 NMR domains.
+- [ ] E4, the test, its rule fixed here before the data: steered sampling at experiment's temperature for EHEE, HEEH
+      and Ub psWT, two seeds, about 40 V100-hours. Censored Spearman >= Upside FF2's on all three (0.61, 0.43, 0.32)
+      with a block bootstrap, and Ub psWT's correlation of error with urea class (now -0.43) within +-0.2.
+      Ablations: no tilt, no global term, element terms only, lambda_i unshrunk.
 
 ## 5. Known risks and blockers
 
-* No energy and no temperature input: Boltz populations cannot be reweighted, and dG resolution is RT ln(N) at one
-  condition (section 2.1).
-* HDX in stable proteins comes from rare openings on millisecond-to-second timescales. mdCATH's 320 K runs of up to
-  about 500 ns do not contain them, so a Phase 3 fine-tune on that data cannot learn their populations.
+* No energy and no temperature input: Boltz-2's frequencies are not Boltzmann weights, and dG resolution is RT ln(N)
+  at one condition (section 2.1). Phase 2's tilt supplies the correction, learned from experiment at 20 C, so its
+  temperature and pD dependence (the tests are at 273-298 K, pD 4.6-7.6) is extrapolated by 0.5-1 kcal/mol at worst.
+* Global and subglobal openings (HEEH's helices and hairpin, ubiquitin's strand 1) are rare events on
+  millisecond-to-second timescales. mdCATH's 320 K runs of up to about 500 ns do not contain them, so that data
+  cannot teach their populations. Local openings (Ub psWT's V70, I13, W45, L67) are
+  fluctuations of the folded state at populations near 1e-4; whether mdCATH-length MD samples them is not measured.
 * Boltz-2 trained on mdCATH: Phase 1 domains must come from its held-out clusters (Phase 1).
 * The 89-domain panel holds stable native states, which makes it a weak test of transitions (Phase 1 adds switching
   domains for this).
 * `step_scale` 1.0 gives bond-length scatter 2 to 4x the crystal spread. It does not change the protection flags
-  (Phase 0), but any use beyond the HDX estimator, such as Phase 2's chain or comparisons of local geometry with MD,
+  (Phase 0), but any use beyond the HDX estimator, such as comparisons of local geometry with MD,
   has to deal with it. Boltz-2 also draws salt bridges and H-bonds 0.3 A or more too short at every setting.
 * Compute nodes reach RCSB and Hugging Face; whether they can query ColabFold is untested, so MSAs are fetched on
   the login node.
-* Phase 3 is blocked on Boltz-2 training code, or on writing a diffusion-only training loop.
+* Phase 2's sampling correction `ll_difference` treats the previous guidance shift as noise and ignores the update's
+  Jacobian; if that bias matters, every steered estimate is biased (E1 tests it).
+* Phase 2's labels are unassigned dG sets: the right values can land on the wrong residues, and only the 13 NMR
+  domains check the assignment. The library holds 28-64 residue domains; Ub psWT has 76.
+* With 15-24 measured amides per protein, Spearman intervals are about +-0.3, so a tie with Upside may stay
+  undecided. Family leakage through the HDX-MS library is checked against its domain list.
+* Phase 2's compute is about 300 V100-hours in all; E1 alone, about 7, commits nothing else.
 
 ## 6. References
 
@@ -516,7 +600,7 @@ Two settings depart from the defaults, for the V100: `trimul_variant: full` in a
         read 0.21-0.43): the sample order is not fully exchangeable there. No other donor differs.
       * Close relatives of all three proteins may be in BioEmu2's training data (above), so even an agreement would
         not be a held-out test.
-- [ ] EHEE and Ub psWT at 10^5 (user 2026-10-25, the controlled tests): the resolving test BioEmu2 has not had,
+- [x] EHEE and Ub psWT at 10^5 (user 2026-10-25, the controlled tests): the resolving test BioEmu2 has not had,
       at its default settings and MSAs. 10 jobs of one run of 10^4 per protein, seeds 1000, 1100, ..., 1900:
       BioEmu2 seeds batch i of a run with SEED + i, so runs of 100 batches need seeds 100 apart, and these are
       independent of 61445028's seed 1. `$E/sample.sbatch` takes `NAME:N:SEED`; `$E/submitted_1e5.txt` and
@@ -525,3 +609,43 @@ Two settings depart from the defaults, for the V100: `trimul_variant: full` in a
       data: the Boltz-2 10^5 statistics (resolved Pearson and Spearman, censored Spearman with a block bootstrap,
       Upside FF2 on the same comparison, halves, open fractions, shortfall below min(experiment, bound)); with HEEH
       this decides whether BioEmu2 ranks these proteins' HDX, and the training overlap above still holds.
+      * EHEE, read out 2026-10-27 (Ub psWT 3 of 10 jobs done): the 10 jobs copied (md5-equal) and pooled in ledger
+        order into `samples/ehee_bioemu2_n100000.npz` (halves: seeds 1000-1400 against 1500-1900); `readout.sh`
+        reran every set and the earlier flags, tables and profiles reproduce byte for byte. CA-RMSD to the design
+        median 0.74 A, Rg 9.25 +- 0.52 A, C-N 1.337 +- 0.028 A with none over 2 A, no sample repeats; 265 of 10^5
+        lie beyond 8 A (Rg up to 34.9 A). Figure `dg/ehee_bioemu2_n100000_dG_vs_residue.png`.
+        - BioEmu2 opens EHEE far too often. All 15 measured amides resolve, but at 3.52-4.70 kcal/mol against
+          experiment's 4.02-8.41: every one falls below min(experiment, bound) (mean shortfall 2.43 kcal/mol; Upside
+          FF2 at 11 of 15, 1.01), with open fractions of 4e-4 to 2.6e-3 against experiment's 7e-7 to 1.1e-3.
+        - The cause is a globally unfolded population. 184 of 10^5 samples (0.18%) have more than half their donors
+          open, and they give 77% of the measured amides' openings (61-94% per amide; 97% come from samples beyond
+          4 A of the design). An unfolded population near 0.2% puts every amide near RT ln(1/0.002) = 3.7 kcal/mol,
+          where experiment's most stable amides (8.4 kcal/mol) put it near 1e-6.
+        - The order is partly kept: Spearman 0.561 (p 0.03) and Pearson 0.648 over the 15; censored at the bound
+          0.457 (bootstrap 95% 0.356 to 0.603), above Upside FF2's 0.609 in 1.8% of the resamples. The halves agree to
+          0.08 kcal/mol rms (smallest Fisher p 0.162), so this is the model's ensemble, not counting noise.
+      * Ub psWT, read out 2026-10-27 12:40: the 10 jobs copied (md5-equal) and pooled the same way into
+        `samples/ubqps_bioemu2_n100000.npz`; `readout.sh` reran every set and every earlier flag, table, profile and
+        figure reproduces byte for byte. Seed 1700's `physicality.json` rejects one frame ("isolated_atoms"), which
+        BioEmu2 still writes to `samples.xtc`; its N, CA and C, all the flags read, are ordinary (CA-RMSD 2.13 A, C-N at
+        most 1.40 A), and it is kept, as every sample is. CA-RMSD to the reference median 2.22 A, at most 4.17 A; Rg
+        11.31 +- 0.16 A; C-N 1.338 +- 0.029 A, one sample over 2 A (bond 74-75, the C-terminal tail); no sample repeats. Figure
+        `dg/ubqps_bioemu2_n100000_dG_vs_residue.png`.
+        - BioEmu2 holds ubiquitin in its native basin. No sample lies beyond 4.2 A of the reference or has more than
+          29% of its donors open, so the measured amides open only by local fluctuations of the folded state: 7 of
+          the 24 ever open (Y59 41 times, L69 14, L50 2, K27, A28, I30 and L56 once each), and the samples that open
+          Y59 or L69 lie no farther from the reference than the rest (median 2.2-2.4 A).
+        - Experiment's least stable amides open through fluctuations BioEmu2 does not sample. V70, W45, I13 and L67
+          (open fractions 6e-5 to 1.2e-4) would open 6-12 times in 10^5 samples and never do (Poisson p 4e-6 to
+          2.4e-3), while Y59 opens ten times as often as experiment's 4e-5.
+        - The order is not kept: Spearman 0.788 (p 0.04) over the 7 resolved (Upside FF2 0.679 at the same 7), but
+          censored at the bound over all 24, 0.063 (p 0.77; bootstrap 95% -0.068 to 0.425), above Upside FF2's 0.432
+          in none of 2,000 resamples. The shortfall test sees only over-opening: BioEmu2 falls below min(experiment,
+          bound) at 6 of 24 (mean 0.07 kcal/mol; Upside FF2 at 21, 1.65), 4 of them a single opening at RT ln(99999),
+          1e-5 kcal/mol under the bound; the real ones are Y59 (4.23 against 5.45) and L69 (4.81 against 5.16). No
+          donor differs between the halves (smallest Fisher p 0.011).
+      * The test's answer, with HEEH: at its default settings and MSAs BioEmu2 does not rank these proteins' HDX as
+        well as Upside FF2. It loses the order on Ub psWT (censored Spearman 0.06 against 0.43), keeps part of it on
+        EHEE (0.46 against 0.61, above Upside in 1.8% of resamples), and on HEEH neither model's Spearman differs from
+        zero. Its stability errors run both ways: EHEE unfolds globally in 0.18% of samples, about 2.4 kcal/mol too
+        often, and ubiquitin never leaves its native basin. The training overlap above still holds.

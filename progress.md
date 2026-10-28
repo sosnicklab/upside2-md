@@ -1687,6 +1687,14 @@ to 10-07 12:00 is in git history.
   molecules, tail core 14.5/25.3/29.3 A against 15.7-16.1/27.9-28.3, heads 99.5% outside), so the glpG complex's head
   coat is the protein-detergent contact of the frozen Martini glpG or the excess detergent; the side-chain/lipid table
   covers DDM's bead types (C1, Na, P1, P2, P4). Findings 7.5. Files: findings.md, plan.md.
+- 10-27 08:50-09:38, MacBook Pro (diffusion_dynamics.md Phase 1 and section 7; user: "Proceed with Boltz and Bioemu2
+  job"). Read out the Boltz-2 query-only MSA control and BioEmu2's EHEE at 10^5. Tools from the handoff bundle; the
+  flag code's scratch engine rebuilt at 6d295b0 (`git archive` of src and parameters, eigen@3 and libomp flags), which
+  reproduces the earlier flags byte for byte under Python 3.15. 40 job npz copied md5-equal and pooled in ledger order
+  (the two MSA 10^5 sets rebuilt too); the 10-25 Boltz log, tables and profiles and every earlier BioEmu2 output
+  reproduce byte for byte. Results: MSA depth ruled out on Ub psWT (censored Spearman -0.06, bootstrap -0.25 to 0.09);
+  BioEmu2 opens EHEE through a 0.18% unfolded population, all 15 amides at 3.5-4.7 kcal/mol (censored Spearman 0.46,
+  Upside FF2 0.61). Files: diffusion_dynamics.md, remote_jobs.md, scratchpad readout scripts (SETS added).
 - 10-27 12:00-13:20, Mac Studio (user: "just deleted python@3.11 from the system. Check if we can migrate to 3.15
   here", then "check if we use 3.14 or 3.13 that can make everything work", then "transit to 3.14 then").
   `.venv` is now Homebrew Python 3.14.10, built by `install_python_env.sh`, which moves from 3.15 to 3.14 and
@@ -1708,3 +1716,58 @@ to 10-07 12:00 is in git history.
   `rama_map_pot/rama_pot` rows 1, 4, 8 in chig_rama); node_fd one bad entry in each of 6 checks over 1dfn_cavity,
   1qhj_memb, 1rkl_channel, 1ubq_rotamer, chig_hbbb. The 1rkl hybrid fixtures exist only on the MacBook and were
   not rerun. Files: install_python_env.sh, progress.md.
+- 10-27 12:32-12:55, MacBook Pro (diffusion_dynamics.md section 7; the same instruction). BioEmu2's Ub psWT 10 jobs
+  finished by 12:22; copied md5-equal, pooled in ledger order (100,000 samples; seed 1700's one physicality-rejected
+  frame, "isolated_atoms", is in `samples.xtc` with an ordinary backbone and is kept) and read out with `readout.sh`;
+  every earlier flag, table, profile and figure reproduces byte for byte. Result: BioEmu2 never leaves ubiquitin's
+  native basin (CA-RMSD at most 4.17 A), so experiment's least stable amides V70, W45, I13 and L67 never open (6-12
+  expected each), and the order is lost (censored Spearman 0.06, bootstrap -0.07 to 0.43; Upside FF2 0.43). With
+  HEEH and EHEE, BioEmu2 at its defaults does not rank these proteins' HDX as well as Upside FF2; section 7's 10^5
+  item closed. Files: diffusion_dynamics.md, remote_jobs.md, scratchpad readout scripts (SETS added).
+- 10-27 13:38-13:55, MacBook Pro (user: "Git pull and merge. Also check if we need to fix the venv"; the read-only git
+  rule lifted for this request). Fast-forwarded martini-dev 096486cb -> 3005a3fd (the Mac Studio's 3.14 move above
+  and upside3.md 5.7); the only overlap, this file, was restored to HEAD and the MacBook's two entries re-inserted in
+  time order, nothing stashed or committed. The venv needed it: the 3.15.1 `.venv` (kept as
+  `.venv.bak_py315_20261027`) lacked the script's torch, pydssp, pyhdx and hdxms-datasets; rebuilt by
+  `install_python_env.sh` on Homebrew 3.14.10, the Mac Studio's versions, `pip check` clean. `source.sh` already equals
+  `source_arm` and `obj/` has `get_param_size`, so neither needed the Mac Studio's fixes. Verified against the 3.15
+  venv on the same build: the 28 fixtures equal but for the work directory in `/input/args` and `/input/adv_args`,
+  regress 0 of 4064 arrays differ; the BioEmu2 and Boltz HDX readouts reproduce byte for byte (flags, tables,
+  profiles, figures; configs and trajectories equal in content, their bytes differing only by h5py's timestamps).
+  `run_flags.sh` needs Phase 1's small sample files, which this machine lacks, so its flags were rerun from the
+  trajectories on disk. Files: progress.md, the memory note on Python versions.
+- 10-27 15:20-15:55, MacBook Pro (diffusion_dynamics.md Phase 1 and Gate 1; user agreed to "record the Gate 1
+  verdict, read the urea dependence, copy the missing samples"). Copied Phase 1's three small Boltz sample sets from
+  midway3 (md5-equal), so `run_flags.sh` now runs end to end here: all 88 flag files and 24 dG outputs reproduce byte
+  for byte, HEEH's included. Read Peng 2022 SI Tables S4-S7: each amide's urea slope against the global m-value
+  (`flags/urea_classes.py`) shows EHEE's measured amides subglobal, HEEH's helices global and its hairpin subglobal,
+  and Ub psWT's amides below the bound local, the four Boltz-2 never opens among them. Gate 1's HDX half recorded as
+  "wrong states"; the risk that mdCATH lacks the openings now holds for global and subglobal ones only. Files:
+  diffusion_dynamics.md, scratchpad urea_classes.py.
+- 10-27 16:05-16:40, MacBook Pro (diffusion_dynamics.md Phase 2; user: "You are not allowed to retrain boltz ... But
+  you can train small models as addons to make it work"). Measured first that a global add-on cannot help: Boltz-2's
+  ensembles mixed with experiment's own dG_global keep Spearman 0.74, 0.04 and -0.19, so the errors sit inside the
+  folded ensemble. An independent design (Plan agent) agreed. Plan approved: a learned tilt potential sampled through
+  Boltz-2's own guidance and Feynman-Kac resampling, trained on Ferrari et al.'s multiplexed HDX-MS (verified on
+  PMC11974690; data through the authors' form), gated by E1, a no-training test of whether steered Boltz-2 can
+  estimate its own rare openings. The 10-21 Phases 2-3 (renoise chain, fine-tune) dropped. Files:
+  diffusion_dynamics.md.
+- 10-27 16:40-19:10, MacBook Pro (diffusion_dynamics.md Phase 2 E1). Wrote the add-on's first code
+  (`scratchpad/boltz_hdx/addon/`: `sampler.py`, Boltz's sampler with the guided/unguided ratio accumulated every
+  noisy step, guidance only before noisy steps and every particle returned with its weight; `opening.py`;
+  `e1_rare.py`; `e1.sbatch`; `e1_readout.py`), submitted the GPU pilot 61663101 (midway3 V100, queued to about
+  20:18 10-28) and built a CPU sandbox with the cluster's Boltz tree. Parity passes (coordinates equal); a bug in
+  `opening.py` (numpy structured strides) fixed before the job runs. The first potential acted on Boltz's O atoms, not
+  the estimator's inferred geometry, and the 10^5 flags show V70, I13, W45, L67 buried far past the open threshold
+  in every sample. Ran a cluster script from /tmp and imported another user's module: findings 10.41. Files:
+  diffusion_dynamics.md, remote_jobs.md, findings.md, scratchpad add-on.
+- 10-27 19:10-22:30, MacBook Pro (the watch; then the handoff, user: "Record this session's progress and I will quit
+  and work on another computer"). Watch passes 19:32, 20:32 and 21:32: ff3.1's mdCATH TM job (level with released
+  ff2.1, above the control); ff3.1 Peng BBA de novo COMPLETE 19:39 (final frames finite, longest C-N 1.68 A, KE/1.5kT
+  0.999-1.008) and scored at the collector's 22:07 pass with BBL native (3 of 32); the Mac Studio session's 20:32
+  submissions recorded (8 Peng seed replicates; ff3.0 glpG `n_blocks` 1 -> 3, block 2 queued) and that session told.
+  The midway3 socket master ended about 21:40 and was not reopened. Handoff: watch cron `4ff7a1bc` deleted, owner set
+  to none, the watch prompt rewritten for the jobs now live (the E1 pilot in place of the finished controlled tests,
+  ff3.0's REMD log, the seed replicates' logs, final frames by `final_frames.py`), the bundle given the MacBook's
+  records, working-tree patch, memory and git-ignored Phase 2 tools. Files: remote_jobs.md, diffusion_dynamics.md,
+  progress.md.

@@ -1251,7 +1251,10 @@ between the runs to their own noise except glycine's alpha_L, whose shared-offse
    runs on Upside 3 instead (user's choice).
 4. [ ] (submitted 10:03 10-26) Panels mdc_ff31 and p44_ff31, their TM jobs against released ff2.1 and the control,
    Peng's 32 arms and the collector (`checks/ff31_merged_20261026/submit.sh`); glpG on Upside 3 with ff3.1
-   (Phase 24 2b.4, Known Errors); read each as it finishes (remote_jobs.md §1 lines 2-3).
+   (Phase 24 2b.4, Known Errors); read each as it finishes (remote_jobs.md §1 lines 2-3). Panels read 10-27: ff3.1 is
+   level with released ff2.1 on both (mean TM +0.006 [-0.001, +0.012] on the 44 domains, +0.005 [-0.001, +0.012] on
+   mdCATH's 89) and above the control on both (+0.037, +0.031). glpG on Upside 3: ff3.1 loses TM4 in preparation as
+   ff2.1 does, ff3.0 holds it (findings 3.15). Peng's arms are still running.
 
 ### Phase 31 - glpG in a DDM micelle with ff3.1 on Upside 3 (STARTED 2026-10-26, user)
 User 10-26: "setup a DMM simulation for glpG, which we did experiment on ... DMM should be single layer instead of
@@ -1299,17 +1302,12 @@ Decisions:
 
 ## Known Errors / Blockers
 
-* **Upside 3's glpG hybrid with ff2.1 loses TM4 in preparation stage 7.0** (findings 3.15, 10-26): every other
-  helix, KE and C-N read as on Upside 2's hybrid. No Upside 2 ff2.1 run shares its corrected side-chain placement
-  (findings 3.15, 10.40), so the ff2.1 numbers are no reference. Two tests, the same preparation and seeds, each read
-  at the end of stage 7.0:
-  - ff3.1 (user 10-26, "first double check if it is because you run it with ff2.1"; A234;
-    `upside3_validation/glpg_ff31`, submitted 10:11 10-26): ff2.1 with only its map trained, so it tests the map.
-  - **ff3.0, the matched test** (user 10-26, "do submit ff3.0"; A235; `upside3_validation/glpg_ff30`, submitted 14:13
-    10-26): its placement-fixed Upside 2 chains hold TM4 (DSSP 0.96 at T 0.70). Lost on Upside 3 means an Upside 3
-    cause, then which audit change (NC3 charge in the side-chain/lipid table, A83's ALA/GLY rows, A72's rotamer 1-body,
-    or something new) moves TM4's energy; held means the loss is ff2.1's own with correct placement.
-  Until then no Upside 3 hybrid HDX result is read.
+* **Upside 3's glpG hybrid with ff2.1 loses TM4 in preparation stage 7.0** (findings 3.15, 10-26), answered 10-27:
+  the loss is ff2.1's own, not Upside 3's. The same preparation and seeds, read at the end of stage 7.0: ff3.0 (A235,
+  `upside3_validation/glpg_ff30`), whose placement-fixed Upside 2 chains hold TM4, holds it on Upside 3 too (TM4 DSSP
+  alpha 0.88 at the last frame, last tenth 0.82); ff3.1 (A234, `glpg_ff31`), ff2.1 with only its map trained, loses it
+  (0.59, last tenth 0.36) as ff2.1 does (0.24, 0.41). ff3.0's REMD block 1 at T 0.70 confirms it against Upside 2's
+  0.96. Which force field the Upside 3 hybrid HDX uses is the user's call; no Upside 3 hybrid HDX result is read before.
 
 * **Every hybrid dry-MARTINI result so far carries these defects** (audit 10-20; fixes in preparation, plan.md Phase 24).
   * The side-chain/lipid interface table treats the choline bead NC3 (+1) as neutral: the builder takes charge from
