@@ -476,7 +476,42 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
       * E1 proper, at that setting, 1,024 particles, seeds 1 and 2. Calibration: Ub psWT D21 (12 of 10^5 open
         unguided), E34 (35), Q41 (12), Y59 (80) and I61 (38); HEEH T24 (629 of 10^4) and Q5 (36).
         Support: Ub psWT I13, W45, L67, V70.
-      * Status: tuning queued.
+      * Tuning readout, 2026-10-28 on the Mac Studio (`e1_readout.sh` on the 12 npz; its scratch engine first
+        reproduced the pilot's 852 openings against 854.5 expected and C-N at most 1.56 A; output
+        `scratchpad/boltz_hdx/addon/runs/boltz_addon_e1_tune_ubqps_v100_61701305/readout.txt`). V70 opens only at
+        kappa 0.5 (3 of 256) and kappa 2 with guidance 0.05 (93 of 256); kappa 1 and 4 open none. Every open sample
+        has C-N under 2 A and the rest within 2.3-3.7 A CA-RMSD. I61's Feynman-Kac estimate against the unguided
+        3.8e-4: 2.1e-5 at kappa 0.5 (2 open), 6.4e-4 and 4.1e-4 at kappa 1 (N_eff 187, 176), then 3.4e-15 and
+        5.5e-14 at kappa 2 and 3.0e-37 at kappa 4. The rule picks kappa 2, guidance 0.05.
+      * **The Feynman-Kac estimate fails above kappa 1, so E1 proper is held** (user 10-28 had chosen "read E1
+        tuning, run E1"; held on this readout). The potential is zero on open states, so the tilt's normalizing
+        constant Z(kappa) = E[exp(-U)] is at least the open fraction (ln 3.8e-4 = -7.9 for I61), and ln Z(kappa)
+        must be convex in kappa. The runs' `log_z` is -6.3, -7.3, -33.3 and -84.1 at kappa 0.5, 1, 2 and 4 for I61
+        (V70 -9.2, -18.9, -39.7, -88.6): concave, and at kappa 2-4 22-76 nats under that floor. The final step adds
+        nothing (mean log-weight about 0), and the collapse follows kappa, not the guidance weight (at kappa 2,
+        -33.3 and -30.5). The rule's N_eff over the open particles (187-243) does not see it. Cause not identified:
+        weight degeneracy at 256 particles, or a defect in how the resampling increments enter `log_z`.
+        `sampler.py`'s bookkeeping reads correctly (the increments telescope along each lineage; the guidance
+        ratio is the Gaussian one). E1 proper at kappa 2 would fail calibration on I61 for the estimator's sake,
+        and the route would be stopped for the wrong reason.
+      * The diagnosis job (user 10-28: "go ahead on boltz job"), its reading fixed here before the data.
+        `sampler.py` records a `trace` at every resampling: the step, t_hat, the particles' mean and least energy,
+        the mean potential increment, the mean guidance log-ratio since the last resampling, the log mean weight
+        (`log_z`'s increment, except at the last step) and the effective sample size. Nothing it computes changes.
+        Runs, all on I61 at guidance 0.05: kappa 1 and 2 at 256 particles with seed 1 (the tuning's two runs again),
+        kappa 2 at 256 with seed 2, and kappa 1 and 2 at 1,024 with seed 1, kappa 2 at 1,024 with seed 2.
+        1. The two repeated runs reproduce the tuning's `log_z` (-7.93, -30.49) and open counts (177, 241 of 256);
+           otherwise the instrumented sampler differs, and nothing else is read.
+        2. Degeneracy if both 1,024-particle kappa-2 runs have `log_z` above both 256-particle kappa-2 runs, closer
+           to the floor -7.9; otherwise the shortfall does not shrink with the particle count, which points to a
+           defect in the weights.
+        3. The trace locates the steps where `log_z` loses its nats, and whether the effective sample size
+           collapses there.
+        Submitted 23:41 10-28 as **61755382** (`boltz_addon_e1_diag_ubqps_v100`, V100, 3 h; `remote_jobs.md` §1 line
+        4), task file `$B/addon/e1_diag_ubqps.txt`. Code in `$B/addon/`: `sampler.py` `83cdb782` and `e1_rare.py`
+        `7f0e1ee5` (the tuning's as `.bak_pre_trace_20261028`), ahead of the MacBook Pro's `addon/`. On stub Boltz
+        modules (a toy denoiser and potential, CPU) the instrumented sampler's coordinates, weights, energies and
+        `log_z` equal the old one's bitwise, and the trace's increments sum to `log_z`.
 - [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).

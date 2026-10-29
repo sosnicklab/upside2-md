@@ -682,6 +682,9 @@ validation on it"; chosen: glpG hybrid included in the validation, merge by aver
    Panels read 10-27: ff3.1 is level with released ff2.1 on both (mean TM +0.006 [-0.001, +0.012] on the 44 domains,
    +0.005 [-0.001, +0.012] on mdCATH's 89) and above the control on both (+0.037, +0.031). glpG on Upside 3: ff3.1
    loses TM4 in preparation as ff2.1 does, ff3.0 holds it (findings 3.15; Known Errors). Peng's arms are still running.
+   Seven of them (proteinB, proteinL and top7 both kinds, proteinG de novo) stopped 10:31 10-28 when their chunks'
+   self-resubmission met the Slurm controller outage; resubmitted 10-28 on the user's word with `bench.sbatch`'s own
+   resubmission line, each resuming from its checkpoint (remote_jobs.md §1 line 2).
 
 ### Phase 31 - glpG in a DDM micelle with ff3.1 on Upside 3 (STARTED 2026-10-26, user)
 User 10-26: "setup a DMM simulation for glpG, which we did experiment on ... DMM should be single layer instead of
@@ -753,7 +756,10 @@ share the minibatch order. Decisions:
    (`compare_init.txt`).
 2. [x] Submitted 23:03 10-27 to 76: 49634971 (R from 23:05), 49634972 (R from ~23:30); remote_jobs.md
    §1 line 2.
-3. [ ] Read at each round end and at 76.
+3. [ ] Read at each round end and at 76. Round 1 (read 22:10 10-28, `ff311_glypair` / `_mb2`): glycine's pair aR
+   +0.021 / +0.009, aL +0.216 / +0.163 (ff3.0 -0.107 / +0.517); epoch-0 pull aL t +4.1 / +4.2, aR -1.7 / -1.5;
+   -ln(P_aL / P_aR) -1.025 / -1.065 (ff2.1 -1.219, ff3.0 -0.598). alpha_L moves toward ff3.0's and is still pulled;
+   the test reads rounds 3-4.
 
 ### Phase 33 - fix the training's native target; ff3.1 retrained on it, and ff3.2 with every term trained (STARTED 2026-10-28, user)
 User 10-28: "try a version with everything trainable, start with current ff3.1, call it ff3.2. Fix ff3.1 according to
@@ -805,7 +811,25 @@ target, the Phase 32 runs kept.
 5. **ff3.2 has priority over ff3.1** (user 10-28, after Jumper's and Peng's statements that ConDiv trains all
    interaction parameters jointly: Jumper thesis p. 42-43, 65-66; Peng 2022 p. 551, SI p. 3). On every scheduling or
    reading conflict ff3.2 goes first.
-6. [ ] Read at each round end.
+6. [ ] Read at each round end. **Round 1, ff3.2** (read 22:10 10-28; ff3.1 is at step 16, its link pending): glycine's
+   shared offsets aR +0.026 -> -0.131, aL +0.422 -> +0.517, beta' -0.253 -> -0.316 (beta, pPII, pPII' within 0.04),
+   so its pair is ff3.0's (-0.107 / +0.517) after one round; epoch-0 pull aR t -3.2, aL +3.3, beta' -2.6, while the
+   held-out proteins pull aL the other way (-3.9 summed, training +40.2); -ln(P_aL / P_aR) -0.567 (ff3.0 -0.598,
+   ff3.1 -0.825). Native fidelity over epoch 0 (`native_fidelity.py`): glycine beta' natives 0.759 (n 366; ff3.1's
+   steps 0-15 0.756), alpha_R 0.997, non-glycine pPII' 0.904, non-glycine beta' 0.096 (n 26). **H-bond margin +0.192
+   -> +0.106 (step 18) -> +0.059 (step 31), under the +0.10 line**, E_beta now below E_alpha; at the same steps the
+   all-term ff3.1 rerun `a31` read +0.160 / +0.119 and the control `c9` +0.135 / +0.130, so this run loses the margin
+   about twice as fast. 24 of 24 proteins every step, KE/1.5kT at most 1.017. User 10-28 "proceed with your
+   suggestion": the run keeps training under the +0.10 line, as the earlier all-term runs did.
+   Glycine at 22:40 10-28: the pooled glycine map's alpha_L - alpha_R (`gly_rama_ff31_maps.py`'s cells) is -0.812
+   in ff3.2's round 1, against ff3.0 -0.836, the merged ff3.1 -1.064 and ff2.1 -1.460; over epoch 1's first 14
+   steps the pull is gone (alpha_R t -0.7, alpha_L +0.3, beta' -1.1), so the data holds it at ff3.0's balance.
+   ff3.1 (steps 0-15, no round written yet) is pulled the same way: alpha_L t +3.3, alpha_R -1.4, beta' -3.0.
+7. [ ] ff3.2's epoch-end panels, the folding test of the fix (epoch 0 read 23:30 10-28: folds 0.449, -0.167 [-0.206,
+   -0.129] against released ff2.1, level with `a32_00` and `a31_00`, so the fix does not cure epoch 0's loss; findings 1.37): tag `n32_EE` added to `submit_new.sh` (user 10-28), so
+   each epoch end gets the 176-run panel the all-term runs had and reads against `a31_EE`, `a32_EE` and `c9_EE`
+   (findings 1.37's table). `extract_ff.py` on the epoch-0 checkpoint writes a `rama.dat` md5-equal to the run's
+   `rama_round_01.dat` (`0c9b7978`; `checks/ff31_fix_20261028/extract_test_n32_00/`).
 
 ### Phase 34 - disordered regions in Upside 3: how accurate, and what could improve them (STARTED 2026-10-28, user)
 User 10-28: "for upside3, investigate the possibility of enhancing intrinsic disordered region simulation accuracy";

@@ -1753,6 +1753,7 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
 | ff3.2 (`f32`, stopped in step 69) | | 0.486 | 0.465 | 0.432 | |
 | ff3.1 rerun, fixed engine (`a31`) | | 0.436 | 0.449 | 0.462 | 0.420 |
 | ff3.2 rerun, fixed engine (`a32`) | | 0.452 | 0.481 | 0.435 | 0.432 |
+| ff3.2 on the fixed native target (`n32`, from the merged ff3.1, 10-28) | | 0.449 | | | |
 
 * **Every epoch of every run folds less than ff2.1** (p < 1e-6 each): ff_3.0_gdepth -0.152 [-0.196, -0.110], lower on
   37 of 44; ff_3.1_depth_data -0.164 [-0.202, -0.126], lower on 43. The starts are at ff2.1's level (`gdepth_start`
@@ -1760,6 +1761,12 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
 * **Most of it is the first epoch** (-0.13 to -0.23). Later epochs add -0.01 to -0.07 in ff3.1 and ff3.2, ff3.0 gives
   part back at epoch 3, and the control is flat (0.390, 0.405; on mdCATH its step 76 equals step 37, 1.36). So the
   cost is leaving ff2.1, not reaching the fixed point.
+* **The native-target fix does not change it** (plan.md Phase 33; read 23:30 10-28). Holding the native replica's
+  phi/psi (20 deg springs) and training every term from the merged ff3.1, epoch 0 folds 0.449: -0.167 [-0.206,
+  -0.129] against released ff2.1 (p 5e-8, lower on 42 of 44), level with the old target's all-term rerun `a32_00`
+  (-0.003 [-0.037, +0.031], p 0.46) and `a31_00` (+0.013 [-0.017, +0.043]); mean Q 0.783 against 0.829
+  (`checks/converge_20261020/paired_npz.py`). The fix moves glycine's map to ff3.0's balance in the same epoch, so
+  the loss is not the native target's dihedral drift.
 * **The round-3 mechanism** (1.17 A): with ff2.1's side-chain pair table put back, epoch 0 folds as ff2.1's start
   (`e00` 0.487, `e00_rot21` 0.583, ff2.1 -0.033); the table random-walks under Adam on a noise-dominated gradient. Not
   tested on the round-4 runs.
