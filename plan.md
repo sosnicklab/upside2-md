@@ -810,13 +810,18 @@ target, the Phase 32 runs kept.
 ### Phase 34 - disordered regions in Upside 3: how accurate, and what could improve them (STARTED 2026-10-28, user)
 User 10-28: "for upside3, investigate the possibility of enhancing intrinsic disordered region simulation accuracy";
 then "record everything in upside3.md. We will implement this later." The record is `upside3.md` 4.2 (what the model
-gives a disordered chain, the literature, B0 and its reading rules, candidates I1-I3); this phase tracks only status.
+gives a disordered chain, the literature, B0 and its reading rules, candidates I1-I3, steps, and a "Resume here" for
+a cold session); this phase tracks only status. User 10-28 after B0: "record this ... I will work on it later in
+another session".
 Decided by the user 10-28: no explicit electrostatic term (the trained terms already carry electrostatics, so it
 would count them twice); salt dependence is outside the model.
 1. [x] Literature and the SAXS panel (`scratchpad/idp_20261028/lit/`).
-2. [ ] B0 on the Mac (4.1 M6): ff2.1 and the SARW as stage A, ff3.1 as stage B (`panel_run.py`, launched 10-28
-   12:10, about 5.5 h on 11 cores; `results.txt` ends in DONE). Read with 4.2's rules and record the result there.
-3. [ ] I1-I3: after B0, in 4.1's order, on the user's word.
+2. [x] B0 on the Mac (4.1 M6), 10-28 11:56-19:37, recorded in 4.2. ff2.1 and ff3.1 make the same error. Both
+   are 11-15% compact, both collapse ACTR and A1-LCD into globules, and both leave Cv78 too expanded. 10-11 of 16
+   entries are unresolved. The routing is I1 with variants; I2 is not indicated and I3 is undecided.
+3. [ ] B1 (ACTR at 298 K, about 30 min on the Mac) and B2 (longer sampling or REMD; the user's choice), as in 4.2's
+   Steps.
+4. [ ] I1-I3: after B0, in 4.1's order, on the user's word.
 
 ## Known Errors / Blockers
 

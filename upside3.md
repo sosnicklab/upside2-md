@@ -321,7 +321,7 @@ Fitting to ensemble data has two precedents:
 * CALVADOS fits by Bayesian reweighting. It reuses frames while their effective fraction stays above 60%, under a
   prior over 70 hydrophobicity scales.
 
-**B0, the baseline (4.1 M6).** Mac, `scratchpad/idp_20261028/`, launched 10-28 12:10.
+**B0, the baseline (4.1 M6).** Mac, `scratchpad/idp_20261028/`, launched 10-28 11:56.
 * **Panel** (`panel.fasta`; table, sources and flags in `lit/review.md` 3.1-3.2): 16 SAXS entries of 24-441 residues,
   14 distinct sequences and conditions. They span net charge -43 to +15, kappa 0.08-0.78, proline 0-15% and aromatics
   0-15%:
@@ -369,6 +369,71 @@ Fitting to ensemble data has two precedents:
   * Wrong pairs or a poor r point to residue specificity in the trained terms: I1 with variants in its training set.
   * Wrong helicity points to I3.
 
+**B0 result: ff2.1, ff3.1 and the SARW** (stage A finished 10-28 16:10, stage B 19:37; `read_b0.py` applies the
+rules above, output `read_b0.txt`).
+* **Mechanism.** Under both force fields some disordered chains spend long stretches as collapsed globules, with Rg
+  within 1.3 times 2.2 A N^0.38 (fraction of frames, ff2.1 / ff3.1):
+  * ACTR, at 278 K: 77% / 68%.
+  * The A1-LCD variants: 32-61% / 35-50%, except +7K+12D at 5% / 6%.
+  * PNt: 16% / 23%. CoRNID: 2% / 18%. Alpha-synuclein: 8% / 5%.
+  * p27, PTMA, Ash1 and tau: at most 1%.
+
+  The switch between globule and coil is slow. For these entries the Rg autocorrelation time is 730-2,250 tu,
+  against 50-180 tu for the SARW. So their seeds disagree: under ff2.1, PNt seeds span 23.9-51.6 A and
+  alpha-synuclein seeds 20.0-33.7 A.
+* **Offset.**
+  * ff2.1: 0.886, 95% bootstrap 0.79-0.99.
+  * ff3.1: 0.850, bootstrap 0.77-0.95.
+  * SARW: 1.20, bootstrap 1.11-1.30.
+
+  Both force fields have an offset by the rule, a compaction of 11-15%.
+* **Sequence dependence beyond length.**
+  * ff2.1: r 0.46, rms log error 0.21 after the offset.
+  * ff3.1: r 0.49, rms log error 0.20.
+  * SARW: r 0.34, rms log error 0.16.
+
+  The misses whose seeds agree go opposite ways:
+  * ACTR: 14.1 A (ff2.1) and 14.5 A (ff3.1) against 26.3 A.
+  * p27 Cv78: 32.0 A and 30.9 A against 22.1 A.
+* **ff3.1 against ff2.1.** Entry by entry, ff3.1's seed range overlaps ff2.1's, with two exceptions:
+  * CoRNID: 31.3 A (seeds 25.0-40.0) against ff2.1's 47.7 A (43.6-50.2) and 47.0 A measured.
+  * Hst5: 12.3 A against 13.0 A, measured 13.8 A.
+
+  Apart from these two, ff3.1's trained map depths leave disordered-chain dimensions where ff2.1 had them.
+* **Pairs.**
+  * Cv78/Cv14: 1.056 +- 0.023 (ff2.1) and 1.076 +- 0.045 (ff3.1) against 0.753. Both are on the wrong side of 1:
+    the charge-segregated variant stays as expanded as the mixed one.
+  * The A1-LCD pairs carry model SE of 0.07-0.12 against measured differences of 6-13%, so this sampling cannot
+    resolve them. -12F+12Y/WT-NLS falls within 2 SE under both force fields. WT+NLS/WT-NLS is on the wrong side
+    under ff2.1 (1.081 +- 0.094) and within 2 SE under ff3.1 (0.900 +- 0.088). +7K+12D/WT+NLS is within 2 SE under
+    ff2.1 (1.284 +- 0.120) and 2.2 SE high under ff3.1 (1.368 +- 0.107).
+  * The SARW reproduces no pair, which is expected from a model without side-chain pair energies.
+* **SARW placement.** For A1-LCD, PNt, alpha-synuclein and tau, both force fields sit below experiment and the SARW
+  above it. For Cv78, both sit between them, and Cv14 is near experiment in both. Where the SARW matches experiment (Hst5, ACTR, Ash1, PTMA), both are
+  smaller. So the force-field error does not lean toward the SARW.
+* **ACTR helix 1** (1044-1054 in Iesmantavicius 2014's text numbering; their Fig. 1 labels the same residues one
+  higher). The wild type's secondary structure propensity, read from their Fig. 1b, is 0.39 at 278 K.
+  * ff2.1: 0.33 +- 0.10, with seeds 0.00-0.73.
+  * ff3.1: 0.25 +- 0.08, with seeds 0.00-0.50.
+  * SARW: 0.05.
+
+  Each collapsed chain holds its own helix content, so helix 1 is unresolved under both force fields. Stage A's
+  reading of "close to measured" came from the seed mean alone and is withdrawn. The other ACTR helices are not
+  compared.
+* **Convergence.** Unresolved by the rule (seed range above the miss): 11 of 16 ff2.1 entries (n_eff 53-580) and 10
+  of 16 ff3.1 entries (n_eff 39-413). Every SARW entry is resolved except ACTR and Ash1, which sit on experiment.
+* **Routing.** Both force fields make the same sequence-dependent error: ACTR and the A1-LCD variants collapse, and
+  the charge-segregated Cv78 does not compact. By the rules this points to residue specificity in the trained terms,
+  that is, I1 with variants such as A1-LCD and p27 in its training set. I2 is not indicated. I3 is undecided, since
+  helix 1 is unresolved.
+* **Open.**
+  * ACTR is the only entry at 278 K (T 0.793), so its collapse may come from the temperature mapping rather than the
+    sequence (step B1).
+  * The A1-LCD pairs, ACTR's helicity and the unresolved entries need longer sampling or REMD before they can be
+    read (step B2).
+  * ACTR's 26.3 A is CALVADOS 2's value. The local copy of Kjaergaard 2010 holds only the abstract, so its SAXS
+    source is unchecked (`lit/review.md` 3.2).
+
 **Candidates.** Each changes what training fits or an existing trained term, never adds a term, and follows
 section 4's rules.
 * **I1. An IDR size term in ConDiv's contrast** (4.1).
@@ -389,16 +454,56 @@ section 4's rules.
   * If disordered chains come out expanded toward the SARW, the target is weighed against I1. A target from
     measurements in water is the alternative, but the DSE is an ensemble contrast and SAXS gives one number per
     protein, so that form is still to be designed.
+
+  B0's answer: neither case holds. Both force fields sit on the compact side of experiment, away from the SARW, so
+  the SARW target is not what puts disordered chains off.
 * **I3. Local backbone balance.** Helicity of IDRs comes from the map depths, which ff3.1 trains, and the H-bond
   energies. B0's ff2.1 against ff3.1 is its first test. Its design is shared with 5.7's D3.
-  * Targets: ACTR's helix-1 series (23-69% helicity over wild type and eight mutants at 277 K; Iesmantavicius 2014).
+  * B0's answer: ff3.1's map depths leave dimensions where ff2.1 had them, except CoRNID and Hst5. ACTR helix 1 is
+    unresolved, because the seeds of the collapsed chain range 0.00-0.73.
+  * Targets: ACTR's helix-1 series, eight mutants at 23-69% helicity and the wild type at 0.39, at 278 K (5 C)
+    (Iesmantavicius 2014). Reading it needs ACTR expanded and sampled first (B1, B2).
   * Per-residue helix and strand populations from BMRB chemical shifts, reweighted as in Jeon 2026.
 * **Not taken:** an explicit electrostatic term (user 10-28, double counting); restraints on folded parts.
 
-**Steps** (recorded 10-28; implemented later, on the user's word).
-- [ ] B0: the baseline above. Read `results.txt` and `stat_ineff.txt` with the rules, and record the result here.
+**Steps** (recorded 10-28; the user will take them up in a later session).
+- [x] B0: the baseline above, read and recorded (10-28 11:56-19:37, MacBook Pro).
+- [ ] B1. ACTR's temperature (Mac, about 30 min including the re-analysis). Run ACTR at 298 K under ff2.1 and ff3.1
+  with 6 seeds each, and read it against the 278 K runs.
+  * If ACTR opens at 298 K, the collapse comes from the T_K / 350.588 mapping, which reaches every IDP measured
+    below 298 K.
+  * If it stays collapsed, the cause is the sequence.
+
+  The test compares the model with itself, so it needs no measured Rg at 298 K. The new entry is kept out of
+  `read_b0.py`'s summary set.
+- [ ] B2. Sampling, before I1, whose targets need the same sampling. The seed spread falls as the square root of
+  run length, so 4x longer runs (120,000 tu) halve it.
+  * Running the whole panel that long takes about 13 h per force field on the Mac. PNt would still be marginal, with
+    a seed range of 23-28 A against a 12-14 A miss.
+  * REMD on midway2 is the alternative for the long chains.
+  * The choice is the user's.
 - [ ] B0 on the base force field (plan.md Phase 33), once released.
-- [ ] I1-I3: designs and the training IDP set, after B0 and in 4.1's order (after HDX and large proteins).
+- [ ] I1-I3: designs and the training IDP set, after B0 and in 4.1's order (after HDX and large proteins). B0
+  points to I1.
+
+**Resume here** (a cold session doing B1, B2 or a rerun):
+* **Where the data are.** Everything is in `scratchpad/idp_20261028/` on this MacBook Pro only. It is gitignored,
+  with 2.6 GB of trajectories. A session on another computer copies it first, or reruns B0, which takes about 7.7 h
+  on 11 workers.
+* **Environment.** Run `source .venv/bin/activate && source source.sh` from the repo root. `panel_run.py`,
+  `stat_ineff.py` and `read_b0.py` need `UPSIDE_HOME`.
+* **Adding an entry.**
+  * Add it to `panel.fasta`; the header is `name|Rg_A|err_A|T_K|ionic_strength_M|reference`.
+  * `panel_run.py` skips finished runs, so the rerun simulates only the new entry's seeds, then re-analyses every
+    entry and rewrites `results.txt`.
+  * Launch it detached with `scratchpad/detach.sh LOG python panel_run.py`. It takes 11 workers, and the Mac has
+    10 performance cores.
+  * Wait with one background waiter for the `DONE` line.
+* **Longer runs.** Changing `DURATION` marks every run unfinished, and `run_idp.py` has no continuation, so every
+  run restarts from a random coil. Longer runs therefore go in their own directory.
+* **After any stage.** Run `python stat_ineff.py` and then `python read_b0.py`, and record the result in this
+  section. `stat_ineff.py` covers only the models on `results.txt`'s `# seeds:` line, because files of a running
+  stage are locked.
 
 ## 5. Large proteins (goal 4)
 
@@ -791,7 +896,9 @@ Still open:
    items of 2.1; three checks in the hybrid code.
 5. Training terms (4.1): the base force field for M3 and T1; the HDX temperature mapping, decided with item 1; the
    request for Ferrari et al.'s data, which only the user can make.
-6. Disordered regions (4.2), after B0: which of I1-I3 to design, and whether the SARW stays the DSE target.
+6. Disordered regions (4.2). B0 points to I1, with variants in its training set. It does not point to I2, and I3
+   is undecided. Still open: whether to design I1 and when, and whether to first spend Mac time on ACTR at 298 K
+   and on longer sampling of the unresolved entries.
 
 ## 8. Files
 
@@ -818,8 +925,8 @@ Copies of the scripts and the readout: `/project/trsosnic/yinhan/checks/handoff_
 | path | what |
 |---|---|
 | `lit/review.md`, `lit/panel.fasta`, `lit/make_panel.py`, `lit/dl*/` | literature review with the basis of each claim; the panel's sequences and SAXS values; its builder (`python make_panel.py lit`); the full texts, the CALVADOS 2 tables and Bremer 2022's SI it read |
-| `run_idp.py`, `panel_run.py`, `stat_ineff.py` | one run from a sequence (ff directory or the ConDiv SARW); the panel driver with its analysis (two stages); the Rg statistical inefficiency |
-| `panel.fasta`, `results.txt`, `results.npz`, `stat_ineff.txt`, `panel.log` | the panel as run; B0's readout and per-residue arrays; the driver's log |
+| `run_idp.py`, `panel_run.py`, `stat_ineff.py`, `read_b0.py` | one run from a sequence (ff directory or the ConDiv SARW); the panel driver with its analysis (two stages); the Rg statistical inefficiency of the models `results.txt` has analysed; 4.2's reading rules |
+| `panel.fasta`, `results.txt`, `results.npz`, `stat_ineff.txt`, `read_b0.txt`, `panel.log` | the panel as run; B0's readout and per-residue arrays; the reading by the rules; the driver's log |
 | `runs/`, `pilot/` | trajectories (one directory per sequence); the alpha-synuclein pilot (`conv_pilot.py`, `pilot.txt`) |
 
 `scratchpad/large_protein_20261019/` (the Mac Studio):

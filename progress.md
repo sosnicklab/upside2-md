@@ -342,7 +342,27 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   excluded volume, Rama only). Literature by sub-agent (`scratchpad/idp_20261028/lit/review.md`): no Upside-IDP
   comparison with experiment exists; a 16-entry SAXS panel. User corrections: Upside's electrostatics are implicit in
   the trained terms (findings 10.42), and no explicit electrostatic term is added (double counting). B0 launched on
-  the Mac 12:10 (ff2.1 x 6 and SARW x 3, then ff3.1 x 6; 30,000 tu from random coil); alpha-synuclein pilot: ff2.1
+  the Mac 11:56 (ff2.1 x 6 and SARW x 3, then ff3.1 x 6; 30,000 tu from random coil); alpha-synuclein pilot: ff2.1
   35.6 and 31.0 A against 35.5 measured, SARW 40.1, Rg tau 340-1,300 tu. Files: upside3.md 4.2 (with 4.1 M6, 7
-  item 6, 8), plan.md Phase 34, findings.md 10.42. The literature sub-agent once sent the user's email in a Crossref
+  item 6, 8), plan.md Phase 34, findings.md 10.42.
+* **10-28 16:10-19:50, MacBook Pro, B0 read** (stage A at 16:10, stage B at 19:37).
+  * Results, ff2.1 / ff3.1:
+    * Offset 0.886 / 0.850, with bootstrap intervals that exclude 1.
+    * r of log(Rg/N^0.6) 0.46 / 0.49.
+    * ACTR and A1-LCD spend long stretches as globules.
+    * Cv78/Cv14 is 1.056 / 1.076 against 0.753.
+    * 11 / 10 of 16 entries are unresolved.
+    * ff3.1 differs from ff2.1 only for CoRNID (31 against 48 A) and Hst5.
+    * The SARW offset is 1.20.
+  * Correction: ACTR helix 1 seeds range 0.00-0.73. Stage A's "close to measured" came from the seed mean alone, and
+    4.2 now records helix 1 as unresolved.
+  * Fix: `stat_ineff.py` failed on HDF5 file locks, because it opened stage B files the driver was still writing.
+    It now covers only the models in `results.txt`'s seeds line.
+  * New: `read_b0.py`, which applies 4.2's rules, including per-seed helicity and globule fractions.
+  * Recorded in upside3.md 4.2, 7 item 6 and 8, and plan.md Phase 34.
+  * Then, on "record this ... I will work on it later in another session":
+    * Added 4.2 steps B1 (ACTR at 298 K) and B2 (sampling).
+    * Added a "Resume here" for a cold session.
+    * Wrote B0's answers into I2 and I3.
+    * Flagged that ACTR's SAXS source is unchecked. The literature sub-agent once sent the user's email in a Crossref
   User-Agent header, against its instructions.
