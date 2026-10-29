@@ -309,13 +309,16 @@ def library_side_maps(L, seq_cpr, group, allow_cpr, mode):
     return np.array(maps), np.array(weights), names
 
 def secstr_basins(n_bin):
-    # Convention of --secstr-bias (upside_config.py:786-792): smooth helix and sheet basins on the (phi, psi) grid
+    # Convention of --secstr-bias (upside_config.py:788-802, A155): a window is 1 on an arc, its two 10 degree edge
+    # sigmoids summed over the arc's periodic images; both basins take phi on (-240, 0) degrees, phi < 0 continued
+    # past +-180 to +120, the helix psi on (-100, 50) and the sheet the rest of psi
     phi = np.linspace(-np.pi, np.pi, n_bin, endpoint=False)[:, None]
     psi = np.linspace(-np.pi, np.pi, n_bin, endpoint=False)[None, :]
     less = lambda a, b: 1./(1. + np.exp(-(b - a)/np.radians(10.)))
-    helix = less(phi, 0.) * less(np.radians(-100.), psi) * less(psi, np.radians(50.))
-    sheet = less(phi, 0.) * (less(psi, np.radians(-100.)) + less(np.radians(50.), psi))
-    return dict(helix=helix, sheet=sheet)
+    arc = lambda x, lo, hi: sum(less(np.radians(lo), x + n*2.*np.pi) * less(x + n*2.*np.pi, np.radians(hi))
+                                for n in (-1, 0, 1))
+    helix_psi = arc(psi, -100., 50.)
+    return dict(helix=arc(phi, -240., 0.) * helix_psi, sheet=arc(phi, -240., 0.) * (1. - helix_psi))
 
 def rama_maps(L, lib, args, seq_cpr):
     # each residue's map as up.md 2.8a builds it: left/right mixture, normalisation, coil/sheet mixture, then the
@@ -683,7 +686,8 @@ def check_environment(pot, L, args, lib, sc):
 def check_membrane(pot, L, args, lib):
     donors, acceptors = hbond_sites(L, args)
     sites = np.r_[donors, acceptors]
-    res = np.array([i for i in range(L.n_res) if i not in arg_list(args, 'membrane_exclude_residues')])
+    excl = arg_list(args, 'membrane_exclude_residues')
+    res = np.array([i for i in range(L.n_res) if i not in excl])
     names = None
     if lib['membrane']:
         with tb.open_file(lib['membrane']) as t:
@@ -704,17 +708,17 @@ def check_membrane(pot, L, args, lib):
             ok = cb_index < len(id1)
             compare(node, 'residue of cb_index in the CB node vs in environment_coverage_sc', cb_res[cb_index[ok]],
                     id1[cb_index[ok]])
-    rows = np.arange(len(sites))
+    rows = np.array([i for i, x in enumerate(sites) if x not in excl], dtype=int)
     for node in ('hb_membrane_potential', 'hb_surf_membrane_potential'):
         if node not in pot: continue
         # membrane_potential.cpp:529-530, 549-552 (surface variant :1050-1052, 1083-1105): hb_index is the
         # protein_hbond row, hb_type[nv] (0 donor, 1 acceptor) selects the coeff pair of that slot, hb_res the residue
-        # (coverage element and surface row)
+        # (coverage element and surface row); an excluded residue's H and O leave with its CB (A168)
         g = pot[node]
         compare(node, 'hb_index', rows, g['hb_index'][:].astype(int))
         compare(node, 'hb_type (by slot)', (rows >= len(donors)).astype(int), g['hb_type'][:])
         if 'hb_res' in g:
-            compare(node, 'hb_res', sites, g['hb_res'][:])
+            compare(node, 'hb_res', sites[rows], g['hb_res'][:])
     if 'cat_pos_bb_cb' in pot:
         # surface.cpp:185-219: row 3nr+j of its input is residue nr's N, CA, C and row index_cb[nr] its CB
         g = pot['cat_pos_bb_cb']

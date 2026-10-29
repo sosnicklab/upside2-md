@@ -899,6 +899,9 @@ Still open:
 6. Disordered regions (4.2). B0 points to I1, with variants in its training set. It does not point to I2, and I3
    is undecided. Still open: whether to design I1 and when, and whether to first spend Mac time on ACTR at 298 K
    and on longer sampling of the unresolved entries.
+7. The channel membrane potential (`--channel-membrane-potential`) carries energy steps with no force: its `surface`
+   score is a count over rotations with no derivative (findings 3.14, after the ledger; 10-29). Keep it as master's
+   model, give it a smooth score with a derivative, or retire it with the membrane retraining (A173).
 
 ## 8. Files
 

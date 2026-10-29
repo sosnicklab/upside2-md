@@ -456,6 +456,11 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
       T 0.70 against 0.93-0.96), already in preparation stage 7.0. The loss is ff2.1's own (Known Errors); the HDX
       readout waits on the user's choice of force field.
    Next after it: refusing ff2.1 (the step `upside3.md` names after the audit), then the open items below.
+2c. [x] The protein harness rerun on HEAD (Mac Studio, 10-29; the hybrid fixtures are MacBook-only, not rerun):
+   regress 0 of 4064 arrays against the 10-27 records; invariance remd, thermostat, mc and chig equipartition PASS;
+   index oracle 0 mismatches on all 28 fixtures after A237 (the 10-27 flags were the oracle's own); node_fd's 6
+   flagged directions line-integrate to noise, 1rkl_channel's once the surface score's steps are removed (findings
+   3.14, after the ledger; `upside3.md` 7 item 7).
    Open from the build review (`pass2/build/report.md`): the cluster binaries set flush-to-zero and
    denormals-are-zero in every process that loads the library (U1, `set_fast_math` found by `nm` in both trees),
    measured at the first midway2 build (remote_jobs.md 0b); `sse2neon.h` is an unpinned Homebrew header whose

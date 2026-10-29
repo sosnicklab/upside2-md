@@ -277,8 +277,8 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   096486cb -> 3005a3fd. Verified on both: the 28 fixtures equal but for paths in `/input/args` and
   `/input/adv_args`, regress 0 of 4064 arrays differ; on the Mac Studio mdtraj DSSP, index oracle and
   node_fd output identical (the 1rkl hybrid fixtures, MacBook only, not rerun); on the MacBook Pro the
-  BioEmu2 and Boltz HDX readouts byte for byte. Present under every stack, not
-  investigated: index oracle flags on 6 datasets (`hb_surf_membrane_potential` and
+  BioEmu2 and Boltz HDX readouts byte for byte. Present under every stack, settled 10-29
+  (below): index oracle flags on 6 datasets (`hb_surf_membrane_potential` and
   `hb_membrane_potential` index lengths in 1rkl_surface and 1rkl_channel_m0, `rama_map_pot/rama_pot`
   rows 1, 4, 8 in chig_rama); node_fd one bad entry in each of 6 checks over 1dfn_cavity, 1qhj_memb,
   1rkl_channel, 1ubq_rotamer, chig_hbbb. node_fd's probes come from one RNG across all configs, so its
@@ -366,3 +366,14 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
     * Wrote B0's answers into I2 and I3.
     * Flagged that ACTR's SAXS source is unchecked. The literature sub-agent once sent the user's email in a Crossref
   User-Agent header, against its instructions.
+* **10-28 23:40-10-29 00:20, Mac Studio, the Upside 3 harness on HEAD** (user: "read upside3 design, run any local test
+  that is needed and you can run right now"). Code unchanged since A236; 28 fixtures regenerated, equal to 10-27's
+  but for paths. Regress 0 of 4064 arrays against both 10-27 records. Invariance remd, thermostat, mc (pivot
+  acceptance 0.7438) and chig equipartition PASS. Index oracle: the 10-27 flags were the oracle's, stale since A155
+  and A168; fixed as A237 (`tests/index_oracle.py`), 0 mismatches on 28, three injected errors caught. node_fd's 6
+  flagged directions line-integrate to noise (1ubq_rotamer's at width 5, below float32 at the default). The
+  1rkl_channel one comes from the `surface` score, a count with no derivative: the channel energy steps with no
+  force (up to 1.4 E_up per step along CB placement), recorded for the user (findings 3.14, upside3.md 7 item 7).
+  Not run: the hybrid fixtures (CHARMM-GUI inputs and baseline h53 on the MacBook Pro only); 4.2 B1 and M2 (their
+  scripts and data are on the MacBook Pro and the cluster). Files: `tests/index_oracle.py`, findings.md, plan.md
+  Phase 24 item 2c, upside3.md 7.
