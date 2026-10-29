@@ -388,7 +388,10 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   - Boltz reproducibility job 61786565 (six repeats of one setting on one GPU: current, pre-trace and deterministic
     mode), its reading fixed first in diffusion_dynamics.md Phase 2 E1; `addon/e1_repro.sbatch`, `repro_compare.py`
     (dry-run on the existing npz). Read 10:15: no pair reproduces, deterministic mode included, parting at step 0;
-    the repeat test must be statistical (`log_z` s.d. 1.6 over 8 runs), the user's choice.
+    the repeat test must be statistical (`log_z` s.d. 1.6 over 8 runs), the user's choice. On the user's "go with
+    your recommendation", the diagnosis's rules 2-3 read statistically (rule fixed first; `addon/diag_rules23.py`):
+    no shrinking from 256 to 1,024 particles, pointing to a defect in the weights at low power; step 0 carries 26
+    nats in every run, and the loss is in the potential increments, not the guidance ratio.
   - Round 2 read for ff3.2 and `_mb2` (plan.md Phases 32-33; `gly_LR` reproduced round 1's -0.567 and -1.065 first).
   - glpG on Upside 3 read: ff2.1 blocks 2-3 and block 1 of ff3.1 and ff3.0 (findings 3.15): TM4 0.44, 0.26, 0.14
     under ff2.1, 0.42 under ff3.1, 0.85 under ff3.0 (Upside 2 0.96).
@@ -409,3 +412,25 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   to it (the current force fields from the same files, to the audited CPU engine's results; energies and forces
   only, so V4 and the parameter-derivative check dropped; G3 and G4 no longer wait on S5 or the side-chain choice),
   with the roadmap, 1.2, 7.1, 9.1 and decision 12; plan.md Phase 23.
+* **10-29 12:20-12:55, Mac Studio, status pass and the Boltz toy test** (user: "yes. and check status"). Status:
+  nothing failed. ff3.2 at step 62 and `_mb2` at step 61, round 3 read for both (plan.md Phases 32-33; a forked
+  sub-agent ran the readout, `gly_LR` reproduced round 2's -0.480 and -0.913 first); ff3.1's Peng arms 19 of 32
+  complete (four since 08:10, checked finite, C-N 1.33-1.35 A, KE/1.5kT 0.985-1.026), 13 scored; Upside 3's cspA de
+  novo complete (30 of 32); glpG ff2.1 block 4 about 43% through on block 3's pace; queued jobs unchanged. Found
+  Upside 3's Peng rescoring not run since 10-26 (8 finished de novo arms, 16 jobs), proposed to the user. Toy test
+  (rule fixed first in diffusion_dynamics.md Phase 2 E1): `addon/toy.py` runs `sampler.py` on Boltz's own
+  `AtomDiffusion` (copied to `addon/sandbox/`) with a Gaussian-ubiquitin denoiser, parity equal; truth from 10^6
+  plain samples, 592 steered runs on 18 cores in 11 min. All four settings pass (mean Z-hat / Z within 2 standard
+  errors of 1 at 1,024 and 4,096 particles), so the weights and `log_z` are right and I61's shortfall points to the
+  estimator's variance with Boltz-2's network. A toy run changes with the batch size (rounding, amplified by
+  resampling), like the GPU's. Files: remote_jobs.md, plan.md, diffusion_dynamics.md, progress.md;
+  scratchpad/boltz_hdx/addon (`toy.py`, `toy_readout.py`, `sandbox/`, `runs/toy/`).
+* **10-29 13:05-13:25, Mac Studio, the rescoring and resampling at low noise only** (user: "run both for me"). The
+  eight unscored Upside 3 de novo arms and their Upside 2 controls submitted by `submit_scores.sh` (49643806-49643821).
+  `sampler.py` gained `resampling_t_max` (`e1_rare.py`, `toy.py`: `--resample-below`), inert by default (three toy
+  runs bitwise equal); rule fixed first in diffusion_dynamics.md Phase 2 E1, limit sigma_data 16 A. Toy at the limit:
+  all four settings pass (576 runs). Then 61805263 on a V100: I61 kappa 2, 256 particles, seeds 1 and 2; its readout
+  `addon/lownoise_read.py` (checked against `e1_readout.py` on a tuning run). A slip: an unsplit ssh variable in zsh
+  skipped the beagle3 backup while rsync went through; the backups were put in place from the md5-equal local
+  copies. Files: remote_jobs.md, diffusion_dynamics.md, progress.md; scratchpad/boltz_hdx/addon (`sampler.py`,
+  `e1_rare.py`, `toy.py`, `lownoise_read.py`, `e1_lownoise_ubqps.txt`, `runs/toy_low/`).

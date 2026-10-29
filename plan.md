@@ -787,7 +787,11 @@ share the minibatch order. Decisions:
    (summed +30.8), aR -1.5, other shared offsets |t| at most 2.1; -ln(P_aL / P_aR) -0.913. alpha_L keeps moving
    toward ff3.0's and is still pulled. `ff311_glypair` hung in step 34 from 22:41 10-28 (a worker's Pool child died
    of a glibc double free, cause not identified); cancelled 09:20 10-29 with 3g0m's files kept, its insurance link
-   reruns step 34 (remote_jobs.md §1 line 2), so its round 2 comes later.
+   reruns step 34 (remote_jobs.md §1 line 2), so its round 2 comes later. Round 3 (read 12:40 10-29), `_mb2` only
+   (`rama_round_03.dat` md5 `f65a593e`): aR +0.012, aL +0.370; epoch-2 pull aL t +1.6, aR -0.1, the first epoch under
+   |t| 2, other shared offsets |t| median 0.6, max 2.9; -ln(P_aL / P_aR) -0.863. The pair is still 0.12 and 0.15
+   from ff3.0's, so the rule waits on round 4 and on `ff311_glypair`. Margin constant at +0.192, 24 of 24 proteins
+   every step, KE/1.5kT at most 1.013.
 
 ### Phase 33 - fix the training's native target; ff3.1 retrained on it, and ff3.2 with every term trained (STARTED 2026-10-28, user)
 User 10-28: "try a version with everything trainable, start with current ff3.1, call it ff3.2. Fix ff3.1 according to
@@ -860,6 +864,12 @@ target, the Phase 32 runs kept.
    epoch 1: glycine beta' natives 0.773 (n 366), alpha_R 0.997, non-glycine pPII' 0.906, non-glycine beta' 0.098
    (n 26). H-bond margin +0.080 at epoch 1's end, +0.036 at step 50, +0.051 at step 54 (dhb -0.489 -> -0.541); 24 of
    24 proteins every step, KE/1.5kT at most 1.016.
+   **Round 3, ff3.2** (read 12:40 10-29; `rama_round_03.dat` md5 `67dd261c`): aR -0.196, aL +0.536 -> +0.567, beta'
+   -0.350 -> -0.385 (beta +0.047, pPII +0.049, pPII' -0.056); the epoch-2 pull aR t -0.2, aL +1.3, beta' -1.3, the
+   other shared offsets' |t| median 0.6, max 2.0. -ln(P_aL / P_aR) -0.451, a further 0.03 from ff3.0's -0.598 (less
+   alpha_L still). Native fidelity over epoch 2: glycine beta' 0.777, alpha_R 0.989; non-glycine alpha_R 0.997, pPII'
+   0.907, beta' 0.098 (n 26). The margin came back to +0.058 at epoch 2's end and is +0.061 to +0.067 over steps
+   57-61; 24 of 24 proteins every step, KE/1.5kT at most 1.015.
 7. [ ] ff3.2's epoch-end panels, the folding test of the fix (epoch 0 read 23:30 10-28: folds 0.449, -0.167 [-0.206,
    -0.129] against released ff2.1, level with `a32_00` and `a31_00`, so the fix does not cure epoch 0's loss; findings 1.37): tag `n32_EE` added to `submit_new.sh` (user 10-28), so
    each epoch end gets the 176-run panel the all-term runs had and reads against `a31_EE`, `a32_EE` and `c9_EE`

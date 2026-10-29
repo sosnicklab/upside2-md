@@ -9,8 +9,11 @@ of Boltz, small trained add-ons allowed) is a trained add-on that tilts frozen B
 planned. Phase 2's E1 is held (10-28): above kappa 1 the Feynman-Kac `log_z` falls under its provable floor, and the
 diagnosis job (10-29) did not reproduce the tuning's runs at the same seed, so its test was not read; a
 reproducibility job (10-29) showed that no steered run reproduces its seed across processes, even on one GPU, so a
-repeat test must be statistical (the user's choice). Jobs are recorded in `remote_jobs.md` §1. Every number below comes from reading code,
-docs and papers on 2026-10-21, or from the dated measurements; numbers marked *estimate* are unmeasured.
+repeat test must be statistical. Read statistically (10-29), the diagnosis pointed to a defect in the weights at low
+power; a CPU toy with a known normalizing constant (10-29) then found `sampler.py`'s weights and `log_z` right on
+Boltz's sampler, which points I61's shortfall to the estimator's variance with Boltz-2's network. E1 proper stays
+held; the next step is the user's. Jobs are recorded in `remote_jobs.md` §1. Every number below comes from reading
+code, docs and papers on 2026-10-21, or from the dated measurements; numbers marked *estimate* are unmeasured.
 
 ## 1. Goal
 
@@ -559,6 +562,125 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
         have mean -8.26, s.d. 1.58, range -10.32 to -6.24, and the diagnosis's kappa 1 run sits 1.6 from the
         tuning's, inside it. Readout `scratchpad/boltz_hdx/addon/runs/boltz_addon_e1_repro_ubqps_v100_61786565/readout.txt`
         (npz and log copied there; readout also on `/beagle3`).
+      * The diagnosis's rules 2-3 read statistically (user 10-29: "go with your recommendation", the reading rather
+        than more seeds first), fixed here before its kappa 2 runs are looked at. The noise allowance is the kappa 1
+        spread just measured: s.d. 1.58 per run, so a difference between two two-run means has s.d. 1.58, and 3.2
+        nats is twice that. The spread at kappa 2 is not measured; the two seeds at each particle count give a
+        first look at it, reported beside and not used to decide.
+        2. Degeneracy if the mean `log_z` of the two 1,024-particle kappa 2 runs exceeds that of the diagnosis's two
+           256-particle runs by more than 3.2 nats and both 1,024 runs lie above both 256 runs. A difference under
+           3.2 nats means the shortfall under the floor -7.9 does not shrink detectably from 256 to 1,024 particles,
+           which points to a defect in the weights. Anything else is undecided. The tuning's 256-particle kappa 2 run
+           is reported beside, not used.
+        3. The trace, on each of the four kappa 2 runs: the resampling rows carrying the most `log_z` loss and the
+           effective sample size there. Since the runs share no particles, a step is located only if the same rows
+           carry the loss in all four.
+        `addon/diag_rules23.py` reads it.
+      * **Rules 2-3 readout, 10:40 10-29: by rule 2 the shortfall does not shrink with the particle count, which
+        points to a defect in the weights.** Kappa 2 `log_z` at 256 particles -28.35 and -33.63 (seeds 1, 2), at
+        1,024 -30.78 and -57.33: the 1,024 mean is 13.1 nats lower, not higher (the tuning's 256 run -30.49 lies
+        among the 256 runs). The test's power is low, which the reading has to carry: the two 1,024 seeds differ by
+        26.5 nats (the 256 seeds by 5.3), far beyond the kappa 1 spread the 3.2-nat allowance came from, so a
+        few-nat gain from more particles would not show. Rule 3: row 0 (step 0, t_hat 4608) carries -25.6 to -26.6
+        nats in all four runs, the potential on the first denoised prediction (mean energy 27.1-27.3 in every
+        run, the closed state); the rest of the loss falls on different rows in each run, some with the effective
+        sample size collapsed (ESS/N 0.001-0.04) and some not (0.45-0.65), so no later step is located. Beside the
+        rules: 86-90% of the final particles are open (energy 0), so along any lineage the potential increments sum
+        to about zero and the step-0 charge should be repaid in later rows; the per-row means of the potential
+        increment instead sum to -195 to -331, meaning the energies of the particles each resampling selects rise
+        again by the next one, while the guidance log-ratio sums to only -0.11 to -0.14 per run. The loss sits in
+        the potential increments, not in the guidance correction. Whether that is a bookkeeping defect or the
+        estimator's own variance at this rarity, these runs cannot separate. Readout
+        `scratchpad/boltz_hdx/addon/runs/boltz_addon_e1_diag_ubqps_v100_61755382/rules23.txt` (also on `/beagle3`).
+        E1 proper stays held.
+      * The toy test (user 10-29: "yes" to it), its reading fixed here before the data. `addon/toy.py` runs
+        `sampler.py` unchanged on Boltz's own `AtomDiffusion` at b1ebfc4 (the midway3 tree's Python files, copied to
+        `addon/sandbox/`) with E1's settings, on the Mac Studio's CPU in fp32 (Boltz2.forward runs the sampler with
+        autocast off). Only the network is replaced, by a deterministic, rotation- and translation-equivariant denoiser
+        of a Gaussian ubiquitin: Ub psWT's CA trace with Gaussian-network fluctuations (contacts within 7.3 A, mean
+        RMSF 1 A). It aligns the reference onto the noisy coordinates and shrinks the residual in each normal mode by
+        lambda / (lambda + sigma^2), so that, like Boltz-2's network, it predicts a folded structure at every noise
+        level. The event is the toy's I61: residues 61 and 56 (CA 5.6 A apart) are open when their distance is at
+        least 7.5 A, the 3.8e-4 upper quantile in 200,000 calibration samples (I61's unguided open fraction). The
+        potential is kappa 7.09 (7.5 - d)+, which is 13.5 on the reference at kappa 1, I61's step-0 energy. The parity
+        check passes (8 toy samples, seed 7, coordinates equal). The toy's own distribution is what its plain sampler
+        draws, so the truth is measured from 10^6 fresh plain samples: Z(kappa) = E[exp(-kappa 7.09 (7.5 - d)+)] and
+        the open fraction, with standard errors. The estimate is ln Z-hat, `log_z` plus the log of the final
+        particles' mean weight (in I61 the final step added about 0, so `log_z` alone was read there), and the
+        open-fraction estimate is E1's Feynman-Kac one. Runs: kappa 1 and 2, guidance weight 0 (no guidance) and 0.05;
+        256 and 1,024 particles with 64 seeds each, 4,096 with 16, 16,384 with 4.
+        1. Per setting, the weights are right if the mean of Z-hat / Z over the seeds lies within 3 standard errors of
+           1 (the seeds' spread combined with the truth's) at both 1,024 and 4,096 particles, and wrong if it lies more
+           than 3 off at both; otherwise undecided. Heavy tails make the seeds' spread understate the error, which is
+           why one particle count alone does not decide. The same for the open-fraction estimate, reported beside.
+        2. If all four settings pass, `sampler.py`'s weights and `log_z` are right on Boltz's sampler, and I61's
+           shortfall is the estimator's variance with Boltz-2's network, or comes from something the toy lacks. If
+           only the guided settings fail, the guidance ratio is wrong, and they are rerun with `alignment_reverse_diff`
+           off: the ratio leaves out that the noisy coordinates are aligned onto the guided prediction. If an unguided
+           setting fails, the Feynman-Kac bookkeeping itself is wrong.
+        3. Beside, not deciding: the median of ln Z-hat - ln Z at each particle count, and the trace's step-0 charge
+           and the sums of the mean potential increment and of the guidance log-ratio, against I61's.
+        A toy run depends on rounding: the same seed at another batch size gives another run (batched and
+        one-at-a-time denoiser outputs differ by about 1e-6 relative, the trace differs from step 0, and resampling
+        amplifies it), so the toy, like the GPU, is read over seeds.
+      * **Toy readout, 12:55 10-29: rule 1 passes in all four settings, so `sampler.py`'s weights and `log_z` are
+        right on Boltz's sampler.** Truth from 10^6 plain samples: open fraction 3.70e-4 +- 0.19e-4, ln Z(1) -6.470
+        +- 0.017, ln Z(2) -7.314 +- 0.033 (the open states carry 24% and 56% of Z). Mean Z-hat / Z at 1,024 and
+        4,096 particles: kappa 1 without guidance 1.031 +- 0.082 and 0.977 +- 0.060, with guidance 1.046 +- 0.038 and
+        1.018 +- 0.039; kappa 2 without guidance 0.749 +- 0.132 and 0.927 +- 0.185, with guidance 1.115 +- 0.150 and
+        1.011 +- 0.077 (all within 2 standard errors). The open-fraction estimate agrees likewise (0.70-1.22 of the
+        truth, within 1.7 standard errors). Beside the rule: the median of ln Z-hat - ln Z rises toward 0 with the
+        particles in every setting; it is largest at kappa 2 without guidance, -1.91, -0.93, -0.49 and -0.21 at 256,
+        1,024, 4,096 and 16,384 particles, where at 256 the mean Z-hat / Z is 0.505 +- 0.095, the estimator's
+        variance at few particles. The toy's step-0 charge is I61's size by the choice of SCALE (-13.5 and -27.0
+        nats), and it is repaid through the run, mostly at the last step (its log mean weight +5.7 to +17.2), since
+        the toy's prediction keeps the pair near the reference until the noise falls below about 1 A. `log_z` alone
+        is -12.9 and -24.8, under the floor by as much as I61's, so in the toy only ln Z-hat, the final step
+        included, reads true; in I61 the last step added about 0 and 86-90% of the particles ended open, so its
+        `log_z` reading stands. The sum of
+        the mean potential increments is -10.6 to -23.3 in the toy, near minus the step-0 energy, against I61's -195
+        to -331. In the toy the particles a resampling selects keep their energies, while in I61 their energies rise
+        again by the next resampling. The guidance log-ratio sums to -0.6 to -1.1 here (I61 -0.1). So the difference
+        is in what the network predicts between resamplings: Boltz-2's denoised structures move the target amide's
+        energy from one resampling to the next far more than an equivariant shrinking denoiser does, each
+        resampling selects on fluctuations that do not last, and that costs nats every time. This points to the
+        estimator's variance with Boltz-2's network, which 1,024 particles did not reduce in I61, or to something
+        else the toy lacks; the mechanism is read from the trace means, not measured per particle. Readout `scratchpad/boltz_hdx/addon/runs/toy/readout.txt`
+        (`toy_readout.py`; truth and runs beside it, md5 of `toy.py` and `sampler.py` in `md5.txt`). E1 proper stays
+        held; what to change (the tilt's schedule over the noise levels, or the kappa used) is the user's.
+      * Resampling at low noise only (user 10-29: "run both", on the proposal), its reading fixed here before the
+        data. `sampler.py` gains `resampling_t_max`: resampling happens only at steps whose t_hat is at most it, and
+        the first resampling, wherever it falls, charges the whole energy, so the weights stay unbiased for any limit;
+        guidance is unchanged. `e1_rare.py` and `toy.py` set it with `--resample-below T`; by default there is no
+        limit, and three toy grid runs rerun with the changed code equal the old ones bitwise. The limit is
+        sigma_data, 16 A: below it Boltz's c_skip exceeds 1/2 and the prediction follows the noisy coordinates more
+        than the network's guess. That leaves resampling at t_hat 13.8 down to 2.0 (9 steps) and the last step. The
+        old I61 runs at kappa 2 support it: their resamplings above 16 A cost -25.5 to -60.7 nats, those below -8.2
+        to +5.7. At t_hat 13.8 those runs still averaged energy 23.5-26.1, so the first resampling will charge most
+        particles' energy at once and only the persistence below 16 A can repay it.
+        1. On the toy, the same rule as the toy test at the limit (four settings; 256 and 1,024 particles with 64
+           seeds, 4,096 with 16): passing in all four shows the changed bookkeeping right; a failure stops the GPU
+           job.
+        2. On the GPU, I61 at kappa 2, guidance 0.05, 256 particles, seeds 1 and 2 (`addon/e1_lownoise_ubqps.txt`).
+           ln Z-hat (`log_z` plus the log of the final particles' mean weight) has the floor -7.9. The collapse is
+           removed if both seeds give ln Z-hat of at least -11.1 (the floor less the 3.2-nat allowance from kappa
+           1), not removed if both lie below -11.1 (the old schedule gave -28.4 and -33.7 at these seeds), and
+           otherwise undecided.
+        3. Beside, not deciding: E1's calibration criterion on I61 (the Feynman-Kac estimate within a factor of 2
+           of 3.8e-4, N_eff over the open particles at least 50), the open count, the trace's first resampling (its
+           charge and effective sample size) and the self-normalized estimate. If the collapse is removed, the next
+           steps (V70 at this setting, the tuning rule rerun under the limit, E1 proper) are the user's. If not, the
+           limit does not rescue the estimator at kappa 2.
+        Toy readout, 13:18 10-29 (`runs/toy_low/readout.txt`, the toy test's truth): rule 1 passes in all four
+        settings, so the GPU job goes out. Mean Z-hat / Z at 1,024 and 4,096 particles: kappa 1 without guidance
+        0.892 +- 0.063 and 0.937 +- 0.059, with guidance 0.965 +- 0.035 and 1.007 +- 0.030; kappa 2 without guidance
+        0.812 +- 0.170 and 1.677 +- 0.488, with guidance 0.994 +- 0.068 and 0.916 +- 0.070 (all within 1.7 standard
+        errors); the median of ln Z-hat - ln Z shrinks with the particles as before. The trace now has 10 rows, the
+        first at t_hat 13.8, which carries the whole charge (-13.5 and -26.9). In the toy the limit changes little,
+        as expected: its loss between resamplings was small to begin with. Submitted 13:19 10-29 as **61805263**
+        (`boltz_addon_e1_lownoise_ubqps_v100`, V100, 1 h; `remote_jobs.md` §1 line 4) with `sampler.py` `21df0b41`
+        and `e1_rare.py` `e4314698` (the previous ones as `.bak_pre_lownoise_20261029`, md5 `83cdb782` and
+        `7f0e1ee5`).
 - [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).
