@@ -893,6 +893,28 @@ would count them twice); salt dependence is outside the model.
    Steps.
 4. [ ] I1-I3: after B0, in the user's order (`upside3.md` 8.1), on the user's word.
 
+### Phase 35 - Upside 3 on the GPU (track G; STARTED 2026-10-29, user)
+User 10-29: "start implementing GPU for upside3. The target is to be able to use GPU to run simulations with CPU
+trained ffs, without any additional training or modifications. You can add GPU support for hybrid as well. The target
+GPU to use is the GPU partition on midway2 and midway3, and on similar clusters"; then "connect to midway2 and midway3
+to check their gpu available, and test on them when you implement the code"; tests on midway2 `gpu2` and midway3
+`gpu` only, not beagle3. The standard is `upside3.md` 10.2; the approved design (route, architecture, milestones) is
+`upside3.md` 10.3 and `~/.claude/plans/swift-roaming-floyd.md`.
+Key decisions (reasons in `upside3.md` 10.3): the CPU engine stays the reference and host, a device engine is built
+from its constructed nodes; one batch is every system of a process, flattened with pre-offset indices; the potentials'
+math is shared through `UPSIDE_HD` and lane-type templates, the loops are per backend; the device files also compile
+as C++ (host backend) so the device path is tested on the Mac; 64-bit fixed-point accumulation (deterministic, a
+non-finite value reads back as NaN); BP one block per system on the CPU's schedule; one CUDA 11.5 binary from midway2
+for K80 to A100; development tree `/beagle3/trsosnic/yinhan/upside3_gpu` (the Upside 3 tree is under its validation).
+1. [ ] G0 probe: driver versions; nvcc 11.5 + gcc 10.1 on the shared headers; a kernel on K80, V100, A100.
+2. [ ] G1 infrastructure (`device.h`, device engine, flattening, accumulation, C API, `--gpu`, CMake), CPU bitwise
+   unchanged.
+3. [ ] G2 bonded and backbone nodes, V1 on host backend and K80; a first V2 on a backbone-only config.
+4. [ ] G3 placement, environment and coverage nodes.
+5. [ ] G4 rotamer BP.
+6. [ ] G5 the ladder on ff2.1 and ff3.1 (V1 all fixtures, V2, speed); V3 submitted once V2 passes.
+7. [ ] G6 the hybrid.
+
 ## Known Errors / Blockers
 
 * **Upside 3's glpG hybrid with ff2.1 loses TM4 in preparation stage 7.0** (findings 3.15, 10-26), answered 10-27:
@@ -964,7 +986,8 @@ would count them twice); salt dependence is outside the model.
 * **`run_remd.py` rolls back NaN replicas and continues**, which the NO GUARDS rule forbids. It is kept unchanged so
   glpG stays comparable across campaigns. Whether to remove it is the user's call.
 * **CPU work runs on midway2 broadwl** unless the user names midway3 caslake. No `amd`, `beagle3` or GPU partitions,
-  and not `broadwl-lc` (its nodes cannot see `/project`).
+  and not `broadwl-lc` (its nodes cannot see `/project`). GPU work (Phase 35) runs on midway2 `gpu2` and midway3
+  `gpu`, never `beagle3` (user 10-29).
 * **HDX post-processing items await the user's decision** (user, 10-11; findings 5.5): three docstring/README
   statements that call TM helices non-exchanging, and the unmeasured interface boundary of the 7 A tail-contact
   criterion. The PF = 1000 uptake cap was replaced in Upside 3 by the per-temperature ESS bound with censored amides
