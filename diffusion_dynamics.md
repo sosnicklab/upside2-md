@@ -681,6 +681,14 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
         (`boltz_addon_e1_lownoise_ubqps_v100`, V100, 1 h; `remote_jobs.md` §1 line 4) with `sampler.py` `21df0b41`
         and `e1_rare.py` `e4314698` (the previous ones as `.bak_pre_lownoise_20261029`, md5 `83cdb782` and
         `7f0e1ee5`).
+        GPU readout, 14:40 10-29 (`addon/lownoise_read.py` on the run's two npz, run from midway2): **rule 2, the
+        collapse is not removed.** ln Z-hat -15.05 (seed 1) and -20.26 (seed 2), both below -11.1, against the old
+        schedule's -28.4 and -33.7 at the same seeds: the limit recovers 13 nats and leaves 7-12 short of the floor.
+        The first resampling, at t_hat 13.8, charges -25.3 and -22.7 nats (ESS/N 0.085 and 0.005), and the steps
+        below it do not repay that. Beside: open 197 and 244 of 256; Feynman-Kac open fraction 2.7e-7 and 1.6e-9
+        against the unguided 3.8e-4, so the calibration criterion is not met; self-normalized 0.28 (N_eff 12.6) and
+        0.95 (N_eff 255). By the reading fixed above, the limit does not rescue the estimator at kappa 2; what
+        follows is the user's. `e1_readout.sh` (flags and C-N) has not been run on these samples.
 - [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).
