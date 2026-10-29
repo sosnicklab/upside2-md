@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Writer/reader registry of the /input/potential nodes (upside3.md 2.2).
+# Writer/reader registry of the /input/potential nodes (upside3.md 4.2).
 #
 # Static pass: every node type registered in src/ (RegisterNodeType, RegisterRotamerSidechain) with the datasets and
 # attributes its constructor reads, following the members and helpers it hands the group to; and every function in

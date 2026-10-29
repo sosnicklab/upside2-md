@@ -2527,7 +2527,7 @@ expected (105) but got (54)"). Measured (`scratchpad/large_protein_20261019/envf
 
 Installed in the repo's `obj/` only (backups `*.bak_pre_envfix_20261019`). `$P` and `/beagle3` keep the old
 writer and engine while trainings run; ff_2.1 and every training so far carry the defect. Upside 3 trains
-with the fix (`upside3.md` section 4).
+with the fix (`upside3.md` 4.1).
 
 ### 3.14 Upside 3 audit ledger (plan.md Phase 24; from 2026-10-19)
 
@@ -2536,7 +2536,7 @@ Confirmed defects, fixed on martini-dev (Upside 3) only. Each fix is verified th
 * `tests/node_fd.py` passes on the node;
 * `tests/regress.py compare` shows only the intended arrays changed.
 
-Effects on ff2.1 are not measured (upside3.md section 1).
+Effects on ff2.1 are not measured (upside3.md 1.1).
 
 | id | file:line | in master | defect | effect | verification |
 |---|---|---|---|---|---|
@@ -2786,13 +2786,17 @@ Every parameter derivative in Upside 3 is exact or raises "not implemented" (A29
 writes a node no potential reads, but `get_protection_state.py` reads its output for HDX, so it is not dead. Which parameters ConDiv
 trains is decided in its learning-rate table. Open items are in plan.md Phase 24.
 
-Found 10-29, not changed (for the user, upside3.md 7 item 7): the channel potential's energy has steps with no force. The
-`surface` score is a count over 20 rotations and its `propagate_deriv` is empty (`surface.cpp:606-612`), so
-`cb_`/`hb_surf_membrane_potential` step when a CB changes class: MD feels none of it, while the logged energy, pivot MC
-and replica exchange read it, the mirror of A105. On 1rkl_channel along each CB placement parameter, 88-149 steps over
-node_fd's stencil range, single steps up to 1.4 E_up. With the steps removed the energy line-integrates to noise
-(cb_surf drift 1.5e-6 to 2.8e-4 relative; hb_surf flat, derivative 0), so the derivatives are right and the steps are
-the model's. Their size and frequency in dynamics is not measured.
+Found 10-29, not changed (for the user, upside3.md 11 item 15; options in 4.5): the channel potential's energy has
+steps with no force. The `surface` score is a count over 20 rotations and its `propagate_deriv` is empty
+(`surface.cpp:606-612`), so `cb_`/`hb_surf_membrane_potential` step when a CB changes class: MD feels none of it,
+while the logged energy, pivot MC and replica exchange read it, the mirror of A105. On 1rkl_channel along each CB
+placement parameter, 88-149 steps over node_fd's stencil range, single steps up to 1.4 E_up. With the steps removed
+the energy line-integrates to noise (cb_surf drift 1.5e-6 to 2.8e-4 relative; hb_surf flat, derivative 0), so the
+derivatives are right and the steps are the model's. In dynamics (1rkl_channel, T 0.85, dt 0.009, 180 tu, positions
+every step): the score changes on 19,988 of 20,000 steps, a median of 8 of 31 residues each; the force-less part of
+the channel energy moves 0.22 E_up rms per step and 1.43 E_up (1.7 kT) over 9 tu, against the channel energy's
+standard deviation of 1.66 E_up, while a smooth term on the same frames (`rama_map_pot`, Simpson's rule per step)
+leaves 0.012 and 0.33. The energy is exactly invariant under xy translation. One fixture, one temperature.
 
 ### 3.15 Upside 3's glpG hybrid with ff2.1 loses TM4 when the protein is first released (2026-10-26; answered 10-27: ff2.1's own, not Upside 3's)
 
@@ -2838,6 +2842,21 @@ retrained term.
   the loss under ff2.1 is therefore ff2.1's own once side-chain placement is correct, not an Upside 3 defect; since
   ff3.1 differs from ff2.1 only in its map, what holds TM4 lies in ff3.0's other retrained terms. One seed and 540 time
   units at T 0.8647; REMD block 1 (remote_jobs.md §1) gives TM4 at T 0.70, against Upside 2's ff3.0 chains' 0.96.
+* **REMD confirms it** (10-29; `glpg_u3_block1.py` on each run's rungs 0 and 23, T 0.70 and 0.795; outputs
+  `glpg/glpg_u3_block23.txt`, `glpg_ff31/glpg_ff31_block1.txt`, `glpg_ff30/glpg_ff30_block1.txt`). TM4 135-151 DSSP
+  alpha at T 0.70 (T 0.795):
+
+  | run | block 1 | block 2 | block 3 |
+  |---|---|---|---|
+  | ff2.1 | 0.44 (0.39) | 0.26 (0.34) | 0.14 (0.21) |
+  | ff3.1 | 0.42 (0.39) | | |
+  | ff3.0 | 0.85 (0.81) | | |
+  | Upside 2 ff3.0, placement fixed | 0.96 (0.93) | | |
+
+  ff2.1 keeps unwinding (block 3's last quarter 0.02). ff3.1 loses TM4's C-terminal half (146-151 at 0.00-0.02, 135-145
+  near 0.7). ff3.0 holds 137-151 at 0.96, Upside 2's level, and loses only 135-136, never helical in block 1, which
+  accounts for the gap to 0.96. Every run keeps KE/1.5kT 1.00 for protein and lipid, C-N 1.310-1.312 +- 0.119-0.120 A
+  and TM1's dihedral-box fraction at 0.96-1.00; of the measures read, only TM4 separates them.
 * **The core (pure-protein ff2.1) against Upside 2** (10-27, Mac Studio; scripts and outputs
   `/project/trsosnic/yinhan/checks/u3_vs_u2_20261027/`):
   * Hamiltonian at identical coordinates: each tree's own writer builds the 16 Peng configs as `bench_run.py` does,
@@ -3906,9 +3925,9 @@ below) in `~/Downloads/glpG_HDX_ff3.0_blocks_20261022/` on the MacBook Pro.
   replicas shared one line of `extract.log` and the `verified$` count failed a correct copy. It now writes each line in
   one call; the check is unchanged.
 
-### 5.7 What Upside REMD on ubiquitin gives an HDX training term (M1, 2026-10-28)
+### 5.7 What Upside REMD on ubiquitin gives an HDX training term (H1, 2026-10-28)
 
-User 10-28: HDX first, then large proteins, then IDRs, as terms in the training (`upside3.md` 4.1); "check if you can do
+User 10-28: HDX first, then large proteins, then IDRs, as terms in the training (`upside3.md` 8.2); "check if you can do
 analysis with" the midway2 results. Data: the Peng-benchmark arms `ubiquitin_native_ff_2.1` and
 `ubiquitin_native_ff_3.0_gdepth` (14 rungs 0.800-0.940, 2,429,200 tu, frames every 100 tu, 24,287 per rung; WT 1UBQ,
 where experiment is Ub psWT F45W/H68N) and `ubiquitin_denovo_ff_3.0_gdepth` (8,028,200 tu), run by the Upside 2 engine;
@@ -3946,6 +3965,13 @@ T_up = 0.85 T / 298 K; censored at RT ln(ESS), Kish ESS; folded below 5 A CA-RMS
 * **The comparison temperature carries the stability error.** Peng reads FF2 at 300 K against an experiment at 273 K,
   the temperature chosen where the model's global stability matches (SI Table S4 and p. 15). At 273 K ff2.1's censored
   Spearman is 0.394, with 10 amides censored.
+* **The training data are per domain, not per amide** (literature read 10-29; `upside3.md` 8.2). Ferrari et al.
+  (Nature 2026, doi:10.1038/s41586-026-10465-z; bioRxiv 2025) give each of 5,778 domains of 28-64 residues a
+  distribution of opening free energies from intact-protein mHDX-MS, which they say does "not resolve which rates stem
+  from which residues"; site-resolved data are HDX-NMR on 13 domains. The data are public on Zenodo
+  (doi:10.5281/zenodo.14983481, CC BY 4.0). A per-amide term can therefore fit only residue-resolved proteins; the
+  domain set needs a distribution-level term. No transferable force field fitted to HDX was found (Zhu, Li and Wang
+  2021 fitted one protein's AICG2+ model).
 
 ---
 
@@ -4970,6 +4996,13 @@ FF2: Tables S8 and S10, at 293 and 300 K on Upside's calibrated scale (Figs 5 an
   His-tag numbering, subtract 21). Do not read an absent amide as fast-exchanging.
 * Table S9 (HEEH, simulation) repeats Table S8, an SI copy error; Upside FF2's HEEH agreement survives only as Table
   S14's summary (0 M: Pearson 0.185, Spearman 0.317, RMSE 1.06 kcal/mol).
+* **The temperature calibration (SI eqs. S14-S16, Table S1; read 10-29).** c x R_up x T_up = 0.593 kcal/mol at
+  298 K, and c = (0.593 dS_up + dG_exp) / dH_up, with dH and dS from two-state fits of 14-replica T-REMD melting
+  curves (H-bond count or Rg) of 13 Rocklin mini-proteins, averaged, and dG_exp their mean stability at 298 K (2.71
+  kcal/mol). FF2's c is 0.700 (Rg) and 0.702 (H-bonds), so 298 K is T_up 0.847 (text 0.85, Fig. S9 0.86). The text
+  gives T_up 1.0 for FF1 and 0.94 for FF1+, but Table S1's c gives 0.95 and 1.0, the reverse. HEEH_rd4_0097 is one
+  of the 13, and also one of the HDX proteins. The HDX proteins were then each read at the temperature (293-305 K)
+  where simulated stability matched dG_global. Upside 3's use: `upside3.md` section 6.
 Transcribed 0 M values: `scratchpad/boltz_hdx/flags/reference/`.
 
 ## 11c. Peng's benchmark trajectories on midway2 are FF1, not FF2 (measured 2026-09-14)
@@ -5046,7 +5079,7 @@ Q33-F51 dock; helix 1-helix 2 retention; L50-L64), with more native-like frames 
 
 ## 11e. Large proteins de novo: compact non-native globules; N-to-C growth does not help (2026-10-19)
 
-The full record, its tables and the Upside 3 plan are in `upside3.md` (sections 2-3; plan.md Phase 22; data in
+The full record, its tables and the Upside 3 plan are in `upside3.md` (8.3; plan.md Phase 22; data in
 `scratchpad/large_protein_20261019/`).
 * The mdCATH native-start panel's drop at 151-250 residues is the folded-fraction cutoff, which tightens with N;
   Upside's Q offset from all-atom and its Rg do not change with size.
@@ -5061,7 +5094,7 @@ The full record, its tables and the Upside 3 plan are in `upside3.md` (sections 
 
 ## 11f. Upside 3 planning: units, GPU and the first audit pass (2026-10-19)
 
-The full record is in `upside3.md` sections 2, 3 and 6 (reports in `scratchpad/upside3_planning_20261019/`).
+The full record is in `upside3.md` sections 4, 5 and 10 (reports in `scratchpad/upside3_planning_20261019/`).
 * **E_up's kJ/mol value is a temperature calibration.** 350.588 K = 298 K / 0.85, and Peng 2022 SI eq. S14 matches
   T_up 0.85 to 298 K for FF2; FF1's match of 1.0 gives 2.479 kJ/mol. Converting parameter files to kJ/mol fixes one
   force field's fit into them, and the MARTINI factor is this same calibration.

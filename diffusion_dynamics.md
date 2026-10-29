@@ -1,13 +1,15 @@
 # A modified Boltz-2 to replace Upside's sampling for HDX
 
-**Status (2026-10-27).** Phase 0 is done (10-21). Phase 1's HDX half is read out: Boltz-2 ranks EHEE's amides at
+**Status (2026-10-29).** Phase 0 is done (10-21). Phase 1's HDX half is read out: Boltz-2 ranks EHEE's amides at
 10^5 samples (censored Spearman 0.74; Upside FF2 0.61) but not HEEH_rd4_0097's at 10^4 (0.04; Upside 0.32) or Ub
 psWT's at 10^5 (-0.21, and -0.06 with a query-only MSA; Upside 0.43). By experiment's urea dependence EHEE's measured
 amides exchange through subglobal openings, HEEH's helices by global unfolding and Ub psWT's amides below the bound
 locally, so Gate 1 ends in its "wrong states" outcome; its mdCATH half is not run. Phase 2 (user 10-27: no retraining
 of Boltz, small trained add-ons allowed) is a trained add-on that tilts frozen Boltz-2's ensemble; no fine-tune is
-planned. Phase 2's E1 GPU pilot 61663101 (sampler parity and 64 unguided samples) is queued on midway3; the next step
-after it is the user's (E1). Jobs are recorded in `remote_jobs.md` §1. Every number below comes from reading code,
+planned. Phase 2's E1 is held (10-28): above kappa 1 the Feynman-Kac `log_z` falls under its provable floor, and the
+diagnosis job (10-29) did not reproduce the tuning's runs at the same seed, so its test was not read; a
+reproducibility job (10-29) showed that no steered run reproduces its seed across processes, even on one GPU, so a
+repeat test must be statistical (the user's choice). Jobs are recorded in `remote_jobs.md` §1. Every number below comes from reading code,
 docs and papers on 2026-10-21, or from the dated measurements; numbers marked *estimate* are unmeasured.
 
 ## 1. Goal
@@ -512,6 +514,51 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
         `7f0e1ee5` (the tuning's as `.bak_pre_trace_20261028`), ahead of the MacBook Pro's `addon/`. On stub Boltz
         modules (a toy denoiser and potential, CPU) the instrumented sampler's coordinates, weights, energies and
         `log_z` equal the old one's bitwise, and the trace's increments sum to `log_z`.
+      * **Diagnosis readout, 08:20 10-29: rule 1 fails, so nothing else in the job is read.** 61755382 ran 23:43-01:04
+        10-29 on midway3-0277, all six runs written, no FAILED line. The repeated runs give `log_z` -6.33 (kappa 1)
+        and -28.35 (kappa 2) against the tuning's -7.93 and -30.49, with the same seed, particles and settings in
+        both npz, and their samples differ wholesale (backbone up to 48 A apart). Between the two jobs only the
+        trace bookkeeping changed (no added random draw) and the node (tuning 0280, diagnosis 0277) under bf16
+        autocast. The pilot's parity check showed one process reproducing itself at a seed, but no run has been
+        repeated across jobs before, so whether Boltz-2 reproduces a seed across jobs on these GPUs is not known.
+        Cause not identified; the log_z failure above kappa 1 stays open and E1 proper stays held. Readout
+        `scratchpad/boltz_hdx/addon/runs/boltz_addon_e1_diag_ubqps_v100_61755382/readout.txt` (npz and log copied
+        there).
+      * The reproducibility job (user 10-29: "fix them all"), its reading fixed here before the data. The tuning's
+        I61 kappa 1 guidance 0.05 run (256 particles, seed 1) six times on one GPU in one job, each in its own
+        process (`addon/e1_repro.sbatch`): twice with the current code (`new`), twice with the tuning's
+        (`old`, the `.bak_pre_trace_20261028` files in `$B/addon/repro_old/`), and twice with the current code under
+        `torch.use_deterministic_algorithms(True, warn_only=True)` and `CUBLAS_WORKSPACE_CONFIG=:4096:8` (`det`),
+        whose warnings name the nondeterministic operations reached. `addon/repro_compare.py` reads it. Bitwise
+        equality of backbones, log-weights and energies decides each pair:
+        1. `new_a`/`new_b` or `old_a`/`old_b` unequal: one GPU does not reproduce a seed across processes, so the
+           diagnosis's rule 1 cannot be met by equality whatever the code, and the trace's first differing row says
+           where the runs part. Then `det_a`/`det_b` equal puts the cause in operations PyTorch's deterministic mode
+           controls (named by the warnings), and a rerun of the diagnosis can be deterministic; unequal puts it
+           outside them (Boltz's CUDA kernels among the candidates), and any repeat test must compare `log_z` over
+           seeds rather than demand equality. The choice of test is the user's.
+        2. Both pairs equal and `old_a`/`new_a` unequal: the trace change altered the GPU computation; locate it.
+        3. Both pairs and `old_a`/`new_a` equal, `old_a`/tuning unequal: runs reproduce on one node and not across
+           nodes (the tuning ran on 0280).
+        4. Everything equal: this node reproduces the tuning, and the diagnosis's difference is node 0277's.
+        The six `log_z` beside the tuning's -7.93 and the diagnosis's -6.33 are a first look at the run-to-run
+        spread at kappa 1, read only as that.
+        Submitted 09:24 10-29 as **61786565** (`boltz_addon_e1_repro_ubqps_v100`, V100, 1:30; `remote_jobs.md` §1
+        line 4); it runs on midway3-0277, the diagnosis's node, so `new_a` against the diagnosis's run is also a
+        repeat across jobs on one node. Old code md5 `20bdd6b7` (`e1_rare.py`) and `9ae0eb7e` (`sampler.py`).
+      * **Reproducibility readout, 10:15 10-29: rule 1, a seed is not reproduced across processes on one GPU.**
+        61786565 ran 09:29-10:08 on midway3-0277, all six runs written. Every pair differs wholesale (backbone up to
+        45 A apart), the current code's and the tuning's alike, so the diagnosis's failed rule 1 says nothing about
+        the trace change. The runs part at the first trace row, step 0, before any resampling (mean energy 13.569
+        against 13.557), and resampling on those weights picks different particles. Deterministic mode does not
+        close it: no deterministic-mode warning in the log, the step-0 difference shrinks from about 1e-3 to about
+        1e-6 of the mean energy and remains, so its source is outside what PyTorch's deterministic mode governs
+        (cuequivariance's kernels the candidates; not identified). A repeat test has to compare `log_z` over repeats
+        or seeds, not demand equality; which test, and whether the diagnosis's rules 2-3 are read under it, is the
+        user's. First look at the spread: the eight `log_z` at this setting (six here, the tuning's, the diagnosis's)
+        have mean -8.26, s.d. 1.58, range -10.32 to -6.24, and the diagnosis's kappa 1 run sits 1.6 from the
+        tuning's, inside it. Readout `scratchpad/boltz_hdx/addon/runs/boltz_addon_e1_repro_ubqps_v100_61786565/readout.txt`
+        (npz and log copied there; readout also on `/beagle3`).
 - [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).

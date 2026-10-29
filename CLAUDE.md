@@ -190,7 +190,7 @@ bash "$UPSIDE_HOME/example/16.MARTINI/<workflow>.sh"
 `remote_jobs.md` "Resume here, from any computer" and follows its checklist in order.
 
 **"continue upside3 progress":** a session asked to continue the Upside 3 work starts at `plan.md` Phase 24
-"Resume here" and follows its checklist in order; the method is `upside3.md` 2.2, the defect ledger
+"Resume here" and follows its checklist in order; the method is `upside3.md` 4.2, the defect ledger
 `findings.md` 3.14.
 
 **All remote job recording goes into `remote_jobs.md`, and nowhere else.** It is the single source of

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# Numpy oracle of the writers' index meaning (upside3.md 2.2).  For every node a config holds, the index datasets
+# Numpy oracle of the writers' index meaning (upside3.md 4.2).  For every node a config holds, the index datasets
 # are rebuilt from first principles and compared, slot by slot as the C++ reader uses them, with what the writer
 # stored.  The sources are the sequence; the atom layout of up.md 5 (N, CA, C at 3i, 3i+1, 3i+2; a hybrid's N, CA,
 # C, O at 4i..4i+3, its BB beads at 4n+i, then the environment); the chain breaks the config records; the axis

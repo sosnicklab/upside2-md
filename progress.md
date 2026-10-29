@@ -124,9 +124,9 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   1.34); both continued 76 -> 114 under an agreement rule fixed before the data (Phase 30).
 * **Large proteins de novo (plan.md Phase 22), 10-19.** On mdCATH the folded-fraction drop at 151-250
   residues is a metric artifact; local de novo runs of 155-179-residue proteins and the control end
-  in compact non-native globules, and vectorial growth equals bulk (findings 11e, upside3.md 5.2).
+  in compact non-native globules, and vectorial growth equals bulk (findings 11e, upside3.md 8.3.2).
   Study data in `scratchpad/large_protein_20261019/`.
-* **The `environment_coverage_hb` typing defect, 10-19** (findings 3.13, upside3.md 5.4). Fixed in
+* **The `environment_coverage_hb` typing defect, 10-19** (findings 3.13, upside3.md 4.1). Fixed in
   `src/environment.cpp` and `py/upside_config.py`, old configs bitwise equal; upside3.md written.
 * **Upside 3 (plan.md Phases 23-24, upside3.md), 10-19 to 10-22.** The user made martini-dev Upside 3,
   with fixes there only (CLAUDE.md reworded). Planning: findings 11f (reports in
@@ -139,7 +139,7 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   (A70-A73, A83, A183-A191), torch out of the glue and trainers (A204), the sequence-distance exclusion
   key (A231). Bilayers: CHARMM-GUI step5 starts interdigitated and GROMACS shows the same early box
   jump, so preps start from GROMACS-equilibrated membranes (findings 8); glpG's solvation gate (8b,
-  A102, A126). The closing criteria (upside3.md 2.2 item 5) were met 10-22. The Upside 3 tree
+  A102, A126). The closing criteria (upside3.md 4.3) were met 10-22. The Upside 3 tree
   `/beagle3/trsosnic/yinhan/upside3` was built on midway2 and named in CLAUDE.md; Peng's 32 arms and
   the glpG prep and REMD were submitted as the validation of the debug, through
   `example/16.MARTINI/run.py` rewritten to submit stages as jobs and REMD in blocks (A232-A233).
@@ -331,10 +331,10 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   estimator on ff2.1 and ff3.0 native arms, MBAR to 273 and 300 K. ff2.1 reproduces Peng's FF2 (Spearman 0.90); 14-15
   of 24 measured amides resolve at 273 K (bound 5.6); ff2.1 opens the globally exchanging amides within the folded
   state; ff3.0's ubiquitin melts about 0.06 T_up lower, with 3 ladder round trips; the definition shift is 0.12
-  kcal/mol. Files: findings.md 5.7, upside3.md 4.1 (design and steps M2-M6, T1) and 7 item 5, plan.md Phase 23
+  kcal/mol. Files: findings.md 5.7, upside3.md 8.2 (design and steps H2-H5, then M2-M6 and T1) and 11 item 9, plan.md Phase 23
   item 5. No cluster job submitted; three arms copied to the Mac read-only. Then "record the plannings. We will run
-  it later": M2, M3 (Peng's FF2 protocol from SI pp. 12-13, about 570 node-hours) and M6 specified in upside3.md
-  4.1, the item added to remote_jobs.md "Resume here" step 7, `fetch.sh` added, and the handoff bundle's records
+  it later": M2, M3 (Peng's FF2 protocol from SI pp. 12-13, about 570 node-hours) and M6 (now H2, H3 and B0) specified in upside3.md
+  8.2, the item added to remote_jobs.md "Resume here" step 7, `fetch.sh` added, and the handoff bundle's records
   and M1 tools refreshed (old records in `records.bak_20261028_1150/`).
 * **10-28 11:05-13:00, MacBook Pro, disordered regions** (user: "for upside3, investigate the possibility of
   enhancing intrinsic disordered region simulation accuracy"; then "record everything in upside3.md. We will
@@ -343,8 +343,8 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   comparison with experiment exists; a 16-entry SAXS panel. User corrections: Upside's electrostatics are implicit in
   the trained terms (findings 10.42), and no explicit electrostatic term is added (double counting). B0 launched on
   the Mac 11:56 (ff2.1 x 6 and SARW x 3, then ff3.1 x 6; 30,000 tu from random coil); alpha-synuclein pilot: ff2.1
-  35.6 and 31.0 A against 35.5 measured, SARW 40.1, Rg tau 340-1,300 tu. Files: upside3.md 4.2 (with 4.1 M6, 7
-  item 6, 8), plan.md Phase 34, findings.md 10.42.
+  35.6 and 31.0 A against 35.5 measured, SARW 40.1, Rg tau 340-1,300 tu. Files: upside3.md 8.4 (with B0, 11
+  item 10, 12), plan.md Phase 34, findings.md 10.42.
 * **10-28 16:10-19:50, MacBook Pro, B0 read** (stage A at 16:10, stage B at 19:37).
   * Results, ff2.1 / ff3.1:
     * Offset 0.886 / 0.850, with bootstrap intervals that exclude 1.
@@ -359,7 +359,7 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   * Fix: `stat_ineff.py` failed on HDF5 file locks, because it opened stage B files the driver was still writing.
     It now covers only the models in `results.txt`'s seeds line.
   * New: `read_b0.py`, which applies 4.2's rules, including per-seed helicity and globule fractions.
-  * Recorded in upside3.md 4.2, 7 item 6 and 8, and plan.md Phase 34.
+  * Recorded in upside3.md 8.4, 11 item 10 and 12, and plan.md Phase 34.
   * Then, on "record this ... I will work on it later in another session":
     * Added 4.2 steps B1 (ACTR at 298 K) and B2 (sampling).
     * Added a "Resume here" for a cold session.
@@ -373,7 +373,39 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   and A168; fixed as A237 (`tests/index_oracle.py`), 0 mismatches on 28, three injected errors caught. node_fd's 6
   flagged directions line-integrate to noise (1ubq_rotamer's at width 5, below float32 at the default). The
   1rkl_channel one comes from the `surface` score, a count with no derivative: the channel energy steps with no
-  force (up to 1.4 E_up per step along CB placement), recorded for the user (findings 3.14, upside3.md 7 item 7).
+  force (up to 1.4 E_up per step along CB placement), recorded for the user (findings 3.14, upside3.md 11 item 15).
   Not run: the hybrid fixtures (CHARMM-GUI inputs and baseline h53 on the MacBook Pro only); 4.2 B1 and M2 (their
   scripts and data are on the MacBook Pro and the cluster). Files: `tests/index_oracle.py`, findings.md, plan.md
-  Phase 24 item 2c, upside3.md 7.
+  Phase 24 item 2c, upside3.md 11.
+* **10-29 08:06-09:45, Mac Studio, status pass and the owed items** (user: "check remote job status", then "fix them
+  all"; both sockets reopened, two Duo pushes). Found `ff311_glypair` hung since 22:41 10-28 in step 34: a
+  `compute_divergence` Pool child for 3g0m died of a glibc double free in `RotamerSidechain`'s destructor and
+  `pool.map` waited for its lost task (remote_jobs.md §1 line 2, §8). Boltz E1 diagnosis 61755382 failed its rule 1
+  (no reproduction at the same seed), so it was not read further. Then:
+  - 3g0m's step files copied aside md5-checked (`checks/ff31_debug_20261027/hang_3g0m_step34/`), the hung srun step
+    cancelled 09:20; the link ended FAILED and insurance 49636476 waits to rerun step 34.
+  - ff3.2's epoch-1 panel `n32_01` submitted (49640339).
+  - Boltz reproducibility job 61786565 (six repeats of one setting on one GPU: current, pre-trace and deterministic
+    mode), its reading fixed first in diffusion_dynamics.md Phase 2 E1; `addon/e1_repro.sbatch`, `repro_compare.py`
+    (dry-run on the existing npz). Read 10:15: no pair reproduces, deterministic mode included, parting at step 0;
+    the repeat test must be statistical (`log_z` s.d. 1.6 over 8 runs), the user's choice.
+  - Round 2 read for ff3.2 and `_mb2` (plan.md Phases 32-33; `gly_LR` reproduced round 1's -0.567 and -1.065 first).
+  - glpG on Upside 3 read: ff2.1 blocks 2-3 and block 1 of ff3.1 and ff3.0 (findings 3.15): TM4 0.44, 0.26, 0.14
+    under ff2.1, 0.42 under ff3.1, 0.85 under ff3.0 (Upside 2 0.96).
+  Files: remote_jobs.md, plan.md, findings.md, diffusion_dynamics.md, progress.md; scratchpad/boltz_hdx/addon.
+* **10-29, Mac Studio, `upside3.md` restructured** (user: "read through upside3.md, do some research and formalize the
+  design ... make it logical and ordered, and fill in the gap between steps"; "and run any local test that are
+  needed"). Plan approved (`~/.claude/plans/mighty-prancing-candle.md`), then one rewrite: scope and definitions,
+  standards for every step, a roadmap of stages S1-S7 and track G with gates, the audit, units and the training tree,
+  a temperature section, a base-force-field section, the training changes (labels H1-H5, L1-L6 with D1-D4, B0-B2,
+  I1-I3; GPU ladder V0-V3), validation and release, GPU, one decisions table, files. Research: two record-reading
+  sub-agents, a literature sub-agent (Peng's S14-S16 calibration, HDX fitting precedents, Ferrari's per-domain data,
+  how force fields accumulate changes) and an independent structural review. Local test: the channel potential in
+  dynamics on 1rkl_channel (force-less energy 1.43 E_up over 9 tu against an s.d. of 1.66; xy translation
+  invariant). Checks: every old number kept except stale code line numbers; every section reference resolves; no
+  em dash or listed word. Cross-references updated in plan.md, findings.md, remote_jobs.md, progress.md, CLAUDE.md
+  and two test headers. Files: `upside3.md`, findings.md (3.14 note, 5.7, 11b), plan.md Phase 23 item 6.
+  Then the user's GPU ruling ("the same results as the current ffs, without retraining"): `upside3.md` 10 rewritten
+  to it (the current force fields from the same files, to the audited CPU engine's results; energies and forces
+  only, so V4 and the parameter-derivative check dropped; G3 and G4 no longer wait on S5 or the side-chain choice),
+  with the roadmap, 1.2, 7.1, 9.1 and decision 12; plan.md Phase 23.

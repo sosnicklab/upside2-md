@@ -381,22 +381,40 @@ temperature calibration, 298 K / 0.85, so A+ is recommended: reduced units insid
 every input and output); GPU (6). Decided 10-19: Upside 3 is a new release, so no list of fixes and their effects
 on ff2.1 is published; each fix is proven correct, but none is measured against ff2.1 or master, and ff2.1 is not
 re-validated on the audited engine (the user's 10-22 validation of the debug runs ff2.1 on it, Phase 24 2b).
-4. [ ] The user's decisions (`upside3.md` 7); the audit is Phase 24.
+Decided 10-29: the GPU "should produce the same results as the current ffs, without retraining or training another
+version of ff". It runs the current force fields from the same files, to the audited CPU engine's results, and
+computes energies and forces only (`upside3.md` 10.2); it no longer waits on the training changes or the side-chain
+choice.
+4. [ ] The user's decisions (`upside3.md` 11); the audit is Phase 24.
 5. [ ] **Training objective terms for HDX, then large proteins, then IDRs** (user 10-28, in that priority; design and
-   steps in `upside3.md` 4.1). Terms added to ConDiv's contrast from the per-frame dV/da the engine already returns; the
+   steps in `upside3.md` 8.2). Terms added to ConDiv's contrast from the per-frame dV/da the engine already returns; the
    energy's functional form stays spline tables.
-   - [x] M1, the one measurement the midway2 data allow (10-28, findings 5.7): ubiquitin on the Peng-benchmark REMD.
+   - [x] H1, the one measurement the midway2 data allow (10-28, findings 5.7): ubiquitin on the Peng-benchmark REMD.
      The pipeline reproduces Peng's FF2. A full benchmark REMD resolves 14-15 of the 24 measured amides at 273 K, and
      ff2.1 opens the globally exchanging amides within the folded state. ff3.0's ubiquitin melts about 0.06 T_up below
      ff2.1's.
-   - [ ] M2-M6 and T1 (`upside3.md` 4.1). M2 waits only on ff3.1's ubiquitin arms finishing; M3-M6 need new runs or
-     data; T1 waits on M3 and the temperature mapping (`upside3.md` 7 item 5).
+   - [ ] H2-H5 (`upside3.md` 8.2; the large-protein and IDR baselines are 8.3.5 and 8.4.6). H2 waits only on ff3.1's
+     ubiquitin arms finishing; H3 and H4 need new runs or data; H5 waits on H3, H4 and the training temperature
+     mapping (`upside3.md` 6.3, 11 item 9).
+6. [x] **`upside3.md` restructured into one ordered design** (user 10-29: "make it logical and ordered, and fill in
+   the gap between steps"; the approved plan is `~/.claude/plans/mighty-prancing-candle.md`). Stages S1-S7 and track
+   G with gates; cross-cutting standards, the temperature scale and the base force field each in one place; labels
+   H1-H5 (HDX), L1-L6 (large proteins), B0-B2 and I1-I3 (IDRs); every gap filled from the records or written as a
+   proposal for the user; cross-references in the other records updated; the channel-potential steps measured in
+   dynamics.
+   **Review (10-29).** Every number of the old text kept except the stale code line numbers, now cited by function.
+   Gaps filled from the records: no Upside 3 training tree yet (every chain on the pre-audit engine), no base or
+   side-chain choice, the trainer's loss (findings 1.37) against the Phase 29 rule, Peng's S14-S16 calibration and
+   its overlap with the HDX test set, Ferrari's per-domain data, the debug validation's results. New proposals for the
+   user (`upside3.md` 11): S1's gate, accumulation and acceptance rules, the training temperature mapping, S3's gate
+   for co-training changes, the refusal design; the GPU's purpose, answered 10-29 (above). The lateral-pressure
+   proposal Phase 24 item 5.1 pointed to was missing and is now in 8.5.
 
 ### Phase 24 - Upside 3 audit: find and fix every bug (STARTED 2026-10-19, user)
 User 10-19: "the fix only goes into upside 3. You can modify on current branch (martini-dev) as this will be the
 'upside 3'. Later in the stage we should make it refuse to run ff2.1 (not yet ...). You can start the debug progress
 now, on this branch." Code concise, simple and logical, in master's style (never example 00's). Method in
-`upside3.md` 2.2; the defect ledger is findings 3.14.
+`upside3.md` 4.2; the defect ledger is findings 3.14.
 
 **Resume here ("continue upside3 progress"; state at 2026-10-22 19:10, Mac with the scratchpad; item 2b to 10-27).**
 Working files (fixtures, baselines, build trees, reviewer outputs) are under the gitignored `scratchpad/upside3_audit/`.
@@ -419,7 +437,7 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
    closed-form numpy gradients, so a process holds one OpenMP runtime; the 86 dead `rotscalar` coordinates removed,
    which stops older checkpoints resuming in a newer tree, remote_jobs.md 0b), hybrid analysis (P2-06) A200-A203,
    build (P1-17) A205-A213, analysis (P1-15) A214-A220, examples (P1-16) A221-A225.
-2a. [x] The closing criteria (upside3.md 2.2 item 5) on the final engine, met 10-22 (`scratchpad/upside3_audit/closing/`):
+2a. [x] The closing criteria (upside3.md 4.3) on the final engine, met 10-22 (`scratchpad/upside3_audit/closing/`):
    * invariance: every test passes (equipartition on chig and on the hybrid production state, pivot MC, REMD,
      thermostat v / mv fast / mv slow; `closing/inv.summary`).
    * node_fd: all 30 configs; every parameter derivative exact or "not implemented" (A29-A31); every flagged
@@ -455,12 +473,13 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
       (findings 3.15): KE, C-N and five of six TM helices as Upside 2's hybrid, but TM4 is lost (DSSP alpha 0.44 at
       T 0.70 against 0.93-0.96), already in preparation stage 7.0. The loss is ff2.1's own (Known Errors); the HDX
       readout waits on the user's choice of force field.
-   Next after it: refusing ff2.1 (the step `upside3.md` names after the audit), then the open items below.
+   Next after it: stage S2 (`upside3.md` section 3), then the open items below; refusing ff2.1 is S7, at release
+   (`upside3.md` 9.3).
 2c. [x] The protein harness rerun on HEAD (Mac Studio, 10-29; the hybrid fixtures are MacBook-only, not rerun):
    regress 0 of 4064 arrays against the 10-27 records; invariance remd, thermostat, mc and chig equipartition PASS;
    index oracle 0 mismatches on all 28 fixtures after A237 (the 10-27 flags were the oracle's own); node_fd's 6
    flagged directions line-integrate to noise, 1rkl_channel's once the surface score's steps are removed (findings
-   3.14, after the ledger; `upside3.md` 7 item 7).
+   3.14, after the ledger; `upside3.md` 11 item 15).
    Open from the build review (`pass2/build/report.md`): the cluster binaries set flush-to-zero and
    denormals-are-zero in every process that loads the library (U1, `set_fast_math` found by `nm` in both trees),
    measured at the first midway2 build (remote_jobs.md 0b); `sse2neon.h` is an unpinned Homebrew header whose
@@ -484,7 +503,7 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
       to zero, as any energy of the xy-uniform membrane must (1qhj net force up to 0.096 E_up/A,
       `scratchpad/upside3_audit/lateral/net_force.log`), so logged energy, pivot MC and replica exchange could not
       see it. A lateral-pressure term, if wanted, is a new energy, the integral of P(z) A(z) dz over the protein's
-      cross-section (upside3.md proposal).
+      cross-section (upside3.md 8.5).
    2. The rotamer-library generators deleted (A104): nothing builds or calls them, no Upside 3 plan rebuilds
       libraries from Dunbrack, and master keeps them as the libraries' provenance (noted in up.md).
    3. Chain breaks (A106, writers patch 6 as written): every shipped workflow (tests/fixtures.py, examples 03-16)
@@ -510,7 +529,7 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
       * the ion count from the P-P thickness, the prep's fallback measuring it from the PO4 beads (A190).
       The hybrid fixtures were re-prepared end to end on them (`fixtures_hybrid_w4/`, baseline h52, item 1). The
       cluster's live hybrid files are re-prepared before Upside 3 runs them (remote_jobs.md 0b).
-   Still with the user: `upside3.md` 7.
+   Still with the user: `upside3.md` 11.
 6. Git is the user's. The commit should include `tests/` and `example/15.SpatialTransformation/calc_rmsd.py`.
 
 **Revised decisions** (CLAUDE.md Development Rules reworded to match, 10-19):
@@ -520,7 +539,7 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
   `scratchpad/upside3_audit/`.
 
 **Harness and pass 1 (10-19 to 10-21).**
-* `tests/` (method `upside3.md` 2.2): `fixtures.py` (ff_2.1 configs for chig, 1dfn, 1ubq and membrane 1qhj, plus one
+* `tests/` (method `upside3.md` 4.2): `fixtures.py` (ff_2.1 configs for chig, 1dfn, 1ubq and membrane 1qhj, plus one
   config per writer option group, 44 of 44 node writers), `node_fd.py` (each potential leaf's forces and parameter
   derivatives against fourth-order differences on the realized float32 steps, with tie maps), `regress.py` (node
   outputs, forces and parameter derivatives on 3 frames plus a seeded REMD-and-pivot run, compared bitwise; a
@@ -764,7 +783,11 @@ share the minibatch order. Decisions:
 3. [ ] Read at each round end and at 76. Round 1 (read 22:10 10-28, `ff311_glypair` / `_mb2`): glycine's pair aR
    +0.021 / +0.009, aL +0.216 / +0.163 (ff3.0 -0.107 / +0.517); epoch-0 pull aL t +4.1 / +4.2, aR -1.7 / -1.5;
    -ln(P_aL / P_aR) -1.025 / -1.065 (ff2.1 -1.219, ff3.0 -0.598). alpha_L moves toward ff3.0's and is still pulled;
-   the test reads rounds 3-4.
+   the test reads rounds 3-4. Round 2 (read 09:30 10-29), `_mb2` only: aR -0.006, aL +0.301; epoch-1 pull aL t +3.0
+   (summed +30.8), aR -1.5, other shared offsets |t| at most 2.1; -ln(P_aL / P_aR) -0.913. alpha_L keeps moving
+   toward ff3.0's and is still pulled. `ff311_glypair` hung in step 34 from 22:41 10-28 (a worker's Pool child died
+   of a glibc double free, cause not identified); cancelled 09:20 10-29 with 3g0m's files kept, its insurance link
+   reruns step 34 (remote_jobs.md §1 line 2), so its round 2 comes later.
 
 ### Phase 33 - fix the training's native target; ff3.1 retrained on it, and ff3.2 with every term trained (STARTED 2026-10-28, user)
 User 10-28: "try a version with everything trainable, start with current ff3.1, call it ff3.2. Fix ff3.1 according to
@@ -830,27 +853,35 @@ target, the Phase 32 runs kept.
    in ff3.2's round 1, against ff3.0 -0.836, the merged ff3.1 -1.064 and ff2.1 -1.460; over epoch 1's first 14
    steps the pull is gone (alpha_R t -0.7, alpha_L +0.3, beta' -1.1), so the data holds it at ff3.0's balance.
    ff3.1 (steps 0-15, no round written yet) is pulled the same way: alpha_L t +3.3, alpha_R -1.4, beta' -3.0.
+   **Round 2, ff3.2** (read 09:30 10-29): glycine's shared offsets aR -0.131 -> -0.196, aL +0.517 -> +0.536, beta'
+   -0.316 -> -0.350 (beta +0.057, pPII +0.056, pPII' -0.052); the epoch-1 pull is under |t| 2 on every glycine basin
+   (aR -1.3, aL +1.1, beta' -1.5; held-out aL -3.6 summed), the other shared offsets' |t| median 0.8, max 3.1.
+   -ln(P_aL / P_aR) -0.567 -> -0.480, now 0.12 above ff3.0's -0.598 (less alpha_L than ff3.0). Native fidelity over
+   epoch 1: glycine beta' natives 0.773 (n 366), alpha_R 0.997, non-glycine pPII' 0.906, non-glycine beta' 0.098
+   (n 26). H-bond margin +0.080 at epoch 1's end, +0.036 at step 50, +0.051 at step 54 (dhb -0.489 -> -0.541); 24 of
+   24 proteins every step, KE/1.5kT at most 1.016.
 7. [ ] ff3.2's epoch-end panels, the folding test of the fix (epoch 0 read 23:30 10-28: folds 0.449, -0.167 [-0.206,
    -0.129] against released ff2.1, level with `a32_00` and `a31_00`, so the fix does not cure epoch 0's loss; findings 1.37): tag `n32_EE` added to `submit_new.sh` (user 10-28), so
    each epoch end gets the 176-run panel the all-term runs had and reads against `a31_EE`, `a32_EE` and `c9_EE`
    (findings 1.37's table). `extract_ff.py` on the epoch-0 checkpoint writes a `rama.dat` md5-equal to the run's
-   `rama_round_01.dat` (`0c9b7978`; `checks/ff31_fix_20261028/extract_test_n32_00/`).
+   `rama_round_01.dat` (`0c9b7978`; `checks/ff31_fix_20261028/extract_test_n32_00/`). Epoch 1's panel `n32_01`
+   submitted 09:22 10-29 (remote_jobs.md §1 line 2).
 
 ### Phase 34 - disordered regions in Upside 3: how accurate, and what could improve them (STARTED 2026-10-28, user)
 User 10-28: "for upside3, investigate the possibility of enhancing intrinsic disordered region simulation accuracy";
-then "record everything in upside3.md. We will implement this later." The record is `upside3.md` 4.2 (what the model
-gives a disordered chain, the literature, B0 and its reading rules, candidates I1-I3, steps, and a "Resume here" for
-a cold session); this phase tracks only status. User 10-28 after B0: "record this ... I will work on it later in
-another session".
+then "record everything in upside3.md. We will implement this later." The record is `upside3.md` 8.4 (what the model
+gives a disordered chain, the literature, B0 and its reading rules, candidates I1-I3 and steps, with its "Resume here"
+in section 12, for a cold session); this phase tracks only status. User 10-28 after B0: "record this ... I will work
+on it later in another session".
 Decided by the user 10-28: no explicit electrostatic term (the trained terms already carry electrostatics, so it
 would count them twice); salt dependence is outside the model.
 1. [x] Literature and the SAXS panel (`scratchpad/idp_20261028/lit/`).
-2. [x] B0 on the Mac (4.1 M6), 10-28 11:56-19:37, recorded in 4.2. ff2.1 and ff3.1 make the same error. Both
+2. [x] B0 on the Mac, 10-28 11:56-19:37, recorded in `upside3.md` 8.4. ff2.1 and ff3.1 make the same error. Both
    are 11-15% compact, both collapse ACTR and A1-LCD into globules, and both leave Cv78 too expanded. 10-11 of 16
    entries are unresolved. The routing is I1 with variants; I2 is not indicated and I3 is undecided.
 3. [ ] B1 (ACTR at 298 K, about 30 min on the Mac) and B2 (longer sampling or REMD; the user's choice), as in 4.2's
    Steps.
-4. [ ] I1-I3: after B0, in 4.1's order, on the user's word.
+4. [ ] I1-I3: after B0, in the user's order (`upside3.md` 8.1), on the user's word.
 
 ## Known Errors / Blockers
 
