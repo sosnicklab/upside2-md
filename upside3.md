@@ -8,6 +8,8 @@
 * No Upside 3 training has run. Every ConDiv chain so far, Phase 33's included, runs on the pre-audit engine (5.4).
 * Waiting on the user: the side-chain model and the starting parameters of the base force field (section 7), and the
   other decisions of section 11.
+* Proposed 10-29 (user): side-chain pair tables coarse-grained from an all-atom force field, with only a correction
+  trained, and the hybrid's side-chain/lipid tables changed with them (7.4). Recorded; BU1 waits on the user.
 * Not blocked by any other step: S2's cluster sync and training tree (5.4), and the baselines that do not depend on the
   base (H2, B1), each started on the user's word as section 8 records. The units module and G1 wait on the units
   option.
@@ -68,7 +70,8 @@ one of the five goals.
   (10-26, plan.md Phase 31).
 
 Whether it is a product goal is open (11, item 14). The answer decides whether the GPU's d2 route is in scope (10.3)
-and whether `martini.h5` moves to native units (11, item 2).
+and whether `martini.h5` moves to native units (11, item 2). Its side-chain/lipid tables change with the side-chain
+pair tables if 7.4 goes ahead.
 
 ### 1.4 Definitions
 
@@ -96,6 +99,8 @@ and whether `martini.h5` moves to native units (11, item 2).
 | D1-D4 | the large-protein design changes, inside L6 | 8.3 |
 | B0-B2 | IDR baseline steps | 8.4 |
 | I1-I3 | IDR candidates | 8.4 |
+| BU1-BU6 | bottom-up side-chain pair tables | 7.4 |
+| F0-F5 | the side-chain forms of 7.4's diagnostic | 7.4 |
 | G1-G5 | GPU steps | 10.3 |
 | V0-V3 | the GPU verification ladder | 10.2 |
 | A+, B, C, D | units options | 5.2 |
@@ -546,12 +551,589 @@ Consequences for Upside 3:
   * Every trainer change needs the user's word (plan.md Phase 28: every candidate fix departs from the FF2 workflow
     the project fixes; findings 10.17).
 
-### 7.4 Steps
+### 7.4 Side-chain pair tables from an all-atom force field (proposed 10-29)
+
+User 10-29: "What we have now is a top-down approach, but it should be the same if we take the existing ffs (e.g.
+amber), and do coarse graining process like what we did in hybrid model, and generate a spline table. The training
+part should be working on the correction for this CG spline table." A large, branched side chain "is simply CG into
+the same spline table as small, simple SC", although it "can have elasticity, rotation, etc., which can be over simplified"; "Doing CG first can
+help us find which SC needs more spline tables than simple ones". Then: "you need to make corresponding change in
+hybrid spline table as well."
+
+**The model today.**
+* Each side chain is one bead per rotamer state: a fixed position and unit direction in the residue's backbone frame
+  (`sidechain.h5` `rotamer_center_fixed`, 86 states). ALA and GLY have 1 state; CYS, ILE, LEU, LYS, PRO, SER, THR and
+  VAL 3; the other ten 6. The states and their phi/psi-dependent prior come from Dunbrack's library (up.md 2.1).
+* Two beads interact through one table per residue-type pair, shared by every state of both residues
+  (`pair_interaction (20,20,54)`; `src/bead_interaction.h` `quadspline`):
+  V(r, t1, t2) = V_iso(r) + A1(cos t1) A2(cos t2) V_ang(r), radial knots 0.7 A apart, cut off at 7 A.
+  * Of the six coordinates of two side chains' relative pose, the form keeps three: the distance and each direction's
+    angle to the line between the beads. It has no dependence on the twist between the two directions or on either side
+    chain's rotation about its own direction.
+  * Its angular dependence is a single product of one function of each angle.
+* The tables are top-down: PDB maximum likelihood, deliberately not matched to atomistic energies (Jumper et al. 2018,
+  findings 1.17), then trained with every other term by ConDiv (FF2).
+* So are the beads. They started near the side chain's centre of mass, directed along CB-CG, and "are updated during
+  the optimization of the potential" (Jumper et al. 2018, full text). The fit in `sidechain.h5`'s `program_text`
+  trains `placement_fixed_point_vector_only` with the pair, coverage and hydrophobe tables and writes it as
+  `rotamer_center_fixed`. The beads lie away from the points master's `src/compute_rotamer_centers.cpp`
+  (`get_beads`) defines, on average by 2.7 A for ARG's guanidinium, 2.5 A for TRP's six-ring and 2.1 A for GLU's
+  carboxyl.
+* The states partition Dunbrack's rotamers to minimise the side-chain atoms' positional variance, at most 6 per
+  residue because belief propagation's cost grows with the square of the state count (Jumper et al. 2018, SI).
+
+**The proposal.**
+* **The CG table.** The pair table is derived by coarse-graining an all-atom force field, as the hybrid's
+  side-chain/lipid tables are derived from dry MARTINI (up.md 2.6). It is a free energy, and its spline must equal it
+  at every node, as for every table (CLAUDE.md).
+* **One CG bead per side chain** (user 10-29: "Try to avoid adding a second bead to each SC. The ending SC should still
+  be CG beads, but there should be addtional spline tables to represent it under different orientation, etc."). Each
+  rotamer state stays one bead. A side chain that one table cannot describe gets more tables on that bead.
+* **The correction** (user 10-29: "The correction could be simply a spline table of same dimention. If CG is exact,
+  the correction table will be all 0s.").
+  * Training learns a table of the CG table's dimension and grid, starting at zero. Its departure from zero, pair by
+    pair, is the CG table's error in a protein.
+  * The file keeps the two apart, so the CG table stays checkable against its derivation. The runtime table is their
+    sum, exactly, because a spline is linear in its coefficients.
+  * A correction that starts at zero must be linear in its parameters, since a product of zero tables has zero
+    gradient. Where the CG table is a sum of products (below), the correction has the same terms with their angular
+    tables held at the CG fit's, and trains their radial tables.
+  * Proposal: train it under an L2 prior toward zero, as ff3.1's basin offsets were trained against NDRD (plan.md
+    Project Goal), so that it stays zero where the data do not pull.
+* **The diagnostic.** The derivation gives each pair of side chains its free energy over the full relative pose. Today's
+  form is fitted to it and the residual read, pair by pair. Side chains whose residual is large get more tables; the
+  rest keep today's.
+* Every bottom-up protein model the 10-01 survey checked needed a top-down correction (findings 1.17: Liwo 2002,
+  Hills 2010, Majewski 2023, Charron 2025), which is the split proposed here.
+
+**What the hybrid's construction gives, and what it lacks for this.** The hybrid's `/sc_table`
+(`py/martini_build_tables.py`, `_sidechain_conformers` and `_run_sc_task`):
+* builds each state's conformers: ideal geometry at the state's library (chi1, chi2) rows, chi3 and chi4 at their
+  wells, syn-pentanes left out, equally weighted;
+* maps them onto martini22 beads;
+* tabulates, at 0.8647 T_up, the free energy of one target bead over the conformers and the rotations about the CB
+  vector, exp(-F/kT) = sum_c w_c <exp(-E_c/kT)>, on (r, theta) about the CB.
+
+For two side chains in water, two things differ:
+1. **The solvent.** Dry MARTINI holds its solvent in its parameters, so the direct Boltzmann sum is the free energy.
+   An all-atom pair in water needs the water sampled (umbrella sampling or free-energy perturbation over the pose), or
+   an implicit-solvent model that approximates it. This is the cost of the derivation.
+2. **The pose.** A target bead is a point, so r and theta about the CB are its whole pose. Two side chains on two
+   backbone frames have six coordinates, and the bead form keeps three.
+
+**Routes to the CG table.**
+
+| route | what is computed | gives | limits |
+|---|---|---|---|
+| A, dilute pairs (the hybrid's construction; UNRES) | two side chains in water, each held in one rotamer state; their free energy over the relative pose | the pair free energy per state pair; the diagnostic directly | a pair in water, not in a packed core, so many-body effects are left to the correction; 3,741 state pairs over 210 type pairs; the side chain's own interactions must be separated from the backbone's (analogues, as UNRES does, or subtraction) |
+| B, force matching on all-atom protein trajectories (MS-CG; ultra-CG for discrete states) | the all-atom forces projected onto the CG model | the best pairwise approximation to the many-body free energy over the sampled ensembles | fits every CG term at once, so the pair table is not obtained apart from burial; the rotamer state is a discrete coordinate (ultra-CG); mdCATH's all-atom forces are CHARMM22*, and whether Charron's Amber deposit keeps all-atom forces is not verified (below) |
+
+Route A is the user's construction. Route B is a check against protein ensembles.
+
+**The diagnostic.** For a residue pair and a state pair, the reference distribution over the relative pose is
+p(x) ~ exp(-F(x)/kT) within the cutoff. Each form is fitted by relative entropy, and its residual is read as the
+relative entropy per contact and as the Boltzmann-weighted RMS error in kT.
+
+A dense grid over the six pose coordinates is ruled out three ways:
+* **Storage.** It would hold 12 x 15^5 = 9.1 million float32 coefficients per state pair, 136 GB over the 3,741
+  state pairs, the same in memory as on disk.
+* **Speed.** Each evaluation would read 4^6 = 4,096 coefficients, against today's 16.
+* **Data.** No simulation fills 9.1 million nodes per state pair.
+
+So every form is today's with more terms: a sum of products of one-dimensional spline tables, the additional tables
+the user describes. Every form keeps one bead per state; what grows is the number of tables, the coordinates they
+span, or the number of states:
+
+| form | what the tables add | for | precedent |
+|---|---|---|---|
+| F0 | today's: V_iso(r) plus one product A1(t1) A2(t2) V_ang(r), one set per type pair | the baseline | COFFDROP's distance-only tables miss TRP-TRP orientations |
+| F1 | a set per state pair; the bead's position and direction a mapping from the all-atom side chain, fixed before the derivation | states that differ in more than their placement | ultra-CG's state-wise pair potentials |
+| F2 | more product terms in (t1, t2) | shapes one product cannot make: head-to-head and side-to-side minima at different r | UNRES VII's head-to-side asymmetry |
+| F3 | terms in the twist between the two bead directions (UNRES's phi) | pairs whose free energy depends on the relative twist | UNRES's PMFs in (r, t1, t2, phi) |
+| F4 | a second direction on the same bead, the normal of its planar group, so the bead carries a frame; terms in each side chain's rotation about its bead direction, the last two coordinates | ring stacking (PHE, TYR, TRP, HIS); guanidinium, amide and carboxylate planes | UNRES IV: one spheroid fails at short range for the rings and MET; Jumper 2018: the direction "could be the unit vector normal to the ring" |
+| F5 | more states, each one bead (LYS's 3 states cover chi2-chi4, ARG's 6 cover chi3-chi4) | side chains that move within one state | UNRES VI: four head-group positions for the salt bridge |
+
+* **F4 completes the pair.** Two beads that each carry a frame have the whole relative pose, so with enough terms an F1
+  set in F4's coordinates holds a dilute pair's free energy, each state's internal motion integrated into it. What it
+  cannot hold is many-body, and that is the correction's.
+* **F5 is the many-body part that states can carry.** A table integrates a state's internal motion separately for each
+  neighbour, as if the side chain could take a different conformer for each. With neighbours A and B, the free energy
+  over finer states s is -kT ln sum_s p_s exp(-(F_sA + F_sB)/kT), against F_A + F_B for the merged state. The gap is
+  computable from the finer states' tables, with no new simulation, and belief propagation closes it once those states
+  are separate.
+* **Not taken (user 10-29): a second bead.** Where UNRES V gives a charged side chain two sites, and martini22 and
+  Martini 3 give LYS and ARG two beads and the aromatics three to five, here the side chain keeps one bead. Its tables
+  carry the shape (F2-F4) and its states the motion (F5). The user asked the same day whether sites would be smaller
+  without slowing the simulation, and ruled on 10-30: "if more than 1 bead can make it more accurate and faster, then
+  yes." The measurement against that rule is under "Tables against sites" below.
+* A residue climbs the ladder until its residual falls under a threshold fixed before the data.
+* Each step has a cost: F5 belief-propagation time, quadratic in the states; F2-F4 spline evaluations per pair; F1
+  table memory. Each needs its GPU kernel (10.3) and passes 2.1's harness.
+
+**A geometric screen (10-29; geometry only, not the diagnostic).** Each state's conformers as the hybrid builds them
+(ideal geometry, equal weights, not a force field's distribution; `scratchpad/sc_bottomup_20261029/`). "Reach" is the
+largest heavy-atom distance from the Upside bead over states. "Distal motion" is the RMS displacement, within one
+state, of the last martini22 bead. "Plane turn" is the range, within one state, of the angle between the planar
+group's normal and the bead direction, averaged over states.
+
+| residue | states | conformers | heavy atoms | martini22 SC beads | reach (A) | bead to centroid (A) | distal motion (A) | plane turn (deg) |
+|---|---|---|---|---|---|---|---|---|
+| ARG | 6 | 63 | 7 | 2 | 5.70 | 1.78 | 2.25 | 61 |
+| LYS | 3 | 51 | 5 | 2 | 3.96 | 0.42 | 2.20 | |
+| TRP | 6 | 36 | 10 | 4 | 4.65 | 1.82 | 1.61 | 64 |
+| HIS | 6 | 36 | 6 | 3 | 2.67 | 0.33 | 0.75 | 16 |
+| MET | 6 | 21 | 4 | 1 | 5.22 | 1.84 | 0.53 | |
+| ILE | 3 | 9 | 4 | 1 | 2.28 | 0.24 | 0.32 | |
+| GLN | 6 | 108 | 5 | 1 | 3.26 | 1.28 | 0.31 | 43 |
+| LEU | 3 | 9 | 4 | 1 | 1.90 | 0.48 | 0.30 | |
+| GLU | 6 | 108 | 5 | 1 | 3.22 | 1.37 | 0.29 | 71 |
+| TYR | 6 | 18 | 8 | 3 | 3.52 | 0.39 | 0.23 | 32 |
+| PHE | 6 | 18 | 7 | 3 | 3.42 | 0.60 | 0.20 | 33 |
+| ASN | 6 | 36 | 4 | 1 | 2.66 | 0.63 | 0.02 | 29 |
+| ASP, CYS, PRO, SER, THR, VAL | 3-6 | 3-18 | 2-4 | 1 | 0.96-2.86 | 0.19-1.09 | 0.00 | ASP 18 |
+
+Heavy atoms count the CB. "Bead to centroid" is the distance from the Upside bead to the state's mean heavy-atom
+centroid, averaged over states.
+
+* **Elasticity.** Within one state, LYS's amine and ARG's guanidinium move 2.2 A RMS and TRP's far ring 1.6 A. Every
+  other side chain moves under 0.8 A. LYS's three states hold 51 conformers, the chi2-chi4 combinations, on one bead
+  each.
+* **Size.** ARG and MET reach 5.7 and 5.2 A from their bead and TRP 4.7 A, against the table's 7 A cutoff. For ARG,
+  MET and TRP the fitted bead is 1.8 A from the heavy-atom centroid. In the CG table the bead is a mapping fixed before
+  the derivation (F1), not a fitted parameter.
+* **Rotation.** Within one state the planar groups turn by 61-71 degrees against the bead direction (ARG, GLU, TRP)
+  and by 29-43 (GLN, PHE, TYR, ASN). The bead direction does not fix the plane, and no state carries the rotation
+  about its direction.
+* **Reading.** ARG, LYS and TRP are the first candidates for F3-F5, then MET, GLU, GLN, PHE, TYR and HIS. ALA, CYS,
+  SER, THR, VAL, PRO, ASP and ASN are rigid within a state and are the likeliest to keep one bead. The screen chooses
+  which pairs the pilot computes; the diagnostic decides.
+
+**Tables against sites (user 10-29: "136GB seems very large. Is it the estimated file size? if we allow multiple bead
+in SC could it be smaller while not bring down the simulation speed?"; 10-30: "if more than 1 bead can make it more
+accurate and faster, then yes").** Measured on the Mac Studio with ff2.1 configs of ubiquitin (76 residues) and
+carbonic anhydrase II (2CBA, 258 residues), one thread (`scratchpad/sc_bottomup_20261029/speed/`, 10-29, and
+`sites/`, 10-30). Today's step, sampled over 15 s of dynamics:
+
+| part of the step | ubiquitin | CA II | grows with |
+|---|---|---|---|
+| side-chain bead pairs: pair list, spline kernel, sums into the state-pair matrices, derivative scatter | 25.4% | 25.4% | bead pairs |
+| belief propagation | 33.5% | 31.6% | state pairs within the cutoff |
+| environment coverage | 17.1% | 18.4% | the beads it reads |
+| H-bond coverage | 9.4% | 12.0% | the beads it reads |
+| the rest | 14.5% | 12.6% | |
+
+* Within the bead-pair share, the spline kernel is a third, and summing each pair into its state-pair matrix
+  (`EdgeHolder::add_to_edge`) another third. Per pair (`bench.cpp`, the engine's headers, 4-wide), today's
+  `quadspline` takes 9.8-10.5 ns, one radial spline 3.0 ns, and each further spline about 2.3 ns.
+* On 10-29 I composed step costs from these shares and recommended sites on an estimate of +1% and +21%. Measured in
+  the engine below, the same sites cost +21% and +39% (findings 10.45).
+
+**Sites run in today's engine.**
+* The file format has the slot. `rotamer_start_stop_bead`'s third column is a bead count per state (1 for every
+  residue in ff2.1). `upside_config.py` gives each bead its own type (`ARG_0`, `ARG_1`) and a state's beads one id.
+  The engine sums each bead pair's energy into its state pair, and each bead's 1-body into its state.
+* `build_sites.py` writes test libraries with sites for ARG, LYS, TRP, TYR and PHE, and their ff2.1 configs. A state's
+  first site carries the rotamer 1-body and the H-bond coverage tables, the others zero. The environment coverage
+  reads only first sites, so burial still counts one point per state.
+* With every site at ff2.1's bead and the pair tables split evenly over the site pairs, energies and forces equal
+  ff2.1's to 3e-5 on both proteins, at the native and three perturbed structures (`check_split.py`). With one site
+  per martini22 bead at each state's conformer mean, the rotamer node passes `tests/node_fd.py`.
+
+Martini22's sites for the five (ARG and LYS 2, TYR and PHE 3, TRP 4), within the 7 A cutoff at the native structures
+(`count_edges.py`):
+
+| | ubiquitin | CA II |
+|---|---|---|
+| beads | 296 to 377 | 1,004 to 1,484 |
+| bead pairs | 2,926 to 4,630 (1.58x) | 11,291 to 26,556 (2.35x) |
+| state pairs within the cutoff | +10% | +24% |
+| today's pairs that involve one of the five | 36% | 49% |
+
+**Step time** (`time.sh`, `profile_all.sh`, `compose.py`; one thread, 22 s each, load 1.4-4):
+
+| design | ubiquitin | CA II |
+|---|---|---|
+| today | 343.6 us | 1,444 us |
+| sites for the five, today's kernel on every site pair (measured) | +21% | +39% |
+| sites for the five, isotropic site tables (composed) | +14% | +33% |
+| one bead: F2 on the pairs that involve the five, today's form on the rest (composed) | +2% | +4% |
+| the same with F3 (composed) | +6% | +6% |
+| the same with F4 (composed, a lower bound) | +17% | +21% |
+| one bead: F2, F3, F4 on every pair (measured against the probe control) | +6%, +13%, +46% | +10%, +16%, +45% |
+
+* **The other forms run as probe engines:** today's engine with the pair kernel replaced by one that evaluates the
+  form's number of splines (`probe/bead_interaction.h`).
+  * The control, the probe at today's spline count, runs within 1.4% (ubiquitin) and 2.5% (CA II) of today's
+    engine. Today's engine rerun at the end is within 0.3%.
+  * F4's probe evaluates its splines but not the second direction's gather and scatter or the azimuths' arithmetic,
+    so its cost is a lower bound.
+* **Composed:** each run's step is split by its sampled profile into bead pairs, belief propagation, coverage and the
+  rest.
+  * A one-bead form adds its measured bead-pair increase in proportion to the pairs it applies to.
+  * The isotropic site design puts the site pairs on the isotropic kernel and the pairs between two one-bead
+    residues on today's.
+* **Where the sites spend it,** with today's kernel:
+  * their bead pairs cost 59% (ubiquitin) and 97% (CA II) more;
+  * belief propagation 5% and 19% more;
+  * the coverage nodes 14% and 24% more, because the H-bond coverage reads every site.
+  * Without the coverage growth they cost +17% and +32%.
+
+**Shape** (`shape_fit.py`; steric only, a proxy for BU3's diagnostic, not the diagnostic).
+* **The reference.** Two side chains, each in its most probable state, at 100,000 uniformly random relative poses
+  with the beads within 7 A. Their heavy atoms (CB onward, the hybrid's conformers) repel by WCA at united-atom contact
+  distances, epsilon 1 kT, and W = -ln <exp(-U)> over both states' conformers. It has no attraction, solvent or
+  backbone.
+* **The fit.** Each form is fitted to W by relative entropy on half the poses. It is read on the other half as the
+  fraction of the null model's relative entropy left; lower is better.
+* **The bead forms** put the bead at the state's heavy-atom centroid with ff2.1's direction.
+* **F4** gives each bead a frame: its direction, and the backbone N-C vector made perpendicular to it. Within one
+  state that is the ring normal's frame up to a fixed turn, since both are fixed in the backbone frame. Its two
+  azimuth tables per product are periodic, 12 coefficients each, 660 coefficients in all.
+  * Unregularised, it fits the fitted half of every pair, but on the held-out half of MET-LEU it leaves 0.41 and of
+    TRP-ILE 44 (`shape_fit_f4.*.txt`).
+  * **The failure is a false well** (`f4_diag.py`). At a held-out pose where the side chains overlap (W of 25,000 kT
+    in MET-LEU, 6.5e7 in TRP-ILE), the fit lies 7.6 and 31 kT below its lowest energy on the fitted half. The nearest
+    fitted pose is 0.11 and 0.16 away, in coordinates scaled to their ranges. A product of six tables can reach there
+    with no fitted pose to stop it.
+  * **F4s** is F4 under a smoothness penalty on every table, its weight chosen by 2-fold cross-validation within the
+    fitted half. It fixes TRP-ILE but not MET-LEU.
+  * **F4b** bounds every angular table in [-1, 1] through its coefficients, which a cubic B-spline cannot leave, so no
+    product exceeds its radial table. It generalizes on both pairs: held-out 0.053 on MET-LEU and 0.088 on TRP-ILE,
+    fitted 0.051 and 0.084.
+* **S** puts one site per martini22 bead at the state's conformer mean, with one radial table per site pair. **S7**
+  cuts those tables at 7 A, as the engine does.
+
+| pair | F0, today | F2 | F3 | F4s | S7, sites | coefficients F4s, S7 |
+|---|---|---|---|---|---|---|
+| VAL-LEU | 0.134 | 0.127 | 0.127 | 0.035 | 0.167 | 660, 12 |
+| LEU-ILE | 0.133 | 0.127 | 0.127 | 0.039 | 0.161 | 660, 12 |
+| MET-LEU | 0.090 | 0.079 | 0.077 | 1.97 (fitted half 0.040); F4b 0.053 | 0.183 | 660, 12 |
+| LYS-VAL | 0.177 | 0.169 | 0.170 | 0.043 | 0.167 | 660, 24 |
+| ARG-LEU | 0.227 | 0.216 | 0.216 | 0.050 | 0.127 | 660, 24 |
+| ARG-PHE | 0.295 | 0.288 | 0.289 | 0.068 | 0.121 | 660, 72 |
+| PHE-PHE | 0.251 | 0.250 | 0.250 | 0.050 | 0.103 | 660, 108 |
+| TYR-LEU | 0.246 | 0.241 | 0.240 | 0.074 | 0.155 | 660, 36 |
+| TRP-ILE | 0.262 | 0.254 | 0.255 | 0.057 | 0.159 | 660, 48 |
+| TRP-TRP | 0.302 | 0.297 | 0.297 | 0.066 | 0.077 | 660, 192 |
+
+Outside F4 unregularised and MET-LEU's F4s, the fitted and held-out halves agree within 0.007. Two runs on different
+pose samples (`shape_fit.txt` and these) agree within 0.005.
+
+* **The missing coordinate is each side chain's rotation about its bead direction.** Three products (F2), or four
+  with the twist (F3), take at most 0.013 off what F0 leaves. The azimuths (F4s) cut F3's by 3.2-5 times on every pair
+  where F4s generalizes, small side chains included.
+* **Sites carry less than F4s on every pair where F4s generalizes:** they leave 1.2 times as much on TRP-TRP and
+  1.8-4.8 times on the other eight. They carry more than F0-F3 for PHE, TYR, TRP and ARG, and about as much for LYS.
+* **The rule's answer: one bead stays.** Sites are less accurate than the one-bead form with a frame for all five
+  residues. They are also slower than it on CA II (+33% to +39% against at least +21%), and faster only on ubiquitin
+  with isotropic tables (+14% against at least +17%).
+* **What F4 still needs** (BU3):
+  * bounded angular tables (F4b) or another constraint, so that no fit places a well where its data do not reach;
+  * the frame in the placement node, a second direction per state, so the pair kernel reads 9 coordinates per bead
+    in place of 6;
+  * its cost settled: +46% if every pair takes it. Which pairs need it, and whether fewer products carry the
+    azimuths, is the diagnostic's to decide.
+  * The proxy has no backbone, which hides part of each side chain's surroundings, so the gain for small side
+    chains may be smaller in a protein.
+
+| form | coefficients per state pair | file, unique pairs, float32 |
+|---|---|---|
+| F0, today | 54, per type pair | 45 KB |
+| F1 | 54 | 0.8 MB |
+| F2, three products | 138 | 2.1 MB |
+| F3, four products with the twist | 240 | 3.6 MB |
+| F4, eight products in five angles (12-knot azimuths) | 660 | 9.9 MB |
+| sites on the martini22 map, isotropic tables | 12 per site pair | 24 KB (a type per residue's site) to 0.5 MB (a type per state's site) |
+| dense six-dimensional grid | 9.1 million | 136 GB |
+
+* **File size decides nothing.** Every proposed form is under 10 MB; the 136 GB was the dense grid.
+* **The wall screen (10-29) shows where the shape lies.** A probe heavy atom is placed against each state's conformers
+  (`sc_wall_screen.py`, the median over conformers), and the distance at which it touches the side chain moves over
+  directions by:
+
+| bead | 2.1 A or more | 1.5-2.0 A | under 1.5 A |
+|---|---|---|---|
+| the trained `rotamer_center_fixed` | MET 4.4, TRP 3.9, ARG 3.6, TYR 3.1, PHE 3.0, GLU 3.0, GLN 3.0, ASP 2.8, PRO 2.7, HIS 2.2, LYS 2.1 | ILE, LEU, ASN, VAL | THR, CYS, SER |
+| each state's heavy-atom centroid, F1's mapping | ARG 2.8, TYR 2.8, TRP 2.6, PHE 2.4, LYS 2.1 | HIS, GLU, ILE, GLN, MET, LEU, THR, VAL | PRO, ASN, ASP, CYS, SER |
+
+* The directions are a polar angle and an azimuth about the bead direction. F0-F3 see only the polar angle, so the
+  wall's motion with the azimuth is what the shape fit finds them missing.
+* Within one state, the walls of ARG, LYS and TRP also spread 0.7-0.9 A RMS over conformers. That is their
+  elasticity, which neither sites nor frames carry (F5's).
+
+**What the literature found (10-29).** Notes, each claim marked full text or abstract, are in
+`scratchpad/sc_bottomup_20261029/` (`lit_bottomup.md`, `lit_data_mapping.md`).
+* **UNRES ran route A** (Makowski, Liwo, Scheraga et al., J Phys Chem B 2007-2017, papers I-VII; IV-VII full text).
+  * Method: AMBER with TIP3P at 298 K; umbrella sampling of side-chain analogue pairs; PMFs binned in
+    (r, t1, t2, phi) at 60 degrees. The form is one spheroidal Gay-Berne site per side chain plus a cavity term.
+  * Where one site failed, as the F table records: the rings and MET (IV); the charged side chains (V); the salt
+    bridges (VI).
+  * Charged or polar side chains against nonpolar ones bind head-to-side and side-to-head differently, more so the
+    larger the side chain, and the symmetric form cannot carry it (VII, 144 pairs). Upside's A1 A2 product can be
+    asymmetric, but it has no phi.
+  * Electrostatics: IV-VI cut them off at 9 A; only VII used PME. VII's potentials were "preliminarily tested" and
+    needed recalibration on proteins.
+* **A dilute pair PMF is UNRES's first-order factor.** A factor of higher order is nonzero wherever the averaged-out
+  variables, such as the water of a packed core, are shared, and a pair table cannot hold it (Liwo et al. 2001 J Chem
+  Phys, abstract; 2014 J Mol Model, full text). This is what the correction has to absorb.
+* **The environment moves the pair.**
+  * Force matching gave the same salt-bridge minimum -10 kJ/mol from Trpzip and -37 kJ/mol from a dipeptide solution.
+    Its pairwise landscape gave non-native states energies close to the native's (Hills, Lu, Voth 2010 PLoS Comput Biol,
+    full text: OPLS/SPC at 498 K, up to four sites per side chain).
+  * At a POPC-water interface, ionizable pairs change pair by pair, some stronger and some weaker, which no single
+    dielectric change describes (Yuzlenko, Lazaridis 2011 J Phys Chem B, full text in part).
+  * No study found computes one pair's PMF both in water and inside a protein core with the same force field.
+* **Discrete internal states** have a bottom-up theory, ultra-coarse-graining (Dama et al. 2013, Davtyan et al. 2014,
+  Dama et al. 2017, J Chem Theory Comput, abstracts). In its rapid-local-equilibrium limit, state-wise pair potentials
+  are mixed by state probabilities (Jin et al. 2022 J Chem Theory Comput, full text). Upside sets its state
+  probabilities by belief propagation over the pair energies instead, and how the two map onto each other is not
+  worked out.
+* **The diagnostic must look past g(r).** Some pair potential reproduces any pair g(r) exactly (Henderson 1974, as Jin
+  et al. 2022 state it), so a form's error shows only in the angular distribution or in many-body observables. The
+  diagnostic's relative entropy is Shell's (J Chem Phys 2008, abstract).
+* **Data.**
+  * Charron's deposit holds 1,245 capped mono- and dipeptide dimers in amber99sb-ildn/TIP3P, umbrella-sampled along
+    their centre-of-mass distance, with forces every 1 ps (SI, full text). Whether the archive keeps their all-atom
+    forces, or only the 5-bead map as for its CATH member (findings 1.17), is not verified.
+  * mdCATH stores all-atom coordinates and forces every 1 ns for 5,398 domains at 320-450 K, in CHARMM22*/TIP3P
+    (full text).
+  * COFFDROP simulated all 231 capped amino-acid pairs for 1 us each (coordinates).
+  * No orientation-resolved pair set exists for ff14SB or ff19SB; UNRES's is the only all-pair, orientation-resolved
+    Amber set found.
+
+**Buried and exposed pairs (user 10-29: "One thing to note for the ff is that we are calculating the SC-SC
+interaction in exposed (solution) condition, while in simulation they are usually inside protein.").** Measured on
+the 30 native structures of `scratchpad/large_protein_20261019/code_audit/pdb_dl/` (`contact_burial.py`: first
+chain; a contact is two side chains with heavy atoms within 4.5 A; buried is relative SASA under 0.20):
+
+| contacts | n | both buried | one buried | both exposed |
+|---|---|---|---|---|
+| all | 9,698 | 52.5% | 29.1% | 18.4% |
+| nonlocal, abs(i-j) >= 3 | 8,128 | 57.6% | 27.8% | 14.7% |
+| nonpolar with nonpolar, nonlocal | 3,722 | 79.7% | 16.7% | 3.5% |
+| charged with charged, nonlocal | 529 | 14.0% | 32.5% | 53.5% |
+
+With buried at relative SASA under 0.10, 39.1% of nonlocal contacts have both buried and 29.5% neither.
+* **What a pair's free energy in water holds.** Its direct interaction, plus a part that water makes: the hydrophobic
+  attraction, the desolvation barrier and solvent-separated minimum, and water's screening of charges and H-bonds. In
+  a core no water makes that part, and the neighbours that replace water are explicit beads with their own tables.
+  Used there, the water part counts the hydrophobic effect a second time beside the burial term, and screens buried
+  charges as water would.
+* **The error falls where the pairs are.** Nonpolar pairs, whose water free energy is mostly water's part, are 80%
+  both buried and 3.5% both exposed. Charged pairs, whose water free energy is mostly water's screening, are 54% both
+  exposed, where a water table applies.
+* So a table derived in water is the exposed limit, right for about one nonlocal contact in seven.
+
+**What the table should be (proposal; question 2).**
+1. **Water everywhere,** as planned until now. The correction, one table per state pair, then learns an average over
+   contexts, weighted toward the core, and errs on the surface.
+2. **Two limits, mixed by burial.** The table is derived with water and without it, and the runtime table mixes them
+   by the two residues' burial: V = U_dry + lambda(N_A, N_B) (W_water - U_dry - dB).
+   * U_dry is the pair's free energy with no water, each state's internal motion integrated; W_water is the dilute
+     pair's free energy in water.
+   * dB is the burial term's own change for the pair in dilute water. So the model gives W_water exactly for a dilute
+     pair and U_dry in a core.
+   * lambda runs from 1 (both exposed) to 0 (both buried) as a function of the coverage N that the burial term already
+     reads. It is physical, not fitted: the fraction of a contact's water-accessible surface left, measured against N
+     on all-atom structures and tabulated as a spline.
+   * It adds tables, not beads, and its coordinate exists before belief propagation. `environment_coverage_sc`
+     weights each bead by its rotamer prior (`weighted_pos` reads `placement_scalar`), not by the BP marginals, so the
+     rotamer node can take it as an argument without a cycle.
+   * The burial term becomes each side chain's transfer free energy from water into a core, which the same force
+     field computes for the side-chain analogue. Question 3's double count is then removed by construction; this
+     makes the burial term bottom-up too.
+   * The precedent is IMM1 (Lazaridis 2003 Proteins 52:176, doi:10.1002/prot.10410; abstract and the CHARMM
+     documentation). It gives each atom a solvation that depends on depth in the membrane, between water outside
+     and cyclohexane inside, with the nonpolar phase fitted to water-to-cyclohexane transfer. Its strengthening of
+     electrostatics inside is an empirically adjusted parameter.
+   * Open in it: U_dry for charged pairs. A core is not a uniform medium, and no single dielectric describes how
+     ionizable pairs change at a bilayer interface (Yuzlenko, Lazaridis 2011, above). So the dry limit of a salt bridge
+     needs its own derivation. Nonpolar and H-bonding pairs have a defined dry limit.
+   * In the hybrid, lambda must count the lipid tails as burial too. Otherwise two lipid-facing side chains inside the
+     bilayer get water's table.
+3. **Force matching on protein trajectories** (route B) gives the protein-averaged table. It gives the burial
+   dependence only if N is a coordinate of the fit.
+
+Recommendation: 2, starting with the nonpolar pairs, whose dry limit is defined and which are 80% buried.
+
+**The all-atom reference: DES-Amber with TIP4P-D (chosen 10-29).** User 10-29: "Find the best ff to use for me."
+Two reviews, `ff_association.md` and `ff_proteins.md` in the same directory, each claim marked full text, SI or
+abstract. For side chains in water the nonbonded parameters and the water model decide the answer; backbone torsions
+barely enter.
+
+What every candidate gets wrong:
+* **Salt bridges are too strong** in every fixed-charge set without corrections. The guanidinium-acetate association
+  constant is 0.37 M^-1 by experiment and 0.94-11.65 M^-1 across force fields: 4.52 in ff99SB-ILDN/TIP3P, 2.23 with
+  TIP4P-Ew (Debiec et al. 2014 J Phys Chem B, full text).
+* **Cation-pi goes the other way.** Uncorrected CHARMM36m and ff14SB underbind it (Liu et al. 2021, abstract), and only
+  CHARMM36 has published corrections.
+* **Force fields disagree by the depth of a well.** Over 46 orientation-fixed analogue pairs, CHARMM36m binds 0.2
+  (nonpolar), 0.6 (polar) and 0.8 kcal/mol (salt bridges) more than a99SB-disp on average, and up to 2.9 for Arg-Glu
+  (Gong, Zhang, Chen 2024 J Phys Chem B, full text).
+* **One integral target does not fix the shape.** Two corrections fitted to the same osmotic data differ by up to 2
+  kcal/mol at contact (Yoo, Aksimentiev 2018 Phys Chem Chem Phys, full text).
+
+| candidate | for | against |
+|---|---|---|
+| **DES-Amber, TIP4P-D** (Piana et al. 2020 J Chem Theory Comput; SI full text, main text abstract) | the only force field fitted to osmotic coefficients of salts and amino acids, the integrated pair free energies (SI Table S3: Ala, Ser, Lys, Val within 0.05); ionic charges scaled by 0.9 and charged-group LJ refitted; none of nine complexes dissociates in 20 us. Independent: the only one of 20 models that reproduces COR15A's NMR relaxation (Rindfleisch et al. 2025 J Chem Theory Comput, full text); the only one without persistent, too-tight salt bridges between ProTalpha and its folded partner (Bugge et al. 2025 Nat Commun, full text) | residual errors at 2 M: Arg 0.59 against 0.695 (too associated), Thr 1.08 against 0.98; complex free energies off by up to 7 kcal/mol; no aromatic, amide or cation-pi test; no small-solute test outside its authors'; not in OpenMM (official Desmond files, an unofficial GROMACS port) |
+| ff19SB, OPC (Tian et al. 2020, full text) | closest to ubiquitin's weak self-association (Kd 4.4 mM) among four force fields (Abriata, Dal Peraro 2021, full text); errors independent of the D. E. Shaw lineage; in OpenMM and AmberTools | no small-solute association data in OPC; ff99SB-lineage side chains, whose salt bridges are 6x too strong in TIP4P-Ew; IDPs too compact: alpha-synuclein Rg 18.4 A against 22.9 A for a99SB-disp in the same protocol (Pedersen et al. 2023 Proteins, full text) |
+| CHARMM36m with NBFIX, CUFIX and cation-pi corrections, CHARMM TIP3P | the only family with cation-pi corrections tested against experiment; best on amides | too sticky: ubiquitin aggregates (Abriata 2021); charged pairs stronger than a99SB-disp (Gong 2024); IDP Rg error 22% (Robustelli 2018) |
+| a99SB-disp, TIP4P-D | IDP Rg error 6% over nine IDPs (Robustelli 2018) | association too weak: ubiquitin stays monomeric, barnase-barstar dissociates; salt bridges in GB1 25-68% populated where NMR finds none (Ahmed et al. 2018, full text) |
+| ff99SB-ILDN or ff14SB, TIP3P | the 44-domain panel's reference (2.3) | guanidinium-acetate 12x; ubiquitin aggregates; IDPs collapse |
+
+* **Why DES-Amber.**
+  * Upside's errors already run toward compaction: IDRs 11-15% too compact (8.4), and the large proteins' non-native
+    globules (8.3.4). A sticky reference would add to both.
+  * DES-Amber is the one fitted to side chains' pair free energies in water.
+  * In independent tests it neither aggregates nor loses its complexes, and it gets a charged complex right.
+  * It is Amber's lineage: a99SB-ILDN, then a99SB-disp.
+* **Its known errors.** Arg is too associated, Thr too repulsive, and cation-pi is untested, likely weak as in every
+  fixed-charge set. These are pair-specific errors for the correction table to absorb, and its size will show them.
+* **The evidence above is for the exposed limit** (user 10-29, "Buried and exposed pairs"). Osmotic coefficients and
+  association constants are measured in water. For buried pairs a third review (`ff_buried.md`, each claim marked)
+  found:
+  * **The dry limit of apolar pairs is one model across the Amber line.** In the parameter files (DESRES's, checked
+    against OpenMM's), Ala, Val, Leu, Ile, Phe, Tyr, Trp, Cys and Pro carry the same LJ and charges in DES-Amber,
+    a99SB-disp, ff99SB-ILDN, ff14SB and ff19SB. ff19SB changed only the sulfur and thiol-H LJ (from GAFF2). So for
+    the pairs that are 80% buried, DES-Amber against ff19SB/OPC is a choice of the water leg only.
+  * **DES-Amber's own changes are untested out of water.** It changed:
+    * Asn/Gln amide and Ser/Thr hydroxyl charges;
+    * Met: the S charge -0.27 to -0.47 and its sigma 3.56 to 3.80 A, which is in the 0.9-scaled release and is not
+      described in its SI;
+    * the LJ of the His polar H;
+    * the backbone;
+    * the charged groups, whose 0.9 scaling weakens a dry salt bridge by 19%, where electronic-screening corrections
+      would ask for about 0.75.
+  * **Transfer from water to cyclohexane**, the burial term's quantity under option 2 (the reviewer's arithmetic on
+    the SI of Zhang et al. 2018 J Chem Inf Model, 16 analogues), RMSE and mean signed error in kcal/mol:
+    * ff14SB/TIP3P 0.57 and -0.05, ff99SB-ILDN 0.59 and -0.05;
+    * CHARMM27 1.15 and -0.75, OPLS-AA/L 0.97 and -0.66.
+    * The Amber figure is partly two errors cancelling, hydration and cyclohexane solvation both too weak.
+    * No data for DES-Amber, a99SB-disp, ff19SB or CHARMM36m. In a water-model scan on fb15, TIP4P-D makes the
+      analogues slightly more hydrophilic.
+  * **Buried mutations** (Gapsys et al. 2016 Angew Chem, barnase, 119 mutations; split by burial by the reviewer).
+    * Every force field errs 0.1-0.45 kcal/mol more on buried sites than exposed, and all underestimate how much
+      buried mutations destabilize.
+    * Buried hydrophobic changes: CHARMM36 0.71-0.72 kcal/mol, Amber99sb*-ILDN 1.06.
+    * The ranking flips on staphylococcal nuclease.
+    * No such test exists for DES-Amber, a99SB-disp, ff19SB or CHARMM36m.
+  * **DES-Amber's own folding enthalpies** are 11-27 kcal/mol too small for seven fast folders (its SI Table S15).
+  * **Reading.** The buried evidence does not move the choice. DES-Amber and ff19SB share the dry apolar pairs.
+    CHARMM36's edge on buried barnase sites is small and protein-dependent, and its family is the stickiest in water.
+    The buried condition needs its own checks in the pilot.
+* **Implicit water (user 10-30: "check if implicit water ff exist and can work here").** A fourth review
+  (`ff_implicit.md`, each claim marked; literature and documentation, no simulation) found none that can be the
+  reference, so W_water stays in explicit water.
+  * **In water, GB is a copy of TIP3P.** GB-Neck2's mbondi3 radii and GBSW's and GBMV2's were fitted to TIP3P pair
+    PMFs, and TIP3P-family water overbinds guanidinium-acetate 2.5-12 times (above).
+  * **Measured pair errors.** Before refitting, an Arg-Glu salt bridge is about 3.5 kcal/mol too strong in GB-Neck2
+    against TIP3P (Nguyen et al. 2013), and propylguanidinium-ethylacetate is -19 (AGBNP1) and -6.5 kcal/mol (AGBNP2)
+    against -8.5 in explicit water (Gallicchio et al. 2009). No continuum model has the solvent-separated minimum. No
+    implicit-solvent association constant for any of the pilot's pairs was found.
+  * **Buried atoms, the condition the tables act in.** Pairwise GB makes buried atoms' Born radii too small: on
+    myoglobin standard pairwise GB puts the pair term 33% too large and the self term 26% too negative against Poisson
+    (Onufriev et al. 2002). OBC's buried radii are "still much smaller" than Poisson's (Mongan et al. 2007), GB-Neck2's
+    less so (Nguyen et al. 2013), and GB-Neck2's carboxylate pKa errors grow with burial (thioredoxin Asp26, -3.7 at 8%
+    exposure). EEF1 and IMM1 neutralize ionic side chains, with solvation parameters that "were largely arbitrary"
+    (Lazaridis 2014). IMM1's interior rule, epsilon = r^0.85, was adjusted to insertion energies, and by the
+    reviewer's arithmetic makes pairs only 1.2-1.3 times stronger than in its water.
+  * **Proteins.** Over eight IDPs the scaling exponent is 0.38 (ff14SBonlysc with GB-Neck2) and 0.33 (a99SB-disp with
+    GB-Neck2) against 0.60 by experiment (Greener 2024). HDGB, GBSW and IMM1 deviate from explicit bilayer pair PMFs
+    (Mirjalili, Feig 2015). PRIMO, a coarse-grained model fitted to GBMV, inherited its errors. Machine-learned implicit
+    solvents are surrogates of TIP3P or TIP5P.
+  * **Pairings.** No implicit model is fitted with DES-Amber; ff19SB with GB is unvalidated; GB99dms, a99SB-disp's
+    refit, over-expands IDPs (0.79).
+  * **Where one can serve:** the electrostatic part of U_dry for charged and polar pairs (option 2 above), by
+    Poisson-Boltzmann or an accurate GB (GBMV2, GBNSR6) in a low-dielectric host. The result depends on the host's
+    dielectric, which theory does not fix, so it is checked first against buried charges in staphylococcal nuclease:
+    an apparent dielectric of 10 or more for internal groups (Karp et al. 2007), and a buried Glu-Lys pair 2.6 A apart
+    worth 5 kcal/mol (an apparent dielectric near 25, inferred by the reviewer). U_dry of nonpolar pairs needs no
+    solvent model: it is the solute potential, the same Lennard-Jones in implicit and explicit models.
+* **The pilot checks it before use (BU2; the rule is a proposal, fixed before the data).**
+  * **Exposed limit:** the guanidinium-acetate and butylammonium-acetate association constants, computed by
+    Debiec's protocol, against 0.37 and 0.31 M^-1 (Springs, Haake 1977, as Debiec et al. tabulate them).
+  * **Buried limit:**
+    * the water-to-cyclohexane transfer free energies of the analogues, against Radzicka and Wolfenden 1988. For
+      the apolar analogues only the water leg differs between the two force fields.
+    * the N-methylacetamide dimer's free energy in CCl4 against water, about -0.9 to -2.4 against +3.1 kcal/mol by
+      experiment (Klotz, as Ben-Tal et al. 1997 compile it; methods in CCl4 differ by 1.5).
+  * ff19SB/OPC computes the same quantities and the pilot's pairs, so the reference's own spread is measured.
+  * DES-Amber stays the reference unless ff19SB/OPC is closer on the sum of |ln(K_sim/K_exp)| over the two
+    constants. If both are off by more than a factor 2 on guanidinium-acetate, the pilot stops for the user. It also
+    stops for the user if the buried checks rank the two force fields the other way from the association constants.
+  * The GROMACS port is used only after its energies on a test pair equal those of the official Desmond files.
+
+**The corresponding change in the hybrid (user 10-29).** The side-chain/lipid table describes the same coarse-grained
+side chain as the pair table, so the two change together.
+* **One side-chain definition for both builders.** States, conformer ensembles and their weights, beads and
+  directions are defined once and read by both. `/sc_table` takes its states from `sidechain.h5` today, and the
+  engine checks `rotamer_count` against it (up.md 2.6). A residue that gets more states (F5) gets them in `/sc_table`
+  too, from the same conformer code. A bead that carries a frame (F4) defines `/sc_table`'s azimuth as well.
+* **The conformer weights.** If the pair derivation weights each state's conformers by the all-atom force field,
+  `_sidechain_conformers` takes the same weights in place of equal ones.
+* **The same diagnostic for `/sc_table`.** Its form is (r, theta) about the CB with the azimuth averaged, so it does
+  not see chi1, and states that differ only in chi1 get nearly the same table (up.md 2.6). The full (r, theta, phi)
+  free energy in the residue frame is compared with its azimuthal average, per state and target, and phi is added where
+  the difference is large.
+* **Physical, untrained.** The side-chain/lipid table keeps no trained correction (CLAUDE.md: everything outside the
+  Upside core is physical). Only the pair table's correction is trained, on soluble proteins.
+* **Two parents.** In the hybrid the side chains then meet each other through an all-atom force field's free energy
+  and meet the lipids through dry MARTINI's. That is the case today too (trained pair tables against dry MARTINI), and
+  question 2 below decides whether the pair table carries water-mediated free energy into the bilayer.
+* **The other consumers of the beads** change with any new placement or state set: `hbond_coverage`,
+  `hbond_coverage_hydrophobe` and the burial couplings (`sigmoid_coupling_environment`,
+  `bb_sigmoid_coupling_environment`) all read `placement_fixed_point_vector_only` (`py/upside_config.py`).
+
+**Open questions, for the pilot and the user.**
+1. **The route**, A, or A with B as a check. A samples water explicitly, since no implicit model can be the reference
+   (10-30, "Implicit water" above). Implicit models keep two possible uses: Poisson-Boltzmann or an accurate GB for
+   the electrostatic part of U_dry, after its check on buried charges, and GB as a pre-screen of which pairs need more
+   tables, which is untested.
+2. **The reference condition** (user 10-29: most contacts are buried, "Buried and exposed pairs" above). The choices
+   are water everywhere (UNRES's choice), two limits mixed by burial (recommended), or force matching. The free
+   energy in water puts the hydrophobic effect and the screening of salt bridges into the pair table wherever the pair
+   is: in a core, in the bilayer. Pair free energies at a bilayer interface also differ from water's pair by pair, so
+   in the hybrid the same choice decides what the pair table carries into the bilayer.
+3. **Burial.** The pair table and the burial term carry the hydrophobic effect together today, co-trained.
+   * With water everywhere, a CG pair table cannot be put into ff2.1 or ff3.1 beside their burial term without
+     counting part of it twice. So the correction's training co-trains burial, and 7.3's gate applies.
+   * With two limits, the burial term is the transfer free energy and the split holds by construction, but the burial
+     term is re-derived as well.
+4. **Temperature.** The CG table is a free energy at one temperature, as the hybrid's is at 0.8647 T_up. For the pair
+   table that is the training temperature of 6.3. Free energies at two temperatures would give the enthalpy and
+   entropy that 8.3.4 finds absent from every term; a later option.
+5. **Units.** The all-atom force field's units are converted once at h5-build time, with the factors passed explicitly,
+   as the dry-MARTINI contract does (CLAUDE.md).
+6. **The rotamer 1-body** stays Dunbrack's PDB statistics. Those carry packing selection, as the Ramachandran map
+   carries fold selection (findings 1.15-1.16), so with a CG pair table they may count packing twice. Not part of this
+   plan; a measurement for after the pilot.
+7. **The stage.** Whether the CG pair table is the base's (S3), before every training change, or a design change in
+   S5 beside D1-D4 (8.3.4 lists more beads per side chain among the large changes).
+8. **Sites** for ARG, LYS, TRP, TYR and PHE: answered on the steric proxy by the user's rule of 10-30 ("Tables
+   against sites" above). One bead stays, since a bead with a frame (F4) is more accurate than sites for all five.
+   BU3 applies the same rule on the all-atom free energy.
+
+**Steps (BU1-BU6).**
+1. [x] Recorded, with the geometric screen (10-29).
+2. [ ] **BU1.** The user's choices: questions 1, 2 and 7, and the diagnostic's threshold.
+3. [ ] **BU2.** The pipeline, from `martini_build_tables.py`'s conformer code: the shared side-chain definition; the
+   reference's check (above); then route A on a pilot of pairs chosen from the screen to span it, with seeds that
+   agree (2.3).
+4. [ ] **BU3.** The diagnostic on the pilot, F0 to F5, for the pair table and for `/sc_table`. It decides the forms,
+   with F4 fitted so that it places no well where its data do not reach, and applies the user's rule on sites
+   (10-30) against the best one-bead form.
+5. [ ] **BU4.** Every pair, in the forms BU3 chose; `/sc_table` rebuilt on the same definition; the engine's new forms
+   through 2.1 and 2.2.
+6. [ ] **BU5.** The CG table read on the native panels with no correction, under question 3's burial decision.
+7. [ ] **BU6.** The correction trained as the only change against a control (2.2), behind 7.3's gate.
+
+### 7.5 Steps
 
 1. [ ] The user chooses the side-chain model and the starting parameters (11, items 3-4).
 2. [ ] The base's c (6.4 item 1), which fixes the training mapping.
 3. [ ] The baselines of S4 on the base (section 8).
 4. [ ] If a change co-trains the trained tables: the control training and its gate (7.3).
+5. [ ] The bottom-up pair tables, BU1-BU6 (7.4), at the stage the user sets.
 
 ## 8. Training changes (S4, S5)
 
@@ -885,7 +1467,8 @@ written before findings 3.13's fix.
 * a desolvation barrier in the pair table, meant to slow collapse, which does not outrun helix formation here.
 
 **Not testable on end states, and large changes:**
-* more beads per side chain, for packing finer than one bead;
+* richer side-chain pair forms for finer packing, such as a frame on each bead (F4); 7.4's diagnostic decides which
+  side chains need them, and a second bead is taken only if it is more accurate and faster (user 10-30);
 * a backbone frame-frame orientation term (AlphaFold2's residue frames). The side-chain beads' angular pair term
   already carries residue orientation, and 2LZM's non-native ladders are the only hint.
 
@@ -1290,7 +1873,7 @@ How to rerun or extend B0 is in section 12.
   * Its trigger has not fired: TM4's helical glycines still flipping, or natively left-handed glycines losing
     alpha_L, under every round-4 candidate. ff3.0 holds TM4.
   * `architecture.md` predates Upside 3 (10-07; it still requires master parity).
-* **The side-chain model's own parameters,** which follow the choice of 7.1.
+* **The side-chain model's own parameters,** which follow the choice of 7.1, and the bottom-up pair tables of 7.4.
 * **The implicit membrane model.** A173 left two properties of the trained membrane tables for an Upside 3 membrane
   retraining that no plan yet contains:
   * the hard channel switch at +-half_thickness;
@@ -1463,6 +2046,13 @@ and the scalar parameter derivative.
 * 10-28: HDX first, then large proteins, then IDRs (1.2). No explicit electrostatic term (8.4.1).
 * 10-29: the GPU produces the current force fields' results, with no retraining and no force field of its own
   (10.2).
+* 10-29: side-chain pair tables coarse-grained from an all-atom force field, with a correction trained (7.4). Each
+  side chain stays one CG bead, with more tables for orientation and the like instead of a second bead. The
+  correction is a table of the CG table's dimension, zero if the CG is exact. The all-atom reference, chosen at the
+  user's request, is DES-Amber with TIP4P-D, checked by the pilot.
+* 10-30: sites only "if more than 1 bead can make it more accurate and faster" (user). On the steric proxy a bead with
+  a frame (F4) is more accurate than sites for ARG, LYS, TRP, TYR and PHE and costs less on CA II, so one bead stays
+  (7.4). No implicit-water model can be the all-atom reference.
 
 **Open, by stage.**
 
@@ -1483,6 +2073,7 @@ and the scalar parameter derivative.
 | 13 | | the items of the running Upside 2 campaign that await a NO GUARDS ruling | 4.5 |
 | 14 | | the hybrid's scope: a product goal, or a validation case | 1.3 |
 | 15 | | the channel membrane potential: keep, smooth, or retire | 4.5 |
+| 16 | S3 or S5 | the bottom-up side-chain pair tables: the route; the reference condition (water everywhere, or two limits mixed by burial); the diagnostic's threshold; the stage | 7.4 |
 
 ## 12. Records and files
 
@@ -1537,6 +2128,29 @@ Copies of the scripts and the readout: `/project/trsosnic/yinhan/checks/handoff_
 * **After any batch.** Run `python stat_ineff.py` and then `python read_b0.py`, and record the result in 8.4.
   `stat_ineff.py` covers only the models on `results.txt`'s `# seeds:` line, because files of a running batch are
   locked.
+
+`scratchpad/sc_bottomup_20261029/` (the Mac Studio; 7.4): `sc_geometry_screen.py` and its output
+`sc_geometry_screen.txt`, the geometric screen; `bead_def_check.py` and its output, the beads against master's
+`get_beads`; `lit_bottomup.md` and `lit_data_mapping.md`, the literature notes; `ff_association.md` and
+`ff_proteins.md`, the force-field reviews, `ff_buried.md`, the third, for buried pairs, and `ff_implicit.md`, the
+fourth, on implicit water (its downloads were in the session scratchpad and are not kept); `sc_wall_screen.py` and
+its outputs `sc_wall_screen.txt` (trained beads) and `sc_wall_screen_centroid.txt` (`--centroid`), the wall screen;
+`contact_burial.py`, the burial of native contacts; `speed/`, behind "Tables against sites": the configs
+(`build.py`), the step profile (`profile.sh`, `parse.py`, the `sample` reports), the kernel benchmark (`bench.cpp`,
+compiled with the engine's flags and `-Isrc -Isrc/include -I/opt/homebrew/include`) and the pair counts
+(`count_pairs.py`). `sites/`, the 10-30 measurements behind the same section:
+* `build_sites.py MODE OUT_DIR NAME...`, the libraries with more than one bead per state and their ff2.1 configs
+  (`split`, the exactness check, read by `check_split.py`; `martini22`, the timed sites);
+* `count_edges.py`, the pair counts;
+* `time.sh`, the clean step times;
+* `profile_all.sh`, the probe runs, and `compose.py DIR`, the designs composed from them. The probe engines are
+  `probe/bead_interaction.h` over a copy of `src/`, built by `probe/build.sh` and `probe/build_f4.sh`; their builds
+  sat in the session scratchpad;
+* `shape_fit.py OUT_TXT FORMS PAIR_INDEX...`, the steric shape fit. Its outputs are `shape_fit.txt` (F0-F3 and S, one
+  run, 10-30 morning), `shape_fit_f4.*.txt` (F0-F4 and S, per pair) and `shape_fit_f4s.txt` (F0-F3, F4s, S and S7,
+  gathered from the per-pair files);
+* `f4_diag.py PAIR_INDEX...`, F4's false wells and the bounded F4b, with its logs `f4_diag.4.log` and
+  `f4_diag.9.log`.
 
 `scratchpad/large_protein_20261019/` (the Mac Studio; 76 G with trajectories):
 

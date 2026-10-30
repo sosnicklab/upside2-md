@@ -434,3 +434,56 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   skipped the beagle3 backup while rsync went through; the backups were put in place from the md5-equal local
   copies. Files: remote_jobs.md, diffusion_dynamics.md, progress.md; scratchpad/boltz_hdx/addon (`sampler.py`,
   `e1_rare.py`, `toy.py`, `lownoise_read.py`, `e1_lownoise_ubqps.txt`, `runs/toy_low/`).
+* **10-29 16:15-17:05, Mac Studio, bottom-up side-chain pair tables investigated and recorded** (user: "for SC-SC
+  interactions in upside3, I plan to do it in a different way ... Investigate and record this in upside3"; then
+  "you need to make corresponding change in hybrid spline table as well"). `upside3.md` 7.4 (new; Steps renumbered
+  7.5): the model today, routes A and B, the F0-F5 diagnostic, a geometric screen of the one-bead side chain from the
+  hybrid's conformer set (ARG, LYS and TRP first: distal groups move 1.6-2.2 A RMS within one state; planar groups turn
+  up to 71 degrees), the literature (two sub-agents; UNRES's Amber/TIP3P PMFs failed with one site where the screen
+  points), the hybrid's corresponding change, open questions and BU1-BU6. Found on the way: `rotamer_center_fixed` is
+  a trained output of Jumper's fit (its `program_text`), 2.7 A on average from master's `get_beads` points for ARG;
+  up.md 2.1 corrected. Files: upside3.md (7.4, 7.5, status, 1.3, 1.4, 8.3.4, 8.5, 11 item 16, 12), up.md 2.1, plan.md
+  Phase 36, progress.md; scratchpad/sc_bottomup_20261029 (`sc_geometry_screen.py`, `bead_def_check.py`, outputs,
+  `lit_bottomup.md`, `lit_data_mapping.md`).
+* **10-29 17:10-18:25, Mac Studio, the user's three rulings on 7.4** (user: "Try to avoid adding a second bead ...";
+  "The correction could be simply a spline table of same dimention"; "Find the best ff to use for me"). The F ladder
+  rewritten on one bead per state: forms are sums of products of 1-D tables (a full six-coordinate grid would be 136 GB
+  over 3,741 state pairs); a bead frame (F4) completes the pair; more states (F5) carry the per-neighbour conformer
+  choice, a gap computable from finer states' tables. The correction is a zero-start table of the CG table's
+  dimension, linear in its parameters (a product of zero tables has no gradient). Force field: two sub-agents (cut off
+  once by the usage limit, resumed), DES-Amber with TIP4P-D chosen, ff19SB/OPC as the pilot's second force field, with
+  a salt-bridge check rule fixed before the pilot. findings 10.43 (the lesson), memory `sc-one-bead-cg-tables`. Files:
+  upside3.md (7.4, 11), plan.md Phase 36, findings.md 10.43, progress.md; scratchpad/sc_bottomup_20261029
+  (`ff_association.md`, `ff_proteins.md`).
+* **10-29 22:40-23:45, Mac Studio, the user's two points on 7.4** (the 136 GB and sites; "in simulation they are usually
+  inside protein").
+  * **Size.** The 136 GB is the dense six-coordinate grid in float32, file and memory; every proposed form is under
+    11 MB.
+  * **Speed.** ff2.1 ubiquitin and CA II, profiled with `sample`:
+    * side-chain bead pairs take 25% of the step, BP 32-34%, the two coverage nodes 27-30%;
+    * an isotropic site-pair kernel costs 3.0 ns against today's 9.8-10.5 ns;
+    * martini22 sites give 1.6x and 2.8x the bead pairs, so an estimated +1% and +21% step (wrong; measured 10-30).
+  * **Shape.** The wall screen: with a centroid bead, ARG, TYR, TRP, PHE and LYS still move their contact wall
+    2.1-2.8 A over direction, which products cannot follow. Sites for those five are recommended to the user as a
+    question.
+  * **Burial.** 30 native PDBs: 58% of nonlocal contacts both buried, 15% both exposed; nonpolar pairs 80% buried,
+    charged pairs 54% exposed. Two limits mixed by burial are proposed. A third force-field review (`ff_buried.md`)
+    found the Amber line shares its dry apolar pairs, so DES-Amber stays, with buried checks added to the pilot.
+  * findings 10.44. Files: upside3.md 7.4 and 11-12, findings.md, progress.md, plan.md Phase 36;
+    scratchpad/sc_bottomup_20261029 (`sc_wall_screen.py`, `contact_burial.py`, `speed/`, `ff_buried.md`).
+* **10-30 00:00-07:45, Mac Studio, the user's rule on sites and implicit water** ("if more than 1 bead can make it
+  more accurate and faster, then yes"; "check if implicit water ff exist and can work here").
+  * **Sites in the engine.** `build_sites.py` libraries with more than one bead per state for ARG, LYS, TRP, TYR and
+    PHE. Co-located copies reproduce ff2.1 to 3e-5 in energy and force; martini22 sites pass `node_fd.py`. Step +21%
+    (ubiquitin) and +39% (CA II), +14% and +33% with isotropic site tables. The 10-29 estimate was wrong (findings
+    10.45).
+  * **One-bead forms** timed by probe engines (a copy of `src/` with the kernel replaced, never the repo): F2, F3 and
+    F4 on the pairs that involve the five +2-4%, +6%, and at least +17-21%.
+  * **Shape** (steric proxy, 10 pairs, held-out half): F2 and F3 gain at most 0.013 over F0. A frame on the bead
+    (F4) cuts F3's residual 3.2-5 times and leaves 1.2-4.8 times less than sites. Unregularised F4 put false wells at
+    overlapped poses on two pairs; a cross-validated smoothness penalty fixed one, bounded angular tables (F4b) both.
+    One bead stays by the user's rule.
+  * **Implicit water** (sub-agent review, `ff_implicit.md`): none can be the reference; W_water stays explicit; PB or
+    an accurate GB is a candidate for U_dry's electrostatics after a buried-charge check.
+  * Files: upside3.md (7.4, 8.3.4, 11, 12), plan.md Phase 36, findings.md 10.45, progress.md, memory
+    `sc-one-bead-cg-tables`; scratchpad/sc_bottomup_20261029 (`sites/`, `ff_implicit.md`).

@@ -4945,6 +4945,33 @@ a trained model; and predict failure by construction only where no term can resp
 reads an ionic strength). Whether the implicit physics is enough is a measurement, not a deduction from the term
 list.**
 
+### 10.43 Extend a design by the mechanism the user named (2026-10-29)
+
+User correction: the user asked for side chains that need "more spline tables than simple ones"; I put a second bead
+per side chain into the ladder of forms (`upside3.md` 7.4), from UNRES and Martini precedent. The user: avoid a second
+bead; the side chain stays one CG bead with additional tables for orientation and the like. **When the user names the
+mechanism of a change, the candidates stay inside it. A different mechanism, however well precedented, is put to the
+user as a question, not written in as a step.**
+
+### 10.44 Choose a reference for the condition the derived term acts in (2026-10-29)
+
+User correction: I chose the all-atom force field for the side-chain pair tables on dilute-solution evidence (osmotic
+coefficients, association constants in water), the condition the derivation simulates. The user: the pairs are
+computed exposed, but in a simulation they are usually inside the protein. Measured afterwards (`upside3.md` 7.4):
+58% of nonlocal native contacts have both side chains buried and 15% both exposed, and nonpolar pairs are 80% both
+buried. **Before choosing a reference or a derivation condition for a coarse-grained term, measure where the term
+acts in the simulations it serves, and require evidence for the reference in that condition as well.**
+
+### 10.45 Time a design in the engine before recommending it on speed (2026-10-30)
+
+Self-found: on 10-29 I recommended sites for ARG, LYS, TRP, TYR and PHE on an estimated step cost of +1% (ubiquitin)
+and +21% (CA II), composed from profile shares, a kernel benchmark and pair counts, and wrote that belief propagation
+"grows with states, not beads". Run in the engine on 10-30 (`upside3.md` 7.4), the same sites cost +21% and +39%, and
++17% and +32% without the coverage nodes' growth, which the estimate had left out by design. The estimate missed that
+every bead pair is summed into its state pair whatever its kernel, and that more sites put more state pairs within
+the cutoff (+10%, +24%), which belief propagation pays for. **When a recommendation rests on speed, build the stand-in
+and time it in the engine first; a cost composed from profile shares is a hypothesis and is reported as one.**
+
 ---
 
 ## 11. Reference: the two glpG PDBs disagree about TM4

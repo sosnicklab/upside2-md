@@ -295,8 +295,12 @@ Protein sidechain rotamer force field. Root-level datasets:
 Knot layout for `pair_interaction[i,j,:]`: two angular sections (r1 direction, r2 direction) followed by two radial sections: one isotropic, in ff_2.1 the repulsive core (about +3.5 E_up at 0.7 A, its first coefficient
 pinned at 5 by the trainer), and one weighted by the two angular factors, whose sign changes along r. `n_knot_angular=15`, `n_knot_sc=12` => 2×15 + 2×12 = 54 knots total.
 
-`rotamer_center_fixed` and `rotamer_prob` were generated from Dunbrack's backbone-dependent rotamer library by
-master's `src/compute_rotamer_centers.cpp` and `src/compute_rotamer_pos.cpp`; Upside 3 does not carry those tools.
+The rotamer states and `rotamer_prob` come from Dunbrack's backbone-dependent rotamer library, through master's
+`src/compute_rotamer_centers.cpp` and `src/compute_rotamer_pos.cpp`; Upside 3 does not carry those tools.
+`rotamer_center_fixed` is a trained output: the fit in `program_text` trains `placement_fixed_point_vector_only`
+with `pair_interaction`, `coverage_interaction` and `hydrophobe_interaction` and writes it under this name. The
+beads lie 2.7 A on average (ARG) from the points `compute_rotamer_centers.cpp` `get_beads` defines
+(`upside3.md` 7.4).
 
 **`ff_3.0/sidechain.h5`** is ff_2.1's file with `pair_interaction`, `coverage_interaction` and
 `hydrophobe_interaction` retrained by ConDiv (the ff30_gdepth_dt009 release, 4). Every other

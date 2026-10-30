@@ -915,6 +915,34 @@ for K80 to A100; development tree `/beagle3/trsosnic/yinhan/upside3_gpu` (the Up
 6. [ ] G5 the ladder on ff2.1 and ff3.1 (V1 all fixtures, V2, speed); V3 submitted once V2 passes.
 7. [ ] G6 the hybrid.
 
+### Phase 36 - side-chain pair tables coarse-grained from an all-atom force field (STARTED 2026-10-29, user)
+User 10-29: derive the SC-SC spline table bottom-up from an all-atom force field (e.g. Amber), "like what we did in
+hybrid model", train only "the correction for this CG spline table", and use the CG step to find which side chains
+need more than the one-bead table; then "you need to make corresponding change in hybrid spline table as well". The
+record is `upside3.md` 7.4 (the model today, routes, the F0-F5 diagnostic, the geometric screen, the hybrid's
+corresponding change, open questions, BU1-BU6); this phase tracks only status.
+1. [x] Investigated and recorded (10-29), with the geometric screen (`scratchpad/sc_bottomup_20261029/`). Found on
+   the way: `rotamer_center_fixed` is a trained output of Jumper's fit, not the C++ tools' (up.md 2.1 corrected).
+   Decided by the user 10-29: each side chain stays one CG bead, with more spline tables for orientation and the
+   like, never a second bead (findings 10.43); the correction is a table of the CG table's dimension, zero if the CG
+   is exact; the force field is for me to find (item 3).
+2. [ ] BU1: the user's remaining choices (`upside3.md` 11, item 16): the route, the reference condition, the
+   threshold, the stage.
+3. [x] The all-atom force field (10-29): DES-Amber with TIP4P-D, ff19SB/OPC as the pilot's second. The pilot checks
+   both against the salt-bridge association constants and, for buried pairs, against water-to-cyclohexane transfer
+   and the N-methylacetamide dimer in CCl4 (`upside3.md` 7.4).
+4. [x] The user's two points (10-29), measured and recorded in `upside3.md` 7.4 ("Tables against sites", "Buried
+   and exposed pairs"). The 136 GB was the dense grid only. Most contacts are buried, so two limits mixed by burial
+   are proposed (findings 10.44).
+5. [x] The user's 10-30 points, measured and recorded in `upside3.md` 7.4 (`scratchpad/sc_bottomup_20261029/sites/`).
+   * Sites only "if more than 1 bead can make it more accurate and faster". Sites run in today's engine (exact
+     against ff2.1 when co-located) and cost +21% (ubiquitin) and +39% (CA II), against my 10-29 estimate of +1% and
+     +21% (findings 10.45). On a steric proxy one bead with a frame (F4) is more accurate than sites for all five
+     residues, at a cost of at least +17% and +21% on the pairs that involve them. One bead stays.
+   * F4 still needs a fit that places no false well (MET-LEU) and a second direction in the placement node (BU3).
+   * Implicit water: no model can be the reference, so W_water stays explicit. PB or an accurate GB is a candidate
+     only for U_dry's electrostatics, after a check on buried charges.
+
 ## Known Errors / Blockers
 
 * **Upside 3's glpG hybrid with ff2.1 loses TM4 in preparation stage 7.0** (findings 3.15, 10-26), answered 10-27:
