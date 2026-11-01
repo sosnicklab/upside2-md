@@ -6,6 +6,7 @@
 #include "deriv_engine.h"
 #include "timing.h"
 #include "thermostat.h"
+#include "device_engine.h"
 #include <chrono>
 #include <algorithm>
 #include <set>
@@ -659,6 +660,8 @@ try {
             false, "", "v, mv ", cmd);
     ValueArg<int> inner_step_arg("", "inner-step", "inner step for the integrator", false, 3, "int", cmd);
     SwitchArg enable_min_arg("", "minimize", "Run an energy minimization before MD", cmd, false);
+    SwitchArg gpu_arg("", "gpu", "integrate on the GPU (the device engine, device_engine.h; the device is the first of "
+            "CUDA_VISIBLE_DEVICES); a build without CUDA runs the device code on the CPU", cmd, false);
     ValueArg<int> min_max_iter_arg("", "min-max-iter", "Minimization max iterations", false, 1000, "int", cmd);
     ValueArg<double> min_energy_tol_arg("", "min-energy-tol", "Minimization energy tolerance", false, 1e-6, "float", cmd);
     ValueArg<double> min_force_tol_arg("", "min-force-tol", "Minimization force tolerance", false, 1e-6, "float", cmd);
@@ -1268,133 +1271,205 @@ try {
         SignalHandlerHandler sigint_handler (SIGINT,  abort_like_handler);
         SignalHandlerHandler sigterm_handler(SIGTERM, abort_like_handler);
 
+        // The device engine runs the integration of every system.  Each round's host work (frames, re-centering,
+        // Monte Carlo moves, replica exchange) runs on the CPU engines, on the state the device returns for it.
+        unique_ptr<DeviceDynamics> device;
+        // views of the systems' state, taken at each transfer since replica exchange swaps the systems' arrays
+        auto host_pos = [&]() {vector<VecArray> v; for(System& sys: systems) v.push_back(sys.engine.pos->output); return v;};
+        auto host_mom = [&]() {vector<VecArray> v; for(System& sys: systems) v.push_back(sys.mom); return v;};
+        if(gpu_arg.getValue()) {
+            if(curvature_changer_interval) throw string("--gpu does not run --curvature-changer-interval");
+            for(System& sys: systems)
+                if(simulation_box::npt::is_enabled(sys.engine)) throw string("--gpu does not run the barostat yet");
+            vector<DerivEngine*> engines;
+            for(System& sys: systems) engines.push_back(&sys.engine);
+            device.reset(new DeviceDynamics(engines));
+            device->set_state(host_pos(), host_mom());
+            if(verbose) printf("%s\n\n", device::describe().c_str());
+        }
+
+        // The frame of a round is its state before any of the round's operations, so that a continuation from it
+        // applies each of them once.  Frames lie on the frame grid, and every run also logs the round it starts
+        // from, so that a continuation's first frame is always the frame it continues from, on the grid or off it
+        // (a step-count run's final capture)
+        auto is_frame = [&](uint64_t nr) {return !(nr%frame_interval) || nr == start_round;};
+        auto is_mc_round = [&](uint64_t nr) {return nr && mc_interval && !(nr%mc_interval);};
+
+        // The host work at the start of round nr: the frame, re-centering and Monte Carlo moves
+        auto round_start = [&](System& sys, int ns, uint64_t nr) {
+            if(is_frame(nr)) {
+                sys.engine.compute(PotentialAndDerivMode);
+                sys.logger->collect_samples();
+
+                if(verbose) {
+                    double display_elapsed = nr*double(dt*inner_step);
+                    if(sys.martini_hybrid_progress) {
+                        double rg = compute_protein_rg(sys);
+                        auto prot_components = compute_hybrid_protein_potential_components(sys.engine);
+                        double protein_potential = prot_components.protein_total();
+                        printf("step %d / %llu time %.3g system %2i temperature %.2f hbonds %5.1f",
+                               int(nr),
+                               static_cast<unsigned long long>(n_round),
+                               display_elapsed,
+                               ns,
+                               sys.temperature,
+                               get_n_hbond(sys.engine));
+                        if(rg >= 0.0) printf(" %5.1f Rg,", rg);
+                        else          printf("  N/A Rg,");
+                        printf(" protein_potential % .2f total_potential % .2f\n",
+                               protein_potential,
+                               sys.engine.potential);
+                    } else {
+                        double rg = compute_all_atom_rg(sys);
+                        printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n",
+                               duration_print_width, display_elapsed,
+                               duration_print_width, display_duration_total,
+                               ns, sys.temperature,
+                               get_n_hbond(sys.engine),
+                               rg, sys.engine.potential);
+                    }
+                }
+                fflush(stdout);
+            }
+
+            if(!(nr%frame_interval) && do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
+
+            // Don't pivot at t=0 so that a partially strained system may relax before the
+            // first pivot
+            if(is_mc_round(nr))
+                sys.mc_samplers.execute(sys.random_seed, nr, sys.temperature, sys.engine,
+                        sys.mom, mc_half_kick, mc_slow_half_kick);
+        };
+
+        // the annealing temperature of a thermostat round
+        auto set_round_temperature = [&](System& sys) {
+            if(anneal_factor != 1.)
+                sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
+            martini_brownian::set_brownian_temperature(&sys.engine, sys.temperature);
+        };
+
+        // A block of rounds ends at the next replica exchange, and after at most 8 rounds so that a stop signal or the
+        // time limit, tested between blocks, stops every system at the same round
+        auto ends_block = [&](uint64_t nr) {return !((nr+1)%8) || (replica_interval && !((nr+1)%replica_interval));};
+
         // we need to run everyone until the next synchronization event
         // a little care is needed if we are multiplexing the events
         auto tstart = chrono::high_resolution_clock::now();
         while(systems[0].round_num < n_round && received_signal==NO_SIGNAL) {
-            // An exception must not escape an OpenMP structured block: doing so calls std::terminate
-            // and the message is destroyed, which is exactly how a mid-run failure reported nothing but
-            // "Abort trap: 6". Trap per system, keep the first message, and rethrow once serial so the
-            // top-level handler can print why the run died.
-            std::string omp_error;
-            bool omp_failed = false;
-            #pragma omp parallel for schedule(static,1)
-            for(int ns=0; ns<int(systems.size()); ++ns) try {
-                System& sys = systems[ns];
-                for(bool do_break=false; (!do_break) && (sys.round_num<n_round); ++sys.round_num) {
-                    int nr = sys.round_num;
-
-                    // The frame of a round is its state before any of the round's operations, so that a
-                    // continuation from it applies each of them once.  Frames lie on the frame grid, and every run
-                    // also logs the round it starts from, so that a continuation's first frame is always the frame
-                    // it continues from, on the grid or off it (a step-count run's final capture)
-                    bool on_frame_grid = !(nr%frame_interval);
-                    bool do_print = on_frame_grid || sys.round_num == start_round;
-                    if(do_print) {
-                        sys.engine.compute(PotentialAndDerivMode);
-                        sys.logger->collect_samples();
-
-                        if(verbose) {
-                            double display_elapsed = nr*double(dt*inner_step);
-                            if(sys.martini_hybrid_progress) {
-                                double rg = compute_protein_rg(sys);
-                                auto prot_components = compute_hybrid_protein_potential_components(sys.engine);
-                                double protein_potential = prot_components.protein_total();
-                                printf("step %d / %llu time %.3g system %2i temperature %.2f hbonds %5.1f",
-                                       nr,
-                                       static_cast<unsigned long long>(n_round),
-                                       display_elapsed,
-                                       ns,
-                                       sys.temperature,
-                                       get_n_hbond(sys.engine));
-                                if(rg >= 0.0) printf(" %5.1f Rg,", rg);
-                                else          printf("  N/A Rg,");
-                                printf(" protein_potential % .2f total_potential % .2f\n",
-                                       protein_potential,
-                                       sys.engine.potential);
-                            } else {
-                                double rg = compute_all_atom_rg(sys);
-                                printf("%*.0f / %*.0f elapsed %2i system %.2f temp %5.1f hbonds, Rg %5.1f A, potential % 8.2f\n",
-                                       duration_print_width, display_elapsed,
-                                       duration_print_width, display_duration_total,
-                                       ns, sys.temperature,
-                                       get_n_hbond(sys.engine),
-                                       rg, sys.engine.potential);
-                            }
-                        }
-                        fflush(stdout);
+            if(device) {
+                for(bool do_break=false; (!do_break) && (systems[0].round_num<n_round); ) {
+                    uint64_t nr = systems[0].round_num;
+                    if(is_frame(nr) || is_mc_round(nr)) {
+                        device->get_state(host_pos(), host_mom());
+                        for(int ns=0; ns<int(systems.size()); ++ns) round_start(systems[ns], ns, nr);
+                        device->set_state(host_pos(), host_mom());
                     }
 
-                    if(on_frame_grid && do_recenter) recenter(sys.engine.pos->output, xy_recenter_only, sys.n_atom);
-
-                    // Don't pivot at t=0 so that a partially strained system may relax before the
-                    // first pivot
-                    if(nr && mc_interval && !(nr%mc_interval)) 
-                        sys.mc_samplers.execute(sys.random_seed, nr, sys.temperature, sys.engine,
-                                sys.mom, mc_half_kick, mc_slow_half_kick);
-
-                    bool thermostat_round = !(nr%thermostat_interval);
-                    if(thermostat_round) {
-                        // Handle simulated annealing if applicable
-                        if(anneal_factor != 1.)
-                            sys.set_temperature(anneal_temp(sys.initial_temperature, inner_step*dt*(sys.round_num+1)));
-                        martini_brownian::set_brownian_temperature(&sys.engine, sys.temperature);
-                        // g-JF momenta are at the coordinates; the leapfrog's trail them by half a kick, so its
-                        // integration cycle takes the thermostat step where it has the forces
-                        if(brownian) sys.thermostat.apply(sys.mom, sys.n_atom, &sys.engine);
-                    }
-
-                    // Enforce fixed-in-space constraints before integration so fixed atoms
-                    // do not receive a first-step kick from initialized/thermostatted momenta.
-                    martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.mom);
-
-                    // MARTINI configurations list every dynamic particle in the single-step g-JF integrator
-                    auto thermostat = thermostat_round ? &sys.thermostat : nullptr;
+                    // the CPU's round: the thermostat (in the leapfrog's cycle, where it has the forces), the
+                    // fixed atoms held before and after the step, then the PO4 hold of the next round.  The third
+                    // hold, after the barostat, has nothing to change without one.
+                    vector<OrnsteinUhlenbeckThermostat*> thermostats;
+                    if(!(nr%thermostat_interval))
+                        for(System& sys: systems) {set_round_temperature(sys); thermostats.push_back(&sys.thermostat);}
+                    if(brownian && thermostats.size()) device->thermostat_step(thermostats, false);
+                    device->zero_fixed_momenta();
                     if(brownian) {
-                        sys.engine.compute(DerivMode);
-                        martini_brownian::apply_langevin_step(&sys.engine, sys.mom, dt);
+                        vector<float> temperature;
+                        for(System& sys: systems) temperature.push_back(sys.temperature);
+                        device->langevin_cycle(dt, temperature, nr);
                     } else if(integrator_arg.getValue() == "mv") {
-                        sys.engine.integration_cycle(sys.mom, dt, inner_step, thermostat);
+                        device->integration_cycle(dt, inner_step, thermostats);
                     } else {
-                        sys.engine.integration_cycle(sys.mom, dt, thermostat);
+                        device->integration_cycle(dt, thermostats);
                     }
+                    device->zero_fixed_momenta();
+                    vector<vector<int>> fixed, z_fixed;
+                    for(System& sys: systems) {
+                        martini_hybrid::refresh_transition_holds_for_engine(sys.engine, nr + 1,
+                                                                            restart_using_momentum_arg.getValue());
+                        fixed  .push_back(martini_fix_rigid::get_fixed_atoms(sys.engine));
+                        z_fixed.push_back(martini_fix_rigid::get_z_fixed_atoms(sys.engine));
+                    }
+                    device->set_fixed_atoms(fixed, z_fixed);
 
-                    // Apply fix rigid constraints after integration
-                    martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.mom);
-
-                    // Apply NPT barostat if enabled (skip step 0 to allow initial relaxation)
-                    if(nr > 0)
-                        simulation_box::npt::maybe_apply_barostat(sys.engine, sys.n_atom, nr, sys.temperature);
-
-                    // Re-apply fixed-in-space constraints after barostat/box updates.
-                    martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.mom);
-                    martini_hybrid::refresh_transition_holds_for_engine(sys.engine, nr + 1,
-                                                                        restart_using_momentum_arg.getValue());
-
-                    if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
-                        curvature_changer->attempt_change(sys.random_seed, sys.round_num, ns, sys, relative_curvature_radius_change);
-
-                    // A block of rounds ends at the next replica exchange, and after at most 8 rounds so that a stop
-                    // signal or the time limit, tested between blocks, stops every system at the same round
-                    do_break = !((nr+1)%8) || (replica_interval && !((nr+1)%replica_interval));
+                    for(System& sys: systems) ++sys.round_num;
+                    do_break = ends_block(nr);
                 }
-            } catch(const string &e) {
-                #pragma omp critical
-                if(!omp_failed) { omp_failed = true; omp_error = e; }
-            } catch(const std::exception &e) {
-                #pragma omp critical
-                if(!omp_failed) { omp_failed = true; omp_error = string("std::exception: ") + e.what(); }
-            } catch(...) {
-                #pragma omp critical
-                if(!omp_failed) { omp_failed = true; omp_error = "unknown exception"; }
+            } else {
+                // An exception must not escape an OpenMP structured block: doing so calls std::terminate
+                // and the message is destroyed, which is exactly how a mid-run failure reported nothing but
+                // "Abort trap: 6". Trap per system, keep the first message, and rethrow once serial so the
+                // top-level handler can print why the run died.
+                std::string omp_error;
+                bool omp_failed = false;
+                #pragma omp parallel for schedule(static,1)
+                for(int ns=0; ns<int(systems.size()); ++ns) try {
+                    System& sys = systems[ns];
+                    for(bool do_break=false; (!do_break) && (sys.round_num<n_round); ++sys.round_num) {
+                        int nr = sys.round_num;
+                        round_start(sys, ns, nr);
+
+                        bool thermostat_round = !(nr%thermostat_interval);
+                        if(thermostat_round) {
+                            set_round_temperature(sys);
+                            // g-JF momenta are at the coordinates; the leapfrog's trail them by half a kick, so its
+                            // integration cycle takes the thermostat step where it has the forces
+                            if(brownian) sys.thermostat.apply(sys.mom, sys.n_atom, &sys.engine);
+                        }
+
+                        // Enforce fixed-in-space constraints before integration so fixed atoms
+                        // do not receive a first-step kick from initialized/thermostatted momenta.
+                        martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.mom);
+
+                        // MARTINI configurations list every dynamic particle in the single-step g-JF integrator
+                        auto thermostat = thermostat_round ? &sys.thermostat : nullptr;
+                        if(brownian) {
+                            sys.engine.compute(DerivMode);
+                            martini_brownian::apply_langevin_step(&sys.engine, sys.mom, dt);
+                        } else if(integrator_arg.getValue() == "mv") {
+                            sys.engine.integration_cycle(sys.mom, dt, inner_step, thermostat);
+                        } else {
+                            sys.engine.integration_cycle(sys.mom, dt, thermostat);
+                        }
+
+                        // Apply fix rigid constraints after integration
+                        martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.mom);
+
+                        // Apply NPT barostat if enabled (skip step 0 to allow initial relaxation)
+                        if(nr > 0)
+                            simulation_box::npt::maybe_apply_barostat(sys.engine, sys.n_atom, nr, sys.temperature);
+
+                        // Re-apply fixed-in-space constraints after barostat/box updates.
+                        martini_fix_rigid::apply_fix_rigid_md(sys.engine, sys.engine.pos->output, sys.mom);
+                        martini_hybrid::refresh_transition_holds_for_engine(sys.engine, nr + 1,
+                                                                            restart_using_momentum_arg.getValue());
+
+                        if(curvature_changer_interval && !(sys.round_num % curvature_changer_interval))
+                            curvature_changer->attempt_change(sys.random_seed, sys.round_num, ns, sys, relative_curvature_radius_change);
+
+                        do_break = ends_block(nr);
+                    }
+                } catch(const string &e) {
+                    #pragma omp critical
+                    if(!omp_failed) { omp_failed = true; omp_error = e; }
+                } catch(const std::exception &e) {
+                    #pragma omp critical
+                    if(!omp_failed) { omp_failed = true; omp_error = string("std::exception: ") + e.what(); }
+                } catch(...) {
+                    #pragma omp critical
+                    if(!omp_failed) { omp_failed = true; omp_error = "unknown exception"; }
+                }
+                // Here we are running in serial again
+                if(omp_failed)
+                    throw string("integration failed at round ") + to_string(systems[0].round_num) +
+                          ": " + omp_error;
             }
-            // Here we are running in serial again
-            if(omp_failed)
-                throw string("integration failed at round ") + to_string(systems[0].round_num) +
-                      ": " + omp_error;
-            if(replica_interval && !(systems[0].round_num % replica_interval))
+            if(replica_interval && !(systems[0].round_num % replica_interval)) {
+                if(device) device->get_state(host_pos(), host_mom());
                 replex->attempt_swaps(base_random_seed, systems[0].round_num,
                                       systems[0].round_num/replica_interval - 1, systems);
+                if(device) device->set_state(host_pos(), host_mom());
+            }
 
             if(time_lim > 0. && chrono::duration<double>(chrono::high_resolution_clock::now() - tstart).count() > time_lim) {
                 passed_time_lim = true;
@@ -1403,6 +1478,7 @@ try {
 
         }
 
+        if(device) device->get_state(host_pos(), host_mom());
         if(use_duration_steps && n_round > 0 && !(enable_min_arg.getValue() && systems[0].round_num == start_round)) {
             // MARTINI step-count runs may end off a frame boundary; capture the final frame.  A run of no rounds
             // after a minimisation has logged this state already.

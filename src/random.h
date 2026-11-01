@@ -18,20 +18,21 @@ enum RandomStreamType {
     BROWNIAN_RANDOM_STREAM = 7
 };
 
+// R123_CUDA_DEVICE (__device__ under nvcc, empty otherwise): the generator runs wherever Random123 runs
 struct RandomGenerator
 {
     private:
         threefry4x32_key_t k;
         threefry4x32_ctr_t c;
 
-        threefry4x32_ctr_t random_bits() {
+        R123_CUDA_DEVICE threefry4x32_ctr_t random_bits() {
             threefry4x32_ctr_t result = threefry4x32(c,k);
             c.v[3]++;
             return result;
         }
 
     public:
-        RandomGenerator(uint32_t seed, uint32_t generator_id, uint32_t atom_number, uint64_t timestep)
+        R123_CUDA_DEVICE RandomGenerator(uint32_t seed, uint32_t generator_id, uint32_t atom_number, uint64_t timestep)
         {
             k.v[0] = seed;
             k.v[1] = generator_id;
@@ -45,7 +46,7 @@ struct RandomGenerator
             c.v[3] = 0u;
         }
 
-        float4 uniform_open_closed() {
+        R123_CUDA_DEVICE Vec<4> uniform_open_closed() {
             threefry4x32_ctr_t bits = random_bits();
             return make_vec4(
                     r123::u01<float>(bits.v[0]),
@@ -55,21 +56,21 @@ struct RandomGenerator
         }
 
         // a uniform in (0,1] at the 53-bit resolution of a double
-        double uniform_open_closed_double() {
+        R123_CUDA_DEVICE double uniform_open_closed_double() {
             threefry4x32_ctr_t bits = random_bits();
             return r123::u01<double>((uint64_t(bits.v[0])<<32) | uint64_t(bits.v[1]));
         }
 
-        float4 normal() {
+        R123_CUDA_DEVICE Vec<4> normal() {
             threefry4x32_ctr_t bits = random_bits();
             r123::float2 n1 = r123::boxmuller(bits.v[0], bits.v[1]);
             r123::float2 n2 = r123::boxmuller(bits.v[2], bits.v[3]);
             return make_vec4(n1.x, n1.y, n2.x, n2.y);
         }
 
-        float3 normal3 () {
+        R123_CUDA_DEVICE Vec<3> normal3 () {
             // just discard the 4th random number
-            float4 ret = normal();
+            Vec<4> ret = normal();
             return make_vec3(ret.x(), ret.y(), ret.z());
         };
 };

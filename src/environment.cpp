@@ -3,185 +3,34 @@
 #include "state_logger.h"
 #include "spline.h"
 #include "interaction_graph.h"
+#include "environment_interaction.h"
+#include "device_nodes.h"
 #include <algorithm>
 
 using namespace std;
 using namespace h5;
 
 namespace {
-    struct EnvironmentCoverageInteraction {
-        // parameters are r0,r_sharpness, dot0,dot_sharpness
 
-        constexpr static bool  symmetric = false;
-        constexpr static int   n_param=4, n_dim1=6, n_dim2=4, simd_width=1;
+// The output element maps of a coverage node (device_nodes.h): an edge (i1, i2) of system ns adds to element
+// out.offset[ns] + base(local i1) + add(local i2)
+template <typename IType, typename Node, typename B, typename A>
+static void coverage_maps(DeviceGraph& g, const vector<DerivComputation*>& systems, vector<int>& base1,
+        vector<int>& add2, B base, A add) {
+    auto& out = g.coord(static_cast<Node&>(*systems[0]));
+    for(int ns: range(g.n_system)) {
+        auto& n = static_cast<Node&>(*systems[ns]);
+        for(int i: range(n.igraph.n_elem1)) base1.push_back(out.offset[ns] + base(n, i));
+        for(int i: range(n.igraph.n_elem2)) add2.push_back(add(n, i));
+    }
+}
 
-        static float cutoff(const float* p) {
-            return p[0] + compact_sigmoid_cutoff(p[1]);
-        }
-
-        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
-            auto sequence_exclude = Int4(2);  // exclude i,i, i,i+1, and i,i+2
-            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
-        }
-
-        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
-                const Vec<n_dim1,Float4> &cb_pos, const Vec<n_dim2,Float4> &sc_pos) {
-            Float4 one(1.f);
-            auto displace = extract<0,3>(sc_pos)-extract<0,3>(cb_pos);
-            auto rvec1    = extract<3,6>(cb_pos);
-            auto prob     = sc_pos[3];
-
-            auto dist2 = mag2(displace);
-            auto inv_dist = rsqrt(dist2);
-            auto dist = dist2*inv_dist;
-            auto displace_unitvec = inv_dist*displace;
-
-            // read parameters then transpose
-            Float4 r0(p[0]);
-            Float4 r_sharpness(p[1]);
-            Float4 dot0(p[2]);
-            Float4 dot_sharpness(p[3]);
-            transpose4(r0,r_sharpness,dot0,dot_sharpness);
-
-            auto dp = dot(displace_unitvec,rvec1);
-            auto radial_sig  = compact_sigmoid(dist-r0, r_sharpness);
-            auto angular_sig = compact_sigmoid(dot0-dp, dot_sharpness);
-
-            // now we compute derivatives (minus sign is from the derivative of angular_sig)
-            auto d_displace = prob*(radial_sig.y()*angular_sig.x() * displace_unitvec -
-                                    radial_sig.x()*angular_sig.y()* inv_dist*(rvec1 - dp*displace_unitvec));
-
-            store<3,6>(d1, -prob*radial_sig.x()*angular_sig.y()*displace_unitvec);
-            store<0,3>(d1, -d_displace);
-            store<0,3>(d2,  d_displace);
-            auto score = radial_sig.x() * angular_sig.x();
-            d2[3] = score;
-            return prob * score;
-        }
-
-        static void param_deriv(Vec<n_param> &d_param, const float* p,
-                const Vec<n_dim1> &hb_pos, const Vec<n_dim2> &sc_pos) {
-            throw std::string("the coverage parameter derivative is not implemented");
-        }
-
-        static bool is_compatible(const float* p1, const float* p2) {return true;};
-    };
-
-    struct HbondEnvironmentCoverageInteraction {
-        // parameters are r0,r_sharpness, dot0,dot_sharpness
-    
-        constexpr static bool  symmetric = false;
-        constexpr static int   n_param=4, n_dim1=6, n_dim2=6, simd_width=1;
-    
-        static float cutoff(const float* p) {
-    	return p[0] + compact_sigmoid_cutoff(p[1]);
-        }
-    
-        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
-            auto sequence_exclude = Int4(2);  // exclude i,i, i,i+1, and i,i+2
-            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
-            //return Int4() == Int4();  // No exclusions (all true)
-        }
-    
-        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
-    	    const Vec<n_dim1,Float4> &x1, const Vec<n_dim2,Float4> &x2) {
-
-    	Float4 one(1.f);
-    	auto displace = extract<0,3>(x2)-extract<0,3>(x1);
-    	auto rvec1 = extract<3,6>(x1);
-    
-    	auto dist2 = mag2(displace);
-    	auto inv_dist = rsqrt(dist2);
-    	auto dist = dist2*inv_dist;
-    	auto displace_unitvec = inv_dist*displace;
-    
-    	// read parameters then transpose
-    	Float4 r0(p[0]);
-    	Float4 r_sharpness(p[1]);
-    	Float4 dot0(p[2]);
-    	Float4 dot_sharpness(p[3]);
-    	transpose4(r0,r_sharpness,dot0,dot_sharpness);
-    
-    	auto dp = dot(displace_unitvec,rvec1);
-    	auto radial_sig  = compact_sigmoid(dist-r0, r_sharpness);
-    	auto angular_sig = compact_sigmoid(dot0-dp, dot_sharpness);
-    
-    	// now we compute derivatives (minus sign is from the derivative of angular_sig)
-    	auto d_displace = radial_sig.y()*angular_sig.x() * displace_unitvec -
-    	       		radial_sig.x()*angular_sig.y()* inv_dist*(rvec1 - dp*displace_unitvec);
-    
-    	store<3,6>(d1, -radial_sig.x()*angular_sig.y()*displace_unitvec);
-    	store<0,3>(d1, -d_displace);
-    	store<0,3>(d2,  d_displace);
-    	auto score = radial_sig.x() * angular_sig.x();
-    	return score;
-        }
-    
-        static void param_deriv(Vec<n_param> &d_param, const float* p,
-                const Vec<n_dim1> &hb_pos, const Vec<n_dim2> &sc_pos) {
-            throw std::string("the coverage parameter derivative is not implemented");
-        }
-    
-        static bool is_compatible(const float* p1, const float* p2) {return true;};
-    };
-
-    struct HbondEnvironmentCoverageInteraction2 {
-        // parameters are r0,r_sharpness, dot0,dot_sharpness
-    
-        constexpr static bool  symmetric = false;
-        constexpr static int   n_param=4, n_dim1=6, n_dim2=3, simd_width=1;
-    
-        static float cutoff(const float* p) {
-    	return p[0] + compact_sigmoid_cutoff(p[1]);
-        }
-    
-        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
-            auto sequence_exclude = Int4(2);  // exclude i,i, i,i+1, and i,i+2
-            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
-            //return Int4() == Int4();  // No exclusions (all true)
-        }
-    
-        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
-    	    const Vec<n_dim1,Float4> &x1, const Vec<n_dim2,Float4> &x2) {
-
-    	Float4 one(1.f);
-    	auto displace = extract<0,3>(x2)-extract<0,3>(x1);
-    	auto rvec1 = extract<3,6>(x1);
-    
-    	auto dist2 = mag2(displace);
-    	auto inv_dist = rsqrt(dist2);
-    	auto dist = dist2*inv_dist;
-    	auto displace_unitvec = inv_dist*displace;
-    
-    	// read parameters then transpose
-    	Float4 r0(p[0]);
-    	Float4 r_sharpness(p[1]);
-    	Float4 dot0(p[2]);
-    	Float4 dot_sharpness(p[3]);
-    	transpose4(r0,r_sharpness,dot0,dot_sharpness);
-    
-    	auto dp = dot(displace_unitvec,rvec1);
-    	auto radial_sig  = compact_sigmoid(dist-r0, r_sharpness);
-    	auto angular_sig = compact_sigmoid(dot0-dp, dot_sharpness);
-    
-    	// now we compute derivatives (minus sign is from the derivative of angular_sig)
-    	auto d_displace = radial_sig.y()*angular_sig.x() * displace_unitvec -
-    	       		radial_sig.x()*angular_sig.y()* inv_dist*(rvec1 - dp*displace_unitvec);
-    
-    	store<3,6>(d1, -radial_sig.x()*angular_sig.y()*displace_unitvec);
-    	store<0,3>(d1, -d_displace);
-    	store<0,3>(d2,  d_displace);
-    	auto score = radial_sig.x() * angular_sig.x();
-    	return score;
-        }
-    
-        static void param_deriv(Vec<n_param> &d_param, const float* p,
-                const Vec<n_dim1> &hb_pos, const Vec<n_dim2> &sc_pos) {
-            throw std::string("the coverage parameter derivative is not implemented");
-        }
-    
-        static bool is_compatible(const float* p1, const float* p2) {return true;};
-    };
+template <typename IType, typename Node>
+static vector<const InteractionGraph<IType>*> graphs(const vector<DerivComputation*>& systems) {
+    vector<const InteractionGraph<IType>*> r;
+    for(auto s: systems) r.push_back(&static_cast<Node&>(*s).igraph);
+    return r;
+}
 
 struct EnvironmentCoverage : public CoordNode {
 
@@ -244,6 +93,16 @@ struct EnvironmentCoverage : public CoordNode {
     virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
 #endif
     virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        typedef EnvironmentCoverageInteraction I;
+        vector<int> base1, add2;
+        coverage_maps<I, EnvironmentCoverage>(g, systems, base1, add2,
+                [](EnvironmentCoverage& n, int i) {return i*n.n_aa;},
+                [](EnvironmentCoverage& n, int i) {return n.aa_types[n.igraph.id2[i]];});
+        return device_environment_coverage(g, g.coord(*this),
+                device_interaction_data(g, graphs<I, EnvironmentCoverage>(systems)), base1, add2);
+    }
 };
 static RegisterNodeType<EnvironmentCoverage,2> environment_coverage_node("environment_coverage");
 
@@ -281,6 +140,15 @@ struct HbondEnvironmentCoverage : public CoordNode {
     virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
 #endif
     virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        typedef HbondEnvironmentCoverageInteraction I;
+        vector<int> base1, add2;
+        coverage_maps<I, HbondEnvironmentCoverage>(g, systems, base1, add2,
+                [](HbondEnvironmentCoverage& n, int i) {return i;}, [](HbondEnvironmentCoverage& n, int i) {return 0;});
+        return device_hbond_environment_coverage(g, g.coord(*this),
+                device_interaction_data(g, graphs<I, HbondEnvironmentCoverage>(systems)), base1, add2);
+    }
 };
 static RegisterNodeType<HbondEnvironmentCoverage,2> hbond_environment_coverage_node("hb_environment_coverage");
 
@@ -318,6 +186,15 @@ struct HbondBackBoneCoverage : public CoordNode {
     virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
 #endif
     virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        typedef HbondEnvironmentCoverageInteraction2 I;
+        vector<int> base1, add2;
+        coverage_maps<I, HbondBackBoneCoverage>(g, systems, base1, add2,
+                [](HbondBackBoneCoverage& n, int i) {return i;}, [](HbondBackBoneCoverage& n, int i) {return 0;});
+        return device_hbond_backbone_coverage(g, g.coord(*this),
+                device_interaction_data(g, graphs<I, HbondBackBoneCoverage>(systems)), base1, add2);
+    }
 };
 static RegisterNodeType<HbondBackBoneCoverage,2> hbond_backbone_coverage_node("hbbb_coverage");
 
@@ -365,6 +242,13 @@ struct WeightedPos : public CoordNode {
             pos.sens(2,p.index_pos) += sens(2,ne);
             energy.sens(0,p.index_weight) -= output(3,ne)*sens(3,ne); // exponential derivative
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto param = [&](int ns) -> const vector<Param>& {return static_cast<WeightedPos&>(*systems[ns]).params;};
+        return device_weighted_pos(g.coord(*this), g.coord(pos), g.coord(energy),
+                g.offset_index(pos,    [&](int ns) {vector<int> r; for(auto& p: param(ns)) r.push_back(p.index_pos);    return r;}),
+                g.offset_index(energy, [&](int ns) {vector<int> r; for(auto& p: param(ns)) r.push_back(p.index_weight); return r;}));
     }
 };
 static RegisterNodeType<WeightedPos,2> weighted_pos_node("weighted_pos");
@@ -589,6 +473,22 @@ struct SigmoidCoupling : public PotentialNode {
         potential = pot;
     }
 
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto& in = g.coord(input);
+        vector<int> types, first, sys;
+        for(int ns: range(g.n_system)) {
+            auto& n = static_cast<SigmoidCoupling&>(*systems[ns]);
+            if(n.get_param() != get_param()) throw string("the device engine shares sigmoid_coupling's parameters between systems");
+            for(int nr: range(n.n_residue)) {
+                types.push_back(n.coupling_types[nr]);
+                first.push_back(in.offset[ns] + nr*n_restype);
+                sys.push_back(ns);
+            }
+        }
+        return device_sigmoid_coupling(g.potential_of(*this), in, n_restype, scale, center, sharpness,
+                vector<float>(weights.begin(), weights.begin()+n_restype*n_restype), types, first, sys);
+    }
+
     virtual std::vector<float> get_param() const override {
         int wsize = n_restype*n_restype;
         vector<float> params(n_restype*3+wsize, 0.f);
@@ -719,6 +619,23 @@ struct BackboneSigmoidCoupling : public PotentialNode {
             env_hb.sens(0, nr) +=  hbond_weight* d_pot;
         }
         potential = pot;
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto &sc = g.coord(env_sc), &hb = g.coord(env_hb);
+        vector<int> first, site, sys;
+        for(int ns: range(g.n_system)) {
+            auto& n = static_cast<BackboneSigmoidCoupling&>(*systems[ns]);
+            if(n.get_param() != get_param())
+                throw string("the device engine shares bb_sigmoid_coupling's parameters between systems");
+            for(int nr: range(n.n_bb)) {
+                first.push_back(sc.offset[ns] + nr*n_restype);
+                site.push_back(hb.offset[ns] + nr);
+                sys.push_back(ns);
+            }
+        }
+        return device_bb_sigmoid_coupling(g.potential_of(*this), sc, hb, n_restype, scale, center, sharpness,
+                hbond_weight, weights, first, site, sys);
     }
 
     // parameters: scale, center, sharpness, hbond_weight, then the weight of each residue type

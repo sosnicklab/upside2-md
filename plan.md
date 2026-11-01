@@ -870,12 +870,78 @@ target, the Phase 32 runs kept.
    alpha_L still). Native fidelity over epoch 2: glycine beta' 0.777, alpha_R 0.989; non-glycine alpha_R 0.997, pPII'
    0.907, beta' 0.098 (n 26). The margin came back to +0.058 at epoch 2's end and is +0.061 to +0.067 over steps
    57-61; 24 of 24 proteins every step, KE/1.5kT at most 1.015.
+   **Round 4, ff3.2, at the target** (read 17:10 10-30; step 76 done 11:58 10-30; `rama_round_04.dat` md5
+   `96e265d2`): aR -0.196 -> -0.231, aL +0.567 -> +0.554, beta' -0.385 (beta +0.066, pPII +0.062, pPII' -0.053); the
+   epoch-3 pull aR t -0.6, aL -0.0, beta' -0.4, the other shared offsets' |t| median 0.5, max 2.2, so the training data
+   no longer moves glycine; the held-out proteins still pull aL down (-4.8 summed). -ln(P_aL / P_aR) -0.425, 0.17
+   above ff3.0's -0.598 (rounds 1-4: -0.567, -0.480, -0.451, -0.425; less alpha_L each round, by less each round).
+   Map step rms by round 0.104, 0.074, 0.051, 0.044; the held-out gap left after each round's step about 1.00, as in
+   every round. Native fidelity over epoch 3: glycine beta' 0.782, alpha_R 0.989; non-glycine alpha_R 0.997, pPII'
+   0.906, beta' 0.099 (n 26; free 0.002). Margin +0.042 (step 69) to +0.065 (step 75), dhb -0.575 -> -0.605, E_beta -
+   E_alpha -0.036 -> -0.071 over steps 65-75; 24 of 24 proteins every step, KE/1.5kT at most 1.013. **Convergence
+   gate at step 76** (`convergence_gate.py`, steps 58-76, run by hand 17:30 10-30;
+   `checks/ff31_fix_20261028/gate_step76_ff32_nativefix.txt`): NOT CONVERGED, `dhb` alone pulled (p 0.0045 against the
+   cut 0.0050; every other group p 0.82-1.00), the one-scalar H-bond term that fell -0.575 -> -0.605 over steps 65-75.
+   **Round 5, ff3.2, at step 95** (read 14:05 10-31; step 95 done 03:10 10-31; `rama_round_05.dat` md5 `ad998fe5`):
+   aR -0.231 -> -0.223, aL +0.554 -> +0.547; the epoch-4 pull aR t +0.2, aL -0.0, beta' -0.6, pPII' +0.8, the other
+   shared offsets' |t| median 0.4, max 1.7; held-out aL still down (-6.2 summed). -ln(P_aL / P_aR) -0.439, the first
+   round to move back toward ff3.0's -0.598 (by 0.014; rounds 1-5: -0.567, -0.480, -0.451, -0.425, -0.439), so the
+   glycine balance has stopped moving at 0.16 less alpha_L than ff3.0 (P_aL / P_aR 1.55 against ff3.0's 1.82 and the
+   merged ff3.1's 2.28). Map step rms 0.041. Native fidelity over epoch 4: glycine beta' 0.785, alpha_R 0.989;
+   non-glycine alpha_R 0.998, pPII' 0.907, beta' 0.100 (n 26). Margin +0.064 (step 76) rising to +0.095 (step 94);
+   dhb fell every step, -0.608 -> -0.647; E_beta - E_alpha -0.080 -> -0.076; 24 of 24 proteins every step, KE/1.5kT
+   at most 1.013. **Convergence gate at step 95** (steps 77-95, by hand 14:00 10-31;
+   `checks/ff31_fix_20261028/gate_step95_ff32_nativefix.txt`): CONVERGED, dhb p 0.027 against the cut 0.005, every
+   other group 0.71-1.00. dhb still moved one way every step; the gate passes it under its family-wise cut (0.05 / 10
+   groups), and a single-group 0.05 test would not.
+   **ff3.1 (`ff31_nativefix`), rounds 1-4** (target 76 reached 11:20 10-31; read 10-31, user: "Check the basin depth
+   difference for alpha l and r in GLY for ff3.1"; round 4 md5 `7693f10a`): glycine's shared aR +0.026 -> -0.052,
+   -0.123, -0.155, -0.171, aL +0.422 -> +0.498, +0.496, +0.493, +0.495. Pooled glycine map (GLY|right|ALL plus the mean
+   change of the 37 GLY|X maps, nonhelix zero) alpha_L - alpha_R by round -1.064 (released) -> -0.904, -0.831, -0.798,
+   -0.781 (ff3.0 -0.836, ff2.1 -1.460, ff3.2 at 95 -0.675); -ln(P_aL / P_aR) -0.825 -> -0.666, -0.594, -0.561, -0.545
+   (ff3.0 -0.598, ff3.2 -0.439). The epoch-3 pull is gone (aR t -0.3, aL +0.3, beta' -1.3; other shared offsets |t|
+   median 0.5, max 1.9); the held-out proteins still pull aL down (-4.8 summed). Native fidelity over epoch 3: glycine
+   beta' 0.771, alpha_R 0.989; non-glycine alpha_R 0.997, pPII' 0.906. No error line, KE/1.5kT at most 1.014. With
+   every Adam group held, the depths settle 0.11 (L - R) from ff3.2's, which trains the other terms with them
+   (`checks/ff32_fold_20261031/gly_depths.py` and `gly_LR_runs.py`, run on the Mac with the repo .venv).
 7. [ ] ff3.2's epoch-end panels, the folding test of the fix (epoch 0 read 23:30 10-28: folds 0.449, -0.167 [-0.206,
    -0.129] against released ff2.1, level with `a32_00` and `a31_00`, so the fix does not cure epoch 0's loss; findings 1.37): tag `n32_EE` added to `submit_new.sh` (user 10-28), so
    each epoch end gets the 176-run panel the all-term runs had and reads against `a31_EE`, `a32_EE` and `c9_EE`
    (findings 1.37's table). `extract_ff.py` on the epoch-0 checkpoint writes a `rama.dat` md5-equal to the run's
-   `rama_round_01.dat` (`0c9b7978`; `checks/ff31_fix_20261028/extract_test_n32_00/`). Epoch 1's panel `n32_01`
-   submitted 09:22 10-29 (remote_jobs.md §1 line 2).
+   `rama_round_01.dat` (`0c9b7978`; `checks/ff31_fix_20261028/extract_test_n32_00/`). **Epoch 1** (`n32_01`, read
+   17:10 10-30 by `paired_npz.py`): folds 0.414, -0.201 [-0.246, -0.160] p 1.8e-08 against released ff2.1 (40 of 44
+   domains lower); -0.035 [-0.076, +0.004] p 0.22 against its own epoch 0 (mean Q -0.022, p 0.005); -0.066 [-0.110,
+   -0.025] p 0.003 against the earlier all-term rerun's epoch 1 `a32_01` (0.481); -0.035 p 0.09 against `a31_01`
+   (0.449); level with the control `c9_01` (0.405; +0.009, p 0.98). **Epochs 2 and 3** (read 14:05 10-31): `n32_02`
+   folds 0.436, -0.180 [-0.227, -0.136] p 5.9e-08 against released ff2.1 (40 of 44 lower), level with `a32_02` (0.435)
+   and `a31_02` (0.462; -0.027, p 0.13), above `c9_02` (0.375; +0.061, p 0.003); `n32_03` 0.431, -0.184 [-0.231,
+   -0.140] p 1e-07 (39 of 44 lower), level with `a32_03` (0.432), `a31_03` (0.420) and `c9_03` (0.430), +0.017 p 0.25
+   against its own epoch 1. **Epoch 4** (`n32_04` 49686492, 14:00-14:46 10-31, read 15:00): folds 0.447, -0.169
+   [-0.215, -0.126] p 9.4e-08 against released ff2.1 (40 of 44 lower), mean Q 0.783 against 0.829; level with its
+   own epoch 3 (+0.016, p 0.45) and with the epoch-3 references `a32_03` (0.432), `a31_03` (0.420) and `c9_03`
+   (0.430), none of which has an epoch-4 panel.
+8. [x] **ff3.2 extended one epoch, to step 95, and converged there** (user 10-30: "Go ahead and continue training ff3.2", after the step-76
+   gate failed on `dhb` alone): the same chain (`train_chain.sbatch ff32_nativefix 95`, the run's own `ConDiv.py`
+   `54383004`, resuming from step 76's checkpoint), so round 5 is written at step 95. The run has no
+   `after_training.sbatch`: at 95 run `convergence_gate.py` by hand; not converged, one more epoch up to 114 as the
+   gated runs had, then stop for the user. Read round 5 and `n32_04` as rounds 1-4. The rule fixed 10-30 before the
+   panels: the full validation (as ff3.1's, plan.md Phase 30) only if the last epoch's panel folds level with
+   released ff2.1 (paired 95% interval of the difference including 0); otherwise ff3.2 stops and findings 1.37
+   records that the native-target fix does not cure the all-term loss. Step 95 reached 03:10 10-31; the gate there
+   reads CONVERGED (item 6), so there is no extension to 114; round 5 is read (item 6). **Decided 15:00 10-31:
+   `n32_04`'s interval excludes 0 (item 7), so ff3.2 stops without the full validation**; findings 1.37 records it,
+   with what the loss is (item 9).
+9. [x] **What is wrong in ff3.2's folding** (user 10-31: "Check what is wrong in ff3.2 that fails to fold protein";
+   read only, findings 1.37 "What the loss is"; `checks/ff32_fold_20261031/`). The domains swell with helices and
+   strands intact; ff3.2 makes every state away from the native cheaper relative to it, unfolded frames by 12.8 E_up
+   on all 16 Peng proteins (released ff3.1 +1.2); about half through the two scalars the DSE target moves (backbone
+   burial scale, H-bond energies), the rest through the side-chain tables both targets move. No code defect found;
+   A193's SARW fix is missing from this run's trainer. Read as a temperature, ff3.2 at T acts as ff2.1 6% hotter for
+   global stability (about 298 K at the panel's 280 K), but not term by term (packing 0.92, H-bond 0.97, backbone
+   desolvation 1.34), so no temperature compensates it; ff3.2 is not deployed (item 8's rule).
+   [ ] The causal test, for the user to decide (it departs from the SI's lambda only as a diagnostic): one epoch from
+   ff2.1 at lambda 0 against the control's epoch 0 (`c9_00`, 0.390), judged by the 44-domain panel and `peng_full.py`'s
+   unfolded shift (minutes per parameter set). If lambda 0 keeps ff2.1's folding, the DSE's weight is the cause.
 
 ### Phase 34 - disordered regions in Upside 3: how accurate, and what could improve them (STARTED 2026-10-28, user)
 User 10-28: "for upside3, investigate the possibility of enhancing intrinsic disordered region simulation accuracy";
@@ -906,14 +972,130 @@ math is shared through `UPSIDE_HD` and lane-type templates, the loops are per ba
 as C++ (host backend) so the device path is tested on the Mac; 64-bit fixed-point accumulation (deterministic, a
 non-finite value reads back as NaN); BP one block per system on the CPU's schedule; one CUDA 11.5 binary from midway2
 for K80 to A100; development tree `/beagle3/trsosnic/yinhan/upside3_gpu` (the Upside 3 tree is under its validation).
-1. [ ] G0 probe: driver versions; nvcc 11.5 + gcc 10.1 on the shared headers; a kernel on K80, V100, A100.
-2. [ ] G1 infrastructure (`device.h`, device engine, flattening, accumulation, C API, `--gpu`, CMake), CPU bitwise
-   unchanged.
-3. [ ] G2 bonded and backbone nodes, V1 on host backend and K80; a first V2 on a backbone-only config.
-4. [ ] G3 placement, environment and coverage nodes.
-5. [ ] G4 rotamer BP.
-6. [ ] G5 the ladder on ff2.1 and ff3.1 (V1 all fixtures, V2, speed); V3 submitted once V2 passes.
-7. [ ] G6 the hybrid.
+**Resume here (state at 2026-10-31 23:45, MacBook Pro; the user resumes on another computer with "resume GPU jobs").**
+No job runs. Items 1-10 are done: V1, V2 and V3 pass on build g7b (findings 11g). Readiness, as told the user 10-31:
+ready for soluble-protein REMD on ff2.1 and ff3.1 on a V100, A100 or RTX6000 (one V100 with 4 ladders in one process
+samples as fast as one 14-core broadwl job; on proteins the K80 is slower than 4 broadwl cores); not ready for the
+hybrid's production, where the GPU is 11 to 22 times 4 cores, since rigid groups and the barostat are refused and stage
+7.1 and glpG are untested; and not yet in use: the binary exists only in the GPU development tree, no workflow script
+has a GPU option, and the ff3.1 released 10-31 16:45 (Phase 37) has had no V1 on the device (V2 and V3 ran on the
+earlier ff3.1 tables). On resume, in order:
+- Set up the computer. The code is the MacBook Pro's uncommitted working tree on HEAD `cce51ce0`, unless the user has
+  committed it since. If not, the handoff bundle `/project/trsosnic/yinhan/checks/handoff_gpu_20261031/` (README.txt)
+  has the working-tree patch (all but `parameters/`, whose released ff3.1 is in the cluster trees), the untracked
+  files, `records/`, the `scratchpad/gpu_work` tools and baseline, and `scratchpad/upside3_audit`'s regression
+  fixtures; the bundle's `src` is the GPU tree's (checksum, 10-31 23:10). The scripts assume the repo at
+  `/Users/yinhan/Documents/upside2-md`. For device tests on the Mac build a home (`build_home.sh
+  scratchpad/gpu_work/dev12_home`, `UPSIDE_HOME` there): the repo's `obj/` lacks the device API until rebuilt. Open
+  the sockets (remote_jobs.md section 0).
+- Ask the user which step to take; on 10-31 the user chose not to start them yet. The proposed order: (a) V1 of the
+  released ff3.1 (`ff31_configs.py`, then `v1.sbatch` on a V100; minutes); (b) item 7's open box, rigid groups and
+  the barostat on the device, then V2 of stage 7.1 and a glpG check; (c) a GPU option in `bp_run.py` and the
+  hybrid's `run.py`; (d) the GPU code into the Upside 3 tree once its campaigns end (never into it while they run);
+  then item 11.
+
+Code in `src/device*.{h,cu}` and the ported nodes'
+`make_device`; working files in the gitignored `scratchpad/gpu_work/` (`build_home.sh`/`regress_home.sh` build and
+regress a copy of the tree; `dev12_record.npz` is the CPU baseline since A239, 4260 arrays, and `regress_hybrid.sh`
+rebuilds a copy and regresses the hybrid fixtures alone; `hyb_dyn/pair.sh` runs one hybrid trajectory on both engines;
+`sync.sh` sends the tree to `/beagle3/trsosnic/yinhan/upside3_gpu`, whose `build_gpu.sh TAG` builds it on the midway2
+login node; `make_subset.py` writes the development configs in `configs/`; `g0/` holds the job scripts `v1.sbatch`,
+`v2run.sbatch`, `v2cmp.sbatch`, `diag.sbatch`, and V3's `v3_run.py`, `v3.sbatch`, `v3_analyse.py`; `ff31_configs.py`
+writes the ff3.1 configs; `deadzone_repro.py` is A239's reproducer). Jobs: remote_jobs.md line 5. Every CPU change
+is checked with `regress_home.sh` against `dev12_record.npz` (A238 and A239 the only intended moves); every device
+node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
+1. [x] G0 probe (findings 11g): K80 driver 460 (CUDA 11.2) and V100 driver 535 both run one CUDA 11.5 binary built on
+   midway2 for sm_37 to sm_86; Threefry bits equal, fixed-point sums bitwise and repeatable. The A100 and RTX6000 jobs
+   are still queued.
+2. [x] G1 infrastructure: `device.h` (backend, `parallel_for`, block-per-system `per_system`/`block_for`/`block_scan`,
+   fixed-point `DeviceAccum`), `device_engine` (graph flattening, the CPU's evaluation order, per-node potentials,
+   Verlet and multi-step integration, OU thermostat on the same streams, an error flag for failed preconditions),
+   `upside --gpu` (host work at frames, pivot moves and replica exchange on the CPU engines), the C API and
+   `DeviceUpside`, `tests/device_v1.py`, CMake `UPSIDE_CUDA`. The host backend fills new memory with NaN.
+3. [x] G2 bonded and backbone nodes (Distance3D, Angle, Dihedral, Spring, rama_coord, cat_pos, affine_alignment,
+   backbone_pairs, infer_H_O, protein_hbond, hbond_energy, rama_map_pot), with the device pair list and interaction
+   graph (`device_interaction_graph.h`) and the pair potentials shared in lane-templated headers.
+4. [x] G3 placement, environment and coverage nodes (placement_*, weighted_pos, environment_coverage,
+   hb_environment_coverage, hbbb_coverage, hbond_coverage, sigmoid_coupling, bb_sigmoid_coupling). V1 passes on the host
+   backend for every node of 1ubq, chig and 1dfn without rotamer; on the K80 it passes but for `hbond_energy`'s
+   exact-zero test (item 8).
+5. [x] G4 rotamer BP (`device_rotamer.cu`): residue pairs by a dense lookup per pair class, numbered in (residue 1,
+   residue 2) order; 1xN bead pairs folded into the other residue's energies and 11 pairs into the energy, as
+   `fill_holders`; one thread block per system runs `solve_for_marginals`'s schedule (its first-update quirk included),
+   each residue's messages multiplied in holder order 33, 36, 66; Bethe energy and envelope derivatives. V1 of the full
+   ff2.1 graph passes on the host backend (chig, 1ubq, 1dfn) and on the K80 (chig; 1ubq, 1ubq_rotamer and 1dfn but for
+   item 8, before its fix). Configs with nodes not yet ported (`Const3D`, `WallSpring_*`, membrane and restraint terms) are refused
+   with their names; V1 reports them as skipped.
+6. [ ] V2 (`tests/device_dyn.py`, 14-replica REMD of 1ubq, CPU against `--gpu` from one start and seed) passes on
+   the K80 and the V100, with and without rotamer (10-29): every replica's KE/1.5kT, potential and N-CA, CA-C, C-N
+   means within 2.9 block standard errors (70 per run, one seed each), KE/1.5kT 1.00 +- 0.01 throughout. Speed is not there yet: per
+   system and step the K80 takes 323 us (no rotamer) and 837 us (full) against 87 and 253 on 4 broadwl cores, the V100
+   101 and 208 against 75 and 181 on 4 Cascade Lake cores. G5's speed work (launch count, host syncs) and V3 follow
+   the hybrid.
+7. [ ] G6 the hybrid (`device_martini.cu`). Revised decision (10-29): `martini_potential` keeps the CPU's candidate
+   table, the CSR adjacency over its non-zero pairs with the hybrid's static pair filters applied once on the host,
+   in place of the class-by-class index of `upside3.md` 10.3 item 10: the same pairs by construction, and glpG's table
+   is only 8.3 M pairs (33 MB per system). The skin cache is a slab per atom of its CSR row, and
+   `martini_sc_table_1body`'s a slab per rotamer row of the environment atoms, so neither has a capacity to exceed.
+   `martini_interaction.h` holds the pair term the CPU node and the device share; the side-chain table and the two
+   springs keep their CPU code and the device has a copy, since sharing them moved the CPU's forces at rounding
+   (findings 11g). Dynamics: masses, fixed and z-fixed atoms in both integrators, the g-JF step, the thermostat on the
+   g-JF bath's complement, the PO4 hold's set changes uploaded after the host refresh; rigid groups and the barostat
+   stay refused.
+   - [x] shared pair term; the whole tree's CPU regress 0 of 4260 arrays against `dev6_record.npz` (`dev8_record.npz`)
+   - [x] device nodes `martini_hybrid_position`, `martini_potential`, `martini_sc_table_1body`, `dist_spring`,
+     `angle_spring`: V1 passes on the host backend for 1rkl 7.0 and 7.1 (the 1.0 A frames past the fixed-point range,
+     findings 11g)
+   - [x] `DeviceDynamics` and `upside --gpu` for the hybrid: one start and seed, 3.05e-5 A apart after one round
+     (rounding), KE/1.5kT equal to 1e-6 over 100 rounds (host backend)
+   - [x] build g5a on the GPUs: V1 passes every node of the 11 fixtures, the hybrid's included, on the K80 and V100
+   - [x] V2 of the hybrid's GPU lipid excess found and fixed (A239, findings 11g): the g-JF position update's force
+     term, below half an ulp of a large coordinate, rounded away where the compiler kept the source order (nvcc;
+     clang for z); the update is now x + b dt/m (p + dt/2 f + beta/2) on the CPU and the device. The K80 with the
+     fix matches the CPU without exchange (lipid KE +0.1 SE); regress moves only the hybrid dynamics (12 of 4260)
+   - [x] V2 of the hybrid on build g7b passes (REMD of 1rkl 7.0, 16 CPU, 16 K80, 8 V100 seeds): Bonferroni 1 on both
+     GPUs, the lipid KE of every replica within 1.8 SE (findings 11g)
+   - [ ] V2 of stage 7.1; rigid groups and the barostat on the device (refused today)
+8. [x] `hbond_energy`'s exact-zero skip removed (user 10-29: "fix the issue"), ledger A238: its sensitivity is the
+   energy per H-bond at every count, so backends no longer flip it.
+9. [x] G5 speed, step 1: parallelism within an element. nvprof on the K80 (10-30, findings 11g): the time is in
+   kernels, not launches or transfers, and in each slow kernel one thread loops serially over hundreds of partners:
+   the pair lists' rebuild (1ubq without rotamer: 450 of 2000 us per evaluation) and cut (210 us), BP's incidence
+   lists (900 us of full 1ubq's 10.9 ms; BP itself 3.2 ms), the hybrid's `martini_sc_table_1body` (5.2 of 11.4 ms)
+   and `martini_potential` (2.1 ms). Decision: `device.h` gets `lanes_for`, one warp per element (one lane on the host
+   backend), with an ordered compaction (ballot and prefix count, so the order is the serial one), an in-order float
+   sum (the serial order, by shuffles) and `AccumLocal`, a thread's fixed-point partial sum flushed once (integer sums,
+   so the same bits as one atomic per term). Every kernel changed keeps its results bitwise; the check is a `--gpu`
+   trajectory of each build, compared bit for bit.
+   - [x] `lanes_for`, `AccumLocal`, `slots_for` (a launch over a pair list's used slots) and a warp-shuffle
+     `block_scan` in `device.h`; the pair-list rebuild, `martini_potential`, `martini_sc_table_1body`, BP's incidence
+     lists and the 12 capacity-sized kernels use them (builds g6a, g6b)
+   - [x] bitwise against g5b on the K80 (1ubq without and with rotamer, 1rkl 7.0) and on the host backend; per system
+     step 360 to 245 us, 867 to 581 us, 14.5 to 6.5 ms (findings 11g)
+   - [x] BP's solve (46% of full 1ubq): its passes fused, 3 synchronisations per update instead of 12 (g6c, bitwise
+     against g5b on the K80; full 1ubq 581 to 526 us per system step, BP 3.55 to 2.78 s of the profile)
+   - [x] g7b (g6c plus A239) installed as the tree's `obj/` (10-30 12:15)
+10. [x] The validation ladder completed on g7b (user 10-30, "run them": V1 on ff3.1 and on every GPU type, the protein
+    V2 by seeds, then V3).
+    - [x] V1 on ff3.1 (chig, 1ubq, 1dfn written as `tests/fixtures.py` does, with ff_3.1 and its `rama.dat`; the same
+      31 nodes as ff2.1) and the 11 fixtures: every quantity passes on the host backend, K80, V100, RTX6000 and A100,
+      with the same worst errors on the four GPUs (findings 11g)
+    - [x] V2 of the protein by seeds (`tests/device_dyn.py`, now with the backbone angles): 1ubq 14-replica REMD,
+      2000 tu, ff2.1 without and with rotamer and ff3.1, 16 CPU, 16 K80, 8 V100 seeds; Bonferroni 0.087 to 1 over the
+      112 comparisons of each config and GPU, and the per-seed means over replicas within 2.0 SE (findings 11g)
+    - [x] V3 (REMD melting, CPU against GPU, ff2.1 and ff3.1). Scale decided by the user 10-30: a tenth of each Peng
+      native duration, since one full arm takes about a week on a V100. The BP validation's 4 proteins (proteinG,
+      homeodomain, WWdomain, NTL9), native start, the Table S2 ladders, dt 0.009, frames every 100 tu, exchanges every
+      10; 4 ladders per engine and force field: a CPU job runs 1 (14 broadwl cores), a V100 job 4 (independent by their
+      streams, exchanges only within a ladder). `g0/v3_run.py` (from `bp_validation/bp_run.py`, build `obj_g7b`,
+      chunked and resubmitting), `v3.sbatch`, `v3_analyse.py` (Q, CA-RMSD, Rg, potential per temperature and T_mid,
+      Welch's t over ladders, Bonferroni); a smoke test at 400 tu ran the resume path and the analysis (10-30). All 40
+      arms complete in one chunk each (10-31 22:35): Bonferroni 0.12 to 1 per protein and force field, 0.93 over the
+      456 comparisons; T_mid within 0.009 (3 K) and 2.2 SE in every pair (findings 11g)
+11. [ ] The rest of `upside3.md` 10.2's ladder: V1 on about 20 proteins with misfolded frames and BP at a tight
+    tolerance beside the production one; V2's energy drift, the hybrid's area per lipid and stage 7.1 (with item 7's
+    rigid groups and barostat on the device); V3's Q and Rg distributions (V3 compared means), the mdCATH panel and
+    glpG TM4 (the hybrid with rigid groups and barostat).
 
 ### Phase 36 - side-chain pair tables coarse-grained from an all-atom force field (STARTED 2026-10-29, user)
 User 10-29: derive the SC-SC spline table bottom-up from an all-atom force field (e.g. Amber), "like what we did in
@@ -942,6 +1124,59 @@ corresponding change, open questions, BU1-BU6); this phase tracks only status.
    * F4 still needs a fit that places no false well (MET-LEU) and a second direction in the placement node (BU3).
    * Implicit water: no model can be the reference, so W_water stays explicit. PB or an accurate GB is a candidate
      only for U_dry's electrostatics, after a check on buried charges.
+
+### Phase 37 - deploy the fixed-target ff3.1 and validate it (STARTED 2026-10-31, user)
+User 10-31: "Deploy ff3.1, run validations (Peng, glpG, and other tests we ran)", then, asked which ff3.1: the retrain on
+the fixed native target replaces the released merge. From now on ff3.1 is `ff31_nativefix` at step 76 (Phase 33 item
+6: glycine settled, -ln(P_aL/P_aR) -0.545); the 10-26 merge is retired with a backup, as the merge retired its
+predecessors (Phase 30). Scripts and logs `/project/trsosnic/yinhan/checks/ff31_nativefix_release_20261031/`.
+- **Files:** `extract_ff.py` on step 76's checkpoint; rama.dat must be md5-equal to the run's `rama_round_04.dat`
+  (`7693f10a`) and the other five files ff_2.1's values (every Adam group was held), so they are released as ff_2.1's
+  files byte for byte, as the merge was.
+- **Release** (release.sh of 10-26, adapted): the four trees' `parameters/ff_3.1` (ConDiv `$P`, the shared Upside 2
+  deployment, the Upside 3 tree, `ff3_selection/params`), md5-verified; the merge kept as `.bak_pre_nativefix_20261031`
+  beside each. Running Peng arms never re-read their parameters (bench_run.py builds the config once), but the new arms
+  reuse the run directory names, so the merge's 5 running Peng chunks and its collector are cancelled first and its
+  runs, scores and Upside 3 glpG directory move aside with the same suffix. The GPU tree (`upside3_gpu`, line 5's own
+  session) is not touched; the Mac repo's `parameters/ff_3.1` is updated with a backup.
+- **Validation, the merge's tests** (Phase 30's submit.sh): the 44-domain and mdCATH panels at dt 0.009 with TM-score
+  against released ff2.1 and the control; Peng's 32 arms on the pre-audit Upside 2 engine and their collector; glpG on
+  Upside 3 (the merge's `glpg_ff31/run.py`, one REMD block, TM4 read at T 0.70 against ff3.0's 0.85). Tags `p44_ff31nf`,
+  `mdc_ff31nf`; Peng and glpG under `ff_3.1`.
+1. [x] Extracted 16:45 10-31 (`extract.log`): rama.dat md5 `7693f10a` (= `rama_round_04.dat`); bb_env, hbond,
+   environment and sheet md5-equal to ff_2.1's, sidechain.h5 equal to 2e-16 (`compare_sidechain.py`), so released as
+   ff_2.1's files.
+2. [x] 16:47-16:49 10-31: the merge's 5 Peng chunks and collector cancelled (`release.log`); `release.sh apply`
+   (`release_apply.log`): four trees md5-verified; the merge's ff_3.1 in `<tree>/backup/` and
+   `params_superseded/bak_pre_nativefix_20261031/`, its 32 Peng runs and 223 logs in `runs_superseded/`,
+   `logs_superseded/`, scores `score/ff_3.1.bak_pre_nativefix_20261031`, glpG `glpg_ff31.bak_pre_nativefix_20261031`;
+   Mac repo `parameters/ff_3.1/rama.dat` replaced (old `rama.dat.bak_pre_nativefix_20261031`).
+3. [x] 16:50 10-31 (`submit.sh`, ids in `submitted.log`, remote_jobs.md §1 line 2).
+4. [ ] Read each as it ends. Panels read 23:40 10-31 (findings 1.34): 44 domains fold 0.631 against released
+   ff2.1's 0.603 (+0.028 [-0.004, +0.059]), mdCATH 0.515 against 0.488 (+0.027 [+0.000, +0.053]), level with the
+   merge; mdCATH TM files pending. glpG keeps TM4 through preparation (stage 7.0 DSSP mean 0.95; merge 0.36). Open:
+   mdCATH TM, Peng's 32 arms, glpG REMD block 1.
+
+### Phase 38 - fix the all-term training's folding loss, then continue ff3.2 (STARTED 2026-10-31, user)
+User 10-31: "Fix the folding issue and continue working on ff3.2". The loss is measured (findings 1.37 "What the loss
+is"): the trained terms make every state away from the native cheaper, about half through the two scalars the DSE
+target moves. Fix the cause in the training, never by a temperature or by freezing terms (Phase 33 item 9).
+- **Step 1, the causal test.** Two arms built exactly as `ff32_nativefix` (Phase 33 build.sh: its trainer copy, start,
+  minibatch order, engine), each changing one thing, one epoch (19 steps), against its epoch 0 `n32_00` (0.449):
+  `ff32_dse0` with the DSE target off (dse_weight 0), and `ff32_sarwsi` with the SARW replica as the SI defines it
+  (backbone burial scaled with the other terms, A193's fix). Each judged by the 44-domain panel at its epoch end and by
+  `peng_full.py`'s unfolded-state shift (n32_00 -11.9 E_up, released ff3.1 +1.2). Read: an arm that keeps ff2.1's
+  folding (paired interval against released ff2.1 including 0) and has no unfolded shift names the cause.
+- **Step 2, the fix**, from step 1's answer, decided with the user where it departs from the FF2 workflow; then ff3.2
+  trains every term (depths included) under it.
+1. [x] Built 16:52-16:56 10-31 (`/project/trsosnic/yinhan/checks/ff32_fix_20261031/`: `make_trainers.py`, `build.sh`,
+   `build.log`, `build_sarwsi.log`): each trainer differs from md5 `54383004` by its one change; each initial
+   checkpoint equals `ff32_nativefix`'s but for run paths and round-off at most 7e-15 (`compare_init.py`). Static
+   check (`sarw_check/`): on a 3g0m SARW frame the backbone burial term is 0 in `ff32_sarwsi`'s SARW config and
+   -77 E_up in the old one.
+2. [x] Submitted 16:57 10-31 (`ff32_dse0` 49692528, `ff32_sarwsi` 49692529); at 19 each `after_training.sbatch`
+   submits its panel (`z32_00`, `s32_00`) and then `peng_full.sbatch` on it.
+3. [ ] Read both panels and unfolded shifts; propose step 2.
 
 ## Known Errors / Blockers
 

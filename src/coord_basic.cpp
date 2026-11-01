@@ -6,6 +6,7 @@
 #include "timing.h"
 #include "state_logger.h"
 #include "vector_math.h"
+#include "device_nodes.h"
 
 using namespace h5;
 using namespace std;
@@ -65,6 +66,14 @@ struct DistCoord : public CoordNode
             update_vec(pos_sens1, p.atom[0],  deriv[nt]*d);
             update_vec(pos_sens2, p.atom[1], -deriv[nt]*d);
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) {
+        auto atoms = [&](CoordNode& pos, int j) {return g.offset_index(pos, [&](int ns) {
+            vector<int> r;
+            for(auto& p: static_cast<DistCoord&>(*systems[ns]).params) r.push_back(p.atom[j]);
+            return r;});};
+        return device_distance(g.coord(*this), g.coord(pos1), g.coord(pos2), atoms(pos1,0), atoms(pos2,1));
     }
 };
 static RegisterNodeType<DistCoord,2> dist_coord_node("Distance3D");
@@ -253,6 +262,13 @@ struct AngleCoord : public CoordNode
             update_vec(pos_sens, p.atom[2], sens(0,nt)*deriv3[nt]);
         }
     }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) {
+        return device_angle(g.coord(*this), g.coord(pos), g.offset_index(pos, [&](int ns) {
+            vector<int> r;
+            for(auto& p: static_cast<AngleCoord&>(*systems[ns]).params) r.insert(r.end(), p.atom, p.atom+3);
+            return r;}));
+    }
 };
 static RegisterNodeType<AngleCoord,1> angle_coord_node("Angle");
 
@@ -322,6 +338,13 @@ struct DihedralCoord : public CoordNode
             for(int na: range(4))
                 ps[na].store(pos_sens + 4*p.atom[na]);  // value was added above
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) {
+        return device_dihedral(g.coord(*this), g.coord(pos), g.offset_index(pos, [&](int ns) {
+            vector<int> r;
+            for(auto& p: static_cast<DihedralCoord&>(*systems[ns]).params) r.insert(r.end(), p.atom, p.atom+4);
+            return r;}));
     }
 };
 static RegisterNodeType<DihedralCoord,1> dihedral_coord_node("Dihedral");

@@ -50,6 +50,33 @@ set (ENGINE_SRC
     monte_carlo_sampler.cpp
     engine_c_library.cpp)
 
+# The device engine (device_engine.h).  Without CUDA its files compile as C++ and run on the host.
+set(DEVICE_SRC
+    device.cu
+    device_engine.cu
+    device_coord.cu
+    device_spring.cu
+    device_hbond.cu
+    device_rama.cu
+    device_affine.cu
+    device_placement.cu
+    device_environment.cu
+    device_rotamer.cu
+    device_martini.cu)
+option(UPSIDE_CUDA "compile the device files for NVIDIA GPUs" OFF)
+if(UPSIDE_CUDA)
+    # one binary for Kepler (the K80, which needs CUDA 11) to Ampere; it links the CUDA runtime statically, so it
+    # still loads on nodes without a GPU
+    cmake_minimum_required(VERSION 3.18)
+    set(CMAKE_CUDA_ARCHITECTURES "37;60;70;75;80;86" CACHE STRING "GPU architectures to compile for")
+    enable_language(CUDA)
+    set(CMAKE_CUDA_STANDARD 14)
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} --extended-lambda -Wno-deprecated-gpu-targets ${DEFINES} -Xcompiler=-O3,-ffast-math,-fno-finite-math-only,-march=${ARCH}")
+else()
+    set_source_files_properties(${DEVICE_SRC} PROPERTIES LANGUAGE CXX COMPILE_FLAGS "-x c++")
+endif()
+list(APPEND ENGINE_SRC ${DEVICE_SRC})
+
 add_executable (upside ${ENGINE_SRC})
 
 INCLUDE_DIRECTORIES (${HDF5_INCLUDE_DIRS})

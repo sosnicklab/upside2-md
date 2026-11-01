@@ -4,6 +4,7 @@
 #include <vector>
 #include "spline.h"
 #include "state_logger.h"
+#include "device_nodes.h"
 #include <initializer_list>
 
 using namespace std;
@@ -172,6 +173,38 @@ struct FixedPlacement {
 };
 
 
+// The device placement of one PlacementNode over every system, its values from the placement data of each system
+template <int n_pos_dim>
+DeviceNode* placement_device_node(DeviceGraph& g, DeviceCoord& out, DeviceCoord& alignment, const vector<int>& kinds,
+        const vector<int>& affine_residue, const vector<const FixedPlacement<n_pos_dim>*>& data) {
+    for(auto d: data)
+        if(d->get_param() != data[0]->get_param())
+            throw string("the device engine shares a placement's table between systems");
+    vector<int> layer;
+    for(auto d: data) for(auto& p: d->params) layer.push_back(p.layer_idx);
+    return device_placement(out, alignment, nullptr, kinds, n_pos_dim, affine_residue, layer, data[0]->get_param(),
+            0, 0, vector<int>());
+}
+
+template <int n_pos_dim>
+DeviceNode* placement_device_node(DeviceGraph& g, DeviceCoord& out, DeviceCoord& alignment, const vector<int>& kinds,
+        const vector<int>& affine_residue, const vector<const RamaPlacement<n_pos_dim>*>& data) {
+    for(auto d: data)
+        if(d->spline.coefficients != data[0]->spline.coefficients)
+            throw string("the device engine shares a placement's spline between systems");
+    auto& rama = g.coord(data[0]->rama);
+    vector<int> layer, rama_residue;
+    for(int ns: range(g.n_system))
+        for(auto& p: data[ns]->params) {
+            layer.push_back(p.layer_idx);
+            rama_residue.push_back(p.rama_residue + rama.offset[ns]);
+        }
+    auto& sp = data[0]->spline;
+    return device_placement(out, alignment, &rama, kinds, n_pos_dim, affine_residue, layer, sp.coefficients,
+            sp.nx, sp.ny, rama_residue);
+}
+
+
 template<PlaceT first>
 static constexpr int compute_pos_dim_from_signature() {
     return placetype_size(first);
@@ -316,6 +349,14 @@ struct PlacementNode: public CoordNode
     virtual std::vector<float> get_param_deriv() {return placement_data.get_param_deriv();}
 #endif
     virtual void set_param(const std::vector<float>& new_param) {placement_data.set_param(new_param);}
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) {
+        vector<const PlacementData*> data;
+        for(auto s: systems) data.push_back(&static_cast<PlacementNode&>(*s).placement_data);
+        return placement_device_node(g, g.coord(*this), g.coord(alignment), vector<int>{int(signature)...},
+                g.offset_index(alignment, [&](int ns) {return static_cast<PlacementNode&>(*systems[ns]).affine_residue;}),
+                data);
+    }
 };
 
 // There is definitely too much template code generation here.  I should

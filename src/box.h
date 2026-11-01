@@ -7,7 +7,7 @@
 
 namespace simulation_box {
 
-inline Vec<3,float> minimum_image(const Vec<3,float>& dr, float box_x, float box_y, float box_z) {
+UPSIDE_HD inline Vec<3,float> minimum_image(const Vec<3,float>& dr, float box_x, float box_y, float box_z) {
     Vec<3,float> out = dr;
     if(box_x > 0.f) out.x() -= box_x * roundf(out.x() / box_x);
     if(box_y > 0.f) out.y() -= box_y * roundf(out.y() / box_y);
@@ -15,7 +15,7 @@ inline Vec<3,float> minimum_image(const Vec<3,float>& dr, float box_x, float box
     return out;
 }
 
-inline void minimum_image_scalar(float& dx, float& dy, float& dz, float box_x, float box_y, float box_z) {
+UPSIDE_HD inline void minimum_image_scalar(float& dx, float& dy, float& dz, float box_x, float box_y, float box_z) {
     if(box_x > 0.f) dx -= box_x * roundf(dx / box_x);
     if(box_y > 0.f) dy -= box_y * roundf(dy / box_y);
     if(box_z > 0.f) dz -= box_z * roundf(dz / box_z);

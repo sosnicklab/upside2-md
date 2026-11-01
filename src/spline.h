@@ -61,7 +61,7 @@ void solve_periodic_2d_spline(
 
 //! \brief Evaluate 2d polynomial in polynomial representation to get value and deriv
 template<typename T>
-inline void spline_value_and_deriv(T &value, T &dx, T &dy, const T* c, T fx, T fy) {
+UPSIDE_HD inline void spline_value_and_deriv(T &value, T &dx, T &dy, const T* c, T fx, T fy) {
     T fx2 = fx*fx; 
     T fx3 = fx*fx2;
 
@@ -84,7 +84,7 @@ inline void spline_value_and_deriv(T &value, T &dx, T &dy, const T* c, T fx, T f
 
 //! \brief Evaluate 1d polynomial in polynomial representation to get value and deriv
 template<typename T>
-inline void spline_value_and_deriv(T result[2], const T* c, T fx) {
+UPSIDE_HD inline void spline_value_and_deriv(T result[2], const T* c, T fx) {
     T fx2 = fx*fx; 
     T fx3 = fx*fx2;
     
@@ -92,6 +92,72 @@ inline void spline_value_and_deriv(T result[2], const T* c, T fx) {
     result[1] = c[0] + fx*c[1] +        fx2*c[2] +        fx3*c[3]; // value
 }
 
+//! \brief The de Boor recursion of a uniform cubic B-spline on the 4 coefficients around a point (value and deriv)
+//!
+//! The value is returned in the zeroth component and the derivative is returned in the first component.  S is
+//! Float4, four evaluations at a time, or float.
+template <typename S>
+UPSIDE_HD inline Vec<2,S> uniform_deBoor_algorithm(
+    const S& c00, const S& c01, const S& c02, const S& c03,
+    const S& excess)
+    // excess should be on [0,1]
+{
+    auto one = S(1.f);
+
+    auto yu1 = excess + S(2.f);
+    auto yu2 = excess + one;
+    auto yu3 = excess;
+
+    auto frac13 = S(1.f/3.f);
+    auto alpha11 = frac13*yu1;
+    auto alpha12 = frac13*yu2;
+    auto alpha13 = frac13*yu3;
+
+    auto c11 = fmadd(one-alpha11,c00, alpha11*c01);
+    auto d11 = c01 - c00;  // deriv coeffs for spline of order 2
+    auto c12 = fmadd(one-alpha12,c01, alpha12*c02);
+    auto d12 = c02 - c01;
+    auto c13 = fmadd(one-alpha13,c02, alpha13*c03);
+    auto d13 = c03 - c02;
+
+    auto frac12 = S(1.f/2.f);
+    auto alpha22 = frac12*yu2;
+    auto alpha23 = frac12*yu3;
+
+    auto c22 = fmadd(one-alpha22,c11, alpha22*c12);
+    auto d22 = fmadd(one-alpha22,d11, alpha22*d12);
+    auto c23 = fmadd(one-alpha23,c12, alpha23*c13);
+    auto d23 = fmadd(one-alpha23,d12, alpha23*d13);
+
+    auto alpha33 = yu3;
+
+    auto c33 = fmadd(one-alpha33,c22, alpha33*c23);
+    auto d33 = fmadd(one-alpha33,d22, alpha33*d23);
+
+    return make_vec2(c33, d33);
+}
+
+//! \brief Left side clamping value for clamped spline
+//!
+//! For clamping with derivative continuity, you should really have
+//! bspline_coeff[0] == bspline_coeff[2]
+UPSIDE_HD inline float clamped_spline_left(const float* bspline_coeff, int n_coeff) {
+    return (1.f/6.f)*bspline_coeff[0] + 
+           (2.f/3.f)*bspline_coeff[1] + 
+           (1.f/6.f)*bspline_coeff[2];
+}
+
+//! \brief Right side clamping value for clamped spline
+//!
+//! For clamping with derivative continuity, you should really have
+//! bspline_coeff[n_coeff-3] == bspline_coeff[n_coeff-1]
+UPSIDE_HD inline float clamped_spline_right(const float* bspline_coeff, int n_coeff) {
+    return (1.f/6.f)*bspline_coeff[n_coeff-3] + 
+           (2.f/3.f)*bspline_coeff[n_coeff-2] + 
+           (1.f/6.f)*bspline_coeff[n_coeff-1];
+}
+
+#ifndef __CUDACC__  // the evaluators below work in Float4, which device files cannot instantiate
 //! \brief Evaluate 1d polynomial in B-spline basis to get value and deriv
 //!
 //! Uses the de Boor algorithm for splines in the B-spline representation.  The 
@@ -160,52 +226,6 @@ inline Vec<2> deBoor_value_and_deriv(const std::vector<float>& bspline_coeff, co
     return make_vec2(c3.w(), d3.w());
 }
 
-//! \brief Evaluate 1d polynomial in B-spline basis to get value and deriv (Float4)
-//!
-//! Uses the de Boor algorithm for splines in the B-spline representation.  The 
-//! value is returned in the zeroth component and the derivative is returned in the
-//! first component.  This function computes four spline evaluation at a time.
-inline Vec<2,Float4> uniform_deBoor_algorithm(
-    const Float4& c00, const Float4& c01, const Float4& c02, const Float4& c03,
-    const Float4& excess) 
-    // excess should be on [0,1]
-{
-    auto one = Float4(1.f);
-
-    auto yu1 = excess + Float4(2.f);
-    auto yu2 = excess + one;
-    auto yu3 = excess;
-
-    auto frac13 = Float4(1.f/3.f);
-    auto alpha11 = frac13*yu1;
-    auto alpha12 = frac13*yu2;
-    auto alpha13 = frac13*yu3;
-
-    auto c11 = fmadd(one-alpha11,c00, alpha11*c01);
-    auto d11 = c01 - c00;  // deriv coeffs for spline of order 2
-    auto c12 = fmadd(one-alpha12,c01, alpha12*c02);
-    auto d12 = c02 - c01;
-    auto c13 = fmadd(one-alpha13,c02, alpha13*c03);
-    auto d13 = c03 - c02;
-
-    auto frac12 = Float4(1.f/2.f);
-    auto alpha22 = frac12*yu2;
-    auto alpha23 = frac12*yu3;
-
-    auto c22 = fmadd(one-alpha22,c11, alpha22*c12);
-    auto d22 = fmadd(one-alpha22,d11, alpha22*d12);
-    auto c23 = fmadd(one-alpha23,c12, alpha23*c13);
-    auto d23 = fmadd(one-alpha23,d12, alpha23*d13);
-
-    auto alpha33 = yu3;
-
-    auto c33 = fmadd(one-alpha33,c22, alpha33*c23);
-    auto d33 = fmadd(one-alpha33,d22, alpha33*d23);
-
-    return make_vec2(c33, d33);
-}
-
-
 //! \brief Evaluate 2d polynomial in B-spline basis to get value and deriv (Float4)
 //!
 //! Uses the de Boor algorithm for splines in the B-spline representation.  The 
@@ -273,30 +293,10 @@ inline Vec<2,Float4> deBoor_value_and_deriv(const float* bspline_coeff[4], const
     return uniform_deBoor_algorithm(c00,c01,c02,c03, y);
 }
 
-//! \brief Left side clamping value for clamped spline
-//!
-//! For clamping with derivative continuity, you should really have
-//! bspline_coeff[0] == bspline_coeff[2]
-inline float clamped_spline_left(const float* bspline_coeff, int n_coeff) {
-    return (1.f/6.f)*bspline_coeff[0] + 
-           (2.f/3.f)*bspline_coeff[1] + 
-           (1.f/6.f)*bspline_coeff[2];
-}
-
 inline float clamped_spline_left(const std::vector<float>& bspline_coeff, int n_coeff) {
     return (1.f/6.f)*bspline_coeff[0] + 
            (2.f/3.f)*bspline_coeff[1] + 
            (1.f/6.f)*bspline_coeff[2];
-}
-
-//! \brief Right side clamping value for clamped spline
-//!
-//! For clamping with derivative continuity, you should really have
-//! bspline_coeff[n_coeff-3] == bspline_coeff[n_coeff-1]
-inline float clamped_spline_right(const float* bspline_coeff, int n_coeff) {
-    return (1.f/6.f)*bspline_coeff[n_coeff-3] + 
-           (2.f/3.f)*bspline_coeff[n_coeff-2] + 
-           (1.f/6.f)*bspline_coeff[n_coeff-1];
 }
 
 inline float clamped_spline_right(const std::vector<float>& bspline_coeff, int n_coeff) {
@@ -409,6 +409,31 @@ inline void clamped_deBoor_coeff_deriv(int* starting_bin,
         deBoor_coeff_deriv(starting_bin, result, x);
     }
 }
+#endif
+
+//! \brief One evaluation of the B-spline at x, as deBoor_value_and_deriv(const float* [4], Float4) evaluates each lane
+UPSIDE_HD inline Vec<2> deBoor_lane(const float* bspline_coeff, float x) {
+    int x_bin = int(x);  // must be at least 1
+    float y = x - truncf(x);
+    const float* c = bspline_coeff - 1 + x_bin;
+    return uniform_deBoor_algorithm(c[0], c[1], c[2], c[3], y);
+}
+
+//! \brief One evaluation of the clamped B-spline at x, as clamped_deBoor_value_and_deriv(const float* [4], Float4,
+//! int) evaluates each lane
+UPSIDE_HD inline Vec<2> clamped_deBoor_lane(const float* bspline_coeff, float x, int n_knot) {
+    bool too_small = x<1.f;
+    bool too_big   = float(n_knot-2)<=x;
+    auto value = deBoor_lane(bspline_coeff, (too_small || too_big) ? 1.f : x);
+    if(too_small || too_big) {
+        value.y() = 0.f;
+        float outer = 1.f/6.f, inner = 2.f/3.f;
+        const float* c = bspline_coeff;
+        if(too_small) value.x() = outer*c[0] + inner*c[1] + outer*c[2];
+        if(too_big)   value.x() = outer*c[n_knot-3] + inner*c[n_knot-2] + outer*c[n_knot-1];
+    }
+    return value;
+}
 
 
 //! \brief Old-style spline object -- not intended for new code
@@ -470,6 +495,30 @@ struct LayeredPeriodicSpline2D {
 };
 
 
+//! \brief LayeredClampedSpline1D::evaluate_value_and_deriv on the spline's arrays
+template<int NDIM_VALUE>
+UPSIDE_HD inline void clamped_spline_value_and_deriv(float* restrict result, const float* coefficients,
+        const float* left_clamped_value, const float* right_clamped_value, int nx, int layer, float x) {
+    if(x>=nx-1) {
+        for(int id=0; id<NDIM_VALUE; ++id) {
+            result[id*2+0] = 0.f;
+            result[id*2+1] = right_clamped_value[layer*NDIM_VALUE+id];
+        }
+    } else if(x<=0) {
+        for(int id=0; id<NDIM_VALUE; ++id) {
+            result[id*2+0] = 0.f;
+            result[id*2+1] = left_clamped_value[layer*NDIM_VALUE+id];
+        }
+    } else {
+        int x_bin = int(x);
+        float fx = x - x_bin;
+
+        const float* c = coefficients + (layer*(nx-1) + x_bin)*4*NDIM_VALUE;
+        for(int id=0; id<NDIM_VALUE; ++id)
+            spline_value_and_deriv(result+id*2, c+id*4, fx);
+    }
+}
+
 //! \brief Old-style spline object -- not intended for new code
 template<int NDIM_VALUE>
 struct LayeredClampedSpline1D {
@@ -516,24 +565,8 @@ struct LayeredClampedSpline1D {
         
     // result contains (dx1, value1, dx2, value2, ...)
     void evaluate_value_and_deriv(float* restrict result, int layer, float x) const {
-        if(x>=nx-1) {
-            for(int id=0; id<NDIM_VALUE; ++id) {
-                result[id*2+0] = 0.f;
-                result[id*2+1] = right_clamped_value[layer*NDIM_VALUE+id]; 
-            }
-        } else if(x<=0) {
-            for(int id=0; id<NDIM_VALUE; ++id) {
-                result[id*2+0] = 0.f;
-                result[id*2+1] = left_clamped_value[layer*NDIM_VALUE+id]; 
-            }
-        } else {
-            int x_bin = int(x);
-            float fx = x - x_bin;
-
-            const float* c = coefficients.data() + (layer*(nx-1) + x_bin)*4*NDIM_VALUE;
-            for(int id=0; id<NDIM_VALUE; ++id) 
-                spline_value_and_deriv(result+id*2, c+id*4, fx);
-        }
+        clamped_spline_value_and_deriv<NDIM_VALUE>(result, coefficients.data(), left_clamped_value.data(),
+                right_clamped_value.data(), nx, layer, x);
     }
 };
 #endif

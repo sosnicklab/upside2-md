@@ -41,6 +41,7 @@ struct OrnsteinUhlenbeckThermostat
             atom_timescale = atom_timescale_; return *this;}
         OrnsteinUhlenbeckThermostat& set_n_invocations(uint64_t n_invocations_) {
             n_invocations = n_invocations_; return *this;}
+        uint64_t get_n_invocations() const {return n_invocations;}
 
         void apply(
                 VecArray mom,

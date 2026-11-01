@@ -434,6 +434,19 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   skipped the beagle3 backup while rsync went through; the backups were put in place from the md5-equal local
   copies. Files: remote_jobs.md, diffusion_dynamics.md, progress.md; scratchpad/boltz_hdx/addon (`sampler.py`,
   `e1_rare.py`, `toy.py`, `lownoise_read.py`, `e1_lownoise_ubqps.txt`, `runs/toy_low/`).
+* **10-29 15:20-, MacBook Pro, Upside 3 on the GPU (plan.md Phase 35; user: "start implementing GPU for upside3").**
+  Plan approved (`~/.claude/plans/swift-roaming-floyd.md`). Measured the GPUs: midway2 `gpu2` K80 (driver 460, CUDA
+  11.2), midway3 `gpu` V100/RTX6000/A100 (V100 driver 535); one CUDA 11.5 binary from midway2 runs on both (G0 probe:
+  Threefry bits equal, fixed-point sums bitwise and repeatable). Development tree `/beagle3/trsosnic/yinhan/upside3_gpu`.
+  Built G1 (`device.h`, `device_engine`, flattening, fixed-point accumulation, `--gpu` loop, C API, `tests/device_v1.py`)
+  and the device nodes of every ff2.1 node but rotamer (G2, G3). CPU bitwise unchanged through each step
+  (`tests/regress.py`, 0 of 4260 arrays) after two corrections: pair potentials moved to headers keep internal
+  linkage, and `hbond_energy`'s scores stay inline on the CPU (findings 11g). V1 passes on the host backend for
+  bonded, backbone and no-rotamer configs of 1ubq, chig, 1dfn; on the K80 the bonded and backbone configs pass but
+  for one discontinuity of the CPU model (`hbond_energy`'s exact-zero test). Found two CPU defects (findings 11g):
+  that test, and `hb_environment_coverage`'s unwritten derivative lanes (fixed). Files: src (`device*.{h,cu}`,
+  `edge_params.h`, `hbond_interaction.h`, `environment_interaction.h`, `eig4.h`, `backbone_steric.h`, the ported
+  nodes' `make_device`, `main.cpp`, CMake), `py/upside_engine.py`, `tests/device_v1.py`; scratchpad/gpu_work.
 * **10-29 16:15-17:05, Mac Studio, bottom-up side-chain pair tables investigated and recorded** (user: "for SC-SC
   interactions in upside3, I plan to do it in a different way ... Investigate and record this in upside3"; then
   "you need to make corresponding change in hybrid spline table as well"). `upside3.md` 7.4 (new; Steps renumbered
@@ -455,6 +468,20 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   a salt-bridge check rule fixed before the pilot. findings 10.43 (the lesson), memory `sc-one-bead-cg-tables`. Files:
   upside3.md (7.4, 11), plan.md Phase 36, findings.md 10.43, progress.md; scratchpad/sc_bottomup_20261029
   (`ff_association.md`, `ff_proteins.md`).
+* **10-29 21:00-10-30 00:10, MacBook Pro, GPU validation, then the hybrid on the device** (user: "fix the issue.
+  after the validation is completed, proceed to implement hybrid GPU support"). A238 done; with it the K80's V1
+  passes every node of 9 ff2.1 fixtures but chig_rama's total potential, whose one rounding-scale move came out 0 by
+  coincidence (V1 now takes the RMS of 4). V2 (14-replica 1ubq REMD, K80 and V100, with and without rotamer) agrees
+  within 2.9 SE; the GPUs are 1.2-3.7x slower per system step than 4 CPU cores. The hybrid: `device_martini.cu`
+  (`martini_hybrid_position`, `martini_potential` on the CPU's filtered pair table, `martini_sc_table_1body`,
+  `dist_spring`, `angle_spring`), `DeviceDynamics` with masses, fixed and z-fixed atoms, the g-JF step and the PO4
+  hold, `--gpu` for `/input/brownian`. CPU bitwise (0 of 4260) after bisecting a sharing that was not: the side-chain
+  table and springs keep their CPU code (findings 11g). V1 passes on the host backend for 1rkl 7.0 and 7.1; a paired
+  g-JF run differs by 4 ulps after one round. Build g5a installed; V1 and hybrid V2 submitted on the K80 and V100
+  (remote_jobs.md line 5). Files: src (`device_martini.cu`, `martini_interaction.h`, `device_engine.{h,cu}`,
+  `device_nodes.h`, `device_rotamer.cu`, `spline.h`, `box.h`, `martini_potential.cpp`, `martini_hybrid.cpp`,
+  `main.cpp`, CMake), `tests/device_v1.py`, `tests/device_dyn.py`; plan.md, findings.md, upside3.md, remote_jobs.md;
+  scratchpad/gpu_work (`regress_hybrid.sh`, `variant.py`, `hyb_dyn/pair.sh`).
 * **10-29 22:40-23:45, Mac Studio, the user's two points on 7.4** (the 136 GB and sites; "in simulation they are usually
   inside protein").
   * **Size.** The 136 GB is the dense six-coordinate grid in float32, file and memory; every proposed form is under
@@ -487,3 +514,113 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
     an accurate GB is a candidate for U_dry's electrostatics after a buried-charge check.
   * Files: upside3.md (7.4, 8.3.4, 11, 12), plan.md Phase 36, findings.md 10.45, progress.md, memory
     `sc-one-bead-cg-tables`; scratchpad/sc_bottomup_20261029 (`sites/`, `ff_implicit.md`).
+* **10-30 00:10-01:55, MacBook Pro, the hybrid's V2 by seeds.** V1 of build g5a passes every node of the 11 fixtures,
+  the hybrid's included, on the K80 and the V100. The hybrid's one-seed V2 reached 4.7 (K80) and 5.3 (V100) block
+  standard errors, and its CPU control (seeds 7 and 8) 7.6, so the block error understates the hybrid's (lipid D's
+  overlapping windows; slow bath relaxation). `tests/device_dyn.py` rewritten as `run` (one arm at one seed, means to
+  an npz, trajectories in a temporary directory) and `compare` (Welch's t over seeds, Bonferroni); job scripts
+  `v2run.sbatch` (arrays) and `v2cmp.sbatch` replace `v2.sbatch` and `v2c.sbatch`. Build g5b installed. V2 submitted
+  as 8 seeds each on broadwl, the K80 and the V100 (remote_jobs.md line 5). Files: `tests/device_dyn.py`; plan.md,
+  findings.md, upside3.md, remote_jobs.md, progress.md; scratchpad/gpu_work/g0.
+* **10-30 01:55-07:40, MacBook Pro, G5 speed and the hybrid's GPU lipid excess.** Speed (plan.md item 9):
+  `device.h`'s `lanes_for`, `AccumLocal`, `slots_for` and a warp-shuffle `block_scan`, used by the pair-list
+  rebuild, `martini_potential`, `martini_sc_table_1body`, BP's incidence lists and the capacity-sized kernels; BP's
+  passes fused (builds g6a, g6b, g6c). Each is bitwise equal to g5b on the K80; per system step 1ubq without rotamer
+  360 to 245 us, full 1ubq 867 to 526 us, the hybrid 14.5 to 6.5 ms; batch scaling on the K80 and V100 in findings
+  11g. V2 of the hybrid by seeds now fails: 40 GPU seeds run the lipids 0.35% hot (4.5 SE) against 24 CPU and
+  host-backend seeds, with or without FMA. Ruled out by measurement: races, g-JF coefficients, wrong forces during a
+  GPU run (`audit.py`), damping and noise differences (`onestep.sbatch`). The no-exchange arms are running. Files:
+  `src/device.h`, `device_interaction_graph.h`, `device_martini.cu`, `device_rotamer.cu`, `device_affine.cu`,
+  `device_environment.cu`, `device_hbond.cu`; plan.md, findings.md, upside3.md, remote_jobs.md; scratchpad/gpu_work
+  (`build_hostbackend.sh`, `bitwise_gpu.sh`, `g0/` scripts, `configs/1rkl70_dyn10.up`).
+* **10-30 07:40-10:45, MacBook Pro, the hybrid's GPU lipid excess found and fixed (A239).** The user's `git pull`:
+  origin's one commit fast-forwarded, findings.md, plan.md, progress.md and upside3.md merged three-way with the local
+  edits (two appended-entry conflicts kept both sides in date order). Without exchange the K80 stayed +0.42% hot, so
+  the cause was in plain dynamics. The g-JF position update's force term, below half an ulp of a large coordinate,
+  rounded away where the compiler kept the source order (nvcc; clang for z); gcc on broadwl had reassociated it.
+  Measured: the reproducer gives the excess's size, and the K80 with the step summed first matches the CPU (+0.1 SE).
+  Both engines now use x + b dt/m (p + dt/2 f + beta/2); regress moves only the hybrid dynamics (12 of 4260 arrays).
+  V2 on build g7b running (CPU, K80, V100). Files: `src/martini_brownian.cpp`, `src/device_engine.cu`; findings.md
+  (A239, 11g), plan.md, upside3.md, remote_jobs.md; scratchpad/gpu_work (`deadzone_repro.py`, `g0/` diagnostics,
+  `dev12_home`, `dev12_record.npz`).
+* **10-30 10:45-12:20, MacBook Pro, the hybrid's V2 passes on the fixed build; g7b installed.** g7b against the CPU
+  (REMD of 1rkl 7.0, 16 CPU, 16 K80, 8 V100 seeds): Bonferroni 1 on both GPUs, lipid KE within 1.8 SE in every
+  replica. The old host backend without exchange sat with the CPU (+1.0 SE; 10 of 16 seeds, 6 hit the 3 h limit on
+  shared nodes). g7b installed as the GPU tree's `obj/` (byte-equal to `obj_g7b`); `obj_g6c_nofma`, `obj_g7a` and the
+  diagnostic scripts (`audit.py`, `audit.sbatch`, `onestep.sbatch`, `noswap.py`, `nsrun.sbatch`) deleted on the
+  cluster and the Mac. Files: findings.md (A239, 11g), plan.md, upside3.md, remote_jobs.md.
+* **10-30 12:20-14:30, MacBook Pro, the rest of the validation ladder submitted (user: "run them").** ff3.1 configs of
+  chig, 1ubq and 1dfn (the same 31 nodes as ff2.1): V1 passes on the host backend. V1 of 14 configs on the K80,
+  V100, RTX6000 and A100; the protein V2 by seeds (1ubq without and with rotamer, and on ff3.1); `tests/device_dyn.py`
+  now also compares the backbone angles. V3 at a tenth of the Peng duration (user's choice): a harness from
+  `bp_validation` (`v3_run.py`, `v3.sbatch`, `v3_analyse.py`, `v3cmp.sbatch`), smoke-tested at 400 tu, then 32 CPU and
+  8 V100 arms; a detached driver runs the analysis when they end. Files: `tests/device_dyn.py`; plan.md (item 10),
+  remote_jobs.md; scratchpad/gpu_work (`ff31_configs.py`, `v3_driver.sh`, `g0/` V3 scripts, `configs/*_ff31.up`).
+* **10-30 17:06-17:20, MacBook Pro, status pass** (user: "Check remote job status. How is ff3.2 training"; not the
+  owner, no cron). Nothing of lines 1-3 failed since 14:30 10-29; 14 newly finished arms read finite, KE/1.5kT
+  0.999-1.009. ff3.2 (`ff32_nativefix`) at its target 76 (11:58 10-30): round 4 read (glycine's data pull gone, its
+  -ln(P_aL/P_aR) -0.425, margin +0.065), epoch-1 panel `n32_01` read (0.414 against released ff2.1's 0.615, below
+  `a32_01`); `_mb2` at 76; `ff311_glypair`'s step 34 rerun clean; released ff2.1's Peng DONE (native 0.552, de novo
+  0.427). Files: remote_jobs.md (header, Owed, §1, table), plan.md Phase 33 items 6-7, progress.md; cluster
+  `WATCH_STATUS.md` and bundle `records/`, `scratchpad/handoff_20261030/round4_read.sh`.
+* **10-30 17:30-17:45, MacBook Pro, ff3.2 extended** (user: "What do you recommend to do with ff3.2?", then "Go ahead
+  and continue training ff3.2"). `convergence_gate.py` at step 76 by hand: NOT CONVERGED, `dhb` alone (p 0.0045, cut
+  0.0050). Extended to 95 by the same chain (49670425; driver md5 `54383004`, step 76's checkpoint, `.chain_starts` 0
+  11 65); `submit_new.sh` (dry-run first) submitted `n32_02` 49670431 and `n32_03` 49670432. Files: plan.md Phase 33
+  items 7-8, remote_jobs.md, progress.md; cluster `checks/ff31_fix_20261028/` (`gate_step76_ff32_nativefix.txt`,
+  `submitted.log`).
+* **10-30 18:50-19:55, MacBook Pro, V1 on every GPU type and the protein V2 by seeds pass** (user: "check status").
+  V1 on g7b: every quantity of the 11 fixtures and the three ff3.1 configs passes on the K80, V100, RTX6000 and A100,
+  with the same worst error per config on all four. Protein V2 (1ubq REMD, 16 CPU, 16 K80, 8 V100 seeds; ff2.1 without
+  and with rotamer, ff3.1): Bonferroni 0.087 to 1; the per-seed means over replicas within 2.0 SE. KE/1.5kT is about
+  1.005 on the CPU for the protein too (open). V3 running: CPU arms 5-41% at 18:52, 3 of 8 V100 arms 10%, 5 queued.
+  Files: findings.md 11g, plan.md (item 10), upside3.md (status), remote_jobs.md.
+
+## 2026-10-31
+
+* **13:54-14:10, MacBook Pro, status pass** (user: "Check remote job status, especially ff3.2 training ... the basin
+  difference between alpha L and R for GLY"; not the owner, no cron). ff3.2 reached 95 at 03:10; the step-95 gate by
+  hand reads CONVERGED (dhb p 0.027); round 5 read (glycine -ln(P_aL/P_aR) -0.439, ff3.0 -0.598, ff3.1 -0.825;
+  rounds 1-4 reproduced exactly); `n32_02` 0.436 and `n32_03` 0.431 read; `n32_04` submitted by `submit_new.sh`. Every
+  ConDiv chain at its target (ff3.1 nativefix 76, both debug arms 76; `ff311_glypair` NODE_FAIL in step 65 recovered
+  by its insurance link). Files: remote_jobs.md, plan.md Phase 33 items 6-8; cluster `WATCH_STATUS.md`, bundle
+  `records/`, `checks/ff31_fix_20261028/gate_step95_ff32_nativefix.txt`.
+* **14:15-16:00, MacBook Pro, what is wrong in ff3.2's folding** (user: "Check what is wrong in ff3.2 that fails to fold
+  protein"). `n32_04` folds 0.447 (-0.169 against released ff2.1), so ff3.2 stops by Phase 33's rule. Read-only
+  diagnosis on the kept panel and Peng frames: tertiary swelling with secondary structure intact; ff3.2 lowers
+  unfolded-state energy relative to native on all 16 Peng proteins, about half through the DSE-driven scalars
+  (backbone burial scale, H-bond energies); A193's SARW fix missing from ff3.2's trainer; the 3g0m double free
+  reproduced once on the login node, memcheck of a small case clean. One 1-core job (valgrind, 49687255). Files:
+  findings.md 1.37, plan.md Phase 33 items 7-9, remote_jobs.md; cluster `checks/ff32_fold_20261031/` (`fail_mode.py`,
+  `decomp.py`, `decomp2.py`, `dir_split.py`, `crystal_view.py`, `grad_profile.py`, `peng_profile.py`, `peng_blocks.py`,
+  `peng_full.py`, `repro_pd.py`, their `.txt` outputs).
+* **16:30-17:05, MacBook Pro, ff3.1 deployed and validating; the fix of the all-term loss started** (user: "1. Deploy
+  ff3.1, run validations (Peng, glpG, and other tests we ran) 2. Fix the folding issue and continue working on ff3.2";
+  asked which ff3.1, the user chose the fixed-target retrain). Before that, read for the user: glycine alpha_L - alpha_R
+  of the released ff3.1 -1.064 and of `ff31_nativefix` by round -0.904 to -0.781 (settled), and the temperature reading
+  of ff3.2 (6% hotter for global stability, not term by term; findings 1.37). Plan.md Phase 37: `ff31_nativefix` step 76
+  extracted and checked, the merge's 5 Peng chunks and collector cancelled, released to the four trees and the Mac
+  repo, the merge's results moved aside (`.bak_pre_nativefix_20261031`), and its tests submitted (2 panels, 2 TM jobs,
+  32 Peng arms, collector, glpG prep and REMD on Upside 3). Phase 38: two test arms built from ff3.2's build with one
+  trainer line each (DSE off; the SI's SARW), checkpoints checked against ff3.2's, SARW change checked statically,
+  both chains submitted with their own panel and unfolded-shift hand-off. The watch probe's ff3.1 paths updated (md5
+  `cf834d4b`). Files: plan.md Phases 33 (item 6), 37, 38; findings.md 1.37; remote_jobs.md; progress.md;
+  `parameters/ff_3.1/rama.dat` (+ backup); cluster `checks/ff31_nativefix_release_20261031/`,
+  `checks/ff32_fix_20261031/`, `~/watch_probe/watch_mdw2.sh`.
+* **10-31 08:30-22:55, MacBook Pro, V3 passes.** The 32 CPU arms ended by 08:30, the 8 V100 arms by 22:35, each in
+  one chunk; the driver's `v3cmp.sbatch` (49703078): Bonferroni 0.12 to 1 per protein and force field, 0.93 overall,
+  T_mid within 3 K. The validation ladder of item 10 is complete; the rest of 10.2's ladder is item 11. Files:
+  findings.md 11g, plan.md (items 10-11), upside3.md (status), remote_jobs.md.
+* **10-31 23:10-23:50, MacBook Pro, GPU work handed off** (user: "record everything in md file and resume when I says
+  'resume GPU jobs'. I will restart on another computer"). Commit check for the user: no scaffolding, the Mac's src
+  checksum-equal to g7b's source, no CPU source changed since the regress baseline; `parameters/ff_3.1/rama.dat` is
+  the other session's ff3.1 release. Readiness told the user (plan.md Phase 35 "Resume here"). Bundle
+  `/project/trsosnic/yinhan/checks/handoff_gpu_20261031/`: working-tree patch on `cce51ce0` (checked: applied to HEAD
+  it reproduces the tree), untracked files, records, `scratchpad/gpu_work` tools, the regression fixtures. Files:
+  CLAUDE.md (the "resume GPU jobs" trigger), plan.md Phase 35, remote_jobs.md, upside3.md, progress.md.
+* **10-31 23:25-23:55, MacBook Pro, status pass.** ff3.1's panels read (`paired_npz.py`): 44 domains fold 0.631
+  against released ff2.1's 0.603, mdCATH 0.515 against 0.488, level with the merge; its glpG preparation keeps TM4
+  (stage 7.0 DSSP mean 0.95, the merge 0.36). Owed glpG blocks read: ff2.1 block 4 TM4 0.05, ff3.0 block 2 0.82.
+  cspA de novo requeued after NODE_FAIL on midway2-0189. Phase 38 arms at steps 9 and 6 of 19. Files: findings.md
+  1.34, 3.15; plan.md Phase 37; remote_jobs.md; cluster `glpg_prep_tm4.txt`, `glpg_u3_block4.txt`,
+  `glpg_ff30_block2.txt`.

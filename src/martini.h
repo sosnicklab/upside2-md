@@ -43,6 +43,8 @@ void load_masses_for_engine(DerivEngine* engine, hid_t config_root);
 void unregister_masses_for_engine(DerivEngine* engine);
 float get_mass(DerivEngine* engine, int atom_index);
 bool has_masses(DerivEngine* engine);
+// every atom's mass, empty without /input/mass
+std::vector<float> get_masses(DerivEngine* engine);
 }
 
 // The MARTINI modules keep per-engine state in maps keyed by the engine's address; an engine's entries must be

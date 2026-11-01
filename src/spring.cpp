@@ -1,6 +1,7 @@
 #include "deriv_engine.h"
 #include "timing.h"
 #include "state_logger.h"
+#include "device_nodes.h"
 #include <iostream>
 
 using namespace h5;
@@ -75,6 +76,16 @@ struct Spring : public PotentialNode
             if(pot) *pot         += 0.5f * p.spring_const * sqr_excess;
             pos_sens(dim1, p.id) +=        p.spring_const * excess;
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) {
+        auto param = [&](int ns) -> const vector<Params>& {return static_cast<Spring&>(*systems[ns]).params;};
+        auto field = [&](float Params::* f) {return g.concat<float>([&](int ns) {
+            vector<float> r; for(auto& p: param(ns)) r.push_back(p.*f); return r;});};
+        return device_spring(g.potential_of(*this), g.coord(pos), dim1, pbc, box_len,
+                g.offset_index(pos, [&](int ns) {vector<int> r; for(auto& p: param(ns)) r.push_back(p.id); return r;}),
+                field(&Params::equil_dist), field(&Params::spring_const),
+                g.concat<int>([&](int ns) {return vector<int>(param(ns).size(), ns);}));
     }
 };
 static RegisterNodeType<Spring,1> spring_node("Spring");

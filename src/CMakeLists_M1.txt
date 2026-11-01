@@ -61,6 +61,22 @@ set(ENGINE_SRC
     monte_carlo_sampler.cpp
     engine_c_library.cpp) # Added this to list so Python module uses it
 
+# The device engine (device_engine.h).  Without CUDA its files compile as C++ and run on the host.
+set(DEVICE_SRC
+    device.cu
+    device_engine.cu
+    device_coord.cu
+    device_spring.cu
+    device_hbond.cu
+    device_rama.cu
+    device_affine.cu
+    device_placement.cu
+    device_environment.cu
+    device_rotamer.cu
+    device_martini.cu)
+set_source_files_properties(${DEVICE_SRC} PROPERTIES LANGUAGE CXX COMPILE_FLAGS "-x c++")
+list(APPEND ENGINE_SRC ${DEVICE_SRC})
+
 # Create the `upside` executable
 add_executable(upside ${ENGINE_SRC})
 INCLUDE_DIRECTORIES(${HDF5_INCLUDE_DIRS})

@@ -8,6 +8,7 @@
 #include "timing.h"
 #include <algorithm>
 #include "Float4.h"
+#include "edge_params.h"
 #include <iostream>
 #include <stdexcept>
 
@@ -165,6 +166,7 @@ struct PairlistComputation {
     public:
         // a new buffer goes with a new cutoff (set_param), so the cached pair list must be rebuilt
         void change_cache_buffer(float new_buffer) {cache_buffer=new_buffer; cache_valid=false;}
+        float get_cache_buffer() const {return cache_buffer;}
         PairlistComputation(int n_elem1_, int n_elem2_, int max_n_edge_):
             n_elem1(n_elem1_), n_elem2(n_elem2_), max_n_edge(max_n_edge_),
 
@@ -489,7 +491,7 @@ struct InteractionGraph{
 
         // First find all the edges
         {
-            pairlist.template find_edges<IType::acceptable_id_pair>(cutoff,
+            pairlist.template find_edges<IType::template acceptable_id_pair<Int4>>(cutoff,
                                 pos1.get(), n_dim1a, sequence_id1.get(),
                                 (symmetric?pos1:pos2).get(), n_dim2a, (symmetric?sequence_id1:sequence_id2).get());
             n_edge = pairlist.n_edge;
@@ -510,11 +512,11 @@ struct InteractionGraph{
             auto t2 = Int4(types2.get(),i2);
 
             auto interaction_offset = (t1*Int4(n_type2) + t2)*Int4(n_param);
-            const float* interaction_ptr[4] = {
+            EdgeParams<Float4> interaction_ptr = {{
                 interaction_param+interaction_offset.x(),
                 interaction_param+interaction_offset.y(),
                 interaction_param+interaction_offset.z(),
-                interaction_param+interaction_offset.w()};
+                interaction_param+interaction_offset.w()}};
 
             auto coord1 = aligned_gather_vec<n_dim1>(pos1.get(),                 i1*Int4(n_dim1a));
             auto coord2 = aligned_gather_vec<n_dim2>((symmetric?pos1:pos2).get(),i2*Int4(n_dim2a));
@@ -534,7 +536,7 @@ struct InteractionGraph{
                     Vec<n_dim2> c2; for(int d: range(n_dim2)) c2[d] = extract_float(coord2[d],i);
 
                     edge_param_deriv.push_back(make_zero<n_param>());
-                    IType::param_deriv(edge_param_deriv.back(), interaction_ptr[i], c1,c2);
+                    IType::param_deriv(edge_param_deriv.back(), interaction_ptr.p[i], c1,c2);
 
                     if(symmetric) {
                         int nt1 = types1[edge_indices1[ne+i]];

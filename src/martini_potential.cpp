@@ -1,4 +1,6 @@
 #include "martini_internal.h"
+#include "martini_interaction.h"
+#include "device_nodes.h"
 #include "deriv_engine.h"
 #include "timing.h"
 #include "spline.h"
@@ -395,6 +397,37 @@ struct MartiniPotential : public PotentialNode
         }
     }
 
+    // The hybrid's exclusions of a pair, fixed for a run: none within a protein, which is Upside's alone; between
+    // the protein and the environment only through a derived BB; none of a protein side chain.  Sets whether each atom
+    // is the protein's for a pair it keeps.
+    static bool hybrid_excludes_pair(const martini_hybrid::HybridRuntimeState& st, int i, int j,
+            bool& i_is_protein, bool& j_is_protein) {
+        if(martini_hybrid::skip_pair_if_intra_protein(st, i, j)) return true;
+        if(i >= 0 && j >= 0 &&
+           i < (int)st.protein_membership.size() &&
+           j < (int)st.protein_membership.size()) {
+            i_is_protein = st.protein_membership[i] >= 0;
+            j_is_protein = st.protein_membership[j] >= 0;
+        }
+        auto i_role = martini_hybrid::atom_role_class_at(st, i);
+        auto j_role = martini_hybrid::atom_role_class_at(st, j);
+        if(st.active) {
+            bool i_is_derived_bb =
+                i_role == martini_hybrid::ROLE_BB &&
+                !martini_hybrid::atom_is_bb_source_at(st, i) &&
+                martini_hybrid::bb_map_index_for_proxy(st, i) >= 0;
+            bool j_is_derived_bb =
+                j_role == martini_hybrid::ROLE_BB &&
+                !martini_hybrid::atom_is_bb_source_at(st, j) &&
+                martini_hybrid::bb_map_index_for_proxy(st, j) >= 0;
+            if((i_is_protein && !j_is_protein && !i_is_derived_bb) ||
+               (j_is_protein && !i_is_protein && !j_is_derived_bb)) return true;
+            if((i_is_protein && i_role == martini_hybrid::ROLE_SC) ||
+               (j_is_protein && j_role == martini_hybrid::ROLE_SC)) return true;
+        }
+        return false;
+    }
+
     virtual void compute_value(ComputeMode mode) override {
         Timer timer(string("martini_potential"));
         
@@ -412,42 +445,6 @@ struct MartiniPotential : public PotentialNode
         // decide minimiser steps and barostat trials
         double pot_sum = 0.;
 
-        // Compute particle-particle interactions
-        const float kMinDistance = 1.0e-6f;
-        const bool active_hybrid_startup = (
-            hybrid_state &&
-            hybrid_state->active);
-
-        auto eval_pair_force = [&](const Vec<3>& pa,
-                                   const Vec<3>& pb,
-                                   const PairParam& param,
-                                   float& pair_potential,
-                                   Vec<3>& pair_force) -> bool {
-            auto dr = pa - pb;
-            dr = simulation_box::minimum_image(dr, box_x, box_y, box_z);
-            auto dist2 = mag2(dr);
-            auto dist = sqrtf(max(dist2, kMinDistance));
-            pair_potential = 0.f;
-            pair_force = make_zero<3>();
-
-            if(dist > cutoff) return false;
-
-            if(param.combined_spline) {
-                float r_coord = (dist - r_min) / (r_max - r_min) * float(n_grid - 1);
-                float result[2];
-                param.combined_spline->evaluate_value_and_deriv(result, 0, r_coord);
-                float pot = result[1];
-                float deriv_spline = result[0];
-                float coord_scale = float(n_grid - 1) / (r_max - r_min);
-                float dE_dr = deriv_spline * coord_scale;
-                float force_mag = -dE_dr;
-                Vec<3> force = (force_mag/dist) * dr;
-                pair_potential += pot;
-                pair_force += force;
-            }
-            return !(pair_potential == 0.f && mag2(pair_force) == 0.f);
-        };
-
         if(pairlist_needs_rebuild(pos1)) {
             rebuild_pairlist(pos1);
         }
@@ -456,49 +453,18 @@ struct MartiniPotential : public PotentialNode
             size_t np = size_t(active_idx);
             int i = pairs[np].first;
             int j = pairs[np].second;
-            if(hybrid_state && martini_hybrid::skip_pair_if_intra_protein(*hybrid_state, i, j)) {
-                continue;
-            }
-
-            const auto& param = param_table[pair_param_index[np]];
+            bool i_is_protein = false;
+            bool j_is_protein = false;
+            if(hybrid_state && hybrid_excludes_pair(*hybrid_state, i, j, i_is_protein, j_is_protein)) continue;
 
             auto p1 = load_vec<3>(pos1, i);
             auto p2 = load_vec<3>(pos1, j);
-            bool i_is_protein = false;
-            bool j_is_protein = false;
-            if(hybrid_state && i >= 0 && j >= 0 &&
-               i < (int)hybrid_state->protein_membership.size() &&
-               j < (int)hybrid_state->protein_membership.size()) {
-                i_is_protein = hybrid_state->protein_membership[i] >= 0;
-                j_is_protein = hybrid_state->protein_membership[j] >= 0;
-            }
-            auto i_role = hybrid_state
-                              ? martini_hybrid::atom_role_class_at(*hybrid_state, i)
-                              : martini_hybrid::ROLE_OTHER;
-            auto j_role = hybrid_state
-                              ? martini_hybrid::atom_role_class_at(*hybrid_state, j)
-                              : martini_hybrid::ROLE_OTHER;
-            if(hybrid_state && hybrid_state->active) {
-                bool i_is_derived_bb =
-                    i_role == martini_hybrid::ROLE_BB &&
-                    !martini_hybrid::atom_is_bb_source_at(*hybrid_state, i) &&
-                    martini_hybrid::bb_map_index_for_proxy(*hybrid_state, i) >= 0;
-                bool j_is_derived_bb =
-                    j_role == martini_hybrid::ROLE_BB &&
-                    !martini_hybrid::atom_is_bb_source_at(*hybrid_state, j) &&
-                    martini_hybrid::bb_map_index_for_proxy(*hybrid_state, j) >= 0;
-                if((i_is_protein && !j_is_protein && !i_is_derived_bb) ||
-                   (j_is_protein && !i_is_protein && !j_is_derived_bb)) continue;
-            }
-            if(active_hybrid_startup &&
-               ((i_is_protein && i_role == martini_hybrid::ROLE_SC) ||
-                (j_is_protein && j_role == martini_hybrid::ROLE_SC))) {
-                continue;
-            }
-
-            Vec<3> force = make_zero<3>();
-            float pair_pot = 0.f;
-            if(!eval_pair_force(p1, p2, param, pair_pot, force)) {
+            auto& spline = *param_table[pair_param_index[np]].combined_spline;
+            Vec<3> force;
+            float pair_pot;
+            if(!martini_pair_force(pair_pot, force, p1, p2, spline.coefficients.data(),
+                        spline.left_clamped_value.data(), spline.right_clamped_value.data(), cutoff, r_min, r_max,
+                        n_grid, box_x, box_y, box_z)) {
                 continue;
             }
             if(pot) pot_sum += pair_pot;
@@ -511,21 +477,47 @@ struct MartiniPotential : public PotentialNode
         }
         if(pot) *pot = float(pot_sum);
     }
+
+    // The pairs the hybrid keeps: each atom's partners above it in the adjacency and their splines
+    void kept_pair_table(vector<int>& row_start, vector<int>& neighbor, vector<int>& spline) const {
+        auto st = martini_hybrid::get_state_for_coord(pos);
+        row_start.assign(1, 0);
+        for(int a = 0; a < n_atom; ++a) {
+            for(int k = adj_row_start[a]; k < adj_row_start[a + 1]; ++k) {
+                bool a_is_protein = false, b_is_protein = false;
+                if(st && hybrid_excludes_pair(*st, a, adj_neighbor[k], a_is_protein, b_is_protein)) continue;
+                neighbor.push_back(adj_neighbor[k]);
+                spline.push_back(pair_param_index[adj_pair_index[k]]);
+            }
+            row_start.push_back(int(neighbor.size()));
+        }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        vector<int> row_start, neighbor, spline;
+        kept_pair_table(row_start, neighbor, spline);
+        for(auto s: systems) {
+            auto& n = static_cast<MartiniPotential&>(*s);
+            vector<int> rs, nb, sp;
+            n.kept_pair_table(rs, nb, sp);
+            bool same = rs == row_start && nb == neighbor && sp == spline && n.cutoff == cutoff &&
+                        n.cache_buffer == cache_buffer && n.box_x == box_x && n.box_y == box_y && n.box_z == box_z &&
+                        n.combined_splines.size() == combined_splines.size();
+            for(size_t ip = 0; same && ip < combined_splines.size(); ++ip)
+                same = n.combined_splines[ip].coefficients == combined_splines[ip].coefficients &&
+                       n.combined_splines[ip].left_clamped_value == combined_splines[ip].left_clamped_value &&
+                       n.combined_splines[ip].right_clamped_value == combined_splines[ip].right_clamped_value;
+            if(!same)
+                throw string("the device engine shares martini_potential's pairs and splines between systems, "
+                             "but the systems' differ");
+        }
+        bool tabulated = !combined_splines.empty();  // a table without pairs reads no radial domain
+        return device_martini_potential(g.potential_of(*this), g.coord(pos), row_start, neighbor, spline,
+                combined_splines, tabulated ? r_min : 0.f, tabulated ? r_max : 0.f, cutoff, cache_buffer,
+                box_x, box_y, box_z);
+    }
 };
 static RegisterNodeType<MartiniPotential, 1> martini_potential_node("martini_potential");
-
-// Uniform cubic B-spline weights and their derivatives at fraction t of a knot interval.
-static inline void cubic_bspline_weights(float w[4], float dw[4], float t) {
-    float u = 1.f - t;
-    w[0] = (1.f/6.f)*u*u*u;
-    w[1] = (1.f/6.f)*(4.f + t*t*(3.f*t - 6.f));
-    w[2] = (1.f/6.f)*(1.f + 3.f*t*(1.f + t*(1.f - t)));
-    w[3] = (1.f/6.f)*t*t*t;
-    dw[0] = -0.5f*u*u;
-    dw[1] = t*(1.5f*t - 2.f);
-    dw[2] = 0.5f + t*(1.f - 1.5f*t);
-    dw[3] = 0.5f*t*t;
-}
 
 // Side-chain/environment energy of every rotamer row: the sum over environment particles of the table
 // V(r, theta) of the row's (residue type, rotamer, target), r the CB-target distance and theta the angle
@@ -933,6 +925,39 @@ struct MartiniScTableOneBody : public CoordNode
             update_vec<3>(pos_sens, atom_idx, grad_env);
         }
     }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto& p = g.coord(pos);
+        auto& c = g.coord(cb_pos);
+        vector<int> row_cb, row_layer, row_group, row_system, env_atom, env_target, env_start(1, 0);
+        for(int ns = 0; ns < g.n_system; ++ns) {
+            auto& n = static_cast<MartiniScTableOneBody&>(*systems[ns]);
+            if(n.spline_coeff != spline_coeff || n.n_grid != n_grid || n.n_theta != n_theta ||
+                    n.n_rotamer_max != n_rotamer_max || n.n_target != n_target ||
+                    n.grid_step_ang != grid_step_ang || n.theta_step != theta_step || n.cutoff_ang != cutoff_ang ||
+                    n.cache_buffer != cache_buffer || n.box_x != box_x || n.box_y != box_y || n.box_z != box_z)
+                throw string("the device engine shares martini_sc_table_1body's tables between systems, "
+                             "but the systems' differ");
+            // a system whose interface is off has no environment term, as compute_value
+            auto st = martini_hybrid::get_state_for_coord(n.pos);
+            bool active = st && st->active;
+            for(int r = 0; r < n.n_row; ++r) {
+                int t = n.row_residue_table_index[r];
+                row_cb.push_back(n.row_residue_index[r] + c.offset[ns]);
+                row_layer.push_back(active && t >= 0 ? n.layer_index(t, n.row_rotamer_index[r], 0) : -1);
+                row_group.push_back(std::max(1, n.row_group_count[r]));
+                row_system.push_back(ns);
+            }
+            for(int i = 0; i < n.n_env; ++i) {
+                env_atom.push_back(n.env_atom_index[i] + p.offset[ns]);
+                env_target.push_back(n.env_target_index[i]);
+            }
+            env_start.push_back(int(env_atom.size()));
+        }
+        return device_sc_table_1body(g.coord(*this), p, c, spline_coeff, n_grid, n_theta, grid_step_ang,
+                theta_step, cutoff_ang, cache_buffer, box_x, box_y, box_z, row_cb, row_layer, row_group,
+                row_system, env_atom, env_target, env_start);
+    }
 };
 static RegisterNodeType<MartiniScTableOneBody, 2> martini_sc_table_1body_node("martini_sc_table_1body");
 
@@ -1051,7 +1076,31 @@ struct DistSpring : public PotentialNode
         }
         if(pot) *pot = float(pot_sum);
     }
-    
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto& c = g.coord(pos);
+        vector<int> atom, system;
+        vector<float> equil, k;
+        for(int ns = 0; ns < g.n_system; ++ns) {
+            auto& n = static_cast<DistSpring&>(*systems[ns]);
+            if(n.bond_potential_spline.coefficients != bond_potential_spline.coefficients ||
+                    n.bond_delta_min != bond_delta_min || n.bond_delta_max != bond_delta_max ||
+                    n.box_x != box_x || n.box_y != box_y || n.box_z != box_z)
+                throw string("the device engine shares dist_spring's spline and box between systems, "
+                             "but the systems' differ");
+            auto st = martini_hybrid::get_state_for_coord(n.pos);
+            for(auto& p: n.params) {
+                if(st && !martini_hybrid::allow_intra_protein_pair_if_active(*st, p.atom[0], p.atom[1])) continue;
+                for(int j = 0; j < 2; ++j) atom.push_back(p.atom[j] + c.offset[ns]);
+                equil.push_back(p.equil_dist);
+                k.push_back(p.spring_constant);
+                system.push_back(ns);
+            }
+        }
+        float coord_scale = float(n_knot - 1) / (bond_delta_max - bond_delta_min);  // as compute_value
+        return device_dist_spring(g.potential_of(*this), c, atom, equil, k, system, bond_potential_spline,
+                bond_delta_min, coord_scale, box_x, box_y, box_z);
+    }
 };
 static RegisterNodeType<DistSpring, 1> dist_spring_node("dist_spring");
 
@@ -1184,7 +1233,31 @@ struct AngleSpring : public PotentialNode
         }
         if(pot) *pot = float(pot_sum);
     }
-    
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto& c = g.coord(pos);
+        vector<int> atom, system;
+        vector<float> cos_theta0, k;
+        for(int ns = 0; ns < g.n_system; ++ns) {
+            auto& n = static_cast<AngleSpring&>(*systems[ns]);
+            if(n.angle_potential_spline.coefficients != angle_potential_spline.coefficients ||
+                    n.box_x != box_x || n.box_y != box_y || n.box_z != box_z)
+                throw string("the device engine shares angle_spring's spline and box between systems, "
+                             "but the systems' differ");
+            auto st = martini_hybrid::get_state_for_coord(n.pos);
+            for(auto& p: n.params) {
+                if(st && !martini_hybrid::allow_multibody_term_if_active(*st, p.atom, 3)) continue;
+                for(int j = 0; j < 3; ++j) atom.push_back(p.atom[j] + c.offset[ns]);
+                float equil_angle_rad = p.equil_angle_deg * M_PI / 180.0f;  // as compute_value
+                cos_theta0.push_back(cosf(equil_angle_rad));
+                k.push_back(p.spring_constant);
+                system.push_back(ns);
+            }
+        }
+        float coord_scale = float(n_knot - 1) / (angle_delta_max - angle_delta_min);  // as compute_value
+        return device_angle_spring(g.potential_of(*this), c, atom, cos_theta0, k, system, angle_potential_spline,
+                angle_delta_min, coord_scale, box_x, box_y, box_z);
+    }
 };
 static RegisterNodeType<AngleSpring, 1> angle_spring_node("angle_spring");
 

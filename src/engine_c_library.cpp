@@ -1,6 +1,8 @@
 #include "engine_c_library.h"
 #include "deriv_engine.h"
 #include "martini.h"
+#include "device_engine.h"
+#include <cstring>
 #include <algorithm>
 
 using namespace h5;
@@ -222,4 +224,75 @@ try {
     return 1;
 } catch(...) {
     return 1;
+}
+
+
+DeviceGraph* construct_device_graph(int n_engine, DerivEngine** engines) try {
+    return new DeviceGraph(vector<DerivEngine*>(engines, engines+n_engine));
+} catch(const string& e) {
+    fprintf(stderr, "\n\nERROR: %s\n", e.c_str());
+    return 0;
+} catch(...) {
+    return 0;
+}
+
+void free_device_graph(DeviceGraph* graph) {delete graph;}
+
+int device_describe(int n_char, char* description) try {
+    auto s = device::describe();
+    if(int(s.size()) >= n_char) throw string("device description longer than its buffer");
+    strcpy(description, s.c_str());
+    return 0;
+} catch(const string& e) {
+    fprintf(stderr, "\n\nERROR: %s\n", e.c_str());
+    return 1;
+}
+
+int device_evaluate(float* potential, float* deriv, DeviceGraph* graph, const float* pos) try {
+    auto& c = *graph->coords[0];
+    vector<float> x(c.output.n, 0.f);
+    for(int na=0; na<c.n_elem; ++na)
+        for(int d=0; d<3; ++d) x[na*c.row_width+d] = pos[na*3+d];
+    c.output.upload(x);
+    graph->compute(PotentialAndDerivMode);
+    graph->check_errors();
+    auto pot = graph->get_potential();
+    copy(pot.begin(), pot.end(), potential);
+    auto s = c.sens.download();
+    for(int na=0; na<c.n_elem; ++na)
+        for(int d=0; d<3; ++d) deriv[na*3+d] = s[na*c.row_width+d];
+    return 0;
+} catch(const string& e) {
+    fprintf(stderr, "\n\nERROR: %s\n", e.c_str());
+    return 1;
+}
+
+// one system's rows of a coordinate node's output or sensitivity, (n_elem, elem_width)
+static int device_get_rows(int n_output, float* output, DeviceGraph* graph, int system, const char* node_name,
+        bool sens) try {
+    int i = graph->engines.at(0)->get_idx(node_name);
+    if(system<0 || system>=graph->n_system) throw string("no such system");
+    if(!graph->coords[i]) {  // a potential node: its potential and sensitivity 1, as get_output and get_sens give
+        if(n_output != 1) throw string("wrong size for potential node");
+        output[0] = sens ? 1.f : graph->get_potential(i)[system];
+        return 0;
+    }
+    auto& c = *graph->coords[i];
+    int n_elem = c.offset[system+1]-c.offset[system];
+    if(n_output != n_elem*c.elem_width) throw string("output of the wrong size");
+    auto v = sens ? c.sens.download() : c.output.download();
+    for(int ne=0; ne<n_elem; ++ne)
+        for(int d=0; d<c.elem_width; ++d) output[ne*c.elem_width+d] = v[(c.offset[system]+ne)*c.row_width+d];
+    return 0;
+} catch(const string& e) {
+    fprintf(stderr, "\n\nERROR: %s\n", e.c_str());
+    return 1;
+}
+
+int device_get_output(int n_output, float* output, DeviceGraph* graph, int system, const char* node_name) {
+    return device_get_rows(n_output, output, graph, system, node_name, false);
+}
+
+int device_get_sens(int n_output, float* sens, DeviceGraph* graph, int system, const char* node_name) {
+    return device_get_rows(n_output, sens, graph, system, node_name, true);
 }

@@ -6,6 +6,17 @@
 * Its validation on ff2.1, the gate of stage S1, is running on midway2 (4.4): 29 of 32 Peng arms complete at 08:25
   10-29, glpG REMD block 4 of 4.
 * No Upside 3 training has run. Every ConDiv chain so far, Phase 33's included, runs on the pre-audit engine (5.4).
+* The GPU (track G) started 10-29 (10.3, plan.md Phase 35): the device engine runs every ff2.1 and ff3.1 node, BP
+  included, and the hybrid's nodes and g-JF dynamics. V1 passes per node, the hybrid's and ff3.1's included, on the
+  Mac's host backend, the K80, V100, RTX6000 and A100; V2 by seeds passes on the K80 and V100 for 1ubq (ff2.1 with
+  and without rotamer, ff3.1) and for the hybrid, whose V2 had found the GPUs running the lipids 0.35% hot, from the
+  g-JF position update's force term rounding away (A239, fixed on both engines, 10-30). V3, REMD melting of 4 Peng
+  proteins on ff2.1 and ff3.1 at a tenth of their duration, passes on the V100 (10-31; T_mid within 3 K). Open in
+  10.2's ladder: the mdCATH panel, glpG TM4 and the hybrid's barostat and rigid groups (plan.md Phase 35 item 11).
+  Usable now for soluble proteins on a V100, A100 or RTX6000 by `upside --gpu` in the GPU development tree; not yet in
+  the Upside 3 tree or the workflow scripts (plan.md Phase 35 "Resume here").
+  Per system step on full ff2.1 1ubq the V100 is 1.4 times faster than 4 CPU cores at 14 copies and 4.4 times at 112;
+  on the hybrid 11 to 22 times (findings 11g).
 * Waiting on the user: the side-chain model and the starting parameters of the base force field (section 7), and the
   other decisions of section 11.
 * Proposed 10-29 (user): side-chain pair tables coarse-grained from an all-atom force field, with only a correction
@@ -1979,7 +1990,8 @@ Verification ladder:
 * **V1. Per node, on static frames** (about 20 proteins x 10 frames, including misfolded globules and hybrid frames):
   energy within 1e-5 relative; force RMS within 1e-5; BP compared at a tight tolerance and at the production one.
 * **V2. Short dynamics:** KE/(1.5 kT), drift, C-N bond and angle distributions, per-term means; lipid diffusion and
-  area per lipid in the hybrid.
+  area per lipid in the hybrid. Each engine runs at several seeds and the error comes from their spread, since block
+  averages of one hybrid run understate it (findings 11g).
 * **V3. Ensembles,** on ff2.1 and ff3.1: REMD melting on the Peng set (the `bp_validation` harness), Q and Rg
   distributions, the mdCATH panel, glpG TM4.
 
@@ -1993,9 +2005,26 @@ Verification ladder:
 | d. OpenMM plugin, or a JAX/PyTorch rewrite | 4-12 person-months | high: OpenMM has no BP, no derived coordinates and no batching, and its refitted splines would be another force field (10.2); a rewrite is a second implementation |
 | d2. GPU for the dry-MARTINI pair loop only | 1-2 person-months | low; the hybrid only, at most about 7x |
 
-**Recommended: b with c.** `InteractionGraph<IType>` is already an evaluator pattern. Templating the evaluators on the
-scalar type gives one implementation for both backends, and removes today's split between the SIMD `compute_edge`
-and the scalar parameter derivative.
+**Decided 10-29 (user: "start implementing GPU for upside3"; plan approved): b with c, built as follows** (plan.md
+Phase 35 tracks it; the approved plan is `~/.claude/plans/swift-roaming-floyd.md`).
+* The CPU engine stays the reference and the host. A device engine (`device_engine.h`) is built from the constructed
+  CPU nodes of every system of a run, so it reads the same parameters and spline coefficients (V0 by construction).
+  Each node's `make_device` hands its data to its device implementation (`device_nodes.h`, `device_<family>.cu`).
+* One batch is every system of an `upside` process, flattened: each node's elements of all systems in one array,
+  every index offset into its input's array, so one launch per node evaluates every replica. Pairs never cross
+  systems; parameter tables are shared, and a run whose systems differ in them is refused.
+* The pair potentials (`IType::compute_edge`) and the 4x4 eigensolver are written once in the lane type (`Float4` on
+  the CPU, `float` on the device; `edge_params.h`, `hbond_interaction.h`, `environment_interaction.h`,
+  `bead_interaction.h`, `eig4.h`); scalar helpers carry `UPSIDE_HD`. Node loops are per backend.
+* The device files compile as C++ without CUDA (the host backend), so the device path is tested on the Mac.
+* Sums from many threads are 64-bit fixed point, so a GPU run repeats bit for bit; a non-finite term reads back NaN.
+* `upside --gpu` integrates on the device and returns the state to the CPU engines at frames, pivot moves and replica
+  exchange.
+* The hybrid (10-29): `martini_potential` keeps the CPU's candidate table, its non-zero pairs with the hybrid's static
+  filters applied once on the host, rather than a class-by-class index: the same pairs by construction, and glpG's
+  table is 8.3 M pairs. Each skin cache is a slab per particle of all its candidates, so it has no capacity to exceed.
+  The g-JF step, masses and fixed and z-fixed atoms run on the device; rigid groups (the preparation stages) and the
+  barostat are refused.
 
 1. [ ] G1: refactor the CPU engine into the single-source form, bitwise equal to the audited CPU engine, with the
    audit harnesses as its test. It waits on S1 (done) and the units option: A+ leaves the engine unchanged, while C
@@ -2024,15 +2053,16 @@ and the scalar parameter derivative.
 
 ### 10.4 Hardware
 
-* **midway2, measured.**
-  * Our account can use `gpu2`: 5 nodes of 4 Tesla K80; QOS of 4 GPUs, 36 h, 10 jobs; billing counts CPUs only.
-  * The K80 is Kepler, which CUDA 12 dropped, so it needs CUDA 11.x (`cuda/11.5` is the default module).
-  * The V100 node has been down since 2024-06. There are no Kokkos or OpenMM modules.
-  * Fit for correctness testing, not for speed.
-* **midway3, from RCC documentation, not measured.** The `gpu` partition has 1 node of 4 A100, 5 of 4 V100 and 5 of 4
-  RTX6000.
-* **beagle3, from RCC documentation.** 22 nodes of 4 A100 and 22 of 4 A40. RCC's documentation says beagle3 uses no
-  SUs, while CLAUDE.md says it bills the group's GPU allocation. Ask before any use.
+Measured 10-29 (findings 11g); the user's GPUs are midway2 `gpu2` and midway3 `gpu`, not beagle3 (10-29).
+* **midway2 `gpu2`:** 5 nodes of 4 Tesla K80 (sm_37), driver 460.32 (CUDA 11.2), Broadwell hosts; QOS 4 GPUs, 36 h, 10
+  jobs; billing counts CPUs only; the V100 node is down. The K80 needs CUDA 11 (`cuda/11.5`). Fit for correctness
+  testing, not for speed.
+* **midway3 `gpu`:** 5 nodes of 4 V100, 4 of 4 RTX6000 (one more down), 1 of 4 A100, Cascade Lake hosts; V100 driver
+  535 (CUDA 12.2); QOS 36 h, 16 GPUs, 4 nodes, pi-trsosnic. Short jobs start by backfill within the hour despite a
+  day-long estimate.
+* **One binary:** CUDA 11.5 on the midway2 login node, SASS for sm_37, 60, 70, 75, 80, 86 and PTX; it runs on both
+  drivers and, with the CUDA runtime linked statically, still loads on CPU-only nodes.
+* **beagle3** (22 nodes of 4 A100, 18 of 4 A40, pi-trsosnic allowed) is not used.
 
 ## 11. Decisions for the user
 
@@ -2046,6 +2076,8 @@ and the scalar parameter derivative.
 * 10-28: HDX first, then large proteins, then IDRs (1.2). No explicit electrostatic term (8.4.1).
 * 10-29: the GPU produces the current force fields' results, with no retraining and no force field of its own
   (10.2).
+* 10-29: start implementing the GPU, route b with c (10.3); test on midway2 `gpu2` and midway3 `gpu`, not beagle3;
+  the hybrid may be ported too.
 * 10-29: side-chain pair tables coarse-grained from an all-atom force field, with a correction trained (7.4). Each
   side chain stays one CG bead, with more tables for orientation and the like instead of a second bead. The
   correction is a table of the CG table's dimension, zero if the CG is exact. The all-atom reference, chosen at the
@@ -2069,7 +2101,7 @@ and the scalar parameter derivative.
 | 9 | S5 | HDX: the training mapping (6.3); how Ferrari et al.'s domain-level data enter (8.2); the base for H3 follows item 4 | 6.3, 8.2 |
 | 10 | S4, S5 | IDRs: whether to design I1 and when; Mac time on B1, and B2's form (longer runs or REMD) | 8.4 |
 | 11 | S7 | the refusal design (proposal) | 9.3 |
-| 12 | G | the route (b with c, prototype first); which GPUs (midway3 `gpu` under which account; beagle3 once its billing is clear); whether d2 is in scope | 10 |
+| 12 | G | answered 10-29: b with c, built (10.3); GPUs midway2 `gpu2` and midway3 `gpu` under pi-trsosnic, not beagle3; the hybrid in scope; the `hbond_energy` exact-zero test removed (A238) | 10 |
 | 13 | | the items of the running Upside 2 campaign that await a NO GUARDS ruling | 4.5 |
 | 14 | | the hybrid's scope: a product goal, or a validation case | 1.3 |
 | 15 | | the channel membrane potential: keep, smooth, or retire | 4.5 |

@@ -5,6 +5,7 @@
 
 extern "C" {
     struct DerivEngine;
+    struct DeviceGraph;
 
     // defined in main.h
     // int upside_main(int argc, const char* const char*)
@@ -26,6 +27,15 @@ extern "C" {
 
     int get_value_by_name(int n_output, float* output, DerivEngine* engine,
             const char* node_name, const char* log_name);
+
+    // The device engine (device_engine.h) of the systems of n_engine engines.  Positions and derivatives are
+    // (n_atom,3) per system, system after system; the potential is one per system.
+    DeviceGraph* construct_device_graph(int n_engine, DerivEngine** engines);
+    void free_device_graph(DeviceGraph* graph);
+    int device_describe(int n_char, char* description);
+    int device_evaluate(float* potential, float* deriv, DeviceGraph* graph, const float* pos);
+    int device_get_output(int n_output, float* output, DeviceGraph* graph, int system, const char* node_name);
+    int device_get_sens  (int n_output, float* sens,   DeviceGraph* graph, int system, const char* node_name);
 }
 
 #endif

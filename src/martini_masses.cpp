@@ -36,6 +36,12 @@ namespace martini_masses {
         return it->second[atom_index];
     }
     
+    std::vector<float> get_masses(DerivEngine* engine) {
+        std::lock_guard<std::mutex> lk(g_mass_mutex);
+        auto it = g_masses.find(engine);
+        return it == g_masses.end() ? std::vector<float>() : it->second;
+    }
+
     bool has_masses(DerivEngine* engine) {
         std::lock_guard<std::mutex> lk(g_mass_mutex);
         auto it = g_masses.find(engine);

@@ -2,7 +2,7 @@
 #define BEAD_INTERACTION_H
 
 #include "vector_math.h"
-#include "spline.h"
+#include "edge_params.h"
 
 // n_param is a constexpr member of each interaction type, which InteractionGraph takes as a template parameter,
 // so the knot counts of the side-chain splines are compile-time constants
@@ -18,24 +18,27 @@ namespace {
     inline Float4 angular_coord(const Float4& cos_angle, float inv_dtheta) {
         return (min(max(cos_angle, Float4(-1.f)), Float4(1.f)) + Float4(1.f))*Float4(inv_dtheta) + Float4(1.f);
     }
-    inline float angular_coord(float cos_angle, float inv_dtheta) {
-        return (std::min(std::max(cos_angle, -1.f), 1.f) + 1.f)*inv_dtheta + 1.f;
+    UPSIDE_HD inline float angular_coord(float cos_angle, float inv_dtheta) {
+        float c = cos_angle < -1.f ? -1.f : cos_angle;  // std::min(std::max(cos_angle, -1.f), 1.f)
+        c = 1.f < c ? 1.f : c;
+        return (c + 1.f)*inv_dtheta + 1.f;
     }
 
-    template<int n_knot_angular, int n_knot, int n_dim1, int n_dim2>
-        inline Float4 quadspline(
-                Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2,
-                const float inv_dtheta, const float inv_dx, const float* p[4],
-                const Vec<n_dim1,Float4> &x1, const Vec<n_dim2,Float4> &x2)
+    // S is the lane type (edge_params.h)
+    template<int n_knot_angular, int n_knot, int n_dim1, int n_dim2, typename S>
+        UPSIDE_HD inline S quadspline(
+                Vec<n_dim1,S> &d1, Vec<n_dim2,S> &d2,
+                const float inv_dtheta, const float inv_dx, EdgeParams<S> p,
+                const Vec<n_dim1,S> &x1, const Vec<n_dim2,S> &x2)
         {
-            Float4 one(1.f);
+            S one(1.f);
             auto displace = extract<0,3>(x2)-extract<0,3>(x1);
             auto rvec1 = extract<3,6>(x1);
             auto rvec2 = extract<3,6>(x2);
 
             auto dist2 = mag2(displace);
             auto inv_dist = rsqrt(dist2);
-            auto dist_coord = dist2*(inv_dist*Float4(inv_dx));
+            auto dist_coord = dist2*(inv_dist*S(inv_dx));
             auto displace_unitvec = inv_dist*displace;
 
             auto cos_cov_angle1 = dot(rvec1, displace_unitvec);
@@ -43,25 +46,25 @@ namespace {
 
             // Spline evaluation
             auto angular_sigmoid1 = deBoor_value_and_deriv(p,  angular_coord(cos_cov_angle1, inv_dtheta));
-            int o = n_knot_angular; const float* pp[4] = {p[0]+o, p[1]+o, p[2]+o, p[3]+o};
+            auto pp = p + n_knot_angular;
 
             auto angular_sigmoid2 = deBoor_value_and_deriv(pp, angular_coord(cos_cov_angle2, inv_dtheta));
-            o=n_knot_angular; pp[0]+=o; pp[1]+=o; pp[2]+=o; pp[3]+=o;
+            pp = pp + n_knot_angular;
 
             auto wide_cover   = clamped_deBoor_value_and_deriv(pp, dist_coord, n_knot);
-            o=n_knot; pp[0]+=o; pp[1]+=o; pp[2]+=o; pp[3]+=o;
+            pp = pp + n_knot;
 
             auto narrow_cover = clamped_deBoor_value_and_deriv(pp, dist_coord, n_knot);
 
             // Partition derivatives
             auto angular_weight = angular_sigmoid1.x() * angular_sigmoid2.x();
 
-            auto radial_deriv   = Float4(inv_dx    ) * (wide_cover.y() + angular_weight*narrow_cover.y());
-            auto angular_deriv1 = Float4(inv_dtheta) * angular_sigmoid1.y()*angular_sigmoid2.x()*narrow_cover.x();
-            auto angular_deriv2 = Float4(inv_dtheta) * angular_sigmoid1.x()*angular_sigmoid2.y()*narrow_cover.x();
+            auto radial_deriv   = S(inv_dx    ) * (wide_cover.y() + angular_weight*narrow_cover.y());
+            auto angular_deriv1 = S(inv_dtheta) * angular_sigmoid1.y()*angular_sigmoid2.x()*narrow_cover.x();
+            auto angular_deriv2 = S(inv_dtheta) * angular_sigmoid1.x()*angular_sigmoid2.y()*narrow_cover.x();
             // a cosine angular_coord holds at +/-1 does not enter the energy
-            angular_deriv1 = ternary((Float4(1.f)<cos_cov_angle1) | (cos_cov_angle1<Float4(-1.f)), Float4(0.f), angular_deriv1);
-            angular_deriv2 = ternary((Float4(1.f)<cos_cov_angle2) | (cos_cov_angle2<Float4(-1.f)), Float4(0.f), angular_deriv2);
+            angular_deriv1 = ternary((S(1.f)<cos_cov_angle1) | (cos_cov_angle1<S(-1.f)), S(0.f), angular_deriv1);
+            angular_deriv2 = ternary((S(1.f)<cos_cov_angle2) | (cos_cov_angle2<S(-1.f)), S(0.f), angular_deriv2);
 
             auto rXX = angular_deriv1*rvec1 - angular_deriv2*rvec2;
             auto deriv_dir = inv_dist * (rXX - dot(displace_unitvec,rXX)*displace_unitvec);
@@ -81,6 +84,7 @@ namespace {
             return coverage;
         }
 
+#ifndef __CUDACC__  // parameter derivatives are the CPU's (upside3.md 10.2)
     template<int n_knot_angular, int n_knot, int n_param, int n_dim1, int n_dim2>
         inline void quadspline_param_deriv(
                 Vec<n_param> &d_param,
@@ -90,20 +94,20 @@ namespace {
             d_param = make_zero<n_param>();
 
 
-            float3 displace = extract<0,3>(x2)-extract<0,3>(x1);
-            float3 rvec1 = extract<3,6>(x1);
-            float3 rvec2 = extract<3,6>(x2);
+            Vec<3> displace = extract<0,3>(x2)-extract<0,3>(x1);
+            Vec<3> rvec1 = extract<3,6>(x1);
+            Vec<3> rvec2 = extract<3,6>(x2);
 
             float  dist2 = mag2(displace);
             float  inv_dist = rsqrt(dist2);
             float  dist_coord = dist2*(inv_dist*inv_dx);
-            float3 displace_unitvec = inv_dist*displace;
+            Vec<3> displace_unitvec = inv_dist*displace;
 
             float  cos_cov_angle1 = dot(rvec1, displace_unitvec);
             float  cos_cov_angle2 = dot(rvec2,-displace_unitvec);
 
-            float2 angular_sigmoid1 = deBoor_value_and_deriv(p,                angular_coord(cos_cov_angle1, inv_dtheta));
-            float2 angular_sigmoid2 = deBoor_value_and_deriv(p+n_knot_angular, angular_coord(cos_cov_angle2, inv_dtheta));
+            Vec<2> angular_sigmoid1 = deBoor_value_and_deriv(p,                angular_coord(cos_cov_angle1, inv_dtheta));
+            Vec<2> angular_sigmoid2 = deBoor_value_and_deriv(p+n_knot_angular, angular_coord(cos_cov_angle2, inv_dtheta));
 
             // Each spline adds into d_param: at a cosine of +1 the angular spline's last bin reaches, with
             // weight 0, the first slot of the block after its own
@@ -119,7 +123,7 @@ namespace {
                 d_param[2*n_knot_angular+n_knot+starting_bin+i] += angular_sigmoid1.x()*angular_sigmoid2.x()*result[i];
 
             // angular_sigmoid derivatives
-            float2 narrow_cover = clamped_deBoor_value_and_deriv(p+2*n_knot_angular+n_knot, dist_coord, n_knot);
+            Vec<2> narrow_cover = clamped_deBoor_value_and_deriv(p+2*n_knot_angular+n_knot, dist_coord, n_knot);
 
             deBoor_coeff_deriv(&starting_bin, result, angular_coord(cos_cov_angle1, inv_dtheta));
             for(int i: range(4)) d_param[starting_bin+i] += angular_sigmoid2.x()*narrow_cover.x()*result[i];
@@ -128,6 +132,7 @@ namespace {
             for(int i: range(4))
                 d_param[n_knot_angular+starting_bin+i] += angular_sigmoid1.x()*narrow_cover.x()*result[i];
         }
+#endif
 
     constexpr static const int n_bit_rotamer = 4; // max number of rotamers is 2**n_bit_rotamer
 }
@@ -145,19 +150,23 @@ namespace {
             return (n_knot-2-1e-6)/inv_dx;  // 1e-6 insulates from roundoff
         }
 
-        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
+        template <typename I>  // Int4 on the CPU, int on the device
+        UPSIDE_HD static I acceptable_id_pair(const I& id1, const I& id2) {
             return id1 != id2;  // sequence ids: the beads of one residue do not pair
         }
 
-        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
-                const Vec<n_dim1,Float4> &sc_pos1, const Vec<n_dim2,Float4> &sc_pos2) {
+        template <typename S>
+        UPSIDE_HD static S compute_edge(Vec<n_dim1,S> &d1, Vec<n_dim2,S> &d2, EdgeParams<S> p,
+                const Vec<n_dim1,S> &sc_pos1, const Vec<n_dim2,S> &sc_pos2) {
             return quadspline<n_knot_angular, n_knot>(d1,d2, inv_dtheta,inv_dx,p, sc_pos1,sc_pos2);
         }
 
+#ifndef __CUDACC__
         static void param_deriv(Vec<n_param> &d_param, const float* p,
                 const Vec<n_dim1> &sc_pos1, const Vec<n_dim2> &sc_pos2) {
             quadspline_param_deriv<n_knot_angular, n_knot>(d_param, inv_dtheta,inv_dx,p, sc_pos1,sc_pos2);
         }
+#endif
 
         static bool is_compatible(const float* p1, const float* p2) {
             for(int nka: range(n_knot_angular))

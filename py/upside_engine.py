@@ -75,6 +75,24 @@ calc.get_output.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_char_p]
 calc.get_value_by_name.restype  = ct.c_int
 calc.get_value_by_name.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_char_p, ct.c_char_p]
 
+calc.construct_device_graph.restype  = ct.c_void_p
+calc.construct_device_graph.argtypes = [ct.c_int, ct.c_void_p]
+
+calc.free_device_graph.restype  = None
+calc.free_device_graph.argtypes = [ct.c_void_p]
+
+calc.device_describe.restype  = ct.c_int
+calc.device_describe.argtypes = [ct.c_int, ct.c_char_p]
+
+calc.device_evaluate.restype  = ct.c_int
+calc.device_evaluate.argtypes = [ct.c_void_p, ct.c_void_p, ct.c_void_p, ct.c_void_p]
+
+calc.device_get_output.restype  = ct.c_int
+calc.device_get_output.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_char_p]
+
+calc.device_get_sens.restype  = ct.c_int
+calc.device_get_sens.argtypes = [ct.c_int, ct.c_void_p, ct.c_void_p, ct.c_int, ct.c_char_p]
+
 
 def in_process_upside(args, verbose=True):
     # A bit of paranoia to make sure this doesn't interfere with python handlers
@@ -200,3 +218,46 @@ class Upside(object):
 
     def __del__(self):
         calc.free_deriv_engine(self.engine)
+
+
+def device_description():
+    buf = ct.create_string_buffer(1024)
+    if calc.device_describe(len(buf), buf): raise RuntimeError('Unable to describe the device')
+    return buf.value.decode()
+
+
+class DeviceUpside(object):
+    """The device engine (src/device_engine.h) of the systems of several Upside engines, which must share one
+    potential graph; it reads the engines' constructed nodes, so they must stay alive"""
+    def __init__(self, engines):
+        self.engines = list(engines)
+        ptrs = (ct.c_void_p*len(self.engines))(*[e.engine for e in self.engines])
+        self.graph = calc.construct_device_graph(len(self.engines), ptrs)
+        if self.graph is None: raise RuntimeError('Unable to build the device engine')
+
+    def evaluate(self, pos_list):
+        """the potential of each system and the derivative of each system's potential by its positions"""
+        pos = np.concatenate([np.require(p, dtype='f4', requirements='C') for p, e in zip(pos_list, self.engines)])
+        assert pos.shape == (sum(e.n_atom for e in self.engines), 3)
+        potential = np.zeros(len(self.engines), dtype='f4')
+        deriv = np.zeros_like(pos)
+        retcode = calc.device_evaluate(potential.ctypes.data, deriv.ctypes.data, self.graph, pos.ctypes.data)
+        if retcode: raise RuntimeError('Unable to evaluate the device engine')
+        bounds = np.cumsum([0]+[e.n_atom for e in self.engines])
+        return potential, [deriv[a:b] for a, b in zip(bounds[:-1], bounds[1:])]
+
+    def _rows(self, function, system, node_name):
+        shape = self.engines[system].get_output(node_name).shape
+        out = np.zeros(shape, dtype='f4')
+        retcode = function(int(np.prod(shape)), out.ctypes.data, self.graph, system, bytes(node_name, encoding="ascii"))
+        if retcode: raise RuntimeError('Unable to read node %s of the device engine' % node_name)
+        return out
+
+    def get_output(self, system, node_name):
+        return self._rows(calc.device_get_output, system, node_name)
+
+    def get_sens(self, system, node_name):
+        return self._rows(calc.device_get_sens, system, node_name)
+
+    def __del__(self):
+        calc.free_device_graph(self.graph)

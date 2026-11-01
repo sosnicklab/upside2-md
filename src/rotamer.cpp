@@ -12,6 +12,7 @@
 #include <set>
 #include "Float4.h"
 #include <functional>
+#include "device_nodes.h"
 
 using namespace std;
 using namespace h5;
@@ -1143,6 +1144,30 @@ struct RotamerSidechain: public PotentialNode {
     virtual std::vector<float> get_param_deriv() override {return igraph.get_param_deriv();}
 #endif
     virtual void set_param(const std::vector<float>& new_param) override {igraph.set_param(new_param);}
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        vector<const InteractionGraph<BT>*> igs;
+        vector<int> bead_n_rot, bead_residue, bead_rot, n_residue;
+        vector<DeviceCoord*> onebody;
+        for(auto pn: prob_nodes) onebody.push_back(&g.coord(*pn));
+        const unsigned selector = (1u<<n_bit_rotamer) - 1u;
+        for(auto s: systems) {
+            auto& n = static_cast<RotamerSidechain&>(*s);
+            if(n.damping != damping || n.max_iter != max_iter || n.tol != tol ||
+                    n.iteration_chunk_size != iteration_chunk_size)
+                throw string("the device engine shares rotamer's solver settings between systems");
+            igs.push_back(&n.igraph);
+            for(int nr: {1, 3, 6}) n_residue.push_back(n.n_elem_rot[nr]);
+            for(int i: range(n.igraph.n_elem1)) {
+                unsigned id = n.igraph.id1[i];
+                bead_rot.push_back(id & selector); id >>= n_bit_rotamer;
+                bead_n_rot.push_back(id & selector); id >>= n_bit_rotamer;
+                bead_residue.push_back(id);
+            }
+        }
+        return device_rotamer(g, g.potential_of(*this), device_interaction_data(g, igs), onebody, bead_n_rot,
+                bead_residue, bead_rot, n_residue, damping, max_iter, tol, iteration_chunk_size);
+    }
 };
 
 template <typename BT>

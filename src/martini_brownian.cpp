@@ -124,6 +124,14 @@ void set_brownian_invocations(DerivEngine* engine, uint64_t n_invocations) {
     if(it != runtime_map().end()) it->second->n_invocations = n_invocations;
 }
 
+Settings get_settings(DerivEngine* engine) {
+    auto it = runtime_map().find(engine);
+    if(it == runtime_map().end()) throw string("the engine has no g-JF integrator (/input/brownian)");
+    const BrownianRuntime& rt = *it->second;
+    return Settings{rt.atom_index, rt.friction, rt.temperature, rt.time_step, rt.reference_temperature,
+                    rt.random_seed, rt.n_invocations, rt.n_inner_steps};
+}
+
 void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
     auto it = runtime_map().find(engine);
     if(it == runtime_map().end()) return;
@@ -175,9 +183,11 @@ void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt) {
                 f.z() = 0.f;
                 p.z() = 0.f;
             }
+            // x + b dt/m (p + dt/2 f + beta/2), one rounding at the coordinate: the force and noise terms are often
+            // below half an ulp of a coordinate tens of A from the origin, and added to it one by one they would
+            // round away against the force and heat the bath (findings 11g)
             auto x = load_vec<3>(pos_out, atom);
-            store_vec(pos_out, atom, x + (b*dt_i/m)*p + (b*dt_i*dt_i/(2.f*m))*f
-                                      + (b*dt_i/(2.f*m))*beta);
+            store_vec(pos_out, atom, x + (b*dt_i/m)*(p + (0.5f*dt_i)*f + 0.5f*beta));
             fn[3*i] = f.x();
             fn[3*i+1] = f.y();
             fn[3*i+2] = f.z();

@@ -2,6 +2,7 @@
 #include "timing.h"
 #include "spline.h"
 #include "state_logger.h"
+#include "device_nodes.h"
 
 using namespace h5;
 using namespace std;
@@ -104,6 +105,18 @@ struct RamaMapPot : public PotentialNode
         throw string("the Ramachandran map parameter derivative is not implemented");
     }
 #endif
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto param = [&](int ns) -> const vector<RamaMapParams>& {return static_cast<RamaMapPot&>(*systems[ns]).params;};
+        for(auto s: systems)
+            if(static_cast<RamaMapPot&>(*s).rama_pot != rama_pot)
+                throw string("the device engine shares rama_map_pot's maps between systems");
+        return device_rama_map_pot(g.potential_of(*this), g.coord(rama),
+                g.offset_index(rama, [&](int ns) {vector<int> r; for(auto& p: param(ns)) r.push_back(p.residue); return r;}),
+                g.concat<int>([&](int ns) {vector<int> r; for(auto& p: param(ns)) r.push_back(p.rama_map_id); return r;}),
+                rama_map_data.coefficients, rama_map_data.nx, rama_map_data.ny,
+                g.concat<int>([&](int ns) {return vector<int>(param(ns).size(), ns);}));
+    }
 };
 static RegisterNodeType<RamaMapPot,1> rama_map_pot_node("rama_map_pot");
 

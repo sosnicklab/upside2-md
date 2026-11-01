@@ -9,23 +9,31 @@
 #include <algorithm>
 #include "Float4.h"
 
+// Functions marked UPSIDE_HD are also compiled for the GPU by the device files (device_*.cu); the host compiler
+// sees an empty qualifier.
+#ifdef __CUDACC__
+#define UPSIDE_HD __host__ __device__
+#else
+#define UPSIDE_HD
+#endif
+
 static constexpr int default_alignment=4; // suitable for SSE
 static constexpr long long default_alignment_long=4; // suitable for SSE
 
 // the function below is used to allow a version of max to be called in a constexpr context
-constexpr inline int maxint(int i, int j) {
+constexpr UPSIDE_HD inline int maxint(int i, int j) {
     return (i>j) ? i : j;
 }
 
-constexpr inline int round_up(int i, int alignment) {
+constexpr UPSIDE_HD inline int round_up(int i, int alignment) {
     return ((i+alignment-1)/alignment)*alignment; // probably alignment is a power of 2
 }
 
-constexpr inline long long round_up(long long i, long long alignment) {
+constexpr UPSIDE_HD inline long long round_up(long long i, long long alignment) {
     return ((i+alignment-1)/alignment)*alignment; // probably alignment is a power of 2
 }
 
-constexpr inline int ru(int i) {
+constexpr UPSIDE_HD inline int ru(int i) {
     return i==1 ? i : round_up(i,4);
 }
 
@@ -54,16 +62,16 @@ struct VecArray {
     float* x;
     int row_width;
 
-    VecArray(): x(nullptr), row_width(0) {}
+    UPSIDE_HD VecArray(): x(nullptr), row_width(0) {}
 
-    VecArray(float* x_, int row_width_):
+    UPSIDE_HD VecArray(float* x_, int row_width_):
         x(x_), row_width(row_width_) {}
 
-    float& operator()(int i_comp, int i_elem) {
+    UPSIDE_HD float& operator()(int i_comp, int i_elem) {
         return x[i_comp+ i_elem*row_width];
     }
 
-    const float& operator()(int i_comp, int i_elem) const {
+    UPSIDE_HD const float& operator()(int i_comp, int i_elem) const {
         return x[i_comp + i_elem*row_width];
     }
 };
@@ -165,25 +173,28 @@ struct
      typedef ScalarT scalar_t;
      ScalarT v[ndim>=1 ? ndim : 1];  // avoid 0-size arrays since this is not allowed
 
-     ScalarT&       x()       {return           v[0];}
-     const ScalarT& x() const {return           v[0];}
-     ScalarT&       y()       {return ndim>=1 ? v[1] : v[0];}
-     const ScalarT& y() const {return ndim>=1 ? v[1] : v[0];}
-     ScalarT&       z()       {return ndim>=2 ? v[2] : v[0];}
-     const ScalarT& z() const {return ndim>=2 ? v[2] : v[0];}
-     ScalarT&       w()       {return ndim>=3 ? v[3] : v[0];}
-     const ScalarT& w() const {return ndim>=3 ? v[3] : v[0];}
+     UPSIDE_HD ScalarT&       x()       {return           v[0];}
+     UPSIDE_HD const ScalarT& x() const {return           v[0];}
+     UPSIDE_HD ScalarT&       y()       {return ndim>=1 ? v[1] : v[0];}
+     UPSIDE_HD const ScalarT& y() const {return ndim>=1 ? v[1] : v[0];}
+     UPSIDE_HD ScalarT&       z()       {return ndim>=2 ? v[2] : v[0];}
+     UPSIDE_HD const ScalarT& z() const {return ndim>=2 ? v[2] : v[0];}
+     UPSIDE_HD ScalarT&       w()       {return ndim>=3 ? v[3] : v[0];}
+     UPSIDE_HD const ScalarT& w() const {return ndim>=3 ? v[3] : v[0];}
 
-     ScalarT& operator[](int i) {return v[i];}
-     const ScalarT& operator[](int i) const {return v[i];}
+     UPSIDE_HD ScalarT& operator[](int i) {return v[i];}
+     UPSIDE_HD const ScalarT& operator[](int i) const {return v[i];}
  };
 
+// CUDA has its own float2, float3, float4 and int3, so the device files and the headers they share spell Vec<N>
+#ifndef __CUDACC__
 typedef Vec<1,float> float1;
 typedef Vec<2,float> float2;
 typedef Vec<3,float> float3;
 typedef Vec<4,float> float4;
 
 typedef Vec<3,  int>   int3;
+#endif
 
 // template <int D>
 // inline Vec<D,float> load_vec(const VecArray& a, int idx) {
@@ -194,7 +205,7 @@ typedef Vec<3,  int>   int3;
 // }
 
 template <int D>
-inline Vec<D,float> load_vec(const VecArray& a, int idx) {
+UPSIDE_HD inline Vec<D,float> load_vec(const VecArray& a, int idx) {
     Vec<D,float> r;
     #pragma unroll
     for(int d=0; d<D; ++d) r[d] = a(d,idx);
@@ -202,7 +213,7 @@ inline Vec<D,float> load_vec(const VecArray& a, int idx) {
 }
 
 template<int D>
-inline Vec<D,float> load_vec(const float* a) {
+UPSIDE_HD inline Vec<D,float> load_vec(const float* a) {
     Vec<D,float> r;
     #pragma unroll
     for(int d=0; d<D; ++d) r[d] = a[d];
@@ -224,13 +235,13 @@ inline void store_vec(VecArrayStorage& a, int idx, const Vec<D,float>& r) {
 }
 
 template <int D>
-inline void store_vec(VecArray& a, int idx, const Vec<D,float>& r) {
+UPSIDE_HD inline void store_vec(VecArray& a, int idx, const Vec<D,float>& r) {
     #pragma unroll
     for(int d=0; d<D; ++d) a(d,idx) = r[d];
 }
 
 template <int D>
-inline void store_vec(float* a, const Vec<D,float>& r) {
+UPSIDE_HD inline void store_vec(float* a, const Vec<D,float>& r) {
     #pragma unroll
     for(int d=0; d<D; ++d) a[d] = r[d];
 }
@@ -242,63 +253,66 @@ inline void store_vec(float* a, const Vec<D,Float4>& r, Alignment align=Alignmen
 }
 
 template <int D, typename multype>
-inline void update_vec_scale(VecArray a, int idx, const multype &r) {
+UPSIDE_HD inline void update_vec_scale(VecArray a, int idx, const multype &r) {
     store_vec(a,idx, load_vec<D>(a,idx) * r);
 }
 
 template <int D, typename VArray>
-inline void update_vec(VArray& a, int idx, const Vec<D> &r) {
+UPSIDE_HD inline void update_vec(VArray& a, int idx, const Vec<D> &r) {
     store_vec(a,idx, load_vec<D>(a,idx) + r);
 }
 
 template <int D>
-inline void update_vec(float* a, const Vec<D> &r) {
+UPSIDE_HD inline void update_vec(float* a, const Vec<D> &r) {
     store_vec(a, load_vec<D>(a) + r);
 }
 
 
 //! Get component of vector by index
 
-static const float M_PI_F   = 3.141592653589793f;   //!< value of pi as float
-static const float M_1_PI_F = 0.3183098861837907f;  //!< value of 1/pi as float
+static constexpr float M_PI_F   = 3.141592653589793f;   //!< value of pi as float
+static constexpr float M_1_PI_F = 0.3183098861837907f;  //!< value of 1/pi as float
 
-inline float approx_rsqrt(float x) {return 1.f/sqrtf(x);}  //!< reciprocal square root at lower accuracy
-inline float rsqrt(float x) {return 1.f/sqrtf(x);}  //!< reciprocal square root (1/sqrt(x))
-template <typename D> constexpr inline D sqr(D x) {return x*x;}  //!< square a number (x^2)
-inline float rcp       (float x) {return 1.f/x;}  //!< reciprocal of number
-inline float approx_rcp(float x) {return 1.f/x;}  //!< reciprocal of number
-inline float ternary(bool b, float x, float y) {return b ? x : y;}
+UPSIDE_HD inline float approx_rsqrt(float x) {return 1.f/sqrtf(x);}  //!< reciprocal square root at lower accuracy
+#ifndef __CUDACC__  // CUDA has its own rsqrt(float): rsqrtf on the device
+UPSIDE_HD inline float rsqrt(float x) {return 1.f/sqrtf(x);}  //!< reciprocal square root (1/sqrt(x))
+#endif
+template <typename D> constexpr UPSIDE_HD inline D sqr(D x) {return x*x;}  //!< square a number (x^2)
+UPSIDE_HD inline float rcp       (float x) {return 1.f/x;}  //!< reciprocal of number
+UPSIDE_HD inline float approx_rcp(float x) {return 1.f/x;}  //!< reciprocal of number
+UPSIDE_HD inline float ternary(bool b, float x, float y) {return b ? x : y;}
+UPSIDE_HD inline float extract_float(float x) {return x;}  //!< scalar counterpart of extract_float(Float4)
 
 template <int D, typename S>
-inline Vec<D,S> vec_rcp(const Vec<D,S>& x) {
+UPSIDE_HD inline Vec<D,S> vec_rcp(const Vec<D,S>& x) {
     Vec<D,S> y;
     for(int i=0; i<D; ++i) y[i] = rcp(x[i]);
     return y;
 }
 
 template <int D, typename S>
-inline Vec<D,S> approx_vec_rcp(const Vec<D,S>& x) {
+UPSIDE_HD inline Vec<D,S> approx_vec_rcp(const Vec<D,S>& x) {
     Vec<D,S> y;
     for(int i=0; i<D; ++i) y[i] = approx_rcp(x[i]);
     return y;
 }
 
 template <int D, typename S> 
-inline Vec<D, int> vec_floor(const Vec<D,S>& x) {
+UPSIDE_HD inline Vec<D, int> vec_floor(const Vec<D,S>& x) {
     Vec<D, int> y;
     for(int i=0; i<D; ++i) y[i] = floor(x[i]);
     return y;
 }
 
 template <int D, typename S> 
-inline Vec<D, int> vec_round(const Vec<D,S>& x) {
+UPSIDE_HD inline Vec<D, int> vec_round(const Vec<D,S>& x) {
     Vec<D, int> y;
     for(int i=0; i<D; ++i) y[i] = round(x[i]);
     return y;
 }
 
 template <int D, typename S> 
-inline Vec<D, int> vec_ceil(const Vec<D,S>& x) {
+UPSIDE_HD inline Vec<D, int> vec_ceil(const Vec<D,S>& x) {
     Vec<D, int> y;
     for(int i=0; i<D; ++i) y[i] = ceil(x[i]);
     return y;
@@ -307,46 +321,46 @@ inline Vec<D, int> vec_ceil(const Vec<D,S>& x) {
 
 // FIXME more general blendv needed
 template <int D>
-inline Vec<D,float> blendv(bool which, const Vec<D,float>& a, const Vec<D,float>& b) {
+UPSIDE_HD inline Vec<D,float> blendv(bool which, const Vec<D,float>& a, const Vec<D,float>& b) {
     return which ? a : b;
 }
 
 
 
 
-template<typename S> inline Vec<1,S> make_vec1(const S& x                                    ) {Vec<1,S> a; a[0]=x;                         return a;}
-template<typename S> inline Vec<2,S> make_vec2(const S& x, const S& y                        ) {Vec<2,S> a; a[0]=x; a[1]=y;                 return a;}
-template<typename S> inline Vec<3,S> make_vec3(const S& x, const S& y, const S& z            ) {Vec<3,S> a; a[0]=x; a[1]=y; a[2]=z;         return a;}
-template<typename S> inline Vec<4,S> make_vec4(const S& x, const S& y, const S& z, const S& w) {Vec<4,S> a; a[0]=x; a[1]=y; a[2]=z; a[3]=w; return a;}
+template<typename S> UPSIDE_HD inline Vec<1,S> make_vec1(const S& x                                    ) {Vec<1,S> a; a[0]=x;                         return a;}
+template<typename S> UPSIDE_HD inline Vec<2,S> make_vec2(const S& x, const S& y                        ) {Vec<2,S> a; a[0]=x; a[1]=y;                 return a;}
+template<typename S> UPSIDE_HD inline Vec<3,S> make_vec3(const S& x, const S& y, const S& z            ) {Vec<3,S> a; a[0]=x; a[1]=y; a[2]=z;         return a;}
+template<typename S> UPSIDE_HD inline Vec<4,S> make_vec4(const S& x, const S& y, const S& z, const S& w) {Vec<4,S> a; a[0]=x; a[1]=y; a[2]=z; a[3]=w; return a;}
 //! make float4 from float3 (as x,y,z) and scalar (as w)
-inline float4 make_vec4(float3 v, float w) { return make_vec4(v.x(),v.y(),v.z(),w); } 
+UPSIDE_HD inline Vec<4> make_vec4(Vec<3> v, float w) { return make_vec4(v.x(),v.y(),v.z(),w); } 
 
-inline float3 xyz(const float4& x) { return make_vec3(x.x(),x.y(),x.z()); } //!< return x,y,z as float3 from a float4
+UPSIDE_HD inline Vec<3> xyz(const Vec<4>& x) { return make_vec3(x.x(),x.y(),x.z()); } //!< return x,y,z as float3 from a float4
 
 //! \cond
 template <int D, typename S> 
-inline Vec<D,S> operator+(const Vec<D,S>& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S> operator+(const Vec<D,S>& a, const Vec<D,S>& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a[i]+b[i];
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator-(const Vec<D,S>& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S> operator-(const Vec<D,S>& a, const Vec<D,S>& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a[i]-b[i];
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator*(const Vec<D,S>& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S> operator*(const Vec<D,S>& a, const Vec<D,S>& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a[i]*b[i];
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator/(const Vec<D,S>& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S> operator/(const Vec<D,S>& a, const Vec<D,S>& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a[i]/b[i];
@@ -355,28 +369,28 @@ inline Vec<D,S> operator/(const Vec<D,S>& a, const Vec<D,S>& b) {
 
 
 template <int D, typename S> 
-inline Vec<D,S> operator+(const S& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S> operator+(const S& a, const Vec<D,S>& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a   +b[i];
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator-(const S& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S> operator-(const S& a, const Vec<D,S>& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a   -b[i];
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator*(const S& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S> operator*(const S& a, const Vec<D,S>& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a   *b[i];
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator/(const S& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S> operator/(const S& a, const Vec<D,S>& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a   /b[i];
@@ -385,28 +399,28 @@ inline Vec<D,S> operator/(const S& a, const Vec<D,S>& b) {
 
 
 template <int D, typename S> 
-inline Vec<D,S> operator+(const Vec<D,S>& a, const S& b) {
+UPSIDE_HD inline Vec<D,S> operator+(const Vec<D,S>& a, const S& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a[i]+b;
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator-(const Vec<D,S>& a, const S& b) {
+UPSIDE_HD inline Vec<D,S> operator-(const Vec<D,S>& a, const S& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a[i]-b;
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator*(const Vec<D,S>& a, const S& b) {
+UPSIDE_HD inline Vec<D,S> operator*(const Vec<D,S>& a, const S& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a[i]*b;
     return c;
 }
 template <int D, typename S> 
-inline Vec<D,S> operator/(const Vec<D,S>& a, const S& b) {
+UPSIDE_HD inline Vec<D,S> operator/(const Vec<D,S>& a, const S& b) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = a[i]/b;
@@ -415,25 +429,25 @@ inline Vec<D,S> operator/(const Vec<D,S>& a, const S& b) {
 
 
 template <int D, typename S> 
-inline Vec<D,S>& operator+=(Vec<D,S>& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S>& operator+=(Vec<D,S>& a, const Vec<D,S>& b) {
     #pragma unroll
     for(int i=0; i<D; ++i) a[i]+=b[i];
     return a;
 }
 template <int D, typename S> 
-inline Vec<D,S>& operator-=(Vec<D,S>& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S>& operator-=(Vec<D,S>& a, const Vec<D,S>& b) {
     #pragma unroll
     for(int i=0; i<D; ++i) a[i]-=b[i];
     return a;
 }
 template <int D, typename S> 
-inline Vec<D,S>& operator*=(Vec<D,S>& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S>& operator*=(Vec<D,S>& a, const Vec<D,S>& b) {
     #pragma unroll
     for(int i=0; i<D; ++i) a[i]*=b[i];
     return a;
 }
 template <int D, typename S> 
-inline Vec<D,S>& operator/=(Vec<D,S>& a, const Vec<D,S>& b) {
+UPSIDE_HD inline Vec<D,S>& operator/=(Vec<D,S>& a, const Vec<D,S>& b) {
     #pragma unroll
     for(int i=0; i<D; ++i) a[i]/=b[i];
     return a;
@@ -441,25 +455,25 @@ inline Vec<D,S>& operator/=(Vec<D,S>& a, const Vec<D,S>& b) {
 
 
 template <int D, typename S> 
-inline Vec<D,S>& operator+=(Vec<D,S>& a, const S& b) {
+UPSIDE_HD inline Vec<D,S>& operator+=(Vec<D,S>& a, const S& b) {
     #pragma unroll
     for(int i=0; i<D; ++i) a[i]+=b;
     return a;
 }
 template <int D, typename S> 
-inline Vec<D,S>& operator-=(Vec<D,S>& a, const S& b) {
+UPSIDE_HD inline Vec<D,S>& operator-=(Vec<D,S>& a, const S& b) {
     #pragma unroll
     for(int i=0; i<D; ++i) a[i]-=b;
     return a;
 }
 template <int D, typename S> 
-inline Vec<D,S>& operator*=(Vec<D,S>& a, const S& b) {
+UPSIDE_HD inline Vec<D,S>& operator*=(Vec<D,S>& a, const S& b) {
     #pragma unroll
     for(int i=0; i<D; ++i) a[i]*=b;
     return a;
 }
 template <int D, typename S> 
-inline Vec<D,S>& operator/=(Vec<D,S>& a, const S& b) {
+UPSIDE_HD inline Vec<D,S>& operator/=(Vec<D,S>& a, const S& b) {
     #pragma unroll
     for(int i=0; i<D; ++i) a[i]/=b;
     return a;
@@ -467,7 +481,7 @@ inline Vec<D,S>& operator/=(Vec<D,S>& a, const S& b) {
 
 
 template <int D, typename S> 
-inline Vec<D,S> operator-(const Vec<D,S>& a) {
+UPSIDE_HD inline Vec<D,S> operator-(const Vec<D,S>& a) {
     Vec<D,S> c;
     #pragma unroll
     for(int i=0; i<D; ++i) c[i] = -a[i];
@@ -485,37 +499,37 @@ inline Vec<D,S> operator-(const Vec<D,S>& a) {
  * float / int =>  float / float = float
  * int / int                     = int
  */
-inline float3 operator+(const float3& a, const   int3& b){float3 c; c[0] = a[0]+b[0]; c[1] = a[1]+b[1]; c[2] = a[2]+b[2]; return c;}
-inline float3 operator+(const   int3& a, const float3& b){float3 c; c[0] = a[0]+b[0]; c[1] = a[1]+b[1]; c[2] = a[2]+b[2]; return c;}
+UPSIDE_HD inline Vec<3> operator+(const Vec<3>& a, const Vec<3,int>& b){Vec<3> c; c[0] = a[0]+b[0]; c[1] = a[1]+b[1]; c[2] = a[2]+b[2]; return c;}
+UPSIDE_HD inline Vec<3> operator+(const Vec<3,int>& a, const Vec<3>& b){Vec<3> c; c[0] = a[0]+b[0]; c[1] = a[1]+b[1]; c[2] = a[2]+b[2]; return c;}
 
-inline float3 operator-(const float3& a, const   int3& b){float3 c; c[0] = a[0]-b[0]; c[1] = a[1]-b[1]; c[2] = a[2]-b[2]; return c;}
-inline float3 operator-(const   int3& a, const float3& b){float3 c; c[0] = a[0]-b[0]; c[1] = a[1]-b[1]; c[2] = a[2]-b[2]; return c;}
+UPSIDE_HD inline Vec<3> operator-(const Vec<3>& a, const Vec<3,int>& b){Vec<3> c; c[0] = a[0]-b[0]; c[1] = a[1]-b[1]; c[2] = a[2]-b[2]; return c;}
+UPSIDE_HD inline Vec<3> operator-(const Vec<3,int>& a, const Vec<3>& b){Vec<3> c; c[0] = a[0]-b[0]; c[1] = a[1]-b[1]; c[2] = a[2]-b[2]; return c;}
 
-inline float3 operator*(const float3& a, const   int3& b){float3 c; c[0] = a[0]*b[0]; c[1] = a[1]*b[1]; c[2] = a[2]*b[2]; return c;}
-inline float3 operator*(const   int3& a, const float3& b){float3 c; c[0] = a[0]*b[0]; c[1] = a[1]*b[1]; c[2] = a[2]*b[2]; return c;}
+UPSIDE_HD inline Vec<3> operator*(const Vec<3>& a, const Vec<3,int>& b){Vec<3> c; c[0] = a[0]*b[0]; c[1] = a[1]*b[1]; c[2] = a[2]*b[2]; return c;}
+UPSIDE_HD inline Vec<3> operator*(const Vec<3,int>& a, const Vec<3>& b){Vec<3> c; c[0] = a[0]*b[0]; c[1] = a[1]*b[1]; c[2] = a[2]*b[2]; return c;}
 
-inline float3 operator/(const float3& a, const   int3& b){float3 c; c[0] = a[0]/b[0]; c[1] = a[1]/b[1]; c[2] = a[2]/b[2]; return c;}
-inline float3 operator/(const   int3& a, const float3& b){float3 c; c[0] = a[0]/b[0]; c[1] = a[1]/b[1]; c[2] = a[2]/b[2]; return c;}
+UPSIDE_HD inline Vec<3> operator/(const Vec<3>& a, const Vec<3,int>& b){Vec<3> c; c[0] = a[0]/b[0]; c[1] = a[1]/b[1]; c[2] = a[2]/b[2]; return c;}
+UPSIDE_HD inline Vec<3> operator/(const Vec<3,int>& a, const Vec<3>& b){Vec<3> c; c[0] = a[0]/b[0]; c[1] = a[1]/b[1]; c[2] = a[2]/b[2]; return c;}
 
 //! \endcond
 
 // FIXME how to handle sqrtf, rsqrtf for simd types?
 // I will assume there are functions rsqrt(s) and rcp(s) and sqrt(s) and I will write sqr(s)
 
-template <typename S> inline S zero() {return S(0.f);} 
-template <typename S> inline S one () {return S(1.f);} 
-template <typename S> inline S two () {return S(2.f);} 
-template <typename S> inline S half() {return S(0.5f);} 
+template <typename S> UPSIDE_HD inline S zero() {return S(0.f);} 
+template <typename S> UPSIDE_HD inline S one () {return S(1.f);} 
+template <typename S> UPSIDE_HD inline S two () {return S(2.f);} 
+template <typename S> UPSIDE_HD inline S half() {return S(0.5f);} 
 
 template <int D, typename S = float>
-inline Vec<D,S> make_zero() {
+UPSIDE_HD inline Vec<D,S> make_zero() {
     Vec<D,S> ret;
     for(int i=0; i<D; ++i) ret[i] = zero<S>();
     return ret;
 }
 
 template <int D, typename S = float>
-inline Vec<D,S> make_one () {
+UPSIDE_HD inline Vec<D,S> make_one () {
     Vec<D,S> ret;
     for(int i=0; i<D; ++i) ret[i] = one <S>();
     return ret;
@@ -524,7 +538,7 @@ inline Vec<D,S> make_one () {
 
 
 template<int start_loc, int stop_loc, int D, typename S>
-inline Vec<stop_loc-start_loc,S> extract(const Vec<D,S>& x) {
+UPSIDE_HD inline Vec<stop_loc-start_loc,S> extract(const Vec<D,S>& x) {
     static_assert(0<=start_loc, "extract start must be non-negative");
     static_assert(start_loc<=stop_loc, "extract start must be <= extract stop");
     static_assert(stop_loc<=D, "extract stop must be <= dimension");
@@ -536,7 +550,7 @@ inline Vec<stop_loc-start_loc,S> extract(const Vec<D,S>& x) {
 }
 
 template<int start_loc, int stop_loc, int D, typename S>
-inline void store(Vec<D,S>& x, const Vec<stop_loc-start_loc,S> &y) {
+UPSIDE_HD inline void store(Vec<D,S>& x, const Vec<stop_loc-start_loc,S> &y) {
     static_assert(0<=start_loc, "extract start must be non-negative");
     static_assert(start_loc<=stop_loc, "extract start must be <= extract stop");
     static_assert(stop_loc<=D, "extract stop must be <= dimension");
@@ -553,12 +567,12 @@ inline void store(Vec<D,S>& x, const Vec<stop_loc-start_loc,S> &y) {
 //     return m;
 // }
 
-inline float fmadd(float a, float b, float c) {
+UPSIDE_HD inline float fmadd(float a, float b, float c) {
     return a*b+c;
 }
 
 template <int D, typename S>
-inline S mag2(const Vec<D,S>& a) {
+UPSIDE_HD inline S mag2(const Vec<D,S>& a) {
     // not valid for length-0 vectors
     S m = a[0]*a[0];
     #pragma unroll
@@ -567,22 +581,22 @@ inline S mag2(const Vec<D,S>& a) {
 }
 
 template <int ndim, typename S>
-inline S inv_mag(const Vec<ndim,S>& a) {
+UPSIDE_HD inline S inv_mag(const Vec<ndim,S>& a) {
     return rsqrt(mag2(a));
 }
 
 template <int ndim, typename S>
-inline S inv_mag2(const Vec<ndim,S>& a) {
+UPSIDE_HD inline S inv_mag2(const Vec<ndim,S>& a) {
     return rcp(mag2(a));
 }
 
 template <int ndim, typename S>
-inline S mag(const Vec<ndim,S>& a) {
+UPSIDE_HD inline S mag(const Vec<ndim,S>& a) {
     return sqrtf(mag2(a));
 }
 
 template <int D, typename S>
-inline S sum(const Vec<D,S>& a) {
+UPSIDE_HD inline S sum(const Vec<D,S>& a) {
     S m = a[0];
     #pragma unroll
     for(int i=1; i<D; ++i) m += a[i];
@@ -591,7 +605,7 @@ inline S sum(const Vec<D,S>& a) {
 
 // derivative of (v/v_mag), which is otherwise know as a hat vector
 template<typename S>
-inline void
+UPSIDE_HD inline void
 hat_deriv(
         const Vec<3,S>& v_hat, const S& v_invmag, 
         Vec<3,S> &col0, Vec<3,S> &col1, Vec<3,S> &col2) // matrix is symmetric, so these are rows or cols
@@ -607,7 +621,7 @@ hat_deriv(
 
 //! cross-product of the vectors a and b
 template <typename S>
-inline Vec<3,S> cross(const Vec<3,S>& a, const Vec<3,S>& b){
+UPSIDE_HD inline Vec<3,S> cross(const Vec<3,S>& a, const Vec<3,S>& b){
     Vec<3,S> c;
     c[0] = a.y()*b.z() - a.z()*b.y();
     c[1] = a.z()*b.x() - a.x()*b.z();
@@ -616,16 +630,16 @@ inline Vec<3,S> cross(const Vec<3,S>& a, const Vec<3,S>& b){
 }
 
 template <int D, typename S>
-inline Vec<D,S> normalized(const Vec<D,S>& a) { return a*inv_mag(a); }
+UPSIDE_HD inline Vec<D,S> normalized(const Vec<D,S>& a) { return a*inv_mag(a); }
 
 template <int D, typename S>
-inline Vec<D,S> approx_normalized(const Vec<D,S>& a) {return a*approx_rsqrt(mag2(a)); }
+UPSIDE_HD inline Vec<D,S> approx_normalized(const Vec<D,S>& a) {return a*approx_rsqrt(mag2(a)); }
 
 template <int D, typename S>
-inline Vec<D,S> prob_normalized(const Vec<D,S>& a) { return a*rcp(sum(a)); }
+UPSIDE_HD inline Vec<D,S> prob_normalized(const Vec<D,S>& a) { return a*rcp(sum(a)); }
 
 template <int D, typename S>
-inline S dot(const Vec<D,S>& a, const Vec<D,S>& b){
+UPSIDE_HD inline S dot(const Vec<D,S>& a, const Vec<D,S>& b){
     S c = a[0]*b[0];
     #pragma unroll
     for(int i=1; i<D; ++i) c = fmadd(a[i],b[i], c);
@@ -634,7 +648,7 @@ inline S dot(const Vec<D,S>& a, const Vec<D,S>& b){
 
 
 template <int D, typename S>
-Vec<D,S> left_multiply_matrix(Vec<D*D,S> m, Vec<D,S> v) {
+UPSIDE_HD Vec<D,S> left_multiply_matrix(Vec<D*D,S> m, Vec<D,S> v) {
     Vec<D,S> mv;
     for(int i=0; i<D; ++i) {
         auto x = m[i*D+0]*v[0];
@@ -646,7 +660,7 @@ Vec<D,S> left_multiply_matrix(Vec<D*D,S> m, Vec<D,S> v) {
 }
 
 template <int D, typename S>
-Vec<D,S> right_multiply_matrix(Vec<D,S> v, Vec<D*D,S> m) {
+UPSIDE_HD Vec<D,S> right_multiply_matrix(Vec<D,S> v, Vec<D*D,S> m) {
     Vec<D,S> vm;
     for(int j=0; j<D; ++j) {
         auto x = v[0]*m[0*D+j];
@@ -658,7 +672,7 @@ Vec<D,S> right_multiply_matrix(Vec<D,S> v, Vec<D*D,S> m) {
 }
 
 template <int D, typename S>
-S min(Vec<D,S> y) {
+UPSIDE_HD S min(Vec<D,S> y) {
     using namespace std;
     S x = y[0];
     // for(int i=1; i<D; ++i) x = ternary((y[i]<x), y[i], x);
@@ -667,7 +681,7 @@ S min(Vec<D,S> y) {
 }
 
 template <int D, typename S>
-S max(Vec<D,S> y) {
+UPSIDE_HD S max(Vec<D,S> y) {
     using namespace std;
     S x = y[0];
     // for(int i=1; i<D; ++i) x = ternary((x<=y[i]), y[i], x);
@@ -681,20 +695,29 @@ S max(Vec<D,S> y) {
 //! Value of function is 1/(1+exp(-x)) and the derivative is 
 //! exp(x)/(1+exp(x))^2
 template <typename S>
-inline Vec<2,S> sigmoid(S x) {
+UPSIDE_HD inline Vec<2,S> sigmoid(S x) {
     S z = expf(-x);
     S w = rcp(S(1.f)+z);
     return make_vec2(w, z*w*w);
 }
 
+#ifndef __CUDACC__  // CUDA's any(bool) is a warp vote, so device code never calls these
 inline bool any(bool x) {return x;} // scalar any function is trivial
 inline bool none(bool x) {return !x;} // scalar none function is trivial
+#endif
+//! any and none of a lane's mask, for code written in either lane type (edge_params.h)
+UPSIDE_HD inline bool lane_any (bool x) {return x;}
+UPSIDE_HD inline bool lane_none(bool x) {return !x;}
+#ifndef __CUDACC__
+inline bool lane_any (const Float4& x) {return any(x);}
+inline bool lane_none(const Float4& x) {return none(x);}
+#endif
 
 
 // Sigmoid-like function that has zero derivative outside (-1/sharpness,1/sharpness)
 // This function is 1 for large negative values and 0 for large positive values
 template <typename S>
-inline Vec<2,S> compact_sigmoid(const S& x, const S& sharpness) {
+UPSIDE_HD inline Vec<2,S> compact_sigmoid(const S& x, const S& sharpness) {
     // FIXME this sigmoid is both narrower and reversed direction from a normal sigmoid
     S y = x*sharpness;
     Vec<2,S> z = make_vec2(S(0.25f)*(y+S(2.f))*(y-S(1.f))*(y-one<S>()), (sharpness*S(0.75f))*(sqr(y)-one<S>()));
@@ -708,7 +731,7 @@ inline Vec<2,S> compact_sigmoid(const S& x, const S& sharpness) {
     return z;
 }
 
-inline float compact_sigmoid_cutoff(float sharpness) {
+UPSIDE_HD inline float compact_sigmoid_cutoff(float sharpness) {
     return 1.f/sharpness;  // exactly 0.
 }
 
@@ -716,7 +739,7 @@ inline float compact_sigmoid_cutoff(float sharpness) {
 //! Sigmoid-like function that has zero derivative outside the two intervals (-half_width-1/sharpness,-half_width+1/sharpness)
 //! and (half_width-1/sharpness,half_width+1/sharpness).  The function is the product of opposing half-sigmoids.
 template <typename S>
-inline Vec<2,S> compact_double_sigmoid(const S& x, const S& half_width, const S& sharpness) {
+UPSIDE_HD inline Vec<2,S> compact_double_sigmoid(const S& x, const S& half_width, const S& sharpness) {
     Vec<2,S> v1 = compact_sigmoid( x-half_width, sharpness);
     Vec<2,S> v2 = compact_sigmoid(-x-half_width, sharpness);
     return make_vec2(v1.x()*v2.x(), v1.y()*v2.x()-v1.x()*v2.y());
@@ -726,7 +749,7 @@ inline Vec<2,S> compact_double_sigmoid(const S& x, const S& half_width, const S&
 //! compact_double_sigmoid that also handles periodicity
 //! note that both theta and center must be in the range (-PI,PI)
 template <typename S>
-inline Vec<2,S> angular_compact_double_sigmoid(const S& theta, const S& center, const S& half_width, const S& sharpness) {
+UPSIDE_HD inline Vec<2,S> angular_compact_double_sigmoid(const S& theta, const S& center, const S& half_width, const S& sharpness) {
     S dev = theta - center;
     dev = blendv((dev <-M_PI_F), dev + S(2.f*M_PI_F), dev);
     dev = blendv((dev > M_PI_F), dev - S(2.f*M_PI_F), dev);
@@ -735,7 +758,7 @@ inline Vec<2,S> angular_compact_double_sigmoid(const S& theta, const S& center, 
 
 //! order is value, then dvalue/dphi, dvalue/dpsi
 template <typename S>
-inline Vec<3,S> rama_box(const Vec<2,S>& rama, const Vec<2,S>& center, const Vec<2,S>& half_width, const S& sharpness) {
+UPSIDE_HD inline Vec<3,S> rama_box(const Vec<2,S>& rama, const Vec<2,S>& center, const Vec<2,S>& half_width, const S& sharpness) {
     Vec<2,S> phi = angular_compact_double_sigmoid(rama.x(), center.x(), half_width.x(), sharpness);
     Vec<2,S> psi = angular_compact_double_sigmoid(rama.y(), center.y(), half_width.y(), sharpness);
     return make_vec3(phi.x()*psi.x(), phi.y()*psi.x(), phi.x()*psi.y());
@@ -748,7 +771,7 @@ inline Vec<3,S> rama_box(const Vec<2,S>& rama, const Vec<2,S>& center, const Vec
 //! The arguments d1,d2,d3,d4 are output values, and d1 corresponds to the derivative of the dihedral angle
 //! with respect to r1.
 template <typename V>  // parameterize on vector type (probably Vec<3> or Float4)
-static typename V::scalar_t dihedral_germ(
+UPSIDE_HD static typename V::scalar_t dihedral_germ(
         V  r1, V  r2, V  r3, V  r4,
         V &d1, V &d2, V &d3, V &d4)
     // Formulas and notation taken from Blondel and Karplus, 1995

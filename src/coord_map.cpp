@@ -6,6 +6,7 @@
 #include "timing.h"
 #include "state_logger.h"
 #include "vector_math.h"
+#include "device_nodes.h"
 
 using namespace std;
 using namespace h5;
@@ -53,6 +54,14 @@ struct PasteRama : public CoordNode {
             pos1.sens(0, p.index_pos1) += sens(0,ne);
             pos2.sens(0, p.index_pos2) += sens(1,ne);
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto index = [&](CoordNode& pos, bool second) {return g.offset_index(pos, [&](int ns) {
+            vector<int> r;
+            for(auto& p: static_cast<PasteRama&>(*systems[ns]).params) r.push_back(second ? p.index_pos2 : p.index_pos1);
+            return r;});};
+        return device_paste_rama(g.coord(*this), g.coord(pos1), g.coord(pos2), index(pos1,false), index(pos2,true));
     }
 };
 static RegisterNodeType<PasteRama,2> paste_rama_node("rama_coord");
@@ -109,6 +118,20 @@ struct CatPos : public CoordNode {
             for(int nd=0; nd<n_dim; ++nd)
                 pos2.sens(nd,index[ne]) += sens(nd,ne);
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto &c1 = g.coord(pos1), &c2 = g.coord(pos2);
+        vector<int> idx, from2;
+        for(int ns: range(g.n_system)) {
+            auto& n = static_cast<CatPos&>(*systems[ns]);
+            for(int ne: range(n.n_elem)) {
+                bool second = ne >= n.pos1_size;
+                idx.push_back(n.index[ne] + (second ? c2 : c1).offset[ns]);
+                from2.push_back(second);
+            }
+        }
+        return device_cat_pos(g.coord(*this), c1, c2, n_dim, idx, from2);
     }
 };
 

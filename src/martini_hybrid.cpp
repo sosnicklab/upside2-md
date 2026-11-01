@@ -1,5 +1,6 @@
 #include "martini_internal.h"
 #include "deriv_engine.h"
+#include "device_nodes.h"
 #include <mutex>
 #include <H5Apublic.h>
 #include <cmath>
@@ -170,6 +171,60 @@ struct HybridPositionNode : public CoordNode {
             if(have_o) update_vec<3>(o_sens, o_elem, o_total);
             else       update_vec<3>(source.sens, o_idx, load_vec<3>(sens, o_idx));
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto& src = g.coord(source);
+        auto& hb  = g.coord(hbond);
+        vector<unsigned char> derived;
+        vector<int> bb, o, o_elem, atom;
+        vector<float> weight, back_weight, rescale;
+        for(int ns=0; ns<g.n_system; ++ns) {
+            auto& n = static_cast<HybridPositionNode&>(*systems[ns]);
+            int off = src.offset[ns];
+            vector<unsigned char> der(n.n_elem, 0u);
+            auto st = get_state_for_coord(n.source);
+            if(st && st->active) {
+                if(st->bb_reference_runtime_atom_indices.size() != st->n_bb)
+                    throw string("Hybrid position node requires a complete BB carrier map");
+                for(size_t k = 0; k < st->n_bb; ++k) {
+                    const auto& atom_idx = st->bb_reference_runtime_atom_indices[k];
+                    int o_idx  = atom_idx[3];
+                    int bb_idx = st->bb_atom_index[k];
+                    int oe     = st->bb_o_hbond_elem[k];
+                    bool valid = o_idx >= 0 && o_idx < n.n_elem && bb_idx >= 0 && bb_idx < n.n_elem &&
+                                 oe < n.hbond.n_elem;
+                    for(int d = 0; d < 3; ++d) valid = valid && atom_idx[d] >= 0 && atom_idx[d] < n.n_elem;
+                    if(!valid) throw string("Hybrid position node has an invalid BB mapping index");
+                    const bool have_o = oe >= 0;
+
+                    // compute_value's weights and sum skip the zero weights, propagate_deriv's sum adds them
+                    float wsum = 0.f, back_wsum = 0.f;
+                    float w[4];
+                    for(int d = 0; d < 4; ++d) {
+                        bool used = st->atom_mask[k][d] != 0 && !(d == 3 && !have_o);
+                        w[d] = used ? st->weights[k][d] : 0.f;
+                        if(used) back_wsum += st->weights[k][d];
+                        if(w[d] != 0.f) wsum += w[d];
+                    }
+                    if(!(wsum > 0.f)) throw string("Hybrid BB weights sum to zero");
+                    const float inv_wsum = 1.f/back_wsum;
+                    for(int d = 0; d < 4; ++d) {
+                        weight.push_back(w[d]);
+                        back_weight.push_back(w[d] == 0.f ? 0.f : st->weights[k][d]*inv_wsum);
+                    }
+                    rescale.push_back(fabsf(wsum - 1.f) > 1e-6f ? 1.f/wsum : 1.f);
+                    for(int d = 0; d < 3; ++d) atom.push_back(atom_idx[d] + off);
+                    bb.push_back(bb_idx + off);
+                    o.push_back(o_idx + off);
+                    o_elem.push_back(have_o ? oe + hb.offset[ns] : -1);
+                    der[o_idx] = der[bb_idx] = 1u;
+                }
+            }
+            derived.insert(derived.end(), der.begin(), der.end());
+        }
+        return device_hybrid_position(g.coord(*this), src, hb, derived, bb, o, o_elem, atom, weight, back_weight,
+                rescale);
     }
 };
 

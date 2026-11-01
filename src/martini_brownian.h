@@ -43,4 +43,15 @@ void set_brownian_invocations(DerivEngine* engine, uint64_t n_invocations);
 // inner_steps substeps of dt/inner_steps. dt must equal /input/brownian numerical_time_step.
 void apply_langevin_step(DerivEngine* engine, VecArray mom, float dt);
 
+// The integrator's state, which the device engine (device_engine.h) integrates with
+struct Settings {
+    std::vector<int>   atom_index;  // the dynamic atoms
+    std::vector<float> friction;    // of each listed atom
+    float    temperature, time_step, reference_temperature;
+    uint32_t random_seed;
+    uint64_t n_invocations;
+    int      n_inner_steps;
+};
+Settings get_settings(DerivEngine* engine);
+
 }

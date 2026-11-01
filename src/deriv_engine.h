@@ -26,6 +26,9 @@ recenter(
         int n_atom //!< number of atoms
         );
 
+struct DeviceGraph;
+struct DeviceNode;
+
 //! \brief Whether to compute potential value as well as its derivative
 enum ComputeMode {
     DerivMode = 0, //!< Only derivative must be computed correctly (potential may not be correct)
@@ -64,6 +67,13 @@ struct DerivComputation
     //! \brief Compute a named quantity and return vector of floats (arbitrary behavior)
     virtual std::vector<float> get_value_by_name(const char* log_name) {
         throw std::string("No values implemented");
+    }
+
+    //! \brief The node's device implementation (device_engine.h) for every system, or null if it has none
+    //!
+    //! Called on system 0's node with the same node of every system, system 0's first
+    virtual DeviceNode* make_device(DeviceGraph& graph, const std::vector<DerivComputation*>& systems) {
+        return nullptr;
     }
 };
 

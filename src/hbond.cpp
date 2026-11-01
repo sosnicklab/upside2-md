@@ -8,6 +8,8 @@
 #include "interaction_graph.h"
 #include "spline.h"
 #include "bead_interaction.h"
+#include "hbond_interaction.h"
+#include "device_nodes.h"
 #include "vector_math.h"
 
 #define N_KNOT_MID_NC 7
@@ -123,166 +125,16 @@ struct Infer_H_O : public CoordNode
             sens_nonunit_next                                 .update(&pos_sens(0,p.atom[2]));
         }
     }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto param = [&](int ns) -> const vector<Params>& {return static_cast<Infer_H_O&>(*systems[ns]).params;};
+        return device_infer_h_o(g.coord(*this), g.coord(pos),
+                g.offset_index(pos, [&](int ns) {
+                    vector<int> r; for(auto& p: param(ns)) r.insert(r.end(), p.atom, p.atom+3); return r;}),
+                g.concat<float>([&](int ns) {vector<float> r; for(auto& p: param(ns)) r.push_back(p.bond_length); return r;}));
+    }
 };
 static RegisterNodeType<Infer_H_O,1> infer_node("infer_H_O");
-
-
-#define radial_cutoff2 (3.5f*3.5f)
-
-template <typename S>
-Vec<2,S> hbond_radial_potential(const S& input,
-        const S& inner_barrier, const S& inv_inner_width,
-        const S& outer_barrier, const S& inv_outer_width
-        )
-{
-    Vec<2,S> outer_sigmoid = sigmoid((outer_barrier-input)*inv_outer_width);
-    Vec<2,S> inner_sigmoid = sigmoid((input-inner_barrier)*inv_inner_width);
-
-    return make_vec2( outer_sigmoid.x() * inner_sigmoid.x(),
-            - inv_outer_width * outer_sigmoid.y() * inner_sigmoid.x()
-            + inv_inner_width * inner_sigmoid.y() * outer_sigmoid.x());
-}
-
-
-template <typename S>
-Vec<2,S> hbond_angular_potential(const S& dotp, const S& wall_dp, const S& inv_dp_width)
-{
-    Vec<2,S> v = sigmoid((dotp-wall_dp)*inv_dp_width);
-    return make_vec2(v.x(), inv_dp_width*v.y());
-}
-
-
-namespace {
-    struct ProteinHBondInteraction {
-        // inner_barrier, inner_scale, outer_barrier, outer_scale, wall_dp, inv_dp_width
-        // first group is donors; second group is acceptors
-        constexpr static const bool symmetric=false;
-        constexpr static const int n_param=8, n_dim1=6, n_dim2=6, simd_width=1;
-
-        static float cutoff(const float* p) {
-            return sqrtf(radial_cutoff2); // FIXME make parameter dependent
-        }
-
-        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
-            //return Int4() == Int4();  // No exclusions (all true)
-            auto sequence_exclude = Int4(1);
-            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
-        }
-
-        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
-                const Vec<n_dim1,Float4> &x1, const Vec<n_dim2,Float4> &x2) {
-            auto one = Float4(1.f);
-
-            auto  H = extract<0,3>(x1);
-            auto  O = extract<0,3>(x2);
-            auto  rHN = extract<3,6>(x1);
-            auto  rOC = extract<3,6>(x2);
-
-            auto HO = H-O;
-
-            auto magHO2 = mag2(HO) + Float4(1e-6f); // a bit of paranoia to avoid division by zero later
-            auto invHOmag = rsqrt(magHO2);
-            auto magHO    = magHO2 * invHOmag;  // avoid a sqrtf later
-
-            auto rHO = HO*invHOmag;
-
-            auto dotHOC =  dot(rHO,rOC);
-            auto dotOHN = -dot(rHO,rHN);
-
-            // FIXME I have to load up 4 of these rather pointlessly since they will all be the same
-            // FIXME I don't know if I guarantee alignment on parameters
-            // I expand to 8 to be sure
-            auto p0 = Float4(p[0]);
-            auto p1 = Float4(p[1]);
-            auto p2 = Float4(p[2]);
-            auto p3 = Float4(p[3]);   transpose4(p0,p1,p2,p3);
-            auto p4 = Float4(p[0]+4);
-            auto p5 = Float4(p[1]+4);
-            auto p6 = Float4(p[2]+4);
-            auto p7 = Float4(p[3]+4); transpose4(p4,p5,p6,p7);
-
-            auto radial   = hbond_radial_potential (magHO , p0, p1, p2, p3);  // x has val, y has deriv
-            auto angular1 = hbond_angular_potential(dotHOC, p4, p5);
-            auto angular2 = hbond_angular_potential(dotOHN, p4, p5);
-
-            auto hb =  radial.x() * angular1.x() * angular2.x();
-            auto c0 =  radial.y() * angular1.x() * angular2.x();
-            auto c1 =  radial.x() * angular1.y() * angular2.x();
-            auto c2 = -radial.x() * angular1.x() * angular2.y();
-
-            auto drOC = c1*rHO;
-            auto drHN = c2*rHO;
-
-            auto dH = c0*rHO + (c1*invHOmag)*(rOC-dotHOC*rHO) + (c2*invHOmag)*(rHN+dotOHN*rHO);
-            auto dO = -dH;
-
-            auto hb_log = ternary(one<=hb, Float4(100.f), -logf(one-hb));  // work in multiplicative space
-
-            auto deriv_prefactor = min(rcp(one-hb),Float4(1e5f)); // FIXME this is a mess
-            store<0,3>(d1, dH   * deriv_prefactor);
-            store<3,6>(d1, drHN * deriv_prefactor);
-            store<0,3>(d2, dO   * deriv_prefactor);
-            store<3,6>(d2, drOC * deriv_prefactor);
-
-            return hb_log;
-        }
-
-        static void param_deriv(Vec<n_param> &d_param, const float* p,
-                const Vec<n_dim1> &x1, const Vec<n_dim2> &x2) {
-            throw string("the protein_hbond parameter derivative is not implemented");
-        }
-
-        static bool is_compatible(const float* p1, const float* p2) {return true;};
-    };
-
-
-    struct HBondCoverageInteraction {
-        // radius scale angular_width angular_scale
-        // first group is hb; second group is sc
-
-        constexpr static bool  symmetric = false;
-        constexpr static int   n_knot = N_KNOT_SC_BB, n_knot_angular=N_KNOT_ANGULAR;
-        constexpr static int   n_param=2*n_knot_angular+2*n_knot, n_dim1=7, n_dim2=6, simd_width=1;
-        constexpr static float inv_dx = 1.f/KNOT_SPACING_BB, inv_dtheta = (n_knot_angular-3)/2.f;
-
-        static float cutoff(const float* p) {
-            return (n_knot-2-1e-6)/inv_dx;  // 1e-6 insulates from roundoff
-        }
-
-        static Int4 acceptable_id_pair(const Int4& id1, const Int4& id2) {
-            // return Int4() == Int4();  // No exclusions (all true)
-            // return id1 != id2; // exclude interactions on the same residue
-            auto sequence_exclude = Int4(2);  // exclude i,i, i,i+1, and i,i+2
-            return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
-        }
-
-        static Float4 compute_edge(Vec<n_dim1,Float4> &d1, Vec<n_dim2,Float4> &d2, const float* p[4],
-                const Vec<n_dim1,Float4> &hb_pos, const Vec<n_dim2,Float4> &sc_pos) {
-            Float4 one(1.f);
-
-            // print_vector("hb_pos[0]", hb_pos[0]);
-            // print_vector("sc_pos[0]", sc_pos[0]);
-            // print_vector("hbond_dist", mag(extract<0,3>(hb_pos)-extract<0,3>(sc_pos)));
-            auto coverage = quadspline<n_knot_angular, n_knot>(d1,d2, inv_dtheta,inv_dx,p, hb_pos,sc_pos);
-
-            auto prefactor = sqr(one-hb_pos[6]);
-            d1 *= prefactor;
-            d2 *= prefactor;
-            d1[6] = -coverage * (one-hb_pos[6])*Float4(2.f);
-
-            return prefactor * coverage;
-        }
-
-        static void param_deriv(Vec<n_param> &d_param, const float* p,
-                const Vec<n_dim1> &hb_pos, const Vec<n_dim2> &sc_pos) {
-            quadspline_param_deriv<n_knot_angular, n_knot>(d_param, inv_dtheta,inv_dx,p, hb_pos,sc_pos);
-            auto prefactor = sqr(1.f-hb_pos[6]);
-            d_param *= prefactor;
-        }
-
-        static bool is_compatible(const float* p1, const float* p2) {return true;};
-    };
-}
 
 
 struct ProteinHBond : public CoordNode
@@ -362,6 +214,16 @@ struct ProteinHBond : public CoordNode
             update_vec(pd2, igraph.loc2[na], load_vec<6>(sens, na+n_donor));
         }
     }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        vector<const InteractionGraph<ProteinHBondInteraction>*> igs;
+        vector<int> n_donors;
+        for(auto s: systems) {
+            igs.push_back(&static_cast<ProteinHBond&>(*s).igraph);
+            n_donors.push_back(static_cast<ProteinHBond&>(*s).n_donor);
+        }
+        return device_protein_hbond(g, g.coord(*this), g.coord(infer), device_interaction_data(g, igs), n_donors);
+    }
 };
 static RegisterNodeType<ProteinHBond,1> hbond_node("protein_hbond");
 
@@ -410,6 +272,19 @@ struct HBondCoverage : public CoordNode {
         } else {
             throw string("Value ") + log_name + string(" not implemented");
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto& out = g.coord(*this);
+        vector<const InteractionGraph<HBondCoverageInteraction>*> igs;
+        vector<int> base1, add2;  // an edge adds to its second element's output
+        for(int ns: range(g.n_system)) {
+            auto& n = static_cast<HBondCoverage&>(*systems[ns]);
+            igs.push_back(&n.igraph);
+            base1.insert(base1.end(), n.igraph.n_elem1, 0);
+            for(int i: range(n.igraph.n_elem2)) add2.push_back(out.offset[ns] + i);
+        }
+        return device_hbond_coverage(g, out, device_interaction_data(g, igs), base1, add2);
     }
 };
 static RegisterNodeType<HBondCoverage,2> coverage_node("hbond_coverage");
@@ -577,11 +452,11 @@ struct HBondEnergy : public HBondCounter
             hb_number2[pepid] += pp(6,na+n_donor);
         }
 
+        // the energy is linear in each residue's count, so its derivative by an occupancy is the residue's energy
+        // per H-bond at any count, zero included
         n_hbond = 0.0;
         potential = 0.0;
         for( int i =0; i<n_res; i++ ) {
-            if (hb_number1[i] == 0.0)
-                continue;
             n_hbond      += 0.5f*hb_number1[i];   // a bond counts at its donor's and its acceptor's residue
             potential    += hb_number1[i]*Ehbond[i];
 
@@ -695,6 +570,38 @@ struct HBondEnergy : public HBondCounter
         return dparams;
     }
 #endif
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
+        auto &cp = g.coord(protein_hbond), &cr = g.coord(rama);
+        vector<int> cls, res_rama, first_donor, first_acceptor, count_start(1,0), count, pep_res, pep_start(1,0), pep_count, sys;
+        for(int ns: range(g.n_system)) {
+            auto& n = static_cast<HBondEnergy&>(*systems[ns]);
+            if(n.params != params) throw string("the device engine shares hbond_energy's parameters between systems");
+            int r0 = res_rama.size();  // this system's first residue
+            // a residue's or peptide's elements, its donors then its acceptors, each in index order
+            auto counted = [&](vector<int>& out, function<bool(int)> donor, function<bool(int)> acceptor) {
+                for(int nd: range(n.n_donor))    if(donor(nd))    out.push_back(cp.offset[ns] + nd);
+                for(int na: range(n.n_acceptor)) if(acceptor(na)) out.push_back(cp.offset[ns] + n.n_donor + na);
+            };
+            for(int i: range(n.n_res)) {
+                cls.push_back(n.res_class[i]);
+                res_rama.push_back(cr.offset[ns] + i);
+                auto d = n.resid_donor.find(i), a = n.resid_acceptor.find(i);
+                first_donor.push_back(d == n.resid_donor.end() ? -1 : cp.offset[ns] + d->second);
+                first_acceptor.push_back(a == n.resid_acceptor.end() ? -1 : cp.offset[ns] + n.n_donor + a->second);
+                counted(count, [&](int nd) {return n.donor_resid[nd]==i;}, [&](int na) {return n.acceptor_resid[na]==i;});
+                count_start.push_back(count.size());
+                sys.push_back(ns);
+            }
+            for(int i: range(n.n_res-1)) {
+                pep_res.push_back(r0 + i);
+                counted(pep_count, [&](int nd) {return n.donor_resid[nd]-1==i;}, [&](int na) {return n.acceptor_resid[na]==i;});
+                pep_start.push_back(pep_count.size());
+            }
+        }
+        return device_hbond_energy(g.potential_of(*this), cp, cr, params, cls, res_rama, first_donor, first_acceptor,
+                count_start, count, pep_res, pep_start, pep_count, sys);
+    }
+
     virtual void set_param(const std::vector<float>& new_param) override {
         if(int(new_param.size()) != n_param)
             throw string("hbond_energy set_param: wrong number of parameters");

@@ -5,9 +5,9 @@
 
 
 //! \brief Apply a 3x3 rotation matrix U to 3d vector r
-inline float3 apply_rotation(const float* restrict U, const float3 &r)
+UPSIDE_HD inline Vec<3> apply_rotation(const float* restrict U, const Vec<3> &r)
 {
-    float3 ret;
+    Vec<3> ret;
     ret.x() = U[0]*r.x() + U[1]*r.y() + U[2]*r.z();
     ret.y() = U[3]*r.x() + U[4]*r.y() + U[5]*r.z();
     ret.z() = U[6]*r.x() + U[7]*r.y() + U[8]*r.z();
@@ -18,9 +18,9 @@ inline float3 apply_rotation(const float* restrict U, const float3 &r)
 //!
 //! Given a rotation matrix U, this applies the transpose/inverse of U
 //! so that it "undoes" a rotation by U
-inline float3 apply_inverse_rotation(const float* restrict U, const float3 &r)
+UPSIDE_HD inline Vec<3> apply_inverse_rotation(const float* restrict U, const Vec<3> &r)
 {
-    float3 ret;
+    Vec<3> ret;
     ret.x() = U[0]*r.x() + U[3]*r.y() + U[6]*r.z();
     ret.y() = U[1]*r.x() + U[4]*r.y() + U[7]*r.z();
     ret.z() = U[2]*r.x() + U[5]*r.y() + U[8]*r.z();
@@ -31,8 +31,8 @@ inline float3 apply_inverse_rotation(const float* restrict U, const float3 &r)
 //!
 //! A affine transformation is the combination of rotation and translation so 
 //! that output = U*r + t.
-inline float3 apply_affine(const float* restrict U, const float3& t, const float3& r) {
-    float3 ret;
+UPSIDE_HD inline Vec<3> apply_affine(const float* restrict U, const Vec<3>& t, const Vec<3>& r) {
+    Vec<3> ret;
     ret.x() = U[0]*r.x() + U[1]*r.y() + U[2]*r.z() + t[0];
     ret.y() = U[3]*r.x() + U[4]*r.y() + U[5]*r.z() + t[1];
     ret.z() = U[6]*r.x() + U[7]*r.y() + U[8]*r.z() + t[2];
@@ -46,10 +46,10 @@ inline float3 apply_affine(const float* restrict U, const float3& t, const float
 //! 3d can be expressed as a rotation by a specified angle about an single axis.
 //! This function converts rotations specified by a axis and an angle into
 //! a 3x3 rotation matrix. The axis must be a unit-vector.
-inline void axis_angle_to_rot(
+UPSIDE_HD inline void axis_angle_to_rot(
         float* U,
         float angle,
-        float3 axis) { // must be normalized
+        Vec<3> axis) { // must be normalized
     float x = axis.x();
     float y = axis.y();
     float z = axis.z();
@@ -69,7 +69,7 @@ inline void axis_angle_to_rot(
 //!
 //! The relative rotation of two rotations with respect to a common reference frame
 //! is the result of undoing rotation U1 then apply rotation U2, hence V=U1^{-1}*U2.
-inline void relative_rotation(
+UPSIDE_HD inline void relative_rotation(
         float* restrict V,
         const float* U1,
         const float* U2) // V = transpose(U1) * U2
@@ -95,7 +95,7 @@ inline void relative_rotation(
 //! applying rotations to specific vectors.  Use this function to convert 
 //! to an appropriate format for applying the rotations (see Wikipedia for
 //! details).
-inline void 
+UPSIDE_HD inline void 
 quat_to_rot(
         float*       restrict U,    // length 9 (row-major order)
         const float* restrict quat) // length 4 (must be normalized)
@@ -112,7 +112,7 @@ quat_to_rot(
 //! The relative rotation of two rotations with respect to a common reference frame
 //! is the result of undoing rotation q1 then apply rotation q2, hence ret=q1^{-1}*q2.
 //! The inverse rotation for a quaternion is its quaternion complex-conjugate.
-inline void
+UPSIDE_HD inline void
 relative_quat(float* restrict ret, const float* q1, const float* q2)
 // ret = conjugate(p) * q  -- it takes you from the right reference frame to the left
 {

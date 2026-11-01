@@ -1640,6 +1640,13 @@ every width.
     at phi 100-180 outweighing the spring. The gate's 0.75 for glycine beta' was set before this ceiling was computed
     and is above it at step 0 (half these glycines sit within a spring width of a basin edge), so its FAIL measures
     the basin's edge, not the springs.
+- **The released ff3.1 is `ff31_nativefix` at step 76** (user 10-31; plan.md Phase 37): ff_2.1's files and its round-4
+  map. Read 23:40 10-31 (`paired_npz.py`, TM files in `checks/ff31_nativefix_release_20261031/`): on the 44 domains at
+  dt 0.009 it folds 0.631 against released ff2.1's 0.603 (+0.028 [-0.004, +0.059], p 0.047, higher on 27 of 44), mean
+  TM 0.682 against 0.681 (+0.001 [-0.006, +0.008]); on mdCATH's 89 it folds 0.515 against 0.488 (+0.027 [+0.000,
+  +0.053], p 0.079); level with the merge on both (-0.017 and -0.001 folded), above the control by +0.20 and +0.16.
+  On Upside 3's glpG it keeps TM4 through preparation stage 7.0 (DSSP alpha mean 0.95, last tenth 0.87, one seed),
+  where the merge (0.36) and ff2.1 (0.41) lost it and ff3.0 settled near 0.82 (3.15); REMD block 1 decides.
 
 ### 1.35 ff_3.1_depth_data keeps glpG's TM4 helical; the cold-rung glycine flip is absent from the corrected chains (2026-10-14/18)
 
@@ -1753,7 +1760,7 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
 | ff3.2 (`f32`, stopped in step 69) | | 0.486 | 0.465 | 0.432 | |
 | ff3.1 rerun, fixed engine (`a31`) | | 0.436 | 0.449 | 0.462 | 0.420 |
 | ff3.2 rerun, fixed engine (`a32`) | | 0.452 | 0.481 | 0.435 | 0.432 |
-| ff3.2 on the fixed native target (`n32`, from the merged ff3.1, 10-28) | | 0.449 | | | |
+| ff3.2 on the fixed native target (`n32`, from the merged ff3.1, 10-28) | | 0.449 | 0.414 | 0.436 | 0.431; epoch 4 (step 95, converged) 0.447 |
 
 * **Every epoch of every run folds less than ff2.1** (p < 1e-6 each): ff_3.0_gdepth -0.152 [-0.196, -0.110], lower on
   37 of 44; ff_3.1_depth_data -0.164 [-0.202, -0.126], lower on 43. The starts are at ff2.1's level (`gdepth_start`
@@ -1766,7 +1773,9 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
   -0.129] against released ff2.1 (p 5e-8, lower on 42 of 44), level with the old target's all-term rerun `a32_00`
   (-0.003 [-0.037, +0.031], p 0.46) and `a31_00` (+0.013 [-0.017, +0.043]); mean Q 0.783 against 0.829
   (`checks/converge_20261020/paired_npz.py`). The fix moves glycine's map to ff3.0's balance in the same epoch, so
-  the loss is not the native target's dihedral drift.
+  the loss is not the native target's dihedral drift. It holds to the run's converged end: epoch 4 (step 95, gate
+  converged) folds 0.447, -0.169 [-0.215, -0.126] p 9e-8, lower on 40 of 44, level with `a32_03`, `a31_03` and
+  `c9_03`; ff3.2 stopped there without the full validation (plan.md Phase 33 item 8).
 * **The round-3 mechanism** (1.17 A): with ff2.1's side-chain pair table put back, epoch 0 folds as ff2.1's start
   (`e00` 0.487, `e00_rot21` 0.583, ff2.1 -0.033); the table random-walks under Adam on a noise-dominated gradient. Not
   tested on the round-4 runs.
@@ -1803,6 +1812,62 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
   Rg(hottest)), Kleinmann's port of Peng's code does the same (`condiv2.py` 690-735); its other drifts were corrected
   to the SI (9v). Peng's own file is lost, and ff2.1 was never this objective's fixed point (76 iterations without a
   convergence test, burial refitted after training, 1.23), so restarting the procedure moves it.
+* **What the loss is, measured on ff3.2** (user 10-31: "Check what is wrong in ff3.2 that fails to fold protein";
+  read only, scripts and outputs `/project/trsosnic/yinhan/checks/ff32_fold_20261031/`; frames of `n32_03` and
+  `p44_ff21_released`, the 44-domain panel's native-start runs at T 0.8). The trained force field makes every state
+  away from the native cheaper relative to it, more the further away, and the training's own targets do not hold
+  the native against it.
+  - *Tertiary, not secondary* (`fail_mode.py`). The loss is the same in all-alpha (18 domains, -0.174) and mixed
+    domains (26, -0.192) and tracks neither helix nor strand content (Spearman -0.03, -0.00). Native-basin retention
+    over all frames barely moves (helix -0.011, strand -0.008). Native CA contacts are lost by separation -0.033
+    (|i-j| 4-11), -0.068 (12-23), -0.097 (24 on), and Rg / Rg(native) goes 0.995 to 1.024, larger in 41 of 44: the
+    domains swell, helices and strands intact.
+  - *Energy, by term* (`decomp.py`, `decomp2.py`; the ten single-valued nodes sum to the engine's energy). On the
+    same frames, ff3.2 makes the loose frames (Q under the all-atom 5th percentile) 3.2 E_up cheaper relative to the
+    native-like ones than ff2.1 does, in 39 of 39 domains with both. Each engine block moved alone from ff2.1:
+    hydrophobe coverage -1.07, pair table -0.91, backbone burial -0.55, coverage -0.20, H-bond energy -0.16, burial
+    -0.14 (rama and sheet -0.21); the blocks add to the whole. The pair table's change reversed gives +0.92 and random
+    per-pair signs about 0, so it is a directed change, not a random walk.
+  - *The further from native, the cheaper* (`peng_profile.py`, `peng_blocks.py`, `peng_full.py`, on released ff2.1's
+    Peng REMD frames, all 14 rungs, 16 proteins, relative to each protein's 50 lowest-RMSD frames). ff3.2's whole
+    force field lowers unfolded frames (CA-RMSD 12 A or more) by 12.8 E_up (-7 to -24), in 16 of 16; within 6 A of
+    native the six blocks shift it by -0.2 to -0.7 on average. The six engine blocks give -15.7: backbone burial scale (-0.30 to -0.40) -5.7, hydrophobe coverage -3.2,
+    pair table -2.8, H-bond energies (E_alpha +0.153, E_beta +0.067, dhb -0.199) -2.7, burial -1.6, coverage +0.3,
+    each negative in 16 of 16 but coverage. Calibration on the same frames: released ff3.1 (depths only, folds
+    level with ff2.1) +1.2, 6 of 16; the control, every term trained from ff2.1, -16.5 after one epoch (`c9_00`,
+    folds 0.390) and -15.3 at step 76 (`c9_03`, 0.430); ff3.2 -11.9 after one epoch (`n32_00`, 0.449), -12.8 at epoch 3
+    and -12.6 at step 95 (`n32_04`, 0.447); each 16 of 16. The shift appears with the folding loss, in the first
+    epoch, and stays, in both all-term runs measured.
+  - *Which target drives it* (`dir_split.py`, `grad_profile.py`: one training protein, 3g0m, from the 14 replicas
+    kept at the debug run's step 34, ff2.1's terms; first order). A unit step along the NSE alone raises every
+    non-native state relative to the restrained native (+16 at 1.5-2 A, +19 at 4-6 A, +35 unfolded); along 0.3 DSE
+    alone lowers them (-4, -24, -198, the SARW -217), -118 of the -198 through the backbone burial scale and -36
+    through the H-bond energies; along the summed gradient unfolded states drop 47 below the native. On ff3.2's
+    actual change, both targets push the pair table, hydrophobe coverage and burial (the NSE alone the coverage); the backbone burial scale (NSE +0.005, DSE +0.62) and
+    the H-bond energies (NSE -0.10, DSE +0.39) move by the DSE alone, as the step-0 split above found (bb scale,
+    E_alpha) and as 1.23's H-bond record shows (stronger without DSE, weaker with it). So about half of the unfolded
+    shift (bb scale and H-bond, 8.4 of 15.7 E_up) is the DSE's, the regulariser Peng wrote "makes the residual
+    interactions as weak as possible" (SI p. 4); the NSE compares the restrained native (1.0 A) with a free ensemble
+    that stays within 2-3 A for 8000 time units, so nothing in the objective measures the native against the unfolded
+    state, and Peng's fixed budget was the brake (1.23). One protein: the DSE's share is shown, not proven, for the
+    side-chain half.
+  - *As a temperature: only along the folding coordinate* (`peng_scale.py`, user 10-31: "Can I view this as a
+    temperature shift in ff3.2?"). On the same frames, ff3.2's energy relative to native is ff2.1's times s = 0.942
+    (0.920-0.961 over the 16 proteins, R^2 1.00), so for global stability ff3.2 at T acts as ff2.1 at T / s, 6% hotter
+    (4-9%): at the panel's T 0.80 (280 K), about 298 K. The terms do not scale together, as a temperature would scale
+    them: side-chain pair 0.92, side-chain burial 0.92, H-bond 0.97, backbone desolvation 1.34, Ramachandran 1.10,
+    springs and reference 1.00; and within 6 A of native the ratio scatters 0.61-1.15. So the native's packing is
+    weakened and the backbone's solvation strengthened while the H-bonds keep ff2.1's strength, which is why
+    secondary structure survives where heating ff2.1 would melt it with the packing. Lowering the simulation
+    temperature cannot undo it: it would restore stability along one coordinate by overstrengthening the H-bonds
+    and backbone terms relative to the packing.
+  - *The training proteins swell too.* Minibatch 0, the only one evaluated at the start, has its coldest free replica's
+    Rg 1.8% larger at epoch 4 (21 of 24); over all 456 the epoch 0 to 4 change is flat (Rg ratio 1.000, RMSD +0.03)
+    because epoch 0's later steps already carry the loss.
+  - *A193 did not reach ff3.2.* `ff32_nativefix`'s `ConDiv.py` (from ff3.1.1's copy, 10-28) keeps the backbone burial
+    term in the SARW replica; the SI's SARW has none. On a 3g0m SARW frame that term is -77 E_up as these runs built
+    the replica and 0 as the SI defines it (`checks/ff32_fix_20261031/sarw_check/`); its effect on the DSE's backbone
+    pull is tested by plan.md Phase 38's `ff32_sarwsi`.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -2777,6 +2842,8 @@ Effects on ff2.1 are not measured (upside3.md 1.1).
 | A235 | `martini_prepare_system.py` `validate_hybrid_workflow_args`, `rotamer_library_differences` | no | A234's check compared the whole `sidechain.h5` with ff_2.1's, but `martini_build_tables.py` builds the side-chain/lipid table from three of its datasets, `restype_order`, `rotamer_start_stop_bead` and `restype_and_chi_and_state` (user 10-26: "do submit ff3.0") | ff3.0 was refused though its side chains build exactly ff_2.1's table (its retraining changed `pair_interaction`, `coverage_interaction`, `hydrophobe_interaction`, `hydrophobe_placement` and `rotamer_center_fixed`, none of which the builder reads), so the TM4 test against Upside 2's placement-fixed ff3.0 chains (3.15) could not run | the check compares those three datasets (`SIDECHAIN_TABLE_DATASETS`) and names any that differ: ff_2.1, ff_3.0 and ff_3.1 pass, locally and in the Upside 3 tree; a copy of ff_2.1's with one chi row or one bead count changed is refused, naming that dataset |
 | A236 | `martini_potential.cpp` `DihedralSpring` (`dihedral_spring`) and the box updater; `main.cpp` dry-MARTINI terms; `martini_itp_reader.py` `[ dihedrals ]`, `[ constraints ]`; `martini_prepare_system_lib.py` `_load_martini_topology`, `_build_bonded_terms`, the writer; `dryMARTINI_itp/dry_martini_v2.1_DDM.itp`; up.md; `tests/index_oracle.py` | no (a new path) | the engine had no dihedral term, so the repo's DDM ITP dropped the published topology's three head dihedrals (GROMACS type 1); the reader's dihedral entry wrote its force constant over its third atom (key `k` twice); `[ constraints ]` were skipped without notice (user 10-26: "you should implement the missing dihedral that is needed") | DDM's maltose head would have run without its torsions, off the published model | `dihedral_spring`: V = k (1 + cos(n phi - phi_s)) from one canonical spline of 1 + cos(u), phi as GROMACS defines it; ITPs read with `FLEXIBLE` defined (constraints enter as their FLEXIBLE bonds; an active constraint or a dihedral of another type refused); the DDM ITP is cgmartini's `martini_v2.0_DDM_01.itp` verbatim (md5 `0d587b39`). Against GROMACS 2026.4 on 5 frames of 200 DDM (600 dihedrals over phi -180 to 180): dihedral, bond and angle energies to 1.2e-6, 3.1e-6, 7.8e-7 relative, dihedral forces to 1.3e-5, all bonded forces to 1.2e-4; `node_fd` 0 bad of 320 directions per frame; `regress` 0 of 4260 arrays differ (`fixtures_w21`, `fixtures_hybrid_w6`); `index_oracle` on 1rkl stage 7.0 0 of 120 mismatch (`scratchpad/ddm_micelle/dihedral_check/`) |
 | A237 | `tests/index_oracle.py` `secstr_basins`, `check_membrane` | no | the oracle kept the secstr-bias basins from before A155 (linear sigmoids in phi and psi) and every H/O row in the membrane nodes from before A168 | false mismatches on three fixtures under every stack since 10-22: `chig_rama` `rama_pot` rows 1, 4, 8, `1rkl_surface` `hb_membrane_potential` 59 rows expected against 50, `1rkl_channel_m0` `hb_surf_membrane_potential` 57 against 52 | the basins follow A155 (arcs of two 10 degree edge sigmoids summed over their periodic images; phi on (-240, 0), helix psi on (-100, 50), sheet the rest) and the H/O rows drop the sites of `--membrane-exclude-residues`: 28 fixtures 0 mismatches (Mac Studio, 10-29); injected an excluded residue's row in `hb_index`, a wrong `hb_res` and a helix bias for chig_rama's sheet on residue 1, each caught; writers and records unchanged |
+| A238 | `hbond.cpp` `HBondEnergy::compute_value`; `device_hbond.cu` | yes | a residue whose H-bond count is exactly zero was skipped, so its donor's and acceptor's occupancy took sensitivity 0 instead of the residue's energy per H-bond, the derivative of an energy linear in the count; a count one ulp above zero on one backend and zero on the other flipped it (found by the device port, findings 11g) | forces inconsistent with the energy by about 1e-6 at such residues | the skip removed (user 10-29: "fix the issue"); reproducer `scratchpad/gpu_work/a238_repro.py` on 1dfn's backbone config: every site's sensitivity now equals the energy per H-bond recomputed from the rama angles (max difference 1.4e-7, was 1.96 at the zero-count sites); node_fd on 1dfn and chig_hbond passes hbond_energy; regress moves only the static forces (24 arrays, relative RMS change at most 8.5e-9) and the dynamics after them |
+| A239 | `martini_brownian.cpp` `apply_langevin_step`; `device_engine.cu` `DeviceDynamics::langevin_cycle` | no | the g-JF position update was written x + (b dt/m) p + (b dt^2/2m) f + (b dt/2m) beta, and a compiler that keeps that order (nvcc; clang on the Mac for z) adds the force term to x + (b dt/m) p, a value on the coordinate's grid, alone: below half an ulp of a coordinate tens of A from the origin (47% of 1rkl 7.0's lipid coordinates, which reach 176 A) it rounds away, against the force, so the bath heats; gcc on broadwl had reassociated it to (x + A) + (B + C), where the noise dithers it (findings 11g) | the GPUs' lipid bath 0.35% hot (KE 4.5 SE, potential +24 E_up) in the hybrid's V2; the Mac's CPU build heats z the same way | written x + (b dt/m)(p + dt/2 f + beta/2), one rounding at the coordinate under any compiler; reproducer `scratchpad/gpu_work/deadzone_repro.py` on 1rkl 7.0's 10-tu frame: energy gained per lipid atom and inner step 5.7e-7 E_up in source order (5.3e-7 makes 0.35%), 8.8e-9 +- 1e-8 in gcc's, 4.2e-9 +- 8.7e-9 in the new form; the K80 with the step summed first (build g7a, 16 seeds x 4 systems at T 0.80, no exchange): lipid KE/1.5kT 1.00523 against the CPU's 1.00513 (+0.1 SE), was 1.00932; regress moves only the hybrid fixtures' dynamics (12 of 4260 arrays: kinetic, pos, potential of 1rkl 7.0 and 7.1, frame 0 equal); V2 of the hybrid on the fixed build g7b (REMD, 16 CPU, 16 K80, 8 V100 seeds): Bonferroni 1 on both GPUs |
 
 Deliberately not changed: the H-bond radial cutoff of 3.5 A truncates the factor at 3.4e-4, which is below the
 1e-4-scale energy noise BP already carries. Moving it to 4.0 A would cut the jump to 6e-6, at about 1.5x the
@@ -2842,18 +2909,19 @@ retrained term.
   the loss under ff2.1 is therefore ff2.1's own once side-chain placement is correct, not an Upside 3 defect; since
   ff3.1 differs from ff2.1 only in its map, what holds TM4 lies in ff3.0's other retrained terms. One seed and 540 time
   units at T 0.8647; REMD block 1 (remote_jobs.md §1) gives TM4 at T 0.70, against Upside 2's ff3.0 chains' 0.96.
-* **REMD confirms it** (10-29; `glpg_u3_block1.py` on each run's rungs 0 and 23, T 0.70 and 0.795; outputs
-  `glpg/glpg_u3_block23.txt`, `glpg_ff31/glpg_ff31_block1.txt`, `glpg_ff30/glpg_ff30_block1.txt`). TM4 135-151 DSSP
-  alpha at T 0.70 (T 0.795):
+* **REMD confirms it** (10-29 and 10-31; `glpg_u3_block1.py` on each run's rungs 0 and 23, T 0.70 and 0.795; outputs
+  `glpg/glpg_u3_block23.txt`, `glpg_u3_block4.txt`, `glpg_ff31.bak_pre_nativefix_20261031/glpg_ff31_block1.txt`,
+  `glpg_ff30/glpg_ff30_block1.txt`, `glpg_ff30_block2.txt`). TM4 135-151 DSSP alpha at T 0.70 (T 0.795):
 
-  | run | block 1 | block 2 | block 3 |
-  |---|---|---|---|
-  | ff2.1 | 0.44 (0.39) | 0.26 (0.34) | 0.14 (0.21) |
-  | ff3.1 | 0.42 (0.39) | | |
-  | ff3.0 | 0.85 (0.81) | | |
-  | Upside 2 ff3.0, placement fixed | 0.96 (0.93) | | |
+  | run | block 1 | block 2 | block 3 | block 4 |
+  |---|---|---|---|---|
+  | ff2.1 | 0.44 (0.39) | 0.26 (0.34) | 0.14 (0.21) | 0.05 (0.17) |
+  | ff3.1, the 10-26 merge | 0.42 (0.39) | | | |
+  | ff3.0 | 0.85 (0.81) | 0.82 (0.85) | | |
+  | Upside 2 ff3.0, placement fixed | 0.96 (0.93) | | | |
 
-  ff2.1 keeps unwinding (block 3's last quarter 0.02). ff3.1 loses TM4's C-terminal half (146-151 at 0.00-0.02, 135-145
+  ff2.1 keeps unwinding to none (block 4 at most 0.08 per residue). ff3.0's block 2 is block 1 again: 137-151 at 0.93,
+  135-136 never helical. The merge loses TM4's C-terminal half (146-151 at 0.00-0.02, 135-145
   near 0.7). ff3.0 holds 137-151 at 0.96, Upside 2's level, and loses only 135-136, never helical in block 1, which
   accounts for the gap to 0.96. Every run keeps KE/1.5kT 1.00 for protein and lipid, C-N 1.310-1.312 +- 0.119-0.120 A
   and TM1's dihedral-box fraction at 0.96-1.00; of the measures read, only TM4 separates them.
@@ -5133,6 +5201,150 @@ The full record is in `upside3.md` sections 4, 5 and 10 (reports in `scratchpad/
   shown in an engine run).
 * **Profile, ff_2.1 on one M3 Max core.** BP is 20-24% of the time, side-chain pair edges 25-27%, burial 19-22% and
   H-bond 13-19%, from 76 to 578 residues. In the hybrid, the dry-MARTINI pair loop is 86%.
+
+## 11g. The device engine (GPU), measured (2026-10-29; plan.md Phase 35)
+
+* **Hardware and toolchain.** midway2 `gpu2`: 5 nodes of 4 Tesla K80 (sm_37), driver 460.32.03 (CUDA 11.2), Broadwell
+  hosts; the V100 node is down. midway3 `gpu`: 5 nodes of 4 V100, 4 of 4 RTX6000 (one more down), 1 of 4 A100, Cascade
+  Lake hosts; QOS 36 h, 16 GPUs, 4 nodes; the queue estimated a day on 10-29. CUDA 11.5 (midway2) compiles sm_37 to
+  sm_87; a binary built with it runs on the K80's 11.2 driver (minor-version compatibility, SASS for sm_37 in the
+  binary), and, with cudart static, still loads on a node without a GPU.
+* **nvcc on the shared headers.** Upside's `float2`, `float3`, `float4` and `int3` typedefs collide with CUDA's types,
+  CUDA defines a host-device `rsqrt(float)` and a device-only warp-vote `any(bool)`, and a header whose inline
+  functions instantiate `Vec<N,Float4>` (`spline.h`) cannot be included by a device file, since nvcc compiles an
+  `UPSIDE_HD` template's instantiation for the device too. Device files include `vector_math.h`, `affine.h`,
+  `random.h`, `deriv_engine.h` and `interaction_graph.h`; `spline.h` stays out.
+* **Moving CPU code into a header can change its results at one ulp.** The H-bond pair potentials, moved from
+  `hbond.cpp`'s anonymous namespace into `hbond_interaction.h` with external linkage, changed `protein_hbond`'s score by
+  one ulp at 21 of 798 entries of 1dfn's native frame (and everything downstream, 795 of 4260 regress arrays), with the
+  same calls to `logf` and `expf`: under `-ffast-math` the compiler's inlining and contraction depend on linkage.
+  Wrapped in an anonymous namespace in the header, the code is bitwise the old code again (measured by bisection,
+  10-29). Internal linkage is not always enough: shared from `martini_interaction.h`, `martini_sc_table_1body`'s
+  table evaluator and the `dist_spring` and `angle_spring` terms moved the hybrid's static forces by up to 1.9e-6 at
+  the native frame (21 regress arrays; the node outputs bitwise equal), and HEAD's member evaluator forwarding to the
+  shared one moved 45, while the pair term of `martini_potential` stayed bitwise (bisected by struct, 10-29). Why is
+  not established; the likely cause is the compiler inlining and reassociating differently across the new call. So
+  those three keep their CPU code and the device has a copy, as `hbond_rama_energy` does. A coherence refactor of CPU
+  code is checked with `tests/regress.py`, never assumed.
+* **What "equal to rounding" looks like.** On the host backend and on the K80, Threefry bits, Box-Muller normals and
+  fixed-point sums are bitwise equal to the CPU's (host backend) and repeat bit for bit. From the same start and seed,
+  the CPU and the device agree to 1.6e-6 A after 37 rounds, 3e-5 A after 185 and 3e-3 A after 400; by the second
+  replica-exchange attempt the accepted swaps differ. Trajectories therefore cannot be compared beyond a few hundred
+  rounds; V2 compares ensembles.
+* **Two CPU defects the device port exposed (10-29).**
+  * `HbondEnvironmentCoverageInteraction::compute_edge` (hb_environment_coverage) never wrote its derivative by the
+    second site's direction (`d2[3..5]`), and `InteractionGraph` stores and multiplies all of `d2`, so the CPU read
+    uninitialized lanes into `infer_H_O`'s sensitivity. On the host backend with NaN-filled memory it showed as NaN
+    forces. Fixed by writing the zeros (`environment_interaction.h`); `tests/regress.py` is bitwise unchanged (0 of
+    4260), so on these fixtures the lanes held zero. ASan does not see uninitialized reads; the host backend's NaN
+    fill (`device.cu`) does.
+  * `hbond_energy` skipped a residue whose H-bond count is exactly 0, so its donor's and acceptor's sensitivity was 0
+    there instead of the residue's energy per H-bond, the true derivative. A count that is one ulp above zero on one
+    backend and zero on the other (`1-expf(-x)` at x near 3e-8; 4 elements of 1dfn's noisy frame on the K80) then
+    moved `protein_hbond`'s sensitivity by O(1) and the forces by 1e-6 (total force rel RMS 4.7e-6). Fixed as A238
+    (user 10-29).
+* **The device engine per node (V1, 10-29 and 10-30).** Every node of the ff2.1 graph, BP included, matches the CPU to
+  rounding on the host backend (chig, 1ubq, 1dfn; two systems at different frames, NaN-filled memory). On build g7b
+  every quantity of the 11 fixtures and of ff3.1's chig, 1ubq and 1dfn (the same 31 nodes, other tables) passes on the
+  K80, V100, RTX6000 and A100 (driver API 11.2 on the K80, 12.2 on the others), and each config's worst error is the
+  same number on all four GPUs (1dfn's `hbond_energy` output 1.50e-4 against a scale of 1.39e-4, the largest).
+* **V1's rounding scale.** A quantity that is a small difference of large ones amplifies rounding. On the K80 the
+  device's omega dihedrals in chig's native frame differ from the CPU's by one ulp of pi (2.4e-7 rad, measured per
+  element); with each omega about 0.01 rad from rest, that moves the omega-spring energy (0.0044 E_up) by 2.7e-5
+  relative, 1e-7 E_up. The CPU's response to a one-ulp move of the coordinates was smaller (6e-7), because a one-ulp
+  move often leaves the angle on the same float; so `tests/device_v1.py` measures each quantity's rounding scale with
+  a 4-ulp move (about 10 ulps of such an angle) and passes an error up to 10 times that or 1e-5 relative. One move is
+  a noisy estimate of it: chig_rama's native potential (0.316 E_up, from terms of ~5) moves by 1e-6 to 5e-5 E_up over
+  six moves on the broadwl build, and by exactly 0 on the move the test drew, so with the seed fixed its potential
+  failed on the K80 and V100 runs of g4a and g4b alike, at a device error of 1.6e-5 E_up inside that spread. The scale
+  is now the RMS over 4 moves.
+* **The fixed-point range.** A term at or past 2^26 reads NaN on the device by design (`device.h`). Protein frames
+  never reach it, but V1's 1.0 A noise overlaps dry-MARTINI beads: 1rkl's hybrid then has a `martini_potential` of
+  2.7e9 E_up (stage 7.0) and 3.1e10 (7.1), derivatives to 3.8e11, where the CPU's double sum stays finite. V1 checks
+  such a frame for a non-finite device result and compares the other two.
+* **The hybrid on the device (10-29).** V1 on the host backend: every node of 1rkl's stages 7.0 and 7.1 to rounding
+  (worst 7e-6 relative, within the scale). From one start and seed, the device's g-JF run (4 substeps, masses, the
+  thermostat on the bath's complement, the fixed atoms) and the CPU's differ by 3.05e-5 A after one round, 4 ulps of
+  a coordinate in [64, 128) A, one per substep, and by 1.9e-4 A after 100 rounds, with KE/1.5kT equal to 1e-6.
+* **V2 of the protein (10-30, build g7b).** 14-replica REMD of 1ubq (T 0.80-0.95), 2000 tu, means over the second
+  half, ff2.1 without and with rotamer and ff3.1; 16 CPU, 16 K80 and 8 V100 seeds, Welch's t per replica and
+  observable (KE/1.5kT, potential, N-CA, CA-C, C-N, N-CA-C, CA-C-N, C-N-CA; 112 per config and GPU): Bonferroni
+  0.087 to 1, largest 3.8 SE (K80, 1ubq without rotamer, replica 4's KE). Without rotamer the GPUs' potential was
+  above the CPU's in most replicas on both GPUs; the replicas of a seed are correlated by exchange, and the per-seed
+  mean over replicas is +1.2 SE on the K80 and +2.0 SE on the V100 (p 0.056; 12 such tests, Bonferroni 0.67). The
+  one-seed V2 of 10-29 (block errors) had passed too. Speed then, per system and step: the K80 323 us without
+  rotamer and 837 us with it against 87 and 253 us on 4 broadwl cores, the V100 101 and 208 us against 75 and 181 us
+  on 4 Cascade Lake cores (since improved, below).
+* **KE/1.5kT is about 1.005 on both engines, protein and hybrid alike (open, cause not measured).** The protein V2's
+  CPU seeds give KE/1.5kT 1.00636 +- 0.00031 (without rotamer), 1.00536 +- 0.00051 (ff2.1) and 1.00554 +- 0.00038
+  (ff3.1), replica means 1.003 to 1.010, and the GPUs the same within 1 SE; the hybrid's lipids give 1.005 (below). So
+  it is a property of the CPU dynamics at dt 0.009, not of the lipid bath, and the GPU reproduces it.
+* **V3 at a tenth of the Peng duration (10-31, build g7b).** proteinG, homeodomain, WWdomain and NTL9 on ff2.1 and
+  ff3.1, native start, the Table S2 ladders; 4 CPU ladders (one per broadwl job) against 4 V100 ladders (one process,
+  56 systems); Q, CA-RMSD, Rg and potential per temperature after the first 20%, and T_mid; Welch's t over ladders
+  (`checks/g0/v3/analysis.txt`). Bonferroni per protein and force field 0.12 to 1, 0.93 over all 456 comparisons;
+  largest proteinG ff3.1's potential at T 0.80, GPU -2.4 E_up (-5.5 SE, p 0.002). T_mid differs by at most 0.0089
+  (3 K, homeodomain ff3.1, -2.2 SE), with no common direction (Stouffer over the 8 pairs -0.1). At the lowest
+  temperature the GPU's potential is the lower in 6 of 8 pairs, Stouffer -2.0 (p 0.04), a pattern picked after
+  looking, so not evidence; it is the resolution: 4 ladders this long cannot exclude a native-basin potential
+  difference of 1-2 E_up, where 1ubq's V2 at T 0.80 (16+8 seeds) agrees within 1 SE, about 1 E_up. Speed in this
+  run: one V100 with 4 ladders gave the sampling of one 14-core broadwl job on proteinG and homeodomain (4 x 246 against
+  1001 tu/min), about 0.75 of one on the smaller WWdomain and NTL9.
+* **V2 of the hybrid, and why its error comes from seeds (10-30).** 1rkl stage 7.0, 4 replicas, 200 tu, CPU against
+  `--gpu` from one start and seed, each mean's error from 5 blocks of the second half: up to 4.7 standard errors on
+  the K80 and 5.3 on the V100, at other observables and with other signs on each. The control, two CPU runs at seeds
+  7 and 8 on one broadwl node (49662130), differed by up to 7.6 (replica 3's lipid D) and 5.3 (replica 0's
+  potential), so the block error understates the hybrid's. Two reasons, the first by construction: lipid D is a mean
+  over 50 start frames whose windows overlap by 49 of 50 frames, so its blocks are nearly one number; and the bath's
+  momentum relaxation time m/gamma is 6/0.169 = 35 tu for a lipid bead against 20-tu blocks (from the parameters, not
+  a measured autocorrelation). `tests/device_dyn.py` now runs each engine at independent seeds and takes the error from
+  their spread (Welch's t; the engines agree when the smallest p times the number of comparisons is above 0.05).
+  Speed per system and step, 4 cores: K80 15.3 ms against 24.3 on its Broadwell host, V100 4.5 ms against 18.0 on
+  Cascade Lake.
+* **V2 of the hybrid by seeds (10-30): the GPUs ran the lipids 0.35% hot, because the g-JF position update's force
+  term rounded away (A239); with the fix V2 passes.** 1rkl 7.0, 4 replicas at T 0.80-0.95 swapped every tu, 200 tu, means over the second
+  half. 40 GPU seeds (16 K80, 8 V100, 16 K80 built with nvcc `-fmad=false`) against 24 host ones (16 CPU, 8 host
+  backend): lipid KE/1.5kT replica mean +0.35% (t 4.5), the potential +24 E_up (t 3.5), the shift of a hotter bath,
+  protein KE -0.02%; every GPU seed shifted, with or without FMA, and the host backend with the CPU. Without exchange
+  (4 copies at T 0.80, 16 seeds each) the K80 stayed +0.42% hot (3.7 SE). Ruled out on the way, each by a measurement:
+  a race (runs repeat bit for bit), the g-JF coefficients (a, b bitwise), the forces (one device engine kept over
+  1000 rounds of a K80 run matches the CPU to rounding at every round), a damping or noise difference (over 20
+  rounds from one state the K80's lipid momentum minus the CPU's has slope -8e-8 +- 3.5e-7 on the CPU's,
+  where the damping behind +0.35% gives +1.5e-5). The cause: the update is x + A + B + C with A = (b dt/m) p ~ 8e-4 A,
+  B = (b dt^2/2m) f ~ 2e-6 A and C = (b dt/2m) beta ~ 5e-6 A. nvcc keeps the source order, so B meets x + A, a value
+  on the coordinate's grid, alone, and below half an ulp it is lost: half of the lipid coordinates (unwrapped, up to
+  176 A, an ulp of 3.8e-6 to 1.5e-5 A). Losing a displacement along the force lifts the potential by B.f, 5.7e-7 E_up
+  per lipid atom and inner step on a 10-tu frame (`deadzone_repro.py`), where a 0.35% excess at the bath's 19-tu
+  relaxation needs 5.3e-7. The protein is spared (its B is 9 ulps). gcc on broadwl had compiled the CPU's same
+  source as (x + A) + (B + C) (its disassembly), where the noise dithers B (8.8e-9 +- 1e-8); the Mac's clang build
+  keeps the source order for z. The update is now x + (b dt/m)(p + dt/2 f + beta/2) on the CPU and the device, one
+  rounding at the coordinate under any compiler (4.2e-9 +- 8.7e-9). The K80 with the step summed first (g7a), no
+  exchange: lipid KE 1.00523 against the CPU's 1.00513 (+0.1 SE), Bonferroni 1. V2 on the fixed build (g7b, REMD
+  as above, 16 CPU, 16 K80 and 8 V100 seeds): Bonferroni 1 on both GPUs, the lipid KE of every replica within 1.8 SE
+  of the CPU's. The host backend built by gcc before the fix, without exchange (10 seeds): lipid KE 1.00629 +-
+  0.00095, +1.0 SE from the CPU and -2.4 SE from the K80 of that code, so it sat with the CPU, as gcc's order
+  predicts. The lesson: a float update of a large coordinate by a sum of terms of very different size is summed
+  before it meets the coordinate; a compiler's reassociation is not a correctness argument. Open, not measured: both
+  engines give lipid KE/1.5kT 1.005 at T 0.80 without exchange (CPU 1.00513 +- 0.00073, 64 systems), 7 SE above 1,
+  and in REMD 1.005 to 0.994 over T 0.80-0.95; a property of the CPU dynamics, which the GPU reproduces (the
+  protein's is the same, above).
+* **Where the device's time goes (nvprof, K80, 10-30).** Kernels, not launches or transfers. In each slow kernel one
+  thread looped serially over hundreds of partners (pair-list rebuild, `martini_potential`, `martini_sc_table_1body`,
+  BP's incidence lists), and the kernels over a pair list's capacity launched a thread per possible slot (600 k for
+  1ubq's rotamer graph). One warp per element (ordered ballot placement, in-order float sums, fixed-point partial
+  sums flushed once), a launch over used slots only and a warp-shuffle scan keep every result bitwise (g5b against
+  g6b, `bitwise.sbatch`) and take 14 copies per system step from 360 to 245 us (1ubq without rotamer), 867 to 581 us
+  (full 1ubq; BP's solve is then 46% of the GPU time, one block per system) and 4 hybrid copies from 14.5 to 6.5 ms.
+  Fusing BP's independent passes (3 block synchronisations per update instead of 12) takes full 1ubq to 526 us.
+  Per system and step against the batch (g6c, 10-30): full 1ubq on the V100 130 us at 14 copies, 78 at 28, 53 at
+  56, 41 at 112 (4 Cascade Lake cores 181 us); on the K80 528, 334, 243, 222 (4 broadwl cores 253 us). The 1rkl 7.0
+  hybrid on the V100 1.56 ms at 4 copies, 1.05 at 8, 0.81 at 16 (4 Cascade Lake cores 18.0 ms); on the K80 6.3, 4.4,
+  3.4 ms (broadwl 24-26 ms). One block per system leaves a GPU idle at a single REMD ladder; several ladders in one
+  process fill it.
+* **A device refactor is checked bitwise on a GPU, not on the host backend.** Fusing BP's passes left the K80's
+  trajectories bitwise (g6c against g5b) but moved the host backend's at rounding (40 of 63 arrays of chig over 20
+  tu): the host backend compiles the device code with the CPU's `-ffast-math`, which re-associates differently when
+  code moves, as it does for CPU code (above). nvcc compiles device code without fast-math.
 
 ## 12. Claims that turned out to be wrong
 

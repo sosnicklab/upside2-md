@@ -189,6 +189,9 @@ bash "$UPSIDE_HOME/example/16.MARTINI/<workflow>.sh"
 **"continue jobs" / "continue monitoring":** a session asked to continue the jobs or the monitoring starts at
 `remote_jobs.md` "Resume here, from any computer" and follows its checklist in order.
 
+**"resume GPU jobs":** a session asked to resume the GPU work starts at `plan.md` Phase 35 "Resume here" and follows
+its steps in order; its jobs are `remote_jobs.md` line 5.
+
 **"continue upside3 progress":** a session asked to continue the Upside 3 work starts at `plan.md` Phase 24
 "Resume here" and follows its checklist in order; the method is `upside3.md` 4.2, the defect ledger
 `findings.md` 3.14.

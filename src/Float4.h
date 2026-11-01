@@ -543,7 +543,6 @@ inline float extract_float(const Float4& x, int d) {
     return data[d];
 }
 
-inline float extract_float(float x) { return x; }
 
 
 inline Float4 fabsf(const Float4 &x) {

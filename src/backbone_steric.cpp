@@ -3,6 +3,8 @@
 #include "affine.h"
 #include <algorithm>
 #include "interaction_graph.h"
+#include "backbone_steric.h"
+#include "device_nodes.h"
 
 using namespace std;
 using namespace h5;
@@ -10,30 +12,6 @@ using namespace h5;
 struct AffineParams {
     index_t residue;
 };
-
-namespace {
-
-constexpr float nonbonded_atom_cutoff2 = 3.f*3.f + 0.1f*3.f;
-
-template <bool return_deriv>
-inline float
-nonbonded_kernel_or_deriv_over_r(float r_mag2)
-{
-    const float energy_scale = 4.f;
-    const float wall = 3.0f;  // corresponds to vdW *diameter*
-    const float wall_squared = wall*wall;  
-    const float width = 0.10f;
-    const float sharpness = 1.f/(wall*width);  // ensure character
-
-    const float2 V = energy_scale*compact_sigmoid(r_mag2-wall_squared, sharpness);
-    return return_deriv ? 2.f*V.y() : V.x();
-}
-
-Int4 acceptable_backbone_pair(const Int4& id1, const Int4& id2) {
-        auto sequence_exclude = Int4(1);
-        return (sequence_exclude < id1-id2) | (sequence_exclude < id2-id1);
-}
-}
 
 struct BackbonePairs : public PotentialNode
 {
@@ -109,7 +87,7 @@ struct BackbonePairs : public PotentialNode
         }
 
         // acceptable_backbone_pair checks that the sequence ids differ by at least 2
-        pairlist.template find_edges<acceptable_backbone_pair>(dist_cutoff,
+        pairlist.template find_edges<acceptable_backbone_pair<Int4>>(dist_cutoff,
                 coords.x.get(), coords.row_width, sequence_id.get(),
                 coords.x.get(), coords.row_width, sequence_id.get());
         int n_edge = pairlist.n_edge;
@@ -152,6 +130,29 @@ struct BackbonePairs : public PotentialNode
                 update_vec(alignment.sens, params[nr2].residue, combine_deriv2);
             }
         }
+    }
+
+    virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) {
+        vector<int> n_atom, seq, n_res;
+        vector<float> ref;
+        int max_n_edge = 0;  // per system, the largest system's
+        for(int ns: range(g.n_system)) {
+            auto& n = static_cast<BackbonePairs&>(*systems[ns]);
+            if(n.dist_cutoff != dist_cutoff)
+                throw string("the device engine shares backbone_pairs' cutoff between systems");
+            n_res.push_back(n.n_residue);
+            max_n_edge = max(max_n_edge, n.pairlist.max_n_edge);
+            for(int nr: range(n.n_residue)) {
+                n_atom.push_back(n.ref_pos[nr].n_atom);
+                seq.push_back(n.sequence_id[nr]);
+                for(int na: range(4)) for(int d: range(3)) ref.push_back(n.ref_pos[nr].pos[na][d]);
+            }
+        }
+        return device_backbone_pairs(g, g.potential_of(*this), g.coord(alignment),
+                g.offset_index(alignment, [&](int ns) {
+                    vector<int> r; for(auto& p: static_cast<BackbonePairs&>(*systems[ns]).params) r.push_back(p.residue);
+                    return r;}),
+                n_atom, ref, seq, n_res, dist_cutoff, pairlist.get_cache_buffer(), max_n_edge);
     }
 };
 static RegisterNodeType<BackbonePairs,1> backbone_pairs_node("backbone_pairs");
