@@ -675,3 +675,8 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   `checks/ff31_nativefix_release_20261031/restart_broken.sh` written, not run. Read through midway3: ff3.0's glpG
   block 3 (done, TM4 0.85 at T 0.70) and `compare_u3_u2.py` over all 16 de novo pairs (-0.030 [-0.049, -0.014],
   p 0.004). Files: findings.md 1.37, 3.15, 10.47; plan.md Phases 24, 38; upside3.md; remote_jobs.md; progress.md.
+* **11-02 03:10-07:35, Mac Studio, watching for midway2.** The midway2 socket master died 03:11; both login nodes take
+  TCP on port 22 but send no SSH banner (tested from midway3), so no reconnect was tried and a banner watch runs
+  through midway3. ff3.1's glpG block 1 on Upside 3 ended 07:19 and was read on the midway3 login: TM4 DSSP 0.74 at
+  T 0.70 (ff3.0 0.85, the merge 0.42), falling within the block; KE, C-N and TM1 as the other runs. Files:
+  findings.md 3.15; plan.md Phase 37; remote_jobs.md; progress.md.

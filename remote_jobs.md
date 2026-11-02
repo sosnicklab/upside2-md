@@ -1,14 +1,17 @@
 # Remote jobs on midway2/midway3: status and handbook
 
-**Current state (2026-11-02 00:15 CST, the Mac Studio; user 10-31: "1. Deploy ff3.1, run validations (Peng, glpG, and
+**Current state (2026-11-02 08:30 CST, the Mac Studio; user 10-31: "1. Deploy ff3.1, run validations (Peng, glpG, and
 other tests we ran) 2. Fix the folding issue and continue working on ff3.2").** Owner: none since 21:55 10-27, when the MacBook Pro's session (owner from 12:46
 10-26) handed off and quit ("Handoff"); no watch runs. Status passes since, none the owner and none with a cron: a
 Mac Studio session (08:06-13:45 10-29; also the user's "fix them all" and "run both"), the MacBook Pro's of 14:30
-10-29, 17:10 10-30, 14:05 and 23:25 10-31 and 14:07 11-01, and the Mac Studio's of 01:30 and 08:50 11-01 and 00:15
-11-02. The GPU work (line 5) resumed on the Mac Studio 00:05 11-01; V1 of the released ff3.1 passed on a V100 00:30
+10-29, 17:10 10-30, 14:05 and 23:25 10-31 and 14:07 11-01, and the Mac Studio's of 01:30 and 08:50 11-01 and 00:15,
+07:30 and 08:30 11-02. The GPU work (line 5) resumed on the Mac Studio 00:05 11-01; V1 of the released ff3.1 passed on a V100 00:30
 11-01 and no job of it runs (plan.md Phase 35 "Resume here"). **midway2 fault since 21:19 11-01** (§1): its Slurm
-answered srun and sbatch with "Unexpected message received", and from 23:57 its login node opens no session (the
-socket master lives); jobs already running kept writing. It broke ff3.2's link 49737476 and 28 of ff3.1's 32 Peng
+answered srun and sbatch with "Unexpected message received", and from 23:57 its login node opens no session; the
+socket master died 03:11 11-02; at 08:35 both login nodes send the Mac their SSH banner at once, while from midway3
+TCP connects and no banner comes in 20 s (at 03:17 a login from there reached hostbased authentication and stalled);
+the MacBook Pro's new master authenticated at 08:31 (Duo) but every command through it hangs, even `date`, so a
+banner or a login proves nothing until a command returns; jobs already running kept writing. It broke ff3.2's link 49737476 and 30 of ff3.1's 32 Peng
 chains, which restart by hand ("Owed by hand") once midway2 answers. The next computer's "continue monitoring" takes the jobs ("Resume here"). The Mac
 Studio's uncommitted records are in the handoff bundle (`records/`, `repo_working_tree_mac_studio_20261029.patch`
 against `3362e2a`) and its session tools in the bundle's `scratchpad/handoff_20261029/` (README). **ff3.1 means
@@ -21,8 +24,8 @@ line 2). Its fix (plan.md Phase 38): with the DSE target off epoch 0 folds 0.575
 **ff3.2 is now `ff32_dse0` trained on** (user 11-01), every term trained (checked: `params_check.txt`), each epoch
 end queuing its own panel, unfolded shift, Rg check and next epoch, gated from step 76; link 49737476 FAILED 21:19
 11-01 on the fault (insurance 49737477 PD afterany). Running on midway2
-besides: ff3.1's validation (panels and TM read, level with released ff2.1; 32 Peng arms and their collector, glpG
-REMD block 1 on Upside 3; §1 line 2). Upside 3's validation has no job: glpG ff3.0 done (3 of 3 blocks, TM4 held),
+besides: ff3.1's validation (panels and TM read, level with released ff2.1; 32 Peng arms and their collector; its
+glpG block 1 on Upside 3 done, TM4 DSSP 0.74 at T 0.70; §1 line 2). Upside 3's validation has no job: glpG ff3.0 done (3 of 3 blocks, TM4 held),
 every Peng arm scored (de novo 16 of 16 below Upside 2's, -0.030, p 0.004), the 8 seed replicates COMPLETE, unscored. Released ff2.1's Peng is DONE, 32 of 32 (§1 line 1).
 midway3: nothing of line 5; the Boltz-2 E1 test of resampling at low noise only, 61805263 (I61 at kappa 2, two
 seeds), ended 13:32 10-29 and did not remove the collapse (§1 line 4). Each line of work has a collector, a
@@ -47,7 +50,7 @@ The user's four lines of work (10-21), and what each has on the clusters:
    (unscored), and the glpG hybrid with ff2.1 (4 blocks), the merge's ff3.1 (1) and ff3.0 (3).
    The TM4 test is answered (10-27, findings 3.15): TM4's loss under ff2.1 is ff2.1's own. At T 0.70 ff3.0 holds TM4
    (DSSP 0.85, 0.82, 0.85 over blocks 1-3), the merge's ff3.1 does not (0.42), and ff2.1 loses it (0.44 to 0.05).
-   The released ff3.1's glpG (block 1 49692243, line 2) runs.
+   The released ff3.1 reads 0.74 in its one block, falling within it (halves 0.78 / 0.70; line 2).
 4. **Boltz-2 HDX sampler** (diffusion_dynamics.md). Phases 0 and 1, the BioEmu2 side test and the controlled 10^5
    tests are finished and read out (§1 "Finished runs"). Phase 2's E1 pilot passed 10-28; E1's tuning (user 10-28 "run
    E1") shows the Feynman-Kac estimate failing above kappa 1, so E1 proper is held; the diagnosis job 61755382 did
@@ -115,7 +118,7 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
 4. **Owed by hand** (`WATCH_STATUS.md` is newer if the two differ; details in §1):
    - **First, when midway2 answers again** (fault since 21:19 11-01, §1): `squeue` and `sacct -S 2026-11-01T21:00`;
      whether ff3.2's insurance link 49737477 started and resumed epoch 1 minibatch 13; whether the ff3.1 collector's
-     pass 49738136 ran; then restart the 28 broken ff3.1 Peng chains (§1 line 2 lists them and the command); then
+     pass 49738136 ran; then restart the 30 broken ff3.1 Peng chains (§1 line 2 lists them and the command); then
      score the seed replicates (`upside3_validation/peng_seeds/score/submit_seed_scores.sh`, md5 `f23c8d41`, 8 jobs
      `sc_seed_<engine>_<prot>_seed<S>`) and read them with `seed_spread.py` there (`373e6733`). The Mac Studio watches
      for midway2's return from 00:20 11-02 (user: "monitor and continue when midway2 is up").
@@ -131,7 +134,7 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
      line names the Mac's `scratchpad/ff31_compare_r6/`, which is in the bundle).
    - ff3.1 (`ff31_nativefix` step 76, released 16:49 10-31; plan.md Phase 37): its validation (§1 line 2). Both
      panels and glpG's preparation read 23:40 10-31, the mdCATH TM files 01:30 11-01. Owed as each ends: each Peng arm's
-     final frames at `[bench] COMPLETE` (the collector scores them), glpG block 1's TM4 readout.
+     final frames at `[bench] COMPLETE` (the collector scores them). glpG block 1 is done and read (07:30 11-02).
    - The all-term loss's fix (plan.md Phase 38): `ff32_dse0` and `ff32_sarwsi` queue their own panels (`z32_00`,
      `s32_00`) and unfolded-shift checks, read 14:10 11-01 (§1 line 2). ff3.2 is `ff32_dse0` trained on (user 11-01):
      read each epoch end's `z32_EE` panel (`paired_npz.py` against `ff21_released` and `n32_EE`), its
@@ -590,13 +593,15 @@ running link) carry 0027 in ExcNodeList.
 
 ## 1. Current jobs
 
-Snapshot **2026-11-02 00:15 CST** (the Mac Studio; midway2 from job logs read through midway3, since midway2 does
-not answer). Owner none since the MacBook Pro's handoff 21:55 10-27 ("Handoff"). **midway2 has been faulty since
+Snapshot **2026-11-02 08:30 CST** (the Mac Studio; midway2 from job logs read through midway3, since midway2 does
+not answer). Compute nodes have lost the controller too: jobs that ended since 21:19 logged "slurmstepd: error: Unable
+to send job complete message: Socket timed out" (ff3.2's link at 05:01, the 28 Peng chunks at 07:10), so `sacct` may
+not show their ends when midway2 returns; no file under `/beagle3` or `/project` was written between 07:30 and 08:30. Owner none since the MacBook Pro's handoff 21:55 10-27 ("Handoff"). **midway2 has been faulty since
 21:19 11-01**: srun answered "Unable to confirm allocation ... Unexpected message received" and sbatch "Batch job
 submission failed: Unexpected message received"; from 23:57 its login node opens no session through a live socket
 master (a command as small as `echo` hangs), and midway3's Slurm does not know midway2. Jobs already running kept
-writing (ff3.1's glpG block 1 at 23:58). It broke ff3.2's link 49737476 at 21:19 (all 24 workers' srun refused) and
-the resubmission of 28 ff3.1 Peng chunks that ended 23:22-23:28. Earlier, between 23:25 10-31 and 14:10 11-01, ff3.1's
+writing (ff3.1's glpG block 1 to its end at 07:19 11-02). It broke ff3.2's link 49737476 at 21:19 (all 24 workers' srun refused) and
+the resubmission of 30 ff3.1 Peng chunks that ended 23:22-23:28 11-01 and 03:16 11-02. Earlier, between 23:25 10-31 and 14:10 11-01, ff3.1's
 alpha3d native 49712331 lost midway2-0156 (NODE_FAIL 06:11, requeued and resumed); with cspA de novo's midway2-0189
 (20:11 10-31), each node's first failure on record, so neither is excluded. `/project/trsosnic` 355 G free, 630,493
 inodes free; `/beagle3` 118,677 inodes free (14:12 11-01; not read at 00:15, since `df` needs midway2). Paths: `$P` =
@@ -649,17 +654,21 @@ inodes free; `/beagle3` 118,677 inodes free (14:12 11-01; not read at 00:15, sin
     (midway2-0156, 06:11 11-01). Second chunks ended 12:52-12:56 11-01, mean 0.38 of the target done (0.12-0.89).
     BBA native and BBL native COMPLETE 15:41 and 15:51 11-01 (the collector's pass 49726963 sent them to scoring as
     49738134-49738135; their final frames are owed); its next pass 49738136 (about 21:51) left no log by 00:15 11-02.
-    **28 chains broke at 23:22-23:28 11-01** on midway2's fault: each third chunk ended normally (`exit=0`) and its
-    resubmission failed ("sbatch: error: Batch job submission failed: Unexpected message received"); alpha3d native
-    49738144 and cspA de novo 49738143, offset by their requeues, were then mid-chunk. Restart them when midway2
+    **30 chains broke on midway2's fault**, 28 at 23:22-23:28 11-01 and alpha3d native 49738144 and cspA de novo
+    49738143 (offset by their requeues) at 03:16 11-02: each chunk ended normally (`exit=0`) and its resubmission
+    failed ("sbatch: error: Batch job submission failed: Unexpected message received"). Restart them when midway2
     answers: `bash checks/ff31_nativefix_release_20261031/restart_broken.sh dry`, then `submit` (md5 `c77df969`; picks
     the arms whose newest log ends in a failed resubmission, skips any already queued, issues `bench.sbatch`'s own
     `BENCH_RESUBMIT` line with the law, logs to `restart_broken.log`; each arm resumes from its checkpoint);
   - glpG on Upside 3: `upside3_validation/glpg_ff31/` (the merge's `run.py`, one REMD block). Prep COMPLETED 20:57
     10-31; `glpg_u3_prep_tm4.py` (`checks/ff31_nativefix_release_20261031/glpg_prep_tm4.txt`): TM4 DSSP alpha through
     stage 7.0 by tenth 1.00 0.98 1.00 0.99 1.00 0.90 0.91 0.91 0.93 0.87 (mean 0.95, last frame 0.82, box 1.00), where
-    the merge fell to 0.36 and ff3.0 settled near 0.82 (findings 3.15). REMD block 1 **49692243** R from 21:01; readout
-    at block end: TM4 DSSP, KE and C-N at T 0.70 against ff3.0's 0.85.
+    the merge fell to 0.36 and ff3.0 settled near 0.82 (findings 3.15). REMD block 1 49692243 ended 07:19 11-02 (log
+    `REMD/glpG-RKRK-79HIS.remd_block1.log` ends "finished", final KE/1.5kT 0.996-1.003, no NaN, ROLLBACK or error
+    line; `block_count` 1 of 1, so the run is done; its Slurm state unread, midway2 down). **Read 07:30 11-02** on the
+    midway3 login (`glpg_u3_block1.py` on `/output` of run.0 and run.23; `glpg_ff31/glpg_ff31_block1.txt`): at T 0.70
+    KE/1.5kT protein 1.004, lipid 1.005; C-N 1.312 +- 0.120 A; TM1 dihedral-box 0.98; **TM4 DSSP alpha 0.74** (halves
+    0.78 / 0.70, last quarter 0.64; 135 at 0.34, 146-151 at 0.48-0.70), at T 0.795 0.71; ff3.0 0.85, the merge 0.42.
 - **The 10-26 merge, retired 16:49 10-31** (plan.md Phase 30; `rama.dat` `5b66c78a`). Its results stand as recorded:
   level with released ff2.1 on both panels (p44 mean TM +0.006 [-0.001, +0.012], mdCATH +0.005 [-0.001, +0.012]),
   above the control on both; Peng 25 of 32 scored when its last 5 chunks and collector were cancelled 16:47 10-31; on
@@ -1100,8 +1109,7 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
 |---|---|---|---|
 | `upside3_validation/peng_seeds` (no job) | Peng seed replicates: top7 and alpha3d de novo, seeds 101 and 202, both engines (line 3) | all 8 COMPLETE (the last 09:17 10-31) | `score/submit_seed_scores.sh` when midway2 answers, then `score/seed_spread.py` |
 | `$P/training/ff311_glypair*` (no job) | The ff3.1 training debug, `ff311_glypair` and `ff311_glypair_mb2` (plan.md Phase 32; line 2), on the old native target | both at their target 76 (`_mb2` 11:44 10-30, `ff311_glypair` 03:35 10-31 after a NODE_FAIL in step 65) | both arms' round 4 by Phase 32's rule; `ff311_glypair`'s round 3 |
-| 32 `b_ff_3.1_<prot>_<kind>`, collector next **49738136** (`ff31_collect`) | ff3.1's Peng arms on the pre-audit Upside 2 engine and their collector (plan.md Phase 37; line 2; two chunks requeued after NODE_FAIL) | BBA and BBL native COMPLETE 15:41-15:51 11-01 (scoring 49738134-49738135); alpha3d native 49738144 and cspA de novo 49738143 R; **28 chains broken** 23:22-23:28 11-01 (resubmission refused on midway2's fault); collector pass unread | when midway2 answers: `restart_broken.sh dry`, then `submit`; BBA and BBL native final frames; `peng_ff31.txt` when DONE |
-| **49692243** REMD block 1 (`glpG-RKRK-79HIS_REMD_remd`, `upside3_validation/glpg_ff31`) | ff3.1 glpG hybrid on Upside 3, one block (plan.md Phase 37; line 3; prep COMPLETED 20:57 10-31, TM4 held through stage 7.0) | R from 21:01 10-31 | block 1's readout: TM4 DSSP, KE and C-N at T 0.70 against ff3.0's 0.85 and the merge's 0.42 |
+| 32 `b_ff_3.1_<prot>_<kind>`, collector next **49738136** (`ff31_collect`) | ff3.1's Peng arms on the pre-audit Upside 2 engine and their collector (plan.md Phase 37; line 2; two chunks requeued after NODE_FAIL) | BBA and BBL native COMPLETE 15:41-15:51 11-01 (scoring 49738134-49738135); **30 chains broken** 23:22 11-01 to 03:16 11-02 (resubmission refused on midway2's fault); collector pass unread | when midway2 answers: `restart_broken.sh dry`, then `submit`; BBA and BBL native final frames; `peng_ff31.txt` when DONE |
 | **49737477** (`condiv-train`, insurance link) | ff3.2: `ff32_dse0` trained on from step 19, every term, DSE off (plan.md Phase 38 item 6; line 2) | link 49737476 FAILED 21:19 11-01 at epoch 1 minibatch 13 (srun refused on midway2's fault); 49737477 PD afterany, unread since | when midway2 answers: check it started (else resubmit the link); then at step 38 `after_training.sbatch` queues `z32_01`, its shift and Rg check, and the next epoch: read them |
 
 **Line 5: Upside 3 on the GPU (plan.md Phase 35; midway2 `gpu2` and midway3 `gpu`, never `beagle3`, user 10-29).**
@@ -1587,8 +1595,9 @@ for fn in sorted(run_dir.glob("*.run.*.up")):
 Slurm and filesystem:
 * **A Slurm controller fault breaks self-resubmitting chains silently** (2026-11-01, 21:19 onward on midway2):
   srun and sbatch answered "Unexpected message received". A Peng chunk then ends `exit=0` and still prints
-  `[bench] resubmitted:`, but followed by `sbatch: error: ...` instead of a job id, and nothing follows it (28 of
-  ff3.1's 32 arms); a training link's workers all fail at once, and only its queued insurance link carries on. Read
+  `[bench] resubmitted:`, but followed by `sbatch: error: ...` instead of a job id, and nothing follows it (30 of
+  ff3.1's 32 arms); a training link's workers all fail at once, and only its queued insurance link can carry on, once
+  the controller answers. Read
   the id on every `[bench] resubmitted` line, not only that the line exists.
 * **A training chain insures itself** (the design that worked unattended on ff30_basin): every link queues its
   `afterany` successor before it trains; `--no-requeue`; the successor resumes from the newest checkpoint after

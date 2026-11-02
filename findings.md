@@ -2932,21 +2932,29 @@ retrained term.
   units at T 0.8647; REMD block 1 (remote_jobs.md §1) gives TM4 at T 0.70, against Upside 2's ff3.0 chains' 0.96.
 * **REMD confirms it** (10-29 to 11-02; `glpg_u3_block1.py` on each run's rungs 0 and 23, T 0.70 and 0.795; outputs
   `glpg/glpg_u3_block23.txt`, `glpg_u3_block4.txt`, `glpg_ff31.bak_pre_nativefix_20261031/glpg_ff31_block1.txt`,
-  `glpg_ff30/glpg_ff30_block1.txt`, `glpg_ff30_block2.txt`, `glpg_ff30_block3.txt`). TM4 135-151 DSSP alpha at T 0.70
-  (T 0.795):
+  `glpg_ff30/glpg_ff30_block1.txt`, `glpg_ff30_block2.txt`, `glpg_ff30_block3.txt`, `glpg_ff31/glpg_ff31_block1.txt`).
+  TM4 135-151 DSSP alpha at T 0.70 (T 0.795):
 
   | run | block 1 | block 2 | block 3 | block 4 |
   |---|---|---|---|---|
   | ff2.1 | 0.44 (0.39) | 0.26 (0.34) | 0.14 (0.21) | 0.05 (0.17) |
   | ff3.1, the 10-26 merge | 0.42 (0.39) | | | |
+  | ff3.1, released (`ff31_nativefix` step 76) | 0.74 (0.71) | | | |
   | ff3.0 | 0.85 (0.81) | 0.82 (0.85) | 0.85 (0.82) | |
   | Upside 2 ff3.0, placement fixed | 0.96 (0.93) | | | |
+
+  The released ff3.1 (block 1 ended 07:19 11-02, read 07:30) holds TM4 better than the merge but below ff3.0, and
+  falls within the block: halves 0.78 / 0.70, last quarter 0.64 (T 0.795: 0.79 / 0.62). The loss sits at both ends,
+  135 at 0.34 and 146-151 at 0.48-0.70, with 139-145 above 0.8; the dihedral-box fraction is 0.93 (ff3.0 0.84),
+  so the frayed ends keep helical phi/psi more often than they keep DSSP's H-bonds. One block, so whether it settles,
+  as ff3.0 did by block 2, or keeps falling, as ff2.1 did, is not measured.
 
   ff2.1 keeps unwinding to none (block 4 at most 0.08 per residue). ff3.0's blocks 2 and 3 are block 1 again: 137-151
   at 0.93-0.98, 135-136 never helical; its run is done (3 of 3 blocks). The merge loses TM4's C-terminal half (146-151 at 0.00-0.02, 135-145
   near 0.7). ff3.0 holds 137-151 at 0.96, Upside 2's level, and loses only 135-136, never helical in block 1, which
   accounts for the gap to 0.96. Every run keeps KE/1.5kT 1.00 for protein and lipid, C-N 1.310-1.312 +- 0.119-0.120 A
-  and TM1's dihedral-box fraction at 0.96-1.00; of the measures read, only TM4 separates them.
+  and TM1's dihedral-box fraction at 0.96-1.00 (the released ff3.1: 1.004 / 1.005, 1.312 +- 0.120 A, 0.98); of the
+  measures read, only TM4 separates them.
 * **The core (pure-protein ff2.1) against Upside 2** (10-27, Mac Studio; scripts and outputs
   `/project/trsosnic/yinhan/checks/u3_vs_u2_20261027/`):
   * Hamiltonian at identical coordinates: each tree's own writer builds the 16 Peng configs as `bench_run.py` does,

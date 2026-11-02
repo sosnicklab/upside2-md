@@ -311,6 +311,8 @@ Results so far (findings 3.14 "The core against Upside 2", 3.15; 10-27):
 * **glpG.** It matches Upside 2 except TM4, which ff2.1 loses on Upside 3 already in preparation stage 7.0 (DSSP alpha
   0.44 at T 0.70 against 0.93-0.96).
   * ff3.0 holds TM4 on Upside 3 (0.88 at the end of stage 7.0), so the loss is ff2.1's own.
+  * The released ff3.1 holds it less well: 0.74 at T 0.70 in its one REMD block, falling within it (ff3.0 0.85 over
+    three blocks; findings 3.15).
   * Which force field the hybrid's HDX uses is the user's call.
 
 State at 08:25 10-29 (`remote_jobs.md`): 29 of 32 Peng arms complete; glpG blocks 1-3 done and block 4 running,

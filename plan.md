@@ -1160,7 +1160,9 @@ predecessors (Phase 30). Scripts and logs `/project/trsosnic/yinhan/checks/ff31_
 4. [ ] Read each as it ends. Panels read 23:40 10-31 (findings 1.34): 44 domains fold 0.631 against released
    ff2.1's 0.603 (+0.028 [-0.004, +0.059]), mdCATH 0.515 against 0.488 (+0.027 [+0.000, +0.053]), level with the
    merge; mean TM level with ff2.1 on both (+0.001 and +0.004, mdCATH read 01:30 11-01). glpG keeps TM4 through
-   preparation (stage 7.0 DSSP mean 0.95; merge 0.36). Open: Peng's 32 arms, glpG REMD block 1.
+   preparation (stage 7.0 DSSP mean 0.95; merge 0.36); REMD block 1 (read 07:30 11-02, findings 3.15) holds TM4 at
+   DSSP 0.74 at T 0.70, between ff3.0's 0.85 and the merge's 0.42, falling within the block (halves 0.78 / 0.70) at
+   both ends of the helix. Open: Peng's 32 arms (30 chains broken by midway2's fault 11-01 to 11-02, restart owed).
 
 ### Phase 38 - fix the all-term training's folding loss, then continue ff3.2 (STARTED 2026-10-31, user)
 User 10-31: "Fix the folding issue and continue working on ff3.2". The loss is measured (findings 1.37 "What the loss
