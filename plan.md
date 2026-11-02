@@ -972,27 +972,26 @@ math is shared through `UPSIDE_HD` and lane-type templates, the loops are per ba
 as C++ (host backend) so the device path is tested on the Mac; 64-bit fixed-point accumulation (deterministic, a
 non-finite value reads back as NaN); BP one block per system on the CPU's schedule; one CUDA 11.5 binary from midway2
 for K80 to A100; development tree `/beagle3/trsosnic/yinhan/upside3_gpu` (the Upside 3 tree is under its validation).
-**Resume here (state at 2026-10-31 23:45, MacBook Pro; the user resumes on another computer with "resume GPU jobs").**
-No job runs. Items 1-10 are done: V1, V2 and V3 pass on build g7b (findings 11g). Readiness, as told the user 10-31:
-ready for soluble-protein REMD on ff2.1 and ff3.1 on a V100, A100 or RTX6000 (one V100 with 4 ladders in one process
-samples as fast as one 14-core broadwl job; on proteins the K80 is slower than 4 broadwl cores); not ready for the
-hybrid's production, where the GPU is 11 to 22 times 4 cores, since rigid groups and the barostat are refused and stage
-7.1 and glpG are untested; and not yet in use: the binary exists only in the GPU development tree, no workflow script
-has a GPU option, and the ff3.1 released 10-31 16:45 (Phase 37) has had no V1 on the device (V2 and V3 ran on the
-earlier ff3.1 tables). On resume, in order:
-- Set up the computer. The code is the MacBook Pro's uncommitted working tree on HEAD `cce51ce0`, unless the user has
-  committed it since. If not, the handoff bundle `/project/trsosnic/yinhan/checks/handoff_gpu_20261031/` (README.txt)
-  has the working-tree patch (all but `parameters/`, whose released ff3.1 is in the cluster trees), the untracked
-  files, `records/`, the `scratchpad/gpu_work` tools and baseline, and `scratchpad/upside3_audit`'s regression
-  fixtures; the bundle's `src` is the GPU tree's (checksum, 10-31 23:10). The scripts assume the repo at
-  `/Users/yinhan/Documents/upside2-md`. For device tests on the Mac build a home (`build_home.sh
-  scratchpad/gpu_work/dev12_home`, `UPSIDE_HOME` there): the repo's `obj/` lacks the device API until rebuilt. Open
-  the sockets (remote_jobs.md section 0).
-- Ask the user which step to take; on 10-31 the user chose not to start them yet. The proposed order: (a) V1 of the
-  released ff3.1 (`ff31_configs.py`, then `v1.sbatch` on a V100; minutes); (b) item 7's open box, rigid groups and
-  the barostat on the device, then V2 of stage 7.1 and a glpG check; (c) a GPU option in `bp_run.py` and the
-  hybrid's `run.py`; (d) the GPU code into the Upside 3 tree once its campaigns end (never into it while they run);
-  then item 11.
+**Resume here (state at 2026-11-01 00:30, Mac Studio).** Items 1-10 are done: V1, V2 and V3 pass on build g7b
+(findings 11g). Readiness, as told the user 10-31: ready for soluble-protein REMD on ff2.1 and ff3.1 on a V100, A100
+or RTX6000 (one V100 with 4 ladders in one process samples as fast as one 14-core broadwl job; on proteins the K80 is
+slower than 4 broadwl cores); not ready for the hybrid's production, where the GPU is 11 to 22 times 4 cores, since
+rigid groups and the barostat are refused and stage 7.1 and glpG are untested; and not yet in use: the binary exists
+only in the GPU development tree and no workflow script has a GPU option.
+- The computer: the code is committed (HEAD `7f31f72`) and equal to the GPU tree's `src py tests cmake` (md5, 162
+  files); the gitignored `scratchpad/gpu_work` and `scratchpad/upside3_audit` come from the bundle
+  `/project/trsosnic/yinhan/checks/handoff_gpu_20261031/` (README.txt). Device tests on the Mac use the home
+  `scratchpad/gpu_work/dev12_home` (`build_home.sh`, `UPSIDE_HOME` there; the repo's `obj/` lacks the device API).
+  On the Mac Studio that home regresses 0 of 4260 arrays against `dev12_record.npz`, the hybrid fixtures included.
+- User 11-01 chose (a), V1 of the released ff3.1, and "run both": (a) and the hybrid's CPU validation, after "the
+  hybrid model is not fully validated". (a) is done (item 10). No job of this phase runs.
+  The hybrid's CPU validation is the glpG runs on Upside 3 (Phase 24 item 2b 4, Phase 37; remote_jobs.md line 3):
+  ff3.0's block 3 and the released ff3.1's block 1 run to about 01:00 and 08:45 11-02, healthy at t 640 and t 200;
+  each is read at its end, never from the live `/output`; the TM4 HDX readout waits on the user's choice of force field.
+- Then, in order: (b) item 7's open box, rigid groups and the barostat on the device, then V2 of stage 7.1 and a glpG
+  check, once the CPU hybrid's glpG readouts hold (V2 tests the GPU against the CPU, so it cannot find a CPU defect);
+  (c) a GPU option in `bp_run.py` and the hybrid's `run.py`; (d) the GPU code into the Upside 3 tree once its
+  campaigns end (never into it while they run); then item 11.
 
 Code in `src/device*.{h,cu}` and the ported nodes'
 `make_device`; working files in the gitignored `scratchpad/gpu_work/` (`build_home.sh`/`regress_home.sh` build and
@@ -1079,7 +1078,9 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
     V2 by seeds, then V3).
     - [x] V1 on ff3.1 (chig, 1ubq, 1dfn written as `tests/fixtures.py` does, with ff_3.1 and its `rama.dat`; the same
       31 nodes as ff2.1) and the 11 fixtures: every quantity passes on the host backend, K80, V100, RTX6000 and A100,
-      with the same worst errors on the four GPUs (findings 11g)
+      with the same worst errors on the four GPUs (findings 11g); the released ff3.1 (11-01, the three configs
+      rewritten, only the Ramachandran tables differ) passes every quantity on the host backend and the V100
+      (61986517), the same worst error per config as before
     - [x] V2 of the protein by seeds (`tests/device_dyn.py`, now with the backbone angles): 1ubq 14-replica REMD,
       2000 tu, ff2.1 without and with rotamer and ff3.1, 16 CPU, 16 K80, 8 V100 seeds; Bonferroni 0.087 to 1 over the
       112 comparisons of each config and GPU, and the per-seed means over replicas within 2.0 SE (findings 11g)
@@ -1154,8 +1155,8 @@ predecessors (Phase 30). Scripts and logs `/project/trsosnic/yinhan/checks/ff31_
 3. [x] 16:50 10-31 (`submit.sh`, ids in `submitted.log`, remote_jobs.md §1 line 2).
 4. [ ] Read each as it ends. Panels read 23:40 10-31 (findings 1.34): 44 domains fold 0.631 against released
    ff2.1's 0.603 (+0.028 [-0.004, +0.059]), mdCATH 0.515 against 0.488 (+0.027 [+0.000, +0.053]), level with the
-   merge; mdCATH TM files pending. glpG keeps TM4 through preparation (stage 7.0 DSSP mean 0.95; merge 0.36). Open:
-   mdCATH TM, Peng's 32 arms, glpG REMD block 1.
+   merge; mean TM level with ff2.1 on both (+0.001 and +0.004, mdCATH read 01:30 11-01). glpG keeps TM4 through
+   preparation (stage 7.0 DSSP mean 0.95; merge 0.36). Open: Peng's 32 arms, glpG REMD block 1.
 
 ### Phase 38 - fix the all-term training's folding loss, then continue ff3.2 (STARTED 2026-10-31, user)
 User 10-31: "Fix the folding issue and continue working on ff3.2". The loss is measured (findings 1.37 "What the loss
@@ -1176,7 +1177,10 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
    -77 E_up in the old one.
 2. [x] Submitted 16:57 10-31 (`ff32_dse0` 49692528, `ff32_sarwsi` 49692529); at 19 each `after_training.sbatch`
    submits its panel (`z32_00`, `s32_00`) and then `peng_full.sbatch` on it.
-3. [ ] Read both panels and unfolded shifts; propose step 2.
+3. [ ] Read both panels and unfolded shifts; propose step 2. `ff32_dse0` read 08:50 11-01 (findings 1.37): `z32_00`
+   folds 0.575, +0.127 [+0.091, +0.163] over `n32_00` and -0.040 [-0.076, -0.007] against released ff2.1, unfolded
+   shift +3.8 E_up (2 of 16 negative): the DSE target carries the shift and most of the loss, not all of it.
+   `ff32_sarwsi` reaches 19 about 11:00 CST 11-01.
 
 ## Known Errors / Blockers
 
@@ -1212,8 +1216,10 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
   residue** (findings 3.14 A61, fixed in the repo 10-20): glpG, numbered from 1, gave each amide its N-terminal
   neighbour's accessibility. The shared deployment's copy (`/beagle3/trsosnic/yinhan/upside2-md/py`, md5 `ca115325`)
   is that version, so every hybrid HDX run through it carries the shift whatever its date: the 10-14 and 10-17 TM4
-  readouts and the 10-22 ff3.0 block figures too (findings 5.6). To regenerate (on the cluster, by the campaign's
-  drivers):
+  readouts and the 10-22 ff3.0 block figures too (findings 5.6). The 10-22 ff3.0 sets (blocks 2, 3 and 2-3, four
+  variants) were regenerated with the repo's code 11-01, then again with the core test
+  (`checks/hdx_acc_flicker_20261101/a61/` and `core/`, findings 5.8); their work dirs still hold the shifted arrays.
+  To regenerate the rest (on the cluster, by the campaign's drivers):
   * `/project/trsosnic/yinhan/popepopg_REMD/<V>/hdx*/results/<V>_popg_remd_<i>_ACC.npy`, and the same arrays in
     `popepopg_REMD_mdw2/<V>.<ff>*/hdx_sc600x12_*/results/` (for the 10-22 set, `acc_shift_corrected/` undoes the
     shift from the stored arrays for every amide whose next residue is a donor);
@@ -1252,9 +1258,18 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
   and not `broadwl-lc` (its nodes cannot see `/project`). GPU work (Phase 35) runs on midway2 `gpu2` and midway3
   `gpu`, never `beagle3` (user 10-29).
 * **HDX post-processing items await the user's decision** (user, 10-11; findings 5.5): three docstring/README
-  statements that call TM helices non-exchanging, and the unmeasured interface boundary of the 7 A tail-contact
-  criterion. The PF = 1000 uptake cap was replaced in Upside 3 by the per-temperature ESS bound with censored amides
-  (A64, 10-20, under the user's 10-19 direction to fix every bug in Upside 3; master unchanged), told to the user
-  10-20. Do not compare uptake with the HXMS data before the remaining items are settled.
+  statements that call TM helices non-exchanging, and the 7 A tail-contact criterion. Measured 11-01 (findings 5.8):
+  around a backbone amide the tail shell peaks at 6.9 A, so the test flickers at the bilayer midplane, and every
+  resolved TM4 amide exchanges only just past the radius. **Revised 11-01 (user: TM4 and TM5 still show finite
+  points with censoring alone):** inside the hydrocarbon core (between the leaflets' ester planes) an amide is
+  shielded when a tail sits inside its own tail shell, the first minimum of the core amide N-tail g(r), measured
+  like the 7.00 A (8.12 A on glpG); outside the core the 7.00 A contact stays. Censored amides stay off scale. It is
+  master's TM-slab AND lipid-facing conjunction, so a lipid-free pocket (S201) stays exposed. Done 11-01 for the four
+  ff3.0 sets and slides 17-18: TM5 clears in all four, TM4 in 79HIS; three single-event TM4 points remain (5.8), and
+  whether the resolution limit should count correlated frames (RT ln(ESS/g), ~2 kcal/mol lower) is the user's call.
+  The Upside 3 tree still holds the pre-core `martini_hdx_membrane_accessibility.py` until the next sync. The
+  PF = 1000 uptake cap was replaced in Upside 3 by the per-temperature ESS bound with censored amides (A64, 10-20,
+  under the user's 10-19 direction to fix every bug in Upside 3; master unchanged), told to the user 10-20. Do not
+  compare uptake with the HXMS data before the remaining items are settled.
 * **lambda's helix 2 / helix 4 misorientation** is a known ff2.1 limitation with no single side-chain cause (findings
   11d). It is re-tested after ff3.0, not trained against.

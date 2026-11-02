@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """Render residue-vs-dG in the reference layout (Downloads/79HIS_0.85.png).
 
-Reads the per-temperature profiles that calc_hdx_ht.py saves and draws the unclipped profile: an amide that
-never exchanges in the reweighted ensemble runs off the top of the axis, so a non-exchanging transmembrane
-helix reads as one continuous excursion rather than a capped plateau. That is how these profiles are
-conventionally read, and it is only correct once the membrane term is in the protection state -- without it
-(martini_hdx_membrane_accessibility.py, findings 113) a lipid-facing amide drops out of the protected state
-every time its backbone H-bond flickers, and the same rendering breaks each helix into isolated needles.
-
-Everything below the excursions is the value the estimator actually returns, up to ~21 kcal/mol. Values above
-0.001987 * temp_scale * ln(ESS) (4.7-6.0 kcal/mol on the glpG POPE/POPG ladder, printed per temperature) rest
-on a reweighted (1 - p_f) smaller than one effective frame, so they order amides correctly but must be read as
-lower bounds, not quoted as dG.
+Reads the per-temperature profiles that calc_hdx_ht.py saves. An amide runs off the top of the axis when the
+reweighted ensemble does not resolve its exchange: it never exchanges, or its (1 - p_f) rests on less than one
+effective frame, the npz's `censored` flag, i.e. dG above 0.001987 * temp_scale * ln(ESS) (5.5-6.3 kcal/mol on
+the glpG POPE/POPG ladder, printed per temperature). Such an amide is at least that protected; its unclipped value
+is set by one or a few exchanging frames, and above ~15 kcal/mol by double rounding of 1 - p_f. On a hybrid ladder
+MBAR on the coupled energy puts each plotted temperature's weight on the few nearest rungs, so a rare event would
+otherwise show as a lone finite point at one temperature inside an off-scale helix (findings 5.8). With both
+kinds off scale, a non-exchanging transmembrane helix reads as one continuous excursion. That is only correct
+once the membrane term is in the protection state -- without it (martini_hdx_membrane_accessibility.py,
+findings 113) a lipid-facing amide drops out of the protected state every time its backbone H-bond flickers,
+and each helix breaks into isolated needles.
 
 The figure carries nothing but the profiles: bare axis, one small legend of temperatures, no shading and no
 marker variants. Annotation was tried on it and blocks the region the eye needs. The two things worth knowing
@@ -36,7 +36,7 @@ STYLE = [("blue", "o"), ("red", "s"), ("green", "^"), ("darkorange", "D"), ("pur
 HELIX_CODES = ("H", "G", "I")
 MIN_HELIX = 5             # shorter runs are single turns, not helices worth reporting
 N_CAP = 4                 # an amide this far into a helix is the first one with an i-4 acceptor
-SENTINEL = 100.0          # calc_hdx_ht.py marks a non-exchanging amide with +1000
+SENTINEL = 100.0          # calc_hdx_ht.py marks a never-exchanging amide with +1000
 
 
 def helix_segments(structure_path, n_residue):
@@ -92,7 +92,7 @@ def main():
     args = parser.parse_args()
 
     d = np.load(args.npz)
-    for required in ("dG_unclipped", "dg_limit", "pdb_resnum"):
+    for required in ("dG_unclipped", "censored", "dg_limit", "pdb_resnum"):
         if required not in d.files:
             raise ValueError('%s has no %r; re-run 4.calc_D_uptake.py to regenerate it'
                              % (args.npz, required))
@@ -103,18 +103,21 @@ def main():
     labels = np.array(["%s%d" % (c, n) if multichain else "%d" % n for c, n in zip(chains, numbers)])
     temps = np.asarray(d["temps"], dtype=float)
     dG = d["dG_unclipped"]
+    censored = d["censored"]
     dg_limit = np.asarray(d["dg_limit"], dtype=float)
     wanted = [float(x) for x in args.temperatures.split(",")]
+
+    def off_scale(j):
+        y = np.array(dG[j], dtype=float)
+        return y, (y >= SENTINEL) | (censored[j] & (y > 0.0)), (y <= -SENTINEL) | (censored[j] & (y <= 0.0))
 
     figure, axis = plt.subplots(figsize=(15, 10))
     for position, target in enumerate(wanted):
         j = int(np.argmin(np.abs(temps - target)))
         colour, marker = STYLE[position % len(STYLE)]
-        y = np.array(dG[j], dtype=float)
-        # A non-exchanging amide is joined to a point far off the axis, which draws the vertical excursion
-        # the figure is read by; no marker is placed there, since there is no value to mark.
-        high = y >= SENTINEL
-        low = y <= -SENTINEL
+        # An unresolved amide is joined to a point far off the axis, which draws the vertical excursion the
+        # figure is read by; no marker is placed there, since there is no value to mark.
+        y, high, low = off_scale(j)
         drawn = np.where(high, Y_LIMITS[1] * 3.0, np.where(low, Y_LIMITS[0] * 3.0, y))
         resolved = ~high & ~low
         axis.plot(residue, drawn, "-", color=colour, linewidth=2.0, zorder=2)
@@ -152,10 +155,11 @@ def main():
               % (int(interior.sum()), int(cap.sum()), int((~interior & ~cap).sum())))
     for target in wanted:
         j = int(np.argmin(np.abs(temps - target)))
-        y = np.array(dG[j], dtype=float)
-        resolved = np.abs(y) < SENTINEL
-        print("  T=%.2f: %d of %d non-exchanging (off scale), %d resolved, resolution limit %.2f"
-              % (temps[j], int((~resolved).sum()), y.size, int(resolved.sum()), dg_limit[j]))
+        y, high, low = off_scale(j)
+        resolved = ~high & ~low
+        print("  T=%.2f: %d of %d off scale (%d never exchange, %d censored), %d resolved, resolution limit %.2f"
+              % (temps[j], int((~resolved).sum()), y.size, int((np.abs(y) >= SENTINEL).sum()),
+                 int((~resolved & (np.abs(y) < SENTINEL)).sum()), int(resolved.sum()), dg_limit[j]))
         if resolved.any():
             print("          resolved dG min %.2f max %.2f median %.2f"
                   % (y[resolved].min(), y[resolved].max(), np.median(y[resolved])))

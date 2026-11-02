@@ -10,28 +10,37 @@ for an implicit membrane is get_protection_state.py --use-TM-region, which reads
 node is implicit-membrane machinery and does not exist in a hybrid HDX topology.
 
 This script recovers the missing term from the *full* hybrid trajectory, which still has the lipid: an
-amide backbone N with at least one lipid hydrophobic-tail bead inside the tails' own first coordination
-shell is treated as water-INACCESSIBLE. The output is one (n_frame, n_donor) accessibility array per
-replica (1 = water-accessible, 0 = inaccessible) aligned with get_protection_state's donor ordering, to be
-fed to combine_hdx_protection.py --water-accessibility (which sets
+amide backbone N with a lipid hydrophobic-tail bead inside the first coordination shell of tails around it
+is treated as water-INACCESSIBLE. The output is one (n_frame, n_donor) accessibility array per replica
+(1 = water-accessible, 0 = inaccessible) aligned with get_protection_state's donor ordering, to be fed to
+combine_hdx_protection.py --water-accessibility (which sets
 protection = 1 - (1 - protein_protection) * accessibility).
 
-The criterion is the bilayer boundary, and it is measured from the bilayer rather than chosen. The radius
-is the flat first minimum of the intermolecular tail-tail g(r) of this system's own lipids, so "inside the
-radius" means "inside the tail region's first neighbour shell"; on the glpG POPE/POPG patch that comes out
-at 7.00 A. One contact is then the boundary itself: measured at that radius, a phosphate bead -- the
-conventional edge of the bilayer -- has a median of zero intermolecular tail neighbours (ester beads 2,
-first tail bead 6, terminal tail bead 11), so the first tail contact is the first step past the head groups.
+Which shell depends on where the amide is, and both are measured from the bilayer rather than chosen.
+Outside the hydrocarbon core the test is the bilayer boundary. The radius is the flat first minimum of the
+intermolecular tail-tail g(r) of this system's own lipids, 7.00 A on the glpG POPE/POPG patch, and one
+contact is the boundary itself: measured at that radius, a phosphate bead -- the conventional edge of the
+bilayer -- has a median of zero intermolecular tail neighbours (ester beads 2, first tail bead 6, terminal
+tail bead 11), so the first tail contact is the first step past the head groups.
 
-The radius is measured once, from the g(r) pooled over every replica of the analysis, and that one radius is
-applied to all of them: MBAR averages the protection state across the ladder, so it must be one function of
-the coordinates on every rung. Measured per replica it moved between 6.6 and 7.25 A on 1rkl runs, enough to
-shift the shielded fraction from 0.65 to 0.79. The radius is written beside the arrays.
+Inside the core, between the two leaflets' ester planes (the median height of each leaflet's GL1/GL2 beads
+above the midplane, the circular mean of the tail beads' z), the radius is the flat first minimum of the
+amide N-tail g(r) of the amides there. Tails pack around a backbone amide less tightly than around each
+other: on glpG that shell peaks at 6.6-6.9 A and ends at 8.12 A, so the tail-tail radius cuts through it. At
+the midplane 7% of amide-frames have no tail within 7.00 A while 3-17 sit within 9 A and the nearest
+phosphate is 12-18 A away; scored as openings, those frames put lone finite dG inside helices that never
+exchange otherwise (findings 5.8).
 
-The test is deliberately local rather than a slab between the two leaflet planes. A slab also protects
-every amide lining the protein's own polar interior, which for glpG merges the short interfacial loops
-into the helices and gives contiguous +inf runs of 40-50 residues. Master ANDs its slab with a
-lipid-facing surface test for the same reason.
+Both radii are measured once, from g(r)s pooled over every replica of the analysis, and applied to all of
+them: MBAR averages the protection state across the ladder, so it must be one function of the coordinates
+on every rung. Measured per replica the tail-tail radius moved between 6.6 and 7.25 A on 1rkl runs, enough
+to shift the shielded fraction from 0.65 to 0.79. The radii are written beside the arrays.
+
+The core term is a conjunction, not a slab between the leaflet planes. A slab also protects every amide
+lining the protein's own polar interior, which for glpG merges the short interfacial loops into the
+helices, gives contiguous +inf runs of 40-50 residues, and closes the catalytic cavity at S201. Master
+ANDs its slab with a lipid-facing surface test for the same reason; the amide's own tail shell is that
+test here.
 
 Each replica is named by its HDX view (martini_hdx_project.py), which records the hybrid segments it was
 projected from. Frames are those segments' output groups in order, the first frame of every group after the
@@ -48,9 +57,10 @@ import re
 import tables as tb
 from scipy.spatial import cKDTree
 
-RDF_EDGES = np.arange(2.0, 12.01, 0.25)   # tail-tail g(r) bins used to locate the first coordination shell
-RDF_FRAMES = 60                           # frames subsampled per replica for the g(r)
+RDF_EDGES = np.arange(2.0, 12.01, 0.25)   # g(r) bins used to locate a first coordination shell
+RDF_FRAMES = 60                           # frames subsampled per replica for the g(r)s
 RDF_FLAT = 1.05                           # bins within this factor of the minimum count as part of it
+ESTER_NAMES = ("GL1", "GL2")              # MARTINI phospholipid glycerol-ester beads
 
 
 def output_group_names(h5):
@@ -107,9 +117,26 @@ def tail_mask(is_lipid, atom_names, tail_names):
     return is_tail, "auto-detected " + ",".join(sorted(set(atom_names[is_tail])))
 
 
-def tail_tail_histogram(pos, boxes, tail_idx, tail_molecule):
-    """Intermolecular tail-tail pair distances, binned on RDF_EDGES, over a subsample of the frames."""
-    histogram = np.zeros(RDF_EDGES.size - 1)
+def in_core(wrapped, box, tail_idx, ester_idx, amide_idx):
+    """Amides between the two leaflets' ester planes, in one frame."""
+    angle = 2.0 * np.pi * wrapped[tail_idx, 2] / box[2]
+    midplane = np.arctan2(np.sin(angle).mean(), np.cos(angle).mean()) / (2.0 * np.pi) * box[2]
+
+    def height(idx):
+        z = wrapped[idx, 2] - midplane
+        return z - box[2] * np.round(z / box[2])
+
+    ester = height(ester_idx)
+    amide = height(amide_idx)
+    upper = ester > 0.0
+    return (amide < np.median(ester[upper])) & (amide > np.median(ester[~upper]))
+
+
+def shell_histograms(pos, boxes, tail_idx, tail_molecule, ester_idx, amide_idx):
+    """Intermolecular tail-tail and core amide N-tail pair distances, binned on RDF_EDGES, over a subsample of
+    the frames."""
+    tail_tail = np.zeros(RDF_EDGES.size - 1)
+    amide_tail = np.zeros(RDF_EDGES.size - 1)
     for f in range(0, pos.shape[0], max(1, pos.shape[0] // RDF_FRAMES)):
         box = boxes[f]
         wrapped = np.mod(pos[f], box)
@@ -118,20 +145,35 @@ def tail_tail_histogram(pos, boxes, tail_idx, tail_molecule):
         pairs = pairs[tail_molecule[pairs[:, 0]] != tail_molecule[pairs[:, 1]]]
         delta = wrapped[tail_idx[pairs[:, 0]]] - wrapped[tail_idx[pairs[:, 1]]]
         delta -= box * np.round(delta / box)
-        histogram += np.histogram(np.linalg.norm(delta, axis=1), RDF_EDGES)[0]
-    return histogram
+        tail_tail += np.histogram(np.linalg.norm(delta, axis=1), RDF_EDGES)[0]
+        core = amide_idx[in_core(wrapped, box, tail_idx, ester_idx, amide_idx)]
+        amide_tail += np.diff(cKDTree(wrapped[core], boxsize=box).count_neighbors(tree, RDF_EDGES))
+    return tail_tail, amide_tail
 
 
 def first_minimum(histogram):
-    """The flat first minimum of the tail-tail g(r) -- the tail region's first shell -- and its first peak."""
+    """The flat first minimum of a g(r) -- the edge of its first coordination shell -- and its first peak.
+
+    The first peak is the first maximum that g(r) then falls RDF_FLAT below, and its well ends where g(r) rises
+    RDF_FLAT above the well's lowest bin. Searching the well, not everything beyond the highest bin, matters for
+    the amide N-tail g(r), whose first and second peaks are about equally high.
+    """
     centre = 0.5 * (RDF_EDGES[1:] + RDF_EDGES[:-1])
     shell = 4.0 * np.pi / 3.0 * (RDF_EDGES[1:] ** 3 - RDF_EDGES[:-1] ** 3)
     g = histogram / shell
-    peak = int(np.argmax(g))
-    beyond = g[peak:]
-    # The minimum spans two bins and which of them is lowest flips with sampling noise. Averaging over the
+    peak = 0
+    while peak < g.size and g[peak] * RDF_FLAT >= g[:peak + 1].max():
+        peak += 1
+    peak = int(np.argmax(g[:peak]))
+    end = peak
+    while end < g.size and g[end] <= g[peak:end + 1].min() * RDF_FLAT:
+        end += 1
+    if end == g.size:
+        raise ValueError("g(r) has no complete first well within %.2f A" % RDF_EDGES[-1])
+    well = g[peak:end]
+    # The minimum spans a few bins and which of them is lowest flips with sampling noise. The mid-point of the
     # bins within RDF_FLAT of the minimum makes the radius reproducible.
-    flat = np.where(beyond <= beyond.min() * RDF_FLAT)[0] + peak
+    flat = np.where(well <= well.min() * RDF_FLAT)[0] + peak
     return float(0.5 * (centre[flat[0]] + centre[flat[-1]])), float(centre[peak])
 
 
@@ -178,37 +220,54 @@ def main():
             raise ValueError(
                 "no lipid tail beads found (class {}, {}); lipid bead names present: {}".format(
                     args.lipid_class, selected, ",".join(sorted(set(atom_names[is_lipid])))))
-        return pos, boxes, tail_idx, residue_ids[tail_idx], atom_map[donor, 0], selected
+        ester_idx = np.where(is_lipid & np.isin(atom_names, ESTER_NAMES))[0]
+        if ester_idx.size == 0:
+            raise ValueError(
+                "no lipid ester beads {} found (class {}); the core test needs both leaflets' ester planes; "
+                "lipid bead names present: {}".format(",".join(ESTER_NAMES), args.lipid_class,
+                                                      ",".join(sorted(set(atom_names[is_lipid])))))
+        return pos, boxes, tail_idx, residue_ids[tail_idx], ester_idx, atom_map[donor, 0], selected
 
-    histogram = np.zeros(RDF_EDGES.size - 1)
+    tail_tail = np.zeros(RDF_EDGES.size - 1)
+    amide_tail = np.zeros(RDF_EDGES.size - 1)
     for view_path in args.hdx_views:
-        pos, boxes, tail_idx, tail_molecule, _, selected = replica_system(view_path)
-        histogram += tail_tail_histogram(pos, boxes, tail_idx, tail_molecule)
-    print("tail beads: {} ({} beads)".format(selected, tail_idx.size))
-    radius, peak = first_minimum(histogram)
-    print("tail-tail g(r) pooled over {} replicas: first peak {:.2f} A, flat first minimum {:.2f} A".format(
-        len(args.hdx_views), peak, radius))
+        pos, boxes, tail_idx, tail_molecule, ester_idx, amide_idx, selected = replica_system(view_path)
+        histograms = shell_histograms(pos, boxes, tail_idx, tail_molecule, ester_idx, amide_idx)
+        tail_tail += histograms[0]
+        amide_tail += histograms[1]
+    print("tail beads: {} ({} beads); ester beads {} ({} beads)".format(
+        selected, tail_idx.size, ",".join(ESTER_NAMES), ester_idx.size))
+    radius, peak = first_minimum(tail_tail)
+    core_radius, core_peak = first_minimum(amide_tail)
+    print("pooled over {} replicas: tail-tail g(r) first peak {:.2f} A, flat first minimum {:.2f} A; "
+          "core amide N-tail g(r) first peak {:.2f} A, flat first minimum {:.2f} A".format(
+              len(args.hdx_views), peak, radius, core_peak, core_radius))
 
     radius_path = args.output_pattern.replace("{replica}", "all")[:-4] + "_radius.txt"
     os.makedirs(os.path.dirname(os.path.abspath(radius_path)), exist_ok=True)
     with open(radius_path, "w") as handle:
-        handle.write("# tail-tail g(r) pooled over {} replicas: first peak (A), contact radius (A)\n".format(
-            len(args.hdx_views)))
-        handle.write("{:.3f} {:.3f}\n".format(peak, radius))
+        handle.write("# pooled over {} replicas, A: tail-tail g(r) first peak, contact radius outside the core; "
+                     "core amide N-tail g(r) first peak, contact radius inside the core\n".format(
+                         len(args.hdx_views)))
+        handle.write("{:.3f} {:.3f} {:.3f} {:.3f}\n".format(peak, radius, core_peak, core_radius))
 
     for replica, view_path in enumerate(args.hdx_views):
-        pos, boxes, tail_idx, _, amide_idx, _ = replica_system(view_path)
+        pos, boxes, tail_idx, _, ester_idx, amide_idx, _ = replica_system(view_path)
         accessibility = np.ones((pos.shape[0], donor.size), dtype=np.float32)
+        core_frames = 0
         for f in range(pos.shape[0]):
             wrapped = np.mod(pos[f], boxes[f])
             tree = cKDTree(wrapped[tail_idx], boxsize=boxes[f])
-            counts = tree.query_ball_point(wrapped[amide_idx], r=radius, return_length=True)
-            accessibility[f, np.asarray(counts) > 0] = 0.0
+            nearest = tree.query(wrapped[amide_idx], k=1)[0]
+            core = in_core(wrapped, boxes[f], tail_idx, ester_idx, amide_idx)
+            core_frames += int(core.sum())
+            accessibility[f, (nearest <= radius) | (core & (nearest <= core_radius))] = 0.0
         output_path = args.output_pattern.replace("{replica}", str(replica))
         np.save(output_path, accessibility)
         buried = (accessibility == 0.0).any(axis=0).sum()
-        print("wrote {} : {} frames x {} donors; {} donors lipid-buried in >=1 frame, {:.1%} of amide-frames"
-              .format(output_path, pos.shape[0], donor.size, int(buried), 1.0 - accessibility.mean()))
+        print("wrote {} : {} frames x {} donors; {} donors lipid-buried in >=1 frame, {:.1%} of amide-frames; "
+              "{:.1%} of amide-frames in the core".format(output_path, pos.shape[0], donor.size, int(buried),
+                                                          1.0 - accessibility.mean(), core_frames / accessibility.size))
 
 
 if __name__ == "__main__":

@@ -112,7 +112,9 @@ Step 3 always saves the unmodified protein result as
 `<prefix>_PS_protein.npy`. For a hybrid analysis it then measures the membrane
 term with `py/martini_hdx_membrane_accessibility.py`: an amide is
 water-inaccessible in a frame where a lipid tail bead lies within the first
-minimum of the tail-tail g(r), measured once over all replicas and written to
+minimum of the tail-tail g(r), or, inside the hydrocarbon core between the
+leaflets' ester planes, within the first minimum of the core amide N-tail g(r);
+both are measured once over all replicas and written to
 `results/<pdb>_<sim>_all_ACC_radius.txt`. `<prefix>_PS.npy` combines the two as
 
 ```text

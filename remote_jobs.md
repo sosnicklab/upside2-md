@@ -4,8 +4,8 @@
 other tests we ran) 2. Fix the folding issue and continue working on ff3.2").** Owner: none since 21:55 10-27, when the MacBook Pro's session (owner from 12:46
 10-26) handed off and quit ("Handoff"); no watch runs. Status passes since, none the owner and none with a cron: a
 Mac Studio session (08:06-13:45 10-29; also the user's "fix them all" and "run both"), the MacBook Pro's of 14:30
-10-29, 17:10 10-30 and 14:05 10-31. The GPU work (line 5) has no job since 22:35 10-31 and resumes on the user's "resume GPU jobs"
-(plan.md Phase 35 "Resume here"; bundle `checks/handoff_gpu_20261031/`). The next computer's "continue monitoring" takes the jobs ("Resume here"). The Mac
+10-29, 17:10 10-30 and 14:05 10-31. The GPU work (line 5) resumed on the Mac Studio 00:05 11-01; V1 of the released
+ff3.1 passed on a V100 00:30 11-01 and no job of it runs (plan.md Phase 35 "Resume here"). The next computer's "continue monitoring" takes the jobs ("Resume here"). The Mac
 Studio's uncommitted records are in the handoff bundle (`records/`, `repo_working_tree_mac_studio_20261029.patch`
 against `3362e2a`) and its session tools in the bundle's `scratchpad/handoff_20261029/` (README). **ff3.1 means
 `ff31_nativefix` at step 76 since 16:49 10-31** (released as `ff_3.1`, under validation; plan.md Phase 37); the 10-26
@@ -123,12 +123,12 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
      and `handoff_20261029/round2/gly_LR_runs.py` on the round's `rama_round_NN.dat`, run on the Mac (its `sys.path`
      line names the Mac's `scratchpad/ff31_compare_r6/`, which is in the bundle).
    - ff3.1 (`ff31_nativefix` step 76, released 16:49 10-31; plan.md Phase 37): its validation (§1 line 2). Both
-     panels and glpG's preparation read 23:40 10-31. Owed as each ends: the mdCATH TM files (49692207), each Peng arm's
+     panels and glpG's preparation read 23:40 10-31, the mdCATH TM files 01:30 11-01. Owed as each ends: each Peng arm's
      final frames at `[bench] COMPLETE` (the collector scores them), glpG block 1's TM4 readout.
-   - The all-term loss's fix (plan.md Phase 38): `ff32_dse0` and `ff32_sarwsi` queue their own panels (`z32_00`,
-     `s32_00`) and unfolded-shift checks at step 19 (steps take 45-65 min on shared nodes, so about 07:00 and 13:00
-     11-01, then the panel): read them against `n32_00`
-     and propose step 2 to the user.
+   - The all-term loss's fix (plan.md Phase 38): `ff32_dse0` read 08:50 11-01 (`z32_00` folds 0.575, -0.040
+     [-0.076, -0.007] against released ff2.1, +0.127 over `n32_00`; unfolded shift +3.8 E_up). `ff32_sarwsi` reaches
+     19 about 11:00 CST 11-01 and queues its panel `s32_00` and shift check: read them against `n32_00` and `z32_00`,
+     then propose step 2 to the user.
    - The ff3.1 training debug: both arms at 76 (`_mb2` 11:44 10-30, `ff311_glypair` 03:35 10-31), round 4's glycine
      pairs read (§1 line 2), not yet judged by plan.md Phase 32's rule.
    - Boltz E1 (midway3): 61805263 (resampling at low noise only) read 14:40 10-29 by `addon/lownoise_read.py`: the
@@ -583,11 +583,13 @@ running link) carry 0027 in ExcNodeList.
 
 ## 1. Current jobs
 
-Snapshot **2026-10-31 23:25 CDT** (midway2 from `squeue` and `sacct -S 10-31T16:30`; midway2 socket live). Owner none
-since the MacBook Pro's handoff 21:55 10-27 ("Handoff"). Between 16:30 and 23:25 10-31 one job failed: ff3.1's cspA
-de novo 49692216, NODE_FAIL on midway2-0189 at 20:11 (its first failure on record), requeued by Slurm and resumed from
-its checkpoint. `/project/trsosnic` 386 G free (ff3.1's two panels 58 G, Phase 38's two arms 10 G so far), 638,088
-inodes free; `/beagle3` 118,763 inodes free (23:30 10-31). Paths: `$P` =
+Snapshot **2026-11-01 08:50 CST** (clocks went back at 02:00 CDT; midway2 from the probe, `squeue` and `sacct -S
+11-01T00:55`; both sockets live). Owner none since the MacBook Pro's handoff 21:55 10-27 ("Handoff"); this pass the
+Mac Studio's, no cron. Since 01:30 no job failed. Ended, all COMPLETED: ff3.1's 32 Peng chunks (02:22-02:25, each
+resubmitted; cspA de novo 05:44), `ff32_dse0` at step 19 (03:42) with its panel `z32_00` and shift check (read), the
+collector pass 49703509 (next 49715512), Upside 3 ubiquitin de novo's chunk 49698511 (next 49719121). midway3 has no
+job. `/project/trsosnic` 379 G free, 634,752 inodes free; `/beagle3` 118,712 inodes free (08:50 11-01).
+Paths: `$P` =
 `/project/trsosnic/yinhan/upside2-md-mdw2`; `checks/`, `ff3_selection/` and `popepopg_REMD_mdw2/` are under
 `/project/trsosnic/yinhan/`; `ff3_benchmark/` and `upside3_validation/` under `/beagle3/trsosnic/yinhan/`.
 
@@ -626,7 +628,9 @@ inodes free; `/beagle3` 118,763 inodes free (23:30 10-31). Paths: `$P` =
     findings 1.37): 44 domains fold 0.631 against released ff2.1's 0.603 (+0.028 [-0.004, +0.059] p 0.047), mean TM
     +0.001 [-0.006, +0.008]; mdCATH's 89 fold 0.515 against 0.488 (+0.027 [+0.000, +0.053] p 0.079); level with the
     merge on both, +0.20 / +0.16 folded over the control. TM files `tm_p44_*_ff31nf_vs_*.txt` in the check directory
-    (49692208); the mdCATH TM job **49692207** PD (Resources) writes `tm_mdcath_*`;
+    (49692208) and `tm_mdcath_*` (49692207 COMPLETED 00:23 11-01, read 01:30): mdCATH mean TM 0.731 against
+    released ff2.1's 0.727 (+0.004 [-0.003, +0.012] p 0.22, higher on 52 of 89), the merge's 0.733 (-0.001), the
+    control's 0.702 (+0.030 [+0.022, +0.037]);
   - Peng: 32 arms `b_ff_3.1_<prot>_<kind>` **49692209-49692240**, each resubmitting itself (runs
     `ff3_benchmark/runs/<prot>_<kind>_ff_3.1/`, logs `ff3_benchmark/logs/<prot>_<kind>_ff_3.1_[0-9]*.out`); collector
     `ff31_collect` (every 6 h; scores into `score/ff_3.1/`, writes `peng_ff31.txt` in the check directory, ending
@@ -820,6 +824,32 @@ inodes free; `/beagle3` 118,763 inodes free (23:30 10-31). Paths: `$P` =
   79ALA_S115T, agreeing with HXMS on that peptide in 79ALA; Val145 comes down to 4.02 (79ALA). The corrected npz's
   seven amides before a proline or the chain end (labels 13 27 58 61 127 151 209) keep the shifted value, so no figure
   is drawn from it.
+- **A61-fixed accessibility and censored display for those four HDX sets** (user 11-01: the figures' TM bands carry
+  lone finite points the implicit figures lack; the depth-aware rules were scored and set aside, the user chose
+  "A61 fix + censor"; findings 5.8). `C3=/project/trsosnic/yinhan/checks/hdx_acc_flicker_20261101/`; the 10-22 work
+  dirs are only read.
+  - 49726840 `hdx_accgeom` (midway2, done 09:51): per-frame amide geometry, `$C3/<variant>/geom_<r>.npz` (~2 G),
+    scored by `$C3/score_rules.py` (`score_79HIS.txt`, figures `$C3/fig/`), MBAR checks `mbar_check_79HIS.txt`,
+    `overlap_{implicit,hybrid}.txt`.
+  - 49727925 `hdx_a61acc` (midway2, done 10:43): views by the repo's `martini_hdx_project.py`, accessibility by its
+    `martini_hdx_membrane_accessibility.py` (Upside 3 tree, md5-equal to the repo), PS by `combine_hdx_protection.py`;
+    log `$C3/a61_acc_49727925.out`, step logs `$C3/a61/logs/`, output `$C3/a61/<variant>/{views,acc,block2-3}`. Its
+    block split failed on a too-strict Energy check (each work dir carries its own mean reference); `split_blocks.py`
+    was fixed and rerun on the login node, writing `$C3/a61/<variant>/{block2,block3}` (336 of 336 PS).
+  - The dG step ran on the Mac Studio (caslake would have started it 14:50): `$C3/diag/a61_local.sh`, log
+    `$C3/diag/a61_local.log`, profiles, figures and `summary.txt` in `$C3/a61/mac_dG/`, copied to the 11-02 deck's
+    `figs/hdx_ff30_a61_20261101/`. Slides 17-18 rebuilt from it.
+  - 49737262 `hdx_coreacc` (midway2, done 15:05; user 11-01 afternoon: TM4 and TM5 still show finite points):
+    accessibility with the core test (plan.md Known Errors) by `$C3/code/martini_hdx_membrane_accessibility.py` (md5
+    `28b7f111`; the repo's copy differs only by one docstring line, and the Upside 3 tree still holds the 64e9c698
+    version, sync pending) on the a61 views, radii 7.00 and 8.12 A in all four; then PS and blocks as above (336 of
+    336). `$C3/core_acc.sbatch`, log `$C3/core_acc_49737262.out`, step logs `$C3/core/logs/`, output
+    `$C3/core/<variant>/{acc,block2-3,block2,block3}`. `$C3/code/check_core.py` checked the new test against the
+    geometry arrays (agreement 1.00000). The dG step ran on the Mac Studio; its script, log, profiles, figures and the
+    band-hole and event checks are archived in `$C3/core/mac_dG/`, copied to the 11-02 deck's
+    `figs/hdx_ff30_core_20261101/`; slides 17-18 rebuilt. Nothing of this runs.
+  - `$C3` holds 18 G (views 9.4 G, geometry ~2 G); the views are needed only to recompute the accessibility. Deleting
+    them waits on the user, as the other HDX work dirs do.
 
 **Line 3: Upside 3 validation of the debug (midway2; user 10-22: "submit Peng 16 validation protein with ff2.1 and glpG
 hybrid simulation with ff2.1, on midway2, as a validation for our entire debug"; plan.md Phase 24 2b).**
@@ -834,8 +864,8 @@ hybrid simulation with ff2.1, on midway2, as a validation for our entire debug";
   ff2.1 on the pre-audit binary, line 1's arms. COMPLETE, 30 of 32 at 12:40 10-29: all 16 native, and BBA, WWdomain,
   homeodomain, top7, lambda, alpha3d, proteinB, NTL9, BBL, gpW, NuG2, proteinL, hyp (00:06 10-29) and cspA (08:24;
   final frames finite, KE/1.5kT 0.995-1.011 and C-N mean 1.32-1.34 A over the last 50 frames of 14 replicas) de novo.
-  Running de novo, done / target at each chunk's start: proteinG 49639066 (7.19 / 7.80), ubiquitin 49639219
-  (5.43 / 8.03). No collector scores them.
+  proteinG de novo COMPLETE since (49646945); ubiquitin de novo runs, 7.76 M of 8.03 M time units at 05:38 CST 11-01,
+  chunk **49719121**, the last. No collector scores them.
 - **Peng scored against Upside 2** (findings 3.15): `peng/score/score_compare.py` (md5 `e17d977f`; reproduces released
   ff2.1's scores exactly), `score.sbatch`, `submit_scores.sh` (idempotent; jobs `sc_cmp_<upside3|upside2>_<arm>`, ids
   in `peng/score/submitted.log`) into `peng/score/ff_2.1_upside3/` and `ff_2.1_upside2/`, read by `compare_u3_u2.py`
@@ -1032,10 +1062,9 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
 | **49643806-49643821** (`sc_cmp_<upside3\|upside2>_<arm>`, midway2) | Rescoring of the eight Upside 3 de novo arms finished since 10-26 and their Upside 2 controls (`upside3_validation/peng/score/`, logs `score/logs/`, ids `score/submitted.log`; line 3) | all 16 COMPLETED 13:18-13:52 10-29 | `compare_u3_u2.py` |
 | `upside3_validation/peng_seeds` (no job) | Peng seed replicates: top7 and alpha3d de novo, seeds 101 and 202, both engines (line 3) | all 8 COMPLETE (the last 09:17 10-31) | score with the seed-1 arms; seed spread against the engine gap |
 | `$P/training/ff311_glypair*` (no job) | The ff3.1 training debug, `ff311_glypair` and `ff311_glypair_mb2` (plan.md Phase 32; line 2), on the old native target | both at their target 76 (`_mb2` 11:44 10-30, `ff311_glypair` 03:35 10-31 after a NODE_FAIL in step 65) | both arms' round 4 by Phase 32's rule; `ff311_glypair`'s round 3 |
-| TM **49692207** (`tm_ff31nf`) | ff3.1's mdCATH TM against released ff2.1, ctrl_03 and the merge (plan.md Phase 37; line 2; both panels COMPLETED and read 23:40 10-31) | PD (Resources) | read `tm_mdcath_mdc_ff31nf_vs_*.txt` |
-| 32 `b_ff_3.1_<prot>_<kind>` **49692209-49692240**, collector **49703509** (`ff31_collect`) | ff3.1's Peng arms on the pre-audit Upside 2 engine and their collector (plan.md Phase 37; line 2; cspA de novo requeued after NODE_FAIL 20:11 10-31) | R from 16:50 10-31, 10.5 h chunks resubmitting themselves; collector PD (BeginTime) | final frames at each `[bench] COMPLETE`; `peng_ff31.txt` when DONE |
+| 32 `b_ff_3.1_<prot>_<kind>`, chunk 2 **49712151-49712333** and cspA de novo **49719339**, collector **49715512** (`ff31_collect`) | ff3.1's Peng arms on the pre-audit Upside 2 engine and their collector (plan.md Phase 37; line 2; chunk 1 49692209-49692240 COMPLETED 02:22-02:25 CST 11-01, each with `[bench] resubmitted`, cspA de novo 05:44) | R, 10.5 h chunks resubmitting themselves, all carrying the exclusion law; collector PD (BeginTime) | final frames at each `[bench] COMPLETE`; `peng_ff31.txt` when DONE |
 | **49692243** REMD block 1 (`glpG-RKRK-79HIS_REMD_remd`, `upside3_validation/glpg_ff31`) | ff3.1 glpG hybrid on Upside 3, one block (plan.md Phase 37; line 3; prep COMPLETED 20:57 10-31, TM4 held through stage 7.0) | R from 21:01 10-31 | block 1's readout: TM4 DSSP, KE and C-N at T 0.70 against ff3.0's 0.85 and the merge's 0.42 |
-| **49692528** (`ff32_dse0`), **49692529** (`ff32_sarwsi`) (`condiv-train`; successor links 49692539, 49692688 PD afterany) | Phase 38's test arms: ff3.2's build with the DSE target off / the SI's SARW, one epoch (line 2) | R from 16:57 / 17:02 10-31; at 23:25 in step 9 / step 6 of 19 (about 45 / 65 min a step, shared nodes), no error line | at 19 each queues its panel (`z32_00`, `s32_00`) and `peng_full.sbatch`: read both against `n32_00` |
+| **49692529** (`ff32_sarwsi`) (`condiv-train`; successor link 49692688 PD afterany) | Phase 38's test arm: ff3.2's build with the SI's SARW, one epoch (line 2); `ff32_dse0` finished (49692528 COMPLETED 03:42 CST 11-01, panel 49715128 and shift 49715129 read 08:50) | R from 17:02 10-31; at 08:50 CST 11-01 in step 17 of 19, 24 of 24 every step (step 8 relaunched 4 workers whose srun never started) | at 19 it queues its panel `s32_00` and `peng_full.sbatch`: read both against `n32_00` and `z32_00` |
 
 **Line 5: Upside 3 on the GPU (plan.md Phase 35; midway2 `gpu2` and midway3 `gpu`, never `beagle3`, user 10-29).**
 - The tree: `/beagle3/trsosnic/yinhan/upside3_gpu`, a development tree beside the Upside 3 tree (which its validation,
@@ -1053,12 +1082,17 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
   (g6c plus A239, the g-JF position update as x + b dt/m (p + dt/2 f + beta/2); 10-30 12:15); beside it the earlier
   builds `obj_g1a` to `obj_g6c` and `obj_hb6b` (no CUDA: the host backend, before A239). Install a new one with
   `install_gpu.sh TAG` only when no job of the tree runs. The hybrid fixtures are `checks/configs/1rkl.stage_7.{0,1}.up`.
-  The ff3.1 configs `checks/configs/{chig,1ubq,1dfn}_ff31.up` come from `scratchpad/gpu_work/ff31_configs.py`.
+  The ff3.1 configs `checks/configs/{chig,1ubq,1dfn}_ff31.up` come from `scratchpad/gpu_work/ff31_configs.py`; since
+  00:20 11-01 they are the released ff3.1's (only `rama_pot` and `proposal_pot` differ from the 10-30 ones, which are
+  in `checks/configs/bak_pre_nativefix_20261031/`), and the tree's `parameters/ff_3.1/rama.dat` is the release
+  (`7693f10a`; the old `5b66c78a` kept as `rama.dat.bak_pre_nativefix_20261031`; the other five files were equal).
   midway3's `gpu` QOS takes at most 12 submitted jobs per user, each array task counted.
-  Every job of line 5 has finished (state 10-31 23:45); `scratchpad/gpu_work/v3_driver.sh` wrote DONE and exited.
-  The user resumes this line on another computer with "resume GPU jobs" (plan.md Phase 35 "Resume here"). The
-  MacBook Pro's uncommitted code and records, its `scratchpad/gpu_work` tools and CPU baseline, and the regression
-  fixtures are in `/project/trsosnic/yinhan/checks/handoff_gpu_20261031/` (README.txt).
+  Resumed on the Mac Studio 00:05 11-01 ("resume GPU jobs"; repo HEAD `7f31f72` carries the code, equal to the tree's
+  `src py tests cmake`; tools from the bundle `/project/trsosnic/yinhan/checks/handoff_gpu_20261031/`). No job of
+  line 5 runs since 00:31 11-01.
+- V1 of the released ff3.1, 61986517 (V100, log `checks/g0/v1_v100_61986517.out`, COMPLETED 00:30 11-01): the three
+  configs pass every quantity (384 each), the same worst error per config as 61891693 on the earlier tables; the host
+  backend passes them too (Mac Studio).
 - Read so far (findings 11g and A239, plan.md Phase 35 items 6-10): V3 on g7b (CPU 49668720-54, one ladder each,
   seeds 1-4; V100 61895691-98, 4 ladders each, seed 101; all 40 in one chunk; data `v3/runs/` 7.4 GB, logs
   `v3/logs/`, analysis 49703078 into `v3/analysis.txt`): Bonferroni 0.12 to 1 per protein and force field, 0.93

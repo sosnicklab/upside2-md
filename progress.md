@@ -624,3 +624,33 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   cspA de novo requeued after NODE_FAIL on midway2-0189. Phase 38 arms at steps 9 and 6 of 19. Files: findings.md
   1.34, 3.15; plan.md Phase 37; remote_jobs.md; cluster `glpg_prep_tm4.txt`, `glpg_u3_block4.txt`,
   `glpg_ff30_block2.txt`.
+* **11-01 00:05-00:35, Mac Studio, "resume GPU jobs".** Set up from the bundle `checks/handoff_gpu_20261031/`: the
+  committed code (HEAD `7f31f72`) equals the GPU tree's `src py tests cmake`; `scratchpad/gpu_work` and
+  `upside3_audit` restored; `dev12_home` built and regressed, 0 of 4260 arrays against `dev12_record.npz`. User chose
+  (a), then "run both" (a and the hybrid's CPU validation). (a): the GPU tree's `ff_3.1/rama.dat` replaced by the
+  release (old kept as `.bak_pre_nativefix_20261031`), the three ff3.1 configs rewritten (only the Ramachandran
+  tables differ), V1 passes on the host backend and the V100 (61986517). The hybrid: glpG's two running blocks on
+  Upside 3 healthy (no error line), read at their ends 11-02. Files: plan.md Phase 35, remote_jobs.md line 5,
+  findings.md 11g.
+* **11-01 01:30 and 08:50 CST, Mac Studio, status passes.** ff3.1's mdCATH TM read (mean TM 0.731 against released
+  ff2.1's 0.727, +0.004 [-0.003, +0.012]). ff3.1's 32 Peng chunks resubmitted; Phase 38's `ff32_dse0` (DSE target off)
+  read: `z32_00` folds 0.575, +0.127 over `n32_00`, -0.040 [-0.076, -0.007] against released ff2.1, unfolded shift
+  +3.8 E_up (was -11.9); `ff32_sarwsi` in step 17. Files: findings.md 1.34, 1.37; plan.md Phases 37, 38;
+  remote_jobs.md; cluster `WATCH_STATUS.md`.
+* **11-01 09:10-11:40, Mac Studio, hybrid glpG HDX lone points** (user: the ff3.0 dG figures on the 11-02 deck's
+  slides 17-18 show finite points inside the off-scale TM bands, the implicit `79*.png` do not). Diagnosed (findings
+  5.8): each lone point rests on 1-40 exchange frames, seen at one plotted T because MBAR on the coupled energy pools
+  ~5 rungs per T (implicit: ~20); part of them are flickers of the 7 A tail-contact test at the bilayer midplane.
+  Six shielding rules scored on per-frame geometry of all 112 replicas (49726840), wrongly reported as clearing
+  none (a proxy metric; lesson 10.46). User chose "A61 fix + censor": the four sets regenerated with the repo's
+  accessibility code (49727925), dG by the repo pipeline on the Mac Studio (reproduces the cluster's censored flags
+  and bounds exactly), `plot_ref_style.py` draws censored amides off scale.
+* **11-01 14:20-15:40, same thread** (user: TM4 and TM5 still show finite points). The membrane term got a core
+  test: inside the ester planes the contact radius is the core amide N-tail g(r)'s first minimum, 8.12 A, measured
+  like the 7.00 A; `first_minimum` now searches the first well. Checked against the geometry arrays (1.00000),
+  regenerated on the cluster (49737262), dG on the Mac Studio. TM5 clears in all four variants, TM4 in 79HIS; three
+  single-event TM4 points remain (findings 5.8). Slides 17-18 rebuilt from `figs/hdx_ff30_core_20261101/`,
+  validated against the previous build and the 09-14 original, only those slides, notes and images changed. Files:
+  `py/martini_hdx_membrane_accessibility.py`, `example/16.MARTINI/readme.md`, `example/00.AnalysisScripts/README.md`,
+  `example/00.AnalysisScripts/helpers/plot_ref_style.py`; findings.md 5.2, 5.3, 5.3b, 5.8, 10.46; plan.md Known
+  Errors; remote_jobs.md section 1 line 2.

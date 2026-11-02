@@ -1644,7 +1644,8 @@ every width.
   map. Read 23:40 10-31 (`paired_npz.py`, TM files in `checks/ff31_nativefix_release_20261031/`): on the 44 domains at
   dt 0.009 it folds 0.631 against released ff2.1's 0.603 (+0.028 [-0.004, +0.059], p 0.047, higher on 27 of 44), mean
   TM 0.682 against 0.681 (+0.001 [-0.006, +0.008]); on mdCATH's 89 it folds 0.515 against 0.488 (+0.027 [+0.000,
-  +0.053], p 0.079); level with the merge on both (-0.017 and -0.001 folded), above the control by +0.20 and +0.16.
+  +0.053], p 0.079), mean TM 0.731 against 0.727 (+0.004 [-0.003, +0.012], p 0.22; read 01:30 11-01); level with the
+  merge on both (-0.017 and -0.001 folded), above the control by +0.20 and +0.16 folded.
   On Upside 3's glpG it keeps TM4 through preparation stage 7.0 (DSSP alpha mean 0.95, last tenth 0.87, one seed),
   where the merge (0.36) and ff2.1 (0.41) lost it and ff3.0 settled near 0.82 (3.15); REMD block 1 decides.
 
@@ -1868,6 +1869,13 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
     term in the SARW replica; the SI's SARW has none. On a 3g0m SARW frame that term is -77 E_up as these runs built
     the replica and 0 as the SI defines it (`checks/ff32_fix_20261031/sarw_check/`); its effect on the DSE's backbone
     pull is tested by plan.md Phase 38's `ff32_sarwsi`.
+  - *The causal test, the DSE target off* (plan.md Phase 38 step 1; `ff32_dse0`, one epoch, panel `z32_00` at dt
+    0.015, read 08:50 11-01 by `paired_npz.py` and `peng_full.py`). It folds 0.575 against `n32_00`'s 0.449 (+0.127
+    [+0.091, +0.163], higher on 38 of 44) and released ff2.1's 0.615 (-0.040 [-0.076, -0.007], p 0.012; mean Q
+    -0.010, p 0.002); the unfolded shift is +3.8 E_up, negative in 2 of 16 (`n32_00` -11.9 in 16 of 16; released
+    ff3.1 +1.2). So the DSE target carries the unfolded shift and about three quarters of epoch 0's folding loss, but
+    the arm does not keep ff2.1's folding: the interval excludes 0, so by step 1's rule it does not name the whole
+    cause. `ff32_sarwsi` is read next.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -3556,10 +3564,11 @@ displayed as maximum confidence. Measured per-temperature limits on this ladder:
 | 0.85 | **5.49** | 27 |
 | 0.90 | 5.57 | 28 |
 
-An amide reaching the bound is **right-censored**: the data say "at least this protected". The bound is drawn as a
-dotted line per temperature on the figure rather than by truncating the data. `plot_ref_style.py` renders the
-unclipped profile; `calc_hdx_ht.py`'s `_DG_res_T_slice.png` keeps master's clipped convention, and the npz stores both
-arrays so both renderings come from one MBAR solve. Smooth 10-20 kcal/mol bands are not reachable from a binary
+An amide reaching the bound is **right-censored**: the data say "at least this protected". `plot_ref_style.py` draws
+a censored amide off scale with the never-exchanging ones (user 11-01; before, it drew the unclipped value, which put
+lone 6-20 kcal/mol points inside the hybrid's off-scale helices, 5.8); `calc_hdx_ht.py`'s `_DG_res_T_slice.png` keeps
+master's clipped convention, and the npz stores both arrays and the flag, so every rendering comes from one MBAR
+solve. Smooth 10-20 kcal/mol bands are not reachable from a binary
 protection state at any feasible sampling, since dG = 20 needs `(1-p_f) ~ 2e-15`.
 
 Plotting trap: the out-of-range sentinels `+1000.0` and `-100.0` **are finite**, so `np.isfinite(...)` let every
@@ -3589,13 +3598,16 @@ bilayer-embedded helical amides (lipid-shielded in >=90% of frames) at `+inf` fr
 contiguous `+inf` runs from 8, 6, 5, 4, 4, 3 to 17, 16, 15, 14, 9, 7: needles become blocks, the reference figure's
 pattern. In helix 104-126 the four residues outside the bilayer keep their finite values while 108-126 go to `+inf`.
 
-**Both numbers in the criterion are measured from the bilayer, not chosen:**
+**Every number in the criterion is measured from the bilayer, not chosen:**
 * **Radius = 7.00 A**, the flat first minimum of the intermolecular tail-tail g(r) (first peak 5.12 A). The minimum
   spans two 0.25 A bins whose ordering flips with noise, so the radius is the mean of the bins within 5% of the
   minimum, which gives 7.000 A on all 16 replicas where a bare argmin flips between 6.88 and 7.12.
 * **Threshold = 1 contact**, because at that radius a phosphate bead has a median of 0 intermolecular tail neighbours
   (ester 2, first tail bead 6, terminal tail 11). The first tail contact is therefore the first step inside the head
   groups, i.e. the bilayer boundary itself.
+* **Inside the core, radius = 8.12 A** (added 11-01, 5.8): between the two leaflets' ester planes the test uses the
+  flat first minimum of the core amide N-tail g(r), the amide's own tail shell (first peak 6.6-6.9 A), because the
+  tail-tail radius cuts through that shell and flickers at the midplane.
 
 `--cutoff` and `--min-contacts` are gone from `martini_hdx_membrane_accessibility.py`, so the criterion has no free
 parameter. A bare slab is the wrong shape, rejected on measurement:
@@ -3679,16 +3691,15 @@ the repo passes `--use-TM-region`; the saved implicit results (`/project/trsosni
 inline pymbar block (`_implicit_plain_pf.npy`), not `calc_hdx_ht.py` or `plot_ref_style.py`. So the lipid credit
 belongs to the hybrid, the reverse of the natural guess, and a hybrid `+inf` run is a lipid-contact map (5.3).
 
-**The TM4 signal is real and must not be suppressed.** Marking TM4 water-inaccessible because it is protein-buried was
-rejected on measurement: the state-B frames (`pp=0 AND acc=1`) are temperature-activated (none across the 8 coldest
-rungs, 71-89% in the hottest 7, res 140 climbing monotonically 0 -> 123), where a cutoff-margin artefact would appear
-at all temperatures; `BL` already protects these amides in 98-99% of frames, so an override would change only the
-1-2% that is the opening; and it would hard-code one protein's identity into shared `py/`. TM4 141/142/145 are **not**
+**Do not mark TM4 water-inaccessible because it is protein-buried.** That was rejected on measurement: `BL` already
+protects these amides in 98-99% of frames, so an override would change only the 1-2% that is the opening, and it would
+hard-code one protein's identity into shared `py/`. The 09-12 reading that the state-B frames (`pp=0 AND acc=1`) are
+thermal opening was wrong (11-01, 5.8): they are temperature-activated (none across the 8 coldest rungs, 71-89% in the
+hottest 7, res 140 climbing 0 -> 123) because `pp` failure is, but `acc = 1` in them was the 7.00 A test's flicker at
+the midplane, with lipid around the amide; the core radius removes almost all of them. TM4 141/142/145 are **not**
 cavity-lining: they carry 23-24 protein heavy atoms within 6 A, as many as the deeply buried 143/147 (22.6, 22.3), and
 sit 6.87-7.34 A from the nearest lipid bead, a tail, against 4.90-5.16 A for 143/147, straddling the 7.00 A shell,
-which is why `acc` lands near 0.5. The signal is local thermal opening at the edge of tail contact.
-- Open: a cutoff sensitivity check at 7.5 and 8.0 A, reported as such and not as a recalibration (the 7.00 A is
-  measured from this system's own g(r) and has no free parameter).
+which is why `acc` lands near 0.5; that straddle is the flicker.
 - Do not quote res 143: its 333 events are non-monotonic in T (76/93/83 at T=0.823-0.838, then 0-3 at the hottest
   rungs), which a genuine exchange signal should not be.
 
@@ -4040,6 +4051,70 @@ T_up = 0.85 T / 298 K; censored at RT ln(ESS), Kish ESS; folded below 5 A CA-RMS
   (doi:10.5281/zenodo.14983481, CC BY 4.0). A per-amide term can therefore fit only residue-resolved proteins; the
   domain set needs a distribution-level term. No transferable force field fitted to HDX was found (Zhu, Li and Wang
   2021 fitted one protein's AICG2+ model).
+
+### 5.8 The lone finite points inside the hybrid's TM bands are flickers of the 7.00 A tail-contact test (2026-11-01)
+
+User 11-01: the four 10-22 ff3.0 figures (5.6) show finite points inside the off-scale TM bands; the implicit figures
+(`79*_0.85.png`, 06-01) show none. Measured on 79HIS, blocks 2-3 pooled (28 rungs x 11,356 frames), PDB numbering:
+- An amide off scale at all three plotted T has zero exchange events in all 318k frames, in either accessibility
+  (as stored, or with the A61 shift undone). The lone points rest on 1-40 events, mostly on a few hot rungs; MBAR's
+  overlap across 0.05 in T is small on the coupled potential, so an event shows only at the plotted T near its rung,
+  which is why the three curves cross. The events share no frames (no broken frame or image error).
+- Undoing A61 leaves 13 such amides against 15, so the shift is not the cause.
+- In the event frames of the lone amides (46, 48, 86, 112, 140-142, 148, 166, shift undone) the amide N sits at the
+  bilayer midplane (|z| 0-3 A for 86, 112, 140-142, 166), 12-18 A from the nearest PO4, with 3-17 tail beads within
+  9 A; only its nearest tail stepped from its usual 5-6 A to 7.0-8.0 A, while its protein protection also broke.
+  No water reaches that position. 48 (|z| 16, PO4 5-6 A) and 148 (z -22, PO4 7 A) are interfacial and can be real.
+- Cause: the radius is the tail-tail g(r)'s first minimum (5.3), but it is applied to amide N-tail pairs, whose
+  shell around a core amide peaks at 6.9 A (first minimum ~8.25 A); 7.00 A sits on that peak. At |z| < 5 A, 7.2% of
+  amide-frames have no tail within 7 A. A radius alone cannot fix it: at 8.25 A a PO4 bead has a median of 2 tail
+  neighbours, and the count keeping the boundary at the phosphates (>= 3) fails at the midplane in 7.3% of frames.
+- This also bears on TM4: 79HIS's 140-142 events are of this kind, so 142's resolved 5.43 (5.6) is not exchange.
+- **Why a rare event shows at one plotted T only, and not in the implicit figure.** MBAR on the coupled energy puts
+  90% of each plotted T's weight on 5 of the 28 rungs (ESS 36-39k), with ~1e-4 from rungs more than 0.04 away; the
+  implicit run3 (protein-only energy, 48 rungs) spreads it over ~20 rungs (ESS 168-176k), 12% from more than 0.04
+  away. The two have about as many amides with 1-40 events (23 implicit, 18 hybrid), but 19 of the implicit's read
+  finite and ordered at all three T, so they look like edge peaks, while the hybrid's curves are three nearly separate
+  5-rung samples. Both are correct reweightings; the implicit's 6-19 kcal/mol edge values are no better resolved.
+- MBAR is converged (self-consistency residual 1e-13; pymbar's robust protocol agrees to 7e-14). The scoring code
+  reproduces the stored profile exactly below 8 kcal/mol; above that 1 - p nears 1e-15 and the value is double
+  rounding (0.36 kcal/mol between identical solves, and some finite/off-scale flips).
+- Six rules scored on 79HIS (`score_rules.py`, `score_79HIS.txt`; figures `fig/`): R0 7.00 A contact (A61 fixed),
+  R1 R0 or between the global ester planes, R2 the same on local planes (20 A), R3 R0 or (between the global ester
+  planes and a tail within 8.25 A), R4 tail nearer than PO4, R5 contact within 8.25 A. With censored amides off scale,
+  finite amides inside a helix with off-scale amides on both sides number 17, 4, 5, 9, 12, 15; TM4 and TM5 clear under
+  R1, R2 and R3. (Reported first by "mixed" amides, finite at some plotted T and off at others: 21-34 for every rule,
+  because that count includes every ragged band edge. On that proxy I told the user no rule clears the bands; lesson
+  10.46.) R1 also closes S201's amide (135 censored at 0.75 and 0.80), a slab's failure (5.3); R2 needs a lateral
+  window with no measured basis; R3 keeps S201 at 1.8-2.7 because its in-core exchange frames are lipid-free
+  (nearest tail median 9.5 A, PO4 9.2 A), the lining of the cavity.
+- **Done (user 11-01).** First "A61 fix + censor": the four sets regenerated with the repo's code
+  (`checks/hdx_acc_flicker_20261101/a61/`), `plot_ref_style.py` drawing censored amides off scale. The user then saw
+  finite points left in TM4 and TM5, so the membrane term took R3 with its radius measured:
+  `martini_hdx_membrane_accessibility.py` shields an amide inside the core (between the global ester planes) when a
+  tail is within the flat first minimum of the core amide N-tail g(r), 8.12 A in all four variants (first peak
+  6.6-6.9 A), and keeps the 7.00 A tail-tail radius outside it. `first_minimum` now searches the first well: that
+  g(r) has first and second peaks of equal height, and the old search beyond the highest bin gave 9.6 A on it. Run on
+  the a61 views (`core/`, job 49737262; remote_jobs.md section 1 line 2), checked against the geometry arrays
+  (agreement 1.00000), dG by the repo's `4.calc_D_uptake.py` on the Mac Studio. At T 0.85, off scale 88, 92, 94, 93 of 203
+  (79HIS, 79HIS_S115T, 79ALA, 79ALA_S115T; 68, 82, 77, 83 never exchange), resolved medians 2.33, 2.23, 2.10, 2.40;
+  block 3 against block 2 (PS) RMS 0.68-1.00 kcal/mol. Finite amides inside a band 10, 9, 3, 10, most of them
+  TM2 92-99 (finite in the implicit figure too). Figures and npz in the 11-02 deck's `figs/hdx_ff30_core_20261101/`.
+- What is left in TM4 is the same flicker at the new radius, now rare: TM5 163-175 is off scale in all four and TM4
+  139-148 in 79HIS, while 142 (79HIS_S115T, 5.7 at T 0.85, one configuration on two adjacent rungs), 145 (79ALA, 6.1,
+  two frames) and 145 (79ALA_S115T, 4.7 at T 0.75 only, 13 frames on rungs 0.72-0.76) stay finite. In all 17 of their
+  exchange frames the amide is in the core with its nearest tail at 8.16-8.90 A. Over all in-core exchange frames of
+  79HIS the nearest tail runs continuously from 8.1 to 16 A, mostly amides 13-16 A from the midplane and 5-8 A from a
+  phosphate, where water does reach, so no larger radius is measured. These points pass the censor test because it
+  counts frames as independent; block RMS against jackknife (0.68-1.00 against 0.13-0.15) puts the statistical
+  inefficiency at 30-50 frames, so a limit of RT ln(ESS/g) would sit ~2 kcal/mol lower. Not adopted; the user's call.
+- Consequences. H145A's TM2 amide 102 at -1.9 (the 11-02 deck's draft) was the A61 shift. With the core test, H145A
+  raises TM6 (+0.17 to +0.30) and lowers TM5 (0 to -0.16) in all four comparisons and moves only loop amide 178
+  (+1.1 to +2.2); S181T raises TM6 (+0.01 to +0.32), lowers TM3 (-0.04 to -0.48) and moves 97 (-1.0 to -2.0), 124
+  (-1.1 to -3.2), 102 (+1.5 to +2.1) and 203 (+1.1 to +4.1); 79HIS alone is more protected at 28 and less at 66, 67,
+  203-205. TM4 141-144 stay censored in all four but 79HIS_S115T's 142. The TM4 exchange that the 7.00 A test let
+  through (the 138-140 turn, Val145, the 79HIS pair's 141-142: 7-1456 frames per amide over all rungs) falls to
+  0-100 frames; lipid surrounded the amide in those frames, so they were no path through the cavity.
 
 ---
 
@@ -5040,6 +5115,17 @@ every bead pair is summed into its state pair whatever its kernel, and that more
 the cutoff (+10%, +24%), which belief propagation pays for. **When a recommendation rests on speed, build the stand-in
 and time it in the engine first; a cost composed from profile shares is a hypothesis and is reported as one.**
 
+### 10.46 Score a fix by the criterion the user stated, not by a proxy for it (2026-11-01)
+
+User correction. The user asked for hybrid HDX TM bands with no finite points inside, as in the implicit figures. I
+scored six lipid-shielding rules by "mixed" amides (finite at some plotted T, off scale at others), found every rule at
+15-34, told the user no rule clears the bands, and the user chose censoring alone, which left finite points in TM4 and
+TM5. The mixed count also counts every ragged band edge; counted as the user sees it, finite amides inside a helix with
+off-scale amides on both sides, the core rules leave 4-9 against R0's 17, and TM4 and TM5 clear. I had also diagnosed
+the TM4 events as contact-radius flickers with no water and then kept them as "lower bounds". **Turn the user's words
+into the metric before scoring options, look at the candidate figures beside the reference before reporting, and do not
+keep a value the diagnosis has already shown to be an artifact.**
+
 ---
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
@@ -5247,7 +5333,9 @@ The full record is in `upside3.md` sections 4, 5 and 10 (reports in `scratchpad/
   rounding on the host backend (chig, 1ubq, 1dfn; two systems at different frames, NaN-filled memory). On build g7b
   every quantity of the 11 fixtures and of ff3.1's chig, 1ubq and 1dfn (the same 31 nodes, other tables) passes on the
   K80, V100, RTX6000 and A100 (driver API 11.2 on the K80, 12.2 on the others), and each config's worst error is the
-  same number on all four GPUs (1dfn's `hbond_energy` output 1.50e-4 against a scale of 1.39e-4, the largest).
+  same number on all four GPUs (1dfn's `hbond_energy` output 1.50e-4 against a scale of 1.39e-4, the largest). The
+  released ff3.1 (11-01, its own `rama.dat`; the configs differ from the earlier ones only in `rama_pot` and
+  `proposal_pot`) passes on the host backend and the V100 with the same worst errors.
 * **V1's rounding scale.** A quantity that is a small difference of large ones amplifies rounding. On the K80 the
   device's omega dihedrals in chig's native frame differ from the CPU's by one ulp of pi (2.4e-7 rad, measured per
   element); with each omega about 0.01 rad from rest, that moves the omega-spring energy (0.0044 E_up) by 2.7e-5
