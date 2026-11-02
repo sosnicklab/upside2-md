@@ -645,7 +645,13 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   none (a proxy metric; lesson 10.46). User chose "A61 fix + censor": the four sets regenerated with the repo's
   accessibility code (49727925), dG by the repo pipeline on the Mac Studio (reproduces the cluster's censored flags
   and bounds exactly), `plot_ref_style.py` draws censored amides off scale.
-* **11-01 14:20-15:40, same thread** (user: TM4 and TM5 still show finite points). The membrane term got a core
+* **11-01 14:07-14:30, MacBook Pro, status pass** (midway2 socket reopened, one Duo push). Phase 38 step 1 read: DSE
+  off (`z32_00`) folds 0.575 against `n32_00`'s 0.449 and released ff2.1's 0.615, unfolded shift +3.80 E_up; the SI's
+  SARW (`s32_00`) 0.446, -9.93. Step 2 put to the user. ff3.1's mdCATH TM level with released ff2.1 (+0.004). Upside 3
+  ubiquitin de novo COMPLETE (final frames clean); the last two Upside 3 de novo arms and their controls queued for
+  scoring (49736365-49736368). Second NODE_FAIL requeue (alpha3d native, midway2-0156). Files: findings.md 1.37,
+  plan.md Phase 38, remote_jobs.md.
+* **11-01 14:20-15:40, Mac Studio, HDX lone points continued** (user: TM4 and TM5 still show finite points). The membrane term got a core
   test: inside the ester planes the contact radius is the core amide N-tail g(r)'s first minimum, 8.12 A, measured
   like the 7.00 A; `first_minimum` now searches the first well. Checked against the geometry arrays (1.00000),
   regenerated on the cluster (49737262), dG on the Mac Studio. TM5 clears in all four variants, TM4 in 79HIS; three
@@ -654,3 +660,18 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   `py/martini_hdx_membrane_accessibility.py`, `example/16.MARTINI/readme.md`, `example/00.AnalysisScripts/README.md`,
   `example/00.AnalysisScripts/helpers/plot_ref_style.py`; findings.md 5.2, 5.3, 5.3b, 5.8, 10.46; plan.md Known
   Errors; remote_jobs.md section 1 line 2.
+* **11-01 14:30-15:00, MacBook Pro, ff3.2 continued** (user: "Proceed to continue work on ff3.2. Double check it is
+  training all parameters, not holding anything fixed"). Parameter check (`param_moves.py`, `ckpt_rates.py`,
+  `params_check.txt`): every group with an engine gradient moved in epoch 0; held only what the engine gives no
+  derivative for (backbone burial centre, sharpness and H-bond weight; environment coverage geometry; H-bond entries
+  4-11; bead positions) and the basin offsets without data. `rg_check.py`: without the DSE unfolded chains are 2.2%
+  smaller than ff2.1's, with it 3.9% larger. New `after_training.sbatch` for `ff32_dse0` (panel, shift, Rg check, next
+  epoch, gate from 76; gate tested on step 19); training on from step 19 (49737476). Files: plan.md Phase 38,
+  findings.md 1.37, remote_jobs.md; cluster `checks/ff32_fix_20261031/`, `ff32_dse0/after_training.sbatch`.
+* **11-02 00:00-00:20, Mac Studio, status pass.** The MacBook Pro's 14:44 records (Phase 38 read, the user's ff3.2
+  decision, its lesson) merged three-way into this Mac's (base `7f31f72`; its lesson renumbered 10.47). midway2 faulty
+  since 21:19 11-01 (Slurm "Unexpected message received"; from 23:57 its login node opens no session): ff3.2's link
+  49737476 failed in epoch 1 (insurance queued), 28 of ff3.1's 32 Peng chains broke at resubmission; restart script
+  `checks/ff31_nativefix_release_20261031/restart_broken.sh` written, not run. Read through midway3: ff3.0's glpG
+  block 3 (done, TM4 0.85 at T 0.70) and `compare_u3_u2.py` over all 16 de novo pairs (-0.030 [-0.049, -0.014],
+  p 0.004). Files: findings.md 1.37, 3.15, 10.47; plan.md Phases 24, 38; upside3.md; remote_jobs.md; progress.md.

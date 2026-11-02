@@ -418,7 +418,7 @@ now, on this branch." Code concise, simple and logical, in master's style (never
 
 **Resume here ("continue upside3 progress"; state at 2026-10-22 19:10, Mac with the scratchpad; item 2b to 10-27).**
 Working files (fixtures, baselines, build trees, reviewer outputs) are under the gitignored `scratchpad/upside3_audit/`.
-Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 line 3): the Peng arms and the glpG chain.
+Item 2b's runs are finished (11-02; remote_jobs.md §1 line 3); owed: scoring the Peng seed replicates, glpG's HDX.
 1. [x] `obj/` holds every fix to A231 (earlier binaries kept as `obj/*.bak_a<N>`, one per install from `*.bak_a101` to
    `*.bak_a230`, and `*.bak_20261021`). Baselines `w56_obj.npz` on `fixtures_w21` (the writers' current set:
    fixtures_w20 plus A231's `sequence_id`; older sets are refused in part: pre-A130 anchors, pre-A172 channel configs,
@@ -459,11 +459,14 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
       Deployment"). It is separate from the shared deployment because running campaigns read that tree (the
       released-ff2.1 Peng arms are this validation's control) and CLAUDE.md forbids deploying under them. Code
       rsynced from the Mac working tree, built on the midway2 login node, its own `.venv` with mdtraj.
-   3. [ ] (running) Peng: the 16 proteins x {native, denovo}, the benchmark's own protocol (`ff3_benchmark/bench_run.py`:
+   3. [ ] Peng: the 16 proteins x {native, denovo}, the benchmark's own protocol (`ff3_benchmark/bench_run.py`:
       14-replica REMD on Table S2's ladders, dt 0.009, frame 100), ff_2.1, in
       `/beagle3/trsosnic/yinhan/upside3_validation/peng/`; compared with the released-ff2.1 arms on the pre-audit
-      binary (`ff3_benchmark/runs/<prot>_<kind>_ff_2.1/`) and Peng's FF2 (Table S2, Fig S4).
-   4. [ ] (running) glpG-RKRK-79HIS hybrid with ff2.1 through `example/16.MARTINI/run.py`, the repo's job script
+      binary (`ff3_benchmark/runs/<prot>_<kind>_ff_2.1/`) and Peng's FF2 (Table S2, Fig S4). All 32 scored (11-02,
+      findings 3.15): native level with Upside 2 (+0.012 [-0.001, +0.028]), de novo lower, -0.030 [-0.049, -0.014],
+      p 0.004, in 14 of 16, with one run per arm per engine. Open: score the seed replicates (top7 and alpha3d de novo,
+      seeds 101 and 202, both engines) and set the seed spread against this gap.
+   4. [ ] glpG-RKRK-79HIS hybrid with ff2.1 through `example/16.MARTINI/run.py`, the repo's job script
       rewritten for the Upside 3 core (A232; user 10-22: "the job scripts should also be updated to support it"):
       the preparation as a job, then 4 REMD blocks of 48 replicas on T 0.70-0.90, each stopped at `--time-limit` and
       queueing the next. `run_sim_1afo_full.sh` sources the Upside 3 tree too (A233). The campaign's `run_remd.py`
@@ -471,8 +474,9 @@ Running on midway2 (item 2b; ids, logs and next actions in remote_jobs.md §1 li
       besides KE, C-N and TM helicity: TM4's protein protection at 298 K (`pp_fail`, dG under PS_protein) with HDX
       through the fixed analysis code (A61 fixed), the follow-up of Phase 16's closed question. Block 1 read 10-26
       (findings 3.15): KE, C-N and five of six TM helices as Upside 2's hybrid, but TM4 is lost (DSSP alpha 0.44 at
-      T 0.70 against 0.93-0.96), already in preparation stage 7.0. The loss is ff2.1's own (Known Errors); the HDX
-      readout waits on the user's choice of force field.
+      T 0.70 against 0.93-0.96), already in preparation stage 7.0. The loss is ff2.1's own (Known Errors). Done 11-02:
+      ff2.1 4 blocks (TM4 0.44 to 0.05), ff3.0 3 blocks (TM4 0.85, 0.82, 0.85; findings 3.15). The HDX readout waits
+      on the user's choice of force field.
    Next after it: stage S2 (`upside3.md` section 3), then the open items below; refusing ff2.1 is S7, at release
    (`upside3.md` 9.3).
 2c. [x] The protein harness rerun on HEAD (Mac Studio, 10-29; the hybrid fixtures are MacBook-only, not rerun):
@@ -1177,10 +1181,32 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
    -77 E_up in the old one.
 2. [x] Submitted 16:57 10-31 (`ff32_dse0` 49692528, `ff32_sarwsi` 49692529); at 19 each `after_training.sbatch`
    submits its panel (`z32_00`, `s32_00`) and then `peng_full.sbatch` on it.
-3. [ ] Read both panels and unfolded shifts; propose step 2. `ff32_dse0` read 08:50 11-01 (findings 1.37): `z32_00`
-   folds 0.575, +0.127 [+0.091, +0.163] over `n32_00` and -0.040 [-0.076, -0.007] against released ff2.1, unfolded
-   shift +3.8 E_up (2 of 16 negative): the DSE target carries the shift and most of the loss, not all of it.
-   `ff32_sarwsi` reaches 19 about 11:00 CST 11-01.
+3. [x] Read 14:10 11-01 (`paired_npz.py`, `peng_full_<tag>.txt`; findings 1.37): DSE off (`z32_00`) folds 0.575,
+   +0.127 [+0.091, +0.163] over `n32_00`, -0.040 [-0.076, -0.007] under released ff2.1, unfolded shift +3.80 E_up;
+   the SI's SARW (`s32_00`) 0.446, level with `n32_00`, shift -9.93. The DSE target carries about three quarters of
+   the loss; the SARW's backbone burial none of it.
+4. [x] Step 2 decided by the user 11-01 ("Proceed to continue work on ff3.2. Double check it is training all
+   parameters, not holding anything fixed"): **ff3.2 is `ff32_dse0` continued**, every term trained, the DSE target
+   off (a departure from FF2's dual target, the user's). The run directory keeps its name; tags `z32_EE`. The run
+   that kept the DSE (`ff32_nativefix`, `n32_EE`) is stopped and stays the comparison.
+5. [x] Parameter check (`checks/ff32_fix_20261031/param_moves.py`, `ckpt_rates.py`, outputs `params_check.txt`):
+   every group the engine gives a gradient for trains and moved in epoch 0: the side-chain pair, coverage and
+   hydrophobe tables (`rot`, 31,420 coefficients, rate 0.0125), environment centre, scale, sharpness and weights,
+   the backbone burial scale, H-bond entries 0-3, all 14 sheet values, and 1,517 Ramachandran depth offsets (pooled
+   mode; 2,955 of 5,040 basin offsets moved after round 1). Held because the engine returns no derivative, as in
+   FF2: the backbone burial centre, sharpness and H-bond weight (commented out in `BackboneSigmoidCoupling`), the
+   environment coverage geometry (`param_deriv` "not implemented"), H-bond entries 4-11, the hydrophobe and rotamer
+   bead positions. Not parameters of the model's trained set: rotamer probabilities, the map shapes inside each basin,
+   springs, backbone sterics. The basin offsets without 20 native sites (in the map or its residue) stay at NDRD.
+6. [ ] Training on from step 19 since 14:43 11-01, one epoch a link. At each epoch end the run's
+   `after_training.sbatch` (md5 `beab944c`; old `.bak_pre_epochs_20261101`) submits the panel `z32_EE` (dt 0.015) and
+   `peng_full.sbatch` on it, writes `rg_check_ff32_dse0.txt` (`rg_check.py`: free-replica Rg against
+   `ff31_nativefix`, which ran ff2.1's files on the same proteins in the same order; epoch 0 at T 1.1 -2.2%, with
+   the DSE +3.9%), then trains one more epoch; from step 76 `convergence_gate.py` decides first (tested on step 19:
+   runs, 10 groups, not converged): converged stops for validation, not converged trains on to at most 114. It is
+   the only submitter of this run's panels (`submit_new.sh` does not list it, so a pass cannot take the panel
+   without its shift). Read each epoch: folding against released ff2.1, the unfolded shift, the Rg ratio (unfolded
+   chains must not keep compacting), glycine's depths (`gly_depths.py` on the round file).
 
 ## Known Errors / Blockers
 

@@ -1867,15 +1867,28 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
     because epoch 0's later steps already carry the loss.
   - *A193 did not reach ff3.2.* `ff32_nativefix`'s `ConDiv.py` (from ff3.1.1's copy, 10-28) keeps the backbone burial
     term in the SARW replica; the SI's SARW has none. On a 3g0m SARW frame that term is -77 E_up as these runs built
-    the replica and 0 as the SI defines it (`checks/ff32_fix_20261031/sarw_check/`); its effect on the DSE's backbone
-    pull is tested by plan.md Phase 38's `ff32_sarwsi`.
-  - *The causal test, the DSE target off* (plan.md Phase 38 step 1; `ff32_dse0`, one epoch, panel `z32_00` at dt
-    0.015, read 08:50 11-01 by `paired_npz.py` and `peng_full.py`). It folds 0.575 against `n32_00`'s 0.449 (+0.127
-    [+0.091, +0.163], higher on 38 of 44) and released ff2.1's 0.615 (-0.040 [-0.076, -0.007], p 0.012; mean Q
-    -0.010, p 0.002); the unfolded shift is +3.8 E_up, negative in 2 of 16 (`n32_00` -11.9 in 16 of 16; released
-    ff3.1 +1.2). So the DSE target carries the unfolded shift and about three quarters of epoch 0's folding loss, but
-    the arm does not keep ff2.1's folding: the interval excludes 0, so by step 1's rule it does not name the whole
-    cause. `ff32_sarwsi` is read next.
+    the replica and 0 as the SI defines it (`checks/ff32_fix_20261031/sarw_check/`). It does not matter: the SI's
+    SARW changes neither folding nor the unfolded shift (next item).
+  - *The DSE target is the cause, measured* (plan.md Phase 38 step 1; read 14:10 11-01; one epoch each from ff3.2's
+    start, everything else as `ff32_nativefix`; `checks/ff32_fix_20261031/`). With the DSE target off (`z32_00`)
+    epoch 0 folds 0.575: +0.127 [+0.091, +0.163] p 7e-7 over `n32_00` (higher on 38 of 44), -0.040 [-0.076, -0.007]
+    p 0.012 under released ff2.1, mean Q 0.819 against 0.783 and 0.829; the unfolded shift on Peng's frames is +3.80
+    E_up (2 of 16 negative) against `n32_00`'s -11.9 (16 of 16). With the SI's SARW (`s32_00`) epoch 0 folds 0.446,
+    level with `n32_00` (-0.003 [-0.036, +0.029]), shift -9.93 (16 of 16). So the DSE target carries about three
+    quarters of epoch 0's loss (0.127 of 0.167) and all of the unfolded shift. It does not act mainly through the
+    H-bond: E_alpha goes -1.961 to -1.908 over the epoch without the DSE, to -1.893 with it (`n32`; -1.865 with the
+    SI's SARW). Which terms carry the DSE's share in the runs is not measured; the remaining -0.040 is unassigned (the
+    pair table's noise, 1.17 A, is a candidate). Glycine's map after the epoch (`gly_depths.py`, pooled map's cells at
+    (85, 0) and (-80, -10)): without the DSE alpha_L -2.438, alpha_R -1.560 (ff2.1's -1.562), L - R -0.877,
+    -ln(P_aL/P_aR) -0.640; ff3.2's round 1 -2.452, -1.647, -0.804, -0.567; the SI's SARW -2.474, -1.657, -0.818,
+    -0.581. The DSE deepens glycine's alpha_R (shared offset -0.13 with it, -0.06 without).
+    Chain dimensions in the training's own replicas (`rg_check.py`; each step keeps every free replica's mean Rg;
+    reference `ff31_nativefix`'s epoch 0, which runs ff2.1's files unchanged on the same 456 proteins in the same
+    order): at T 1.1, the unfolded chain, the DSE expands it, +3.9% (median; larger in 81% of proteins; +4.5% at
+    epoch 1), the SI's SARW +2.5%, and without the DSE it contracts 2.2% (smaller in 67%); at T 0.8 +1.1%, +0.9%,
+    +0.3%. The DSE target therefore pushes unfolded chains past ff2.1's size and swells the native-like ones with
+    them; without it the unfolded chain is a little more compact than ff2.1's, which ff3.2's later epochs must not
+    extend (plan.md Phase 38 item 6).
 
 ## 2. The hybrid model: what each side supplies
 
@@ -2917,19 +2930,20 @@ retrained term.
   the loss under ff2.1 is therefore ff2.1's own once side-chain placement is correct, not an Upside 3 defect; since
   ff3.1 differs from ff2.1 only in its map, what holds TM4 lies in ff3.0's other retrained terms. One seed and 540 time
   units at T 0.8647; REMD block 1 (remote_jobs.md §1) gives TM4 at T 0.70, against Upside 2's ff3.0 chains' 0.96.
-* **REMD confirms it** (10-29 and 10-31; `glpg_u3_block1.py` on each run's rungs 0 and 23, T 0.70 and 0.795; outputs
+* **REMD confirms it** (10-29 to 11-02; `glpg_u3_block1.py` on each run's rungs 0 and 23, T 0.70 and 0.795; outputs
   `glpg/glpg_u3_block23.txt`, `glpg_u3_block4.txt`, `glpg_ff31.bak_pre_nativefix_20261031/glpg_ff31_block1.txt`,
-  `glpg_ff30/glpg_ff30_block1.txt`, `glpg_ff30_block2.txt`). TM4 135-151 DSSP alpha at T 0.70 (T 0.795):
+  `glpg_ff30/glpg_ff30_block1.txt`, `glpg_ff30_block2.txt`, `glpg_ff30_block3.txt`). TM4 135-151 DSSP alpha at T 0.70
+  (T 0.795):
 
   | run | block 1 | block 2 | block 3 | block 4 |
   |---|---|---|---|---|
   | ff2.1 | 0.44 (0.39) | 0.26 (0.34) | 0.14 (0.21) | 0.05 (0.17) |
   | ff3.1, the 10-26 merge | 0.42 (0.39) | | | |
-  | ff3.0 | 0.85 (0.81) | 0.82 (0.85) | | |
+  | ff3.0 | 0.85 (0.81) | 0.82 (0.85) | 0.85 (0.82) | |
   | Upside 2 ff3.0, placement fixed | 0.96 (0.93) | | | |
 
-  ff2.1 keeps unwinding to none (block 4 at most 0.08 per residue). ff3.0's block 2 is block 1 again: 137-151 at 0.93,
-  135-136 never helical. The merge loses TM4's C-terminal half (146-151 at 0.00-0.02, 135-145
+  ff2.1 keeps unwinding to none (block 4 at most 0.08 per residue). ff3.0's blocks 2 and 3 are block 1 again: 137-151
+  at 0.93-0.98, 135-136 never helical; its run is done (3 of 3 blocks). The merge loses TM4's C-terminal half (146-151 at 0.00-0.02, 135-145
   near 0.7). ff3.0 holds 137-151 at 0.96, Upside 2's level, and loses only 135-136, never helical in block 1, which
   accounts for the gap to 0.96. Every run keeps KE/1.5kT 1.00 for protein and lipid, C-N 1.310-1.312 +- 0.119-0.120 A
   and TM1's dihedral-box fraction at 0.96-1.00; of the measures read, only TM4 separates them.
@@ -2948,7 +2962,10 @@ retrained term.
     (`pull_cold.py` + `score_local.py` reproduce `score_compare.py`, WWdomain de novo 0.43264): native, 16 proteins,
     mean TM 0.564 against 0.552 (+0.012 [-0.001, +0.028], Wilcoxon p 0.52), the engines agree; de novo, 9 of 16, 0.437
     against 0.461 (-0.025 [-0.051, -0.003], p 0.051, median -0.005), carried by top7 (-0.108) and alpha3d (-0.071), both
-    still rising between run halves, one run per arm per engine.
+    still rising between run halves, one run per arm per engine. **All 16 de novo (11-02, `compare_u3_u2.txt`; the
+    10-26 one kept as `.bak_20261026`): 0.396 against 0.427, -0.030 [-0.049, -0.014], p 0.0042, lower in 14 of 16**;
+    beyond twice the half-split SE in cspA (-0.049), proteinG (-0.087) and proteinL (-0.059); top7 -0.108 and alpha3d
+    -0.071 are inside it. The gap is no longer two arms. Native is unchanged.
   * Reweighting each engine's 1,500 scored de novo frames by the other's Hamiltonian at the same coordinates (ESS
     1,250-1,475) predicts Upside 3 - Upside 2 of -0.002 (top7 +0.000, alpha3d -0.009): the energy change does not
     explain the de novo gap. The seed replicates (remote_jobs.md §1 line 3) measure the run-to-run spread.
@@ -5125,6 +5142,16 @@ off-scale amides on both sides, the core rules leave 4-9 against R0's 17, and TM
 the TM4 events as contact-radius flickers with no water and then kept them as "lower bounds". **Turn the user's words
 into the metric before scoring options, look at the candidate figures beside the reference before reporting, and do not
 keep a value the diagnosis has already shown to be an artifact.**
+
+### 10.47 Read the shared status file before writing any shared copy (2026-11-01)
+
+Self-found: at 14:13 11-01 the MacBook Pro rsynced its records over the handoff bundle's `records/`, then found in
+`WATCH_STATUS.md` that the Mac Studio had run a pass at 08:50 and an HDX analysis 09:24-11:24 since the last sync.
+Whatever records the Mac Studio had put in the bundle were replaced, with no copy kept; its own repo still holds
+them. Two computers can work the same cluster at once, and each one's records are then only part of the picture.
+**Before writing a shared copy (the bundle's records, `WATCH_STATUS.md`), read `WATCH_STATUS.md` and the target's
+timestamps. If another computer wrote after this one's last sync, back up the target first and say so; do not
+overwrite it.**
 
 ---
 

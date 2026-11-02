@@ -301,8 +301,9 @@ Results so far (findings 3.14 "The core against Upside 2", 3.15; 10-27):
 * **Hamiltonian at identical coordinates.** Only `bb_sigmoid_coupling_environment` (the 3.13 fix) moves at the E_up
   scale (median 0.20, max 1.05 E_up).
 * **Peng, native starts.** Mean TM 0.564 against 0.552, +0.012 [-0.001, +0.028], Wilcoxon p 0.52. The engines agree.
-* **Peng, de novo** (9 of 16 then). 0.437 against 0.461, -0.025 [-0.051, -0.003], p 0.051, carried by top7 (-0.108)
-  and alpha3d (-0.071), both still rising between run halves.
+* **Peng, de novo.** On 9 of 16 (10-27) 0.437 against 0.461, -0.025 [-0.051, -0.003], p 0.051, carried by top7
+  (-0.108) and alpha3d (-0.071). On all 16 (11-02) 0.396 against 0.427, -0.030 [-0.049, -0.014], p 0.0042, lower in
+  14 of 16, so the gap is broad, not two arms.
   * Reweighting each engine's frames by the other's Hamiltonian predicts -0.002, so the energy change does not explain
     the gap.
   * The seed replicates (seeds 1, 101, 202) measure the run-to-run spread.
