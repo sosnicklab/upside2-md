@@ -689,6 +689,29 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
         against the unguided 3.8e-4, so the calibration criterion is not met; self-normalized 0.28 (N_eff 12.6) and
         0.95 (N_eff 255). By the reading fixed above, the limit does not rescue the estimator at kappa 2; what
         follows is the user's. `e1_readout.sh` (flags and C-N) has not been run on these samples.
+      * Particle count at low noise (user 11-02: "Particle scaling, full"), its reading fixed here before the data.
+        The 256-particle runs' traces show the weights collapsing onto a few particles at most resamplings (ESS/N
+        0.00-0.03 at t_hat 11.1-5.6 in seed 1, 0.005-0.01 at 13.8-8.9 in seed 2), with single rows repaying +8.2 to
+        +8.4 nats: one lineage's luck, the regime where the toy's deficit shrank with the particle count. The test is
+        whether it shrinks here. No code changes: `e1.sbatch` with `e1_rare.py` `e4314698` and `sampler.py`
+        `21df0b41`, I61 at kappa 2, guidance 0.05, `--resample-below 16`, at 1,024 and 4,096 particles with seeds 1-4
+        and 16,384 with seeds 1-2 (task files `addon/scale/`), beside 61805263's two runs at 256 (-15.05, -20.26).
+        `addon/scale_read.py` reads them; ln Z-hat, the floor -7.9 and the line -11.1 as in the rule above.
+        1. Removed if at some N of at least 1,024 every seed gives ln Z-hat of at least -11.1 and meets the
+           calibration criterion on I61 (the Feynman-Kac open fraction within a factor of 2 of 3.8e-4, N_eff over the
+           open particles at least 50); the smallest such N is E1's working particle count. Then the next steps (V70
+           at that N, the tuning rule rerun under the limit, E1 proper) are the user's.
+        2. Not removed if every 16,384 seed lies below -11.1 and their mean rises less than 3.2 nats over the
+           256-particle mean (-17.66): more particles do not rescue kappa 2 at any count E1 can afford, and what to
+           change in the sampler is the user's.
+        3. Otherwise undecided; the trend of the mean with N is reported.
+        Beside, not deciding: open counts, the self-normalized estimate, each run's first-resampling charge and
+        ESS/N, its least ESS/N over the rows, and the seeds' spread at each N.
+        Submitted 13:09 11-02 from `$B/addon` (`remote_jobs.md` §1 line 4), seven V100 jobs: **62073874** (1,024,
+        seeds 1-4 in turn), **62073875-62073878** (4,096, one seed each), **62073879-62073880** (16,384, one seed each);
+        about 16 V100-hours, from 256 and 1,024 particles' 375 s and 1,225 s per run. The readout **62073881**
+        (`scale/read.sbatch`, caslake, after all seven) writes `addon/runs/scale_readout.txt`. `scale_read.py`
+        `5f959e3d` reproduced 61805263's and 61755382's numbers before submission.
 - [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).

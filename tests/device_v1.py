@@ -2,7 +2,9 @@
 # V1 of the device engine (upside3.md 10.2): every node's output (a potential node's is its potential) and
 # sensitivity, and each system's potential and derivative, from the device engine against the CPU engine on fixed
 # frames.  Each config runs as two systems of one device engine at different frames, so the per-system offsets are
-# exercised.  The frames are regress.py's: the native, and Gaussian noise of 0.2 and 1.0 A on it.
+# exercised.  The frames are regress.py's: the native, and Gaussian noise of 0.2 and 1.0 A on it; with --frames
+# FRAMES.npz, the npz's array (frame, atom, xyz) under the config's file name without .up.  Each frame's line gives the
+# potential's difference in E_up and the derivative's error, which a BP tolerance comparison reads.
 #
 # Rounding: the device differs from the CPU in the rounding of every operation, and a quantity that is a small
 # difference of large ones (a spring's energy near its rest length) amplifies that.  So each quantity's error, its
@@ -26,7 +28,7 @@
 #
 # Prints each config's worst quantity and every failure, and exits 1 if any fails.  A config with a node that has no
 # device implementation is reported as skipped (the engine names the nodes on stderr).
-# usage: device_v1.py [--tol TOL] [--ulps N] [--ulp-factor F] CONFIG [CONFIG ...]
+# usage: device_v1.py [--tol TOL] [--ulps N] [--ulp-factor F] [--frames FRAMES.npz] CONFIG [CONFIG ...]
 import sys, os
 import numpy as np
 import tables as tb
@@ -44,7 +46,9 @@ def rel_rms(ref, x):
     diff = np.sqrt(np.mean((x-ref)**2))
     return diff/scale if scale > 0. else diff
 
-def frames(config):
+def frames(config, given):
+    if given is not None:
+        return list(given[os.path.basename(config)[:-len('.up')]].astype('f4'))
     with tb.open_file(config) as t:
         x0 = t.root.input.pos[:,:,0].astype('f4')
     rng = np.random.default_rng(1)
@@ -68,7 +72,7 @@ def cpu_record(engine, nodes, x):
         rec[n+'/sens'] = engine.get_sens(n)
     return rec
 
-def check(config, tol, n_ulp, ulp_factor):
+def check(config, tol, n_ulp, ulp_factor, given_frames):
     with tb.open_file(config) as t:
         nodes = [g._v_name for g in t.root.input.potential]
     cpu = [ue.Upside(config), ue.Upside(config)]
@@ -77,7 +81,7 @@ def check(config, tol, n_ulp, ulp_factor):
     except RuntimeError:
         print('%s: skipped, refused by the device engine' % os.path.basename(config))
         return True
-    fr = frames(config)
+    fr = frames(config, given_frames)
     rng = np.random.default_rng(2)
     results = []  # (name, error, rounding scale)
     for f in range(len(fr)):
@@ -96,6 +100,8 @@ def check(config, tol, n_ulp, ulp_factor):
                       'device not finite: %s' % (f, ns, ref['potential'][0], np.abs(ref['deriv']).max(), shown))
                 results.append(('frame%d/system%d/past range' % (f, ns), 0. if shown else np.inf, 0.))
                 continue
+            print('    frame%d/system%d: potential %.6g, device - CPU %+.2e E_up; derivative error %.2e of its RMS' % (
+                f, ns, ref['potential'][0], d['potential'][0] - ref['potential'][0], rel_rms(ref['deriv'], d['deriv'])))
             for n in nodes:
                 if n.startswith('affine_alignment'):
                     d[n+'/output'] = same_sign_quaternion(ref[n+'/output'], d[n+'/output'])
@@ -114,15 +120,16 @@ def check(config, tol, n_ulp, ulp_factor):
 
 def main():
     args = sys.argv[1:]
-    tol, n_ulp, ulp_factor = 1e-5, 4, 10.
+    tol, n_ulp, ulp_factor, given_frames = 1e-5, 4, 10., None
     while args[0].startswith('--'):
         if args[0] == '--tol': tol = float(args[1])
         elif args[0] == '--ulps': n_ulp = int(args[1])
         elif args[0] == '--ulp-factor': ulp_factor = float(args[1])
+        elif args[0] == '--frames': given_frames = np.load(args[1])
         else: raise ValueError('unknown option ' + args[0])
         args = args[2:]
     print(ue.device_description())
-    ok = [check(c, tol, n_ulp, ulp_factor) for c in args]
+    ok = [check(c, tol, n_ulp, ulp_factor, given_frames) for c in args]
     sys.exit(0 if all(ok) else 1)
 
 if __name__ == '__main__':

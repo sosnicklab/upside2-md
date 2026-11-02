@@ -94,7 +94,8 @@ struct ProteinHBondInteraction {
         auto dH = c0*rHO + (c1*invHOmag)*(rOC-dotHOC*rHO) + (c2*invHOmag)*(rHN+dotOHN*rHO);
         auto dO = -dH;
 
-        auto hb_log = ternary(one<=hb, S(100.f), -logf(one-hb));  // work in multiplicative space
+        // work in multiplicative space; log1pf, since one-hb keeps only whole steps of 2^-24 of a weak H-bond
+        auto hb_log = ternary(one<=hb, S(100.f), -log1pf(-hb));
 
         auto deriv_prefactor = lane_min(rcp(one-hb),S(1e5f)); // FIXME this is a mess
         store<0,3>(d1, dH   * deriv_prefactor);

@@ -12,7 +12,11 @@
 # because block averages of one hybrid run understate it: two CPU runs at seeds 7 and 8 differed by up to 7.6 block
 # standard errors (findings 11g).  A run keeps its trajectories in a temporary directory and writes its means to
 # WORK_DIR/ARM.SEED.npz, which compare reads.  OBJ is the build, a directory of UPSIDE_HOME (obj, or obj_<tag>).
+# nve runs N_COPY copies of a protein config at T_NVE without exchange, the thermostat thermalizing the start only, and
+# measures energy conservation per copy over the whole run: the total energy's (potential plus kinetic) least-squares
+# drift per 1000 time units and its RMS about that line, with the mean potential and KE/1.5kT.
 # usage: device_dyn.py run WORK_DIR ARM SEED CONFIG N_REPLICA DURATION OBJ [upside option ...]   (--gpu for the device)
+#        device_dyn.py nve WORK_DIR ARM SEED CONFIG N_COPY DURATION OBJ [upside option ...]
 #        device_dyn.py compare WORK_DIR ARM_A ARM_B
 import sys, os, re, shutil, tempfile
 import subprocess as sp
@@ -21,18 +25,29 @@ import tables as tb
 from scipy import stats
 
 upside_path = os.environ['UPSIDE_HOME']
+T_NVE = 0.85
 
 def run(work, arm, seed, config, n_rep, duration, obj, extra):
     temps = ','.join('%.4f' % t for t in np.linspace(0.80, 0.95, n_rep))
     swaps = ['--swap-set', ','.join('%d-%d' % (i, i+1) for i in range(0, n_rep-1, 2))]
     if n_rep > 2: swaps += ['--swap-set', ','.join('%d-%d' % (i, i+1) for i in range(1, n_rep-1, 2))]
+    simulate(work, arm, seed, config, n_rep, duration, obj,
+             ['--temperature', temps, '--replica-interval', '1'] + swaps + extra, observables)
+
+def nve(work, arm, seed, config, n_copy, duration, obj, extra):
+    # the thermostat's interval beyond the run: it thermalizes the start and never acts again
+    simulate(work, arm, seed, config, n_copy, duration, obj,
+             ['--temperature', ','.join(['%.4f' % T_NVE]*n_copy), '--thermostat-interval', str(2.*duration)] + extra,
+             energy_observables)
+
+def simulate(work, arm, seed, config, n_system, duration, obj, options, observe):
     cmd = [os.path.join(upside_path, obj, 'upside'), '--duration', str(duration), '--frame-interval', str(duration/200.),
-           '--seed', str(seed), '--temperature', temps, '--replica-interval', '1', '--disable-recentering'] + swaps + extra
+           '--seed', str(seed), '--disable-recentering'] + options
     with tempfile.TemporaryDirectory() as d:
-        copies = [os.path.join(d, '%d.up' % i) for i in range(n_rep)]
+        copies = [os.path.join(d, '%d.up' % i) for i in range(n_system)]
         for c in copies: shutil.copyfile(config, c)
         log = sp.run(cmd + copies, stdout=sp.PIPE, stderr=sp.STDOUT, universal_newlines=True, check=True).stdout
-        obs = [observables(c) for c in copies]
+        obs = [observe(c) for c in copies]
     names = list(obs[0])
     os.makedirs(work, exist_ok=True)
     np.savez(os.path.join(work, '%s.%d.npz' % (arm, seed)), names=names,
@@ -72,6 +87,19 @@ def observables(path):
     obs['C-N-CA'] = angle(C[:,:-1], N[:,1:], CA[:,1:])
     return obs
 
+def energy_observables(path):
+    # the logged kinetic energy is per atom (3 KE / n_dof), and a protein config has 3 n_atom degrees of freedom
+    with tb.open_file(path) as t:
+        if 'hybrid_control' in t.root.input:
+            raise SystemExit('nve takes protein configs only: a hybrid has fixed and rigid atoms')
+        o, n_atom = t.root.output, t.root.input.pos.shape[0]
+        time, pot, kin, T = o.time[:], o.potential[:, 0], o.kinetic[:, 0], o.temperature[:, 0]
+    total = pot + n_atom*kin
+    slope, intercept = np.polyfit(time, total, 1)
+    return {'drift/1000tu': np.array([1000.*slope]),
+            'E_total RMS': np.array([np.sqrt(np.mean((total - slope*time - intercept)**2))]),
+            'potential': pot, 'KE/1.5kT': kin/(1.5*T)}
+
 def angle(a, b, c):
     # mean over the chain of the angle at b, per frame
     u, v = a-b, c-b
@@ -102,10 +130,13 @@ def main():
     if sys.argv[1] == 'run':
         work, arm, seed, config, n_rep, duration, obj = sys.argv[2:9]
         run(work, arm, int(seed), config, int(n_rep), float(duration), obj, sys.argv[9:])
+    elif sys.argv[1] == 'nve':
+        work, arm, seed, config, n_copy, duration, obj = sys.argv[2:9]
+        nve(work, arm, int(seed), config, int(n_copy), float(duration), obj, sys.argv[9:])
     elif sys.argv[1] == 'compare':
         compare(*sys.argv[2:5])
     else:
-        raise SystemExit('usage: device_dyn.py run|compare ...')
+        raise SystemExit('usage: device_dyn.py run|nve|compare ...')
 
 if __name__ == '__main__':
     main()

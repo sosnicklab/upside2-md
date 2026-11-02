@@ -182,7 +182,8 @@ struct ProteinHBond : public CoordNode
             vs(6,na+n_donor) += hb_log;
         }
 
-        for(int nv: range(n_virtual)) vs(6,nv) = 1.f-expf(-vs(6,nv));
+        // 1-exp(-x) by expm1f, since the subtraction keeps only whole steps of 2^-24 of a weak H-bond's score
+        for(int nv: range(n_virtual)) vs(6,nv) = -expm1f(-vs(6,nv));
     }
 
     virtual void propagate_deriv() override {

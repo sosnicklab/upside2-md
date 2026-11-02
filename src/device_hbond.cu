@@ -152,7 +152,7 @@ struct DeviceProteinHBond : public DeviceNode {
             hl.add(el1[e1[e]], val[e]);
             hl.add(el2[e2[e]], val[e]);
         });
-        parallel_for(out.n_elem, DEVICE_LAMBDA (int nv) {vs[nv*w+6] = 1.f-expf(-hl.get(nv));});
+        parallel_for(out.n_elem, DEVICE_LAMBDA (int nv) {vs[nv*w+6] = -expm1f(-hl.get(nv));});  // as the CPU's
     }
 
     void propagate_deriv() override {

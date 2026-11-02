@@ -20,7 +20,10 @@
 * Waiting on the user: the side-chain model and the starting parameters of the base force field (section 7), and the
   other decisions of section 11.
 * Proposed 10-29 (user): side-chain pair tables coarse-grained from an all-atom force field, with only a correction
-  trained, and the hybrid's side-chain/lipid tables changed with them (7.4). Recorded; BU1 waits on the user.
+  trained, and the hybrid's side-chain/lipid tables changed with them (7.4). 11-02: a second version coarse-grained
+  from dry MARTINI's side chains, to be tried beside it (7.4). Recorded; BU1 waits on the user.
+* Proposed 11-02 (user): the carbonyl O integrated as a particle. Jumper's loop places it from N, CA and C at every
+  evaluation and pulls its forces back onto them (7.5). Recorded, to be checked and implemented later.
 * Not blocked by any other step: S2's cluster sync and training tree (5.4), and the baselines that do not depend on the
   base (H2, B1), each started on the user's word as section 8 records. The units module and G1 wait on the units
   option.
@@ -325,8 +328,7 @@ S1's gate is in section 3.
 |---|---|---|---|
 | U1 | the cluster binaries set flush-to-zero and denormals-are-zero in every process that loads the library (`set_fast_math`); the proposed fix is `-ffast-math` on compile lines only, checked by a regress compare of two midway2 builds | to be decided before S2's training build, so every Upside 3 training shares one build | plan.md Phase 24 item 2b |
 | U2 | `sse2neon.h` is an unpinned Homebrew header whose defaults set the Mac's `_mm_rcp_ps` accuracy | Mac builds' reproducibility | same |
-| U4 | the g-JF round evaluates the forces once more than it needs, about 20% of a hybrid's cost; skipping it needs to know that nothing moved the coordinates since the last evaluation | performance only; after correctness work | same |
-| cluster tree | the Upside 3 tree carries A231, A234 and A235; A236 (`dihedral_spring`) and A237 are local only | S2 | `remote_jobs.md` |
+| U4 | the g-JF round evaluates the forces once more than it needs, about 20% of a hybrid's cost; skipping it needs to know that nothing moved the coordinates since the last evaluation | performance only; after correctness work | same || cluster tree | the Upside 3 tree carries A231, A234 and A235; A236 (`dihedral_spring`) and A237 are local only | S2 | `remote_jobs.md` |
 | BBA | 6.3 E_up in `backbone_pairs` on one random start | S1's gate if it bears on the de novo gap | 4.4 |
 | channel potential | energy steps with no force (below) | the decision of 11, item 15 | findings 3.14, after the ledger |
 | container | A213 deleted `.devcontainer/`; a container for Upside 3 is written when there is a runtime to test it on | nothing | plan.md Phase 24 |
@@ -599,7 +601,8 @@ hybrid spline table as well."
 **The proposal.**
 * **The CG table.** The pair table is derived by coarse-graining an all-atom force field, as the hybrid's
   side-chain/lipid tables are derived from dry MARTINI (up.md 2.6). It is a free energy, and its spline must equal it
-  at every node, as for every table (CLAUDE.md).
+  at every node, as for every table (CLAUDE.md). A second version derives it from dry MARTINI's side chains (CG-DM,
+  "A second version" below).
 * **One CG bead per side chain** (user 10-29: "Try to avoid adding a second bead to each SC. The ending SC should still
   be CG beads, but there should be addtional spline tables to represent it under different orientation, etc."). Each
   rotamer state stays one bead. A side chain that one table cannot describe gets more tables on that bead.
@@ -1077,6 +1080,36 @@ What every candidate gets wrong:
     stops for the user if the buried checks rank the two force fields the other way from the association constants.
   * The GROMACS port is used only after its energies on a test pair equal those of the official Desmond files.
 
+**A second version from dry MARTINI's side chains** (user 11-02: "besides SC table built from AA ff, we can try
+another version starting with dryMARTINI SC"; to be tested and implemented later). Two CG tables are built on the one
+side-chain definition and read by the same diagnostic: CG-AA from DES-Amber (above) and CG-DM from dry MARTINI.
+* **Its construction is the hybrid's, with a side chain as the target.** `_run_sc_task` tabulates one state's
+  conformers, as martini22 beads, against one environment bead. For CG-DM the target is a second side chain's
+  martini22 beads over its own conformers. The Boltzmann sum runs over both conformer sets and the relative pose, and
+  each bead pair interacts by dry MARTINI's published form (CLAUDE.md: potential-shifted LJ and reaction field, to
+  1.2 nm), as in every hybrid table.
+* **No water to sample.** Dry MARTINI holds its solvent in its parameters, so the sum is the free energy (item 1 of
+  "For two side chains in water" above). CG-DM is a numerical integral of the kind `/sc_table`'s build already does,
+  with no umbrella sampling. So it can cover all 210 type pairs, and BU3's diagnostic can read every pair, where
+  CG-AA's pilot reads a chosen few.
+* **One parent in the hybrid.** Under CG-DM the side chains meet each other and the lipids through one force field,
+  which removes the hybrid's two parents (below).
+* **What it carries, to be measured rather than assumed.**
+  * The shape is martini22's: one bead for most side chains, 2-4 for ARG, LYS, HIS, PHE, TYR and TRP (the screen
+    above). The diagnostic then measures how well the one-bead forms carry martini22's shape, not the all-atom one.
+  * Dry MARTINI's solvent sits in every bead pair's LJ, so CG-DM is a water-everywhere table (question 2). In a core
+    it counts the hydrophobic effect beside the burial term (question 3), as CG-AA's water table would.
+  * How well it gives side-chain association in water is not known here. BU2's exposed checks apply to it unchanged:
+    the guanidinium-acetate and butylammonium-acetate association constants, computed for dry MARTINI's beads of
+    those groups, against 0.37 and 0.31 M^-1.
+  * Its temperature is question 4's. Its native units are converted once at h5-build time, with the factors passed
+    explicitly, as for `martini.h5` (CLAUDE.md, the dry-MARTINI unit contract).
+* **How the two are compared (proposal).** Each is read on the native panels with no correction (BU5), then given its
+  correction (BU6). A correction's departure from zero is its parent's error in a protein, pair by pair (above), so at
+  equal native panels the parent with the smaller correction is the better one. CG-DM is the cheaper build, so it can
+  also carry the pipeline first (the shared definition, the diagnostic, the engine's new forms, the correction's
+  training) while CG-AA's sampling runs.
+
 **The corresponding change in the hybrid (user 10-29).** The side-chain/lipid table describes the same coarse-grained
 side chain as the pair table, so the two change together.
 * **One side-chain definition for both builders.** States, conformer ensembles and their weights, beads and
@@ -1093,7 +1126,8 @@ side chain as the pair table, so the two change together.
   Upside core is physical). Only the pair table's correction is trained, on soluble proteins.
 * **Two parents.** In the hybrid the side chains then meet each other through an all-atom force field's free energy
   and meet the lipids through dry MARTINI's. That is the case today too (trained pair tables against dry MARTINI), and
-  question 2 below decides whether the pair table carries water-mediated free energy into the bilayer.
+  question 2 below decides whether the pair table carries water-mediated free energy into the bilayer. Under CG-DM
+  both come from dry MARTINI.
 * **The other consumers of the beads** change with any new placement or state set: `hbond_coverage`,
   `hbond_coverage_hydrophobe` and the burial couplings (`sigmoid_coupling_environment`,
   `bb_sigmoid_coupling_environment`) all read `placement_fixed_point_vector_only` (`py/upside_config.py`).
@@ -1126,28 +1160,93 @@ side chain as the pair table, so the two change together.
 8. **Sites** for ARG, LYS, TRP, TYR and PHE: answered on the steric proxy by the user's rule of 10-30 ("Tables
    against sites" above). One bead stays, since a bead with a frame (F4) is more accurate than sites for all five.
    BU3 applies the same rule on the all-atom free energy.
+9. **The parent** (user 11-02). Whether CG-DM is the pipeline's first build, a candidate beside CG-AA, or both, and the
+   rule that picks between them (proposal under "A second version" above).
 
 **Steps (BU1-BU6).**
 1. [x] Recorded, with the geometric screen (10-29).
-2. [ ] **BU1.** The user's choices: questions 1, 2 and 7, and the diagnostic's threshold.
+2. [ ] **BU1.** The user's choices: questions 1, 2, 7 and 9, and the diagnostic's threshold.
 3. [ ] **BU2.** The pipeline, from `martini_build_tables.py`'s conformer code: the shared side-chain definition; the
    reference's check (above); then route A on a pilot of pairs chosen from the screen to span it, with seeds that
-   agree (2.3).
-4. [ ] **BU3.** The diagnostic on the pilot, F0 to F5, for the pair table and for `/sc_table`. It decides the forms,
+   agree (2.3). CG-DM for every type pair from the same code, with the exposed checks on dry MARTINI's beads.
+4. [ ] **BU3.** The diagnostic, F0 to F5, on CG-AA's pilot, CG-DM's pairs and `/sc_table`. It decides the forms,
    with F4 fitted so that it places no well where its data do not reach, and applies the user's rule on sites
    (10-30) against the best one-bead form.
-5. [ ] **BU4.** Every pair, in the forms BU3 chose; `/sc_table` rebuilt on the same definition; the engine's new forms
-   through 2.1 and 2.2.
-6. [ ] **BU5.** The CG table read on the native panels with no correction, under question 3's burial decision.
-7. [ ] **BU6.** The correction trained as the only change against a control (2.2), behind 7.3's gate.
+5. [ ] **BU4.** Every pair, in the forms BU3 chose, for each parent kept; `/sc_table` rebuilt on the same definition;
+   the engine's new forms through 2.1 and 2.2.
+6. [ ] **BU5.** Each CG table read on the native panels with no correction, under question 3's burial decision.
+7. [ ] **BU6.** Each correction trained as the only change against a control (2.2), behind 7.3's gate; the parents
+   compared by their corrections ("A second version" above).
 
-### 7.5 Steps
+### 7.5 The carbonyl O: placed or integrated (proposed 11-02)
+
+User 11-02: "there is oxygen remove and add back in each integration cycle. Check if we can do everything without
+removing oxygen", and: "in jumper's original paper, the backbone remove and add O in each step. it is not only in
+hybrid". To be checked and implemented later.
+
+**The model today, Jumper's inner loop** (Jumper et al. 2018, both PLoS Comput Biol papers, Fig 1; thesis 4.4):
+* Each residue is N, CA and C. At every force evaluation the carbonyl O and the amide H "are deterministically
+  placed" from them: x_O = x_C + 1.24 A d_O, with d_O = unitvec(unitvec(C - CA) + unitvec(C - N_next)), so O lies in
+  the plane of CA, C and the next N (`infer_H_O`, written by `upside_config.write_infer_H_O`).
+* The forces on O, H and the side-chain beads are "pulled back" onto N, CA and C by the chain rule, and the dynamics
+  run on N, CA and C alone (Steps 5-6).
+* So O has no degrees of freedom of its own: it is left out of the integration and rebuilt at every evaluation, in
+  every config. The C-terminal residue has no O. The hybrid adds only a frozen O slot in `pos` that
+  `martini_hybrid_position` overwrites (up.md 5).
+
+**What reads the placed O.** Every term built on `infer_H_O`'s acceptors, which give each O's position and its C=O
+direction d_O (`py/upside_config.py`):
+* the backbone H-bond (`protein_hbond`, and the H-bond energy on it);
+* side-chain coverage of the backbone (`write_rotamer_backbone`), which uses d_O's angle (thesis 4.4: d_H and d_O "are
+  used to assess angular components of both hydrogen bonding and side chain interactions");
+* backbone desolvation's coverage (`write_bb_environment`);
+* the membrane potentials' backbone terms (`write_membrane_potential3`, `write_membrane_potential4`);
+* the hybrid's BB centre (`martini_hybrid_position`).
+
+**What integrating O takes** (the check is whether every item works):
+* **The layout.** Each residue carries N, CA, C and O in `pos`, the hybrid's layout today, so the two layouts become
+  one. The first O comes from the PDB; a random start places it once. `infer_H_O` then places only H, and a node reads
+  O and d_O = unitvec(O - C) from `pos` for the terms above. The C-terminal residue's O needs a rule, since the
+  placement has no next N there.
+* **Bonded terms.** O needs a C=O bond, angles to CA and to the next N, and a planarity term, none of which the core
+  has. They are physical springs with no trained part, so they are fixed before any test, not tuned to it. Their
+  stiffness bears on the timestep, and the timesteps in use (0.009 in training, 0.015 on the 44-domain panel; 1.4,
+  2.3) do not move to suit them. Upside's protein atoms have unit mass, so a bond no stiffer than the backbone's
+  (`--bond-stiffness`, 48 E_up/A^2) adds no faster motion.
+* **The ensemble.** A placed O is a function of N, CA and C. An integrated O adds three degrees of freedom per residue
+  and spreads about its placed position: along a bond as stiff as the backbone's, sqrt(kT/k) = 0.13 A at T 0.85, on
+  top of what the placement inherits from N, CA and C. Every term above then averages over that spread, while the
+  H-bond and coverage tables were trained with O at its placement. So the change is a deliberate departure (2.2): it
+  is read on the native panels against the placed O, and if they lose, those tables are retrained with it, behind
+  7.3's gate.
+* **The rest of the engine.** Pivot moves (the moved range takes the O), replica exchange, the logged trajectory (O
+  logged as integrated, where `mdtraj_upside.py` rebuilds it today), ConDiv's native structures and frames, the
+  readers of the three-atom layout in `py/` and `example/`, and the GPU's `device_infer_h_o` and H-bond inputs.
+* **The H.** Jumper places H the same way. The user named O; whether H follows is part of the check.
+* **The hybrid.** Its O slot becomes a dynamic particle, and the code that holds the slot fixed each round and
+  overwrites it at every evaluation is deleted: the O half of `active_protein_proxy_fixed_atoms` and of the barostat's
+  `hybrid_derived_slots`, and `martini_hybrid_position`'s O. BB stays derived, from N, CA, C and the integrated O. If
+  O stays placed, the hybrid's frozen O slot can still be dropped from `pos`, a smaller cleanup that leaves the model
+  unchanged.
+* **Cost** decides little: the integrator and thermostat are 1.1-1.5% of an evaluation and the springs part of
+  3.4-4.8% (10.1). Integrating O adds a third more integrated atoms and the new springs, and removes the O placement.
+
+**The check (proposal; nothing is run).**
+1. The bonded terms and the node that reads O from `pos`, each through `tests/node_fd.py`.
+2. With O at its placement, every term that reads O equals today's: a test of the plumbing, with no physics in it.
+3. Short dynamics on a few native-panel proteins at the timesteps in use: O's spread about its placement, the H-bond
+   count and energy, KE/1.5kT with the new degrees of freedom counted, and the C-N and C=O bond lengths.
+4. The native panels against the placed O (2.2). If they lose, whether to retrain the tables that read O goes to the
+   user.
+
+### 7.6 Steps
 
 1. [ ] The user chooses the side-chain model and the starting parameters (11, items 3-4).
 2. [ ] The base's c (6.4 item 1), which fixes the training mapping.
 3. [ ] The baselines of S4 on the base (section 8).
 4. [ ] If a change co-trains the trained tables: the control training and its gate (7.3).
 5. [ ] The bottom-up pair tables, BU1-BU6 (7.4), at the stage the user sets.
+6. [ ] The check of the integrated carbonyl O (7.5), and the user's decision on it.
 
 ## 8. Training changes (S4, S5)
 
@@ -2108,7 +2207,8 @@ Measured 10-29 (findings 11g); the user's GPUs are midway2 `gpu2` and midway3 `g
 | 13 | | the items of the running Upside 2 campaign that await a NO GUARDS ruling | 4.5 |
 | 14 | | the hybrid's scope: a product goal, or a validation case | 1.3 |
 | 15 | | the channel membrane potential: keep, smooth, or retire | 4.5 |
-| 16 | S3 or S5 | the bottom-up side-chain pair tables: the route; the reference condition (water everywhere, or two limits mixed by burial); the diagnostic's threshold; the stage | 7.4 |
+| 16 | S3 or S5 | the bottom-up side-chain pair tables: the route; the reference condition (water everywhere, or two limits mixed by burial); the diagnostic's threshold; the stage; the parent, all-atom, dry MARTINI or both (user 11-02) | 7.4 |
+| 17 | S3 or S5 | the carbonyl O: placed, as in Jumper's loop, or integrated (proposed 11-02; after its check) | 7.5 |
 
 ## 12. Records and files
 

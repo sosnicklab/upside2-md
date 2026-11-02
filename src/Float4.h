@@ -479,6 +479,11 @@ inline Float4 logf(const Float4& x) {
     return Float4(result, Alignment::aligned);
 }
 
+inline Float4 log1pf(const Float4& x) {
+    alignas(16) float result[4] = {log1pf(x.x()), log1pf(x.y()), log1pf(x.z()), log1pf(x.w())};
+    return Float4(result, Alignment::aligned);
+}
+
 inline bool any(const Float4& x) {return x.any();}
 inline bool none(const Float4& x) {return x.none();}
 

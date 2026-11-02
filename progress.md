@@ -680,3 +680,67 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   through midway3. ff3.1's glpG block 1 on Upside 3 ended 07:19 and was read on the midway3 login: TM4 DSSP 0.74 at
   T 0.70 (ff3.0 0.85, the merge 0.42), falling within the block; KE, C-N and TM1 as the other runs. Files:
   findings.md 3.15; plan.md Phase 37; remote_jobs.md; progress.md.
+* **11-02 12:15-12:55, MacBook Pro, status pass; ff3.2's end of training** (user: "check remote job status, ff3.2
+  training status", then "resume broke jobs ... we do not need convergence, as stated by Peng and Jumper. figure out a
+  way to determine end of training", then "check ff3.2 basin depth difference between GLY alpha L and R, and whether
+  it keeps protein folded"). midway2's Slurm came back about 09:43 and wrote the jobs lost in the fault as TIMEOUT;
+  ff3.2's insurance link resumed epoch 1 at minibatch 13. The broken Peng chains and the seed scoring were restarted
+  by another session on this Mac (12:18); checked here: 30 of 30 resumed from their checkpoints with the law. Peng's
+  SI and Jumper's thesis and paper re-read (findings 1.23): neither tests convergence or picks a checkpoint on held-out
+  proteins. The convergence gate is replaced by FF2's 76 steps: `ff32_dse0/after_training.sbatch` now stops at 76
+  (md5 `11bd82e9`; run under stubs at steps 38 and 76; `.bak_pre_budget_20261102`), and step 76 is the result unless
+  an earlier epoch folds better at p < 0.05. Epoch 0 read: glycine's pooled alpha_L - alpha_R -1.064 to -0.877 (ff3.0
+  -0.836); `z32_00` keeps helical and left-handed glycines level with released ff2.1. Files: plan.md (end of training,
+  Phase 38 items 6-7), findings.md 1.23 and 10.48, remote_jobs.md, progress.md.
+* **11-02 12:10-13:15, MacBook Pro, a second session: midway2's return and Boltz E1's particle count** (user: "check
+  remote job status, GPU jobs status", then "Restart 30 Peng chains" and "Score 8 seed replicates", then "run the GPU
+  jobs. We need to continue working on trying to make Boltz work for HDX" and "Particle scaling, full"). Opened the
+  midway2 socket (one Duo push); restarted ff3.1's 30 broken Peng chains (49743748-49743779) and submitted the seed
+  scoring (49743788-49743795; the four alpha3d jobs done 12:34). Boltz: the 256-particle traces show the weights
+  collapsing onto a few particles, so the low-noise setting goes out at 1,024, 4,096 and 16,384 particles on midway3
+  V100s (62073874-62073880, readout 62073881), its rule fixed first in diffusion_dynamics.md Phase 2 E1; no code
+  change, `scale_read.py` checked against the earlier runs. Files: diffusion_dynamics.md, remote_jobs.md, plan.md
+  Phase 37, progress.md; `$B/addon/scale/`, `scale_read.py`; WATCH_STATUS.md.
+* **11-02 13:15-13:45, MacBook Pro, the second session: Upside 3 GPU validation, the soluble remainder** (user: "is the
+  upside3 GPU validataion completed?", then "continue the validation" and "Soluble remainder"). Readings fixed first in
+  plan.md Phase 35 item 11. `tests/device_v1.py --frames`, `tests/device_dyn.py nve` (the logged kinetic energy is per
+  atom: total = potential + n_atom x kinetic), `g0/v1x_prep.py`, `g0/v3_dist.py` on a refactored `v3_analyse.py`,
+  `g0/v2seq.sbatch`; host-backend tests pass on the Mac. Submitted V1 at scale (16 Peng proteins, BP 1e-3 and 1e-6,
+  10 frames each), V2 drift (1ubq full and ff3.1, 16 CPU and 8 V100 seeds) and V3 distributions (from item 10's data).
+  Files: plan.md Phase 35, remote_jobs.md line 5, progress.md; tests/device_v1.py, tests/device_dyn.py; GPU tree
+  `checks/g0/`.
+* **11-02 15:10-17:00, MacBook Pro, the second session: readings, A240, the handoff** (user: "estimate completion
+  time for upside3 GPU validation and implementation", then "fix the bug you find, then dump everything into md
+  files. I will start on another computer"). V3 distributions and V2 energy drift pass (Bonferroni 1, and 0.65 and
+  1); both engines drift about 90 E_up per 1000 tu without the thermostat (Known Errors). V1 at scale failed at
+  BBA's and NTL9's hottest native frame: weak H-bond occupancies kept only whole steps of 2^-24, from `1-hb` and
+  `1-expf(-s)`. Fixed as A240 with `log1pf` and `expm1f` on both engines (`expm1f` alone changed nothing, which
+  located the per-pair subtraction); reproducer, node_fd, regress (835 arrays, all reachable from protein_hbond) and
+  host-backend V1 pass; GPU build g8a made, its V100 V1 queued (62096441, 62096444). Corrected plan.md: glpG's TM4
+  REMD needs no rigid group or barostat. Read the Peng seed replicates (top7's engine gap beyond its seed spread).
+  Wrote the handoff bundle `checks/handoff_gpu_20261102/`. Files: src/hbond.cpp, src/hbond_interaction.h,
+  src/Float4.h, src/device_hbond.cu; plan.md Phases 24 and 35 and Known Errors, findings.md 3.14 (A240), 3.15, 11g,
+  remote_jobs.md, progress.md; `scratchpad/gpu_work/` (`a240_repro.py`, `a240_regress_check.py`,
+  `g0/v1home.sbatch`, `configs/v1x/`, `dev13_record.npz`, `dev14_record.npz`).
+* **11-02 12:55-13:55, MacBook Pro, ff3.2's remaining loss** (user: "find the source of the remaining loss and try to
+  resolve it"). Diagnosed on `z32_00` (DSE off, -0.040 folded against released ff2.1) with the 10-31 scripts and a new
+  `decomp3.py`: the loss is tertiary (long-range contacts -0.03, Rg +1%), through a directed change of the side-chain
+  hydrophobe coverage (-0.71 E_up of the loose-minus-native gap) and burial (-0.34) that favours the crystal over the
+  thermal native (3.79 E_up) and lowers compact non-native states that no replica presents to the native target.
+  The user chose the fix: the restrained replica held in the native basin (a one-sided wall at 1.2 d0 on native CA
+  contacts, the panel's definition) instead of the 1.0 A elastic network. `ConDiv_basin.py` written and smoke-tested
+  on 3g0m (wall exact; restrained RMSD 0.92 to 1.33 A at Q 0.96); arm `ff32_basin` built and submitted, one epoch.
+  Six one-file reset panels (14:20): the side-chain file (+0.054) and the burial (+0.041) each bring `z32_00` level
+  with released ff2.1, the backbone burial's reset costs -0.096, as the decomposition predicted. On the user's
+  "double check we are not forcing ff3.2 to produce the result we want", every ff3.2 edit was audited and the arm's
+  decision rule fixed before its results (plan.md Phase 38 item 10). Files: plan.md Phase 38 items 8-10,
+  findings.md 1.37, remote_jobs.md, progress.md; cluster `checks/ff32_rest_20261102/`.
+* **11-02 14:25-16:50, MacBook Pro, ff3.2's completion estimate and the handoff** (user: "estimate completion time
+  for ff3.2", then "dump everything into md files. I will start on another computer"). Step times read from both
+  logs: `ff32_dse0`'s link on midway2-[0316-0327] takes 4,000-4,600 s a step since the fault, while `ff32_basin` on
+  other nodes takes 1,700-2,000 s, so the slowdown follows that link's nodes (cause not found). Estimate: step 76
+  between 15:00 11-03 and 15:00 11-04, the full validation about 3 days after; with the basin restraint adopted,
+  1-2 days later. Handoff: records updated, the glycine depth scripts made path-independent (they reproduce round 1's
+  -0.877 / -0.640) and copied with the records, the working-tree patch and this Mac's memory into the cluster's
+  handoff bundle. Files: remote_jobs.md (header, §1 line 2, "Resume here" step 4), plan.md Phase 38 "Resume here",
+  progress.md; bundle `checks/handoff_20261026/` (README addendum, `records/`, `scratchpad/handoff_20261102/`).
