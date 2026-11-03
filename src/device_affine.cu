@@ -149,7 +149,8 @@ struct DeviceBackbonePairs : public DeviceNode {
 
     DeviceBackbonePairs(DeviceGraph& graph, AccumView potential_, DeviceCoord& alignment_, const vector<int>& residue_,
             const vector<int>& n_atom_, const vector<float>& ref_pos_, const vector<int>& sequence_id,
-            const vector<int>& n_residue_of_system, float dist_cutoff, float cache_buffer, int max_n_edge):
+            const vector<int>& n_residue_of_system, float dist_cutoff, float cache_buffer,
+            const vector<int>& max_n_edge):
         potential(potential_), alignment(alignment_), n_residue(residue_.size()), residue(residue_), n_atom(n_atom_),
         system(DevicePairlist<true>::systems(n_residue_of_system)), ref_pos(ref_pos_),
         coords(3*residue_.size()), ref_pos_coords(12*residue_.size()),
@@ -226,7 +227,7 @@ DeviceNode* device_affine_alignment(DeviceCoord& out, DeviceCoord& pos, const ve
 DeviceNode* device_backbone_pairs(DeviceGraph& graph, AccumView potential, DeviceCoord& alignment,
         const vector<int>& residue, const vector<int>& n_atom, const vector<float>& ref_pos,
         const vector<int>& sequence_id, const vector<int>& n_residue, float dist_cutoff,
-        float cache_buffer, int max_n_edge) {
+        float cache_buffer, const vector<int>& max_n_edge) {
     return new DeviceBackbonePairs(graph, potential, alignment, residue, n_atom, ref_pos, sequence_id, n_residue,
             dist_cutoff, cache_buffer, max_n_edge);
 }

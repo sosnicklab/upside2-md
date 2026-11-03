@@ -6,17 +6,20 @@
 // system's cache of pairs within cutoff + cache_buffer is rebuilt when one of its elements has moved more than
 // half the buffer since the last rebuild, and each evaluation cuts the cache to the pairs within the cutoff.  The
 // rebuild and the cut keep the pairs ordered (by first element, then second), so the result does not depend on the
-// order the threads run in.  System s's pairs sit in the slots [s*max_n_edge, s*max_n_edge + n_edge[s]).
+// order the threads run in.  System s's pairs sit in the slots [s*max_n_edge, s*max_n_edge + n_edge[s]), where
+// max_n_edge is the largest system's capacity; each system is held to its own, as on the CPU.
 
 #include "device_nodes.h"
+#include <algorithm>
 
 // A pair list over two sets of elements (one set paired with itself if symmetric).  Accept is a type with a
 // device-callable static bool ok(int sequence_id1, int sequence_id2), the exclusion by sequence ids.
 template <bool symmetric>
 struct DevicePairlist {
     int n_system, n_elem1, n_elem2;
-    int max_n_edge;  // per system
+    int max_n_edge;  // the slots of each system, the largest system's capacity
     float cutoff, cache_cutoff;
+    DeviceArray<int> capacity;            // per system, its own max_n_edge
     DeviceArray<int> start1, start2;      // each system's first element in each set, then the set's size
     DeviceArray<int> system1, system2;    // each element's system
     DeviceArray<int> sequence_id1, sequence_id2;
@@ -31,9 +34,11 @@ struct DevicePairlist {
 
     DevicePairlist(DeviceGraph& graph, const std::string& name, const std::vector<int>& n_elem1_of_system,
             const std::vector<int>& n_elem2_of_system, const std::vector<int>& sequence_id1_,
-            const std::vector<int>& sequence_id2_, float cutoff_, float cache_buffer, int max_n_edge_):
+            const std::vector<int>& sequence_id2_, float cutoff_, float cache_buffer,
+            const std::vector<int>& max_n_edge_of_system):
         n_system(graph.n_system), n_elem1(sequence_id1_.size()), n_elem2(sequence_id2_.size()),
-        max_n_edge(max_n_edge_), cutoff(cutoff_), cache_cutoff(cutoff_+cache_buffer),
+        max_n_edge(*std::max_element(max_n_edge_of_system.begin(), max_n_edge_of_system.end())),
+        cutoff(cutoff_), cache_cutoff(cutoff_+cache_buffer), capacity(max_n_edge_of_system),
         start1(starts(n_elem1_of_system)), start2(starts(n_elem2_of_system)),
         system1(systems(n_elem1_of_system)), system2(systems(n_elem2_of_system)),
         sequence_id1(sequence_id1_), sequence_id2(sequence_id2_),
@@ -42,8 +47,7 @@ struct DevicePairlist {
         cache_edge1(size_t(n_system)*max_n_edge), cache_edge2(size_t(n_system)*max_n_edge),
         edge1(size_t(n_system)*max_n_edge), edge2(size_t(n_system)*max_n_edge),
         error(graph.error.ptr),
-        overflow_code(graph.add_check(name + "'s pair list needs more than its max_n_edge of " +
-                    std::to_string(max_n_edge_))),
+        overflow_code(graph.add_check(name + "'s pair list needs more than its system's max_n_edge")),
         first(true)
     {
         cache_n_edge.zero();
@@ -98,6 +102,7 @@ struct DevicePairlist {
         int *cnt = count.ptr, *bs = base.ptr, *cne = cache_n_edge.ptr, *ce1 = cache_edge1.ptr, *ce2 = cache_edge2.ptr;
         float cache_cutoff2 = sqr(cache_cutoff);
         int cap = max_n_edge;
+        const int* own_cap = capacity.ptr;
         int* err = error;
         int code = overflow_code;
         // the partners of element i in its system, within the cache cutoff and accepted, written in order to the
@@ -125,7 +130,7 @@ struct DevicePairlist {
             if(!rb[ns]) return;
             int total = block_scan(st1[ns+1]-st1[ns], [=] (int i) {return cnt[st1[ns]+i];},
                     [=] (int i, int prefix, int v) {bs[st1[ns]+i] = prefix;});
-            if(total > cap) *err = code;
+            if(total > own_cap[ns]) *err = code;
             cne[ns] = total < cap ? total : cap;
         });
         lanes_for(n_elem1, DEVICE_LAMBDA (int i, Lanes l) {
@@ -173,7 +178,7 @@ struct DeviceInteractionGraph {
 
     int n_system;
     DeviceCoord &pos1, &pos2;
-    int n_elem1, n_elem2, n_type2, max_n_edge;
+    int n_elem1, n_elem2, n_type2, max_n_edge;  // the slots of each system, the largest system's capacity
     DeviceArray<int> loc1, loc2, type1, type2, id1, id2;
     DeviceArray<float> param;
     DeviceArray<float> x1, x2;   // the elements' coordinates, n_dim1 and n_dim2 per element
@@ -183,7 +188,7 @@ struct DeviceInteractionGraph {
     DeviceInteractionGraph(DeviceGraph& graph, const std::string& name, const DeviceInteractionData& d):
         n_system(graph.n_system), pos1(*d.pos1), pos2(symmetric ? *d.pos1 : *d.pos2),
         n_elem1(d.loc1.size()), n_elem2(symmetric ? d.loc1.size() : d.loc2.size()),
-        n_type2(d.n_type2), max_n_edge(d.max_n_edge),
+        n_type2(d.n_type2), max_n_edge(*std::max_element(d.max_n_edge.begin(), d.max_n_edge.end())),
         loc1(d.loc1), loc2(symmetric ? d.loc1 : d.loc2), type1(d.type1), type2(symmetric ? d.type1 : d.type2),
         id1(d.id1), id2(symmetric ? d.id1 : d.id2), param(d.interaction_param),
         x1(size_t(n_elem1)*n_dim1), x2(symmetric ? 0 : size_t(n_elem2)*n_dim2),

@@ -1895,7 +1895,11 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
     epoch 1), the SI's SARW +2.5%, and without the DSE it contracts 2.2% (smaller in 67%); at T 0.8 +1.1%, +0.9%,
     +0.3%. The DSE target therefore pushes unfolded chains past ff2.1's size and swells the native-like ones with
     them; without it the unfolded chain is a little more compact than ff2.1's, which ff3.2's later epochs must not
-    extend (plan.md Phase 38 item 6).
+    extend (plan.md Phase 38 item 6). Epoch 1 extends it: the hot replica's Rg is 0.957 [0.907, 0.995] of epoch 0's
+    on the same proteins (smaller in 77%), 0.939 of the reference's, while the panel holds (`z32_01` 0.578, level
+    with `z32_00`) and on Peng's fixed frames the unfolded states rise further against the native (+5.61 E_up,
+    epoch 0 +3.80). The free chain is compacting into states that are not Peng's open unfolded ones, the compact
+    non-native states of "The remaining loss" below being the candidate; not yet measured.
   - *The remaining loss, without the DSE* (user 11-02: "find the source of the remaining loss and try to resolve
     it"; plan.md Phase 38 step 3; read-only, `/project/trsosnic/yinhan/checks/ff32_rest_20261102/`; `z32_00`'s frames
     against released ff2.1's, as `n32_03` was read). The native-state target, as this trainer forms it, rewards the
@@ -1930,6 +1934,21 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
       the round-0 library +0.015, none of those three resolved. The signs are decomp2.py's, predicted before the
       panels ran; two of six resets at p 0.015 and 0.065 would not pass a six-way correction alone, so the evidence
       is their agreement with the fixed-frame prediction, not either p.
+    - *The fix, the native-basin restraint* (`ff32_basin`, tag `w32_00`: one epoch of `ff32_dse0` with the restrained
+      replica held by a one-sided wall at 1.2 d0 on the native CA contacts; plan.md Phase 38 item 10; read 03:05
+      11-03 by the rule fixed before its results). It does what the mechanism says: the restrained replica sits at
+      1.23-1.53 A (median per step; the old restraint 0.85-0.91, free 2.1-3.0); on the 32 domains with 20 loose
+      frames in `w32_00` the change from released ff2.1 makes the crystal 1.76 E_up cheaper than native-like frames
+      and the loose ones 0.40 (`z32_00` on the same 32: 3.69 and 1.13; smaller in 32 and 31 of 32), and on 3g0m's
+      fixed frames the 3-7 A states it lowered (-0.7 to -0.8) now rise with RMSD (+0.75, +1.48, +2.17). Every block
+      shrinks toward zero with it (hydrophobe coverage loose -0.23 against -0.71, H-bond energies crystal -0.61
+      against -1.05). The loose frames are each arm's own sample, the 3g0m bins the same frames for both. Folding
+      recovers: 0.630 against 0.575, +0.055 [+0.022, +0.091] p 0.004 (30 domains higher, 13 lower), level with
+      released ff2.1 (+0.015 [-0.015, +0.045]) and released ff3.1 (-0.001). Mean TM moves by less than its interval
+      for every tag here (0.679-0.684; +0.006 [-0.002, +0.013] over `z32_00`), so on this panel TM does not resolve
+      the loss the folded fraction sees. Unfolded states rise further on Peng's frames (+6.99 E_up, 0 of 16
+      negative; `z32_00` +3.80), while the free chain at T 1.1 compacts as in `z32_01` (Rg 0.943 of
+      `ff31_nativefix`'s; `z32_00` 0.978, `z32_01` 0.939).
 
 ## 2. The hybrid model: what each side supplies
 
@@ -2906,7 +2925,7 @@ Effects on ff2.1 are not measured (upside3.md 1.1).
 | A237 | `tests/index_oracle.py` `secstr_basins`, `check_membrane` | no | the oracle kept the secstr-bias basins from before A155 (linear sigmoids in phi and psi) and every H/O row in the membrane nodes from before A168 | false mismatches on three fixtures under every stack since 10-22: `chig_rama` `rama_pot` rows 1, 4, 8, `1rkl_surface` `hb_membrane_potential` 59 rows expected against 50, `1rkl_channel_m0` `hb_surf_membrane_potential` 57 against 52 | the basins follow A155 (arcs of two 10 degree edge sigmoids summed over their periodic images; phi on (-240, 0), helix psi on (-100, 50), sheet the rest) and the H/O rows drop the sites of `--membrane-exclude-residues`: 28 fixtures 0 mismatches (Mac Studio, 10-29); injected an excluded residue's row in `hb_index`, a wrong `hb_res` and a helix bias for chig_rama's sheet on residue 1, each caught; writers and records unchanged |
 | A238 | `hbond.cpp` `HBondEnergy::compute_value`; `device_hbond.cu` | yes | a residue whose H-bond count is exactly zero was skipped, so its donor's and acceptor's occupancy took sensitivity 0 instead of the residue's energy per H-bond, the derivative of an energy linear in the count; a count one ulp above zero on one backend and zero on the other flipped it (found by the device port, findings 11g) | forces inconsistent with the energy by about 1e-6 at such residues | the skip removed (user 10-29: "fix the issue"); reproducer `scratchpad/gpu_work/a238_repro.py` on 1dfn's backbone config: every site's sensitivity now equals the energy per H-bond recomputed from the rama angles (max difference 1.4e-7, was 1.96 at the zero-count sites); node_fd on 1dfn and chig_hbond passes hbond_energy; regress moves only the static forces (24 arrays, relative RMS change at most 8.5e-9) and the dynamics after them |
 | A239 | `martini_brownian.cpp` `apply_langevin_step`; `device_engine.cu` `DeviceDynamics::langevin_cycle` | no | the g-JF position update was written x + (b dt/m) p + (b dt^2/2m) f + (b dt/2m) beta, and a compiler that keeps that order (nvcc; clang on the Mac for z) adds the force term to x + (b dt/m) p, a value on the coordinate's grid, alone: below half an ulp of a coordinate tens of A from the origin (47% of 1rkl 7.0's lipid coordinates, which reach 176 A) it rounds away, against the force, so the bath heats; gcc on broadwl had reassociated it to (x + A) + (B + C), where the noise dithers it (findings 11g) | the GPUs' lipid bath 0.35% hot (KE 4.5 SE, potential +24 E_up) in the hybrid's V2; the Mac's CPU build heats z the same way | written x + (b dt/m)(p + dt/2 f + beta/2), one rounding at the coordinate under any compiler; reproducer `scratchpad/gpu_work/deadzone_repro.py` on 1rkl 7.0's 10-tu frame: energy gained per lipid atom and inner step 5.7e-7 E_up in source order (5.3e-7 makes 0.35%), 8.8e-9 +- 1e-8 in gcc's, 4.2e-9 +- 8.7e-9 in the new form; the K80 with the step summed first (build g7a, 16 seeds x 4 systems at T 0.80, no exchange): lipid KE/1.5kT 1.00523 against the CPU's 1.00513 (+0.1 SE), was 1.00932; regress moves only the hybrid fixtures' dynamics (12 of 4260 arrays: kinetic, pos, potential of 1rkl 7.0 and 7.1, frame 0 equal); V2 of the hybrid on the fixed build g7b (REMD, 16 CPU, 16 K80, 8 V100 seeds): Bonferroni 1 on both GPUs |
-| A240 | `hbond_interaction.h` `ProteinHBondInteraction::compute_edge`; `hbond.cpp` `ProteinHBond::compute_value`; `device_hbond.cu`; `Float4.h` (`log1pf`) | yes | a donor's or acceptor's H-bond occupancy, 1 - prod(1-hb) over its pairs, was formed as -logf(1-hb) per pair and 1-expf(-s) over the pairs; both subtractions round to the float grid below 1, so an occupancy kept only whole steps of 2^-24 (6e-8): a weak bond (hb ~ 1e-6) had a few to a few hundred levels, and one below half a step read 0 (found by the device port's V1 at scale, findings 11g) | an occupancy error up to about 3e-8, about 1e-7 E_up of H-bond energy; between backends one ulp of `expf` moved a weak bond a whole step (1.7% of BBA's hbond_energy at its hottest native frame), and a weak-bond energy was flat under coordinate moves, so V1 had no rounding scale there | -log1pf(-hb) and -expm1f(-s) on the CPU and the device (user 11-02: "fix the bug you find"); reproducer `scratchpad/gpu_work/a240_repro.py` on BBA's and NTL9's frame 3 (`configs/v1x/`): before, every occupancy below 1e-3 on the 2^-24 grid (BBA 56 and 1 steps) and hbond_energy unchanged by 4-ulp moves; after, none on the grid, the moves change it by 1e-9 to 3e-8, every occupancy within 0.49 step of before; node_fd on 1dfn and chig_hbond passes hbond_energy; regress (`dev13_record.npz` to `dev14_record.npz`, MacBook Pro; dev13 equal to `dev12_record.npz`) moves 835 of 4260 arrays, every static one reachable from protein_hbond (`a240_regress_check.py`), protein_hbond by at most 7.6e-8, the largest static change 2.3e-5 E_up (1ubq's rotamer energy, of 68), every trajectory's frame 0 equal; V1 on the host backend passes BBA and NTL9 at both tolerances and the 14 standard configs; V1 on the V100 with build g8a: 62096441, 62096444 (plan.md Phase 35 item 11) |
+| A240 | `hbond_interaction.h` `ProteinHBondInteraction::compute_edge`; `hbond.cpp` `ProteinHBond::compute_value`; `device_hbond.cu`; `Float4.h` (`log1pf`) | yes | a donor's or acceptor's H-bond occupancy, 1 - prod(1-hb) over its pairs, was formed as -logf(1-hb) per pair and 1-expf(-s) over the pairs; both subtractions round to the float grid below 1, so an occupancy kept only whole steps of 2^-24 (6e-8): a weak bond (hb ~ 1e-6) had a few to a few hundred levels, and one below half a step read 0 (found by the device port's V1 at scale, findings 11g) | an occupancy error up to about 3e-8, about 1e-7 E_up of H-bond energy; between backends one ulp of `expf` moved a weak bond a whole step (1.7% of BBA's hbond_energy at its hottest native frame), and a weak-bond energy was flat under coordinate moves, so V1 had no rounding scale there | -log1pf(-hb) and -expm1f(-s) on the CPU and the device (user 11-02: "fix the bug you find"); reproducer `scratchpad/gpu_work/a240_repro.py` on BBA's and NTL9's frame 3 (`configs/v1x/`): before, every occupancy below 1e-3 on the 2^-24 grid (BBA 56 and 1 steps) and hbond_energy unchanged by 4-ulp moves; after, none on the grid, the moves change it by 1e-9 to 3e-8, every occupancy within 0.49 step of before; node_fd on 1dfn and chig_hbond passes hbond_energy; regress (`dev13_record.npz` to `dev14_record.npz`, MacBook Pro; dev13 equal to `dev12_record.npz`) moves 835 of 4260 arrays, every static one reachable from protein_hbond (`a240_regress_check.py`), protein_hbond by at most 7.6e-8, the largest static change 2.3e-5 E_up (1ubq's rotamer energy, of 68), every trajectory's frame 0 equal; V1 on the host backend passes BBA and NTL9 at both tolerances and the 14 standard configs; V1 on the V100 with build g8a passes every quantity of the 32 Peng configs at both tolerances (62096441) and of the 14 standard configs (62096444), 11-02 (plan.md Phase 35 item 11); g8a installed in the GPU tree 17:22 11-02 |
 
 Deliberately not changed: the H-bond radial cutoff of 3.5 A truncates the factor at 3.4e-4, which is below the
 1e-4-scale energy noise BP already carries. Moving it to 4.0 A would cut the jump to 6e-6, at about 1.5x the
@@ -5134,6 +5153,14 @@ four of its Peng chunks failed 13:12-14:11, found only at 23:50. A job whose log
 no log (exit 0:53), so only `sacct -X -S <start>` sees it. A chained job that dies writing its own progress (`run.py`'s
 `block_count`) does not queue its successor, and rerunning its stage without that file would redo block 1 over block 1's
 data: restore the progress file to what the finished step would have written, then resubmit by the script's own path.
+**The soft quota is the limit that bites, and `df` does not show it.** Past a group's soft quota a grace period runs;
+when it ends, creation fails while `df -i` still reports ~118,000 free against the hard limit. `/beagle3/trsosnic`
+passed its 1,268,000-file soft quota by 10-27 (IFree 125,183) with the watch reading only `df -i`; the grace ran out
+11-02 between 19:30 and 19:46, and Boltz E1's two 5-hour 16,384-particle arms lost their results at `np.savez`.
+**Read `quota` on the midway3 login node (soft quota, limit, grace for `/beagle3` and `/project`) at every watch
+pass, and report any group over a soft quota with the grace left.** `quota`'s usage count can lag `df -i` by up to an
+hour: after the 11-03 08:12 deletion `df -i` read 1,163,475 at once while `quota` read the old 1,254,102 until after
+08:26 and matched by 09:26. So `df -i` gives current usage and `quota` gives the limits and grace.
 
 ### 10.40 A reference run is valid only if it carries every fix the run it judges carries (2026-10-26)
 
@@ -5293,7 +5320,8 @@ for the paper's 16 proteins plus 7 CASP targets (2.8 GB, 2018-07-20). **It is FF
 `ff3_benchmark/scoring/tmscore.py` and the paper's exclusions it gives 0.480 from native and 0.360 de novo, against
 published FF1 0.45 / 0.37 and FF2 0.55 / 0.42 (the paper's native figure counts only excursions within the native
 basin). That also validates our scoring path externally. Reading the `.xtc` needs mdtraj, installed out-of-tree at
-`/beagle3/trsosnic/yinhan/pylibs` (`pip --target`; add to `PYTHONPATH`).
+`/beagle3/trsosnic/yinhan/pylibs` (`pip --target`; add to `PYTHONPATH`), packed 11-02 into
+`/project/trsosnic/yinhan/checks/disk_reclaim_20261102/pylibs.tar` (`tar -xf` it into `/beagle3/trsosnic/yinhan` first).
 
 A second FF1 set in Upside's format (search for `.up`, not `.xtc`): `/project2/trsosnic/share/paper_traj_nabil/
 {from_native,from_denovo}`, 14 replicas for cspa, gpW, hyp, nug2, top7 (28 GB, 2018-02); its
@@ -5539,7 +5567,9 @@ The full record is in `upside3.md` sections 4, 5 and 10 (reports in `scratchpad/
   `hbond_energy`'s output by 1.7% and 0.15% (2.2e-7 E_up), while 4-ulp coordinate moves leave the CPU's value
   unchanged, which gives V1 a rounding scale of 0 there. Every other quantity of the 16 Peng proteins' 320 frames
   passes at both BP tolerances. The steps came from two subtractions, `1-hb` per pair and `1-expf(-s)`; both are now
-  `log1pf` and `expm1f` (A240).
+  `log1pf` and `expm1f` (A240). With A240 (build g8a) V1 at scale passes every quantity of the 32 configs on the
+  V100, BBA's worst error falling to 8.0e-6 and NTL9's to 1.4e-5, and 1dfn's worst error on the standard configs,
+  `hbond_energy` at 1.5e-4 on g7b, falls to 6.9e-6.
 * **V3's distributions agree (11-02):** Q and Rg deciles per temperature, CPU against V100 over item 10's 40 arms,
   Bonferroni 1 per protein and force field and over 1754 comparisons.
 * **V2's energy drift agrees, and the model drifts (11-02, g7b):** 1ubq at T 0.85 without the thermostat after the
@@ -5548,6 +5578,12 @@ The full record is in `upside3.md` sections 4, 5 and 10 (reports in `scratchpad/
   the CPU does it too: a property of the model or integrator (BP's early stop, cutoff jumps or dt are candidates;
   none measured). Production runs carry the thermostat. The V100 takes 340 us per system step at 4 copies of full
   1ubq (broadwl 4 cores: 182).
+* **One `--gpu` process cannot hold different proteins yet (11-02, host backend, HEAD `b441375`).** chig, 1ubq and
+  1dfn on ff3.1 are refused twice: the device's interaction graph requires every system's `max_n_edge` equal, and
+  its default is the system's full pair count (`interaction_graph.h:323`); `rama_map_pot` shares its maps, and
+  `rama_pot` holds one 72x72 layer per residue. Their interaction parameters are equal. With both checks relaxed in a
+  throwaway copy the batch runs, so no other node refuses. A panel of many domains needs both changes before a GPU
+  can hold enough systems (plan.md Phase 35 item 12).
 
 ## 12. Claims that turned out to be wrong
 

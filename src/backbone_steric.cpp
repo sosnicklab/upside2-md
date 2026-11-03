@@ -133,15 +133,14 @@ struct BackbonePairs : public PotentialNode
     }
 
     virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) {
-        vector<int> n_atom, seq, n_res;
+        vector<int> n_atom, seq, n_res, max_n_edge;
         vector<float> ref;
-        int max_n_edge = 0;  // per system, the largest system's
         for(int ns: range(g.n_system)) {
             auto& n = static_cast<BackbonePairs&>(*systems[ns]);
             if(n.dist_cutoff != dist_cutoff)
                 throw string("the device engine shares backbone_pairs' cutoff between systems");
             n_res.push_back(n.n_residue);
-            max_n_edge = max(max_n_edge, n.pairlist.max_n_edge);
+            max_n_edge.push_back(n.pairlist.max_n_edge);
             for(int nr: range(n.n_residue)) {
                 n_atom.push_back(n.ref_pos[nr].n_atom);
                 seq.push_back(n.sequence_id[nr]);

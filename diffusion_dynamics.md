@@ -12,7 +12,11 @@ reproducibility job (10-29) showed that no steered run reproduces its seed acros
 repeat test must be statistical. Read statistically (10-29), the diagnosis pointed to a defect in the weights at low
 power; a CPU toy with a known normalizing constant (10-29) then found `sampler.py`'s weights and `log_z` right on
 Boltz's sampler, which points I61's shortfall to the estimator's variance with Boltz-2's network. E1 proper stays
-held; the next step is the user's. Jobs are recorded in `remote_jobs.md` §1. Every number below comes from reading
+held; the next step is the user's. Jobs are recorded in `remote_jobs.md` §1. Phase 0-1's run data on `/beagle3` and
+BioEmu2's samples were deleted 11-03 at the user's word (logs and scripts kept; the pooled sets the readouts use are
+in the Mac Studio's `scratchpad/boltz_hdx/flags/samples/`; `remote_jobs.md` disk section). Phase 2's `.venv` and
+`cache/mols` were packed 11-03 for `/beagle3`'s file quota: unpack both before running E1 again (the two `tar -xf`
+commands in that section). Every number below comes from reading
 code, docs and papers on 2026-10-21, or from the dated measurements; numbers marked *estimate* are unmeasured.
 
 ## 1. Goal

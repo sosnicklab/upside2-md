@@ -108,13 +108,27 @@ struct RamaMapPot : public PotentialNode
 
     virtual DeviceNode* make_device(DeviceGraph& g, const vector<DerivComputation*>& systems) override {
         auto param = [&](int ns) -> const vector<RamaMapParams>& {return static_cast<RamaMapPot&>(*systems[ns]).params;};
-        for(auto s: systems)
-            if(static_cast<RamaMapPot&>(*s).rama_pot != rama_pot)
-                throw string("the device engine shares rama_map_pot's maps between systems");
+        // each system's maps, those equal to an earlier system's (the replicas of one protein) uploaded once
+        vector<const vector<float>*> distinct;
+        vector<int> first_layer, map_id;
+        vector<float> coefficients;
+        int layer_size = rama_map_data.nx*rama_map_data.ny*16;
+        for(int ns: range(g.n_system)) {
+            auto& d = static_cast<RamaMapPot&>(*systems[ns]).rama_map_data;
+            if(d.nx != rama_map_data.nx || d.ny != rama_map_data.ny)
+                throw string("the device engine runs rama_map_pot's maps on one grid in every system");
+            size_t k = 0;
+            while(k<distinct.size() && *distinct[k] != d.coefficients) ++k;
+            if(k == distinct.size()) {
+                distinct.push_back(&d.coefficients);
+                first_layer.push_back(coefficients.size()/layer_size);
+                coefficients.insert(coefficients.end(), d.coefficients.begin(), d.coefficients.end());
+            }
+            for(auto& p: param(ns)) map_id.push_back(first_layer[k] + p.rama_map_id);
+        }
         return device_rama_map_pot(g.potential_of(*this), g.coord(rama),
                 g.offset_index(rama, [&](int ns) {vector<int> r; for(auto& p: param(ns)) r.push_back(p.residue); return r;}),
-                g.concat<int>([&](int ns) {vector<int> r; for(auto& p: param(ns)) r.push_back(p.rama_map_id); return r;}),
-                rama_map_data.coefficients, rama_map_data.nx, rama_map_data.ny,
+                map_id, coefficients, rama_map_data.nx, rama_map_data.ny,
                 g.concat<int>([&](int ns) {return vector<int>(param(ns).size(), ns);}));
     }
 };

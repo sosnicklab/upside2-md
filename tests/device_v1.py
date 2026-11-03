@@ -26,9 +26,13 @@
 # NaN on the device by design, so that a blow-up shows.  Such a frame passes if the device's potential or derivative
 # is not finite, and its quantities are not compared.
 #
+# With --batch the configs run together as one device engine, a system each (different proteins of one force field
+# share a process), each system at the configs' frame f in turn, and each is tested against its own CPU engine; the
+# configs need the same node names and the same number of frames.
+#
 # Prints each config's worst quantity and every failure, and exits 1 if any fails.  A config with a node that has no
 # device implementation is reported as skipped (the engine names the nodes on stderr).
-# usage: device_v1.py [--tol TOL] [--ulps N] [--ulp-factor F] [--frames FRAMES.npz] CONFIG [CONFIG ...]
+# usage: device_v1.py [--tol TOL] [--ulps N] [--ulp-factor F] [--frames FRAMES.npz] [--batch] CONFIG [CONFIG ...]
 import sys, os
 import numpy as np
 import tables as tb
@@ -72,44 +76,38 @@ def cpu_record(engine, nodes, x):
         rec[n+'/sens'] = engine.get_sens(n)
     return rec
 
-def check(config, tol, n_ulp, ulp_factor, given_frames):
+def node_names(config):
     with tb.open_file(config) as t:
-        nodes = [g._v_name for g in t.root.input.potential]
-    cpu = [ue.Upside(config), ue.Upside(config)]
-    try:
-        dev = ue.DeviceUpside(cpu)
-    except RuntimeError:
-        print('%s: skipped, refused by the device engine' % os.path.basename(config))
-        return True
-    fr = frames(config, given_frames)
-    rng = np.random.default_rng(2)
-    results = []  # (name, error, rounding scale)
-    for f in range(len(fr)):
-        x = [fr[f], fr[(f+1)%len(fr)]]
-        pot, deriv = dev.evaluate(x)
-        for ns in range(2):
-            d = {'potential': [pot[ns]], 'deriv': deriv[ns]}
-            for n in nodes:
-                d[n+'/output'] = dev.get_output(ns, n)
-                d[n+'/sens'] = dev.get_sens(ns, n)
-            ref = cpu_record(cpu[ns], nodes, x[ns])
-            moved = [cpu_record(cpu[ns], nodes, ulp_moved(x[ns], n_ulp, rng)) for i in range(N_MOVE)]
-            if max(abs(ref['potential'][0]), np.abs(ref['deriv']).max()) >= ACCUM_RANGE:
-                shown = not (np.isfinite(d['potential'][0]) and np.all(np.isfinite(d['deriv'])))
-                print('    frame%d/system%d: CPU potential %.3g, largest derivative %.3g, past the device range; '
-                      'device not finite: %s' % (f, ns, ref['potential'][0], np.abs(ref['deriv']).max(), shown))
-                results.append(('frame%d/system%d/past range' % (f, ns), 0. if shown else np.inf, 0.))
-                continue
-            print('    frame%d/system%d: potential %.6g, device - CPU %+.2e E_up; derivative error %.2e of its RMS' % (
-                f, ns, ref['potential'][0], d['potential'][0] - ref['potential'][0], rel_rms(ref['deriv'], d['deriv'])))
-            for n in nodes:
-                if n.startswith('affine_alignment'):
-                    d[n+'/output'] = same_sign_quaternion(ref[n+'/output'], d[n+'/output'])
-                    for m in moved: m[n+'/output'] = same_sign_quaternion(ref[n+'/output'], m[n+'/output'])
-            for k in ref:
-                scale = np.sqrt(np.mean([rel_rms(ref[k], m[k])**2 for m in moved]))
-                results.append(('frame%d/system%d/%s' % (f, ns, k), rel_rms(ref[k], d[k]), scale))
-    del dev
+        return [g._v_name for g in t.root.input.potential]
+
+def compare(dev, cpu, nodes, x, f, n_ulp, rng, results):
+    """Each system's quantities at x (one frame per system, frame number f) from the device engine against the
+    system's CPU engine, appended to results[ns] as (name, error, rounding scale)"""
+    pot, deriv = dev.evaluate(x)
+    for ns in range(len(cpu)):
+        d = {'potential': [pot[ns]], 'deriv': deriv[ns]}
+        for n in nodes:
+            d[n+'/output'] = dev.get_output(ns, n)
+            d[n+'/sens'] = dev.get_sens(ns, n)
+        ref = cpu_record(cpu[ns], nodes, x[ns])
+        moved = [cpu_record(cpu[ns], nodes, ulp_moved(x[ns], n_ulp, rng)) for i in range(N_MOVE)]
+        if max(abs(ref['potential'][0]), np.abs(ref['deriv']).max()) >= ACCUM_RANGE:
+            shown = not (np.isfinite(d['potential'][0]) and np.all(np.isfinite(d['deriv'])))
+            print('    frame%d/system%d: CPU potential %.3g, largest derivative %.3g, past the device range; '
+                  'device not finite: %s' % (f, ns, ref['potential'][0], np.abs(ref['deriv']).max(), shown))
+            results[ns].append(('frame%d/system%d/past range' % (f, ns), 0. if shown else np.inf, 0.))
+            continue
+        print('    frame%d/system%d: potential %.6g, device - CPU %+.2e E_up; derivative error %.2e of its RMS' % (
+            f, ns, ref['potential'][0], d['potential'][0] - ref['potential'][0], rel_rms(ref['deriv'], d['deriv'])))
+        for n in nodes:
+            if n.startswith('affine_alignment'):
+                d[n+'/output'] = same_sign_quaternion(ref[n+'/output'], d[n+'/output'])
+                for m in moved: m[n+'/output'] = same_sign_quaternion(ref[n+'/output'], m[n+'/output'])
+        for k in ref:
+            scale = np.sqrt(np.mean([rel_rms(ref[k], m[k])**2 for m in moved]))
+            results[ns].append(('frame%d/system%d/%s' % (f, ns, k), rel_rms(ref[k], d[k]), scale))
+
+def report(config, results, tol, ulp_factor):
     passed = lambda err, scale: err <= tol or err <= ulp_factor*scale
     failed = [r for r in results if not passed(r[1], r[2])]
     worst = max(results, key=lambda r: r[1]/max(tol, ulp_factor*r[2]) if np.isfinite(r[1]) else 1e300)
@@ -118,10 +116,50 @@ def check(config, tol, n_ulp, ulp_factor, given_frames):
     for name, err, scale in failed: print('    FAIL %s error %.3e rounding scale %.3e' % (name, err, scale))
     return not failed
 
+def check(config, tol, n_ulp, ulp_factor, given_frames):
+    """A config as two systems of one device engine, at frames f and f+1"""
+    nodes = node_names(config)
+    cpu = [ue.Upside(config), ue.Upside(config)]
+    try:
+        dev = ue.DeviceUpside(cpu)
+    except RuntimeError:
+        print('%s: skipped, refused by the device engine' % os.path.basename(config))
+        return True
+    fr = frames(config, given_frames)
+    rng = np.random.default_rng(2)
+    results = []  # both systems' quantities in one list, in the order they are computed
+    for f in range(len(fr)):
+        compare(dev, cpu, nodes, [fr[f], fr[(f+1)%len(fr)]], f, n_ulp, rng, [results, results])
+    del dev
+    return report(config, results, tol, ulp_factor)
+
+def check_batch(configs, tol, n_ulp, ulp_factor, given_frames):
+    """The configs as one device engine, a system each, every system at its config's frame f"""
+    nodes = node_names(configs[0])
+    if any(node_names(c) != nodes for c in configs): raise ValueError('--batch needs configs of the same nodes')
+    cpu = [ue.Upside(c) for c in configs]
+    try:
+        dev = ue.DeviceUpside(cpu)
+    except RuntimeError:
+        print('batch of %d configs: refused by the device engine' % len(configs))
+        return False
+    fr = [frames(c, given_frames) for c in configs]
+    if len(set(map(len, fr))) != 1: raise ValueError('--batch needs the same number of frames per config')
+    rng = np.random.default_rng(2)
+    results = [[] for c in configs]
+    for f in range(len(fr[0])):
+        compare(dev, cpu, nodes, [x[f] for x in fr], f, n_ulp, rng, results)
+    del dev
+    return all([report(c, r, tol, ulp_factor) for c, r in zip(configs, results)])
+
 def main():
     args = sys.argv[1:]
-    tol, n_ulp, ulp_factor, given_frames = 1e-5, 4, 10., None
+    tol, n_ulp, ulp_factor, given_frames, batch = 1e-5, 4, 10., None, False
     while args[0].startswith('--'):
+        if args[0] == '--batch':
+            batch = True
+            args = args[1:]
+            continue
         if args[0] == '--tol': tol = float(args[1])
         elif args[0] == '--ulps': n_ulp = int(args[1])
         elif args[0] == '--ulp-factor': ulp_factor = float(args[1])
@@ -129,7 +167,8 @@ def main():
         else: raise ValueError('unknown option ' + args[0])
         args = args[2:]
     print(ue.device_description())
-    ok = [check(c, tol, n_ulp, ulp_factor, given_frames) for c in args]
+    if batch: ok = [check_batch(args, tol, n_ulp, ulp_factor, given_frames)]
+    else:     ok = [check(c, tol, n_ulp, ulp_factor, given_frames) for c in args]
     sys.exit(0 if all(ok) else 1)
 
 if __name__ == '__main__':

@@ -981,35 +981,31 @@ math is shared through `UPSIDE_HD` and lane-type templates, the loops are per ba
 as C++ (host backend) so the device path is tested on the Mac; 64-bit fixed-point accumulation (deterministic, a
 non-finite value reads back as NaN); BP one block per system on the CPU's schedule; one CUDA 11.5 binary from midway2
 for K80 to A100; development tree `/beagle3/trsosnic/yinhan/upside3_gpu` (the Upside 3 tree is under its validation).
-**Resume here (state at 2026-11-02 17:00, MacBook Pro, handed off to the next computer).** Items 1-10 are done on
-build g7b (findings 11g). Item 11's soluble part was read 11-02: V3's distributions and V2's energy drift pass; V1 at
-scale found A240 (a weak H-bond's occupancy kept only whole steps of 2^-24), fixed on both engines and verified on the
-Mac; its V100 rerun on build g8a, 62096441 and 62096444, was queued at 16:49 (remote_jobs.md line 5). Readiness, as
-told the user 10-31, holds: ready for soluble-protein REMD on ff2.1 and ff3.1 on a V100, A100 or RTX6000 (one V100
-with 4 ladders in one process samples as fast as one 14-core broadwl job; on proteins the K80 is slower than 4
-broadwl cores); glpG's production on the GPU is untested; no workflow script has a GPU option yet.
-- The computer: the code is the uncommitted working tree on HEAD `ea0817ba`: A240 in `src/hbond.cpp`,
+**Resume here (state at 2026-11-02 17:25, Mac Studio).** Items 1-10 are done on build g7b (findings 11g). Item 11's
+soluble part passes (11-02): V3's distributions, V2's energy drift, and V1 at scale on build g8a, which carries A240 (a
+weak H-bond's occupancy kept only whole steps of 2^-24, fixed on both engines). g8a is the GPU tree's installed `obj`
+since 17:22 11-02. No job of line 5 runs. Readiness, as told the user 10-31, holds: ready for soluble-protein REMD on
+ff2.1 and ff3.1 on a V100, A100 or RTX6000 (one V100 with 4 ladders in one process samples as fast as one 14-core
+broadwl job; on proteins the K80 is slower than 4 broadwl cores); glpG's production on the GPU is untested; no workflow
+script has a GPU option yet.
+- The computer: the code is HEAD `b441375` (the user's commit of the MacBook Pro's tree: A240 in `src/hbond.cpp`,
   `src/hbond_interaction.h`, `src/Float4.h` and `src/device_hbond.cu`, and the harness changes `tests/device_v1.py
-  --frames` and `tests/device_dyn.py nve`. The bundle `/project/trsosnic/yinhan/checks/handoff_gpu_20261102/`
-  (README.txt) holds it as a patch with the untracked files, the gitignored `scratchpad/gpu_work` and
-  `scratchpad/upside3_audit`, and the records. Device tests on a Mac use a home built from the working tree by
-  `build_home.sh` (the repo's `obj/` lacks the device API); the CPU regress baseline is now `dev14_record.npz` (A240's
-  moves; `dev12_record.npz`, equal to `dev13_record.npz`, before them). The GPU tree has A240's four files (md5 equal
-  to the Mac's), `obj_g8a` built from them, `obj` still g7b, and `home_g8a` (copies of `py` and `tests`, `obj` linked
-  to `obj_g8a`) for V1 on the uninstalled build (`g0/v1home.sbatch`). Its `py/martini_hdx_membrane_accessibility.py`
-  is older than HEAD's and is not GPU code. Before `sync.sh`, compare `scratchpad/gpu_work/configs` with the cluster's
-  `checks/configs` by md5: the MacBook Pro's ff3.1 configs were older than the cluster's released-ff3.1 ones (replaced
-  11-02, the old ones in `configs/bak_mbp_stale_20261102/`), and the sync would have overwritten the cluster's.
+  --frames` and `tests/device_dyn.py nve`). The bundle `/project/trsosnic/yinhan/checks/handoff_gpu_20261102/`
+  (README.txt) holds the gitignored `scratchpad/gpu_work` and `scratchpad/upside3_audit` tools; the Mac Studio's
+  `scratchpad/gpu_work` was refreshed from it 17:25 11-02 (its older `g0/v2run.sbatch` and `g0/v3_analyse.py` kept as
+  `.bak_pre_mbp_20261102`). Device tests on a Mac use a home built from the working tree by `build_home.sh` (the
+  repo's `obj/` lacks the device API); the CPU regress baseline is now `dev14_record.npz` (A240's moves;
+  `dev12_record.npz`, equal to `dev13_record.npz`, before them). The GPU tree has A240's four files (md5 equal to the
+  Mac's) and `obj` = `obj_g8a`; `obj_g7b` and the earlier builds sit beside it. Its
+  `py/martini_hdx_membrane_accessibility.py` is older than HEAD's and is not GPU code. Before `sync.sh`, compare
+  `scratchpad/gpu_work/configs` with the cluster's `checks/configs` by md5: the MacBook Pro's ff3.1 configs were older
+  than the cluster's released-ff3.1 ones (replaced 11-02, the old ones in `configs/bak_mbp_stale_20261102/`), and the
+  sync would have overwritten the cluster's.
 - Next, in order:
-  1. Read 62096441 (`checks/g0/v1x_g8a_v100_<id>.out`, the 32 Peng configs at both BP tolerances, with
-     `--frames`) and 62096444 (`v1_g8a_v100_<id>.out`, the 14 standard configs) by item 11's V1 rule; record the
-     result in item 11 and in A240's ledger row (findings 3.14).
-  2. If both pass, install g8a (`install_gpu.sh g8a` on the cluster; first check that no job of the tree runs), so
-     the tree's `obj` carries A240.
-  3. (c) a GPU option in `bp_run.py` and the hybrid's `run.py`, then glpG's V1 frames, V2 and TM4 REMD on the GPU,
-     which need no rigid group or barostat (item 11, corrected 11-02), against the CPU hybrid's glpG readouts (V2 tests
-     the GPU against the CPU, so it cannot find a CPU defect); the mdCATH panel with (c) and an Upside 3 CPU reference;
-     (b) item 7's open box, rigid groups and the barostat on the device, for the preparation stages, stage 7.1 and area
+  1. (c) the production workflows on the GPU, item 12 (approved 11-02; steps 1-2 done 11-03 on build g9a, now installed; steps 3-5 wait for the user's word): batches of
+     different proteins on the device, a GPU option in the hybrid's `run.py` and an mdCATH runner, then glpG's V1
+     frames, V2 and TM4 REMD and the mdCATH panel, each against the GPU tree's CPU engine (V2 tests the GPU against
+     the CPU, so it cannot find a CPU defect); (b) item 7's open box, rigid groups and the barostat on the device, for the preparation stages, stage 7.1 and area
      per lipid; (d) the GPU code, with A240, into the Upside 3 tree once its campaigns end (never while they run).
 - The estimate told the user 11-02 15:30: the soluble part done 11-03; the mdCATH panel 11-05 to 11-07; glpG TM4 on
   the GPU 11-06 to 11-09 (glpG's GPU speed is unmeasured; 1rkl's V100 is 11-22 times 4 cores); rigid groups and the
@@ -1128,7 +1124,7 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
       them. Beside, not deciding: each temperature's two-sample KS distance between the engines' pooled frames.
       **Passes** (49746180, 11-02): Bonferroni 1 for each of the 8 protein and force field pairs and over all 1754
       comparisons (smallest p 0.013); the refactored `v3_analyse.py` reproduces `v3/analysis.txt` (empty diff).
-    - [ ] V1 at scale: the 16 Peng proteins with ff2.1 (Upside 3's Peng runs, `upside3_validation/peng/runs/`;
+    - [x] V1 at scale: the 16 Peng proteins with ff2.1 (Upside 3's Peng runs, `upside3_validation/peng/runs/`;
       the config is the native arm's replica 0 `/input`), 10 frames each, the last frame of replicas spread over
       the ladder: 4 from the native arm (0, n/3, 2n/3, n-1) and 6 from the de novo arm (0-3, n/2, n-1), the low
       ones misfolded globules where the protein does not fold; each frame's CA-RMSD to native and Rg are reported.
@@ -1138,8 +1134,8 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
       only if the same frame passes at 1e-6 (the stop test fired at another iteration, a known BP property) and
       the frame's potential differs by at most 7.5e-4 E_up and its derivative by at most 8e-5 of its RMS, the BP
       stop-test fix's precedent (`upside3.md` 10.2); otherwise V1 fails.
-      **Fails by this rule** (62076233, V100, 11-02): 30 of 32 configs pass every quantity at both tolerances (no
-      BP failure at 1e-3; worst rotamer output error 6.9e-6). BBA and NTL9 fail one quantity each, at both
+      On g7b it **failed by this rule** (62076233, V100, 11-02): 30 of 32 configs pass every quantity at both
+      tolerances (no BP failure at 1e-3; worst rotamer output error 6.9e-6). BBA and NTL9 fail one quantity each, at both
       tolerances: `hbond_energy`'s output at native replica n-1 (the same frame counted as frame 2's system 1 and
       frame 3's system 0), relative errors 1.67e-2 and 1.50e-3, rounding scale 0. Cause, measured on the CPU (Mac):
       those frames' H-bonds are weak, and both engines form an occupancy as `1.f-expf(-s)` (`hbond.cpp:185`,
@@ -1150,8 +1146,12 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
       bug you find"): the steps come from two subtractions, `1-hb` per pair (`hbond_interaction.h`) and
       `1-expf(-s)`; both engines now use `log1pf` and `expm1f` (`expm1f` alone left every step in place). On the
       Mac the reproducer, node_fd and regress pass (findings 3.14 A240), and V1 on the host backend passes BBA and
-      NTL9 at both tolerances and the 14 standard configs. V1 on the V100 with g8a: 62096441 (the 32 configs, with
-      `--frames`) and 62096444 (the 14 standard configs), queued 16:49 11-02; read them by this rule.
+      NTL9 at both tolerances and the 14 standard configs. **Passes on g8a** (V100, read 17:20 11-02): 62096441,
+      the 32 configs with `--frames`, passes every quantity at both tolerances (1280 per config; BBA's worst error
+      now 8.0e-6, NTL9's 1.4e-5, the largest of all 2.9e-5, WWdomain's `hbond_coverage`), and 62096444, the 14
+      standard configs, passes every quantity with the same worst error per config as g7b's 61891693, except that
+      the three 1dfn configs lose their worst, `hbond_energy` at 1.5e-4 (now 6.9e-6, 2.6e-7 and 6.9e-6). g8a is
+      installed as the tree's `obj` (17:22 11-02; g7b kept as `obj_g7b`).
     - [x] V2's energy drift: `device_dyn.py nve`, N copies at T 0.85 without exchange, the thermostat thermalizing
       the start only (its interval beyond the run). Per copy over the whole run: the drift of the total energy
       (potential plus kinetic; least-squares slope, E_up per 1000 tu), its RMS about that line, the mean potential
@@ -1171,6 +1171,88 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
     `rigid_protein_stage`), and glpG's `stage_7.0.up` (`upside3_validation/glpg_ff31`) has no `/input/barostat`;
     replica exchange refuses the barostat anyway. It needs (c) and glpG's own V1 and V2. Item 7's rigid groups and
     barostat serve the preparation stages and area per lipid, an NPT observable.
+12. [ ] (c) the production workflows on the GPU (user 11-02: "plan that, while still monitoring"). Approved 11-02 with
+    the user's choices: glpG's TM4 on ff3.1, mdCATH on ff2.1 and ff3.1, the largest system's capacity, steps 1-2 now
+    (steps 3-5 wait for the user's word). Goal: run the two workflows item 11 still owes, the glpG hybrid REMD and the mdCATH panel, on a
+    GPU from the workflow scripts, each tested against the same workflow on the GPU tree's CPU engine.
+    Measured for the plan (11-02):
+    - glpG's `stage_7.0.up` (`upside3_validation/glpg_ff31`): 4712 particles, 25 nodes, all with a device port; no
+      `/input/barostat`, no rigid group; `martini_potential`'s candidate table 7,491,136 pairs, which the device shares
+      between replicas. Its CPU REMD (48 replicas on 28 broadwl cores, Upside 3 tree) runs 2,070-2,180 tu per replica
+      in a 35.25 h block, 11 ms per system step; `run.py`'s comment of about 1,000 tu per block is stale.
+    - The mdCATH panel (`ff3_selection/panel.py`): 89 domains x 4 seeds, 356 constant-temperature runs (T 0.8 after an
+      anneal from t 96 to 400, 10,000 tu, frames every 10, pivot moves every 5, dt 0.009), one single-thread `upside`
+      per run, 28 per node, on the ConDiv tree's Upside 2 binary; TM-score by `checks/converge_20261020/tm_panel.py`.
+      A panel is 3.56 M system tu (6.3 h on one 28-core node). No Upside 3 run of it exists.
+    - Different proteins cannot share one `--gpu` process (host backend, chig, 1ubq and 1dfn on ff3.1): the device's
+      interaction graph requires equal `max_n_edge`, whose default is each system's full pair count, and
+      `rama_map_pot` shares its maps, one 72x72 layer per residue. With both checks relaxed in a throwaway copy the
+      batch runs, so no other node refuses; the interaction parameters are equal across the three. `backbone_pairs`
+      already sizes every system's slab by the largest system's capacity.
+    - Runners: the hybrid's `run.py` calls `upside` itself (one process of 48 replicas, sbatch `--wrap` from one
+      `slurm_args_file`). The soluble runners are cluster files (`ff3_benchmark/bench_run.py`, its copies in
+      `upside3_validation/peng/` and `bp_validation/`, and `g0/v3_run.py`, the only one with `--gpu`).
+      `ff3_benchmark/bench_run.py` and `ff3_selection/panel.py` serve running campaigns (ff3.1's Peng arms, ff3.2's
+      panels) and are not edited.
+    Design (reasons):
+    - The device engine's one change: batches of different proteins. Every system's pair slab takes the largest
+      system's `max_n_edge`, as `backbone_pairs` does, and each system's own capacity is still tested, so the device
+      refuses what the CPU refuses. `rama_map_pot` takes each system's maps, uploading identical maps once, so a batch
+      of one protein keeps today's arrays. A batch of one protein stays bitwise (item 9's trajectory check).
+    - The hybrid: `run.py` gains `remd_engine = "cpu"` or `"gpu"` in its stage 2 settings, with the GPU job's Slurm
+      options and environment beside the CPU ones. Preparation stays on the CPU (the device refuses rigid groups and the
+      barostat). A GPU block runs the same command with `--gpu`, on one GPU with 4 cores for the host work (frames,
+      exchanges), under `env_upside3_gpu.sh` until (d); ladder, seeds and block restarts are the CPU's.
+    - mdCATH: a runner in the GPU tree, `checks/mdc/mdc_run.py`, with `panel.py`'s configs, schedule, frames and seed
+      count and an engine argument. A GPU job runs domains of similar size, 4 copies each, in one `upside --gpu`
+      process; each run keeps its own output file, so `tm_panel.py` and `paired_npz.py` read it unchanged. The
+      reference is the same runner on the GPU tree's build without `--gpu`: the same code, so the comparison isolates
+      the device (the Upside 2 panels differ from it by the audit).
+    - Not in (c): GPU options in the Peng runners (V3 covered Peng's REMD and no remaining test needs them), (b), (d).
+    Steps, each test fixed before its data; every job is listed here for approval:
+    1. [x] Mixed batches on the device, on the Mac's host backend first: the change above; CPU regress 0 of 4260
+       arrays moved against `dev14_record.npz`; `tests/device_v1.py` gains a batch mode testing every system of one
+       mixed process against its CPU engine, run on chig, 1ubq and 1dfn (ff2.1 and ff3.1). On a V100: a 1ubq
+       trajectory bitwise equal to g8a's, and the mixed V1 (2 jobs, under 10 min each).
+       Mac part done 18:12 11-02 (`scratchpad/gpu_work/dev15_home` against `dev14_home`, HEAD): V1 of the 14 standard
+       configs prints the same lines as HEAD's; the mixed batches pass every quantity (ff2.1 worst 5.2e-6, ff3.1 the
+       same); host-backend `--gpu` trajectories of 1ubq with exchange and of 1rkl 7.0 are bitwise HEAD's; CPU regress
+       0 of 4260 arrays. Build g9a on the GPU tree (remote_jobs.md line 5); on the V100 19:25-19:30 11-02: 1ubq (14
+       systems, 101 frames) and 1rkl 7.0 (4 systems, 41 frames) bitwise equal to g8a, at g8a's speed; the mixed V1 passes
+       every quantity (ff2.1 and ff3.1, 192 per protein). g9a installed 21:54 11-02, after the `/beagle3` inode quota
+       that blocked file creation 19:46-21:51 was reclaimed.
+    2. [x] The hybrid's GPU option and glpG on the device. `run.py` as above, its stale comment corrected. glpG's V1
+       frames: 10 production frames from `glpg_ff31` block 1 (replicas across the ladder, beginning and end), at BP
+       tolerances 1e-3 and 1e-6, by item 11's V1 rule (1 V100 job, under 1 h). A probe of 48 glpG replicas with
+       `--gpu` for 20 tu on a V100 and an A100: device memory and time per system step, which set the GPU type and a
+       block's length (2 jobs, under 30 min).
+       `run.py`'s option written; glpG's frames `checks/configs/v1g/` (`g0/v1g_prep.py`); V1 62105839 and the probes
+       62105864 (V100) and 62105868 (A100, both by `g0/glpg_probe.sh`, through `run.py`'s own submission), 18:20.
+       glpG's V1 passes all 1040 quantities at both tolerances (worst rotamer output 2.0e-6 and 2.4e-6, 4 times their
+       rounding scale). The V100 probe ran 210 tu of 48 replicas in 903 s through `run.py`'s GPU path: 794.7
+       us/system/step, 850 tu an hour against the CPU block's 60 (14 times one 28-core broadwl node), 4,382 of 16,384 MiB,
+       KE/1.5kT 0.993-1.017; then `run.py` could not write `block_count` (the quota). A CPU-length block of 2,100 tu is
+       about 2.5 h on a V100. The A100 probe (62105868 failed at its start on the same quota; rerun 62120973, 23:43):
+       628.9 us/system/step, 1,100 tu an hour, 4,495 of 40,960 MiB, KE/1.5kT 0.994-1.014, so a 2,100 tu block is about
+       1.9 h on an A100. glpG fits either GPU; the A100 is 1.27 times the V100. Step 4's GPU type and block length are
+       the user's, with steps 3-5.
+    3. [ ] glpG V2 by seeds (`device_dyn.py`, as 1rkl's): REMD of stage 7.0 with 4 replicas over 200 tu, 16 CPU seeds
+       on broadwl (about 1 h each on 14 cores) against 8 V100 seeds (`v2seq.sbatch`, about 1 h); KE/1.5kT, protein
+       and lipid KE, potential, C-N and lipid diffusion per replica; passes if `compare`'s Bonferroni is above 0.05.
+    4. [ ] glpG TM4 REMD on the GPU: `run.py` with `remd_engine = "gpu"` from the CPU run's `stage_7.0` checkpoint
+       in a new run directory, 48 replicas, blocks of the CPU's length (about 2,100 tu). Phase 24's readout (TM4 DSSP,
+       KE and C-N at T 0.70) against the CPU's block. One trajectory per engine cannot test agreement sharply (V2
+       does); a difference beyond the CPU block's half-to-half spread (ff3.1: 0.78 / 0.70) is investigated. Jobs: one
+       GPU job per block, its length from step 2's probe.
+    5. [ ] mdCATH on the GPU: `mdc_run.py`; the CPU reference (356 runs on broadwl, about 7 h on 28 cores per force
+       field) and the GPU panel (356 systems in size-binned batches on V100s, its cost from a one-batch probe, which
+       also times the host work: frames and pivot moves run serially over systems in `main.cpp`'s `--gpu` loop, and
+       if they take more than 10% of the run that loop is parallelized as the CPU branch is, bitwise). The engines
+       agree if, over the 89 domains, the paired bootstrap 95% interval of the mean TM-score difference (seeds pooled
+       per domain, `tm_panel.py`) contains 0 and the paired Wilcoxon p is above 0.05; the folded fraction is reported
+       beside, not deciding.
+    6. [ ] Report to the user what runs on a GPU and how fast, and update `upside3.md` 10 and the readiness statement.
+    Estimate (11-02): steps 1-2 11-03 to 11-04, step 3 11-04, steps 4 and 5 11-05 to 11-07.
 
 ### Phase 36 - side-chain pair tables coarse-grained from an all-atom force field (STARTED 2026-10-29, user)
 User 10-29: derive the SC-SC spline table bottom-up from an all-atom force field (e.g. Amber), "like what we did in
@@ -1239,16 +1321,18 @@ predecessors (Phase 30). Scripts and logs `/project/trsosnic/yinhan/checks/ff31_
 User 10-31: "Fix the folding issue and continue working on ff3.2". The loss is measured (findings 1.37 "What the loss
 is"): the trained terms make every state away from the native cheaper, about half through the two scalars the DSE
 target moves. Fix the cause in the training, never by a temperature or by freezing terms (Phase 33 item 9).
-- **Resume here (the MacBook Pro's handoff, 16:50 11-02).** The next steps, in order; times, ids and paths in
-  remote_jobs.md §1 line 2 and its "Resume here" step 4:
-  1. Epoch 1's end (about 17:00 11-02): read `z32_01` as item 6 says (folding against released ff2.1 and `z32_00`,
-     unfolded shift, Rg ratio, round 2's glycine depths).
-  2. The basin arm's end (`ff32_basin`, step 19 about 00:00 11-03, panel `w32_00` about an hour later): read it by
-     item 10's rule, fixed before its results, and report to the user, who decides. No variant of the wall is tried
-     on any outcome.
-  3. If the user adopts the restraint, ff3.2 continues from `ff32_basin`'s step 19 to 76 under it (57 steps: done
-     about 18:00 11-04 at the pre-fault 31 min a step, about noon 11-06 at the present 70); `ff32_dse0` then stays as
-     the comparison. Otherwise `ff32_dse0` trains on to 76 (about 15:00 11-03 to 15:00 11-04) and item 7 applies.
+- **Resume here (the MacBook Pro's handoff 16:50 11-02; basin arm read 03:05 11-03 by the Mac Studio).** The next
+  steps, in order; times, ids and paths in remote_jobs.md §1 line 2 and its "Resume here" step 4:
+  1. [x] Epoch 1 (ended 16:47 11-02), read 17:40 by item 6: `z32_01` level with `z32_00`, still under released
+     ff2.1, and the unfolded chain compacting further (item 6). Epoch 2's first link ran on midway2-[0316-0327],
+     whose busy cores sit at 1.2 GHz; at the user's word (18:10) they are excluded and the link was moved after step
+     39 (remote_jobs.md §1 line 2); at 31-43 min a step since, step 57 about 05:30 and step 76 about 17:00 11-03.
+  2. [x] The basin arm (`ff32_basin`, step 19 at 00:48 11-03; `w32_00` and its readouts by 02:56), read 03:05 by item
+     10's rule: (a) and (b) both met (item 10, findings 1.37 "The fix"). Reported to the user, who decides.
+  3. [ ] Adopted by the user 11-03 ("Ok. Proceed", to the recommendation of 03:10): **ff3.2 is `ff32_basin` trained
+     on** from step 19 to 76 under the restraint, one epoch a link (item 11; 57 steps, 30-41 h at the present 31-43
+     min a step). `ff32_dse0` trains on to 76 (about 17:00 11-03) as the comparison at the same length and the
+     fallback; item 7 applies to both.
   4. The chosen force field is judged by item 10 (c) on mdCATH, Peng and glpG's TM4 against released ff2.1 (about 3
      days of jobs).
 - **Step 1, the causal test.** Two arms built exactly as `ff32_nativefix` (Phase 33 build.sh: its trainer copy, start,
@@ -1293,9 +1377,14 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
    It is the only submitter of this run's panels (`submit_new.sh` does not list it, so a pass cannot take the panel
    without its shift). Read each epoch: folding against released ff2.1, the unfolded shift, the Rg ratio (unfolded
    chains must not keep compacting), glycine's depths (`gly_depths.py` on the round file).
-7. [ ] At step 76: `paired_npz.py` of `z32_00` to `z32_02` against `z32_03`; step 76 unless one is better at p < 0.05.
-   Then the chosen epoch against released ff2.1: level, the full validation (mdCATH, Peng, glpG); below, ff3.2 is
-   not deployed (Phase 33's rule).
+   **Epoch 1, read 17:40 11-02:** `z32_01` folds 0.578, level with `z32_00` (+0.002 [-0.033, +0.039]) and under
+   released ff2.1 (-0.038 [-0.072, -0.005], p 0.038); unfolded shift +5.61 E_up (epoch 0 +3.80); glycine's
+   alpha_L - alpha_R -0.791 (round 1 -0.877, released ff3.1 -0.781). The Rg check fails its condition: at T 1.1 the
+   free replicas are 0.957 [0.907, 0.995] of epoch 0's Rg on the same proteins (smaller in 77%), 0.939 of
+   `ff31_nativefix`'s (epoch 0 0.978); T 0.8 level (1.004). Reported to the user; the run trains on.
+7. [ ] At step 76: `paired_npz.py` of `z32_00` to `z32_02` against `z32_03`, and of `w32_00` to `w32_02` against
+   `w32_03` for ff3.2 since 11-03 (item 11); step 76 unless one is better at p < 0.05. Then the chosen epoch against
+   released ff2.1: level, the full validation (mdCATH, Peng, glpG); below, ff3.2 is not deployed (Phase 33's rule).
    **Epoch 0, read 12:45 11-02** (user: "check ff3.2 basin depth difference between GLY alpha L and R, and whether
    it keeps protein folded"; `gly_depths.py` and `gly_LR_runs.py` on the Mac, which reproduce every earlier row). The
    pooled glycine map's alpha_L - alpha_R moved from the start's -1.064 (the merge) to -0.877 in round 1, next to
@@ -1340,9 +1429,12 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
      `ff32_dse0`'s but for paths, largest float difference 8.6e-15; minibatches equal; round-0 library `5b66c78a`);
      one epoch (19 steps), first link 49746562; at 19 its `after_training.sbatch` submits panel `w32_00`,
      `peng_full` and the Rg check.
-   - [ ] Read against `z32_00`, by the rule below: `decomp2.py` gap (no sampling noise; `z32_00` -1.08 E_up),
-     `crystal_view.py`, `paired_npz.py` folded (resolves about +-0.035), mean TM on the 44 (`tm_panel.py`), the
-     restrained replica's RMSD in `check_step.py`, the unfolded shift and Rg. Then the user decides.
+   - [x] Read against `z32_00` 03:05 11-03, by the rule below (findings 1.37 "The fix"): (a) met, the restrained
+     replica at 1.23-1.53 A (old 0.85-0.91, free 2.1-3.0), the crystal's advantage -1.76 E_up and the loose frames'
+     -0.40 on the 32 domains `crystal_view.py` and `decomp2.py` keep (`z32_00` on them -3.69 and -1.13), 3g0m's 3-7
+     A dip gone; (b) met, folded 0.630 against 0.575 (+0.055 [+0.022, +0.091], p 0.004; level with released ff2.1,
+     +0.015), mean TM 0.684 against 0.679 (+0.006 [-0.002, +0.013]). Unfolded shift +6.99 E_up (`z32_00` +3.80); Rg
+     at T 1.1 0.943 of `ff31_nativefix`'s (`z32_00` 0.978, `z32_01` 0.939). The user decides.
    - **Decision rule, fixed 14:25 11-02 before any result of the arm** (user 11-02: "double check we are not forcing
      ff3.2 to produce the result we want. all edits should make sense, not just to twist parameter to generate
      results we want"). (a) Mechanism: the arm's change must do what the reason for it says, independent of folding:
@@ -1355,6 +1447,16 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
      ff2.1: proteins and metrics never used to choose. The 44-domain panel has chosen the DSE's removal, found this
      loss, and will choose this arm and the epoch, so its numbers for ff3.2 are optimistic and are not evidence of
      quality by themselves.
+11. [ ] **ff3.2 under the restraint** (user 11-03; Resume here step 3): `ff32_basin` from its step-19 checkpoint to
+    76, one epoch a link, nothing else changed (driver `0213050c`, the same minibatch order and solver). Its
+    `after_training.sbatch` becomes `ff32_dse0`'s per-epoch form with tags `w32_EE` (the one-epoch version kept as
+    `.bak_pre_epochs_20261103`), and adds `mech.sbatch` (`decomp2.py`, `crystal_view.py` on the epoch's panel,
+    afterok it). Checked by `--test-only` and a stub run of both branches; no test job. Read each epoch as item 6
+    (folding against released ff2.1 and `w32_00`, the unfolded shift, Rg, glycine's depths) and the crystal and
+    loose gaps, which show whether the hot chain's compaction (Rg 0.943 at epoch 0) goes into the compact
+    non-native states the restraint removed. Training keeps no frames (each step's divergence file holds the
+    replicas' mean Rg and RMSD only), so the hot replicas' native contacts cannot be read from it. If the gaps grow
+    back or folding falls, that is recorded and reported; the wall is not changed.
 
 ## Known Errors / Blockers
 

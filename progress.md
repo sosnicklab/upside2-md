@@ -744,3 +744,98 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   -0.877 / -0.640) and copied with the records, the working-tree patch and this Mac's memory into the cluster's
   handoff bundle. Files: remote_jobs.md (header, §1 line 2, "Resume here" step 4), plan.md Phase 38 "Resume here",
   progress.md; bundle `checks/handoff_20261026/` (README addendum, `records/`, `scratchpad/handoff_20261102/`).
+* **11-02 17:15-17:30, Mac Studio, A240's GPU check and install** (user: "continue upside3 GPU jobs monitor"). Opened
+  both sockets. V1 on build g8a (V100) read by plan.md Phase 35 item 11's rule: 62096441 passes every quantity of the
+  32 Peng configs at both BP tolerances (BBA and NTL9, which failed `hbond_energy` on g7b, now worst 8.0e-6 and
+  1.4e-5), 62096444 every quantity of the 14 standard configs (1dfn's `hbond_energy` worst 1.5e-4 gone). No job of the
+  GPU tree on either cluster, so `install_gpu.sh g8a` (17:22; `obj` = `obj_g8a`, g7b kept as `obj_g7b`). Item 11's
+  soluble part is complete. Refreshed this Mac's `scratchpad/gpu_work` from the 11-02 bundle (two replaced scripts
+  kept as `.bak_pre_mbp_20261102`). Files: plan.md Phase 35 ("Resume here", item 11), findings.md 3.14 (A240) and
+  11g, remote_jobs.md (header, "Owed by hand", job table, line 5), progress.md.
+* **11-02 17:18-20:40, Mac Studio, ff3.2's epoch 1 and the throttled nodes** (user: "continue ff3.2 monitor"). Opened the midway2 socket.
+  Epoch 1 of `ff32_dse0` ended 16:47 (24 of 24 proteins every step, KE/1.5kT 0.994-1.014, H-bond margin +0.126) and
+  its after-training job queued `z32_01`, its shift and epoch 2 (49748334). Read by Phase 38 item 6: `z32_01` folds
+  0.578, level with `z32_00`, -0.038 [-0.072, -0.005] under released ff2.1; unfolded shift +5.61 E_up; round 2's
+  glycine alpha_L - alpha_R -0.791; the free replicas' Rg at T 1.1 0.957 of epoch 0's, so the unfolded chain keeps
+  compacting, against item 6's condition (reported). The 70-min steps are the nodes' clock: on midway2-[0316-0327],
+  where epoch 2 ran again, every busy core sits at 1,199 MHz against 2,500-2,900 on normal nodes. At the user's word
+  (18:10) the 12 nodes went into the node law (README row, `--test-only` checked, `update_pending.sh`) and epoch 2's
+  link 49748334 was cancelled 18:12 after step 39's checkpoint; its insurance 49748335 resumed there 19:11 on 22
+  normal nodes (cores 2.0-2.8 GHz, checked), ran step 40 and lost a node 19:49; 49748605 resumed at step 40 the same
+  minute (step 41 1,681 s). No ff3.2 job writes to `/beagle3`, whose inode quota is spent (20:35 check).
+  `ff32_basin` at step 11 of 19 by 20:12, clean. Split the work with the GPU session on this Mac (it owns the watch, cron
+  `1b3ab805`; this session keeps the ff3.2 entries). Files: remote_jobs.md (header, "Resume here" step 4, §0d, §1
+  line 2, job table), plan.md Phase 38 ("Resume here", item 6), findings.md 1.37, progress.md; cluster
+  `slurm/midway2.args` and `README.md`; `scratchpad/handoff_20261102/` fetched from the bundle (round files in
+  `gly/rounds/`, the clock probe `node_clock.sh` added).
+* **11-02 17:35-17:56, Mac Studio, the watch and the plan for (c)** (user: "plan that, while still monitoring").
+  Took the jobs: watch cron `1b3ab805` (hourly at :23), owner the Mac Studio's session `upside2-md-a0`; the other
+  Mac Studio session `upside2-md-fe` reads ff3.2 by hand and owns its entries (agreed by message). Surveyed the
+  cluster runners (soluble REMD, the mdCATH panel, glpG's Upside 3 runs) and found on the host backend that one
+  `--gpu` process cannot hold different proteins (`max_n_edge`, `rama_map_pot`; findings 11g). Wrote plan.md Phase
+  35 item 12. Files: plan.md Phase 35, findings.md 11g, remote_jobs.md (owner lines), progress.md; cluster
+  WATCH_STATUS.md.
+* **11-02 17:58-18:22, Mac Studio, item 12 steps 1-2** (user approved steps 1-2 with glpG on ff3.1, mdCATH on ff2.1
+  and ff3.1, the largest system's capacity). Device batches of different proteins: `DevicePairlist` takes each
+  system's `max_n_edge` (slabs of the largest, each system held to its own; `backbone_pairs` and the rotamer's
+  residue pairs the same), `rama_map_pot` uploads each system's maps (equal ones once); `device_v1.py --batch`.
+  Host backend: one-protein V1 identical to HEAD's, mixed batches pass every quantity, trajectories bitwise, regress
+  0 of 4260. The hybrid `run.py` gains `remd_engine` (its stale per-block comment corrected). Build g9a, `home_g9a`,
+  glpG's V1 frames; 7 midway3 jobs submitted 18:20 (bitwise, mixed V1, glpG V1, two glpG probes through `run.py`).
+  Files: src/device_interaction_graph.h, src/device_nodes.h, src/device_rotamer.cu, src/device_affine.cu,
+  src/backbone_steric.cpp, src/rama_map_pot.cpp, tests/device_v1.py, example/16.MARTINI/run.py; plan.md Phase 35
+  item 12, remote_jobs.md line 5, progress.md; `scratchpad/gpu_work/g0/` (`v1g_prep.py`, `glpg_probe.sh`).
+* **11-02 20:26, Mac Studio, watch pass and item 12 steps 1-2 read.** g9a passes on a V100: bitwise to g8a (1ubq,
+  1rkl), mixed V1 (ff2.1, ff3.1), glpG's V1 at both tolerances. The V100 glpG probe ran 48 replicas at 850 tu an hour
+  (14 times the CPU block), 4.4 of 16 GiB, then failed writing `block_count`: `/beagle3/trsosnic`'s group inode soft
+  quota (1,276,989 of 1,268,000) had its grace expire between 19:30 and 19:46, which also cost Boltz E1's two
+  16,384-particle arms their results and failed its readout. `/project/trsosnic` is 140 G over its block soft quota
+  with 6 days of grace. Install of g9a held; the deletions are the user's. Files: remote_jobs.md (header, Owed by
+  hand, lines 4-5, job table, disk section), plan.md item 12, findings.md 10.39, progress.md; cluster WATCH_STATUS.md.
+* **11-02 21:51-21:56, Mac Studio, disk cleanup** (user: "do a cleanup of the disk, check what is no longer used").
+  `/beagle3` files from 1,276,989 to 1,263,519, under the 1,268,000 soft quota: the records' safe-to-delete
+  discards and the read V100 probe replicas deleted; `chi1_perplexity`, `pylibs` and the GPU builds before g7b packed
+  into compared tars in `/project/trsosnic/yinhan/checks/disk_reclaim_20261102/`. File creation works again; every
+  job started in the block swept (ff3.1's collector and scorings wrote to `/project`). g9a installed; the A100 probe
+  resubmitted (62120973). `/project`: at the user's choice the retired ff3.1 glpG chains' replicas (180 G) deleted
+  22:40, 23 G under its block soft quota.
+  Then (user: "some ff3.0 trajectories can be cleaned", choosing the failed and superseded Peng sets) the replica
+  files of `ff3_benchmark/runs/*_ff_3.0` and `runs_superseded/ff_3.0_20260930-022510` (44 G, 896 files) deleted 22:56.
+  11-03 00:24-00:38 (user: "clean up old boltz and bioemu2 files, if no longer in use"): Boltz Phase 0-1 runs'
+  data (23.8 G, logs kept) and BioEmu2's samples, env and weights (11 G) deleted; Boltz Phase 2 untouched.
+  Files: remote_jobs.md (header, Owed by hand, line 5, job table, disk section, 1b), plan.md item 12, findings.md
+  (pylibs pointer), progress.md.
+* **11-03 00:37-03:10, Mac Studio (`upside2-md-fe`), ff3.0/ff3.1 trajectories and `ff32_basin`'s end** (user: "We can
+  delete some ff3.0 and ff3.1 trajectories to free some space"). Agreed with the watch session, which had no ff3.x
+  reclaim in flight; surveyed every ff3.0/ff3.1 set (size, files, what still reads it) and put four to the user, who
+  chose the retired ff3.1 sets and the ff3.0 HDX frame copies. A checked manifest (2,300 `*.run.<r>.up` files, no
+  hardlink, none written in 24 h) and `reclaim_ff3x_20261103.sh` deleted 486 G 00:50-00:57: `/project` 3,468 to
+  3,094 GiB (480 G under its soft quota), `/beagle3` 1,392 files; the HDX results, outputs and the chains' replicas
+  verified kept. `ff32_basin` COMPLETED 00:48 (19 of 19 steps clean); its Rg check reads 0.943 at T 1.1. Its
+  mechanism job first failed on the half-written panel and was requeued after it (with `tm_panel`); all readouts
+  ended by 02:56 and were read 03:05 by plan.md Phase 38 item 10's rule: (a) and (b) both met (folded 0.630 against
+  `z32_00`'s 0.575, TM level, crystal and loose gaps about halved, 3g0m's 3-7 A dip gone); reported to the user, who
+  decides. Files: remote_jobs.md (header, Owed by hand, line 2, job table, disk section, 1b), plan.md (Phase 38
+  Resume here, item 10), findings.md 1.37 "The fix", progress.md; cluster `checks/disk_reclaim_20261102/` (script,
+  manifest, `reclaim.log`), `checks/ff32_rest_20261102/mech_w32_00.sbatch`.
+* **11-03 07:30-07:50, Mac Studio (`upside2-md-fe`), ff3.2 continues under the native-basin restraint** (user: "Ok.
+  Proceed", to the recommendation to adopt `ff32_basin` and let `ff32_dse0` finish as the comparison). plan.md Phase
+  38 item 11 written first. `ff32_basin`'s `after_training.sbatch` replaced by `ff32_dse0`'s per-epoch form with tags
+  `w32_EE` and a new `mech.sbatch` (crystal and loose gaps per epoch), the one-epoch version backed up; checked by a
+  stub run of every branch and `--test-only`, no test job. Training keeps no frames, so the proposed hot-replica
+  native-contact check was replaced by the per-epoch gaps. First link 49757705 submitted 07:39, PD on priority
+  (broadwl full) behind `ff32_dse0`'s epoch-3 link, which with `z32_02` waits since 05:50; `ff32_dse0`'s step 57
+  reached 05:50, Rg at T 1.1 0.923, round 3's glycine alpha_L - alpha_R -0.758. Files: plan.md (Phase 38 Resume here,
+  items 7 and 11), remote_jobs.md (header, Resume here, line 2, job table), progress.md; cluster
+  `checks/ff32_rest_20261102/` (`after_training_ff32_basin.sbatch`, `mech.sbatch`, `stub_epochs.sh`,
+  `stub_epochs.txt`, `submitted.log`), `$P/training/ff32_basin/after_training.sbatch`.
+  08:05 (user: "Decide for me"): `ff32_dse0`'s epoch-3 link set to nice 100, so ff3.2's link starts first.
+* **11-03 07:35-08:15, Mac Studio (`upside2-md-a0`), `/beagle3` file quota** (user: "Delete some files to clear the
+  file limit", "Maybe tar some of them then delete"). `du --inodes` over `/beagle3/trsosnic`: ours are 209,049 of the
+  group's 1,254,101 (soft quota 1,268,000); `anaconda/` (a removed account) 507,205, `schwartznw/` 339,897, `yiheng/`
+  180,347. Three unused-by-any-job candidates put to the user, who chose Boltz's two: `reclaim_boltz_phase2.sh`
+  deleted `boltz_hdx/cache/mols/` (45,228, the extracted copy of `mols.tar`, compared first) and packed `boltz_hdx/.venv`
+  (45,422) into `boltz_venv.tar` on `/project`, compared and counted, then deleted it. `df -i` 1,254,102 to 1,163,475;
+  both are unpacked before any E1 rerun. Files: remote_jobs.md (Owed by hand, line 4, disk section),
+  diffusion_dynamics.md (Status), progress.md; cluster `checks/disk_reclaim_20261102/` (script, manifests, compares,
+  `reclaim.log`, `boltz_venv.tar`).

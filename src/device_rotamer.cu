@@ -323,7 +323,7 @@ struct DeviceRotamer : public DeviceNode {
             for(int ns=0; ns<n_system; ++ns) {
                 int n1 = n_residue[3*ns+c1], n2 = n_residue[3*ns+c2];
                 ls.push_back(ls.back() + n1*n2);
-                cap[p] = max(cap[p], min(n1*n2, ig.max_n_edge));
+                cap[p] = max(cap[p], min(n1*n2, ig.max_n_edge[ns]));
             }
             int w = class_n_rot(c1)*class_n_rot(c2);
             lookup_start[p] = DeviceArray<int>(ls);

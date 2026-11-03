@@ -20,7 +20,8 @@ struct DeviceInteractionData {
     std::vector<int> n_elem1, n_elem2;  // per system
     std::vector<int> loc1, loc2, type1, type2, id1, id2, sequence_id1, sequence_id2;
     std::vector<float> interaction_param;
-    int n_type1, n_type2, max_n_edge;
+    int n_type1, n_type2;
+    std::vector<int> max_n_edge;  // per system
     float cutoff, cache_buffer;
 };
 
@@ -33,10 +34,11 @@ DeviceInteractionData device_interaction_data(DeviceGraph& g, const std::vector<
     d.pos2 = IType::symmetric ? nullptr : &g.coord(*ig0.pos_node2);
     for(int ns=0; ns<g.n_system; ++ns) {
         auto& ig = *igs[ns];
-        if(ig.get_param() != ig0.get_param() || ig.cutoff != ig0.cutoff || ig.max_n_edge != ig0.max_n_edge)
+        if(ig.get_param() != ig0.get_param() || ig.cutoff != ig0.cutoff)
             throw std::string("the device engine shares an interaction's parameters between systems, "
                     "but the systems' parameters differ");
         d.n_elem1.push_back(ig.n_elem1);
+        d.max_n_edge.push_back(ig.max_n_edge);
         for(int i=0; i<ig.n_elem1; ++i) {
             d.loc1.push_back(ig.loc1[i] + d.pos1->offset[ns]);
             d.type1.push_back(ig.types1[i]);
@@ -55,7 +57,6 @@ DeviceInteractionData device_interaction_data(DeviceGraph& g, const std::vector<
     d.interaction_param = ig0.get_param();
     d.n_type1 = ig0.n_type1;
     d.n_type2 = ig0.n_type2;
-    d.max_n_edge = ig0.max_n_edge;
     d.cutoff = ig0.cutoff;
     d.cache_buffer = ig0.pairlist.get_cache_buffer();
     return d;
@@ -97,7 +98,7 @@ DeviceNode* device_hbond_energy(AccumView potential, DeviceCoord& protein_hbond,
         const std::vector<int>& residue_system);
 
 // device_rama.cu
-// the spline coefficients of LayeredPeriodicSpline2D<1>, shared by every system
+// the spline coefficients of LayeredPeriodicSpline2D<1>, the layers of every system's maps; map_id indexes them
 DeviceNode* device_rama_map_pot(AccumView potential, DeviceCoord& rama, const std::vector<int>& residue,
         const std::vector<int>& map_id, const std::vector<float>& coefficients, int nx, int ny,
         const std::vector<int>& system);
@@ -106,11 +107,11 @@ DeviceNode* device_rama_map_pot(AccumView potential, DeviceCoord& rama, const st
 // atom holds 3 per residue, ref_geom 9 (atom, xyz)
 DeviceNode* device_affine_alignment(DeviceCoord& out, DeviceCoord& pos, const std::vector<int>& atom,
         const std::vector<float>& ref_geom);
-// ref_pos holds 12 per residue (4 atoms, xyz); n_residue per system
+// ref_pos holds 12 per residue (4 atoms, xyz); n_residue and max_n_edge per system
 DeviceNode* device_backbone_pairs(DeviceGraph& graph, AccumView potential, DeviceCoord& alignment,
         const std::vector<int>& residue, const std::vector<int>& n_atom, const std::vector<float>& ref_pos,
         const std::vector<int>& sequence_id, const std::vector<int>& n_residue, float dist_cutoff,
-        float cache_buffer, int max_n_edge);
+        float cache_buffer, const std::vector<int>& max_n_edge);
 
 // device_placement.cu
 // kinds: each output component group's PlaceT (0 scalar, 1 vector, 2 point), n_pos_dim values per element.  The

@@ -46,8 +46,9 @@ prep_seed          = 2026
 #----------------------------------------------------------------------
 
 n_blocks           = 4       # REMD blocks of one wall time each; raise it and re-run to extend
-frame_interval     = 10      # time units per frame: a block of 48 glpG replicas on 28 cores covers ~1,000 time units
-                             # (~28 per wall hour), so ~100 frames per block. Momentum is not recorded and blocks
+remd_engine        = "cpu"   # "cpu", or "gpu": each block runs upside --gpu on one GPU (preparation stays on the CPU)
+frame_interval     = 10      # time units per frame: a block of 48 glpG replicas on 28 cores covers ~2,100 time units
+                             # (~60 per wall hour), so ~210 frames per block. Momentum is not recorded and blocks
                              # restart from positions, so a replica grows by one frame of positions per frame.
 prod_time_step     = 0.009
 n_rep              = 48      # replicas
@@ -60,6 +61,9 @@ account            = "pi-trsosnic"
 slurm_args_file    = "/project/trsosnic/yinhan/slurm/midway2.args"   # midway2 partition and node exclusions (CLAUDE.md)
 job_env_file       = "/beagle3/trsosnic/yinhan/upside3/env_upside3.sh"   # each job sources the tree's environment
 cpus_per_node      = 28              # broadwl; the replicas share the node's cores as OpenMP threads
+gpu_slurm_args     = "--partition=gpu --qos=gpu --gres=gpu:1 --constraint=v100"   # a midway3 V100: submit on midway3
+gpu_job_env_file   = "/beagle3/trsosnic/yinhan/upside3_gpu/env_upside3_gpu.sh"    # the GPU tree (plan.md Phase 35)
+gpu_cpus           = 4               # cores of a GPU block, for its host work (frames, replica exchange)
 run_time           = "35:45:00"      # requested wall time of every job (hh:mm:ss)
 time_margin        = 1800            # seconds a block keeps for its final frame, archiving and the next submission
 job_name           = "{}_{}".format(pdb_id, sim_id)
@@ -77,6 +81,8 @@ run_dir  = prep_dir / sim_id
 seed_up  = prep_dir / "checkpoints" / "{}.stage_7.0.up".format(pdb_id)
 run_dir.mkdir(parents=True, exist_ok=True)
 
+if remd_engine not in ("cpu", "gpu"):
+    raise ValueError("remd_engine must be cpu or gpu, not {}".format(remd_engine))
 h5_files = [run_dir / "{}.run.{}.up".format(pdb_id, j) for j in range(n_rep)]
 block_count = run_dir / "block_count"
 n_threads = min(n_rep, cpus_per_node)
@@ -86,12 +92,15 @@ job_stage = os.environ.get("HYBRID_JOB_STAGE", "")
 
 
 def submit(stage, log, dependency=None):
-    cmd = ('sbatch --parsable $(cat {}) --account={} --job-name={}_{} --output={} --time={} '
+    on_gpu = stage == "remd" and remd_engine == "gpu"
+    slurm_args = gpu_slurm_args if on_gpu else "$(cat {})".format(slurm_args_file)
+    threads = gpu_cpus if on_gpu else n_threads
+    cmd = ('sbatch --parsable {} --account={} --job-name={}_{} --output={} --time={} '
            '--nodes=1 --ntasks-per-node=1 --cpus-per-task={} {}--wrap=". {} && export OMP_NUM_THREADS={} '
            'HYBRID_JOB_STAGE={} && cd {} && python3 {}"').format(
-        slurm_args_file, account, job_name, stage, log, run_time, n_threads,
+        slurm_args, account, job_name, stage, log, run_time, threads,
         '--dependency=afterok:{} '.format(dependency) if dependency else '',
-        job_env_file, n_threads, stage, script_dir, Path(__file__).resolve())
+        gpu_job_env_file if on_gpu else job_env_file, threads, stage, script_dir, Path(__file__).resolve())
     job = sp.check_output(cmd, shell=True, text=True).strip()
     print("submitted {} job {}".format(stage, job))
     return job
@@ -186,8 +195,9 @@ if job_stage == "remd":
         "--time-step", str(prod_time_step), "--integrator", "v", "--thermostat-timescale", "5.0",
         "--thermostat-interval", "-1", "--seed", str(stage_seed(randomseed, "remd.segment%i" % segment)),
         "--disable-recentering", "--replica-interval", str(replica_interval)] + [
-        x for swap_set in swap_sets for x in ("--swap-set", swap_set)]
-    print("REMD block {} of {} ({} replicas, T {}-{}, segment {})".format(block, n_blocks, n_rep, T_low, T_high, segment))
+        x for swap_set in swap_sets for x in ("--swap-set", swap_set)] + (["--gpu"] if remd_engine == "gpu" else [])
+    print("REMD block {} of {} ({} replicas, T {}-{}, segment {}, {})".format(
+        block, n_blocks, n_rep, T_low, T_high, segment, remd_engine))
     sp.check_call(upside_cmd)
     block_count.write_text(str(block))
     if block < n_blocks:
