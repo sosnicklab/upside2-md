@@ -1950,6 +1950,34 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
       negative; `z32_00` +3.80), while the free chain at T 1.1 compacts as in `z32_01` (Rg 0.943 of
       `ff31_nativefix`'s; `z32_00` 0.978, `z32_01` 0.939).
 
+### 1.38 The most-probable-state side chain: what the mode does to the dynamics (2026-11-03)
+
+The PI's variant (plan.md Phase 39): BP as in ff2.1, then each residue keeps only its state of largest marginal, and
+the energy and all derivatives are those of the chosen states. Measured on `$P`'s engine with the mode patched in
+(`scratchpad/bpmax_20261103/`, `tests/` and `res/`), ConDiv's configs, 1aba, 1a62 and 1afh, dt 0.009. The build
+before the angular-gradient fix, which the run uses for steps 0-37 as the earlier arms did, gives bitwise the same
+max-mode trajectories, so every dynamics number here holds for both.
+- **The patch is exact where it should be.** BP mode is bitwise the stock engine (energy, forces, rotamer, coverage
+  and hydrophobe parameter derivatives; and a 30-tu trajectory on midway2). Max mode's rotamer energy equals the
+  energy of the chosen states rebuilt from the BP diagnostics (`node_energy`, `edge_energy`, the 1-body minima) to
+  1e-5. Its forces agree with central differences as BP's do (median relative error 5-7e-4). Its parameter
+  derivatives agree exactly whenever no state flips (pair blocks 2.000, coverage 1.0, BP's own convention).
+- **The chosen states switch all the time.** Along NVE trajectories logged every 3-step round, 38-62% of rounds
+  change some residue's state (0.48-0.94 switches a round); 36-71 residues switch in 30 tu. A random displacement of
+  1e-3 A changes a state in 10-15 of 30 directions. Each switch moves the energy, read at the round's end, by 0.23-0.33
+  E_up (median; up to 5.8).
+- **So the mode heats.** Without a thermostat the total energy gains 600-3000 E_up per 1000 tu, against BP's 70-74 on
+  the same engine. With the default thermostat (timescale 5), KE/1.5kT is 1.006-1.025 against BP's 0.998-1.009, from
+  0.8% to 2.4% above BP over T 0.80, 0.85 and 1.10, larger at T 1.10. The forces are those of E at fixed states, so
+  the extra heat enters at the switches, where E is discontinuous and no force sees the step. The split of each round's
+  energy change into the jump and the rest does not isolate it at round resolution, so the size of the true jump at the
+  crossing is not measured.
+- **Consequence for the training.** The free replicas sample about 1-2% hot and not exactly exp(-E/kT), and ConDiv
+  reweights them by E. This is the model the PI asked for, not a defect to correct: no thermostat or time-step change
+  was made for it. A folding comparison with the BP arms at the same nominal temperatures carries this offset.
+- Max mode's energy at the native is 16-32 E_up above BP's free energy (1aba -220.2 against -236.3, 1a62 -263.8
+  against -295.4, 1afh +106.0 against +86.4): no side-chain entropy, and the chosen states' energy, not the mean.
+
 ## 2. The hybrid model: what each side supplies
 
 ### 2.1 Replaced by design

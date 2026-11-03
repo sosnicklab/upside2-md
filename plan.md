@@ -1458,6 +1458,55 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     replicas' mean Rg and RMSD only), so the hot replicas' native contacts cannot be read from it. If the gaps grow
     back or folding falls, that is recorded and reported; the wall is not changed.
 
+### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
+User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the
+most probable state and ignore the others, then retrain. The user delegated the design ("decide them for me, and go
+ahead and implement and deploy it") and ruled that **the engine change must not be git-committable**: it lives only
+in `scratchpad/bpmax_20261103/` (git-ignored) and in its own cluster tree, never in this repo's `src/` or `py/`.
+- **What it is.** BP runs as now. Each residue takes s* = argmax of its node marginal (ties to the lowest index);
+  the energy is E = sum_i E_i(s_i*) + sum_ij E_ij(s_i*, s_j*) from the raw 1-body and pair values (no entropy, no
+  mutual information), and every sensitivity is 1 for the chosen states and 0 otherwise, so forces and ConDiv's
+  parameter derivatives (`ConDiv.py` `get_param_deriv`) are those of E at fixed states. A NaN marginal gives NaN
+  weights, so it reaches the energy and forces as in BP mode. Differs from `ff21_nobp_dt009` (one fixed state per
+  residue type, no BP, 1-body 0): here the state follows the environment step by step.
+- **Decisions (delegated, 11-03).** Per-residue argmax, as the PI described (not the joint MAP of max-product BP).
+  The ff2.1 retraining protocol of `ff21_ctrl_dt009` / `ff21_nobp_dt009` (init ff2.1, its minibatch order, dt 0.009,
+  same trainer and rates) to step 76 and the same convergence gate; compared at the fixed points with the BP control
+  and the fixed-state arm on the 89 mdCATH domains and the 44-domain panel, by TM-score. Run name `ff21_bpmax_dt009`,
+  "the most-probable-state side chain".
+- **The earlier arms' engine history** (user 11-03: "the program should be the same state as the other tests"). Both
+  ran steps 0-37 on `$P`'s binary of 10-02 (before the angular-gradient fix, findings 3.12) and 38-76 on the fixed one
+  of 10-18; the fix changes only the side-chain pair angular parameter gradient, not the simulations. This arm does the
+  same: steps 0-37 on `obj_preangfix`, 38 on `obj_angfix`, both with the mode; the tree's `obj` symlink is switched
+  at step 38 by the run's `setup/switch_engine.sh`. A first link on the fixed engine from step 0 was cancelled in step
+  0 for this.
+- **Where.** The patch is against `$P/src/rotamer.cpp` (the Upside 2 engine both earlier arms trained on), not Upside
+  3's. A dedicated tree `/project/trsosnic/yinhan/upside2-md-bpmax` holds the patched sources, its two builds, `$P`'s `py/`
+  with `write_rotamer` setting `most_probable_state = 1`, and the training scripts, so every config written there
+  (training and its panels) carries the mode and runs on the patched binary. `$P` is not touched.
+- **Physics risk, measured before training.** E jumps whenever a residue's argmax changes, and forces never see the
+  jump, so the dynamics conserves no energy and need not sample exp(-E/kT). Measure on the patched build, BP against
+  max mode on the same engine: argmax switches per step, the size of the jumps, KE/1.5kT, NVE drift. Large effects
+  are reported before any training.
+1. [x] Patch (`scratchpad/bpmax_20261103/rotamer_bpmax.patch`, 83 lines, `rotamer.cpp` only), stock and patched
+   builds of `$P`'s source on the Mac (`build_stock`, `build_max`).
+2. [x] Checks on the Mac (findings 1.38; scripts and results in `scratchpad/bpmax_20261103/tests`, `res`): BP mode
+   bitwise equal to the stock build on 3 training proteins; max mode's energy equals the chosen states' energy
+   rebuilt independently, its forces and parameter derivatives agree with central differences; the dynamics
+   measurement: about one switch every second 3-step round, KE/1.5kT 0.8-2.4% above BP's under the thermostat over
+   T 0.80-1.10 (at most 1.025), NVE drift 8-40 times BP's. Judged a property of the model, not a defect: proceed and
+   report.
+3. [x] Cluster tree `/project/trsosnic/yinhan/upside2-md-bpmax` built on midway2 with `$P/obj`'s compiler and flags,
+   twice: each build in BP mode is bitwise the binary the earlier arms ran at the same steps (`obj_preangfix` against
+   `upside.bak_pre_angfix_20261018`, `obj_angfix` against `$P/obj`) in energy, forces, parameter derivatives and a
+   30-tu trajectory (1aba, 1a62); in max mode the two differ only in the rotamer angular parameter derivatives.
+4. [x] Run directory as `ff21_nobp_dt009` was made: init_param md5-equal to released `ff_2.1`, every input, the
+   trainer, the Python and the venv the earlier arms'; gate, engine switch and mdCATH panel in the new tree. Setup
+   49766481 done; link 49766810 to step 38 running from 12:42 11-03, on `obj_preangfix` (remote_jobs.md §1 line 1).
+4b. [ ] Step 38: the engine switch and the link to 76 happen (`gate_<id>.out`, `setup/engine_history.log`).
+5. [ ] At the fixed point: the mdCATH panel (automatic) and the 44-domain panel at dt 0.009 (by hand, in the new
+   tree), TM-score against the fixed points of the BP control and the fixed-state arm.
+
 ## Known Errors / Blockers
 
 * **Upside 3 protein runs do not conserve energy without the thermostat** (11-02, Phase 35 item 11's V2 drift;

@@ -91,6 +91,7 @@ The ConDiv runs, all on midway2 broadwl at dt 0.009 (`$P/training/<run>`, `$P` =
 |---|---|---|
 | ff21_nobp_dt009 | ff2.1 retrained with one side-chain state per residue type (the deterministic side chain) | converged at step 76 10-19; step 37 released as ff_2.1_nobp |
 | ff21_ctrl_dt009 (`c9_EE`) | ff2.1 retrained the same way with BP (the probabilistic control) | converged at step 76 10-20; step 37 released as ff_2.1_ctrl38 |
+| ff21_bpmax_dt009 (`mdc_bpmax_EE`) | the same with BP's most probable state per residue (the most-probable-state side chain); in `/project/trsosnic/yinhan/upside2-md-bpmax`, not `$P` | running from 12:42 11-03: link 49766810 to 38 on the pre-fix engine, then the fixed engine to 76 (§1 line 1) |
 | ff30_gdepth_dt009 (`d9_EE`) | ff3.0: NDRD plus one trained glycine depth pair, every term trained | released as ff_3.0_gdepth 10-09 |
 | ff31_depth_data (`fd_EE`) | the old ff3.1: 1,442 per-map basin depths, prior 0.2, every term trained | released as ff_3.1_depth_data 10-13; retired 10-26 (`.bak_pre_merge_20261026`) |
 | ff31_depth_all (`fa_EE`) | ff3.1 with all 5,040 depths, prior 0.3 | finished 10-13, not validated |
@@ -668,6 +669,35 @@ inodes free (105 G used in under 5 h; the watch reports below 200 G). Paths: `$P
     since they take only proteins scored in every column and the retired `ff_3.1_depth_data` column scores none. Then
     plan.md Phase 27 step 4.
 - **Both side-chain trainings are finished** ("Finished runs"); no jobs.
+- **A third arm, the most-probable-state side chain `ff21_bpmax_dt009`** (user 11-03, the PI's request; plan.md
+  Phase 39): BP runs, each residue keeps only its state of largest marginal. Trained from released ff2.1 (init_param
+  md5-equal to `ff_2.1`) with the control's inputs, trainer and minibatch order, and the earlier arms' engine history
+  (user 11-03: "the program should be the same state as the other tests"): steps 0-37 on the engine before the
+  angular-gradient fix, 38 onward on the fixed one, both with the mode.
+  - **Running: link 49766810** (R from 12:42 11-03 on midway2-[0017-0018,...]; target 38, no gate; log
+    `/project/trsosnic/yinhan/upside2-md-bpmax/training/condiv-train_49766810.out`), insurance successor 49766811
+    (afterany). At 38 `after_training.sbatch` -> `setup/at_target.sh` -> `setup/switch_engine.sh` switches the tree's
+    `obj` symlink from `obj_preangfix` to `obj_angfix` and submits the link to 76 (`setup/engine_history.log`); from 76
+    the gate and, converged, the mdCATH panel `mdc_bpmax_EE`; not, one more epoch, up to 114. Its workers were seen
+    running `obj_preangfix/upside` and its `libupside.so` at 12:45.
+  - Setup 49766481 COMPLETED 12:29 (step-0 parameters, solver and minibatch order identical to the control's). The
+    first link 49766483 (target 76, fixed engine from step 0) ran 12:33-12:37 and was cancelled in step 0 to match
+    the engine history; its successor 49766605 cancelled before starting; partial step deleted (no checkpoint). Its
+    336 worker configs all carried `most_probable_state = 1`.
+  - **Its own tree, not `$P`:** run dir `/project/trsosnic/yinhan/upside2-md-bpmax/training/ff21_bpmax_dt009`
+    (README there). The tree's `obj` (a symlink, see above) carries the patched engine and its `py/upside_config.py`
+    writes `most_probable_state = 1`, so every config written there is in the mode; `$P` is untouched. **Any
+    evaluation of this force field must run in that tree** (source its run's `env.sh`): in `$P` or `/beagle3` it would
+    silently run as BP. The mdCATH panel does (`ff3_selection/panel_mdcath_bpmax.sbatch`); the 44-domain panel at dt
+    0.009 and TM-scoring against `mdc_ctrl_03` / `mdc_nobp_03` and `p44_ctrl_03` / `p44_nobp_03` are owed by hand, the
+    same way. Never switch `obj` by hand while a link of this run is in the queue.
+  - The engine change is not in git (user 11-03): patch and tests in the repo's git-ignored
+    `scratchpad/bpmax_20261103/`, the cluster's checks in `/project/trsosnic/yinhan/checks/bpmax_20261103/`
+    (`cluster_parity.sh`, `cluster_parity2.sh`: each patched build in BP mode is bitwise the binary the earlier arms
+    ran at the same steps).
+  - **Next:** after step 0 (about 36 min from 12:42), the step's log shows no worker failure; at 38 (about 23 h), the
+    engine switch in `gate_<id>.out` and `engine_history.log`, and the link to 76 queued. The mode runs 1-2% hot by
+    design (findings 1.38); a protein-step's KE/1.5kT above 1.05 is not expected and is to be investigated.
 
 **Line 2: Ramachandran map training**
 - **ff3.1 is `ff31_nativefix` at step 76, released 16:49 10-31 and under validation** (user 10-31: "Deploy ff3.1, run

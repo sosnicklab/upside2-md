@@ -839,3 +839,19 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   both are unpacked before any E1 rerun. Files: remote_jobs.md (Owed by hand, line 4, disk section),
   diffusion_dynamics.md (Status), progress.md; cluster `checks/disk_reclaim_20261102/` (script, manifests, compares,
   `reclaim.log`, `boltz_venv.tar`).
+* **11-03 11:50-12:45, Mac Studio, the most-probable-state side chain** (user, the PI's request: "after we have 50%,
+  30%, 20% probabilities, we only accept 50% state ... We will need to retrain the ff"; "decide them for me, and go
+  ahead and implement and deploy it. Do not make the core engine change git commitable"). plan.md Phase 39, findings
+  1.38. Patched `$P`'s `rotamer.cpp` (attribute `most_probable_state`) in the git-ignored
+  `scratchpad/bpmax_20261103/`; checked on the Mac (BP bitwise, max-mode energy rebuilt independently, forces and
+  parameter derivatives by central differences, dynamics: KE/1.5kT 0.8-2.4% above BP, NVE drift 8-40 times BP's);
+  built the separate tree `/project/trsosnic/yinhan/upside2-md-bpmax` on midway2 (BP bitwise `$P/obj` there too),
+  the run `ff21_bpmax_dt009` from the control's inputs, and submitted setup and the first link to step 76
+  (remote_jobs.md §1 line 1). Files: plan.md, findings.md, remote_jobs.md, progress.md; repo `src/` and `py/` untouched.
+* **11-03 12:50-13:05, Mac Studio, the third arm's program state checked** (user: "Double check you train it from
+  ff2.1, and the program should be the same state as the other tests"). init_param md5-equal to released `ff_2.1`
+  and to both arms'; trainer, Python, venv and inputs the same. The engine was not: both earlier arms ran steps 0-37
+  before the angular-gradient fix (10-18). The first link (49766483, started 12:33) and its successor were cancelled
+  in step 0, a second build `obj_preangfix` made and shown bitwise to the earlier arms' steps 0-37 binary in BP mode,
+  and the run restarted as link 49766810 to step 38 with an automatic switch to the fixed build at 38 (stub-tested).
+  Files: plan.md, remote_jobs.md, progress.md; cluster run README, `setup/{at_target,switch_engine}.sh`.
