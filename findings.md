@@ -1672,6 +1672,13 @@ same group indices, its seeds differing only in the force-field datasets. Glycin
   both force fields (GLY136 or GLY149, 0.05-0.37 on rungs 15-27), and GLY143 never flips. DSSP alpha 135-151 on
   79HIS's T 0.80 rung: ff3.1 0.909 (first / second half 0.929 / 0.889; 135 0.72, 150-151 0.65 / 0.62), ff3.0 0.941
   (0.944 / 0.938; 135 0.73, 151 0.79); the core 137-149 holds under both.
+- **ff3.0's chains over blocks 1-5** (read 11-04 before their deletion, `checks/tm4_ff30_blocks_20261104/`, same
+  methods, block 1 reproducing the values above): TM4 at T 0.70 over blocks 1-5 (phi/psi 134-151; DSSP alpha 135-151): 79HIS holds (0.98-1.00; 0.92-0.96), 79HIS_S115T
+  holds (0.97-0.99; 0.91-0.94; GLY149 at phi > 0 rising to 0.16 in block 5), 79ALA frays from block 4 (0.91; DSSP 0.74,
+  0.71; weakest 141 and 149, GLY136/143/149 at 0.10-0.19), and 79ALA_S115T's GLY149 sits at phi > 0 in 0.26-0.48 of
+  frames from block 2 (DSSP 0.65-0.75). So under ff3.0 TM4 frays in the H145A (79ALA) backgrounds and holds in the
+  79HIS ones. At
+  T 0.80, 79ALA_S115T and 79HIS_S115T fall to DSSP 0.56-0.73 in blocks 4-5.
 - **The defective chains** (misplaced side-chain beads, 4.17; replaced by the corrected ones) held TM4 under all
   three force fields (79HIS DSSP alpha on the T 0.80 rung over block 2: ff3.1 0.863, ff3.0 0.945, ff2.1 0.887, ff3.1
   fraying most at both ends; figure `~/Downloads/glpg_tm4_dssp_remd_ff21_ff30_ff31.png` from

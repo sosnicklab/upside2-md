@@ -1,8 +1,8 @@
 # Remote jobs on midway2/midway3: status and handbook
 
 **Current state (2026-11-02 16:45 CST, the MacBook Pro; line 5 at 08:40 11-04 and ff3.2 at 17:50 11-03, the Mac Studio; user 10-31: "1. Deploy ff3.1, run validations (Peng, glpG, and
-other tests we ran) 2. Fix the folding issue and continue working on ff3.2").** Owner: the Mac Studio (session `upside2-md-a0`, watch cron `1b3ab805`) since 17:41
-11-02; before it none since 21:55 10-27, when the MacBook Pro's session (owner from 12:46 10-26) handed off and quit
+other tests we ran) 2. Fix the folding issue and continue working on ff3.2").** Owner: none since 11-04 (the Mac Studio's session, owner from 17:41 11-02, stopped after
+its pass of 09:26 11-03; user 11-04: no watch until the user resumes on the Mac Studio); before it none since 21:55 10-27, when the MacBook Pro's session (owner from 12:46 10-26) handed off and quit
 ("Handoff"). Status passes in between, none the owner and none with a cron: a
 Mac Studio session (08:06-13:45 10-29; also the user's "fix them all" and "run both"), the MacBook Pro's of 14:30
 10-29, 17:10 10-30, 14:05 and 23:25 10-31, 14:07 11-01, 12:20 and 16:45 11-02, and the Mac Studio's of 01:30 and 08:50 11-01
@@ -43,7 +43,7 @@ steps 3-5 (user 11-03: "proceed to next validations"; build g9a, installed 21:54
 CPU reference (49777036-43) is complete; the probe (A100, after the V100 could not hold batch 4's 20 GB) put the
 host work at 19%, so it now runs in parallel (build g9b, installed 00:36 11-04, bitwise g9a's on a V100); the GPU
 panel's 8 jobs completed by 08:29 11-04 and pass the CPU reference's checks, the folded fraction agreeing; the
-TM-score comparison, step 5's deciding test, runs as 49803361-62 (§1 line 5). Boltz-2's E1 particle-count test at low noise (user 11-02: "Particle scaling, full"; §1 line 4), after
+TM-score comparison, step 5's deciding test, passes on both force fields (49803361-62, read 10:50 11-04; §1 line 5). Boltz-2's E1 particle-count test at low noise (user 11-02: "Particle scaling, full"; §1 line 4), after
 61805263 did not remove the collapse at 256 particles: 62073874-78 COMPLETED by 15:33; the two 16,384 arms 62073879-80
 ran to their end but lost their results to the quota below, and the readout 62073881 FAILED. Read on the Mac Studio
 11-03 from the finished runs: removal fails at 1,024 and 4,096, and E1 is closed (user 11-03; diffusion_dynamics.md
@@ -77,11 +77,12 @@ The user's four lines of work (10-21), and what each has on the clusters:
    E1") shows the Feynman-Kac estimate failing above kappa 1, and more particles (1,024, 4,096; read 11-03) did not
    fix it, so E1 is closed (user 11-03). Phase 3 replaces the steered sampler with replica exchange whose move is
    Boltz-2's own renoise-denoise; its toy test T0 passed on the Mac 11-03, and T1, the same move on Boltz-2 (Ub psWT),
-   runs as 62199777 (§1 line 4).
+   failed its parity check as 62199777 on a code defect (a 5-step schedule), passed it as 62262317 and failed after it
+   on a second (a strided index); both fixed 11-04, it reruns as 62263853 (§1 line 4).
 
 Open and not in the user's list:
-- ff3.0's four Upside 2 glpG chains: TM4 at the ends of blocks 2-5 is owed (§1 line 2). ff3.0's HDX on blocks 2-3 is
-  done (findings 5.6); ff3.1's was dropped by the user 10-23, and the user closed the TM4 HDX question 22:15 10-23
+- ff3.0's four Upside 2 glpG chains: TM4 over blocks 1-5 read 14:56 11-04 (findings 1.35), then their trajectories
+  deleted (user 11-04: ff3.0 is transitional; "Disk"). ff3.0's HDX on blocks 2-3 is done (findings 5.6); ff3.1's was dropped by the user 10-23, and the user closed the TM4 HDX question 22:15 10-23
   (plan.md Phase 16). The fraying turn, Val145 and the weak protein protection are read on Upside 3's glpG runs.
 - Large-protein de novo folding (plan.md Phase 22) is done; its proposal (compact misfolds as negative examples,
   training past 150 residues, replica exchange for the large-protein benchmarks) awaits the user.
@@ -138,7 +139,7 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
    `st_peng4.sh` are in the bundle's `scratchpad/handoff_20261029/`). Tell the user what started, finished or failed
    since.
 4. **Owed by hand** (`WATCH_STATUS.md` is newer if the two differ; details in §1):
-   - **Boltz Phase 3's T1, 62199777** (§1 line 4): when it ends, pull `t1.npz` and read it on the Mac with
+   - **Boltz Phase 3's T1, 62263853** (§1 line 4; the second rerun, after 62199777 and 62262317): when it ends, pull `t1.npz` and read it on the Mac with
      `scratchpad/boltz_hdx/addon/t1_read.py` by the rule in diffusion_dynamics.md Phase 3 T1; report to the user.
      Boltz E1's lost 16,384 arms are not rerun (E1 closed 11-03). The `/beagle3` quota was reclaimed 21:51 11-02 (disk section), and every job that started while
      it blocked was swept: ff3.1's collector 49748039 and its two scorings ran 21:45-21:48 and wrote to `/project`
@@ -175,9 +176,8 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
      round 1 reproduces -0.877 / -0.640).
    - The ff3.1 training debug: both arms at 76 (`_mb2` 11:44 10-30, `ff311_glypair` 03:35 10-31), round 4's glycine
      pairs read (§1 line 2), not yet judged by plan.md Phase 32's rule.
-   - Upside 3 on the GPU (line 5; plan.md Phase 35 item 12 step 5; steps 3 and 4 read): the TM-score comparison
-     49803361-62, read by step 5's rule when both end.
-   - ff3.0's four Upside 2 glpG chains: TM4 at the ends of blocks 2-5 (§1 line 2).
+   - Upside 3 on the GPU (line 5): item 12 steps 3-5 passed (step 5 read 10:50 11-04); step 6, the report and
+     `upside3.md` 10, is owed (plan.md Phase 35).
    - Read by the collectors and reported when they appear: ff3.1's `peng_ff31.txt` (new ff3.1's collector 49692241,
      `checks/ff31_nativefix_release_20261031/`; the merge's stopped at 25 of 32).
      Released ff2.1's `peng_ff21.txt` is DONE (32 of 32, §1 line 1); its summary lines are NaN, since the retired
@@ -210,8 +210,10 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
 
 ### Handoff: two computers, one owner (2026-10-26)
 
-**Owner now: the Mac Studio** (session `upside2-md-a0`, watch cron `1b3ab805`, since 17:41 11-02; user: "plan that,
-while still monitoring"). A second Mac Studio session, `upside2-md-fe`, reads ff3.2's jobs by hand and owns their
+**Owner now: none, and no watch runs** (user 11-04: "Mac Studio stopped, but do not monitor. I will resume on Mac
+studio later today"). The Mac Studio owned the jobs from 17:41 11-02 (session `upside2-md-a0`, watch cron `1b3ab805`;
+user: "plan that, while still monitoring") to its last pass 09:26 11-03; the MacBook Pro's status pass and fixes of
+10:40-11:45 11-04 were not a watch. A second Mac Studio session, `upside2-md-fe`, reads ff3.2's jobs by hand and owns their
 record entries (line 2's ff3.2 bullets and rows, plan.md Phase 38); it runs no watch. Before, no owner from 21:55 10-27
 (user: "Record this session's progress and I will quit and work on another computer"). The MacBook Pro owned the jobs 12:46 10-26 to its last pass 21:32 10-27 and deleted its watch cron at the
 handoff; the Mac Studio owned them 23:55 10-24 to 10:29 10-26, and its non-owner session of 08:06-13:45 10-29 handed
@@ -285,9 +287,10 @@ repo's `training/` over it. The repo's `ConDiv.py` and `train_chain.sbatch` carr
 
 ### The watch
 
-**One watch at a time.** A watch is a session cron: it dies with its Claude session and expires after 7 days. The watch
-is the Mac Studio's cron `1b3ab805` (session `upside2-md-a0`, hourly at :23, from 17:41 11-02; its prompt is "Hourly
-watch prompt" below with ff3.2's readouts left to `upside2-md-fe`). None ran 21:55 10-27 to 17:41 11-02 (the MacBook Pro's cron `4ff7a1bc`, 12:46 10-26 to its last pass 21:32 10-27, was deleted at
+**One watch at a time.** A watch is a session cron: it dies with its Claude session and expires after 7 days. No
+watch runs since the Mac Studio's session stopped (its cron `1b3ab805`, session `upside2-md-a0`, hourly at :23 from
+17:41 11-02, last pass 09:26 11-03; user 11-04: "do not monitor"); its prompt is "Hourly watch prompt" below with
+ff3.2's readouts left to `upside2-md-fe`. None ran 21:55 10-27 to 17:41 11-02 (the MacBook Pro's cron `4ff7a1bc`, 12:46 10-26 to its last pass 21:32 10-27, was deleted at
 the handoff; user 10-24: "continue monitoring midway2 and midway3"). A watch is read only: it submits, resubmits and
 changes nothing, never reopens a socket, and reports to the user; after a record change it copies the five records
 into the handoff bundle's `records/`, so the bundle stays current if the owner shuts down first. Each pass records what
@@ -1015,7 +1018,13 @@ inodes free (105 G used in under 5 h; the watch reports below 200 G). Paths: `$P
   Rg 19-21 A, one slot's instantaneous value, read beside findings 5.6's block 2 / block 3 disagreement. Groups in
   `run.<r>.up` (each block opens with its 287-frame calibration group ending at t 18.0; `checks/glpg_groups_20261022.py`),
   block 2 / block 3: 79HIS 19-37 / 38-56, 79HIS_S115T 18-36 / 37-54, 79ALA 19-37 / 38-55, 79ALA_S115T 19-37 / 38-56.
-  **Owed:** TM4 at the ends of blocks 2, 3, 4 and 5 of ff3.0's four chains (`tm4_ff31.py`, `gly_flip_rungs.py`, DSSP).
+  **Read 14:56 11-04** (`checks/tm4_ff30_blocks_20261104/tm4_ff30_blocks_20261104.txt`, job 49814556; block 1
+  reproduces the 10-18 readout, the block ranges these): TM4 at T 0.70 over blocks 1-5 (phi/psi 134-151; DSSP alpha 135-151): 79HIS holds (0.98-1.00; 0.92-0.96), 79HIS_S115T
+  holds (0.97-0.99; 0.91-0.94; GLY149 at phi > 0 rising to 0.16 in block 5), 79ALA frays from block 4 (0.91; DSSP 0.74,
+  0.71; weakest 141 and 149, GLY136/143/149 at 0.10-0.19), and 79ALA_S115T's GLY149 sits at phi > 0 in 0.26-0.48 of
+  frames from block 2 (DSSP 0.65-0.75). So under ff3.0 TM4 frays in the H145A (79ALA) backgrounds and holds in the
+  79HIS ones. The replicas were then
+  deleted ("Disk").
 - **HDX dG on the four ff3.0 chains, blocks 2 and 3** (user 10-22: "generate delta G plot into ~/Downloads, and I will
   see if we need longer run"; on midway3 caslake, since midway2's venvs lack mdtraj, pymbar and matplotlib). Readout
   findings 5.6: the blocks disagree well beyond their error bars, so one block does not converge the dG. Scripts,
@@ -1281,16 +1290,23 @@ own steering. `$B` = `/beagle3/trsosnic/yinhan/boltz_hdx`.
   `addon/runs/scale_readout.txt`): removal fails at 1,024 and 4,096; the rule's other branch needs the 16,384 arms.
   E1 closed 11-03 (user: "proceed with your recommendation"); the 16,384 arms are not rerun.
 - **Phase 3 T1, invariance of Boltz-2's own move** (user 11-03: "proceed", to T1 as proposed; rule fixed before the
-  data in `diffusion_dynamics.md` Phase 3 T1): **62199777** `boltz_remc_t1_ubqps_v100`, submitted 18:13 11-03 from
-  `$B/addon` with `sbatch --partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1 --constraint=v100
-  --time=06:00:00 t1.sbatch` (`--test-only` passed first; Slurm's estimate 04:50 11-04), logged in
-  `addon/submitted.log`. Code `remc.py` `6bf12acf`, `remc_boltz.py` `7b21e83b`, `t1.sbatch` `8902a64b` (local copies in
-  `scratchpad/boltz_hdx/addon/`). The job extracts the packed `.venv` (`checks/disk_reclaim_20261102/boltz_venv.tar`)
+  data in `diffusion_dynamics.md` Phase 3 T1): **62263853** `boltz_remc_t1_ubqps_v100`, submitted 11:27 11-04 from
+  `$B/addon` with `sbatch --job-name=boltz_remc_t1_ubqps_v100 --partition=gpu --qos=gpu --account=pi-trsosnic
+  --gres=gpu:1 --constraint=v100 --time=06:00:00 t1.sbatch` (`--test-only` passed first), logged in
+  `addon/submitted.log`. Code `remc.py` `e5e9dfb2`, `remc_boltz.py` `7556f0ae`, `t1.sbatch`
+  `8902a64b` (copies in the MacBook Pro's `scratchpad/boltz_hdx/addon/`; the Mac Studio's are the old ones). The first
+  submission, 62199777 (18:13 11-03, code `6bf12acf` / `7b21e83b`), FAILED 19:31 at the parity check (`DIFFERENT, max
+  |d| 36.9 A`; the sampler against itself equal): `remc.schedule` read the module's `num_sampling_steps`, Boltz2's
+  default of 5, while the sampler ran 200, so every move would have started at step 3-4 of 5. Fixed in `remc_boltz.py`
+  (backups `.bak_pre_nsteps_20261104`; diffusion_dynamics.md Phase 3 T1). Its rerun 62262317 (10:57-11:05 11-04)
+  passed the check (`equal`) and FAILED at its first observation: `atom_idx`, a field of Boltz's 43-byte residue
+  records, is a strided view torch cannot index with; copied to a contiguous int64 array (backup
+  `.bak_pre_stride_20261104`), and the whole run path tested on the Mac with Boltz stubbed before 62263853. The job extracts the packed `.venv` (`checks/disk_reclaim_20261102/boltz_venv.tar`)
   and `cache/mols.tar` to the node's `/tmp` and deletes them at its end, so `/beagle3` gets only the log and the
   result; it reruns `boltz predict` on `inputs/ubqps.yaml` for the processed input (the 11-03 cleanup deleted the old
   one), then the parity check (`[check]` line; the job stops if not equal), then 256 chains x 100 sweeps with 1,024
   same-trunk plain samples (about 3.3 h; `[remc] sweep N` every 10 sweeps). Log
-  `$B/logs/boltz_remc_t1_ubqps_v100_62199777.out`; data `$B/addon/runs/boltz_remc_t1_ubqps_v100_62199777/`
+  `$B/logs/boltz_remc_t1_ubqps_v100_62263853.out`; data `$B/addon/runs/boltz_remc_t1_ubqps_v100_62263853/`
   (`predict.log`, `t1.npz`). Any later Boltz GPU job reuses `t1.sbatch`'s node-local extraction instead of unpacking
   on `/beagle3`.
 - The readout tools are git-ignored, `scratchpad/boltz_hdx/flags/` and `scratchpad/bioemu2_hdx/readout/`, copied into
@@ -1309,8 +1325,7 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
 
 | JobID / where | what | state | next action |
 |---|---|---|---|
-| **62199777** (`boltz_remc_t1_ubqps_v100`, midway3 gpu, V100) | Boltz Phase 3 T1: Boltz-2's own renoise-denoise move at lambda 0 on Ub psWT, 256 chains x 100 sweeps, with the parity check and 1,024 same-trunk plain samples (line 4) | PD from 18:13 11-03 (Slurm's estimate 04:50 11-04); log `$B/logs/boltz_remc_t1_ubqps_v100_62199777.out` | pull `t1.npz`, read with `addon/t1_read.py` by Phase 3 T1's rule, report to the user |
-| **49803361** (ff2.1), **49803362** (ff3.1), `tm_mdc_u3_<ff>`, midway2 broadwl 28 cores | Upside 3 GPU, item 12 step 5's deciding test: TM-score of the GPU panel against the CPU reference, paired per domain (`checks/converge_20261020/tm_panel.sbatch domains_mdcath <runs> u3_<ff>_gpu u3_<ff>_cpu mdcath_candidates/candidates_mdcath.csv`, run from `ff3_selection`); logs `/beagle3/trsosnic/yinhan/upside3_gpu/checks/mdc/logs/tm_mdc_u3_<ff>_gpu_cpu_<id>.out`; series cached in `checks/converge_20261020/tm_runs/u3_<ff>_<engine>/`; data `upside3_gpu/checks/mdc/runs/u3_<ff>_{gpu,cpu}/` (47 GB a tag, 188 GB; kept until step 5 is read; `/beagle3` group 4.57T of 5.00T) (line 5) | submitted 08:33 11-04 | both done: step 5's rule (CI of the mean TM difference contains 0 and Wilcoxon p > 0.05) for each force field, then plan.md item 12 step 6 |
+| **62263853** (`boltz_remc_t1_ubqps_v100`, midway3 gpu, V100) | Boltz Phase 3 T1: Boltz-2's own renoise-denoise move at lambda 0 on Ub psWT, 256 chains x 100 sweeps, with the parity check and 1,024 same-trunk plain samples (line 4); the second rerun (62199777 parity failed, 62262317 strided index; both fixed) | PD from 11:27 11-04; log `$B/logs/boltz_remc_t1_ubqps_v100_62263853.out`; `[remc] sweep N` every 10 sweeps, about 3.3 h | pull `t1.npz`, read with `addon/t1_read.py` by Phase 3 T1's rule, report to the user |
 | `$P/training/ff311_glypair*` (no job) | The ff3.1 training debug, `ff311_glypair` and `ff311_glypair_mb2` (plan.md Phase 32; line 2), on the old native target | both at their target 76 (`_mb2` 11:44 10-30, `ff311_glypair` 03:35 10-31 after a NODE_FAIL in step 65) | both arms' round 4 by Phase 32's rule; `ff311_glypair`'s round 3 |
 | 30 restarted `b_ff_3.1_<prot>_<kind>`, now chunks **49760923-49760946**, collector next **49750446** (`ff31_collect`) | ff3.1's Peng arms on the pre-audit Upside 2 engine and their collector (plan.md Phase 37; line 2) | BBA and BBL native COMPLETE and scored (final frames finite, KE/1.5kT 1.002-1.008); the 30 broken chains restarted 12:18 11-02: BBA de novo COMPLETE 13:49, WWdomain de novo 18:05, WWdomain native 18:35 and NTL9 native 22:10 (final frames finite, KE/1.5kT 1.000-1.007, 1.003-1.008, 1.004-1.009 and 1.004-1.007, 14 replicas each), WWdomain native and de novo scored 21:45-21:48, NTL9 native 04:23 11-03 by pass 49748728 (`<TM>` 0.199 at T 0.680, released ff2.1 0.249); the other 26 chunks ended 22:51 and resubmitted themselves (49748835-49748860, logs written), none on the throttled midway2-[0316-0327]; of them gpW native 49748839 COMPLETE 05:55 11-03 and alpha3d native 49748860 07:57 (final frames finite, KE/1.5kT 1.002-1.006 and 1.002-1.006, 14 replicas each); the other 24 ended at their wall time 09:22 11-03 and resubmitted themselves (49760923-49760946), PD on Priority at 09:26 (broadwl 179 of 180 nodes allocated); collector next 49750446 (begin 09:49) | each arm's final frames at `[bench] COMPLETE`; `peng_ff31.txt` when DONE |
 | **49754482** (`condiv-train`, epoch 3 to 76), successor **49765255** (PD afterany) | `ff32_dse0` trained on, the comparison for ff3.2 since 11-03 (plan.md Phase 38 items 6, 11; line 2) | R from 11:41 11-03, step 69 at 17:37 (24 of 24 proteins every step, margin +0.159); `z32_02` (49754402) and its shift (49754413) COMPLETED 12:16, read 17:50: folds 0.599, level with released ff2.1 (-0.016 [-0.059, +0.026]), shift +6.38 E_up | at step 76 (about 21:05 11-03) `after_training.sbatch` queues `z32_03` and stops; then Phase 38 item 7 |
@@ -1428,7 +1443,11 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
   batch 4): 356 runs per force field to t 9990, no non-finite value, KE/1.5kT after t 2000 1.006 (1.001-1.011 per
   run), the last frames' longest C-N 1.85 A (ff2.1) and 1.84 A (ff3.1). Folded fraction against the CPU reference
   (`paired_npz.py`, `checks/mdc/paired_u3_<ff>_gpu_cpu.txt`): ff2.1 -0.002 [-0.023, +0.019] p 0.91, ff3.1 -0.003
-  [-0.030, +0.023] p 0.92. TM-score 49803361-62 submitted 08:33.
+  [-0.030, +0.023] p 0.92. TM-score 49803361-62 (submitted 08:33) COMPLETED 09:27-10:37 11-04 and **passes**
+  (read 10:50 on the MacBook Pro): mean TM, GPU - CPU over the 89 domains, ff2.1 -0.000 [-0.005, +0.005] p 0.86, ff3.1
+  +0.000 [-0.005, +0.006] p 0.91 (logs `checks/mdc/logs/tm_mdc_u3_<ff>_gpu_cpu_<id>.out`). No job of line 5 runs.
+  The panel's trajectories (`upside3_gpu/checks/mdc/runs/u3_<ff>_{gpu,cpu}/*.up`, 197 GB) were deleted 11-04 after
+  this read; npz, logs and the TM series kept ("Disk").
 - V1 of the released ff3.1, 61986517 (V100, log `checks/g0/v1_v100_61986517.out`, COMPLETED 00:30 11-01): the three
   configs pass every quantity (384 each), the same worst error per config as 61891693 on the earlier tables; the host
   backend passes them too (Mac Studio).
@@ -1645,14 +1664,38 @@ quota   (midway3 login)     -> /beagle3 and /project group blocks and files with
 `df` counts free space against the hard limit, but past the soft quota a grace period runs, and when it ends the soft
 quota is the limit: creation fails while `df -i` still shows ~118,000 free (findings 10.39).
 
-Now: **`/beagle3/trsosnic` files 1,163,452 of a 1,268,000 soft quota, 104,548 under** (`df -i` and `quota` 09:26 11-03,
-after the reclaims below; limit 1,394,800; `quota` lags `df -i` by up to an hour, it read 1,254,102 at 08:26). About 118,000 of them are
-ours (`yinhan/` 209,049 by `du --inodes` 07:40 11-03, before the 08:05 reclaim); the rest are other members':
-`anaconda/` 507,205 (owner a removed account), `schwartznw/` 339,897, `yiheng/` 180,347, about 15,000 in smaller
-directories. It was over the soft quota from 10-27 at the latest (IFree 125,183 then) until the grace expired 11-02
+Now: **`/beagle3/trsosnic` files 656,016 of a 1,268,000 soft quota, 611,984 under** (`df -i` 14:42 11-04, after
+`anaconda/`'s deletion below; limit 1,394,800; `quota` lags `df -i` by up to an hour). Ours are about 118,000 (`yinhan/` 121,705
+by `du --inodes` 11:03 11-04, about 92,000 of them the venvs and interpreters live work uses); the rest are other
+members': `anaconda/` 507,205 (owner uid 1105467662, a removed account), `schwartznw/` 339,897, `yiheng/` 180,347,
+about 15,000 in smaller directories, before `anaconda/` was deleted 11-04 (below). **`anaconda/`** (checked 11-04, read only): an Anaconda3 2022.05 base (Python 3.9.18) made under
+bayhi's account (gone on midway3), group-writable; no process, job or script outside bayhi's trees uses it now; last
+activity a conda command 08-25; members installed into it until 2026-02 (jbolger tensorflow, MDAnalysis; simoneritchey
+mrcfile; schwartznw jupyter; ours antiorm, db, sqlitedict). 449 packages, 161 beyond stock 2022.05; site-packages
+154,251 files. Ours depends on it only through `/beagle3/trsosnic/yinhan/upside2-md/source.sh` (anaconda first on
+`PATH`, used by `run_hdx_analysis.sh`), and for us it is already broken: `~/.local`'s numpy 2.0.2 shadows its 1.26.4,
+so pandas, tables and mdtraj fail unless `PYTHONNOUSERSITE=1`. **Its replacement** (user 11-04: public, not under
+one member's name; a new venv, since the shared deployment's `.venv` would have to change numpy, tables, scipy and
+prody under a running campaign): `source /project/trsosnic/shared/anaconda_py39.sh` on either cluster, a venv on
+`python-3.9.18` (a copy of the deployment's `pyrt`) holding anaconda's 426 Python packages at their versions, conda's
+tooling left out, about 166,000 files (9.7 GB) on `/project`; differences, build (`build/build.sh`, `build.log`) and
+checks in `/project/trsosnic/shared/README.md`. Every package imported in its own process: 420 of 429 on both
+clusters (fail: pycurl, which has no Python 3.9 wheel; db, streamlit and a check artifact, as in anaconda), after
+gcc 10.1.0's libstdc++ and conda's unixODBC were added to its interpreter's `lib`; on midway2 its tensorflow stack
+imports where anaconda's does not. It reproduces the HDX tools' results of `.venv_el8_py311_bak` (md5-equal
+`PDB_to_initial_structure.py` outputs, bitwise trajectory, MBAR to 10 decimals) on midway3. **Backup**:
+`/project/trsosnic/shared/archive/beagle3_anaconda_20261104.tar` (job 49809806: 23 GB, 637,439 entries equal to the
+tree's, no error; a manifest of every path with its access time written first, since reading the tree resets them;
+`tar --compare` found no difference in the 65 min it ran before it was stopped for the deletion), restore by
+`tar -xpf <tar> -C /beagle3/trsosnic`. **Deleted 14:03-14:42 11-04** (user: "delete it now, as we already have tar
+file"; job 49812826, `shared/archive/rm_anaconda.sbatch`, log `rm_anaconda_49812826.out`), after a last check that
+no process or job on either cluster used it and nothing in it changed since the tar: `/beagle3` files 1,163,216 to
+656,016. Left: `etc/jupyter/labconfig/page_config.json` and its directories (schwartznw's, not group-writable).
+`/beagle3/trsosnic/yinhan/upside2-md/source.sh` still puts the deleted path on `PATH`; remove that line when the
+ff3.1 Peng campaign ends. Blocks 1.2 T free by `df` after the 11-04 reclaim. It was over the soft quota from 10-27 at the latest (IFree 125,183 then) until the grace expired 11-02
 between 19:30 and 19:46, and no file could be created until 21:51. Blocks 4.39 T of 5.00 T. **`/project/trsosnic`
-2.99 T of a 3.49 T soft quota** (`quota` 08:12 11-03; limit 3.84 T, 864 G free by `df` 06:26; files 478,584 of
-1,035,800). `/project2/trsosnic` 1.45 T of 1.49 T; nothing in these campaigns writes there. Midway3 home: 25 G of a
+2.92 T of a 3.49 T soft quota** by `quota` 14:47 11-04, before ff3.0's deletion; 1.2 T free by `df` after it
+(14:58; limit 3.84 T; files about 661,000 of 1,035,800, the shared environment's 166,000 included). `/project2/trsosnic` 1.45 T of 1.49 T; nothing in these campaigns writes there. Midway3 home: 25 G of a
 30 G quota (§8).
 
 **`/beagle3` inode exhaustion, 12:20-14:30 10-24** (findings 10.39): the first submission of Boltz's 10^5 tests filled
@@ -1661,6 +1704,33 @@ Disk quota exceeded`), and four Peng chunks died in 9 s with no log (exit 0:53: 
 were resubmitted (§1 line 3).
 
 **Reclaimed at the user's word** (manifests, scripts and logs kept):
+* 11-04 14:58, ff3.0's trajectories, 260.3 GB and 1,002 files (`checks/disk_reclaim_20261104_ff30/`, `m8`-`m12`,
+  `reclaim.log`; user: "ff3.0 is transitional ff, so once we have the results analyzed and on the slides, we can
+  comfortably delete the trajectory files"; `/project` 972 G to 1.2 T free). First the one owed readout, TM4 over
+  blocks 1-5 (above), then the readouts copied to `checks/archive_1102_20261104/ff30/` and the 1102 report folder
+  (TM4 tables, Upside 3 `glpg_ff30` blocks 1-3, the 12 HDX `results/`). Deleted: the four Upside 2 chains' replicas
+  (192.2 GB; `seeds/`, logs, `block_count` kept) and their HDX `outputs/popg_remd` (21.1 GB; `results/`, `inputs/`
+  kept), the `.placedefect_20261017` HDX outputs (2.8 GB), Upside 3 `glpg_ff30`'s REMD replicas (9.4 GB;
+  checkpoints and `remd_start.up` kept) and the `ff_3.0_gdepth` Peng replicas (34.6 GB; `input/`, scores kept).
+  The released force field files `ff_3.0_gdepth` themselves are kept.
+* 11-04 14:03-14:42, `/beagle3` files 1,163,216 to 656,016: `/beagle3/trsosnic/anaconda` deleted (507,200 files),
+  backed up first as one tar on `/project` and replaced by `/project/trsosnic/shared/anaconda_py39` (above).
+* 11-04 11:42-11:44, 559 GB and 7,420 files: `/beagle3` 294.5 GB (3,544 files), `/project` 264.8 GB (3,876)
+  (`checks/disk_reclaim_20261104/`: `reclaim.sh` md5 `81723eb8`, `m1`-`m7` manifests, `reclaim.log`; user: "Make sure
+  we have the results analysed and recorded in /Users/yinhan/Documents/2026/reports/GroupMeetings/1102, then proceed
+  to delete results already done analysed"). Readouts first copied to `checks/archive_1102_20261104/` and to the
+  report folder's `results_archive_20261104/` (README there: dataset, result, what was deleted). Deleted, trajectory
+  `.up` files only, each with one link and unwritten for an hour: the GPU mdCATH panel and its CPU reference
+  (`upside3_gpu/checks/mdc/runs/`, 197.4 GB), the GPU glpG TM4 block's replicas (8.6 GB; `remd_start.up` and the
+  stage 7.0 checkpoint kept), V3's runs (7.6 GB), the `ff_2.1_nobp` and `ff_2.1_ctrl38` Peng replicas (69.1 GB;
+  `input/`, `run.log`, `COMPLETE`, scores kept), `bp_validation/runs` (11.8 GB; `static/`, `obs_*.npz`, analyses
+  kept), the panels `c9_00_{bb21,env21,hb21,rot21,sheet21}`, `c9_02`, `c9_03`, `n32_00`-`04`, `s32_00`,
+  `z32_00_{rot21,bb21,hb21,env21,sheet21,rama0}` (204.7 GB) and the retired merge's `p44_ff31`, `mdc_ff31` (60.1
+  GB); every panel's npz kept, so `paired_npz.py` and `panel.py select` still read them. The first run stopped after
+  `m1` (its check loop returned 1 under `pipefail`); fixed and rerun, 0 of every manifest remain. Kept as not
+  finished or still read: the Upside 3 Peng runs (top7's gap open), the released ff2.1 Peng arms, the reference
+  panels (released ff2.1, released ff3.1, ctrl38 and no-BP epoch 3), `w32_*`, `z32_00`-`03`, `a31_*`, `a32_*`, the
+  ff3.0 Upside 2 glpG chains and the Upside 3 glpG runs.
 * 11-03 08:05-08:12, `/beagle3` files, 1,254,102 to 1,163,475 by `df -i`
   (`checks/disk_reclaim_20261102/reclaim_boltz_phase2.sh` md5 `7a15ee01`, `manifest_boltz_mols.txt`,
   `manifest_boltz_venv.txt`; user: "Delete some files to clear the file limit", "Maybe tar some of them then delete",
@@ -1685,7 +1755,8 @@ were resubmitted (§1 line 3).
   `block2-3/` and `joined/` of the 12 ff3.0 glpG HDX work dirs (388.5 G; `results/`, `outputs/popg_remd/`,
   `inputs/`, `pdb/`, `protein_only/`, `acc_shift_corrected/` kept, 29 G; checked after: 12 of 12 `dG_profiles.npz`,
   336 of 336 outputs). The four ff3.0 chains' replicas (112 files, 179 G) stay, so the recipe's
-  `hdx_block.sbatch` (`extract_block.py`) rebuilds any copy into a new work dir. Offered and kept: those chains (TM4 at blocks 2-5 owed) and the released `ff_3.0_gdepth` Peng arms (32 G).
+  `hdx_block.sbatch` (`extract_block.py`) rebuilds any copy into a new work dir. Offered and kept then: those chains
+  (TM4 at blocks 2-5 owed) and the released `ff_3.0_gdepth` Peng arms; both deleted 11-04 (above).
 * 11-03 00:24-00:38, old Boltz and BioEmu2 (`reclaim_boltz_bioemu2.sh`, `manifest_boltz_runs.txt`,
   `manifest_bioemu2.txt`; user: "clean up old boltz and bioemu2 files, if no longer in use", then chose BioEmu2's env
   and weights, its samples, and Boltz Phase 0-1 runs; both finished and read out, `diffusion_dynamics.md` Phase 1 and
@@ -1731,9 +1802,8 @@ were resubmitted (§1 line 3).
   byte, but CA-RMSD (`panel_compare.py`) can no longer be recomputed for these tags).
 
 **Large directories awaiting the user:** `popepopg_REMD`'s four variant directories (355 G, `hdx/` on the §1b list),
-`gly_peptides` (§1b), `glpG_DDM_micelle_REMD` (73 G, §1b), `implicit_79HIS_*` (70 G), `popepopg_glpG` (9 G). The
-four Upside 2 ff3.0 glpG chains' replicas (179 G; TM4 at blocks 2-5 owed) and the released `ff_3.0_gdepth` Peng
-arms (32 G) were offered 11-03 and kept. What grows: each panel ~11 G (mdCATH ~47 G), each
+`gly_peptides` (§1b), `glpG_DDM_micelle_REMD` (73 G, §1b), `implicit_79HIS_*` (70 G), `popepopg_glpG` (9 G). What
+grows: each panel ~11 G (mdCATH ~47 G), each
 training step in flight ~38 G of replica files (deleted at the step's end), each block-2 HDX ~28 G.
 
 ---

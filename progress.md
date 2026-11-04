@@ -946,3 +946,24 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   [-0.023, +0.019] p 0.91, ff3.1 -0.003 [-0.030, +0.023] p 0.92. TM-score comparison (step 5's test) submitted on
   broadwl. Files: plan.md (Phase 35 Resume here, item 12 step 5), findings.md 11g, upside3.md 10.2,
   remote_jobs.md (header, line 5, job table, §1), progress.md.
+* **11-04 10:40-11:30, MacBook Pro: status pass, Boltz T1 fixed, GPU step 5 read, closures and disk surveyed**
+  (user: "check remote job status", then "fix the failed jobs, check which task branch can be closed, and check what
+  can be removed"). Since 09:26 11-03 every job COMPLETED but Boltz T1 62199777, which failed its parity check: the
+  module's `num_sampling_steps` is Boltz2's default 5, so `remc` ran a 5-step schedule against the sampler's 200.
+  Fixed; the rerun 62262317 passed parity and failed on a strided `atom_idx` index; fixed and the post-check path run
+  end to end on the Mac with Boltz stubbed; rerun 62263853. Upside 3 GPU item 12 step 5 passes (mean TM GPU - CPU
+  ff2.1 -0.000 [-0.005, +0.005], ff3.1 +0.000 [-0.005, +0.006]). Read beside, not recorded in their lines (owned by
+  the Mac Studio): ff3.2 `w32_01` 0.633, `w32_02` 0.674 (+0.059 [+0.015, +0.103] over released ff2.1), `z32_03`
+  0.606; bpmax at step 38 on the fixed engine; ff3.1 Peng 23 of 32 COMPLETE. Then (user: record the analysed results
+  in the 1102 report folder, then delete them; Mac Studio stopped, no watch): readouts of seven finished datasets
+  copied to `GroupMeetings/1102/results_archive_20261104/` (README) and `checks/archive_1102_20261104/`, then 559 GB
+  of their trajectories deleted by manifest (`checks/disk_reclaim_20261104/`; `/project` 989 G free, `/beagle3` 1.2 T,
+  files 1,163,220). Owner none. Files: `scratchpad/boltz_hdx/addon/` `remc_boltz.py`, `remc.py` (and the cluster's,
+  with backups), diffusion_dynamics.md (Phase 3 T1), plan.md (Phase 35), remote_jobs.md (header, Owed, Handoff, the
+  watch, line 4, line 5, job table, Disk), progress.md. Then `anaconda/` (user: check its use, a replacement with
+  fewer files in a public directory, a tar backup first): no current use found; replacement
+  `/project/trsosnic/shared/anaconda_py39` (anaconda's 426 packages at their versions, 166k files, 420 of 429 import
+  on both clusters, HDX parity) and backup `shared/archive/beagle3_anaconda_20261104.tar` (637,439 entries); then
+  deleted at the user's word, 14:03-14:42: `/beagle3` files 1,163,216 to 656,016 of 1,268,000. Then ff3.0 (user: transitional, delete its trajectories once analysed and on the slides): the owed TM4 over
+  blocks 1-5 of its four Upside 2 chains read (frays in the 79ALA backgrounds, holds in the 79HIS ones; findings 1.35),
+  readouts archived, 260.3 GB of ff3.0 trajectories deleted (`checks/disk_reclaim_20261104_ff30/`).

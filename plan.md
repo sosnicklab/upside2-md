@@ -297,7 +297,8 @@ stopped 10-18 in Phase 21); the old chains are kept as `<V>.<ff>.placedefect_202
 at phi > 0 at T 0.70 (findings 1.35); ff3.0's HDX on blocks 2 and 3 is Phase 16's closing readout (findings 5.6:
 the blocks disagree beyond their error bars, so a longer run is the user's decision).
 
-7. [ ] Owed: TM4 at the ends of blocks 2-5 of the 8 chains (remote_jobs.md).
+7. [x] TM4 over blocks 1-5, read 11-04 on ff3.0's four chains (the old ff3.1's were deleted 11-02; findings 1.35):
+   frays in the 79ALA backgrounds, holds in the 79HIS ones. ff3.0's trajectories deleted after (remote_jobs.md).
 
 ### Phase 19 - a second native-state panel from mdCATH (DONE 2026-10-17, user)
 The Peng benchmark's 16 natives and the 44-domain panel (60 proteins) do not resolve ff_2.1_nobp from its
@@ -981,7 +982,7 @@ math is shared through `UPSIDE_HD` and lane-type templates, the loops are per ba
 as C++ (host backend) so the device path is tested on the Mac; 64-bit fixed-point accumulation (deterministic, a
 non-finite value reads back as NaN); BP one block per system on the CPU's schedule; one CUDA 11.5 binary from midway2
 for K80 to A100; development tree `/beagle3/trsosnic/yinhan/upside3_gpu` (the Upside 3 tree is under its validation).
-**Resume here (state at 2026-11-04 08:40, Mac Studio).** **Validated and closed 11-03 (user: "close what is
+**Resume here (state at 2026-11-04 10:50, MacBook Pro).** **Validated and closed 11-03 (user: "close what is
 validated"): the GPU runs soluble proteins on ff2.1 and ff3.1 with the CPU's results**, by `upside3.md` 10.2's ladder
 (findings 11g): V0 by construction; V1 of every node on the 14 standard configs, the 16 Peng proteins' 320 frames
 (native, misfolded globules, both BP tolerances) and mixed batches, on the K80, V100, RTX6000 and A100 (items 10-12);
@@ -990,16 +991,16 @@ distributions (items 10-11). Its scope: dynamics of one protein per process (mix
 dynamics are step 5's mdCATH panel); a config with an unported node (`Const3D`, `WallSpring_*`, membrane and
 restraint terms) is refused by name; V3 cannot resolve a native-basin potential difference below 1-2 E_up. The
 energy gain without the thermostat and KE/1.5kT 1.005 are the CPU engine's, which the GPU reproduces (Known Errors).
-Open: the hybrid (1rkl 7.0's V1 and V2 and glpG's V1 and V2 pass, and glpG's TM4 block agrees with the CPU's;
-stage 7.1, area per lipid, rigid groups and the barostat) and the mdCATH panel's TM-score test (its runs pass the
-CPU reference's checks and its folded fraction agrees). Speed: one V100 with 4 ladders samples as fast as one 14-core broadwl
+The mdCATH panel (mixed batches of 89 domains) passes on both force fields: TM-score and folded fraction equal to
+the CPU reference's (item 12 step 5, 11-04). Open: the hybrid (1rkl 7.0's V1 and V2 and glpG's V1 and V2 pass, and
+glpG's TM4 block agrees with the CPU's; stage 7.1, area per lipid, rigid groups and the barostat). Speed: one V100 with 4 ladders samples as fast as one 14-core broadwl
 job on proteins, the K80 slower than 4 broadwl cores; glpG's 48 replicas run 850 tu an hour on a V100, 1,100 on the
 A100, against 60 on a 28-core broadwl node; an mdCATH batch of 88 systems of 169-242 residues runs 1.8 times as
 fast on an A100 as on a 28-core broadwl node after g9b (2.0 times), and batches of 57-166 residues 1.4-1.5 times
 as fast on a V100. Build g9b (g9a with the `--gpu` host work parallel over systems, bitwise g9a's on a V100) is the
 GPU tree's `obj` since 00:36 11-04.
-- Running (remote_jobs.md line 5): item 12 step 5's TM-score comparison of the GPU panel against the CPU reference,
-  one broadwl job per force field, at the user's word of 11-03 ("proceed to next validations").
+- No job runs. Item 12 step 5 passed 11-04: the mdCATH panel on the GPU gives the CPU reference's mean TM-score on
+  both force fields (ff2.1 -0.000 [-0.005, +0.005] p 0.86, ff3.1 +0.000 [-0.005, +0.006] p 0.91).
 - The computer: the code is HEAD `a3b23e2` (g9a's mixed batches and `run.py`'s `remd_engine` in `3aa607d`) plus
   g9b's `src/main.cpp`, uncommitted; the working tree's `src`, `py` and `tests` equal `scratchpad/gpu_work/dev16_home`'s
   (`dev15_home` is g9a). The gitignored tools are in
@@ -1010,8 +1011,8 @@ GPU tree's `obj` since 00:36 11-04.
   the cluster's `checks/configs` by md5 (the cluster's hold the released ff3.1's and `glpg.stage_7.0.up`, which the
   Mac lacks); single files are sent by `scp`.
 - Next, in order:
-  1. When the TM-score jobs end: step 5's rule on each force field's `all` line (the bootstrap interval of the mean
-     TM difference contains 0 and Wilcoxon p > 0.05); if either fails, find why before step 6; then step 6.
+  1. Item 12 step 6: the report to the user and `upside3.md` 10's readiness statement. The panel's trajectories
+     were deleted 11-04 after step 5's read (its npz, logs and TM series kept; remote_jobs.md "Disk").
   2. (b) item 7's open box, rigid groups and the barostat on the device, for the preparation stages, stage 7.1 and
      area per lipid; (d) the GPU code into the Upside 3 tree once its campaigns end (never while they run).
 - The estimate told the user 11-02 15:30: the mdCATH panel 11-05 to 11-07; glpG TM4 on the GPU 11-06 to 11-09 (now
@@ -1271,7 +1272,7 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
        19 of 48 below), and the ladder mean, which the exchanges cannot change, is 0.706 against 0.689 and falls
        alike by quarter (GPU 0.787, 0.729, 0.675, 0.632; CPU 0.766, 0.694, 0.659, 0.638). So T 0.70's difference is
        in which configurations occupy the cold rungs, not a bias of the engine. T 0.795 reads 0.717 against 0.705.
-    5. [ ] mdCATH on the GPU: `mdc_run.py`; the CPU reference (356 runs on broadwl, about 7 h on 28 cores per force
+    5. [x] mdCATH on the GPU: `mdc_run.py`; the CPU reference (356 runs on broadwl, about 7 h on 28 cores per force
        field) and the GPU panel (356 systems in size-binned batches on V100s, its cost from a one-batch probe, which
        also times the host work: frames and pivot moves run serially over systems in `main.cpp`'s `--gpu` loop, and
        if they take more than 10% of the run that loop is parallelized as the CPU branch is, bitwise). The engines
@@ -1323,7 +1324,11 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
        (ff3.1). Folded fraction, GPU - CPU over the 89 domains (`paired_npz.py`): ff2.1 -0.002 [-0.023, +0.019]
        p 0.91, ff3.1 -0.003 [-0.030, +0.023] p 0.92; mean Q +0.000 for both; every length bin's and fold stratum's
        interval contains 0. The TM-score comparison (`tm_panel.sbatch`, one broadwl job per force field)
-       submitted 08:33.
+       submitted 08:33. **Passes** (49803361-62 COMPLETED 09:27-10:37 11-04, read 10:50; logs
+       `upside3_gpu/checks/mdc/logs/tm_mdc_u3_<ff>_gpu_cpu_<id>.out`): mean TM, GPU - CPU over the 89 domains, ff2.1
+       0.727 / 0.727, -0.000 [-0.005, +0.005] p 0.86 (43 domains lower, 46 higher); ff3.1 0.731 / 0.730, +0.000
+       [-0.005, +0.006] p 0.91 (44 / 45). Every length bin's and fold stratum's interval contains 0; of the 14
+       strata's TM > 0.5 tests one reads p 0.046 (ff2.1 mixed, +0.007 [+0.000, +0.016]), within chance over 14.
     6. [ ] Report to the user what runs on a GPU and how fast, and update `upside3.md` 10 and the readiness statement.
     Estimate (11-02): steps 1-2 11-03 to 11-04, step 3 11-04, steps 4 and 5 11-05 to 11-07.
 

@@ -864,7 +864,21 @@ with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler 
         proportion pooled over chains and reference (the chains counted by their effective number of states), the
         two-sample test under the null; the C-N share likewise. The synthetic pass case then passes (largest |z|
         2.69) and a case with one donor shifted fails (-34.7). `addon/t1_read.py`.
-      * Submitted 18:13 11-03 as **62199777** (`t1.sbatch`; `remote_jobs.md` §1 line 4), Slurm's estimate 04:50 11-04.
+      * 62199777 (submitted 18:13 11-03) failed rule 1 at 19:31: `denoise_from` at step 0 against Boltz-2's sampler
+        DIFFERENT, max |d| 36.9 A; the sampler against itself equal. Cause: `remc.schedule` reads the module's
+        `num_sampling_steps`, which Boltz2 leaves at AtomDiffusion's default of 5 (`Boltz2DiffusionParams` has no
+        such field; the 200 steps are passed per call), so the check ran a 5-step path, and T1's moves would have
+        started at steps 3-4 of 5 instead of 118-155 of 200. The toy sets its own count, so T0 could not see it.
+        Fixed 11-04 in `remc_boltz.py` (the module's count set to `SAMPLING_STEPS`; `remc.py` `e5e9dfb2` with a
+        docstring only; backups `.bak_pre_nsteps_20261104`). The rerun 62262317 passed rule 1 (10:59 11-04: `equal`,
+        the sampler against itself equal) and then failed at the first observation: `structure.residues["atom_idx"]`
+        is a field of a 43-byte structured array, and torch refuses `start[1:]`'s stride as an index. Fixed by
+        copying it to a contiguous int64 array (`remc_boltz.py` md5 `7556f0ae`, backup `.bak_pre_stride_20261104`).
+        The code after the check had not run before, so it was run end to end on the Mac first, through the real
+        `remc.py`, `protection.py` and `ubqps_protection.npz` with Boltz stubbed by a network that denoises to the
+        1UBQ reference (session scratchpad, not kept): the check equal, `t1.npz` written with every array, 72 donors,
+        CA-RMSD 0 and the reference's C-N; the harness reproduces both failures on the earlier files. Rerun
+        **62263853**, same `t1.sbatch`, rules unchanged (`remote_jobs.md` §1 line 4).
 - [ ] T2, calibration and support (GPU): the N ladder on Ub psWT; I61, D21, E34, Q41 and Y59 within a factor of 2 of
       their plain frequencies, V70, I13, W45 and L67 resolved, as E1 asked. *Estimate*, from the toy's equilibration:
       8 ladders x 12 rungs x 2,000 sweeps, about 20 V100-hours; fixed after T1 measures the time per move.
