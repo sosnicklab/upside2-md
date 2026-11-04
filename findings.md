@@ -5281,6 +5281,16 @@ mechanism of the model, find it first in the model's source (Jumper's papers and
 branch-only code is checked against the core before it is taken as what the user meant, and the user's proposal is
 never written up as "not proposed".**
 
+### 10.50 Score against a benchmark with every metric its paper reports (2026-11-03)
+
+User correction, from the PI: "in Peng 2022 paper, Figure 5, it is not only delta G we care about. We also care about
+the slopes." The Boltz-2 and BioEmu2 HDX readouts scored dG at 0 M only, against a paper whose title says
+"(Importantly) Its Denaturant Dependence" and whose Table S14 scores dG and m-value at two urea concentrations. I had
+read Tables S5-S7's urea columns and used them only to classify amides. Scored by m, Boltz-2's EHEE ranking turned out
+to come from openings of the wrong size, and BioEmu2 matched Upside FF2 on HEEH where dG had not separated them
+(diffusion_dynamics.md Phase 1, section 7). **Before writing a readout against a published benchmark, list every
+metric in the paper's summary table and compute each one the data allow; for any left out, say why.**
+
 ---
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
@@ -5572,6 +5582,33 @@ The full record is in `upside3.md` sections 4, 5 and 10 (reports in `scratchpad/
   engines give lipid KE/1.5kT 1.005 at T 0.80 without exchange (CPU 1.00513 +- 0.00073, 64 systems), 7 SE above 1,
   and in REMD 1.005 to 0.994 over T 0.80-0.95; a property of the CPU dynamics, which the GPU reproduces (the
   protein's is the same, above).
+* **V2 of glpG by seeds passes (11-03, build g9a).** glpG's production stage 7.0 (4712 particles, released ff3.1,
+  start bitwise the CPU REMD's), the 1rkl protocol: 16 CPU seeds against 8 V100 seeds, Bonferroni 0.94 over 48
+  comparisons, largest 2.6 SE (a backbone angle); lipid KE, lipid D and the potential within 1.5 SE in every replica.
+  At 4 replicas the V100 takes 4.2 ms per system step, 4 broadwl cores 50 ms.
+* **glpG's TM4 block on the GPU agrees with the CPU's (11-03, g9a, V100).** One 48-replica block from the CPU run's
+  stage 7.0 checkpoint, read over the CPU block's t 0-2150. At T 0.70 TM4 DSSP is 0.653 against 0.741, the CPU
+  halves' spread (0.784 / 0.697); over the 48 rungs the difference changes sign (cold third -0.046, the rest +0.04
+  to +0.06), and the ladder mean, which exchanges cannot move, is 0.706 against 0.689 with the same fall by quarter
+  (last quarter 0.632 against 0.638). A single rung of one block is set by which configurations hold it; compare
+  engines on the ladder mean. KE/1.5kT and C-N equal the CPU's.
+* **The device holds every interaction graph at its largest system's full pair count (11-03, g9a).** The default
+  `max_n_edge` is n1 x n2 (`interaction_graph.h:323`), the slab is that times the batch's systems, and cudaMalloc
+  reserves it whole, while the CPU's untouched capacity costs no RSS. mdCATH batch 4 (88 systems, 169-242
+  residues, ff3.1) has 227 M slots (environment and H-bond coverage 177 M, rotamer 44 M), about 16.5 GB, plus 3.5 GB
+  of Ramachandran maps: the host backend's footprint is 32.1 GB against the CPU engine's 12.0 GB, over a V100's 16
+  GB, and the V100 probe failed. Device memory grows as systems x (longest length)^2. The host backend fills every
+  device array, so its peak footprint less the CPU engine's measures a batch's device memory on a Mac (batch 4: 20.1
+  GB estimated, 19,755 MiB on the A100; batch 3: 10.4 GB). The capacity could shrink to the cutoff's real pair
+  count, which would need its own check against the CPU.
+* **The mdCATH protocol on the GPU (11-04, g9a and g9b).** The host work (frames every 10 tu, pivot moves every 5,
+  each move a CPU potential evaluation) took 19.1% of an A100 run of batch 4 (88 systems, 169-242 residues) while
+  it ran serially over the systems; g9b runs it in parallel through the CPU branch's loop, bitwise (Mac, and a V100
+  against g9a). Per system step on g9b, 4 host cores, against 28 broadwl cores: batches of 57-95, 95-128 and
+  129-166 residues 39.5, 51.5 and 65.4 us on a V100 (1.43, 1.49, 1.40 times), batch 4 60.6 us on an A100 (2.04
+  times; 68.5 us on g9a). The 712 runs pass the CPU reference's checks (KE/1.5kT 1.006, C-N at most 1.85 A), and
+  the folded fraction agrees with the CPU's on both force fields (ff2.1 -0.002 [-0.023, +0.019], ff3.1 -0.003
+  [-0.030, +0.023]).
 * **Where the device's time goes (nvprof, K80, 10-30).** Kernels, not launches or transfers. In each slow kernel one
   thread looped serially over hundreds of partners (pair-list rebuild, `martini_potential`, `martini_sc_table_1body`,
   BP's incidence lists), and the kernels over a pair list's capacity launched a thread per possible slot (600 k for

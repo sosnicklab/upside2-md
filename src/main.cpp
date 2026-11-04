@@ -14,6 +14,7 @@
 #include "state_logger.h"
 #include <csignal>
 #include <map>
+#include <functional>
 #include <sstream>
 #include <fstream>
 #include <iostream>
@@ -1271,8 +1272,9 @@ try {
         SignalHandlerHandler sigint_handler (SIGINT,  abort_like_handler);
         SignalHandlerHandler sigterm_handler(SIGTERM, abort_like_handler);
 
-        // The device engine runs the integration of every system.  Each round's host work (frames, re-centering,
-        // Monte Carlo moves, replica exchange) runs on the CPU engines, on the state the device returns for it.
+        // The device engine runs the integration of every system.  Each round's host work (frames, re-centering and
+        // Monte Carlo moves, the systems in parallel as on the CPU; replica exchange) runs on the CPU engines, on the
+        // state the device returns for it.
         unique_ptr<DeviceDynamics> device;
         // views of the systems' state, taken at each transfer since replica exchange swaps the systems' arrays
         auto host_pos = [&]() {vector<VecArray> v; for(System& sys: systems) v.push_back(sys.engine.pos->output); return v;};
@@ -1352,6 +1354,29 @@ try {
         // time limit, tested between blocks, stops every system at the same round
         auto ends_block = [&](uint64_t nr) {return !((nr+1)%8) || (replica_interval && !((nr+1)%replica_interval));};
 
+        // f(ns) for every system, the systems in parallel.  An exception must not escape an OpenMP structured block:
+        // doing so calls std::terminate and the message is destroyed, which is exactly how a mid-run failure
+        // reported nothing but "Abort trap: 6". Trap per system, keep the first message, and rethrow once serial so
+        // the top-level handler can print why the run died.
+        auto for_each_system = [&](const function<void(int)>& f) {
+            string error;
+            bool failed = false;
+            #pragma omp parallel for schedule(static,1)
+            for(int ns=0; ns<int(systems.size()); ++ns) try {
+                f(ns);
+            } catch(const string &e) {
+                #pragma omp critical
+                if(!failed) { failed = true; error = e; }
+            } catch(const std::exception &e) {
+                #pragma omp critical
+                if(!failed) { failed = true; error = string("std::exception: ") + e.what(); }
+            } catch(...) {
+                #pragma omp critical
+                if(!failed) { failed = true; error = "unknown exception"; }
+            }
+            if(failed) throw string("integration failed at round ") + to_string(systems[0].round_num) + ": " + error;
+        };
+
         // we need to run everyone until the next synchronization event
         // a little care is needed if we are multiplexing the events
         auto tstart = chrono::high_resolution_clock::now();
@@ -1361,7 +1386,7 @@ try {
                     uint64_t nr = systems[0].round_num;
                     if(is_frame(nr) || is_mc_round(nr)) {
                         device->get_state(host_pos(), host_mom());
-                        for(int ns=0; ns<int(systems.size()); ++ns) round_start(systems[ns], ns, nr);
+                        for_each_system([&](int ns) {round_start(systems[ns], ns, nr);});
                         device->set_state(host_pos(), host_mom());
                     }
 
@@ -1396,14 +1421,7 @@ try {
                     do_break = ends_block(nr);
                 }
             } else {
-                // An exception must not escape an OpenMP structured block: doing so calls std::terminate
-                // and the message is destroyed, which is exactly how a mid-run failure reported nothing but
-                // "Abort trap: 6". Trap per system, keep the first message, and rethrow once serial so the
-                // top-level handler can print why the run died.
-                std::string omp_error;
-                bool omp_failed = false;
-                #pragma omp parallel for schedule(static,1)
-                for(int ns=0; ns<int(systems.size()); ++ns) try {
+                for_each_system([&](int ns) {
                     System& sys = systems[ns];
                     for(bool do_break=false; (!do_break) && (sys.round_num<n_round); ++sys.round_num) {
                         int nr = sys.round_num;
@@ -1449,20 +1467,7 @@ try {
 
                         do_break = ends_block(nr);
                     }
-                } catch(const string &e) {
-                    #pragma omp critical
-                    if(!omp_failed) { omp_failed = true; omp_error = e; }
-                } catch(const std::exception &e) {
-                    #pragma omp critical
-                    if(!omp_failed) { omp_failed = true; omp_error = string("std::exception: ") + e.what(); }
-                } catch(...) {
-                    #pragma omp critical
-                    if(!omp_failed) { omp_failed = true; omp_error = "unknown exception"; }
-                }
-                // Here we are running in serial again
-                if(omp_failed)
-                    throw string("integration failed at round ") + to_string(systems[0].round_num) +
-                          ": " + omp_error;
+                });
             }
             if(replica_interval && !(systems[0].round_num % replica_interval)) {
                 if(device) device->get_state(host_pos(), host_mom());

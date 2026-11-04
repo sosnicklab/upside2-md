@@ -1,23 +1,29 @@
 # A modified Boltz-2 to replace Upside's sampling for HDX
 
-**Status (2026-10-29).** Phase 0 is done (10-21). Phase 1's HDX half is read out: Boltz-2 ranks EHEE's amides at
-10^5 samples (censored Spearman 0.74; Upside FF2 0.61) but not HEEH_rd4_0097's at 10^4 (0.04; Upside 0.32) or Ub
-psWT's at 10^5 (-0.21, and -0.06 with a query-only MSA; Upside 0.43). By experiment's urea dependence EHEE's measured
-amides exchange through subglobal openings, HEEH's helices by global unfolding and Ub psWT's amides below the bound
-locally, so Gate 1 ends in its "wrong states" outcome; its mdCATH half is not run. Phase 2 (user 10-27: no retraining
-of Boltz, small trained add-ons allowed) is a trained add-on that tilts frozen Boltz-2's ensemble; no fine-tune is
-planned. Phase 2's E1 is held (10-28): above kappa 1 the Feynman-Kac `log_z` falls under its provable floor, and the
-diagnosis job (10-29) did not reproduce the tuning's runs at the same seed, so its test was not read; a
-reproducibility job (10-29) showed that no steered run reproduces its seed across processes, even on one GPU, so a
+**Status (2026-11-03).** Phase 0 is done (10-21). Phase 1's HDX half is read out: Boltz-2 ranks EHEE's amides at 10^5
+samples (censored Spearman 0.74; Upside FF2 0.61) but not HEEH_rd4_0097's at 10^4 (0.04; Upside 0.32) or Ub psWT's at
+10^5 (-0.21, and -0.06 with a query-only MSA; Upside 0.43). By experiment's urea dependence EHEE's measured amides
+exchange through subglobal openings, HEEH's helices by global unfolding and Ub psWT's amides below the bound locally,
+so Gate 1 ends in its "wrong states" outcome; its mdCATH half is not run. Scored as well by Peng's second metric, the
+m-value (11-03, the PI), Boltz-2 opens every measured amide locally: its m does not follow HEEH's (Spearman -0.18;
+Upside FF2 0.475) and is unresolved on EHEE and Ub psWT at 10^5, so the verdict stands. In the side test BioEmu2's m
+follows HEEH's as well as FF2's (0.465), but it opens EHEE only globally (0.18; FF2 0.40). Phase 2 (user 10-27: no
+retraining of Boltz, small trained add-ons allowed) is a trained add-on that tilts frozen Boltz-2's ensemble; no
+fine-tune is planned. Phase 2's E1 is held (10-28): above kappa 1 the Feynman-Kac `log_z` falls under its provable
+floor, and the diagnosis job (10-29) did not reproduce the tuning's runs at the same seed, so its test was not read;
+a reproducibility job (10-29) showed that no steered run reproduces its seed across processes, even on one GPU, so a
 repeat test must be statistical. Read statistically (10-29), the diagnosis pointed to a defect in the weights at low
 power; a CPU toy with a known normalizing constant (10-29) then found `sampler.py`'s weights and `log_z` right on
-Boltz's sampler, which points I61's shortfall to the estimator's variance with Boltz-2's network. E1 proper stays
-held; the next step is the user's. Jobs are recorded in `remote_jobs.md` §1. Phase 0-1's run data on `/beagle3` and
-BioEmu2's samples were deleted 11-03 at the user's word (logs and scripts kept; the pooled sets the readouts use are
-in the Mac Studio's `scratchpad/boltz_hdx/flags/samples/`; `remote_jobs.md` disk section). Phase 2's `.venv` and
-`cache/mols` were packed 11-03 for `/beagle3`'s file quota: unpack both before running E1 again (the two `tar -xf`
-commands in that section). Every number below comes from reading
-code, docs and papers on 2026-10-21, or from the dated measurements; numbers marked *estimate* are unmeasured.
+Boltz's sampler, which points I61's shortfall to the estimator's variance with Boltz-2's network. More particles
+(1,024 and 4,096, read 11-03) do not reduce it, and E1 is closed (user 11-03). Phase 3 (11-03) keeps Boltz-2 frozen
+and replaces the steered sampler with replica exchange whose move is Boltz-2's own renoise-denoise, so no path weight
+is carried. Its toy test T0 passes (11-03): MBAR recovers the toy's rare-event truth (P(d >= 7.5) 4.15e-4 against
+3.70e-4), and T1, the same move on Boltz-2, is the user's call. Jobs are recorded in `remote_jobs.md` §1. Phase 0-1's
+run data on `/beagle3` and BioEmu2's samples were deleted 11-03 at the user's word (logs and scripts kept; the pooled
+sets the readouts use are in the Mac Studio's `scratchpad/boltz_hdx/flags/samples/`; `remote_jobs.md` disk section).
+Phase 2's `.venv` and `cache/mols` were packed 11-03 for `/beagle3`'s file quota: unpack both before running E1 again
+(the two `tar -xf` commands in that section). Every number below comes from reading code, docs and papers on
+2026-10-21, or from the dated measurements; numbers marked *estimate* are unmeasured.
 
 ## 1. Goal
 
@@ -107,6 +113,10 @@ machine, about 90 A100-hours; its PDB stage (which made AF2 generative, and whic
 4. **No fine-tune of Boltz-2** (user 2026-10-27: no compute for it). The renoise-denoise chain and the lag-conditioned
    fine-tune of the 10-21 plan are dropped; both targeted time order, not populations (assessment 2026-10-24).
 5. **No Arts-style score-as-force dynamics on Boltz** (section 2.4).
+6. **Phase 3: replica exchange on frozen Boltz-2, its own renoise-denoise as the Metropolis move** (2026-11-03,
+   after E1 closed). It replaces Phase 2's Feynman-Kac sampler: a move that leaves Boltz-2's distribution unchanged
+   needs only the tilt in its acceptance, so no path weight can collapse. Decision 4 dropped renoise-denoise as a
+   model of time order; here it is an equilibrium move, and nothing is read from the chain's order.
 
 ## 4. Phases
 
@@ -367,6 +377,29 @@ HDX:
         experiment's at 3.2-4.3, and leaves V19 and W21 1.8-2.0 kcal/mol too protected (error against class -0.12).
       * The 10^5 test was framed as local exchange on both proteins, but EHEE's is subglobal: Boltz-2 ranks one
         protein's subglobal openings and fails on another's local ones and a third's global and subglobal ones.
+- [x] m-values, Peng 2022's second metric (user 2026-11-03, the PI: "it is not only delta G we care about. We also care
+      about the slopes"). Peng's Figs 5-7 and 10 and Table S14 score every amide's dG and its m-value, the slope of dG
+      against urea, at 0 M and at high urea; the readouts above scored dG only. Peng's denaturant model weights a
+      conformation with N protected NHs by exp(-s N [den] / RT) (main text p. E; `example/04.HDX/4.calc_HDX.py`), so
+      at 0 M m_i = s dN_i, where dN_i is the number of protected NHs lost in the samples that open amide i: the size of
+      the opening. Pearson and Spearman of m at 0 M do not depend on s. Experiment's m is the 0 M slope of eq. S18
+      fitted to Tables S5-S7 with Table S4's global channel; scoring FF2's Tables S8 and S10 against it reproduces
+      Table S14's FF2 m-value Pearson and Spearman to within 0.03 (EHEE at 0 and 4 M, Ub at 0 M), though not Ub's RMSE
+      (0.35 against 0.52). Code `flags/urea/` (`parse_si.py` writes `reference/*_urea.csv` from the SI text,
+      `check_s14.py`, `mvalue.py`); log `urea/mvalue.log`.
+      * Boltz-2 opens every measured amide locally. Its openings break 0.9-6.1 of a sample's 31-59 protected NHs (one
+        Ub psWT sample 10.6), including the amides that experiment's slopes place at 0.85-1.0 of m_global (EHEE's A12,
+        R13, T29 and E36; HEEH's helices). Its EHEE dG ranking (Spearman 0.74) comes from openings of the wrong size:
+        experiment exchanges A12 and R13 by global unfolding, Boltz-2 through openings of 5.4 and 0.9 NHs.
+      * HEEH_rd4_0097: Boltz-2's m does not follow experiment (Spearman -0.18 over 16, bootstrap over the 10 seeds
+        -0.36 to 0.09); Upside FF2 0.475 (Table S14).
+      * EHEE and Ub psWT are not resolved at 10^5. An amide's m is the mean over the samples that open it, and most
+        measured amides open in 1-9 (Ub psWT median 1). EHEE Spearman 0.37 over 14 (-0.34 to 0.72; FF2 0.41 on the
+        same 14); Ub psWT 0.33 over 12 (-0.03 to 0.67; FF2 0.65 on the same 12), where I3, F4, V5, L15 and T55 share
+        one value from the same 2 samples.
+      * The s-dependent half of Table S14 (m RMSE; dG and m at 4, 2.13 and 2.4 M) is not computed. Peng calibrates s
+        on the model's own global unfolding (Table S4), and Boltz-2 samples none: the fewest protected NHs in any
+        sample are 21 of 39 (EHEE), 26 of 40 (HEEH) and 48 of 72 (Ub psWT).
 
 mdCATH 320 K (CHARMM22*/TIP3P, 5 replicas of about 500 frames at 1 ns), equilibrium only; not run:
 - [ ] Test set: 8 to 12 domains from the 89-domain panel (`ff3_selection/` on the cluster; `plan.md` Phase 19), over
@@ -427,7 +460,7 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
   topologies and beta-grasp domains; the 13 NMR domains validate the residue assignment.
 * Code in `scratchpad/boltz_hdx/addon/` (git-ignored) and `$B/addon/` on midway3.
 
-- [ ] E1, the falsifier (about 7 V100-hours, no training): untrained Boltz-2's own rare open fractions by particle
+- [x] E1, the falsifier (about 7 V100-hours, no training; closed 11-03, below): untrained Boltz-2's own rare open fractions by particle
       resampling, one amide at a time, with an opening potential whose bias is undone in the weights; 1,024 particles
       per amide, two seeds.
       * First, the wrapper with the add-on off reproduces plain Boltz-2's samples for the same seed, coordinates equal.
@@ -716,6 +749,23 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
         about 16 V100-hours, from 256 and 1,024 particles' 375 s and 1,225 s per run. The readout **62073881**
         (`scale/read.sbatch`, caslake, after all seven) writes `addon/runs/scale_readout.txt`. `scale_read.py`
         `5f959e3d` reproduced 61805263's and 61755382's numbers before submission.
+        Outcome: the 1,024 and 4,096 arms finished 11-02; the two 16,384 arms ran to their end and lost their results
+        at save to `/beagle3`'s inode quota, and the readout job failed with them.
+        **Readout, 11-03 on the Mac Studio (the eight finished runs pulled from `$B/addon/runs/`): removal fails at
+        1,024 and at 4,096 particles, and the rule's other branch is defined at 16,384, so formally undecided.** The
+        256-particle runs reproduce 61805263 (-15.05, -20.26). ln Z-hat at 1,024: -12.29, -19.15, -11.13, -16.79
+        (mean -14.84); at 4,096: -17.61, -16.94, -14.54, -16.52 (mean -16.40, s.d. 1.32), every seed below the line
+        -11.1 and 7-10 nats under the floor -7.9. The mean rises 1.26 nats from 256 to 4,096 and falls from 1,024 to
+        4,096, where the toy's deficit shrank at every step. No seed meets calibration: the Feynman-Kac open fraction is
+        2e-8 to 1.3e-5 against the unguided 3.8e-4. The first resampling charges -16 to -24 nats at ESS/N 0.000-0.004
+        at every particle count. Kappa 1 estimated I61 right (6.4e-4 and 4.1e-4) but opens no V70 in 256, so the tilt
+        this estimator survives does not reach the states E1 needs, and the tilt that reaches them breaks it.
+        Readout `scratchpad/boltz_hdx/addon/runs/scale_readout.txt` (also at `$B/addon/runs/`); `scale_read.py`'s
+        last-but-one line takes 4,096 as the largest N and is not the rule's verdict. Rerunning the two 16,384 arms
+        (about 10 V100-hours, after unpacking Boltz's `.venv` and `cache/mols`) would decide it formally.
+        **E1 closed, 11-03** (user: "proceed with your recommendation. but don't give up on the big goal, try another
+        potential solution"): the 16,384 arms are not rerun and the Feynman-Kac sampler is dropped. The add-on's
+        design (U_phi, the data, E2-E4) carries over to Phase 3's sampler.
 - [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).
@@ -725,6 +775,101 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
       and Ub psWT, two seeds, about 40 V100-hours. Censored Spearman >= Upside FF2's on all three (0.61, 0.43, 0.32)
       with a block bootstrap, and Ub psWT's correlation of error with urea class (now -0.43) within +-0.2. Ablations: no
       tilt, no global term, element terms only, lambda_i unshrunk.
+
+### Phase 3: replica exchange on frozen Boltz-2, its own denoiser as the move (2026-11-03)
+
+User 2026-11-03: "proceed with your recommendation. but don't give up on the big goal, try another potential
+solution", after E1 closed (Decision 6).
+
+Why this form. Phase 2 steered the reverse diffusion and carried path weights, and at the tilt that opens Boltz-2's
+rare amides those weights collapse (E1). The weights are needed only because steering changes the path. A Metropolis
+chain whose move leaves Boltz-2's distribution unchanged needs none: a tilted target p_Boltz(x) exp(-U(x)) is sampled
+with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler gives, never enters.
+* The move, renoise-denoise: from a sample x, draw x_k = x + sigma_k eps at step k of Boltz-2's schedule and run its
+  own sampler from step k to the end. If the sampler returned the exact posterior of its own noised distribution, this
+  would be the two-block Gibbs sampler on (x, x_k), reversible with respect to p_Boltz, so the Metropolis ratio would
+  need only U. Boltz-2 is not exactly that: its steps are discrete, the network is not a conservative score (Plainer
+  et al. 2025 found small-noise inconsistency), and below gamma_min = 1 A its steps are deterministic. So the chain's
+  stationary distribution at U = 0 can drift from plain Boltz-2's; T1 measures it, and it is the route's main risk.
+  sigma_k is drawn at random from a fixed set at every sweep (a mixture of reversible moves is reversible): large ones
+  give near-independent proposals, small ones local moves.
+* The ladder: rungs with U_r = lambda_r N(x), N the number of protected NHs from the estimator's own flags
+  (`protection.py`, equal to the engine's): Peng's denaturant model, so each rung is a urea concentration up to the
+  scale s. Neighbouring rungs swap with acceptance min(1, exp((lambda_i - lambda_j)(N_i - N_j))). No gradient is
+  needed, so no surrogate.
+* The readout: MBAR over every rung with reduced potentials lambda_r N (p_Boltz cancels), so each amide's open fraction
+  at lambda = 0 resolves well below RT ln(samples), and its m-value comes off the same ladder. The pooled library with
+  its MBAR weights also reweights exactly to p_Boltz exp(-U_phi) for any add-on, the training base Phase 2 needed.
+* What it cannot change: the target is still Boltz-2's distribution, and Phase 1 shows it wrong where it is resolved
+  (Ub psWT's D21 and strand 1 opened 50-200x too often, no unfolded HEEH, openings of 1-6 NHs). This sampler measures
+  Boltz-2's tails and m-values; correcting them stays the add-on's job, now on weights that do not collapse.
+* Code: `scratchpad/boltz_hdx/addon/remc.py` (git-ignored, beside `sampler.py`).
+
+- [x] T0, the code on Phase 2's toy (CPU, Mac Studio; `toy.py`'s Gaussian ubiquitin and its 10^6 plain samples as
+      truth: P(d >= 7.5 A) 3.70e-4 +- 1.9e-5, P(d >= 7.75 A) 5.2e-5 +- 7.2e-6, ln Z(kappa 1) -6.470 +- 0.017 and
+      ln Z(kappa 2) -7.314 +- 0.033 for E1's pair potential). Tilt U_r = -lambda_r d on the pair, 8 rungs from 0 to
+      8 /A, 64 independent ladders, moves at sigma 1, 2, 4 or 8 A, 400 sweeps after 50 discarded. Rules, fixed before
+      the data, with standard errors over the 64 ladders combined with the truth's:
+      1. Parity: the renoise-denoise loop started at step 0 from the plain sampler's initial noise reproduces
+         `AtomDiffusion.sample` bitwise (8 samples, seed 7). Failing stops T0.
+      2. Invariance: rung 0 alone (lambda 0, every move accepted) gives the truth's mean and s.d. of d and its
+         P(d >= 6.5) within 3 standard errors.
+      3. Ladder: MBAR's P(d >= 7.5), P(d >= 7.75) and ln Z(kappa 1, 2) at lambda 0 within 3 standard errors.
+      Passing 1-3 means the code is right on the toy, and T1 is proposed; failing 2 or 3 is a code defect to find
+      before any GPU time. The toy cannot test Boltz-2's own consistency, which is T1's question.
+      * Readout, 17:35 11-03 (`addon/t0_read.py`, `runs/t0/readout.txt`): rules 1 and 2 pass, rule 3 fails. Parity
+        equal at seeds 7 and 11. Invariance: mean d -2.1 se, P(d >= 6.5) -0.3 se, s.d. +1.2 se, no trend, the same
+        after moves at every sigma. Ladder: P(d >= 7.5) 1.84e-4 (-6.2 se), P(d >= 7.75) 1.45e-5 (-4.9 se), ln Z -6.72
+        and -7.79 (-4.7, -5.6 se). Diagnosis: the top rungs had not equilibrated. Rungs 0-2 match the truth reweighted
+        to their tilt (rung 1 mean d 5.982 against 5.994), while rungs 3-7 still rise between the halves of the run
+        (rung 5 7.035, then 7.210, against 7.302) at move acceptance 2-6%. So the run length was short, not the code
+        wrong; 400 sweeps had been fixed before the data.
+      * Rerun, its rule fixed after that readout and before the rerun's data: the ladder run alone, same settings and
+        seed 22, 3,000 sweeps, reading sweeps 1,501-3,000. (a) Its first 450 sweeps equal `ladder.npz` bitwise (the
+        `remc.run` refactor that takes the move as a function changes no draw). (b) Stationarity: every rung's mean d
+        agrees between the two halves of the read range within 3 standard errors over the ladders; if not, still
+        not equilibrated, and the rule is not read. (c) Rule 3 as written. Beside, not deciding: each rung's mean d and
+        P(d >= 7) against the truth reweighted to its tilt where that has an effective sample size of at least 1,000
+        (rungs 0-4), a test of the tilted chain's stationary distribution with no MBAR in it, so of the move's
+        reversibility.
+      * **Rerun readout, 18:10 11-03 (`runs/t0/readout_long.txt`): T0 passes, 8 of 8.** (a) The first 450 sweeps
+        equal `ladder.npz` bitwise. (b) Every rung stationary (-0.4 to +0.5 se between halves). Rule 3: P(d >= 7.5)
+        4.15e-4 (+1.3 se), P(d >= 7.75) 6.8e-5 (+1.7 se), ln Z -6.435 and -7.249 (+0.9, +1.0 se). Beside: rung means
+        on the reweighted truth where it is well sampled (rung 1 5.994 and P(d >= 7) 0.0331, against 5.994 and
+        0.0333), so no sign of a reversibility bias on the toy at this precision. The top rungs accept 1-4% of moves
+        and needed about 1,500 sweeps to equilibrate from plain starts: the cost that sets T2's budget.
+- [ ] T1, invariance on Boltz-2 (GPU, about 3.5 V100-hours; user 11-03: "proceed"). One V100 job on Ub psWT,
+      `remc_boltz.py` (code beside `remc.py`). The 11-03 cleanup deleted the processed input, so the job first
+      reruns `boltz predict` on `inputs/ubqps.yaml` with its stored MSA. Boltz's `.venv` and `cache/mols` stay packed:
+      the job extracts both tars to the node's local disk (the venv's Boltz is an editable install of
+      `$B/boltz/src`), so `/beagle3`'s file quota (1,163,491 of 1,268,000) is not touched. Then: the parity check
+      (`--check`, seed 7); 1,024 plain samples from the same trunk (`--plain`); 256 chains at lambda 0 started from
+      that call's own plain samples, 100 sweeps, moves at sigma 1, 2, 4, 8 or 16 A (45-82 of the 200 steps, about 0.31
+      of a sample, about 0.38 s per move on a V100 from Phase 1's 20 minutes per 1,000 samples). Rules, fixed here
+      before the data, on sweeps 21-100 against the same-trunk reference (the 256 starts and the 1,024):
+      1. Parity equal, or nothing else is read.
+      2. Every one of the 72 donors' protected fraction within 3.4 standard errors (Bonferroni over 72 at 0.05; the
+         chains' standard error over chains combined with the reference's binomial one).
+      3. Mean N and mean CA-RMSD within 3 standard errors; the share of states with a C-N bond over 2 A not above the
+         reference's by more than 3.
+      4. No trend: mean N over sweeps 21-60 and 61-100 within 3 standard errors, paired by chain.
+      Passing 2-4 means Boltz-2's own move keeps its distribution, and T2 is proposed. A failure is located by the
+      states after moves at each sigma; the candidate remedies (drop those sigma, or run the chain on the 1 A-noised
+      state with the deterministic tail as a read-out map) get their own rule before any rerun. Beside, not deciding:
+      the same comparisons against the pooled plain 10^5 set (other MSA subsamples), and the time per move. T1 tests
+      invariance only (every move is accepted at lambda 0); reversibility under a tilt is T2's calibration.
+      * Rule 2's statistics corrected 18:35 11-03, before any T1 data: run on synthetic chains drawn from the pooled
+        10^5 flags, which must pass, the readout failed. A donor the reference never opens has a zero binomial error
+        at its own proportion, so 0.23% in the chains read z +6.9. The reference's error is now binomial at the
+        proportion pooled over chains and reference (the chains counted by their effective number of states), the
+        two-sample test under the null; the C-N share likewise. The synthetic pass case then passes (largest |z|
+        2.69) and a case with one donor shifted fails (-34.7). `addon/t1_read.py`.
+      * Submitted 18:13 11-03 as **62199777** (`t1.sbatch`; `remote_jobs.md` §1 line 4), Slurm's estimate 04:50 11-04.
+- [ ] T2, calibration and support (GPU): the N ladder on Ub psWT; I61, D21, E34, Q41 and Y59 within a factor of 2 of
+      their plain frequencies, V70, I13, W45 and L67 resolved, as E1 asked. *Estimate*, from the toy's equilibration:
+      8 ladders x 12 rungs x 2,000 sweeps, about 20 V100-hours; fixed after T1 measures the time per move.
+- [ ] T3, the readout: dG and m-values for all three proteins against experiment and Upside FF2 (Table S14), and
+      whether Boltz-2's own distribution holds an unfolded HEEH at all.
 
 ## 5. Known risks and blockers
 
@@ -859,3 +1004,33 @@ Two settings depart from the defaults, for the V100: `trimul_variant: full` in a
         (0.46 against 0.61, above Upside in 1.8% of resamples), and on HEEH neither model's Spearman differs from zero.
         Its stability errors run both ways: EHEE unfolds globally in 0.18% of samples, about 2.4 kcal/mol too often,
         and ubiquitin never leaves its native basin. The training overlap above still holds.
+- [x] m-values (2026-11-03; Phase 1's m-value item, same code and rules; EHEE and Ub psWT on the 10^5 sets, at
+      `$E/readout/` since the MacBook Pro's upload of 16:25 11-03, pulled md5-equal and reproducing the 10-27 dG
+      readout). BioEmu2 gets the size of the openings right on HEEH only.
+      * HEEH_rd4_0097 (10^4): m Spearman 0.465 over all 20 (bootstrap over the 10 blocks 0.14 to 0.57; Pearson 0.521),
+        FF2 0.475 (Table S14), where its dG gave 0.239. Its helix amides open in its few unfolded samples, breaking
+        11-22 protected NHs (3-8 samples each), and experiment's slopes put them at 0.76-1.09 of m_global; Boltz-2's
+        break 0.9-3.2.
+      * EHEE_rd2_0005 (10^5): every measured amide opens through openings of 14-23 of 32 protected NHs, its 0.27%
+        unfolded population, where experiment's slopes put 11 of the 15 at 0.22-0.67 of m_global. m Spearman 0.179
+        (bootstrap 0.02 to 0.31), below FF2's 0.400 on the same 15. Boltz-2 errs the other way, at 0.9-5.4 NHs.
+      * Ub psWT (10^5): 6 of 23 open, all at 1.1-2.2 NHs (K27, which experiment exchanges globally, in one sample);
+        too few to score (Spearman 0.27, bootstrap -0.32 to 1.00). It samples no unfolded state, so no s.
+- [x] The s-dependent half of Table S14 (2026-11-03, `flags/urea/high_urea.py`, log `urea/high_urea.log`). s by
+      Peng's rule, the model's global stability given experiment's slope: s = m_global / (<N>_folded - <N>_unfolded),
+      recalibrated in every bootstrap resample. Unfolded is CA-RMSD beyond 8 A, with more than half the donors open as
+      the check. The model's global line has experiment's slope at 0 M (0.8712 and 0.6070), and finite-difference
+      slopes equal the analytic ones to 4e-4 kcal/mol/M.
+      * HEEH, 0 M: the whole row matches Upside FF2. dG Pearson 0.258, Spearman 0.239, RMSE 1.04 (FF2 0.185, 0.317,
+        1.06); m 0.521, 0.465, RMSE 0.40 or 0.34 by the two definitions (FF2 0.541, 0.475, 0.404). Global stability
+        3.94 or 4.32 kcal/mol against experiment's 4.32. Unfolded is 8 samples beyond a gap from 4.53 to 11.64 A, or 4.
+      * HEEH, 2.13 M, not determined: m Spearman 0.37 or 0.36 (bootstrap 0.16 to 0.48; FF2 0.439), dG Spearman 0.03 or
+        -0.01 (FF2 0.036), m RMSE 0.68 or 0.27 (bootstrap 0.37 to 1.39; FF2 0.216), global stability 1.25 or 2.36
+        (experiment 2.46). These rest on the few unfolded samples. Under the CA-RMSD definition, the one sample with 8
+        protected NHs holds 6% of all weight at 2.13 M and sets 18 of the 20 amides at 1.2-1.5 kcal/mol.
+      * EHEE is not comparable with Peng's FF2 at high urea. Peng reads FF2 at the temperature where its global
+        stability matches experiment's, and BioEmu2, with no temperature, is 3.51 or 3.73 kcal/mol against 8.57 (265
+        or 184 unfolded samples; no gap in CA-RMSD, 7.96 to 8.20 A). At 4 M every amide then reads 0.4-1.0 kcal/mol
+        against experiment's 3.3-6.1 (dG RMSE 4.8 or 4.2; FF2 1.14), its m all 0.84-0.93 against 0.19-0.61 (RMSE 0.50
+        or 0.36; FF2 0.175). The dG order holds (Spearman 0.72 or 0.69, bootstrap 0.49 to 0.76; FF2 0.689), and the m
+        order follows the definition (-0.22, bootstrap -0.50 to -0.02, or 0.57; FF2 0.600).

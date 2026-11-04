@@ -855,3 +855,94 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   in step 0, a second build `obj_preangfix` made and shown bitwise to the earlier arms' steps 0-37 binary in BP mode,
   and the run restarted as link 49766810 to step 38 with an automatic switch to the fixed build at 38 (stub-tested).
   Files: plan.md, remote_jobs.md, progress.md; cluster run README, `setup/{at_target,switch_engine}.sh`.
+* **11-03 15:00-16:35, Mac Studio, HDX m-values for Boltz-2 and BioEmu2** (user, relaying the PI: "in Peng 2022
+  paper, Figure 5, it is not only delta G we care about. We also care about the slopes"). Peng's Figs 5-7 and 10 and
+  Table S14 score each amide's dG and its m-value (slope against urea); our readouts scored dG only. The 0 M m-value
+  is s times the protected NHs lost on opening, so its correlations need no calibration. Experiment's m (eq. S18 on
+  Tables S5-S7) reproduces Table S14's FF2 m-value correlations to within 0.03. Boltz-2 opens every measured amide
+  locally (0.9-6.1 NHs); HEEH m Spearman -0.18 (FF2 0.475); EHEE and Ub psWT unresolved at 10^5. BioEmu2 HEEH 0.465.
+  The high-urea half needs s from each model's own global unfolding, which Boltz-2 does not sample. 16:00-16:20
+  (user: "yes. proceed"): BioEmu2's HEEH high-urea half, s from its own unfolded samples. At 0 M the whole Table S14
+  row matches FF2; at 2.13 M it is not determined, since 4-8 unfolded samples carry it and one holds 6% of the weight.
+  Then the MacBook Pro uploaded BioEmu2's EHEE and Ub psWT 10^5 readout files to `$E/readout/` (16:25); pulled
+  md5-equal, `.resid` identical, the 10-27 dG readout reproduced. EHEE opens only globally (14-23 NHs; m Spearman
+  0.18, FF2 0.40), and its global stability is 3.5-3.7 kcal/mol against 8.57, so its 4 M row cannot be compared
+  with FF2's. Ub psWT opens 6 of 23, all locally, too few to score. Files: diffusion_dynamics.md (Status, Phase 1,
+  section 7), remote_jobs.md (BioEmu2 paragraph, 11-03 cleanup line), findings.md 10.50, progress.md; scratchpad
+  `boltz_hdx/flags/urea/` (`parse_si.py`, `check_s14.py`, `mvalue.py`, `high_urea.py`, their logs) and
+  `flags/reference/*_urea.csv`.
+* **11-03 16:38-16:52, Mac Studio, Boltz E1's particle-count readout** (user: "yes", to reading the finished runs
+  after asking whether frozen Boltz can be made to sample HDX-correct frames). The eight finished runs pulled from
+  `$B/addon/runs/` and read with `scale_read.py` here (its readout job had failed with the lost 16,384 arms). The 256
+  runs reproduce; at 1,024 and 4,096 particles no seed reaches the -11.1 line or calibration (Feynman-Kac open
+  fraction 2e-8 to 1.3e-5 against 3.8e-4), and the mean does not rise from 1,024 to 4,096. Formally undecided without
+  the 16,384 arms. Files: diffusion_dynamics.md (Status, Phase 2 E1), remote_jobs.md (header, Resume here, line 4
+  detail, job table), progress.md; `scratchpad/boltz_hdx/addon/runs/scale_readout.txt`, also at `$B/addon/runs/`.
+* **11-03 17:38-17:55, Mac Studio, ff3.2 progress check** (user: "check ff3.2 training progress"). `ff32_basin`
+  (ff3.2) link 49757705 R from 11:28, step 31 at 17:33, 30 min a step; `check_step.py` on steps 19-31: 24 of 24
+  proteins, KE/1.5kT at most 1.015, H-bond margin +0.098 to +0.106 (under +0.10 at 24-26 and 31; user notified).
+  `ff32_dse0` link 49754482 step 69 at 17:37, margin rising to +0.159. `z32_02` read: 0.599, level with released ff2.1
+  (-0.016 [-0.059, +0.026]); shift +6.38 E_up. Files: remote_jobs.md (header, Resume here, line 2, job table),
+  plan.md (Phase 38 Resume here step 3, items 6 and 11), progress.md.
+* **11-03 17:10-18:15, Mac Studio, E1 closed; Phase 3 and its toy test T0** (user: "proceed with your recommendation.
+  but don't give up on the big goal, try another potential solution"). E1 closed in diffusion_dynamics.md and
+  remote_jobs.md (its finished jobs' row deleted). Phase 3 written with its rules before the data: replica exchange on
+  frozen Boltz-2 whose Metropolis move is Boltz-2's own renoise-denoise, a ladder along Peng's protected-NH count, MBAR.
+  `addon/remc.py` (the move as Boltz's sampling loop from any step, bitwise to `AtomDiffusion.sample` from step 0),
+  `toy_remc.py`, `t0_read.py`, `remc_boltz.py` (T1's driver, not yet run). T0 on the toy: parity and invariance pass;
+  the ladder failed at 400 sweeps (top rungs not equilibrated, rung means still rising) and passed 8 of 8 at 3,000
+  sweeps read over the last 1,500 (P(d >= 7.5) 4.15e-4 against 3.70e-4; ln Z within 1 se). T1 (about 3.5 V100-hours,
+  node-local venv so no `/beagle3` files) proposed. Files: diffusion_dynamics.md (Status, Decision 6, Phase 2 E1,
+  Phase 3), remote_jobs.md, progress.md; `scratchpad/boltz_hdx/addon/` (`runs/t0/`).
+* **11-03 18:15-18:40, Mac Studio, Phase 3's T1 submitted** (user: "proceed"). `remc_boltz.py` rewritten for the
+  real model (the sampler's conditioning captured from Boltz2.forward, parity and self-repeat checks, CA-RMSD to
+  `1UBQ_psWT_ref.pdb` checked against scipy's alignment), `t1.sbatch` (venv and CCD molecules extracted to the node's
+  `/tmp`, so no `/beagle3` files; the processed input remade by `boltz predict`), `remc.run` simplified (toy still
+  bitwise). Deployed md5-equal, `--test-only` passed, submitted as 62199777 on midway3's V100 queue. `t1_read.py` written
+  and tested on synthetic chains; that test found rule 2's reference error zero for a never-opened donor, corrected
+  before any data (diffusion_dynamics.md Phase 3 T1). Files: diffusion_dynamics.md, remote_jobs.md (§1 line 4, owed
+  by hand, job table), progress.md; `scratchpad/boltz_hdx/addon/` (`remc_boltz.py`, `t1.sbatch`, `t1_read.py`).
+* **11-03 18:00-18:50, Mac Studio, GPU: soluble proteins closed; item 12 steps 3-5 started** (user: "close what is
+  validated, and proceed to next validations"). Closed in plan.md Phase 35 (Resume here, items 6 and 11) and
+  upside3.md 10.2-10.3: soluble proteins on ff2.1 and ff3.1 pass V0-V3 but the mdCATH panel; G2's speed target is
+  recorded as not met (one V100 = 14 broadwl cores on proteins). Step 3, glpG V2: `checks/configs/glpg.stage_7.0.up`
+  promoted from `glpg_ff31`'s checkpoint (start bitwise the CPU REMD's), 16 CPU and 8 V100 seeds submitted. Step 4:
+  `g0/glpg_tm4.sh` (new) submitted one 48-replica V100 block through `run.py`, read later over the CPU block's t
+  0-2150. Step 5: `checks/mdc/mdc_run.py` and `mdc.sbatch` (new; panel.py's configs and schedule, 4 length batches,
+  either engine), tested on the midway2 login node; the CPU reference's 8 batches and the V100 probe of batch 4
+  submitted. Files: plan.md, upside3.md, remote_jobs.md (line 5), progress.md; `scratchpad/gpu_work/g0/glpg_tm4.sh`,
+  `scratchpad/gpu_work/mdc/`.
+* **11-03 22:05-22:20, Mac Studio, GPU status** (user: "check status"). Step 3, glpG V2 by seeds, passes (Bonferroni
+  0.94 over 48, largest 2.6 SE); the mdCATH CPU reference is complete (712 runs to t 9990, finite, KE/1.5kT 1.006);
+  step 4's V100 block at 2,110 tu; step 5's probe still on Priority (start estimated 00:00 11-04). Files: plan.md
+  (Phase 35 Resume here, item 12 steps 3 and 5), findings.md 11g, upside3.md 10.2, remote_jobs.md (header, line 5,
+  job table), progress.md.
+* **11-03 23:10-23:55, Mac Studio, GPU: step 4 read, step 5's probe diagnosed and resubmitted** (watcher: 62200634
+  COMPLETED, 62201376 FAILED). Step 4: glpG's V100 TM4 block (2,790 tu) read over the CPU block's t 0-2150 by
+  `g0/glpg_tm4_read.py` (glpg_u3_block1.py cut to a time window); T 0.70's TM4 DSSP 0.653 against 0.741 (the CPU
+  halves' spread), so every rung of both blocks was read (`g0/glpg_tm4_rungs.py`): the difference changes sign along
+  the ladder and the ladder mean agrees (0.706 against 0.689, the same fall by quarter); KE and C-N equal. Step 5:
+  the V100 probe's log was lost with its temporary directory; on the Mac host backend batch 4's 88 systems run, 22 of
+  them for 12 tu match the CPU engine (KE/1.5kT 2.1-4.0 on both before the anneal), and the footprint (32.1 GB
+  against the CPU engine's 12.0 GB) shows about 20 GB of device arrays, from every interaction graph's full-pair
+  capacity times the systems. `mdc_run.py` now prints upside's log on a failure; the probe resubmitted on an A100
+  (62225254). Files: plan.md (Phase 35 Resume here, item 12 steps 4 and 5), findings.md 11g, upside3.md 10.2 and
+  10.3, remote_jobs.md (header, line 5, job table, §1), progress.md; `scratchpad/gpu_work/g0/glpg_tm4_read.py`,
+  `glpg_tm4_rungs.py`, `scratchpad/gpu_work/mdc/mdc_run.py`.
+* **11-04 00:20-00:45, Mac Studio, GPU: probe read, host loop parallelized (g9b), GPU panel submitted.** The A100
+  probe 62225254: 19,755 MiB (confirms the V100's memory limit), 68.5 us per system step, host work 19.1% (over
+  item 12's 10%). `src/main.cpp`: one `for_each_system` (the CPU branch's trapped OpenMP loop) now runs both the
+  CPU branch and the `--gpu` host work. Mac: CPU regress 0 of 4260 against `dev14_record.npz`; `mc_bitwise.sh` (new)
+  with 4 threads bitwise equal to g9a on both engines (mixed batches, frames and moves every tu); a mixed batch of
+  pre-release and released ff3.1 configs is refused by name, correctly. Batch 3's device memory 10.4 GB (Mac). g9b
+  built on midway2, installed 00:36; `g0/bitwise.sbatch` now fails its job on a difference; check 62227671 and the
+  panel's 8 jobs 62227672-79 behind it. Files: src/main.cpp, plan.md (Phase 35 Resume here, item 12 step 5),
+  findings.md 11g, remote_jobs.md (header, line 5, job table, §1), progress.md; `scratchpad/gpu_work/mc_bitwise.sh`,
+  `g0/bitwise.sbatch`, `dev16_home/`, `dev16_record.npz`.
+* **11-04 08:30-08:40, Mac Studio, GPU: g9b's check and the mdCATH GPU panel read** (watcher: 62227671-79
+  COMPLETED). g9b is bitwise g9a on a V100 (frames, swaps and pivot moves every tu). The panel's 712 runs pass the CPU
+  reference's checks (t 9990, finite, KE/1.5kT 1.006, C-N at most 1.85 A); 1.40-1.49 times the 28-core broadwl
+  node's speed on V100s (batches 1-3) and 2.04 on the A100 (batch 4). Folded fraction GPU - CPU: ff2.1 -0.002
+  [-0.023, +0.019] p 0.91, ff3.1 -0.003 [-0.030, +0.023] p 0.92. TM-score comparison (step 5's test) submitted on
+  broadwl. Files: plan.md (Phase 35 Resume here, item 12 step 5), findings.md 11g, upside3.md 10.2,
+  remote_jobs.md (header, line 5, job table, §1), progress.md.
