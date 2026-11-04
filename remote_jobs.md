@@ -102,7 +102,7 @@ The ConDiv runs, all on midway2 broadwl at dt 0.009 (`$P/training/<run>`, `$P` =
 | ff31_depth_data (`fd_EE`) | the old ff3.1: 1,442 per-map basin depths, prior 0.2, every term trained | released as ff_3.1_depth_data 10-13; retired 10-26 (`.bak_pre_merge_20261026`) |
 | ff31_depth_all (`fa_EE`) | ff3.1 with all 5,040 depths, prior 0.3 | finished 10-13, not validated |
 | ff32_depth_data (`f32_EE`) | ff3.1's depths started from ff3.0 | stopped by the user in step 69 10-18 |
-| ff31_depth_data_angfix (`a31_EE`), ff32_depth_data_angfix (`a32_EE`) | the ff3.1 and ff3.2 runs on the fixed engine | finished step 76 10-21, awaiting the user's review |
+| ff31_depth_data_angfix (`a31_EE`), ff32_depth_data_angfix (`a32_EE`) | the ff3.1 and ff3.2 runs on the fixed engine | finished step 76 10-21; `a31_EE`'s panel trajectories deleted 11-04 (folded and Q tables kept, "Disk"); `a32_EE`'s deleted 11-04 at the user's word (tables kept) |
 | ff311_depth_pooled, ff321_depth_pooled | ff3.1.1 / ff3.2.1 with every term trained | cancelled 13:38 10-21, 3 min in (user's revision); kept as `<run>.cancelled_20261021` |
 | ff311_depths_only (`p311_EE`, ff3.1.1), ff321_depths_only (`p321_EE`, ff3.2.1) | ff2.1 with only its depths trained, pooled prior, from NDRD's and ff3.0's map | finished step 114 10-25; merged into ff3.1 and released as `ff_3.1` 10-26 (line 2) |
 | ff311_glypair, ff311_glypair_mb2 | the ff3.1 training debug: ff3.1.1 with glycine as ff3.0's shared pair, two minibatch orders | `ff311_glypair` running from 23:05 10-27, `_mb2` queued; target 76 (line 2) |
@@ -158,6 +158,9 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
    - ff3.1 (`ff31_nativefix` step 76, released 16:49 10-31; plan.md Phase 37): its validation (§1 line 2). Both
      panels and glpG's preparation read 23:40 10-31, the mdCATH TM files 01:30 11-01. Owed as each ends: each Peng arm's
      final frames at `[bench] COMPLETE` (the collector scores them). glpG block 1 is done and read (07:30 11-02).
+     ff3.1 is transitional (user 11-04): the scored arms' replicas, both panels' trajectories and glpG's REMD replicas
+     were deleted 11-04 after their readouts were archived ("Disk"); every scored arm's replicas may go as it is
+     scored.
    - The all-term loss's fix (plan.md Phase 38): `ff32_dse0` and `ff32_sarwsi` queue their own panels (`z32_00`,
      `s32_00`) and unfolded-shift checks, read 14:10 11-01 (§1 line 2). Since 11-03 ff3.2 is `ff32_basin` trained on
      (user; plan.md Phase 38 item 11), and `ff32_dse0` trains on to 76 as its comparison. For each epoch end of both
@@ -166,7 +169,10 @@ yet), read the handoff bundle's `records/` and working-tree patches ("Where thin
      rg_check_ff32_basin.txt`, `checks/ff32_fix_20261031/rg_check_ff32_dse0.txt`), for `w32_EE` also
      `decomp2_w32_EE.txt` and `crystal_view_w32_EE.txt` (`checks/ff32_rest_20261102/`, against `w32_00`'s -0.40 and
      -1.76), and the round's glycine depths; at 76 the epoch choice of plan.md Phase 38 item 7. Read so far: `z32_00`
-     to `z32_02`, `w32_00`; next owed `w32_01` (queued at step 38, about 21:05 11-03), then `z32_03` (step 76). The panel read,
+     to `z32_03`, `w32_00` to `w32_02` (`w32_01`, `w32_02` read 15:30 11-04, plan.md Phase 38 item 11); `w32_03` and
+     the epoch choice are read by the detached job 49816524 into `checks/ff32_epoch3_20261104/summary.txt` (about
+     20:30 11-04): read it, then validation of the chosen epoch or, if below released ff2.1, the fixes of item 11.
+     ff3.2's restart points are archived read-only in `checks/ff32_checkpoints_20261104/` (README). The panel read,
      from `ff3_selection/` with `training/ff30_gly/env.sh`: `python3 -I
      /project/trsosnic/yinhan/checks/converge_20261020/paired_npz.py domains aa runs <tag> <reference tag>`.
      The glycine depths: copy the round file
@@ -1328,8 +1334,8 @@ Finished and cancelled rows are deleted; their lessons are in §8 and "Finished 
 | **62263853** (`boltz_remc_t1_ubqps_v100`, midway3 gpu, V100) | Boltz Phase 3 T1: Boltz-2's own renoise-denoise move at lambda 0 on Ub psWT, 256 chains x 100 sweeps, with the parity check and 1,024 same-trunk plain samples (line 4); the second rerun (62199777 parity failed, 62262317 strided index; both fixed) | PD from 11:27 11-04; log `$B/logs/boltz_remc_t1_ubqps_v100_62263853.out`; `[remc] sweep N` every 10 sweeps, about 3.3 h | pull `t1.npz`, read with `addon/t1_read.py` by Phase 3 T1's rule, report to the user |
 | `$P/training/ff311_glypair*` (no job) | The ff3.1 training debug, `ff311_glypair` and `ff311_glypair_mb2` (plan.md Phase 32; line 2), on the old native target | both at their target 76 (`_mb2` 11:44 10-30, `ff311_glypair` 03:35 10-31 after a NODE_FAIL in step 65) | both arms' round 4 by Phase 32's rule; `ff311_glypair`'s round 3 |
 | 30 restarted `b_ff_3.1_<prot>_<kind>`, now chunks **49760923-49760946**, collector next **49750446** (`ff31_collect`) | ff3.1's Peng arms on the pre-audit Upside 2 engine and their collector (plan.md Phase 37; line 2) | BBA and BBL native COMPLETE and scored (final frames finite, KE/1.5kT 1.002-1.008); the 30 broken chains restarted 12:18 11-02: BBA de novo COMPLETE 13:49, WWdomain de novo 18:05, WWdomain native 18:35 and NTL9 native 22:10 (final frames finite, KE/1.5kT 1.000-1.007, 1.003-1.008, 1.004-1.009 and 1.004-1.007, 14 replicas each), WWdomain native and de novo scored 21:45-21:48, NTL9 native 04:23 11-03 by pass 49748728 (`<TM>` 0.199 at T 0.680, released ff2.1 0.249); the other 26 chunks ended 22:51 and resubmitted themselves (49748835-49748860, logs written), none on the throttled midway2-[0316-0327]; of them gpW native 49748839 COMPLETE 05:55 11-03 and alpha3d native 49748860 07:57 (final frames finite, KE/1.5kT 1.002-1.006 and 1.002-1.006, 14 replicas each); the other 24 ended at their wall time 09:22 11-03 and resubmitted themselves (49760923-49760946), PD on Priority at 09:26 (broadwl 179 of 180 nodes allocated); collector next 49750446 (begin 09:49) | each arm's final frames at `[bench] COMPLETE`; `peng_ff31.txt` when DONE |
-| **49754482** (`condiv-train`, epoch 3 to 76), successor **49765255** (PD afterany) | `ff32_dse0` trained on, the comparison for ff3.2 since 11-03 (plan.md Phase 38 items 6, 11; line 2) | R from 11:41 11-03, step 69 at 17:37 (24 of 24 proteins every step, margin +0.159); `z32_02` (49754402) and its shift (49754413) COMPLETED 12:16, read 17:50: folds 0.599, level with released ff2.1 (-0.016 [-0.059, +0.026]), shift +6.38 E_up | at step 76 (about 21:05 11-03) `after_training.sbatch` queues `z32_03` and stops; then Phase 38 item 7 |
-| **49757705** (`condiv-train`, `ff32_basin` from step 19 to 38), successor **49764882** (PD afterany) | ff3.2 since 11-03: `ff32_basin` trained on, every term, DSE off, the restrained replica in the native basin (plan.md Phase 38 item 11; line 2) | R from 11:28 11-03 on 23 nodes, step 31 at 17:33 (30 min a step, 24 of 24 proteins, KE/1.5kT at most 1.015); H-bond margin +0.098 to +0.106 since step 19, under +0.10 at steps 24-26 and 31, user notified 17:50 | at step 38 (about 21:05) `after_training.sbatch` queues `w32_01`, its shift, gaps and Rg check, and epoch 2: read them against `w32_00` and `z32_01` |
+| **49801508** (`condiv-train`, `ff32_basin` epoch 3 to step 76), insurance **49801596** | ff3.2: `ff32_basin`, the native-basin restraint, DSE off (plan.md Phase 38 item 11; line 2) | R from 07:37 11-04, step 70 at 15:08, 30 min a step, 24 of 24 proteins; step 76 about 18:10 | at 76 its `after_training_ff32_basin.sbatch` submits panel `w32_03`, its unfolded shift and gaps, then stops |
+| **49816524** (`ff32_e3_wait`, midway2 1 core, 16 h) | ff3.2's epoch-3 read, detached (user 11-04: "proceed with your suggestion, but make sure the mistakes can be corrected later"; `checks/ff32_epoch3_20261104/`, README) | R from 15:48 11-04, waiting for step 76's after-training line | submits `read.sbatch` afterok on `w32_03`'s panel, shift and gaps; it writes `summary.txt` (the epoch choice and verdict by `choose.py`'s rule, fixed before the data, then the item 11 readouts) and archives the step-76 checkpoint. Read `summary.txt`, then by its verdict: validation, or the fixes |
 
 **Line 5: Upside 3 on the GPU (plan.md Phase 35; midway2 `gpu2` and midway3 `gpu`, never `beagle3`, user 10-29).**
 - The tree: `/beagle3/trsosnic/yinhan/upside3_gpu`, a development tree beside the Upside 3 tree (which its validation,
@@ -1703,7 +1709,24 @@ the inode quota. Jobs writing there failed: Upside 3's glpG REMD could not write
 Disk quota exceeded`), and four Peng chunks died in 9 s with no log (exit 0:53: Slurm could not create the log); both
 were resubmitted (§1 line 3).
 
+**ff3.0 and ff3.1 are transitional** (user 11-04): "once ff3.2 is complete and validated, all ff3.0 and ff3.1
+results can completely gone". Until then only what is analysed and read by nothing running or owed is removed. Left
+for that day: the trainings in `$P/training` (`ff31_nativefix`, which ff3.2's Rg check reads; `ff311_glypair`, whose
+step-34 replicas `crystal_view.py` reads at each `ff32_basin` epoch end; `_mb2`, `ff31_depth_data_angfix`,
+`ff311_depths_only`, `ff321_depths_only`, `ff31_depth_all`, `ff31_depth_data`; about 29 GB and 91,000 files), the 9
+running ff3.1 Peng arms, every remaining ff3.0/ff3.1 npz and score, and the released `ff_3.0_gdepth` / `ff_3.1` files.
+
 **Reclaimed at the user's word** (manifests, scripts and logs kept):
+* 11-04 15:13, ff3.1's analysed data, 129.9 GB and 1,606 files (`checks/disk_reclaim_20261104_ff31/`, `m13`-`m16`;
+  user: "ff3.1 is also transitional ... check how far ff3.2 is, and if any existing ff3.1 can be analyzed and
+  removed"; `/project` 1.2 T to 1.3 T free). Readouts first to `checks/archive_1102_20261104/ff31/` and the 1102
+  report folder (the panels' TM tables, the paired folded/Q tables of `p44_ff31nf`, `mdc_ff31nf` and `a31_00`-`03`
+  against released ff2.1, the 23 Peng scores, glpG's preparation and block 1 TM4). Deleted: the replicas of the 23
+  scored ff3.1 Peng arms (18.3 GB; `input/`, logs, `COMPLETE`, scores kept; the 9 running arms untouched),
+  `p44_ff31nf` / `mdc_ff31nf`'s `.up` (60.1 GB; npz and TM series kept), Upside 3 `glpg_ff31`'s REMD replicas (8.4
+  GB; checkpoints kept) and `a31_00`-`03`'s `.up` (43.1 GB; npz kept; no TM-score, as `ff21_released` has no
+  trajectories left to pair with). Then `a32_00`-`03`'s `.up` (704 files, 43.0 GB; user: "delete a32"; `m17`,
+  tables in the same archive), and the 9 running ff3.1 arms kept (user: "keep the current running jobs").
 * 11-04 14:58, ff3.0's trajectories, 260.3 GB and 1,002 files (`checks/disk_reclaim_20261104_ff30/`, `m8`-`m12`,
   `reclaim.log`; user: "ff3.0 is transitional ff, so once we have the results analyzed and on the slides, we can
   comfortably delete the trajectory files"; `/project` 972 G to 1.2 T free). First the one owed readout, TM4 over

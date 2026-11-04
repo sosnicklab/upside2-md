@@ -1541,6 +1541,39 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     **Step 31, read 17:45 11-03:** 30 min a step, 24 of 24 proteins, KE/1.5kT at most 1.015. The H-bond margin has
     sat at +0.098 to +0.106 since step 19, under the +0.10 line at steps 24-26 and 31 (`ff32_dse0` +0.131 to +0.159
     over epoch 3); the user was notified and the run trains on.
+    **Epochs 0-2 read 15:30 11-04** (MacBook Pro; user: "check ff3.2 for (1) basin depth difference between alpha L
+    and R in GLY, (2) whether it holds protein folded, as this failed in last version"). Step 70 at 15:08, 30 min a
+    step, 76 about 18:10. (1) Pooled glycine alpha_L - alpha_R (`gly_depths.py`, dse0 round 1 reproducing -0.877):
+    rounds 0-3 -1.064 / -0.915 / -0.829 / -0.774 (per map -ln(P_aL/P_aR) -0.825 / -0.677 / -0.591 / -0.537), round k
+    the library of epoch k, so `w32_02` runs round 3; released ff3.1 -0.781, ff3.0 -0.836, ff2.1 -1.460, the previous
+    ff3.2 -0.675. Shared glycine offsets after round 3 alpha_R -0.095, alpha_L +0.580 (ff3.0's pair -0.107, +0.517).
+    Still moving, about 0.06 a round. (2) Folding: the panel folds `w32_00` / `w32_01` / `w32_02` 0.630 / 0.633 / 0.674
+    against released ff2.1's 0.615 (+0.015 [-0.015, +0.045], +0.018 [-0.016, +0.051], +0.059 [+0.015, +0.103] p
+    0.023; mean Q +0.014 p 0.029 at epoch 2), where the previous ff3.2 folded 0.447 (-0.169); unfolded-state shift
+    +6.99 / +6.35 / +7.94 E_up, 0 of 16 negative (previous -11.94, 16 of 16); states beyond 15 A +19.1 / +23.0 / +28.3
+    E_up above native (`crystal_view`). Against that, two trends: the loose-minus-native-like gap against released
+    ff2.1 (`decomp2`) -0.40 / -0.93 / -1.20 E_up over 31-32 domains, through hydrophobe H-bond coverage and rotamer
+    (backbone environment coupling +0.35 the other way), and the hot chain's Rg at T 1.1 0.943 / 0.896 / 0.880 of
+    `ff31_nativefix`'s (T 0.8 level, 0.996-0.997). Folding has not fallen; by item 11 the growing gap is reported, and
+    `w32_03` (about 19:30) shows whether folding follows it.
+    **Why, read 16:40 11-04** (findings 1.37 "Why the two diagnostics grow"): both are states the contrast never
+    contains (free replicas restart at the native each step and the free phase is the three coldest): the loose gap
+    is the 11-02 side-chain packing mechanism regrowing (directed, half uniform hydrophobe coverage), the compaction
+    is backbone burial favouring collapsed unfolded chains (-1.95 of -2.23 E_up at `w32_02`), which the DSE target
+    held the other way (`n32_04` +3.08). Fixes, each a departure from FF2's workflow for the user to choose and to be
+    tested as a one-epoch arm from step 19 by a rule fixed before its data: a denatured-state term with a set point
+    (the unfolded ensemble held at released ff2.1's size instead of pushed toward the SARW), or non-native states in
+    the free phase (persistent chains across a protein's visits, or warmer replicas in the free ensemble); or no
+    change, with `w32_03`'s read and the epoch choice deciding.
+    **Chosen 11-04 (user: "proceed with your suggestion, but make sure the mistakes can be corrected later"): no
+    change.** `w32_03` and the epoch choice are read by a detached job (`checks/ff32_epoch3_20261104/`, job 49816524 ->
+    `read.sbatch` -> `summary.txt`) by item 7's rule written into `choose.py` before the data (dry-run on `w32_02`):
+    step 76 unless an earlier epoch folds better at p < 0.05; the chosen epoch below released ff2.1 (95% interval
+    under 0) is not deployed, otherwise its full validation follows. If `w32_03` folds below `w32_02`, the epoch choice
+    takes `w32_02` and the fixes above are tested as arms. To keep every step reversible: ff3.2's and `ff32_dse0`'s
+    epoch-end checkpoints, their round libraries and the trainer are archived read-only with md5s
+    (`checks/ff32_checkpoints_20261104/`, README with the arm recipe); nothing is released into `parameters/` before
+    the validation passes; `ff31_nativefix`, `ff311_glypair`, `p44_ff21_released` and every `w32_*` / `z32_*` panel stay.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the

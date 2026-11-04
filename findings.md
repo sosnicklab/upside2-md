@@ -1956,6 +1956,23 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
       the loss the folded fraction sees. Unfolded states rise further on Peng's frames (+6.99 E_up, 0 of 16
       negative; `z32_00` +3.80), while the free chain at T 1.1 compacts as in `z32_01` (Rg 0.943 of
       `ff31_nativefix`'s; `z32_00` 0.978, `z32_01` 0.939).
+    - *Why the two diagnostics grow under the restraint* (read 11-04 on `w32_00`-`02`, user: "check what is going
+      wrong with the 2 failed diagnostics"; `checks/ff32_collapse_20261104/`). Each step every protein's replicas
+      start from its native structure (`run_minibatch`, `t.init_path`) for 8000 tu, and the contrast is the
+      restrained native basin against the three coldest free replicas, which stay near native: no compact
+      non-native or unfolded state is ever in it, so a change that also lowers those states is never pushed back.
+      (a) The loose gap (`decomp2` -0.40 / -0.93 / -1.20 E_up) is directed (`decomp3.py` on `w32_02`: hydrophobe
+      coverage -0.561, reversing with -delta to +0.564, random signs -0.11 to -0.01; uniform part -0.248, 31 of 31,
+      pattern -0.313; side-chain burial -0.202, mostly pattern), the 11-02 mechanism regrowing as the same
+      parameters move further (hydrophobe coverage rms change 0.104 against `z32_00`'s 0.054). (b) The hot chain's
+      compaction: on released ff2.1's unfolded Peng frames (CA-RMSD >= 12 A), the change makes the most compact
+      third cheaper than the most extended third (`unfolded_rg_blocks.py`, 16 proteins): `w32_00` / `01` / `02`
+      -1.45 / -1.77 / -2.23 E_up (16 of 16), of which backbone burial -1.32 / -1.60 / -1.95, pair table -0.40,
+      side-chain burial -0.36 at `w32_02` (hydrophobe coverage +0.33 the other way); `z32_03` -1.90 (backbone
+      burial -2.04); the previous ff3.2 with the DSE `n32_04` +3.08 (backbone burial +1.20, 0 of 16). So the DSE
+      target, <dV/da>_SARW - <dV/da>_unfolded, was the only term that saw unfolded states, and it held them open;
+      off, the backbone burial drifts toward collapse. The same backbone-burial change protects the native basin
+      (+0.35 in the loose gap; its reset cost folding -0.096, above), so neither diagnostic is a term to put back.
 
 ### 1.38 The most-probable-state side chain: what the mode does to the dynamics (2026-11-03)
 

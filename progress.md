@@ -966,4 +966,11 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   on both clusters, HDX parity) and backup `shared/archive/beagle3_anaconda_20261104.tar` (637,439 entries); then
   deleted at the user's word, 14:03-14:42: `/beagle3` files 1,163,216 to 656,016 of 1,268,000. Then ff3.0 (user: transitional, delete its trajectories once analysed and on the slides): the owed TM4 over
   blocks 1-5 of its four Upside 2 chains read (frays in the 79ALA backgrounds, holds in the 79HIS ones; findings 1.35),
-  readouts archived, 260.3 GB of ff3.0 trajectories deleted (`checks/disk_reclaim_20261104_ff30/`).
+  readouts archived, 260.3 GB of ff3.0 trajectories deleted (`checks/disk_reclaim_20261104_ff30/`). Then ff3.1 (user: also transitional; all ff3.0/ff3.1 go once ff3.2 is validated): ff3.2 at step 70 of 76;
+  129.9 GB of analysed ff3.1 data deleted (`checks/disk_reclaim_20261104_ff31/`), readouts archived. `a32` deleted
+  (43.0 GB). ff3.2 epochs 0-2 read (plan.md Phase 38 item 11): glycine alpha_L - alpha_R -0.774 at round 3 (ff3.1
+  -0.781); folds 0.674 against released ff2.1's 0.615; the loose gap and hot-chain compaction grow. Diagnosed
+  (findings 1.37): both are states the training contrast never contains; compaction is backbone burial (-1.95 of
+  -2.23 E_up), the loose gap the directed side-chain packing change; fixes listed in plan.md Phase 38 item 11. The
+  user chose no change: epoch 3's read and the epoch choice run detached (`checks/ff32_epoch3_20261104/`, 49816524),
+  restart points archived (`checks/ff32_checkpoints_20261104/`).
