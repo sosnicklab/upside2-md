@@ -2002,6 +2002,42 @@ max-mode trajectories, so every dynamics number here holds for both.
 - Max mode's energy at the native is 16-32 E_up above BP's free energy (1aba -220.2 against -236.3, 1a62 -263.8
   against -295.4, 1afh +106.0 against +86.4): no side-chain entropy, and the chosen states' energy, not the mean.
 
+### 1.39 ff3.2 turns BBA into one helix: the backbone burial it lost (2026-11-05)
+
+User 11-05: "check why ff3.2 fails so bad on BBA". ff3.2's first scored Peng arm, BBA native (1FME, 28 residues,
+hairpin 0-12 with GLY8 at the turn, helix 13-25), mean TM 0.360 and median RMSD 7.70 A against released ff2.1's
+0.416 and 2.41 A. Scripts and outputs in `checks/ff32_bba_20261105/` (read-only on the run files).
+
+- **What the chain does** (`bba_diag.py`, `bba_rama.py`). At T 0.65 the native is lost within the first time block
+  and does not return (folded, RMSD < 3 A, 0.08 against ff2.1's 0.87). The helix stays (helix contacts 0.99) and
+  melts later than in ff2.1 (0.56 at T 0.92 against 0.18). The hairpin and its packing go: hairpin contacts 0.29
+  against 0.49, hairpin-helix 0.56 against 0.96. The cold chain is one helix over residues 1-26 (longest helical
+  run median 26 against the native's 13, at least 20 residues in 84% of frames; Rg 11.6 A, larger than at T 0.78).
+  The hairpin's residues sit in alpha_R 0.83-0.94, GLY8 in alpha_R 0.86 where ff2.1 keeps it at phi > 0 (0.98).
+  Folded fraction peaks at T 0.74-0.78 (0.18) and falls toward the cold end: the helix is the low-temperature state.
+- **Which term** (`bba_decomp.py`: ff2.1's config with one node moved to ff3.2's, and the reverse, on 800
+  native-like and 400 all-helix frames). E(all-helix) - E(native-like) goes from -3.23 E_up (ff2.1) to -6.60
+  (ff3.2), -3.37; single nodes add to -3.41 and forward equals reverse within 0.05. Backbone burial
+  (`bb_sigmoid_coupling_environment`) -2.49, side-chain pair table -1.44, the two glycines' Rama maps -0.92,
+  hydrophobe coverage -0.44, side-chain burial -0.26; against these the other residues' Rama maps +1.14, H-bond
+  coverage +0.57, H-bond energy +0.43. The burial term's native preference falls from 4.56 to 2.07 E_up
+  (`bba_bbenv.py`), the ratio of its scale (-0.301 to -0.136).
+- **Where the burial loss comes from.** Every other trained force field keeps the scale at or above ff2.1's
+  (`ctrl38` -0.367, `c9_03` -0.351, `n32_04` -0.400, `s32_00` -0.311). Only the runs with the DSE target off halve
+  it: `ff32_dse0` -0.161 at its first epoch (`z32_00`) and `ff32_basin`, which starts from the same checkpoint,
+  -0.193 / -0.170 / -0.142 / -0.136 over `w32_00`-`03`. It is the term 1.37 found protecting the native basin on the
+  44 domains (its reset on `z32_00` cost -0.096), so there the co-trained terms make up for it. In BBA the all-helix
+  state earns a third of the native's burial energy (-2.11 against -6.67 E_up under ff2.1), so halving the term
+  costs the native most; the pair table and the glycine maps move the same way, and the terms moving the other way
+  (the other Rama maps, H-bond) give back +2.14 of the -5.55.
+- **How far it reaches** (`bench_ss.py`, native arms over the same simulated time, finished chunks only, 11-05
+  20:20). Most proteins are level with ff2.1 (median RMSD within 0.3 A; lambda 5.73 against 8.97, protein G 3.93
+  against 4.48 better). The same direction, weaker, in two beta-rich proteins: WW domain helix +0.21 against
+  ff2.1's +0.10 of residues, beta -0.11 against 0.00 (RMSD 4.65 against 4.50); NTL9 helix +0.37 against +0.25,
+  beta -0.27 against -0.18 (both lose it, 7.40 against 7.09). One cold trajectory per arm and 2 of the chunks, so the
+  WW and NTL9 shifts are not yet resolved; Peng's paired read at `peng_ff32.txt` judges ff3.2 (plan.md Phase 38
+  item 10 (c)), BBA alone does not.
+
 ## 2. The hybrid model: what each side supplies
 
 ### 2.1 Replaced by design
@@ -5315,6 +5351,17 @@ to come from openings of the wrong size, and BioEmu2 matched Upside FF2 on HEEH 
 (diffusion_dynamics.md Phase 1, section 7). **Before writing a readout against a published benchmark, list every
 metric in the paper's summary table and compute each one the data allow; for any left out, say why.**
 
+### 10.51 Before deleting a run's files, find every reader of them (2026-11-04)
+
+ff3.1's Peng replicas were deleted 11-04 under the rule "every scored arm's replicas may go as it is scored". The
+scorer (`$P/training/ff21_nobp_dt009/setup/score/score_arms_ff.py`) calibrates each protein's residue offset on its
+native arm's first output frame and reuses it for the de novo arm, so once the native replicas were gone, NTL9 de
+novo's score job (49829587, 23:10 11-04) printed `skipped` and exited 0. The collector's `scored.log` still listed
+it, because that log records a submission rather than a result. ff3.1's last 9 de novo arms could not be scored, and
+ff3.2's table, which compares against ff3.1, waited with them. **Before deleting a run's files, grep the pipeline for
+every later reader of them, the other arm of a pair included; an arm counts as scored only when its score file
+exists.**
+
 ---
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
@@ -5630,9 +5677,10 @@ The full record is in `upside3.md` sections 4, 5 and 10 (reports in `scratchpad/
   it ran serially over the systems; g9b runs it in parallel through the CPU branch's loop, bitwise (Mac, and a V100
   against g9a). Per system step on g9b, 4 host cores, against 28 broadwl cores: batches of 57-95, 95-128 and
   129-166 residues 39.5, 51.5 and 65.4 us on a V100 (1.43, 1.49, 1.40 times), batch 4 60.6 us on an A100 (2.04
-  times; 68.5 us on g9a). The 712 runs pass the CPU reference's checks (KE/1.5kT 1.006, C-N at most 1.85 A), and
-  the folded fraction agrees with the CPU's on both force fields (ff2.1 -0.002 [-0.023, +0.019], ff3.1 -0.003
-  [-0.030, +0.023]).
+  times; 68.5 us on g9a). The 712 runs pass the CPU reference's checks (KE/1.5kT 1.006, C-N at most 1.85 A) and
+  agree with the CPU's over the 89 domains: mean TM-score GPU - CPU -0.000 [-0.005, +0.005] p 0.86 (ff2.1) and
+  +0.000 [-0.005, +0.006] p 0.91 (ff3.1); folded fraction -0.002 [-0.023, +0.019] and -0.003 [-0.030, +0.023].
+  This is the first dynamics of batches of different proteins, and it closes them.
 * **Where the device's time goes (nvprof, K80, 10-30).** Kernels, not launches or transfers. In each slow kernel one
   thread looped serially over hundreds of partners (pair-list rebuild, `martini_potential`, `martini_sc_table_1body`,
   BP's incidence lists), and the kernels over a pair list's capacity launched a thread per possible slot (600 k for

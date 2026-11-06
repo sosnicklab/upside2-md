@@ -879,6 +879,73 @@ with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler 
         1UBQ reference (session scratchpad, not kept): the check equal, `t1.npz` written with every array, 72 donors,
         CA-RMSD 0 and the reference's C-N; the harness reproduces both failures on the earlier files. Rerun
         **62263853**, same `t1.sbatch`, rules unchanged (`remote_jobs.md` §1 line 4).
+      * **Readout, 18:30 11-04 (`addon/t1_read.py`, `runs/boltz_remc_t1_ubqps_v100_62263853/readout.txt`): T1 fails
+        by its rules, 2 of 3; nothing submitted.** 1: equal. 2 fails: largest |z| 4.12, donor rows 53 (+4.1) and 31
+        (+3.8) against the limit 3.4. 3 passes: mean N 58.721 against 58.598 (+2.7 se), CA-RMSD 1.594 against 1.560 A
+        (+2.3 se), C-N share 0.15% against 0.08% (+0.6 se). 4 passes: 58.705 then 58.737 (+1.0 se).
+        Located, not deciding. The two failing donors are open in 1 and 2 of the 1,280 reference samples and in 0 and 2
+        of the chains' 20,480 states. A Fisher exact test with every chain state counted as independent, which favours
+        finding a difference, gives p 0.059 and 0.019, against 7e-4 for 0.05 over 72 donors: at one or two counts the
+        rule's normal approximation overstates the difference, so these two z alone do not show drift. The signs agree,
+        though: every listed deviation has the chains more protected (rows 50, 70, 30 at +2.3 to +2.7, mean N +2.7 se),
+        and states with 18 or more open NHs are 51 of 20,480 against 8 of 1,280 (p 0.02; at 17 or more, p 0.9). The
+        shift is there by sweeps 1-10 (58.73 against the starts' 58.56), flat after, and the same after moves at every
+        sigma (58.71-58.73), so it locates to no sigma. The reference's 1,280 samples limit every one of these reads.
+        Time per move 0.34 s (87.2 s per sweep of 256 chains), so T2 as estimated is about 18 V100-hours.
+- [ ] T1b, T1 again with an 8x reference (user 11-04: "proceed with your recommendation on boltz"). T1's rule 2 failed
+      on two donors its 1,280-sample reference opens once or twice, where the reference's binomial error rests on one
+      or two counts, and rule 3's mean N read +2.7 se with the reference's error the larger part. One V100 job,
+      `t1b.sbatch`: `t1.sbatch` with the run's seed 2 (T1's 1) and `--plain 8192` (T1's 1,024), so the reference is
+      8,448 same-trunk samples; the parity check, the 256 chains, 100 sweeps and the sigma set are T1's. For the larger
+      reference `remc_boltz.py` observes 1,024 replicas per call (`OBSERVE_BATCH`; the burial coverage would not fit a
+      16 GB V100 at 8,448): at T1's sizes that is one call, the code T1 ran; on T1's 256 final frames, chunks of 50
+      give flags and C-N bonds equal bitwise and CA-RMSD within 2e-5 A, and the frames' flags equal T1's sweep-100
+      record (`addon/runs/t1b_check/observe_test.py`, CPU). About 5.5 V100-hours.
+      Rules, fixed here before its data: T1's rules 1-4 as written, read by `t1_read.py` unchanged on T1b's own data.
+      T1b is a new test, not pooled with T1, and T1's failure stays on the record. Pass: Boltz-2's move keeps its
+      distribution at this precision, and T2 is built with its rule written before its data, checked with
+      `--test-only` and submitted. Fail: the move drifts; it is located by sigma as for T1, and a remedy gets its own
+      rule before any run; nothing is submitted. Beside, not deciding: T1's rows 53 and 31, the sign of every
+      deviation over 2 se, and the share of states with 18 or more open NHs.
+      * **Readout, 06:55 11-05 (62293143, COMPLETED 06:03; `addon/t1_read.py`, `runs/boltz_remc_t1b_ubqps_v100_62293143/`
+        `readout.txt`, beside reads `beside.txt` from `beside.py`): T1b fails by its rules, 2 of 3; nothing
+        submitted.** 1: equal. 2 fails: donor row 0 (residue 2) reads +4.1 against the limit 3.4, protected 0.9989 in
+        the chains and 0.9968 in the 8,448-sample reference (open in 23 of 20,480 chain states, 22 of 256 chains, and
+        27 of 8,448). These counts are not the one or two that limited T1. 3 passes: mean N 58.688 against 58.632
+        (+2.4 se), CA-RMSD 1.582 against 1.567 A (+1.6 se), C-N share 0.13% against 0.13% (+0.0 se). 4 passes: 58.679
+        then 58.696 (+0.6 se). 86.8 s per sweep.
+        Beside, not deciding. T1's rows 53 and 31 now read +0.7 and -1.1, so T1's two failures were small-count noise,
+        as located. Of the 7 rows over 2 se, 6 have the chains more protected: residues 2 (+4.1), 75 (+3.1), 46 (+2.7),
+        21 (+2.6), 65 (+2.4) and 66 (+2.4); residue 32 is the exception (-2.0). Over all 72 rows, 35 read positive and
+        18 negative. States with 18 or more open NHs: 0.40% against 0.43% (p 0.76); with 17 or more, 1.78% against
+        2.13% (p 0.046). Against the pooled plain 10^5, the largest |z| is 3.80. The same sign as T1 (+2.7 se on
+        mean N), at about half T1's size: Boltz-2's move leaves the chains slightly more protected.
+        Located by sigma. Mean N of the states after a move: +2.7 and +2.6 se at 0.92 and 1.90 A, +0.9, +1.4 and
+        +0.6 se at 3.95, 7.67 and 15.95 A. Residue 2 reads +3.3 to +4.0 at 0.92-3.95 A and +1.3 to +1.5 at the two
+        largest. The change in N across one move, which is zero at every sigma for a move that keeps the
+        distribution, is +0.016, +0.034 and +0.030 at the three small sigma and -0.042 and -0.064 at 7.67 and 15.95 A
+        (each within 2 se). The small moves add protection and the large ones, which are close to fresh samples,
+        take it back. That fits a bias carried by the moves at 4 A and below, but the chain mixes all five, so the
+        states before each move are the chains' own biased ones and this read cannot isolate a sigma. The
+        mechanism, the denoiser's late steps sharpening a renoised state more than the sampler's own path does, is
+        unproven. For HDX the size matters: residue 2's open fraction 0.11% against 0.32% is a factor of 2.9, wider
+        than T2's factor-of-2 target.
+- [ ] T1c, T1b with only the two large moves (user 11-05: "decide for me the next move for Boltz"). Why this test: in
+      a chain sitting above the reference, a move that keeps Boltz-2's distribution can only pull N back toward it.
+      In T1b the moves at 7.67 and 15.95 A did (-0.053 and -0.032 per move from the chains' +0.056, about what a fresh
+      sample would give), and the three at 3.95 A and below pushed it further up (+0.018, +0.028, +0.028). The
+      one-move test from fresh plain samples proposed at 06:55 was dropped before any run: T1b's scatter of N across
+      one move (s.d. 1.26 at 0.92 A to 2.28 at 15.95 A) gives a standard error of 0.020-0.036 per sigma at 4,096
+      pairs, against effects of 0.02-0.05. One V100 job, `t1c.sbatch`: `t1b.sbatch` with the run seed 3 and
+      `--sigmas 8,16` (the schedule's 7.67 and 15.95 A); the parity check, 256 chains, 100 sweeps and 8,192 same-trunk
+      plain samples as T1b. About 6 V100-hours (only the two longest moves of T1b's 45-82 steps).
+      Rules, fixed here before its data: T1's rules 1-4 as written, read by `t1_read.py` unchanged on T1c's own data,
+      not pooled with T1 or T1b. Pass: the large-move set keeps Boltz-2's distribution at this precision, and T2 is
+      built on it with its rule written before its data; lambda 0 cannot measure acceptance under the tilt, which
+      near-independent moves make lower, so T2's design starts there. Fail: the drift does not come from the small
+      moves alone; the second remedy, the chain on the 1 A-noised state with the deterministic tail as a read-out
+      map, gets its own rule before any run, and nothing is submitted. Beside, not deciding: the change in N across
+      one move at each sigma, residue 2's row, the sign of every row over 2 se, and the time per sweep.
 - [ ] T2, calibration and support (GPU): the N ladder on Ub psWT; I61, D21, E34, Q41 and Y59 within a factor of 2 of
       their plain frequencies, V70, I13, W45 and L67 resolved, as E1 asked. *Estimate*, from the toy's equilibration:
       8 ladders x 12 rungs x 2,000 sweeps, about 20 V100-hours; fixed after T1 measures the time per move.

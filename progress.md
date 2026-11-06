@@ -946,6 +946,13 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   [-0.023, +0.019] p 0.91, ff3.1 -0.003 [-0.030, +0.023] p 0.92. TM-score comparison (step 5's test) submitted on
   broadwl. Files: plan.md (Phase 35 Resume here, item 12 step 5), findings.md 11g, upside3.md 10.2,
   remote_jobs.md (header, line 5, job table, §1), progress.md.
+* **11-04 10:39-10:50, Mac Studio, GPU: step 5 passes, item 12 closed** (user: "git push all local changes";
+  watcher: 49803361-62 COMPLETED). The 7 modified files committed as `be8f652` and pushed to `origin/martini-dev`.
+  TM-score of the GPU panel against the CPU reference: mean TM GPU - CPU -0.000 [-0.005, +0.005] p 0.86 (ff2.1),
+  +0.000 [-0.005, +0.006] p 0.91 (ff3.1), so the engines agree by step 5's rule; one of 28 subgroup rows at p 0.046
+  (ff2.1 mixed stratum, TM > 0.5, GPU higher). Batches of different proteins closed; step 6's report given.
+  Files: plan.md (Phase 35 Resume here, items 11 and 12), upside3.md (opening, 10.2, 10.3 G5), findings.md 11g,
+  remote_jobs.md (header, checklist, job table, §1 line 5), progress.md.
 * **11-04 10:40-11:30, MacBook Pro: status pass, Boltz T1 fixed, GPU step 5 read, closures and disk surveyed**
   (user: "check remote job status", then "fix the failed jobs, check which task branch can be closed, and check what
   can be removed"). Since 09:26 11-03 every job COMPLETED but Boltz T1 62199777, which failed its parity check: the
@@ -974,3 +981,117 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   -2.23 E_up), the loose gap the directed side-chain packing change; fixes listed in plan.md Phase 38 item 11. The
   user chose no change: epoch 3's read and the epoch choice run detached (`checks/ff32_epoch3_20261104/`, 49816524),
   restart points archived (`checks/ff32_checkpoints_20261104/`).
+* **11-04 16:20-16:40, Mac Studio: git pull and a status pass** (user: "git pull and merge with local", then "check
+  remote status, find what is completed, what is closed, and if we need to submit any appending jobs"). Pulled
+  `986af0b` (fast-forward) and re-applied this computer's uncommitted record edits over it, merging the MacBook Pro's
+  Phase 35 and line 5 entries by hand (step 6 closed here; the panel's trajectories deleted there). Status, read only:
+  every job since 00:00 11-04 COMPLETED but `tar_anaconda` (stopped in its compare) and T1's 62262317 (rerun);
+  running are bpmax link 49806998 (engine switched at step 38, workers on `obj_angfix/upside`, step 49, KE/1.5kT
+  0.998-1.037), `ff32_basin` at step 72, ff3.1 Peng's 9 de novo arms (23 of 32 scored) and Boltz T1 62263853 (parity
+  passed, sweep 50 of 100). Every running line has its successor queued; nothing to submit. Then (user: "decide for
+  me what needs to be run"): Phase 32 judged by its rule, failed (rounds 3-4 averaged, aR +0.036 and aL +0.397
+  against ff3.0's -0.107 / +0.517; `ff311_glypair` still pulled, t +2.7), not rerun; H2 moved to ff3.2's ubiquitin
+  arms, since ff3.1's native arm's replicas went in the 11-04 reclaim; what follows each ff3.2 verdict fixed in
+  Phase 38 item 11; this computer's Boltz `remc.py` / `remc_boltz.py` pulled md5-equal from the cluster (backups
+  `.bak_pre_nsteps_20261104`). Files: remote_jobs.md (header, Resume steps 4 and 7, job table, lines 1-2),
+  plan.md (Phases 23, 32, 38, 39), upside3.md 8.2, progress.md; cluster `WATCH_STATUS.md` and the bundle's
+  `records/`.
+* **11-04 16:45-17:05, Mac Studio: the watch taken, with auto-start** (user: "monitor and auto start jobs"). Owner
+  the Mac Studio, session `upside2-md-b9`, cron `16048789` hourly at :23 (expires 11-11), whose prompt also submits
+  the jobs decided in advance (remote_jobs.md "The watch"). Prepared and dry-run (`plan` mode, `sbatch --test-only`,
+  nothing queued, test copies removed): `checks/ff32_validate_20261104/` (ff3.2's validation: stages the chosen
+  epoch as `ff_3.2_<epoch>`, mdCATH panel and TM, Peng's 32 arms and collector, glpG on Upside 3) and
+  `checks/bpmax_fixedpoint_20261104/` (bpmax's 44-domain panel in its tree and both TM comparisons). Files:
+  remote_jobs.md (header, Handoff, The watch, job table), plan.md (Phases 38, 39), progress.md; cluster
+  `WATCH_STATUS.md`.
+* **11-04 18:25-18:40, Mac Studio: watch pass; Boltz T1 read, fails rule 2.** T1 62263853 COMPLETED 17:37 (parity
+  equal); `t1.npz` and its log pulled to `scratchpad/boltz_hdx/addon/runs/boltz_remc_t1_ubqps_v100_62263853/`, read
+  by `t1_read.py`: rule 2 fails (two donors at z +4.1 and +3.8, each opened once or twice in the 1,280-sample
+  reference, exact p 0.06 and 0.02), rules 3-4 pass, all deviations toward more protection; T2 not submitted, the
+  next run is the user's. ff3.2's `ff32_basin` stopped at step 76 (budget); its panel `w32_03`, shift, gaps and the
+  epoch read queued themselves. ff3.1 NTL9 de novo COMPLETE (final frames finite, KE/1.5kT 1.003-1.007). Files:
+  diffusion_dynamics.md Phase 3 T1, remote_jobs.md (header, owed items, line 4, job table), progress.md; cluster
+  `WATCH_STATUS.md` and the bundle's `records/`.
+* **11-04 19:25-19:45, Mac Studio: ff3.2 epoch 3 validated by the watch; Boltz T1b submitted.** `summary.txt` 19:13:
+  `w32_03` chosen, LEVEL with released ff2.1 (+0.029 [-0.008, +0.066] p 0.065; `w32_02` not better at p < 0.05), so
+  `checks/ff32_validate_20261104/submit.sh` ran (`plan`, then `apply` 19:26): `ff_3.2_w32_03` staged md5-checked in
+  both trees, the mdCATH panel and TM, Peng's 32 arms and collector, glpG prep and REMD block 1. Then (user: "proceed
+  with your recommendation on boltz") T1b: T1 with run seed 2 and an 8x same-trunk reference, rule written before
+  its data (diffusion_dynamics.md Phase 3 T1b); `remc_boltz.py` observes 1,024 replicas per call (one call at T1's
+  sizes; on T1's final frames chunks give equal flags and C-N, CA-RMSD within 2e-5 A, flags equal T1's record);
+  `--test-only`, submitted 62293143. Files: plan.md Phase 38 item 11, diffusion_dynamics.md Phase 3, remote_jobs.md
+  (header, owed items, The watch, line 4, job table), progress.md; cluster `WATCH_STATUS.md`, `addon/remc_boltz.py`,
+  `addon/t1b.sbatch`; the bundle's `records/`.
+* **11-04 23:48-00:05, Mac Studio: the watch found the Peng scorer cannot score ff3.1's de novo arms.** The
+  collector's pass 49819033 submitted NTL9 de novo's score job 49829587, which printed `skipped` in 14 s: the scorer
+  calibrates the residue offset on the native arm's first frame, and ff3.1's native replicas were deleted 11-04.
+  A read-only probe showed the native arm's `input/<stem>.up` gives the same offsets on all 16 proteins, and equals
+  frame 0 within 2.4e-7 A where replicas exist. The fix, reading the frame from `input/pos`, is proposed and awaits
+  the user, since two running collectors use that scorer. glpG's ff3.2 prep completed (KE/1.5kT 0.998). Files:
+  remote_jobs.md (header, owed items, line 2, job table), findings.md 10.51, progress.md; cluster `WATCH_STATUS.md`,
+  `~/watch_probe/calib_input_probe.py`.
+* **11-05 01:50-02:55, Mac Studio: ff3.2's mdCATH panel and TM read; Boltz T1b started.** `mdc_w32_03` (356 runs)
+  folds 0.566 of 89 domains against released ff2.1's 0.488 (+0.078, p 9.7e-07) and ff3.1's 0.515 (+0.051, p
+  5.6e-05); mean TM 0.739 against 0.727 (+0.012, p 1.1e-04) and 0.731 (+0.008, p 0.023), TM > 0.5 level. glpG's
+  REMD block 1 started 01:55. T1b started 01:01, parity equal. ff3.1's BBL de novo COMPLETE 03:09 (final frames
+  finite, KE/1.5kT 1.003-1.006), unscorable until the scorer fix. Files: plan.md Phase 38 item 11, remote_jobs.md (header,
+  owed items, line 4, job table), progress.md; cluster `WATCH_STATUS.md`.
+* **11-05 06:48-07:10, Mac Studio: Boltz T1b read, fails rule 2; nothing submitted.** 62293143 COMPLETED 06:03.
+  `t1_read.py`: parity equal; residue 2's protected fraction +4.1 se against the limit 3.4 (0.9989 against 0.9968 in
+  the 8,448-sample reference, counts 23 and 27 open); mean N +2.4 se, CA-RMSD +1.6 se, C-N level, no trend. T1's
+  failing rows now read +0.7 and -1.1. 6 of the 7 rows over 2 se have the chains more protected. The excess sits
+  after moves at 0.92-1.90 A; across one move the small sigma add protection and 7.67-15.95 A take it back, each
+  within 2 se, and the mixed chain cannot isolate a sigma. ff3.2's 32 Peng arms all resubmitted at 05:57. Files:
+  diffusion_dynamics.md Phase 3 T1b, remote_jobs.md (header, owed items, The watch, line 4, job table),
+  progress.md; Mac `addon/runs/boltz_remc_t1b_ubqps_v100_62293143/` (`readout.txt`, `beside.py`, `beside.txt`);
+  cluster `WATCH_STATUS.md`.
+* **11-05 07:48-08:00, Mac Studio: the most-probable-state side chain (`ff21_bpmax_dt009`) converged at step 76;
+  its evaluation submitted.** Link 49806998 reached 76 at 07:08 (24 of 24 proteins, no error line, step 76's
+  KE/1.5kT at most 1.031). Gate 49846050 CONVERGED (smallest p 0.033, `dhb`); its mdCATH panel `mdc_bpmax_03`
+  49846115 queued itself, configs in the mode. `checks/bpmax_fixedpoint_20261104/submit.sh plan` passed
+  `--test-only` on all three jobs; `apply` at 07:49 submitted the 44-domain panel 49847544 and TM jobs 49847545 and
+  49847546. ff3.2's collector at 07:30: 0 of 32 scored (first chunks only). glpG ff3.2 REMD block 1 at ff3.1's pace,
+  no error lines. Files: plan.md Phase 39 items 4c and 5, remote_jobs.md (header, The watch, line 1, line 2's ff3.2
+  row, job table), progress.md; cluster `WATCH_STATUS.md`.
+* **11-05 09:48-09:55, Mac Studio: the most-probable-state side chain's 44-domain panel read.** `p44_bpmax_03`
+  49847544 COMPLETED 09:14 (176 runs, KE/1.5kT 1.009-1.035, no non-finite output), TM 49847545 at 09:18: mean TM
+  0.652, level with the BP control (0.650, p 0.51), above the fixed-state arm (0.623, +0.029, p 0.0023), below
+  released ff2.1 (0.681, -0.028, p 3.6e-06). The mdCATH panel and its TM run on. Files: plan.md Phase 39 item 5,
+  remote_jobs.md (header, line 1, job table), progress.md; cluster `WATCH_STATUS.md`.
+* **11-05 10:50-11:55, Mac Studio: ff3.2's glpG preparation read; Boltz T1c submitted; ff3.2's validation checked.**
+  User: "is ff3.2 keeping protein folded and glpG TM4 stable?", "decide for me the next move for Boltz. also make sure
+  all ff3.2 validation jobs are submitted". glpG prep (`glpg_u3_prep_tm4.py`): TM4 DSSP through stage 7.0 mean 0.94,
+  last frame 0.82 (ff3.1 0.95, 0.82); TM1 last frame 0.74 (ff3.1 1.00). REMD block 1 writes `/output` only at its
+  end; its log at T 0.70, t 300-600: 94.7 backbone H-bonds, Rg 19.7 A (ff3.1 94.0, 19.9; ff2.1 without TM4 87.4).
+  Boltz: the one-move test proposed at 06:55 was dropped before any run (T1b's per-move s.d. of N 1.26-2.28 gives
+  0.020-0.036 se at 4,096 pairs against effects of 0.02-0.05); T1c, T1b with only the moves at 7.67 and 15.95 A,
+  rule written first, `--test-only` passed, 62369218. ff3.2's validation: all 32 Peng arms queued, collector
+  pending, glpG REMD running, mdCATH panel and TM read, staged in both trees; nothing missing. Files:
+  diffusion_dynamics.md Phase 3 T1c, remote_jobs.md (header, owed items, The watch, line 2's ff3.2, line 4, job
+  table), progress.md; `addon/t1c.sbatch`, `addon/submitted.log`; cluster `checks/ff32_validate_20261104/glpg_prep_tm4.txt`.
+* **11-05 12:00-12:15, Mac Studio: ff3.2 is the target; ff3.0 and ff3.1 transitional** (user: "ff3.1 and ff3.0 no
+  longer matters, if the ff3.2 validation is positive. they are transitional"). Recorded in plan.md "Architecture and
+  Key Decisions". The ff3.1 scorer fix is deferred to the case where ff3.2's validation fails. ff3.2's Peng collector
+  now compares against released ff2.1 alone (`checks/ff32_validate_20261104/collect.sbatch` `55615d2a`, backup
+  `.bak_pre_ff21only_20261105`; `bash -n` and `--test-only` pass; the two-column `compare_peng.py` checked on ff2.1
+  against ctrl38), since its paired summary keeps only proteins scored in every column. Files: plan.md,
+  remote_jobs.md (owed items, line 2's ff3.2 row), progress.md.
+* **11-05 14:40-14:50, Mac Studio: the most-probable-state side chain's mdCATH panel read; Phase 39 done.**
+  `mdc_bpmax_03` 49846115 COMPLETED 13:55 (356 runs, KE/1.5kT 1.009-1.032, no non-finite output), TM 49847546 at
+  14:23: mean TM 0.696, level with the BP control (0.702, p 0.25), above the fixed-state arm (0.667, p 1.5e-06), below
+  released ff2.1 (0.727, p 7.1e-10), as on the 44 domains. ff3.2's collector now runs the ff2.1-only file (49854603).
+  Files: plan.md Phase 39 item 5, remote_jobs.md (header, line 1, run table, job table), progress.md; cluster
+  `WATCH_STATUS.md`.
+* **11-05 16:40-19:50, Mac Studio: watch passes; ff3.2's first Peng score; T1c runs.** All 36 Peng chunks that ended
+  16:13-16:29 resubmitted themselves with the node law. The 11:55 pass missed ff3.1 gpW de novo's `[bench] COMPLETE`
+  (11:12); its final frames were read 16:45 (finite, KE/1.5kT 1.000-1.007 over 14 replicas). ff3.2 BBA native
+  COMPLETE 19:30 (final frames finite, KE/1.5kT 1.002-1.007), scored 19:34: mean TM 0.360, median RMSD 7.70 A,
+  against released ff2.1's 0.416 and 2.41 A; one arm, the paired verdict waits for `peng_ff32.txt`. Boltz T1c
+  62369218 R from 16:57, `[check]` equal. Files: remote_jobs.md (header, line 2's ff3.1 text, line 4, job table),
+  progress.md; cluster `WATCH_STATUS.md`.
+* **11-05 19:55-20:40, Mac Studio: why ff3.2 loses BBA** (user: "check why ff3.2 fails so bad on BBA"). Read-only
+  scripts on the BBA native arms (`checks/ff32_bba_20261105/`): at T 0.65 ff3.2 turns BBA into one helix over
+  residues 1-26 (GLY8 alpha_R 0.86); the helix-minus-native energy gap moves -3.37 E_up, mostly the backbone burial
+  (-2.49; its scale -0.301 to -0.136, halved only in the DSE-off runs `z32`/`w32`), the pair table (-1.44) and the
+  glycine maps (-0.92). Other native arms level with ff2.1 but for weaker helix gains in WW domain and NTL9. Files:
+  findings.md 1.39, progress.md.

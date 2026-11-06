@@ -12,12 +12,16 @@
   and without rotamer, ff3.1) and for the hybrid, whose V2 had found the GPUs running the lipids 0.35% hot, from the
   g-JF position update's force term rounding away (A239, fixed on both engines, 10-30). V3, REMD melting of 4 Peng
   proteins on ff2.1 and ff3.1 at a tenth of their duration, passes on the V100 (10-31; T_mid within 3 K). glpG's V2
-  and TM4 block agree (11-03). Open in 10.2's ladder: the mdCATH panel's TM-score test (its folded fraction agrees,
-  11-04) and the hybrid's stage 7.1, area per lipid, barostat and rigid groups (plan.md Phase 35 item 12).
-  Usable now for soluble proteins on a V100, A100 or RTX6000 by `upside --gpu` in the GPU development tree; not yet in
-  the Upside 3 tree or the workflow scripts (plan.md Phase 35 "Resume here").
-  Per system step on full ff2.1 1ubq the V100 is 1.4 times faster than 4 CPU cores at 14 copies and 4.4 times at 112;
-  on the hybrid 11 to 22 times (findings 11g).
+  and TM4 block agree (11-03); the mdCATH panel, batches of different proteins, agrees on both force fields (11-04).
+  Open in 10.2's ladder: the hybrid's stage 7.1, area per lipid, barostat and rigid groups (plan.md Phase 35 item 7).
+  **Ready now** by `upside --gpu` in the GPU development tree (`/beagle3/trsosnic/yinhan/upside3_gpu`, on a V100,
+  A100 or RTX6000) for soluble proteins on ff2.1 and ff3.1, one protein or a batch of different ones per process
+  (REMD ladders, panels). The hybrid's stage 7.0 REMD runs there too (`run.py` `remd_engine = "gpu"`) and agrees
+  with the CPU on V1, V2 and glpG's TM4 block, but its ladder is not closed; its preparation stages and NPT runs
+  stay on the CPU. Not yet in the Upside 3 tree (plan.md Phase 35 "Resume here").
+  Speed, one GPU with 4 host cores against one 28-core broadwl node: the mdCATH panel's batches of 88-92 proteins 1.4-1.5
+  times on a V100 and 2.0 on an A100; a protein REMD with 4 ladders on a V100 as fast as 14 broadwl cores; glpG's
+  48-replica REMD 14 times on a V100 and 18 on the A100 (findings 11g).
 * Waiting on the user: the side-chain model and the starting parameters of the base force field (section 7), and the
   other decisions of section 11.
 * Proposed 10-29 (user): side-chain pair tables coarse-grained from an all-atom force field, with only a correction
@@ -1359,8 +1363,10 @@ The energy's functional form stays spline tables; the change is in the objective
 
 **Steps** (user 10-28: "record the plannings. We will run it later"; none starts without the user's word).
 - [x] H1 (10-28): ubiquitin on the Peng-benchmark REMD; findings 5.7, `scratchpad/hdx_term_20261028/` (section 12).
-- [ ] H2: H1's readout on ff3.1's ubiquitin arms, once both hold a COMPLETE file. No new run.
-  * The arms are `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/ubiquitin_{native,denovo}_ff_3.1`.
+- [ ] H2: H1's readout on ff3.2's ubiquitin arms, once both hold a COMPLETE file. No new run.
+  * The arms are those of ff3.2's Peng validation, `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/ubiquitin_{native,denovo}_<ff3.2's name>`,
+    and their replicas are kept until H2 is read. ff3.1's arms cannot serve: its native arm's replicas were deleted
+    11-04 after scoring (ff3.1 is transitional, user 11-04).
   * H1's rules are kept unchanged, and H2 is read against H1's ff2.1.
   * It feeds the choice of the base (7.2). The script edits it needs are in section 12.
 - [ ] H3: Upside 3 REMD of EHEE_rd2_0005, HEEH_rd4_0097 and Ub psWT, each under ff2.1 and under the base, from the
@@ -2098,15 +2104,17 @@ Verification ladder:
 * **V3. Ensembles,** on ff2.1 and ff3.1: REMD melting on the Peng set (the `bp_validation` harness), Q and Rg
   distributions, the mdCATH panel, glpG TM4.
 
-**Status, 11-03 (plan.md Phase 35; findings 11g).** Soluble proteins on ff2.1 and ff3.1 are validated and closed
+**Status, 11-04 (plan.md Phase 35; findings 11g).** Soluble proteins on ff2.1 and ff3.1 are validated and closed
 (user 11-03): V0 by construction (10.3); V1 on every node of the standard configs, 16 Peng proteins x 10 frames and
 mixed batches, on the K80, V100, RTX6000 and A100; V2 of 1ubq by seeds, with and without rotamer and on ff3.1, and its
 energy drift; V3's melting at a tenth of the Peng duration (4 proteins, user 10-30) and its Q and Rg distributions.
-The scope: dynamics of one protein per process; configs with an unported node are refused by name; V3 resolves a
-native-basin potential difference down to 1-2 E_up. Open: the mdCATH panel's TM-score test (the first dynamics of
-mixed batches: 356 runs per force field in 4 batches of 88-92 systems, the largest, up to 242 residues, needing about
-20 GB of device memory and so an A100; the runs pass the CPU reference's checks and their folded fraction agrees
-with the CPU's, 11-04) and the hybrid, where 1rkl's V1 and V2 and glpG's V1 and V2 pass, glpG's TM4
+The mdCATH panel, the first dynamics of batches of different proteins, agrees (11-04): 356 runs per force field
+in 4 batches of 88-92 systems, against the same runner on the CPU engine, mean TM-score GPU - CPU -0.000 [-0.005,
++0.005] (ff2.1) and +0.000 [-0.005, +0.006] (ff3.1), the folded fraction and Q equal too. The scope: dynamics of
+one protein or a batch of different proteins per process; configs with an unported node are refused by name; V3
+resolves a native-basin potential difference down to 1-2 E_up. Device memory grows as a batch's systems times its
+longest protein's length squared (every interaction graph holds the largest system's full pair count): 88 systems
+of up to 242 residues need about 20 GB, an A100, and of up to 166 about 10 GB, a V100. Open: the hybrid, where 1rkl's V1 and V2 and glpG's V1 and V2 pass, glpG's TM4
 REMD block agrees with the CPU's on the ladder mean, and stage 7.1, area per lipid, rigid groups and the barostat
 remain.
 
@@ -2152,9 +2160,9 @@ Phase 35 tracks it; the approved plan is `~/.claude/plans/swift-roaming-floyd.md
    28-core broadwl node.
 3. [x] G3, the remaining nodes of the current force fields, and the hybrid's but rigid groups and the barostat.
 4. [x] G4, the BP kernels, which every current force field needs.
-5. [ ] G5, the ladder V0-V3: soluble proteins closed 11-03; glpG's V2 and TM4 block agree; the mdCATH panel's
-   folded fraction agrees and its TM-score test runs; the hybrid's stage 7.1, area per lipid, rigid groups and
-   barostat open (10.2's status).
+5. [ ] G5, the ladder V0-V3: soluble proteins closed 11-03 and batches of different proteins (the mdCATH panel)
+   11-04; glpG's V2 and TM4 block agree; the hybrid's stage 7.1, area per lipid, rigid groups and barostat open
+   (10.2's status).
 
 * **Where development happens.** The CPU engine stays the reference, and development happens on the Mac against the
   host backend (the Mac's GPU cannot run CUDA).
