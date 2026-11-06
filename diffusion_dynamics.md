@@ -1,6 +1,6 @@
 # A modified Boltz-2 to replace Upside's sampling for HDX
 
-**Status (2026-11-03).** Phase 0 is done (10-21). Phase 1's HDX half is read out: Boltz-2 ranks EHEE's amides at 10^5
+**Status (2026-11-06).** Phase 0 is done (10-21). Phase 1's HDX half is read out: Boltz-2 ranks EHEE's amides at 10^5
 samples (censored Spearman 0.74; Upside FF2 0.61) but not HEEH_rd4_0097's at 10^4 (0.04; Upside 0.32) or Ub psWT's at
 10^5 (-0.21, and -0.06 with a query-only MSA; Upside 0.43). By experiment's urea dependence EHEE's measured amides
 exchange through subglobal openings, HEEH's helices by global unfolding and Ub psWT's amides below the bound locally,
@@ -18,7 +18,10 @@ Boltz's sampler, which points I61's shortfall to the estimator's variance with B
 (1,024 and 4,096, read 11-03) do not reduce it, and E1 is closed (user 11-03). Phase 3 (11-03) keeps Boltz-2 frozen
 and replaces the steered sampler with replica exchange whose move is Boltz-2's own renoise-denoise, so no path weight
 is carried. Its toy test T0 passes (11-03): MBAR recovers the toy's rare-event truth (P(d >= 7.5) 4.15e-4 against
-3.70e-4), and T1, the same move on Boltz-2, is the user's call. Jobs are recorded in `remote_jobs.md` §1. Phase 0-1's
+3.70e-4). On Boltz-2 (T1-T1d, 11-03 to 11-06) every move that remembers its state leaves the chains more
+protected than Boltz-2's own samples, by 2.4-3.9 standard errors in mean N, and the moves that do not are fresh
+draws. At the user's word T2b runs the ladder on T1d's move anyway, and its calibration measures whether that bias
+matters at HDX's precision (Decision 7). Jobs are recorded in `remote_jobs.md` §1. Phase 0-1's
 run data on `/beagle3` and BioEmu2's samples were deleted 11-03 at the user's word (logs and scripts kept; the pooled
 sets the readouts use are in the Mac Studio's `scratchpad/boltz_hdx/flags/samples/`; `remote_jobs.md` disk section).
 Phase 2's `.venv` and `cache/mols` were packed 11-03 for `/beagle3`'s file quota: unpack both before running E1 again
@@ -117,6 +120,13 @@ machine, about 90 A100-hours; its PDB stage (which made AF2 generative, and whic
    after E1 closed). It replaces Phase 2's Feynman-Kac sampler: a move that leaves Boltz-2's distribution unchanged
    needs only the tilt in its acceptance, so no path weight can collapse. Decision 4 dropped renoise-denoise as a
    model of time order; here it is an equilibrium move, and nothing is read from the chain's order.
+7. **The ladder runs on T1d's move, its bias measured by T2's calibration** (2026-11-06). Every move that remembers
+   its state failed T1's invariance rules toward protection (T1b's moves at 3.95 A and below, T1d's from the 1
+   A-noised state), and the moves that keep the distribution (T1c's, 7.67 and 15.95 A) are fresh draws (T2a). Closing
+   Phase 3 at Boltz-2's plain resolution was proposed at 11:40; the user chose to go on ("move to next Boltz job and
+   submit it for me"). T1d's failure stays on the record: its chains sit 0.10 NH more protected, a 0.17% shift that
+   T1's rules resolve. T2's calibration, a factor of 2 on five amides Boltz-2 opens in 12-80 of 10^5 plain samples,
+   is the test of whether that bias matters for HDX.
 
 ## 4. Phases
 
@@ -930,7 +940,7 @@ with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler 
         mechanism, the denoiser's late steps sharpening a renoised state more than the sampler's own path does, is
         unproven. For HDX the size matters: residue 2's open fraction 0.11% against 0.32% is a factor of 2.9, wider
         than T2's factor-of-2 target.
-- [ ] T1c, T1b with only the two large moves (user 11-05: "decide for me the next move for Boltz"). Why this test: in
+- [x] T1c, T1b with only the two large moves (user 11-05: "decide for me the next move for Boltz"). Why this test: in
       a chain sitting above the reference, a move that keeps Boltz-2's distribution can only pull N back toward it.
       In T1b the moves at 7.67 and 15.95 A did (-0.053 and -0.032 per move from the chains' +0.056, about what a fresh
       sample would give), and the three at 3.95 A and below pushed it further up (+0.018, +0.028, +0.028). The
@@ -946,11 +956,174 @@ with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler 
       moves alone; the second remedy, the chain on the 1 A-noised state with the deterministic tail as a read-out
       map, gets its own rule before any run, and nothing is submitted. Beside, not deciding: the change in N across
       one move at each sigma, residue 2's row, the sign of every row over 2 se, and the time per sweep.
+      * **Readout, 00:50 11-06 (62369218, COMPLETED 22:38 11-05; `t1.npz` md5 `1c7a8385` on the Mac and the cluster;
+        `runs/boltz_remc_t1c_ubqps_v100_62369218/t1_read.txt`): T1c passes, rules 1-4.** 1: equal. 2: largest |z|
+        3.21 against 3.4 (row 21, protected 1.0000 in the chains and 0.9996 in the 8,448-sample reference), then
+        +2.4, +2.2, -2.1, +2.0. 3: mean N 58.628 against 58.613 (+0.8 se), CA-RMSD -0.5 se, C-N share -0.1 se.
+        4: 58.634 then 58.622 (-0.5 se). Beside from `t1_read.py`: mean N after a move 58.640 at 7.67 A and 58.619 at
+        15.95 A; against the pooled plain 10^5 the largest |z| is 7.66, the same-trunk reference itself sitting below
+        it (58.613 against 58.648; other MSA subsamples, as in T1b); 109.6 s per sweep of 256 chains, 0.43 s a move.
+        So the large-move set keeps Boltz-2's distribution at this precision, and T2 follows, from acceptance under
+        the tilt (T2a). The other beside reads are in T2a's output.
+- [x] T1d, the chain on the 1 A-noised state (user 11-06: "Proceed with your recommendation", option (b) of T2a's
+      readout; rule fixed 01:55 11-06 before any code ran). Why: T2a found the large moves near-independent, so only a
+      local move can walk a ladder into the tails, and T1b's local moves (3.95 A and below) carried a drift toward
+      protection. Below gamma_min = 1 A Boltz-2's steps are deterministic but for the random rotation, the regime
+      where the late steps may sharpen a renoised state more than the sampler's own path does (unproven). Here the
+      chain's state is the sampler's own state at the last level above gamma_min (step j, sigma_j), carried with its
+      read-out y, the sample the remaining steps make of it. A move adds independent noise of variance
+      sigma_k^2 - sigma_j^2, reaching step k's sigma_k, and runs the sampler's stochastic steps from k back to j; the
+      read-out is drawn again for the proposal. N and every observable are taken on the read-out. With (x, y) as the
+      state the acceptance stays exp(-lambda (N' - N)) though the read-out draws random rotations, and y's marginal is
+      Boltz-2's own if the move keeps the sampler's distribution at level j. Code: `remc.py` (`run`'s `level`,
+      `denoise_from`'s `end`, `noised_level`), `remc_boltz.py --noised`, `toy_remc.py --noised --sigmas`.
+      Checks before any GPU time, on the Mac; failing one is a code defect to find, not a result:
+      (i) the refactor changes no draw of the old chain: `toy_remc.py chain` with T0's ladder settings (seed 22, 8
+      rungs to lambda 8, 64 ladders, 450 sweeps) equals `runs/t0/ladder.npz` bitwise;
+      (ii) the new path on the toy: 512 chains at lambda 0, moves at 2 and 4 A from the noised state, 450 sweeps,
+      seed 23, read by T0's rule 2 (mean and s.d. of d and P(d >= 6.5) within 3 standard errors of the truth);
+      (iii) `--test-only` of the job.
+      The job, `t1d.sbatch`: `t1c.sbatch` with the run seed 4 and `--sigmas 2,4 --noised` (moves at 1.90 and 3.95 A
+      from the state at sigma_j); the parity check adds a split check (the sampler run to step j, then on to the end,
+      equals the sampler bitwise); 256 chains started from new plain states at step j, 100 sweeps, 8,192 same-trunk
+      plain samples. About 5 V100-hours (moves of about 55-65 steps; plain samples at 1.1 s).
+      Rules, fixed here before its data: T1's rules 1-4 as written, read by `t1_read.py` unchanged on T1d's own data,
+      rule 1 also requiring the split check equal. Pass: the move from the noised state keeps Boltz-2's distribution
+      at this precision, and T2a's memory read (`t2a_read.py`) on T1d's data decides as T2a's rule does: an upper
+      bound at 0.2 or more at either sigma, and the ladder is built on that move with its own rule first. Fail:
+      located by T1b's reads (mean N by sigma, the change in N across a move); the move's remedies are then spent,
+      nothing is submitted, and closing Phase 3 at Boltz-2's plain resolution goes to the user. Beside, not deciding:
+      T1c's beside list and the memory read.
+      * **Checks, 05:40 11-06 (`runs/t1d_toy/`): (i)-(iii) pass; submitted.** (i) The toy ladder rerun equals
+        `ladder.npz` bitwise in every array over 450 sweeps (`ladder_regress.log`). (ii) Rule 2 on the noised chain
+        (`invariance_noised_read.txt`): mean d 5.650 against 5.653 (-2.4 se), P(d >= 6.5) 0.0593 against 0.0606
+        (-2.3 se), s.d. 0.5437 against 0.5457 (-2.2 se), all within 3 but all on the same side, a shift of 0.003 A in
+        mean d; first and last quarter equal (5.648, 5.649). (iii) `--test-only` passed. Code `remc.py` `72397622`,
+        `remc_boltz.py` `4fc53964`, `t1d.sbatch` `ba884737` (backups `.bak_pre_noised_20261106` on the Mac and the
+        cluster; `t0_read.py` gained `--invariance`, its rule-2 output on T0's file unchanged). **62419935**
+        `boltz_remc_t1d_ubqps_v100`, submitted 05:42 11-06 (midway3 `gpu`, V100, 8 h).
+      * **Readout, 11:35 11-06 (62419935, COMPLETED 11:09, wall 17,123 s; `t1.npz` md5 `d54b7d33` on the Mac and the
+        cluster; `runs/boltz_remc_t1d_ubqps_v100_62419935/t1_read.txt`, `t2a_read.txt`): T1d fails rules 2 and 3;
+        nothing submitted.** 1: both `[check]` lines equal (step 0, and the split at step 154, sigma 1.016 A). 2 fails:
+        row 68 (residue 73) reads +3.7 against 3.4, protected 0.2576 in the chains and 0.2205 in the 8,448-sample
+        reference, then residue 72 +3.1 and residues 18 and 69 +2.6. 3 fails: mean N 58.711 against 58.609 (+3.9 se);
+        CA-RMSD 1.590 against 1.573 A (+1.5 se), C-N share +0.2 se. 4 passes: 58.698 then 58.725 (+0.7 se). 79.5 s per
+        sweep of 256 chains, 0.31 s a move.
+        Located by T1b's reads. Mean N after a move is 58.699 at 1.90 A and 58.719 at 3.95 A, both about 0.1 above
+        the reference. The change in N across one move is +0.003 (+0.2 se) at 1.90 A and -0.003 (-0.3 se) at 3.95 A.
+        The mixed chain's stationarity forces only the average of the two to zero, so each move on its own leaves the
+        chains' raised level where it is. A move that kept Boltz-2's distribution would pull chains 0.10 above it back
+        by about (1 - r) times that, -0.07 at 1.90 A and -0.09 at 3.95 A at the memory read's r, if N's regression
+        across a move is linear (assumed, not measured), as T1b's large moves did (-0.053, -0.032). So both moves from
+        the noised state carry the bias, with the sign of T1b's small moves and nearly twice T1b's size (+0.102 against
+        +0.056 in mean N). Putting the chain below gamma_min did not remove it, and its mechanism remains unproven. By
+        T1d's rule the move's remedies are spent: nothing is submitted, and closing Phase 3 at Boltz-2's plain
+        resolution goes to the user.
+        Beside, not deciding. Over all 72 rows 40 read positive and 15 negative, and the 4 rows over 2 se all have the
+        chains more protected. Residue 2, T1b's failure, reads -0.2 (open in 31 of 20,480 chain states and 12 of
+        8,448). Against the pooled plain 10^5 the largest |z| is 3.49. The memory read: r +0.330 [+0.305, +0.353] at
+        1.90 A and +0.160 [+0.141, +0.179] at 3.95 A (per-donor medians +0.101 and +0.005), so the 1.90 A move would
+        carry a ladder by T2a's rule, but T1d's rule reads memory only on a pass, and a ladder on a move that does not
+        keep the distribution would sample the wrong tails. A move costs 0.29 of a plain sample. The toy check (ii)
+        had its three reads on one side at about -2.3 se, inside its rule; whether that was this bias at the toy's
+        precision is not known.
 - [ ] T2, calibration and support (GPU): the N ladder on Ub psWT; I61, D21, E34, Q41 and Y59 within a factor of 2 of
       their plain frequencies, V70, I13, W45 and L67 resolved, as E1 asked. *Estimate*, from the toy's equilibration:
       8 ladders x 12 rungs x 2,000 sweeps, about 20 V100-hours; fixed after T1 measures the time per move.
+      * **T2a, acceptance under the tilt, from data in hand (CPU, the Mac; rule fixed 00:55 11-06, before T1c's moves
+        were read).** Why first: with only the large moves, a proposal that forgets its starting state is a plain
+        Boltz-2 sample whatever the rung. Every rung's chain then filters plain samples, and the ladder samples the
+        tilted tails no better than plain samples reweighted by exp(-lambda N) at the same number of proposals (the
+        independence sampler's bound); its one gain would be a move's cost against a full sample. How much a large
+        move remembers therefore decides T2's design. Read on T1c, sweeps 21-100, where every move is accepted:
+        1. The correlation of N before and after one move, per sigma (7.67 and 15.95 A), with a 95% bootstrap interval
+           over chains.
+        Decision: if the upper bound of 1 is under 0.2 at both sigma, the large-move ladder is not built and nothing
+        is submitted. That is reported for the user's decision, with what could sample the tails instead: plain
+        samples drawn by large moves at their cost, reweighted; a local move that passes T1's rules; or the chain on
+        the 1 A-noised state. If it is 0.2 or more at either sigma, the ladder is built on that move: rungs spaced
+        from the pooled plain N distribution reweighted to each lambda for a swap acceptance of at least 0.2, move
+        acceptance per rung predicted from the measured memory, its own rule written before its data, `--test-only`,
+        then submitted. Beside, not deciding: each donor's agreement before and after a move against independent
+        draws' (p^2 + (1 - p)^2); T1c's own beside reads (the change in N across one move, residue 2's row, the
+        sign of every row over 2 se); the cost of one move against one plain sample; and the plain open counts of
+        the nine target amides in the 8,448 same-trunk and pooled 10^5 samples.
+        * **Readout, 01:00 11-06 (`addon/t2a_read.py` `910d5efe`, `runs/boltz_remc_t1c_ubqps_v100_62369218/`
+          `t2a_read.txt`): the large moves are near-independent, so the large-move ladder is not built and nothing
+          is submitted; the next step is the user's.** 1: r +0.029 [+0.009, +0.048] at 7.67 A (9,216 pairs) and
+          -0.011 [-0.029, +0.007] at 15.95 A (11,264), both far under 0.2. Beside: per-donor memory across a move,
+          on the 23 donors protected between 1% and 99%, median +0.003 (range -0.012 to +0.065). Change in N across
+          one move +0.017 (+1.0 se) at 7.67 A and -0.011 (-0.7 se) at 15.95 A, both zero within error as for a move
+          that keeps the distribution. Residue 2, T1b's failure, reads +0.4 (open in 28 of 20,480 chain states and
+          13 of 8,448). Six rows over 2 se, four more protected in the chains (residues 24 +3.2, 57 +2.4, 53 +2.2,
+          73 +2.0; 8 -2.1, 59 -2.0), and 32 positive against 23 negative over all 72: no sign of T1b's one-sided
+          drift. One move costs 0.43 s against at most 1.11 s for a plain sample (0.39). Plain open counts, same-trunk
+          8,448 and pooled 10^5: I61 1 and 38, D21 1 and 12, E34 3 and 35, Q41 1 and 12, Y59 0 and 80, L67 1 and 0;
+          V70, I13 and W45 0 and 0.
+          What it means. This move set samples Boltz-2's distribution correctly, but as fresh draws at 0.39 of a plain
+          sample's cost, so a tilted ladder on it gains nothing on the tails over those draws reweighted. Resolving
+          an amide open at frequency f takes about 10 / f draws: at 1e-5, 10^6 moves, about 120 V100-hours; V70, I13
+          and W45, never open in 10^5, may sit lower. The tails need a move that walks: the moves at 3.95 A and below
+          remember the state but carried T1b's drift, and the remaining remedy, the chain on the 1 A-noised state with
+          the deterministic tail as a read-out map, is untested. Options for the user: (a) stop Phase 3's ladder and
+          use large-move draws as a 2.6x cheaper plain sampler for what plain sampling resolves; (b) test the 1
+          A-noised-state chain, with T1's invariance rules on a new rule before any run (about 4-6 V100-hours); (c)
+          close Phase 3 at Boltz-2's plain resolution.
+      * **T2b, the N ladder on T1d's move (user 11-06: "move to next Boltz job and submit it for me"; Decision 7;
+        rule fixed 12:25 11-06, before any ladder data).** Why this move: of the moves tested, only the ones that
+        remember their state can walk a ladder into the tails (T2a), and T1d's at 1.90 A remembers enough by T2a's
+        rule (r +0.330 [+0.305, +0.353]). Its bias is known (T1d); T2b's calibration measures whether it matters.
+        Design. Chains on T1d's state (`--noised`: the sampler's state at step 154) with moves from 1.90, 3.95 and
+        7.67 A (`--sigmas 2,4,8`; revised 13:05 from T1d's 1.90 and 3.95 A after check (i), below), 12 rungs at lambda 0-3 per protected NH (spacing 0.273). The rungs come from the
+        pooled plain N (mean 58.65, s.d. 1.57; its lower tail falls 1.6-1.9 in ln P per NH from N 57 to 53), so the
+        top rung flattens the tail, and a spacing times the s.d. of 0.4-0.8 predicts swap acceptance well above 0.2.
+        Two jobs, seeds 5 and 6 (two MSA trunks, as the plain set pools 100), each 4 ladders (48 replicas) for 2,000
+        sweeps, the second half read; about 10-20 V100-hours each at T1d's 0.31 s a move, 36 h allowed (the `gpu`
+        QOS limit). If the first 10 sweeps' time projects past 34 h, the watch cancels and resubmits with the
+        sweeps that fit, the rule unchanged.
+        Checks before GPU time, a failure being a code defect to find, not a result: (i) the noised-state ladder on
+        the toy (`toy_remc.py chain --noised --sigmas 2,4`, seed 24, T0's long ladder settings: 8 rungs to lambda 8,
+        64 ladders, 3,000 sweeps, 1,500 burnt) read by T0's rule 3 with its stationarity check (`t0_read.py
+        --stationary`); (ii) `t2_read.py` on synthetic ladders resampled from the pooled plain set at lambda 0-0.6
+        recovers the plain open fractions, and its histogram MBAR equals pymbar's weights; (iii) `--test-only`.
+        Rules (`addon/t2_read.py`, written before the data): 0. every rung's mean N stationary between the halves of
+        the read range within 3 se over the 8 ladders, or nothing is read; 1. both `[check]` lines equal in both
+        jobs; 2. calibration: MBAR's lambda 0 open fraction of I61, D21, E34, Q41 and Y59 (the two jobs' mean)
+        within a factor of 2 of the pooled plain 10^5's; 3. support: V70, I13, W45 and L67 each open, with no C-N
+        bond over 2 A, in at least 20 read states in each job. Pass: T3 reads Ub psWT's dG at the ladder's
+        resolution, against experiment and Upside FF2, with T1d's bias stated beside it. Calibration fails: the bias
+        matters at HDX's precision, and Phase 3 closes at plain resolution. Support alone fails: the N tilt does not
+        reach those amides; reported, and the ladder's lambda range is not widened on that outcome. Beside, not
+        deciding: each amide's estimate with a 95% bootstrap interval over ladders, every donor against plain, MBAR's
+        mean N at lambda 0 against plain, per rung the move and swap acceptance, mean N, CA-RMSD and the C-N share,
+        acceptance per sigma, round trips per ladder.
+        * **Checks, 12:50 11-06: (ii) and (iii) pass, (i) fails; nothing submitted.** (ii) On synthetic ladders
+          resampled from the pooled plain set (lambda 0-0.6, 2 jobs x 4 ladders x 2,000 sweeps) `t2_read.py` gives
+          ratios 0.78-1.20 on the five calibration amides and mean N 58.64 and 58.65 against plain's 58.65, support
+          fails as it must (no V70 open in plain), and its histogram MBAR equals pymbar's weights to 1e-16.
+          (iii) `--test-only` passed for both seeds (`t2b.sbatch` `96f5f5d6`). (i) The noised-state ladder on the toy
+          (`runs/t2_toy/ladder_noised.npz`, 44 min; `ladder_noised_read.txt`) is stationary (every rung within 1.3 se
+          between halves) but fails T0's rule 3: P(d >= 7.5) 2.75e-4 against the truth's 3.70e-4 (-3.0 se),
+          P(d >= 7.75) 2.85e-5 against 5.2e-5 (-2.7 se), ln Z(kappa 2) -7.531 against -7.314 (-3.2 se). Every tilted
+          rung sits below the truth reweighted to it (rung 3, lambda 3.43, ESS 34,935: mean d 6.647 against 6.676),
+          where T0's sample-space ladder with moves at 0.92-7.67 A sat at or above it and passed. By the rule above a
+          failed check is a defect to find, so T2b waits: two toy ladders at lambda 0 and 3.43 with moves at 1.90 and
+          3.95 A, one in sample space and one on the noised state, tell the noised path from the move set.
+        * **Diagnosis, 13:02 11-06 (`runs/t2_toy/diag_read.txt`, `t2_toy_diag.py`; 256 ladders x 2 rungs, 1,000
+          sweeps, the second half read): the move set, not the noised path.** At lambda 3.43 the sample-space chain
+          reads mean d 6.652 against the reweighted truth's 6.676 (-2.3 se) and P(d >= 7) 0.262 against 0.279
+          (-1.9 se); the noised chain 6.637 (-4.0 se) and 0.252 (-3.0 se). The two differ by 1 se, and both are
+          right at lambda 0 (5.651 and 5.655 against 5.654). So moves at 3.95 A and below under-reach the tilted
+          tail in either space, which T0's ladder, with a 7.67 A move beside them, did not (rung 3 at 6.690). No
+          code defect. **Revised 13:05, before any ladder data on Boltz-2: T2b's moves are 1.90, 3.95 and 7.67 A**
+          (`--sigmas 2,4,8`; the large move is T1c's, which keeps Boltz-2's distribution, and is a fresh draw that the
+          tilt mostly rejects). Check (i) is rerun on it (`runs/t2_toy/ladder_noised_248.npz`, seed 27, T0's long
+          settings) by T0's rule 3; the rest of T2b's rule is unchanged.
 - [ ] T3, the readout: dG and m-values for all three proteins against experiment and Upside FF2 (Table S14), and
-      whether Boltz-2's own distribution holds an unfolded HEEH at all.
+      whether Boltz-2's own distribution holds an unfolded HEEH at all. At plain resolution these are Phase 1's
+      readouts (Status): dG Spearman 0.74 on EHEE (FF2 0.61), 0.04 on HEEH (0.32), -0.21 on Ub psWT (0.43); m against
+      HEEH's -0.18 (FF2 0.475), unresolved on EHEE and Ub psWT at 10^5; no unfolded HEEH in 10^4. At the ladder's
+      resolution, Ub psWT's after T2b passes.
 
 ## 5. Known risks and blockers
 

@@ -58,10 +58,14 @@ replica_interval   = 10      # time between exchange attempts (upside time units
 randomseed         = 1
 
 account            = "pi-trsosnic"
-slurm_args_file    = "/project/trsosnic/yinhan/slurm/midway2.args"   # midway2 partition and node exclusions (CLAUDE.md)
+cluster            = "midway2"       # "midway2" or "midway3": every job of a variant runs there, so that the first REMD
+                                     # block can wait on the preparation; run this script on that cluster's login node
+cpu_slurm_args     = {"midway2": "$(cat /project/trsosnic/yinhan/slurm/midway2.args)",   # broadwl and the node exclusions (CLAUDE.md)
+                      "midway3": "--partition=caslake"}
+cpus_per_node      = {"midway2": 28, "midway3": 48}   # broadwl, caslake; the replicas share the node's cores as OpenMP threads
+gpu_slurm_args     = {"midway2": "--partition=gpu2 --qos=gpu2 --gres=gpu:1",                  # a K80, or the one V100 node
+                      "midway3": "--partition=gpu --qos=gpu --gres=gpu:1 --constraint=v100"}   # a V100
 job_env_file       = "/beagle3/trsosnic/yinhan/upside3/env_upside3.sh"   # each job sources the tree's environment
-cpus_per_node      = 28              # broadwl; the replicas share the node's cores as OpenMP threads
-gpu_slurm_args     = "--partition=gpu --qos=gpu --gres=gpu:1 --constraint=v100"   # a midway3 V100: submit on midway3
 gpu_job_env_file   = "/beagle3/trsosnic/yinhan/upside3_gpu/env_upside3_gpu.sh"    # the GPU tree (plan.md Phase 35)
 gpu_cpus           = 4               # cores of a GPU block, for its host work (frames, replica exchange)
 run_time           = "35:45:00"      # requested wall time of every job (hh:mm:ss)
@@ -83,9 +87,11 @@ run_dir.mkdir(parents=True, exist_ok=True)
 
 if remd_engine not in ("cpu", "gpu"):
     raise ValueError("remd_engine must be cpu or gpu, not {}".format(remd_engine))
+if cluster not in cpu_slurm_args:
+    raise ValueError("cluster must be midway2 or midway3, not {}".format(cluster))
 h5_files = [run_dir / "{}.run.{}.up".format(pdb_id, j) for j in range(n_rep)]
 block_count = run_dir / "block_count"
-n_threads = min(n_rep, cpus_per_node)
+n_threads = min(n_rep, cpus_per_node[cluster])
 
 # A job runs this script again with HYBRID_JOB_STAGE naming its stage; run by hand, it submits the next job.
 job_stage = os.environ.get("HYBRID_JOB_STAGE", "")
@@ -93,7 +99,7 @@ job_stage = os.environ.get("HYBRID_JOB_STAGE", "")
 
 def submit(stage, log, dependency=None):
     on_gpu = stage == "remd" and remd_engine == "gpu"
-    slurm_args = gpu_slurm_args if on_gpu else "$(cat {})".format(slurm_args_file)
+    slurm_args = gpu_slurm_args[cluster] if on_gpu else cpu_slurm_args[cluster]
     threads = gpu_cpus if on_gpu else n_threads
     cmd = ('sbatch --parsable {} --account={} --job-name={}_{} --output={} --time={} '
            '--nodes=1 --ntasks-per-node=1 --cpus-per-task={} {}--wrap=". {} && export OMP_NUM_THREADS={} '

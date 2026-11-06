@@ -1095,3 +1095,52 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   (-2.49; its scale -0.301 to -0.136, halved only in the DSE-off runs `z32`/`w32`), the pair table (-1.44) and the
   glycine maps (-0.92). Other native arms level with ff2.1 but for weaker helix gains in WW domain and NTL9. Files:
   findings.md 1.39, progress.md.
+* **11-06 00:40-01:15, Mac Studio: watch pass; Boltz T1c passes, T2a stops the large-move ladder.** Both sockets had
+  expired; each reopened once (Duo). T1c 62369218 COMPLETED 22:38, `t1.npz` md5 equal, `t1_read.py`: rules 1-4 pass.
+  T2a's rule was written into diffusion_dynamics.md before its read: the large moves are near-independent (N across a
+  move r +0.029 and -0.011, limit 0.2), so a tilted ladder on them gains nothing over plain draws reweighted; no T2
+  built or submitted, the options go to the user. midway2: ff3.1 NuG2 and hyp de novo and ff3.2 BBL native COMPLETE,
+  final frames finite (KE/1.5kT 1.001-1.007); ff3.1 proteinG de novo resubmitted 49863650. Files: diffusion_dynamics.md
+  Phase 3 T1c and T2a, remote_jobs.md (owed items, the watch, line 4, job table), progress.md; new
+  `scratchpad/boltz_hdx/addon/t2a_read.py`; cluster `WATCH_STATUS.md`.
+* **11-06 01:20-01:45, Mac Studio: does ff3.2's BBA failure reach mdCATH** (user: "proceed", to the offered check).
+  `checks/ff32_bba_20261105/mdc_ss.py` on all 89 mdCATH domains: ff3.2 is 1% of residues more helical than the
+  all-atom reference (ff2.1 0.6%), in alpha and mixed domains; the 26 beta-rich domains keep their helix level and
+  fold better (+0.083, p 0.005). `bba_onset.py`: BBA's native left at 8,400 tu, near the panel's 10,000 tu, so the
+  panel tests a BBA-pace takeover only at its end; Peng's long arms decide. The BBA failure is not a temperature
+  shift (folded fraction falls on cooling). Files: findings.md 1.39, progress.md.
+* **11-06 01:50-05:50, Mac Studio: Boltz T1d built, checked and submitted** (user: "Proceed with your recommendation",
+  option (b) of T2a). Rule written into diffusion_dynamics.md Phase 3 T1d before any code ran. `remc.py` (`run`'s
+  `level`, `denoise_from`'s `end`, `noised_level`), `remc_boltz.py --noised` with a split parity check, `toy_remc.py
+  --noised --sigmas`, `t0_read.py --invariance`; backups `.bak_pre_noised_20261106`. Checks: T0's toy ladder rerun
+  bitwise equal over 450 sweeps; the noised chain on the toy passes T0's rule 2 (-2.4, -2.3, -2.2 se, all one side);
+  `--test-only` passed. T1d 62419935 submitted 05:42 (V100, about 5 h). Watch cron `5c4918e1` replaces `8935beb8`
+  (reads T1d; T2 only to `--test-only`). Peng: 32 chunks resubmitted 02:44-02:59; ff3.1 cspA de novo and ff3.2 BBA
+  de novo COMPLETE (final frames finite; cspA's 101-frame last chunk reads 0.988-1.006 from the restart transient,
+  its previous chunk 1.003-1.006); ff3.2 BBL native scored 0.428 against ff2.1's 0.457. Files: diffusion_dynamics.md,
+  remote_jobs.md, progress.md; `scratchpad/boltz_hdx/addon/` code and `runs/t1d_toy/`; cluster `WATCH_STATUS.md`.
+* **11-06 06:35-11:40, Mac Studio: watch passes; Boltz T1d fails; Peng arms complete.** T1d 62419935 COMPLETED 11:09
+  (wall 17,123 s), `t1.npz` md5 `d54b7d33` equal; `t1_read.py`: rule 1 passes (both `[check]` lines equal), rules 2
+  and 3 fail (residue 73 +3.7 against 3.4; mean N 58.711 against 58.609, +3.9 se, toward protection, nearly twice
+  T1b's +0.056), rule 4 passes (+0.7 se). Neither move pulls the raised chains back (change in N per move +0.003 at
+  1.90 A, -0.003 at 3.95 A), so both carry the bias. Memory r +0.33 / +0.16; by T1d's rule nothing is built or
+  submitted, and closing Phase 3 goes to the user. Peng: ff3.1 protein G (06:14) and protein L (09:21) de novo, ff3.2
+  WW domain native and de novo (09:46, 09:55) and NTL9 native (11:23) COMPLETE, final frames finite over 14 replicas
+  (KE/1.5kT 1.002-1.009); ff3.2 BBA de novo scored 0.378 against ff2.1's 0.411 (median RMSD 6.69 against 2.47 A);
+  ff3.1's eight de novo score jobs skipped as expected (findings 10.51). Files: diffusion_dynamics.md Phase 3 T1d,
+  remote_jobs.md, progress.md; `scratchpad/boltz_hdx/addon/runs/boltz_remc_t1d_ubqps_v100_62419935/`.
+* **11-06 11:45-12:55, Mac Studio: the user's three asks (11:50).** (1) "hybrid preparation can be on CPU. Also modify
+  the scripts in examples so they can run on GPU on midway2 or midway3. After that you can mark upside3 GPU as
+  complete": `engine` switch in examples 01, 02, 03, 04, 05, 10, 11, 12, 13, 15 (06-09 use refused nodes),
+  `16.MARTINI/run.py` `cluster` (its GPU block had depended across clusters), upside3.md 10.5; stub runs: `cpu`
+  command lines unchanged, `gpu` adds only `--gpu` and the GPU job options; Phase 35 marked complete. (2) "move to
+  next Boltz job and submit it for me": T2b, the N ladder on T1d's move (rule in diffusion_dynamics.md Phase 3 T2b;
+  `t2_read.py` with a histogram MBAR, tested on synthetic ladders; `t2b.sbatch`, `--test-only` passed); its toy
+  check (i) fails T0's rule 3 (tails 0.55-0.74 of the truth), so nothing is submitted and two diagnostic toy ladders
+  run. (3) "fix the ff3.2, train it and re-do the validations": the interim Peng read (49882604; the scorer's method on
+  finished frames, matched to released ff2.1) is level, dTM -0.004 [-0.017, +0.009], losses in BBA, WW and cspA de
+  novo; `ff32_pcd` (persistent free chains, plan.md Phase 38 item 12, `ConDiv_pcd.py` `abb27c42`) built, checked
+  (static test, compare_init, stub of after_training) and started (49883975, R 12:26; its first step writes the free
+  frames). Lesson findings 10.52. Files: plan.md, diffusion_dynamics.md, upside3.md, findings.md, remote_jobs.md,
+  progress.md, the examples; checks dirs `ff32_interim_20261106`, `ff32_pcd_20261106`; `scratchpad/boltz_hdx/addon/`
+  (`t2_read.py`, `t2b.sbatch`, `t2_toy_diag.py`, `t0_read.py --stationary`, `runs/t2_toy/`).

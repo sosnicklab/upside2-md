@@ -34,6 +34,9 @@ partition        = "yout_partition"  # FIXME change it
 #partition        = "caslake"
 job_name         = '{}_{}'.format(pdb_id, sim_id)
 run_time         = "36:00:00" # requested run time of job allocation in hh:mm:ss
+engine           = "cpu"   # "cpu", or "gpu": upside --gpu runs the dynamics on one GPU, from an
+                           # UPSIDE_HOME built with -DUPSIDE_CUDA=ON (upside3.md 10.5)
+gpu_partition    = "gpu"   # the GPU partition, also its QOS: "gpu" on midway3, "gpu2" on midway2
 
 #----------------------------------------------------------------------
 ## Initialization
@@ -132,6 +135,14 @@ sbatch_opts = (
               )
 
 sbatch_opts = sbatch_opts.format(account, job_name, log_file, run_time, partition, n_rep)
+
+if engine not in ("cpu", "gpu"):
+    raise ValueError("engine must be cpu or gpu, not {}".format(engine))
+if engine == "gpu":   # one task holds every system on the GPU; its cores do the frames and the exchanges
+    upside_opts += "--gpu "
+    sbatch_opts = ("--account={} --job-name={} --output={} --time={} --partition={} --qos={} --gres=gpu:1 "
+                   "--nodes=1 --ntasks=1 --cpus-per-task=4 --mem=8000").format(account, job_name, log_file, run_time,
+                                                                               gpu_partition, gpu_partition)
 
 print ("Running...")
 cmd = "sbatch {} --wrap=\"{}/obj/upside {} {}\"".format(sbatch_opts, upside_path, upside_opts, h5_file)

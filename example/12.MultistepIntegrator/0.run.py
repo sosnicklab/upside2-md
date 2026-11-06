@@ -23,6 +23,8 @@ integrator     = 'mv'  # v: verlet; mv: multi-step verlet
 time_step      = 0.003 # step of the fast forces
 inner_step     = 3     # the slow forces step every inner_step*time_step = 0.009; a longer one heats the protein
 base_dir       = './'
+engine         = "cpu"  # "cpu", or "gpu": upside --gpu on one GPU, from an UPSIDE_HOME built with
+                        # -DUPSIDE_CUDA=ON; run this script inside a GPU allocation (upside3.md 10.5)
 
 #----------------------------------------------------------------------
 ## Initialization
@@ -104,6 +106,10 @@ upside_opts = (
                  "--inner-step {} "
               )
 upside_opts = upside_opts.format(duration, frame_interval, T, randomseed, integrator, time_step, inner_step )
+if engine not in ("cpu", "gpu"):
+    raise ValueError("engine must be cpu or gpu, not {}".format(engine))
+if engine == "gpu":
+    upside_opts += "--gpu "
 
 h5_file  = "{}/{}.run.up".format(run_dir, pdb_id)
 log_file = "{}/{}.run.log".format(run_dir, pdb_id)

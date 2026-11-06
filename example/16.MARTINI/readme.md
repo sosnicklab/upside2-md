@@ -174,11 +174,17 @@ OMP_NUM_THREADS=28 upside <id>.run.0.up ... <id>.run.47.up \
   --replica-interval 10 --swap-set <even pairs> --swap-set <odd pairs>
 ```
 
-**Slurm (RCC midway2).** Every job takes the partition and node exclusions from `slurm_args_file`
-(`/project/trsosnic/yinhan/slurm/midway2.args`, CLAUDE.md), `--account`, `--time=run_time` (35:45:00, under the
-36 h cap), one node with `--cpus-per-task=min(n_rep, cpus_per_node)`, and sources `job_env_file`, the Upside 3
-tree's environment (`/beagle3/trsosnic/yinhan/upside3/env_upside3.sh`). Submit from midway2; one chain per
-protein variant.
+**Slurm (RCC midway2 or midway3).** `cluster` names where every job of a variant runs, so the first REMD block can
+wait on the preparation; run `run.py` on that cluster's login node, one chain per protein variant. Every job takes
+`--account`, `--time=run_time` (35:45:00, under the 36 h cap) and one node. On the CPU it takes
+`cpu_slurm_args[cluster]` (midway2: the partition and node exclusions of
+`/project/trsosnic/yinhan/slurm/midway2.args`, CLAUDE.md; midway3: caslake) with
+`--cpus-per-task=min(n_rep, cpus_per_node)`, and sources `job_env_file`, the Upside 3 tree's environment
+(`/beagle3/trsosnic/yinhan/upside3/env_upside3.sh`). With `remd_engine = "gpu"` each REMD block takes
+`gpu_slurm_args[cluster]` (midway2: `gpu2`, a K80 or its one V100 node; midway3: `gpu` with a V100) and
+`gpu_cpus` cores, and sources `gpu_job_env_file`, the GPU tree's environment
+(`/beagle3/trsosnic/yinhan/upside3_gpu/env_upside3_gpu.sh`); the preparation always runs on the CPU, since the
+device engine refuses rigid groups and the barostat (upside3.md 10.5).
 
 The result is 48 per-replica `.up` files per variant, each with the accumulated `output_previous_*`
 history.

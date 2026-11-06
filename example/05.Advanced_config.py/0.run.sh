@@ -17,6 +17,8 @@ T=0.8
 duration=1000
 frame_interval=50
 base_dir=./
+engine=cpu   # cpu, or gpu: upside --gpu on one GPU, from an UPSIDE_HOME built with -DUPSIDE_CUDA=ON;
+             # run this script inside a GPU allocation (upside3.md 10.5)
 
 
 input_dir=$base_dir/inputs
@@ -98,4 +100,9 @@ cp $config_base $h5_file
 
 echo "Running..."
 # run simulation
-$upside --frame-interval $frame_interval --temperature $T --duration $duration --seed $seed $h5_file | tee $log_file
+case $engine in
+    cpu) gpu_flag="" ;;
+    gpu) gpu_flag=--gpu ;;
+    *) echo "engine must be cpu or gpu, not $engine" >&2; exit 1 ;;
+esac
+$upside $gpu_flag --frame-interval $frame_interval --temperature $T --duration $duration --seed $seed $h5_file | tee $log_file

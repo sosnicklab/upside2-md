@@ -20,6 +20,8 @@ T              = 0.8
 duration       = 1000
 frame_interval = 50
 base_dir       = './'
+engine         = "cpu"  # "cpu", or "gpu": upside --gpu on one GPU, from an UPSIDE_HOME built with
+                        # -DUPSIDE_CUDA=ON; run this script inside a GPU allocation (upside3.md 10.5)
 
 #----------------------------------------------------------------------
 ## Initialization
@@ -98,6 +100,10 @@ upside_opts = (
                  "--seed {} "
               )
 upside_opts = upside_opts.format(duration, frame_interval, T, randomseed)
+if engine not in ("cpu", "gpu"):
+    raise ValueError("engine must be cpu or gpu, not {}".format(engine))
+if engine == "gpu":
+    upside_opts += "--gpu "
 
 h5_file  = "{}/{}.run.up".format(run_dir, pdb_id)
 log_file = "{}/{}.run.log".format(run_dir, pdb_id)

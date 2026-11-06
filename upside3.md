@@ -13,12 +13,14 @@
   g-JF position update's force term rounding away (A239, fixed on both engines, 10-30). V3, REMD melting of 4 Peng
   proteins on ff2.1 and ff3.1 at a tenth of their duration, passes on the V100 (10-31; T_mid within 3 K). glpG's V2
   and TM4 block agree (11-03); the mdCATH panel, batches of different proteins, agrees on both force fields (11-04).
-  Open in 10.2's ladder: the hybrid's stage 7.1, area per lipid, barostat and rigid groups (plan.md Phase 35 item 7).
+  Complete 11-06 (plan.md Phase 35): the hybrid's stage 7.1, area per lipid, barostat and rigid groups stay on the CPU
+  at the user's word ("hybrid preparation can be on CPU").
   **Ready now** by `upside --gpu` in the GPU development tree (`/beagle3/trsosnic/yinhan/upside3_gpu`, on a V100,
   A100 or RTX6000) for soluble proteins on ff2.1 and ff3.1, one protein or a batch of different ones per process
   (REMD ladders, panels). The hybrid's stage 7.0 REMD runs there too (`run.py` `remd_engine = "gpu"`) and agrees
   with the CPU on V1, V2 and glpG's TM4 block, but its ladder is not closed; its preparation stages and NPT runs
-  stay on the CPU. Not yet in the Upside 3 tree (plan.md Phase 35 "Resume here").
+  stay on the CPU. Not yet in the Upside 3 tree (plan.md Phase 35 "Resume here"). How to run it, the examples
+  included: 10.5.
   Speed, one GPU with 4 host cores against one 28-core broadwl node: the mdCATH panel's batches of 88-92 proteins 1.4-1.5
   times on a V100 and 2.0 on an A100; a protein REMD with 4 ladders on a V100 as fast as 14 broadwl cores; glpG's
   48-replica REMD 14 times on a V100 and 18 on the A100 (findings 11g).
@@ -2114,9 +2116,9 @@ in 4 batches of 88-92 systems, against the same runner on the CPU engine, mean T
 one protein or a batch of different proteins per process; configs with an unported node are refused by name; V3
 resolves a native-basin potential difference down to 1-2 E_up. Device memory grows as a batch's systems times its
 longest protein's length squared (every interaction graph holds the largest system's full pair count): 88 systems
-of up to 242 residues need about 20 GB, an A100, and of up to 166 about 10 GB, a V100. Open: the hybrid, where 1rkl's V1 and V2 and glpG's V1 and V2 pass, glpG's TM4
-REMD block agrees with the CPU's on the ladder mean, and stage 7.1, area per lipid, rigid groups and the barostat
-remain.
+of up to 242 residues need about 20 GB, an A100, and of up to 166 about 10 GB, a V100. The hybrid: 1rkl's V1 and V2 and glpG's V1 and V2 pass, and glpG's TM4
+REMD block agrees with the CPU's on the ladder mean; stage 7.1, area per lipid, rigid groups and the barostat stay on
+the CPU (user 11-06, "hybrid preparation can be on CPU"), which completes the GPU work (10.5: how to run it).
 
 ### 10.3 Route
 
@@ -2190,6 +2192,25 @@ Measured 10-29 (findings 11g); the user's GPUs are midway2 `gpu2` and midway3 `g
 * **One binary:** CUDA 11.5 on the midway2 login node, SASS for sm_37, 60, 70, 75, 80, 86 and PTX; it runs on both
   drivers and, with the CUDA runtime linked statically, still loads on CPU-only nodes.
 * **beagle3** (22 nodes of 4 A100, 18 of 4 A40, pi-trsosnic allowed) is not used.
+
+### 10.5 Running on a GPU
+
+* **The binary.** `upside --gpu` needs a build with `-DUPSIDE_CUDA=ON` (`src/CMakeLists_Other.txt`). On midway2 and
+  midway3 that is the GPU tree: `source /beagle3/trsosnic/yinhan/upside3_gpu/env_upside3_gpu.sh` sets `UPSIDE_HOME`,
+  `PATH` and the Upside 3 venv, on either cluster. The device is the first of `CUDA_VISIBLE_DEVICES`.
+* **What runs.** Dynamics of one protein or a batch of different proteins per process, REMD ladders included, on
+  ff2.1 and ff3.1 (10.2). A config holding an unported node is refused by name (`Const3D`, `MovingConst3D`,
+  `WallSpring`, the membrane and restraint terms, `SigmoidEnergy` and the other trans-cis nodes), as are rigid groups,
+  the barostat and `--curvature-changer-interval`; run those on the CPU.
+* **The examples.** Each example that the device runs has `engine = "cpu"` or `"gpu"` among its settings (01, 02,
+  03, 04, 05, 10, 11, 12, 13, 15; 06-09 use refused nodes). With `"gpu"` the scripts that submit their own job
+  take one task, 4 cores and one GPU from `gpu_partition`, which is also the QOS: `gpu` on midway3 (V100, RTX6000,
+  A100), `gpu2` on midway2 (K80, and one V100 node). The ones that run upside in place (01, 05, 12, 15, and the
+  `0.run.sh` scripts) are run inside a GPU allocation, for example
+  `srun --account=<account> --partition=gpu --qos=gpu --gres=gpu:1 --cpus-per-task=4 --time=01:00:00 python 0.run.py`.
+  Source the GPU environment first: the jobs inherit the submitting shell's `UPSIDE_HOME`.
+* **The hybrid** (`example/16.MARTINI/run.py`): `remd_engine = "gpu"` runs each REMD block on one GPU of
+  `cluster`'s GPU partition, and the preparation stays on the CPU, which is where rigid groups and the barostat run.
 
 ## 11. Decisions for the user
 

@@ -2037,6 +2037,64 @@ hairpin 0-12 with GLY8 at the turn, helix 13-25), mean TM 0.360 and median RMSD 
   beta -0.27 against -0.18 (both lose it, 7.40 against 7.09). One cold trajectory per arm and 2 of the chunks, so the
   WW and NTL9 shifts are not yet resolved; Peng's paired read at `peng_ff32.txt` judges ff3.2 (plan.md Phase 38
   item 10 (c)), BBA alone does not.
+- **Not a temperature shift.** ff2.1's folded fraction rises on cooling (0.01 at T 0.89 to 0.87 at 0.65); ff3.2's
+  peaks at 0.18 (T 0.74-0.78) and falls on cooling to 0.08, so no relabelling of temperature maps one onto the
+  other: the force field changed which state is lowest, not where the protein melts.
+- **mdCATH, 11-06** (`mdc_ss.py`, all 89 domains, the panel's stored phi/psi after T_EQUIL against the all-atom
+  320 K reference; helix = alpha_R runs of 4 or more). No helix takeover there. ff3.2 against released ff2.1:
+  helix +0.006 of residues (p 3e-6, 62 of 89), extended -0.005; against all-atom ff3.2 is +0.012 helical (ff2.1
+  +0.006), the excess in the alpha (+0.017) and mixed domains. The 26 beta-rich domains (all-atom helix under 0.15)
+  keep the all-atom helix level (-0.001, p 0.9) and fold better (+0.083 [+0.030, +0.139], p 0.005, 20 of 26). Helix
+  change and folding change correlate weakly positively (Spearman +0.20, p 0.06). The limit: the panel runs 10,000
+  tu from the native, and BBA's cold chain left its native at 8,400 tu (`bba_onset.py`; ff2.1 never; folded in the
+  first 10,000 tu 0.28 against 0.48), so a takeover at BBA's pace shows only at the panel's end and a slower one not
+  at all. The long Peng arms remain the test.
+
+### 1.40 At 76 steps the trained terms are still drifting, on steps that are mostly noise (2026-11-06)
+
+Jumper suggested more epochs. `checks/ff32_epochs_20261106/epoch_drift.py` (read-only, the runs' own step
+checkpoints and divergence files) measures, per parameter group, each epoch's displacement and the cosine between
+successive epochs' displacements: near 0 for noise around a fixed point, near 1 for a steady drift that more epochs
+would carry on.
+
+| group | ff3.2 (`ff32_basin`, 76 steps): displacement per epoch, of the group's RMS | cosine, epochs 1-3 | the DSE run (`ff32_nativefix`, 95 steps): cosine, epochs 1-4 |
+|---|---|---|---|
+| side-chain pair table `rot` (31,420) | 1.2%, 0.9%, 0.9%, 0.8% | +0.70, +0.79, +0.79 | +0.70, +0.82, +0.80, +0.80 |
+| sheet (20) | 37%, 24%, 20%, 18% | +0.95, +0.96, +0.84 | +0.85, +0.88, +0.78, +0.70 |
+| environment scale `envs` (20) | 7.8%, 5.9%, 3.9%, 4.6% | +0.44, +0.77, +0.69 | +0.52, +0.42, +0.13, +0.32 |
+| backbone burial `bbenve` | -0.301, -0.193, -0.170, -0.142, -0.136 (values) | one way every epoch | -0.379 to -0.400, reversing in epochs 3-4 |
+| environment weights `envw`, H-bond `hb` | | -0.30 to +0.47, mixed | `envw` mixed; `hb` +0.82 to +0.97 |
+
+- **The bulk of the force field has not stopped moving at 76 steps**, in either objective: the side-chain table and
+  the sheet keep one direction epoch after epoch, the side-chain table at a near-constant rate. The DSE run still
+  drifted at step 95.
+- **The convergence gate does not see it.** `convergence_gate.py` passed `ff32_nativefix` at step 95 (every group's p
+  0.71-1.00 but `dhb`'s 0.027): it asks whether one epoch's summed raw gradient stands out among its sign flips, and
+  the per-step gradients are noise-dominated (step-to-step cosine -0.02 to +0.03 for `rot`, the sum no larger than
+  chance). Adam's normalised steps integrate a small consistent component per coordinate all the same, so "the gate
+  passes" means "no gradient resolved within an epoch", not "the parameters have stopped changing".
+- **ff3.2's backbone burial gradient is consistent from step to step** (cosine +0.37 to +0.58 in epochs 1-3,
+  against near 0 for the other groups), pushing the term weaker each epoch, the trend 1.39 found behind BBA.
+- **What one more epoch did to folding:** in the DSE run, epoch 4 against epoch 3 on the 44 domains +0.016 (p 0.45).
+  In ff3.2's run the panel peaked at epoch 2 (0.674) and read 0.645 at epoch 3.
+
+- **More proteins per step (Jumper's actual suggestion, 11-06).** `noise_scale.py` (same directory, read-only)
+  measures the gradient noise scale B_noise = tr(Sigma) / |G|^2 (McCandlish et al. 2018) per group and epoch from
+  each epoch's 456 per-protein contrasts, |G|^2 corrected for its own sampling noise; a step of B proteins carries
+  the signal fraction 1 / (1 + B_noise / B). In ff32_basin's epoch 0: sheet 127, H-bond 461, coverage 482,
+  hydrophobe 866, backbone burial 1,331, side-chain pairs 2,221, the environment groups unresolved, so a step of
+  24 is 1-16% signal (sheet 16%, side-chain pairs 1%). In epochs 1-3 almost every group's mean over all 456
+  proteins is below their spread (B_noise beyond 456). The steady drift above fits a small mean of order 5% of the
+  per-protein spread per coordinate, which Adam adds up over many steps. So training runs far below its noise
+  scale: each step's direction is mostly the minibatch's draw of proteins and their MD noise, and larger steps
+  would follow the training set's gradient more closely, at a CPU cost per step proportional to the step's
+  proteins. The side-chain, coverage and hydrophobe contrasts pass through the regulariser (`d_obj`: a Student-t
+  prior divided by the protein count and a floor at -6), the only groups whose update is not their summed
+  contrast.
+
+So more epochs of ff3.2's own objective would carry its drift on, the burial loss included. Under persistent free
+chains (plan.md Phase 38 item 12) the drift is driven by an objective that sees non-native states, and those chains
+act only from a protein's second visit: 76 steps give them three visits.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -5361,6 +5419,16 @@ it, because that log records a submission rather than a result. ff3.1's last 9 d
 ff3.2's table, which compares against ff3.1, waited with them. **Before deleting a run's files, grep the pipeline for
 every later reader of them, the other arm of a pair included; an arm counts as scored only when its score file
 exists.**
+
+### 10.52 Asked for the next step, propose one; closing a line of work is the user's call (2026-11-06)
+
+Asked "propose next step of Boltz job and decide for me" after Boltz T1d failed its invariance rules, the reply closed
+diffusion_dynamics.md Phase 3 at plain resolution and recorded the closure as decided, though T1d's own rule had
+named closing as "the user's" and the user had said on 11-03 "don't give up on the big goal". The user answered
+"move to next Boltz job and submit it for me", and T2b, the ladder on T1d's move with T2's calibration as the test of
+whether its bias matters, was built and run instead. **A request for the next step gets the best next experiment,
+with its cost and what it can decide; when every option looks weak, say so beside a recommended next run, and leave
+the choice to stop to the user.**
 
 ---
 

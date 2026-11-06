@@ -987,7 +987,7 @@ would count them twice); salt dependence is outside the model.
    Steps.
 4. [ ] I1-I3: after B0, in the user's order (`upside3.md` 8.1), on the user's word.
 
-### Phase 35 - Upside 3 on the GPU (track G; STARTED 2026-10-29, user)
+### Phase 35 - Upside 3 on the GPU (track G; STARTED 2026-10-29, COMPLETE 2026-11-06, user)
 User 10-29: "start implementing GPU for upside3. The target is to be able to use GPU to run simulations with CPU
 trained ffs, without any additional training or modifications. You can add GPU support for hybrid as well. The target
 GPU to use is the GPU partition on midway2 and midway3, and on similar clusters"; then "connect to midway2 and midway3
@@ -1000,7 +1000,11 @@ math is shared through `UPSIDE_HD` and lane-type templates, the loops are per ba
 as C++ (host backend) so the device path is tested on the Mac; 64-bit fixed-point accumulation (deterministic, a
 non-finite value reads back as NaN); BP one block per system on the CPU's schedule; one CUDA 11.5 binary from midway2
 for K80 to A100; development tree `/beagle3/trsosnic/yinhan/upside3_gpu` (the Upside 3 tree is under its validation).
-**Resume here (state at 2026-11-04 10:50, Mac Studio).** **Validated and closed 11-03 (user: "close what is
+**Complete 2026-11-06** (user: "hybrid preparation can be on CPU. Also modify the scripts in examples so they can run
+on GPU on midway2 or midway3. After that you can mark upside3 GPU as complete"). The hybrid's preparation stages and
+NPT runs stay on the CPU, which closes item 7's last box and item 11's rest; the examples that the device runs have
+an `engine` switch (`upside3.md` 10.5), checked by stub runs (below). **Resume here (state at 2026-11-06, Mac
+Studio).** **Validated and closed 11-03 (user: "close what is
 validated"): the GPU runs soluble proteins on ff2.1 and ff3.1 with the CPU's results**, by `upside3.md` 10.2's ladder
 (findings 11g): V0 by construction; V1 of every node on the 14 standard configs, the 16 Peng proteins' 320 frames
 (native, misfolded globules, both BP tolerances) and mixed batches, on the K80, V100, RTX6000 and A100 (items 10-12);
@@ -1028,10 +1032,19 @@ GPU tree's `obj` since 00:36 11-04.
   `obj_g9a` (`e928f0fa`), `obj_g8a` and the earlier builds beside it. Before `sync.sh`, compare `scratchpad/gpu_work/configs` with
   the cluster's `checks/configs` by md5 (the cluster's hold the released ff3.1's and `glpg.stage_7.0.up`, which the
   Mac lacks); single files are sent by `scp`.
-- Next, in order:
-  1. The user's word on what follows item 12 (reported 10:50 11-04): (b) item 7's open box, rigid groups and the
-     barostat on the device, for the preparation stages, stage 7.1 and area per lipid; and (d) the GPU code into the
-     Upside 3 tree once its campaigns end (never while they run).
+- The examples (11-06): `engine = "cpu"` or `"gpu"` in 01, 02, 03, 04, 05, 10, 11, 12, 13 and 15 (06-09 use nodes
+  the device refuses); with `"gpu"` the self-submitting ones take one task, 4 cores and one GPU of `gpu_partition`
+  (also the QOS: `gpu` on midway3, `gpu2` on midway2), and the in-place ones and the `0.run.sh` scripts add `--gpu`
+  inside a GPU allocation. `example/16.MARTINI/run.py` gained `cluster` (midway2 or midway3), so its preparation and
+  its REMD blocks run on one cluster: before, `remd_engine = "gpu"` submitted midway2's preparation and a midway3 GPU
+  block joined by `afterok`, a dependency no scheduler can hold across clusters. Checked on the Mac by stub runs
+  (`upside` and `sbatch` logging their arguments, the device-API home `dev16_home`'s `py`): with `"cpu"` every
+  command line equals the one before the edit (13's two scripts but for their random seed), and with `"gpu"` each
+  differs only by `--gpu` and the GPU job options; the hybrid's six cluster and engine variants submit as designed.
+  No example has run on a GPU node since the edit.
+- Left, a deployment rather than validation: the GPU code into the Upside 3 tree once its campaigns end (never while
+  they run; ff3.2's glpG REMD runs on it now), then a rebuild on midway2 and `regress.py compare` against the tree's
+  build.
 - The estimate told the user 11-02 15:30: the mdCATH panel 11-05 to 11-07 and glpG TM4 on the GPU 11-06 to 11-09,
   both done 11-04; rigid groups and the barostat 11-07 to 11-10; the whole about 11-10.
 - The hybrid's CPU validation (glpG on Upside 3; Phase 24 item 2b 4, Phase 37; remote_jobs.md line 3): ff2.1 (4 of 4
@@ -1077,7 +1090,7 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
    system and step the K80 takes 323 us (no rotamer) and 837 us (full) against 87 and 253 on 4 broadwl cores, the V100
    101 and 208 against 75 and 181 on 4 Cascade Lake cores. G5's speed work (launch count, host syncs) and V3 follow
    the hybrid.
-7. [ ] G6 the hybrid (`device_martini.cu`). Revised decision (10-29): `martini_potential` keeps the CPU's candidate
+7. [x] G6 the hybrid (`device_martini.cu`). Revised decision (10-29): `martini_potential` keeps the CPU's candidate
    table, the CSR adjacency over its non-zero pairs with the hybrid's static pair filters applied once on the host,
    in place of the class-by-class index of `upside3.md` 10.3 item 10: the same pairs by construction, and glpG's table
    is only 8.3 M pairs (33 MB per system). The skin cache is a slab per atom of its CSR row, and
@@ -1100,7 +1113,8 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
      fix matches the CPU without exchange (lipid KE +0.1 SE); regress moves only the hybrid dynamics (12 of 4260)
    - [x] V2 of the hybrid on build g7b passes (REMD of 1rkl 7.0, 16 CPU, 16 K80, 8 V100 seeds): Bonferroni 1 on both
      GPUs, the lipid KE of every replica within 1.8 SE (findings 11g)
-   - [ ] V2 of stage 7.1; rigid groups and the barostat on the device (refused today)
+   - [x] V2 of stage 7.1; rigid groups and the barostat on the device: not ported (user 11-06, "hybrid preparation
+     can be on CPU"); the device refuses them by name and they run on the CPU
 8. [x] `hbond_energy`'s exact-zero skip removed (user 10-29: "fix the issue"), ledger A238: its sensitivity is the
    energy per H-bond at every count, so backends no longer flip it.
 9. [x] G5 speed, step 1: parallelism within an element. nvprof on the K80 (10-30, findings 11g): the time is in
@@ -1139,7 +1153,7 @@ node with `tests/device_v1.py` on the host backend (the Mac) and on a GPU.
       Welch's t over ladders, Bonferroni); a smoke test at 400 tu ran the resume path and the analysis (10-30). All 40
       arms complete in one chunk each (10-31 22:35): Bonferroni 0.12 to 1 per protein and force field, 0.93 over the
       456 comparisons; T_mid within 0.009 (3 K) and 2.2 SE in every pair (findings 11g)
-11. [ ] The rest of `upside3.md` 10.2's ladder. User 11-02 ("continue the validation", then "Soluble remainder"):
+11. [x] The rest of `upside3.md` 10.2's ladder. User 11-02 ("continue the validation", then "Soluble remainder"):
     the soluble part first, needing no device code; each reading fixed here before its data. The soluble part is
     closed 11-03 (Resume here); the hybrid's and the mdCATH panel's rungs run as item 12.
     - [x] V3's Q and Rg distributions, from item 10's 40 arms (no new runs). `g0/v3_dist.py`: per ladder,
@@ -1618,6 +1632,54 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     (49823717, 02:22 11-05, `checks/ff32_validate_20261104/tm_mdcath_*`): mean TM 0.739 against released ff2.1's
     0.727 (+0.012 [+0.006, +0.018] p 1.1e-04, higher on 62 of 89) and ff3.1's 0.731 (+0.008 [-0.000, +0.016] p
     0.023, higher on 53); TM > 0.5 level with both (0.967 against 0.972 and 0.974).
+    **Peng interim, 12:20 11-06** (`checks/ff32_interim_20261106/peng_interim.txt`, job 49882604; the scorer's own
+    method on every frame each ff3.2 arm had written in finished chunks, against released ff2.1's first frames up to
+    the same count; it reproduces both BBA native jsons to every digit; not the verdict, which is `peng_ff32.txt`):
+    level over the 32 arms, mean dTM -0.004 [-0.017, +0.009] (p 0.31, 12 higher, 20 lower; native -0.005, de novo
+    -0.003). The losses sit in BBA (-0.056 native, -0.032 de novo), the WW domain (-0.065, -0.046) and cspA de novo
+    (-0.079); the gains in ubiquitin (+0.077, +0.075) and NuG2 de novo (+0.074). BBA's mechanism is findings 1.39:
+    the backbone burial scale fell from -0.301 to -0.136 over `w32_00`-`03` with nothing in the contrast to hold it.
+12. [ ] **ff3.2 with persistent free chains** (user 11-06: "fix the ff3.2, train it and re-do the validations"; rule
+    fixed 12:45 11-06, before any run). Why: every free replica restarts at the native each visit and the contrast
+    takes its second half (4000 of 8000 time units at T 0.80-0.85), so the free ensemble never holds the non-native
+    states the trained terms make cheaper, and nothing in the objective pushes them back up (11-04 "Why the two
+    diagnostics grow"). Three readings grew every epoch: the hot chain's compaction, the loose-minus-native-like
+    gap, and the backbone burial scale's fall. In Peng's long runs BBA turns into one helix and the WW domain loses
+    TM. The fix chosen 11-04 for this case, first of its list: persistent contrastive divergence (Tieleman 2008).
+    The objective stays the free ensemble at T0; only its sampling changes.
+    - The change (`checks/ff32_pcd_20261106/make_pcd.py`, asserted replacements on `ConDiv_basin.py` `0213050c` ->
+      `ConDiv_pcd.py` `abb27c42`): each protein's 12 free replica slots start from their own final frames of the
+      protein's previous visit, one epoch earlier at the same minibatch (the minibatches are fixed and walked in
+      order), written to that step's directory as `<code>.free_final.npy`. Epoch 0 starts at the native, as before,
+      and a missing or mis-shaped file raises. The restrained and SARW replicas start at the native, as before.
+      Nothing else changes: the basin wall, DSE off, the minibatch order, the solver, 76 steps.
+    - The run `ff32_pcd` (tags `p32_EE`), built by `build_pcd.sh` exactly as `ff32_basin` was, from the same
+      initial checkpoint (compared by `compare_init.py`), trained 0-76 one epoch a link. Epoch 0 has no previous
+      visit, so it repeats ff32_basin's protocol at new random seeds, and the persistence acts in epochs 1-3. Its
+      `after_training.sbatch` is ff32_basin's with the names changed (panel, unfolded shift, gaps, Rg check, next
+      link). About 38 h of training at 30 min a step.
+    - Checks before any run, no test job: the driver differs from `0213050c` only by the edits; a static test on
+      the login node (`static_test.py`: the previous-visit paths, frames written to a copy of a real config read
+      back equal and the engine's energy finite on them); the initial checkpoint equal to ff32_basin's but for
+      paths; the after-training script's stub run of both branches; `--test-only` of the first link.
+    - Read each epoch as item 11 (folding on the 44 against released ff2.1 and against `w32_EE` at the same epoch,
+      the unfolded shift, the gaps, glycine's depths) and the backbone burial scale. The Rg check and the free
+      replica's RMSD now read persisted chains, so they are reported but no longer comparable with ff32_basin's.
+      Decision rule, fixed now: (a) mechanism, the persisted chains reach non-native states: in epoch 1 the median
+      over proteins of free replica 1's mean CA-RMSD (`divergence.pkl` `rmsd`) above epoch 0's; without it the
+      change did nothing and is reported as such. (b) Folding on the 44 at step 76 not below `w32_03` (paired 95%
+      interval not wholly under 0). The epoch is chosen by item 7's rule (step 76 unless an earlier epoch folds
+      better at p < 0.05), and a chosen epoch below released ff2.1 is not deployed. (c) The chosen epoch runs item
+      11's full validation (mdCATH panel and TM, Peng's 32 arms and collector, glpG on Upside 3), against released
+      ff2.1, with `w32_03` beside it. No variant of the change is tried on any outcome. The backbone burial scale
+      has no target value; it is read, never set.
+    - **Proposed 13:20 11-06, waiting for the user: 8 epochs (152 steps) instead of 4** (Jumper suggested more epochs;
+      findings 1.40). At 76 steps the side-chain table and the sheet still drift one way epoch after epoch in both
+      ff32_basin and the 95-step DSE run, and persistent chains act only from a protein's second visit, so 76 steps
+      give them three visits and 152 seven. About 38 h more on the chain's 336 CPUs. Each epoch's panel and
+      `epoch_drift.py` read as above, the epoch chosen by item 7's rule over all eight. The change is
+      `after_training.sbatch`'s `END_STEP`, made before step 76 (about 02:00 11-08) or not at all. ff32_basin is not
+      extended: its own objective's drift carries the burial loss on.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the
