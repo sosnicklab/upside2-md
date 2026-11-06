@@ -1144,3 +1144,11 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   frames). Lesson findings 10.52. Files: plan.md, diffusion_dynamics.md, upside3.md, findings.md, remote_jobs.md,
   progress.md, the examples; checks dirs `ff32_interim_20261106`, `ff32_pcd_20261106`; `scratchpad/boltz_hdx/addon/`
   (`t2_read.py`, `t2b.sbatch`, `t2_toy_diag.py`, `t0_read.py --stationary`, `runs/t2_toy/`).
+* **11-06 13:10-13:30, Mac Studio: more proteins a step for ff3.2's fix.** The user relayed Jumper's suggestion (first
+  read as more epochs: `epoch_drift.py` shows ff32_basin's side-chain table and sheet still drifting at 76 steps, and
+  the convergence gate blind to it; then clarified as more proteins each round). `noise_scale.py`: ff32_basin's
+  gradient noise scale 127-2,221 proteins by group in epoch 0 and beyond 456 after, so 24 a step is 1-16% signal
+  (findings 1.40). The user chose 57 a step, 80 steps: `ff32_pcd` stopped after 1 step; `ff32_pcd57`
+  (`make_pcd57.py`, `match_order.py`, `train_chain57.sbatch`, `after_training_ff32_pcd57.sbatch` reading epochs 1, 3,
+  5, 7, 9; stub run of every branch) started 13:24 (49885329, 798 CPUs). plan.md Phase 38 item 12 revised before any
+  data. Watch cron `13bea105` replaced `5c4918e1` at 13:10.

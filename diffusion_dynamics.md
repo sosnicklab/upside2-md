@@ -1119,6 +1119,16 @@ with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler 
           (`--sigmas 2,4,8`; the large move is T1c's, which keeps Boltz-2's distribution, and is a fresh draw that the
           tilt mostly rejects). Check (i) is rerun on it (`runs/t2_toy/ladder_noised_248.npz`, seed 27, T0's long
           settings) by T0's rule 3; the rest of T2b's rule is unchanged.
+        * **Check (i) rerun, 13:36 11-06 (`runs/t2_toy/ladder_noised_248_read.txt`, 33 min): passes T0's rule 3, 7 of
+          7; submitted.** Stationary (every rung within 1.5 se between halves); P(d >= 7.5) 3.13e-4 against 3.70e-4
+          (-1.7 se), P(d >= 7.75) 4.60e-5 against 5.2e-5 (-0.6 se), ln Z(kappa 1) and (kappa 2) -2.1 se each. Beside,
+          and the limit of this pass: the tilted rungs read as low as without the 7.67 A move (rung 3, lambda 3.43:
+          6.648 against the reweighted truth's 6.676; the failed run 6.647), so the better tail estimates may owe
+          part of their margin to the seed, and the toy's tails still come out about 0.85 of the truth. T2b's
+          calibration on Boltz-2 is the test of whether a bias of that kind matters at HDX's precision. Acceptance
+          0.30 at each of the three sigmas. **62453020** (seed 5) and **62453022** (seed 6)
+          `boltz_remc_t2b_ubqps_v100`, submitted 13:37 11-06 from `$B/addon` (`t2b.sbatch` `e5a4dc5c`, midway3 `gpu`,
+          V100, 36 h; `--test-only` passed first; `addon/submitted.log`).
 - [ ] T3, the readout: dG and m-values for all three proteins against experiment and Upside FF2 (Table S14), and
       whether Boltz-2's own distribution holds an unfolded HEEH at all. At plain resolution these are Phase 1's
       readouts (Status): dG Spearman 0.74 on EHEE (FF2 0.61), 0.04 on HEEH (0.32), -0.21 on Ub psWT (0.43); m against

@@ -1673,13 +1673,17 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       11's full validation (mdCATH panel and TM, Peng's 32 arms and collector, glpG on Upside 3), against released
       ff2.1, with `w32_03` beside it. No variant of the change is tried on any outcome. The backbone burial scale
       has no target value; it is read, never set.
-    - **Proposed 13:20 11-06, waiting for the user: 8 epochs (152 steps) instead of 4** (Jumper suggested more epochs;
-      findings 1.40). At 76 steps the side-chain table and the sheet still drift one way epoch after epoch in both
-      ff32_basin and the 95-step DSE run, and persistent chains act only from a protein's second visit, so 76 steps
-      give them three visits and 152 seven. About 38 h more on the chain's 336 CPUs. Each epoch's panel and
-      `epoch_drift.py` read as above, the epoch chosen by item 7's rule over all eight. The change is
-      `after_training.sbatch`'s `END_STEP`, made before step 76 (about 02:00 11-08) or not at all. ff32_basin is not
-      extended: its own objective's drift carries the burial loss on.
+    - **Revised 13:25 11-06, before any of its data was read: 57 proteins a step, 80 steps** (Jumper's suggestion, more
+      proteins in each round; the user chose it from the measurement, findings 1.40: ff32_basin's gradient noise scale
+      is 127-2,221 proteins by group in epoch 0 and beyond the 456 after, so a step of 24 is 1-16% signal). The run
+      at 24 (`ff32_pcd`, 49883975) was stopped after 1 step and is not read. `ff32_pcd57` (tags `p57_EE`):
+      `ConDiv_pcd.py` with `minibatch_size` 57 (`make_pcd57.py` -> `ConDiv_pcd57.py`), 8 steps an epoch, 80 steps =
+      10 epochs, Adam and every other setting unchanged; the depth offsets move once an epoch, so 10 rounds. Its
+      minibatches are ff32_basin's shuffle of the same 456 proteins re-sliced into 8 (`match_order.py`). Each link
+      runs 16 steps (`train_chain57.sbatch`: 57 tasks of 14 cores, 798 CPUs), and its `after_training.sbatch` reads
+      epochs 1, 3, 5, 7 and 9 (steps 16-80). The persistent chains get 9 revisits. About 2.5 times the 76-step run's
+      CPU (4,560 protein visits against 1,824). The rule above stands with these numbers: (a) at epoch 1 against
+      epoch 0; (b) folding at step 80 not below `w32_03`; the epoch chosen by item 7's rule among the five read.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the
