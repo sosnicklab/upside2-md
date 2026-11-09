@@ -1236,3 +1236,7 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   neighbour on its node ended: midway3's epilog deletes every /tmp entry of the user at any job's end, and the venv
   was extracted to /tmp. `t2d.sbatch` now uses `$SLURM_TMPDIR` (`65da611b`); `--test-only` passed; the four went back
   into their run directories with seeds 413-487 (62625768-62625774). Seeds written before the stop are whole.
+* **11-09 05:40-06:05, Mac Studio: Boltz T2d read** (diffusion_dynamics.md Phase 3 T2d). All 500 seeds pulled
+  md5-equal, pooled (5 x 10^5, each seed 1,000 finite unsteered samples) and flagged by Phase 1's pipeline;
+  `t2d_read.py`: not pooled with the 10^5 (D52, p 1.4e-4), read alone; V70 too stable by more than a decade, I13,
+  W45 and L67 unresolved at a decade. Nothing submitted. Files: remote_jobs.md, diffusion_dynamics.md.

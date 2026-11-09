@@ -28,7 +28,9 @@ calibration, and reads Boltz-2's open fraction there at a decade's precision (De
 calibration: I61's ladders are not stationary (+3.7 standard errors against the limit 3), so no amide is read; beside,
 the four targets' estimates sit 3.4-7.3 decades under experiment, on tails not calibrated. The user chose to go on
 (11-08): T2d bounds the four amides with 5 x 10^5 more of Boltz-2's exact plain samples, at a decade, with no move
-to bias it (Decision 9). Jobs are recorded in
+to bias it (Decision 9). Read 11-09: V70 opens once in 5 x 10^5, too stable by more than a decade; I13, W45 and L67
+open 6, 5 and 2 times, 6-15 times under experiment and unresolved at a decade; the set is read alone, because D52
+opens 4% less often than in the 10^5 (p 1.4e-4). Reported; what follows is the user's call. Jobs are recorded in
 `remote_jobs.md` §1. Phase 0-1's
 run data on `/beagle3` and BioEmu2's samples were deleted 11-03 at the user's word (logs and scripts kept; the pooled
 sets the readouts use are in the Mac Studio's `scratchpad/boltz_hdx/flags/samples/`; `remote_jobs.md` disk section).
@@ -1274,7 +1276,7 @@ with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler 
         0.74). Not trunk sampling: in the pooled 10^5 the per-trunk open counts of I61, D21, E34, Q41 and Y59 are not
         overdispersed (chi-square 82-105 on 99 degrees of freedom); four random trunks read I61 at 0.47 of the pool or
         less with probability 0.22, but T2b and T2c, eight trunks, both read 0.44-0.47.
-- [ ] T2d, Boltz-2's exact plain samples bound the four core amides (user 11-08: "Propose next boltz job and submit it
+- [x] T2d, Boltz-2's exact plain samples bound the four core amides (user 11-08: "Propose next boltz job and submit it
       for me"; Decision 9; rule fixed 07:55 11-08, before any of its data). The pooled plain 10^5 never opens V70, I13,
       W45 or L67, whose experimental open fractions at 273 K are 1.24e-4, 6.9e-5, 8.9e-5 and 6.0e-5: its one-sided 95%
       bound, 3.0e-5, sits only a factor of 2-4 under them. 5 x 10^5 more samples put the bound of an amide that never
@@ -1320,7 +1322,32 @@ with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler 
         10.55). `t2d.sbatch` (`65da611b`) now extracts to the job's own `$SLURM_TMPDIR`; the code each seed runs is
         unchanged. The four went back into their directories, with seeds 413-487, as 62625768-62625774, and the last
         five blocks (seeds 488-612) as 62627802-62627806 at 19:40. 62607660, the last on the old script, stopped the same
-        way at 21:09 when 62607650 ended beside it, and went back as 62632705.
+        way at 21:09 when 62607650 ended beside it, and went back as 62632705. All 20 directories COMPLETED with `[done]` by
+        04:51 11-09, every `--check` equal: 500 seed files, pulled md5-equal to `addon/runs/t2d/`, each 1,000 finite
+        unsteered samples at its own seed, pooled in seed order as `flags/samples/ubqps_md_s10_t2d_n500000.npz`; flags
+        by `run_flags.sh`'s two steps for that set (500,000 x 72 donors).
+      * **Read 05:55 11-09** (`t2d_read.py` `6803192b`, `addon/runs/t2d_read.txt`):
+        0. Not pooled: 55 donors open at least 10 times in the union; the smallest Fisher p is D52's, 1.4e-4 (50,231
+           of 500,000 against 10,445 of 10^5, open 0.1005 against 0.1045) against the limit 9.1e-4, so the new set
+           is read alone. The gap is steady within each set (D52's halves 0.1003 and 0.1006 new, 0.1042 and 0.1047
+           old; the new set's halves pool, smallest p 2.1e-3 against 9.1e-4), and D52's per-seed spread is 1.23 times
+           the binomial's (0.94-1.32 over the 26 donors open 0.5-99.5% of the time), too little to carry it, so the
+           two sets differ by a little at D52; the cause is not measured (`e1_rare.py --unguided` here, `boltz predict`
+           and `check_samples.py` for the 10^5).
+        1. N 500,000, every sample.
+        2. V70: k 1, one-sided 95% upper 9.5e-6 under experiment's tenth 1.24e-5 -> **too stable by more than a
+           decade**. I13: k 6, 1.2e-5 [4.4e-6, 2.6e-5] against 6.87e-5 -> unresolved at a decade. W45: k 5, 1.0e-5
+           [3.3e-6, 2.3e-5] against 8.90e-5 -> unresolved. L67: k 2, 4.0e-6 [4.8e-7, 1.4e-5] against 6.04e-5 ->
+           unresolved.
+        Verdict: not all four too stable and none within a decade, so by the rule it is reported and nothing is
+        submitted; no variant is run. The three unresolved amides open 6-15 times less often than experiment, their
+        95% intervals wholly under it and reaching under its tenth; V70 lacks its opening by more than a decade.
+        Beside, not deciding: the calibration amides new against old, I61 2.98e-4 (149) and 3.80e-4 (38), D21 8.4e-5
+        and 1.2e-4, E34 3.3e-4 and 3.5e-4, Q41 1.6e-4 and 1.2e-4, Y59 7.1e-4 and 8.0e-4 (Fisher p 0.2-0.7); mean
+        protected NHs 58.651 and 58.648; measured amides resolved in the union 22 of 24, the bound RT ln N 7.22
+        kcal/mol (10^5: 6.25); C-N over 2 A in 628 of 5 x 10^5 samples (10^5: 131), Rg 11.34 +- 0.16 A (10^5: 11.34).
+        T2c's lambda-0 estimates, V70 3.1e-10, I13 4.8e-10, W45 3.4e-8 and L67 3.1e-12, sit 2.0-5.2 decades under the
+        lower ends of these exact intervals, as T2c's failed calibration warned.
 - [ ] T3, the readout: dG and m-values for all three proteins against experiment and Upside FF2 (Table S14), and
       whether Boltz-2's own distribution holds an unfolded HEEH at all. At plain resolution these are Phase 1's
       readouts (Status): dG Spearman 0.74 on EHEE (FF2 0.61), 0.04 on HEEH (0.32), -0.21 on Ub psWT (0.43); m against
