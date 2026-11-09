@@ -30,7 +30,8 @@ the four targets' estimates sit 3.4-7.3 decades under experiment, on tails not c
 (11-08): T2d bounds the four amides with 5 x 10^5 more of Boltz-2's exact plain samples, at a decade, with no move
 to bias it (Decision 9). Read 11-09: V70 opens once in 5 x 10^5, too stable by more than a decade; I13, W45 and L67
 open 6, 5 and 2 times, 6-15 times under experiment and unresolved at a decade; the set is read alone, because D52
-opens 4% less often than in the 10^5 (p 1.4e-4). Reported; what follows is the user's call. Jobs are recorded in
+opens 4% less often than in the 10^5 (p 1.4e-4). Reported. The user asked for the next job (11-09): E2a tests
+Phase 2's premise, Boltz-2's own order, on Ferrari et al.'s 11 new HDX-NMR domains (Decision 10). Jobs are recorded in
 `remote_jobs.md` §1. Phase 0-1's
 run data on `/beagle3` and BioEmu2's samples were deleted 11-03 at the user's word (logs and scripts kept; the pooled
 sets the readouts use are in the Mac Studio's `scratchpad/boltz_hdx/flags/samples/`; `remote_jobs.md` disk section).
@@ -169,6 +170,11 @@ machine, about 90 A100-hours; its PDB stage (which made AF2 generative, and whic
    move that walks carries that bias and the moves that keep the distribution are fresh draws (T2a), so the decade
    question goes to Boltz-2's exact samples, in the direction they can settle: more samples bound an amide that never
    opens. T2c's failure stands; no ladder variant is run.
+10. **After T2d, Boltz-2's own order on the add-on's domain class (E2a)** (2026-11-09). T2d read the four core
+   amides alone (V70 too stable by more than a decade; I13, W45 and L67 under experiment, unresolved at a decade),
+   and the user asked for the next job ("propose and run next BOltz job"). Every sampler past plain has failed
+   (E1's weights, T1-T2c's moves), so the add-on would work on plain samples, keeping Boltz-2's order inside each
+   element. E2a tests that order on Ferrari et al.'s 11 new site-resolved domains before any library or training.
 
 ## 4. Phases
 
@@ -818,7 +824,51 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
         **E1 closed, 11-03** (user: "proceed with your recommendation. but don't give up on the big goal, try another
         potential solution"): the 16,384 arms are not rerun and the Feynman-Kac sampler is dropped. The add-on's
         design (U_phi, the data, E2-E4) carries over to Phase 3's sampler.
-- [ ] E2, data (the user requests it through the form): a library pilot of about 200 domains (about 85 V100-hours; the
+- [ ] E2a, Boltz-2's own order on the add-on's domain class (user 11-09: "propose and run next BOltz job"; Decision 10;
+      rule fixed 09:30 11-09, before any of its data). The add-on keeps Boltz-2's order inside each element (lambda_i
+      shrunk toward zero) because that order is what ranks EHEE; Phase 1 tested it on three proteins (EHEE 0.74, HEEH
+      0.04, Ub psWT -0.21). Ferrari et al.'s HDX-NMR set (Zenodo 10.5281/zenodo.14983481, `Dataset_4_HDXNMR.json`,
+      CC BY 4.0, md5 `207a51dc`) gives per-position opening free energies for 13 domains of the library's class, 11 of
+      them new here: 5 three-helix and 3 EEHEE designs (two of them point mutants of the others) and 3 natural LysM
+      domains. If Boltz-2 does not order these, an add-on that keeps its order cannot reach Upside, and one that
+      changes it needs site labels that only these 13 domains carry.
+      Design. Each domain as its measured construct (No-His where measured, else 6xHis; `addon/nmr_domains.py` writes
+      `addon/inputs/nmr_domains.tsv` and `flags/reference/<name>_experiment.csv` from the rows of averaged
+      `free_energy_nc_corrected`), MSAs from the ColabFold server by `addon/prep_nmr.py` (the LysM domains 16,384
+      sequences; the No-His designs 2-3 rows, their own sequence and at most one other design; the 6xHis designs
+      210-225, other tagged sequences matched on the tag). 5 x 10^4 plain `md` samples a domain, 50 runs of 1,000 at
+      seeds 13-62, one MSA trunk each, through `e1_rare.py --unguided` after its `--check` (`addon/nmr.sbatch`,
+      `t2d.sbatch` with the input named, 25 seeds a job): 22 jobs, about 125 GPU-hours. The bound RT ln N at
+      293 K, Ferrari's temperature, is 6.30 kcal/mol, under which lie 44-100% of a domain's measured amides (all of
+      them in 8 of the 11). Flags on the Mac by Phase 1's pipeline (`run_flags.sh`'s steps), each domain's reference
+      structure the predict step's `model_0`.
+      Rules (`addon/nmr_read.py`, written before the data):
+      1. Every sample counts; a seed with fewer than 1,000 samples or a job whose `--check` fails is not read.
+      2. Per domain, Phase 1's censored Spearman rho_d against the averaged per-position values over all measured
+         amides, Boltz-2 and experiment censored at the bound; dG = RT ln(p / (1 - p)) at 293 K.
+      3. Across domains, rho-bar is the mean over 9 families (a point mutant and its parent averaged as one family);
+         its 95% interval by bootstrap over families, each domain's seeds resampled inside it as Phase 1's blocks.
+      Verdict. Order holds: rho-bar at least 0.45, Upside FF2's mean Spearman over Peng's three (0.61, 0.43, 0.32), and
+      its interval above 0; E2's library and E3 follow on this order. Order fails: the interval under 0.45; an add-on
+      that keeps Boltz-2's order cannot reach Upside, and Phase 2's training premise fails on its own domain class;
+      reported, and whether the Boltz line goes on is the user's call. Otherwise unresolved, reported. No variant
+      (more seeds, other constructs) is run on any outcome. The bar is Upside's on other proteins, since Upside has not
+      run these; Boltz-2's own reference and experiment are the same domains.
+      Beside, not deciding: each rho_d with its interval and the Spearman over resolved amides; the two mutant pairs'
+      per-site dG differences, Boltz-2's against experiment's; Phase 1's EHEE and HEEH sets against Dataset_4's values
+      for them, a check of Peng's data against Ferrari's; the per-condition rows at 293 K; donors open per sample, C-N
+      over 2 A and Rg.
+      * Checks before GPU time: the code is T2d's (`e1_rare.py` `e4314698`, `sampler.py` `21df0b41`, `opening.py`
+        `2518d645`, equal on the cluster); `nmr.sbatch` differs from `t2d.sbatch` only in the input's name and in
+        keeping the predict step's PDB; `--test-only` passed on all 22. The V100s were all taken at 08:40 with 25
+        jobs ahead, so E2a runs on the RTX 6000s, one GPU type for every domain: Phase 0 measured the RTX 6000 at the
+        V100's speed with the same bf16 kernels, and each job's `--check` runs on its own GPU. Memory 16 GB (T2d's
+        jobs peaked at 5.7 GB of 40). Submitted 08:43 11-09 from `$B/addon` with `sbatch
+        --job-name=boltz_plain_nmr_<name>_rtx6000 --partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1
+        --constraint=rtx6000 --time=12:00:00 nmr.sbatch NAME FIRST LAST` (`nmr.sbatch` `dc7e2216`;
+        `addon/submitted.log`): **62687144-62687170**, the 12 blocks of hhh0012, hhh0062, hhh0557, eehee0642,
+        eehee0871 and eehee0871m; the other 10 go in as the `gpu` QOS's 12-job limit frees (the watch).
+- [ ] E2, data (the data are public on Zenodo, findings 5.7, so no form is needed): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).
 - [ ] E3, training: the surrogate (per-flag accuracy on held-out frames reported), then the tilt and the global term
