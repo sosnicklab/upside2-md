@@ -1784,6 +1784,47 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       `w32_03`: +0.006 [+0.001, +0.012] p 0.037 (0.745 against 0.739, higher on 51), level on each subset; `w32_03`
       itself was +0.012 [+0.006, +0.018] over released ff2.1. On mdCATH, ff3.2 is above released ff2.1. Peng and
       glpG's TM4 are still owed.
+13. [ ] **Why the DSE target costs folding** (user 11-09, after item 12's burial reading: "Diagnose the DSE first";
+    no training until it is answered; read-only, `/project/trsosnic/yinhan/checks/dse_diag_20261109/`). Without the
+    DSE the native-against-free contrast alone takes the backbone solvation scale from -0.301 to -0.018 over
+    `ff32_pcd57`'s 80 steps, under native restarts (epoch 0, -0.174) and persistent chains alike (findings 1.41);
+    with it at the SI's lambda 0.3 every all-term run folds 0.15-0.24 under released ff2.1, about three quarters of
+    it the DSE's (findings 1.37), and ff2.1's own step-0 gradient balances at lambda 0.10-0.15 (findings 1.17's
+    split). The question: is this trainer's DSE the SI's, and is its unfolded ensemble the unfolded state?
+    - Sources, setting by setting: the SI (eqs. S11-S13, Fig. S3, S7), Jumper's ConDiv for the FF1 details FF2
+      kept, Kleinmann's `condiv2.py` (lambda 0 there, so its DSE path never ran) and this trainer: the SARW
+      replica's temperature and terms, the NSE and DSE ensembles, the free replicas' starts, the window, any
+      normalisation.
+    - Data: the step-0 split under released ff2.1 (`checks/gradsplit_20261001/ndrd_txt/`, 24 proteins with an
+      unfolded target, NSE and DSE apart), its loader first reproducing `analyze_split.py`'s and
+      `threshold_report.py`'s sums. Per protein and group the balance weight lambda* = -NSE / DSE, and how unfolded
+      the DSE frames are (Rg against the native's and the SARW's, H-bonds against the SARW's, the frame count).
+    - Prediction, fixed before the data are read: if the unfolded set is partly folded chains, most of the DSE pull
+      comes from the proteins whose unfolded frames are least open (smallest Rg_unf / Rg_SARW, most H-bonds), and
+      lambda* rises toward 0.3 where they are fully open. If neither holds, that cause is rejected.
+    - **Read 15:40 11-09** (findings 1.41). The DSE path is the SI's (signs, normalisation, the free Hamiltonian);
+      the cutoff, the SARW's backbone term, the basin wall and the persistent chains are each ruled out. The
+      prediction holds for H-bonds and fails for Rg: the DSE per residue follows the unfolded frames' residual
+      H-bonds (bb_env scale +0.94, p 1.5e-11) and not their Rg (-0.11). Where they keep few (h 0.04-0.08), ff2.1
+      balances at the SI's lambda or above (exploratory). Not located: whether those H-bonds are ff2.1's unfolded
+      state, the native start's memory, or the colder of the two pooled replicas.
+    - **`dse_visits`, the confirming run** (user 11-09: "run the test"). The step-0 split under released ff2.1
+      (`parameters/ff_2.1`, NDRD map) on the same 24 proteins with `ff32_pcd57`'s protocol (its trainer imported:
+      the basin wall and phi/psi springs, dt 0.009, the SARW at T 1.1), changed in two ways only: three
+      consecutive 8000 tu visits per protein, the free replicas continuing from their own final frames with the
+      force field fixed, and the DSE and h kept per bracketing replica as well as pooled. In
+      `checks/dse_diag_20261109/`: `dse_visits_worker.py` (one protein), `dse_visits.sbatch` (24 tasks of 14 CPUs),
+      `dse_visits_read.sbatch` afterany it, which writes the verdict to `dse_visits_read.txt`. Rule, fixed before it
+      runs (`dse_visits_read.py`):
+      (a) the native start's memory: h falls from visit 1 to visit 3 (the mean paired change over the proteins with
+      a DSE at both has its 95% bootstrap interval under 0), and for each of the bb_env scale, E_alpha and E_beta
+      the balance at visit 3 has its interval above visit 1's value and containing 0.3. The DSE then needs
+      equilibrated unfolded chains: lambda 0.3 with item 12's persistent chains.
+      (b) the pooled colder replica: at visit 1, for each of the three groups, the warmer replica's balance has its
+      interval containing 0.3 while the pooled set's lies under 0.3. The DSE then takes the SI's one replica near Tm.
+      (c) neither: the residual H-bonds are ff2.1's own unfolded state at these temperatures, the cause is not
+      located, and the next step is the user's.
+      Its jobs: remote_jobs.md §1 line 2.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the

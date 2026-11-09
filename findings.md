@@ -2096,6 +2096,65 @@ So more epochs of ff3.2's own objective would carry its drift on, the burial los
 chains (plan.md Phase 38 item 12) the drift is driven by an objective that sees non-native states, and those chains
 act only from a protein's second visit: 76 steps give them three visits.
 
+### 1.41 The backbone term's loss without the DSE, and what sets the DSE's size (2026-11-09)
+
+User 11-09: "check if our training workflow still have defect that caused this" (1.39's BBA helix), then "Diagnose
+the DSE first" (plan.md Phase 38 item 13). Read-only on existing files; scripts and outputs in
+`/project/trsosnic/yinhan/checks/dse_diag_20261109/` (README).
+
+- **What the backbone term rewards** (`src/environment.cpp`, `BackboneSigmoidCoupling`). E = scale x sum over sites
+  of compact_sigmoid(coverage - center), the coverage being the site's weighted side-chain coverage plus its H-bond
+  coverage. The sigmoid is about 1 for a site neither covered nor H-bonded and 0 for a covered one, so with scale < 0
+  (ff2.1 -0.301) the term rewards exposed, unsatisfied backbone, and its derivative counts those sites. Weakening it
+  costs most the states with exposed backbone, which is why BBA's native (an exposed hairpin) loses to the all-helix
+  state, whose backbone is covered by its own H-bonds (1.39).
+- **Without the DSE the native-against-free contrast alone takes it to zero** (`bb_contrast.py`, `bb_by_protein.py`
+  on `ff32_pcd57`'s 80 steps of 57 divergence files). The summed contrast, native minus free, is negative in most
+  steps (the free chains keep more exposed backbone than the restrained native), and the scale follows it: steps
+  summing -91 to -106 move it +0.011 to +0.014, steps summing +49 to +71 move it -0.004 to -0.008. It goes -0.301 to
+  -0.174 in epoch 0, where every chain still starts at the native, and on to -0.018 at step 80 under persistent
+  chains, so the native restarts are not its cause. The pull is spread: 252 of 456 proteins push the term weaker over
+  their 10 visits, the 10 largest carry 14% of it, it follows neither length (Spearman +0.04) nor the free chain's
+  RMSD (+0.15), and minibatch 6 pushes -61 to -106 in every one of the 10 epochs, so it is the training set's, not
+  noise. In ff2.1's workflow the DSE held it: at step 0 NSE -47.68 against 0.3 DSE +104.65 (1.17). The current
+  trainer has `dse_weight = 0.0`.
+- **The DSE path is the SI's** (eqs. S11-S13, Fig. S3; Kleinmann's `condiv2.py`; this trainer). Signs, the per-protein
+  frame means summed over the minibatch with lambda on the DSE's mean, and every derivative evaluated under the free
+  Hamiltonian agree. Kleinmann's DSE path never ran (lambda 0 there) and carries two defects this trainer does not
+  (its energy guard reads the hottest free replica, not the SARW; with mRg(coldest) > mRg(hottest) its upper Tm
+  replica is the SARW). Where this trainer departs from the SI's wording:
+  - the Rg cutoff, 2/3 Rg_low + 1/3 Rg_high (Fig. S3, as coded) against the text's Rg_native and Rg_SARW: 2% apart
+    in Rg, 2% in every DSE group (`threshold_report.py`; 1.17). Not the cause.
+  - the SARW keeps the backbone term (the SI: no "solvation terms"): the SI's SARW folds the same (`s32_00`, 1.37).
+    Not the cause.
+  - the basin wall and the persistent chains are absent from the step-0 measurement below, so they cannot be its cause.
+  - the unfolded frames pool the two replicas bracketing the Rg midpoint (the SI: "a replica close to the Tm"), and
+    the free chains start at the native each step (the SI is silent; Jumper's ConDiv starts each run at the data
+    point). Not tested.
+- **The DSE's size follows the residual H-bonds of its unfolded frames** (`dse_split_diag.py` on
+  `gradsplit_20261001/ndrd_txt`: released ff2.1 at step 0, 24 proteins with an unfolded target, NSE and DSE apart, run
+  at that trainer's dt 0.015 and its 1 A restraint; the loader reproduces 1.17's sums and the balance weights, bb_env
+  scale 0.125, E_alpha 0.144, E_beta 0.102). Openness o of the two DSE replicas (0 the native's Rg, 1 the SARW's),
+  median 0.51 (0.30-0.71); the selected frames' residual H-bond score h (0 the SARW's, 1 the restrained native's),
+  median 0.11 (0.04-0.30); o and h unrelated (-0.10).
+  - The prediction fixed in plan.md item 13 holds for h and fails for o. DSE per residue against h: bb_env scale
+    +0.94 (p 1.5e-11), E_alpha -0.67 (p 3.5e-4), E_beta -0.70 (p 1.5e-4), E_bias -0.89 (p 9e-9); against o -0.11 to
+    +0.21, none resolved. The balance weight by o tercile, 0.100, 0.066 and 0.200 for the bb_env scale, is not
+    resolved.
+  - Exploratory, after that reading: by h tercile, the proteins whose unfolded frames keep the fewest residual
+    H-bonds (h 0.04-0.08) balance at the SI's lambda or above (bb_env scale 0.39 [0.12, 0.68], E_beta 0.59 [0.16,
+    1.16], E_alpha 0.70 [-0.15, 1.51]), the other two terciles at 0.07-0.15. Partly by construction (the balance is
+    -NSE / DSE and the DSE grows with h), so it shows the two readings agree, not a second test. The residual H-bonds
+    are not helical in particular (residual fraction alpha 0.15, beta 0.13, other 0.20), follow neither the native's
+    helix nor strand content (+0.08, -0.11), and are larger where the DSE draws from colder rungs (-0.42, p 0.039).
+- **So** the DSE's pull beyond ff2.1's balance comes from the third of proteins whose unfolded frames keep 15-30% of
+  the native's H-bond score above the SARW's, each pulled toward the SARW's none. Not located: whether those H-bonds
+  are ff2.1's unfolded state at those temperatures, the native start's memory (each step runs 8000 tu from the native
+  and reads its second half), or the colder of the two pooled replicas. The existing files keep the two replicas'
+  frames pooled and one visit per protein, so they cannot separate the three; the test is plan.md item 13's.
+- Beside, deciding nothing: under persistent chains the T 1.1 replica compacts (0.919 of its own epoch 0 at epoch 9,
+  `rg_check_ff32_pcd57.txt`), with the DSE off and the force field moving.
+
 ## 2. The hybrid model: what each side supplies
 
 ### 2.1 Replaced by design
