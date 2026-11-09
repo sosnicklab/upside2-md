@@ -1152,3 +1152,87 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   (`make_pcd57.py`, `match_order.py`, `train_chain57.sbatch`, `after_training_ff32_pcd57.sbatch` reading epochs 1, 3,
   5, 7, 9; stub run of every branch) started 13:24 (49885329, 798 CPUs). plan.md Phase 38 item 12 revised before any
   data. Watch cron `13bea105` replaced `5c4918e1` at 13:10.
+* **11-06 16:35-19:20, Mac Studio: watch passes; midway2-0261 excluded.** ff3.2 glpG REMD block 1 read late (TM4 0.977
+  at T 0.70; the sacct-window miss, findings 10.53). ff32_pcd57 epoch 1's free replicas checked to start from epoch 0's
+  final frames (`checks/ff32_pcd_20261106/pcd_start_check.py`, 57 of 57). Three score jobs died in a second on
+  midway2-0261: its group-name lookup fails, so `module` init breaks `set -e` scripts (reproduced inside a running job
+  with `srun --overlap`). Excluded at the user's word, `slurm/midway2.args` and `README.md` (backups
+  `*.bak_pre_0261_20261106`), pending jobs updated, `--test-only` refuses it (remote_jobs.md §0d).
+* **11-06 21:15-21:30, Mac Studio: Peng for the most-probable-state side chain** (user: "run the remaining validation
+  for ff21_bpmax_dt009"; plan.md Phase 39 item 6). The other arms' Peng releases re-extracted md5-equal from their
+  `epoch_01_minibatch_18`, so this arm's own was released as `ff_2.1_bpmax38` into the bpmax tree only. New in
+  `checks/bpmax_peng_20261106/`: `release.sh`, `bench_bpmax.sbatch` (`bench.sbatch` with the tree's env), `submit.sh`,
+  `collect.sbatch`, `static_check.py` (flag set in the config, patched binary, 100 tu finite). `--test-only` on all
+  33, then 32 arms and the collector submitted 21:20, all R; every replica config carries `most_probable_state = 1`.
+  Watch cron `d08a8402` replaced `7cb0bd8c` to cover them.
+* **11-06 22:45-23:10, Mac Studio: ff32_pcd57 epoch 1 read** (plan.md Phase 38 item 12). Mechanism (a) passes
+  (new `checks/ff32_pcd_20261106/mech_a.py`, read-only); the 44 fold 0.684 against released ff2.1's 0.615 at dt 0.015
+  (`ff21_released`; `p44_ff21_released` is the dt 0.009 panel and is not the reference for these); the backbone burial
+  scale fell to ff32_basin's step-76 value by step 16. Glycine rounds pulled to `scratchpad/handoff_20261102/gly/rounds/p57/`.
+  Boltz T2b seed 5 COMPLETED 22:52; the read waits for seed 6.
+* **11-07 00:47-01:05, Mac Studio: Boltz T2b read, fails.** Both seeds pulled md5-equal, `t2_read.py`: stationary,
+  parity equal, calibration fails on I61 (0.47 of plain, limit 0.5), support fails (V70, I13, W45, L67 unopened); by
+  the rule Phase 3 closes at plain resolution, left to the user (diffusion_dynamics.md Phase 3 T2b). 25 ff3.2 Peng
+  chunks resubmitted at midnight; gpW native's `[bench] COMPLETE` of 22:50 read late, finite (findings 10.53 widened:
+  a pass carries the time its sacct ran).
+* **11-07 07:47-08:10, Mac Studio: ff32_pcd57 epoch 3 read** (plan.md Phase 38 item 12). The 44 fold 0.687 against
+  released ff2.1's 0.615 and `w32_03`'s 0.645 (+0.042 [+0.001, +0.086]); shift +13.94, gap -1.150; glycine settled at
+  -0.77; the backbone burial scale fell to -0.053 at step 32, reported to the user. Glycine rounds 3-4 of both runs
+  pulled md5-equal to `scratchpad/handoff_20261102/gly/rounds/{p57,basin}/`. ff3.2 Peng: 11 more arms scored against
+  released ff2.1 (20 of 32, 7 higher, 13 lower).
+* **11-07 15:47-16:05, Mac Studio: ff32_pcd57 epoch 5 read** (plan.md Phase 38 item 12). The 44 fold 0.715, +0.099
+  over released ff2.1 and +0.070 over `w32_03`; shift +14.58, gap -1.313; glycine -0.80 to -0.83; burial scale -0.035
+  at step 48. Glycine rounds 5-6 pulled md5-equal to `scratchpad/handoff_20261102/gly/rounds/p57/`.
+* **11-07 16:00-16:35, Mac Studio: Boltz T2c proposed, checked and submitted** (user: "Propose next boltz job for me
+  and run it"; diffusion_dynamics.md Phase 3 T2c, Decision 8). One ladder per amide on its opening excess (I61, V70,
+  I13, W45, L67), rule written first. `remc_boltz.py` gained `--targets` and `--lambdas`; new `t2c.sbatch`,
+  `t2c_read.py`, `runs/t2c_check/` (excess check, synthetic jobs, rule 0's false-alarm rate). Check (ii) found rule 0's
+  error wrong for four ladders (t with 3 dof) before any data; fixed. Four V100 jobs 62551232-62551235 queued.
+* **11-07 22:00-22:15, Mac Studio: ff32_pcd57 against every flag** (user: "check if ff3.2 pass all the flags we set
+  before", then "I meant the current training ff3.2"). `check_step.py` at each epoch end and the steric check, both
+  read-only, never run on this run before: the H-bond margin was under +0.10 in epochs 1-4 and recovered to +0.139;
+  STERIC FLAG on free non-glycine beta' + pPII' (0.0043 against 0.0042). Recorded in plan.md item 12; lesson
+  findings 10.54.
+* **11-07 23:50-00:05, Mac Studio: ff32_pcd57 epoch 7 read** (plan.md Phase 38 item 12). The 44 fold 0.701, +0.086
+  over released ff2.1 and +0.056 over `w32_03`, level with epoch 5; shift +13.48, gap -1.660; glycine -0.82 to -0.84;
+  the backbone burial scale stopped falling (-0.050, -0.038). Glycine rounds 7-8 pulled md5-equal to
+  `scratchpad/handoff_20261102/gly/rounds/p57/`. Most-probable-state BBL native COMPLETE, finite.
+* **11-08 05:50-06:15, Mac Studio: ff32_pcd57's step-80 build** (plan.md Phase 38 item 12). Built
+  `checks/ff32_p57_validate_20261108/` from `ff32_epoch3_20261104` and `ff32_validate_20261104` (names, source check,
+  `mdc_w32_03` as the TM panel's beside reference, glpG directory); rule (b)'s consequence written before the data
+  (BELOW `w32_03` stops, the user decides). Dry run with `p57_07` standing in: `choose.py` reproduces epoch 7's
+  numbers, `submit.sh plan` passes `--test-only` on every job. The backbone burial scale near zero in epoch 9
+  (-0.0006 to -0.024). Most-probable-state BBA and BBL native scored, level with the BP control; its 30 other arms
+  rolled into their fourth chunks.
+* **11-08 06:50-07:05, Mac Studio: Boltz T2c read; ff32_pcd57 at step 80** (diffusion_dynamics.md Phase 3 T2c; plan.md
+  Phase 38 item 12). T2c's four jobs COMPLETED 06:05-06:31, pulled md5-equal to `addon/runs/`, read by `t2c_read.py`:
+  calibration fails (I61's ladders not stationary, +3.7 se against 3), so no amide is read; nothing submitted, the
+  next step is the user's. ff32_pcd57's last link COMPLETED 06:49 at step 80; epoch 9's panel, shift and gaps queued.
+* **11-08 07:10-08:10, Mac Studio: Boltz T2d proposed and submitted** (user: "Propose next boltz job and submit it
+  for me"; diffusion_dynamics.md Decision 9 and Phase 3 T2d). Diagnosed T2c (`addon/runs/t2c_diag/diag.py`): the
+  target ladders open once, at sweeps 617-1766, and I61 drifts toward protection at all 14 rungs; per-trunk plain
+  counts are not overdispersed, so not trunk sampling. T2d asks the decade question of exact plain samples: 5 x 10^5
+  more at seeds 113-612 through `e1_rare.py --unguided`, read by `t2d_read.py` (pooling by Fisher, Poisson bounds
+  against experiment / 10), rule written first; checks: code md5-equal, reader right on five known sets,
+  `--test-only` of 20 jobs. 12 submitted (62607649-62607660); 8 blocks owed to the `gpu` QOS's 12-job limit.
+* **11-08 08:45-09:05, Mac Studio: ff32_pcd57 epoch 9 read, its choice and full validation** (plan.md Phase 38 item
+  12). Epoch 9 folds 0.706 (+0.091 over released ff2.1, +0.062 over `w32_03`); `read.sh`: rule (b) passes, step 80
+  chosen, above ff2.1; `submit.sh` plan (35 `--test-only`) then apply: `ff_3.2_p57_09` staged, mdCATH panel and TM,
+  Peng's 32 arms and collector, glpG on Upside 3. Glycine rounds 9-10 pulled md5-equal. Nine Peng chunks (8 ff3.2
+  de novo, ff3.1 ubiquitin de novo) resubmitted themselves 07:16-07:32; ff3.2 NTL9 de novo scored level with ff2.1.
+* **11-08 09:10-09:25, Mac Studio: w32_03's validation cleared** (user: "you can clear the previous version of
+  ff3.2's validation"). Cancelled its 8 de novo Peng chunks and collector (24 of 32 scored); deleted its Peng runs
+  (30 GB), mdCATH runs (47 GB, after checking all 356 TM series that `ff_3.2_p57_09`'s TM reads are cached), glpG
+  outputs (9.3 GB) and the staged `ff_3.2_w32_03` copies; readouts, jsons, logs, its 44-domain panel and params kept.
+  upside3.md H2 now names `ff_3.2_p57_09`'s ubiquitin arms.
+* **11-08 14:40-17:45, Mac Studio: watch through a /beagle3 stall; ff3.2's mdCATH read.** /beagle3 hung on both
+  clusters about 14:30-15:15 (midway3 sessions returned nothing; recorded, no Duo relaunch). Boltz T2d's 62607650 went
+  NODE_FAIL in it and Slurm requeued it under its id, so its run directory and 15 seeds are kept; the 145 seed files
+  then were pulled md5-equal and sane. 24 bpmax Peng chunks resubmitted at their budget; 8 of 32 bpmax arms scored.
+  `ff_3.2_p57_09` on mdCATH: mean TM 0.745 against released ff2.1's 0.727 (+0.018 [+0.012, +0.025]), above on every
+  subset; `w32_03` +0.006 beside (plan.md Phase 38 item 12). ff3.1's last Peng arm finished (unscorable until the fix).
+* **11-08 18:39-18:50, Mac Studio: Boltz T2d's /tmp fault found and fixed** (diffusion_dynamics.md Phase 3 T2d;
+  findings.md 10.55). Three T2d jobs COMPLETED; four FAILED 127 at their next seed's start, each minutes after a
+  neighbour on its node ended: midway3's epilog deletes every /tmp entry of the user at any job's end, and the venv
+  was extracted to /tmp. `t2d.sbatch` now uses `$SLURM_TMPDIR` (`65da611b`); `--test-only` passed; the four went back
+  into their run directories with seeds 413-487 (62625768-62625774). Seeds written before the stop are whole.

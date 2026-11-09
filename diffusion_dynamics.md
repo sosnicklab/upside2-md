@@ -20,8 +20,16 @@ and replaces the steered sampler with replica exchange whose move is Boltz-2's o
 is carried. Its toy test T0 passes (11-03): MBAR recovers the toy's rare-event truth (P(d >= 7.5) 4.15e-4 against
 3.70e-4). On Boltz-2 (T1-T1d, 11-03 to 11-06) every move that remembers its state leaves the chains more
 protected than Boltz-2's own samples, by 2.4-3.9 standard errors in mean N, and the moves that do not are fresh
-draws. At the user's word T2b runs the ladder on T1d's move anyway, and its calibration measures whether that bias
-matters at HDX's precision (Decision 7). Jobs are recorded in `remote_jobs.md` §1. Phase 0-1's
+draws. At the user's word T2b ran the ladder on T1d's move anyway, its calibration measuring whether that bias
+matters at HDX's precision (Decision 7). Read 11-07, it fails: I61 reads 0.47 of plain (the limit 0.5) and the ladder
+opens none of V70, I13, W45 and L67 in 20 states, so by its rule Phase 3 closes at plain resolution, which is the
+user's call. The user chose to go on (11-07): T2c tilts each of the four amides' own opening excess, with I61 as
+calibration, and reads Boltz-2's open fraction there at a decade's precision (Decision 8). Read 11-08, T2c fails its
+calibration: I61's ladders are not stationary (+3.7 standard errors against the limit 3), so no amide is read; beside,
+the four targets' estimates sit 3.4-7.3 decades under experiment, on tails not calibrated. The user chose to go on
+(11-08): T2d bounds the four amides with 5 x 10^5 more of Boltz-2's exact plain samples, at a decade, with no move
+to bias it (Decision 9). Jobs are recorded in
+`remote_jobs.md` §1. Phase 0-1's
 run data on `/beagle3` and BioEmu2's samples were deleted 11-03 at the user's word (logs and scripts kept; the pooled
 sets the readouts use are in the Mac Studio's `scratchpad/boltz_hdx/flags/samples/`; `remote_jobs.md` disk section).
 Phase 2's `.venv` and `cache/mols` were packed 11-03 for `/beagle3`'s file quota: unpack both before running E1 again
@@ -96,6 +104,25 @@ of its training noise draws 6.5% fall below 0.5 A and 0.5% below 0.1 A, so the s
 trained. Plainer et al. 2025 found small-noise scores inconsistent (Fokker-Planck violations) even in purpose-built
 models, and fixed it with a training-time regularizer.
 
+Onsager-Machlup action minimisation (Raja et al., ICML 2025, OM-TPS; read 11-06, user: "check if Onsager-Machlup
+action optimization can be used in Boltz job") is the same score-as-force idea applied to paths. The learned score at
+a small nonzero diffusion time is taken as the drift of an overdamped SDE, and a discretised path between two given
+endpoints is moved by gradient descent to minimise the OM action: a smoothness term, the drift's norm and its
+divergence, the last by Hutchinson's estimator. It returns one most-likely path per optimisation, not the path
+ensemble, which the authors state. Their free energies and rates came from umbrella sampling, committors or MD with
+a physical force field around the paths: alanine dipeptide's barrier of about 6 kcal/mol; a Muller-Brown rate of
+1.3e-5 against the true 5.4e-5. Their models were trained on equilibrium samples of the system itself (a 2-D
+potential, alanine dipeptide, Arts et al.'s per-protein C-alpha models of the fast folders, a flow model on
+tetrapeptide MD), which is what makes the score a force. It is not used for Boltz-2's HDX, for three reasons:
+* HDX needs the populations of opened states, which are endpoint free energies. An action is not one without a
+  potential, and Boltz-2's non-conservative denoiser defines none.
+* The opened endpoints (V70, I13, W45, L67) are the states Boltz-2 never produces, so there is nothing to connect the
+  native to.
+* The drift would be Boltz-2's score at small noise, the regime where its moves leave the chains more protected (T1b,
+  T1d) and where the reasons above apply.
+If T2b's support fails, the same ladder can tilt on a coordinate aimed at one amide (its burial, as E1's potential was)
+instead of N. MBAR's reweighting stays exact for any coordinate, and it needs no path or endpoint.
+
 ### 2.5 Cost reference points
 
 Gathered for the dropped fine-tune (Decision 4). Boltz-1: 68k steps, batch 128, crops of 384 to 512 tokens, no GPU
@@ -127,6 +154,19 @@ machine, about 90 A100-hours; its PDB stage (which made AF2 generative, and whic
    submit it for me"). T1d's failure stays on the record: its chains sit 0.10 NH more protected, a 0.17% shift that
    T1's rules resolve. T2's calibration, a factor of 2 on five amides Boltz-2 opens in 12-80 of 10^5 plain samples,
    is the test of whether that bias matters for HDX.
+8. **After T2b, each ladder tilts one amide's opening excess (T2c)** (2026-11-07). T2b failed calibration (I61 0.47
+   of plain) and support; its rule closed Phase 3 at plain resolution, and the user chose to go on ("Propose next boltz
+   job for me and run it"). T2b's top rung opened about 7.5 NHs, the easiest ones, so a tilt on N does not reach the
+   core amides; section 2.4's remedy for that, written before T2b's data, is a coordinate aimed at one amide. T2c
+   asks E1's question at a decade's precision, the scale of the gap it measures; T2b's failure at a factor of 2 stands.
+9. **After T2c, Boltz-2's exact plain samples bound the four core amides (T2d)** (2026-11-08). T2c failed calibration
+   (I61 not stationary) and the user chose to go on ("Propose next boltz job and submit it for me"). Its diagnosis:
+   the target ladders open for the first time at sweeps 617-1766 (seed 7 never opens V70, W45 or L67), so the read half
+   holds each ladder's one relaxation; I61's tilted rungs rise between the halves at all 14 rungs in all four jobs, and
+   its lambda 0 reads 0.44 of plain as T2b's read 0.47, the move's drift toward protection that T1-T1d measured. A
+   move that walks carries that bias and the moves that keep the distribution are fresh draws (T2a), so the decade
+   question goes to Boltz-2's exact samples, in the direction they can settle: more samples bound an amide that never
+   opens. T2c's failure stands; no ladder variant is run.
 
 ## 4. Phases
 
@@ -1129,11 +1169,163 @@ with acceptance min(1, exp(-(U' - U))), and Boltz-2's density, which no sampler 
           0.30 at each of the three sigmas. **62453020** (seed 5) and **62453022** (seed 6)
           `boltz_remc_t2b_ubqps_v100`, submitted 13:37 11-06 from `$B/addon` (`t2b.sbatch` `e5a4dc5c`, midway3 `gpu`,
           V100, 36 h; `--test-only` passed first; `addon/submitted.log`).
+        * **Read 00:55 11-07: T2b fails, calibration (I61) and support; nothing submitted.** Both jobs COMPLETED
+          (seed 5 22:52, seed 6 23:57 11-06; 2,000 sweeps in 32,575 and 32,799 s), pulled to
+          `addon/runs/boltz_remc_t2b_ubqps_v100_<id>/` (`t2.npz` md5 `a6f55034` and `9196d762`, equal on the cluster;
+          logs, `predict.log`), read by `t2_read.py` into `addon/runs/t2b_read.txt`. Rule 0: stationary, every rung
+          within 3 se between the halves of sweeps 1001-2000 (the largest rung 10, -2.9 se; rungs 7-11 all lower in
+          the second half, -0.6 to -2.9 se). Rule 1: both `[check]` lines equal in both jobs. Rule 2, at lambda 0
+          against the pooled plain 10^5, the jobs' mean: I61 1.77e-4 against 3.80e-4 (38 open), ratio 0.47, FAIL; D21
+          1.10, E34 0.69, Q41 0.73, Y59 0.60 pass, so four of the five read below plain. Rule 3: open with no C-N bond
+          over 2 A in [seed 5, seed 6] read states, V70 [0, 0], I13 [5, 0], W45 [0, 0], L67 [0, 0], FAIL. By the rule
+          the bias matters at HDX's precision and Phase 3 closes at plain resolution; closing goes to the user.
+          Beside: MBAR's mean N at lambda 0 58.764 and 58.657 against plain's 58.648; over the 36 donors open at
+          least 50 times in plain, ln(ladder / plain) median -0.00, largest +0.56 (residue 51). Per rung, lambda 0 to
+          3: move acceptance 1.00, 0.79, 0.60, 0.42, 0.26, 0.16, 0.08, 0.04, 0.02, 0.01, 0.00, 0.00; swap acceptance
+          0.75-0.80 inside the ladder (0.39 and 0.37 at its two ends); mean N 58.73 down to 51.12; median CA-RMSD
+          1.39-1.60 A; C-N over 2 A at most 0.0016. Acceptance per sigma 0.30, 0.28, 0.27 at 1.90, 3.95 and 7.67 A.
+          Round trips per ladder 36, 55, 45, 39 and 19, 76, 62, 43. So the ladder mixes in lambda and its top rung
+          holds chains about 7.5 amides less protected than plain, but above lambda 1.9 almost no move is accepted,
+          and those chains do not include the four amides plain never opens.
+- [x] T2c, one ladder per amide (user 11-07: "Propose next boltz job for me and run it"; Decision 8; rule fixed 16:30
+      11-07, before any of its data). Each ladder tilts one amide's opening excess E_a, `opening.py`'s potential at
+      kappa 1: burial above 5, plus 4 times the backbone H-bond score above 0.01, plus 4.6 times the ASP/GLU coverage
+      above 0.05. E_a is zero exactly where the estimator calls the amide open, and rung r samples p_Boltz
+      exp(-lambda_r E_a), so MBAR reweights to lambda 0 as it does for N. The question is E1's, which E1 could not
+      answer: how often Boltz-2 itself opens experiment's four least stable amides. Their open fractions at 273 K are
+      V70 1.24e-4, W45 8.9e-5, I13 6.9e-5 and L67 6.0e-5 (Peng 2022 SI); the plain tails extrapolate to about 1e-7
+      to 1e-8 (E1). The answer is read at a decade's precision. T2b measured the move's bias on five resolved amides
+      at 0.47-1.10 of plain, well inside a decade. A pass also leaves a weighted library holding these amides' open
+      states, the support Phase 2's add-on would be trained on.
+      Design. T2b's chain and moves (the 1 A-noised state; moves at 1.90, 3.95 and 7.67 A). 14 rungs at lambda 0,
+      0.25, 0.5, 0.65, 0.75, 0.85, 0.95, 1.05, 1.15, 1.25, 1.35, 1.5, 1.7 and 2.0 per burial unit, set from the pooled
+      plain excesses: their lower tails fall 0.85-1.10 in ln P per unit, so tilts near 1 flatten them, and the
+      spacing is 0.1 there, where the tilted spread is widest; plain reweighted to lambda 0-0.75 predicts swap
+      acceptance 0.5-0.8 on every target. Five ladders a job, one per amide: I61 for calibration (open in 38 of the
+      pooled 10^5; its excess, mean 12.8 and s.d. 2.5, is the nearest in shape to the targets' 13.8-18.4), then V70,
+      I13, W45 and L67. Four jobs, seeds 7-10 (four MSA trunks), 70 replicas each, 2,000 sweeps, the second half read:
+      about 14 V100-hours each at T2b's 0.34 s per replica and move, 56 in all. Code: `remc_boltz.py --targets
+      --lambdas`; `remc.py` unchanged.
+      Checks before GPU time, a failure being a code defect to find: (i) `remc_boltz.py`'s excess on the pooled 10^5
+      backbones equals the one computed from the engine's own BurialLevel, Hbond and CTerHbond arrays, and is zero
+      exactly where the stored flags are open, and each replica reads its own ladder's amide; (ii) `t2c_read.py` (MBAR
+      by pymbar 4.0.3) on synthetic ladders (the pooled plain set resampled at its low rungs) recovers plain's I61,
+      support fails as it must, and rule 0 passes stationary data; (iii) `--test-only` of the four jobs.
+      Rules (`addon/t2c_read.py`, written before the data), per amide over its four ladders:
+      0. Stationary: every rung's mean excess agrees between the halves of the read range within 3 standard errors,
+         the error the larger of the spread over the ladders and the batch-means error within them (blocks of 100
+         sweeps); an amide that is not stationary is not read. (Revised 16:15, before any data, by check (ii): the
+         spread over four ladders alone follows Student's t with 3 degrees of freedom, so a limit of 3 flagged half of
+         the stationary synthetic amides.)
+      1. Parity: both `[check]` lines equal in every job, or nothing is read.
+      2. Calibration: I61's lambda 0 open fraction (MBAR on its four ladders) within a factor of 10 of the pooled
+         plain 10^5's (3.8e-4); otherwise the tails are not trusted at the verdict's precision and no amide is read.
+      3. Support: the amide open, with no C-N bond over 2 A, in at least 20 read states of every job.
+      4. Precision: the 95% bootstrap interval of its lambda 0 open fraction over the four ladders spans at most a
+         factor of 10.
+      Verdict for each target amide passing 0-4, its estimate against experiment's open fraction: more than 10 times
+      lower, Boltz-2 is too stable there by more than a decade; within a factor of 10, within a decade; more than 10
+      times higher, too open. Every target too stable: Phase 1's missing local openings are measured on Boltz-2's own
+      distribution, correcting them is the add-on's job (Phase 2), and the ladders' states with their MBAR weights are
+      its support; reported, nothing submitted. Any within a decade: T3 reads that amide's dG at the ladder's
+      resolution, T2b's bias beside. An amide failing 3 or 4 is reported unresolved. No variant (rungs, moves,
+      sweeps) is run on any outcome. Beside, not deciding: each job's estimate per amide; per rung the move and swap
+      acceptance, mean excess and open share; round trips per ladder; the open states' CA-RMSD and C-N; in each
+      amide's ladders the other donors at lambda 0 against plain, and MBAR's mean N.
+      * **Checks, 16:20 11-07 (`addon/runs/t2c_check/`): (i)-(iii) pass; submitted.** (i) `excess_check.py`, the
+        functions compiled from `remc_boltz.py`'s own source: on 2,978 of the pooled backbones (995 of them the
+        lowest-excess frames of a target or I61) the coordinate equals the engine's excess within 3.9e-5, is zero on
+        exactly the open flags (I61's 38 open frames among them), and every replica of the 70 reads its own ladder's
+        amide. (ii) `synth.py`, four synthetic jobs drawn from the pooled plain set at 0.3 times the grid (lambda
+        0-0.6), read by `t2c_read.py` (`synth_read.txt`): I61 3.79e-4 against plain's 3.80e-4 (ratio 1.00; jobs
+        3.6-4.0e-4), the other donors at plain (mean N 58.65), support 0 open for the four targets as it must be. Rule
+        0 as first written flagged four of the five stationary amides (largest -8.5 se) and was revised (above);
+        revised, it flags 3.5% and 4.5% of 400 stationary synthetic sets per amide (`drift_calibration.py`; 3.7% for 14
+        independent rungs), and V70's +3.1 in the four-job set is that rate. The reader takes 49 s. (iii)
+        `--test-only` passed for seeds 7-10. Code `remc_boltz.py` `e912eb54` (backup `.bak_pre_targets_20261107` on
+        the Mac and the cluster, `4fc53964`, T2b's), `t2c.sbatch` `647359c3` (`t2b.sbatch` with the T2c arguments),
+        `t2c_read.py` `6527a503`. **62551232-62551235** `boltz_remc_t2c_ubqps_v100` (seeds 7-10), submitted 16:26
+        11-07 from `$B/addon` (midway3 `gpu`, V100, 35:30 h; `addon/submitted.log`); projected start 05:11 11-08.
+        Without the V100 constraint an A100 would start at 02:34, which would mix GPU types against T2b's measured
+        bias, so all four stay on V100 as T1-T2b did.
+      * **Read 07:00 11-08: T2c fails, calibration (I61 not stationary); no amide is read; nothing submitted.** All
+        four COMPLETED 06:05-06:31 11-08 (2,000 sweeps in 45,886-46,992 s), pulled to
+        `addon/runs/boltz_remc_t2c_ubqps_v100_<id>/` (`t2c.npz` md5 `1c71727b`, `e07d6f2f`, `49aeeafa`, `7ceb5626`,
+        logs too, equal on the cluster; `predict.log`), read by `t2c_read.py` `6527a503` into `addon/runs/t2c_read.txt`
+        (exit 1, its failure code). Rule 0: V70, W45 and L67 stationary (largest +2.4, -2.5, -1.9 se); I61 +3.7 se at
+        rung 6 and I13 -3.0 se at rung 10, not stationary, not read (the limit flags 3.5-4.5% of stationary synthetic
+        sets per amide). Rule 1: both `[check]` lines equal in all four jobs. Rule 2: I61 at lambda 0 1.65e-4 [1.10e-4,
+        2.48e-4] against plain's 3.80e-4, ratio 0.44 (jobs 0.97-2.77e-4), inside the factor of 10, but not stationary,
+        so calibration fails and no amide is read. No variant is run; what follows is the user's call.
+        Beside, deciding nothing. Rule 3, open with no C-N bond over 2 A in the read states of seeds 7-10: V70 [0,
+        1335, 1875, 103], I13 [2000, 980, 1686, 778], W45 [0, 920, 234, 1565], L67 [0, 461, 485, 699]; seed 7 never
+        opens V70, W45 or L67. Rule 4's intervals span factors of 15 (I13) to 1,800 (V70). The lambda 0 estimates,
+        V70 3.1e-10, I13 4.8e-10, W45 3.4e-8 and L67 3.1e-12, lie 3.4 (W45) to 7.3 (L67) decades under experiment's
+        6.0e-5 to 1.24e-4, and every interval's upper end at least 2.7 decades under (W45 1.6e-7 against 8.9e-5); on
+        tails the calibration did not pass, they are not a measurement. MBAR's mean N at lambda 0 58.67-58.73 against
+        plain's 58.648; the other donors at lambda 0 against plain, ln ratio median -0.00 in every amide's ladders
+        (range -1.16 to +0.73, I61's down to -5.60). Swap acceptance 0.55-0.93 inside the ladders, 0.25-0.44 at the
+        two ends; round trips 13-91 per ladder; move acceptance 0.21-0.23 at each sigma, 0.00-0.06 above lambda 1.2.
+        The open states' median CA-RMSD 1.44-2.04 A (V70's 4.68 A), none with a C-N bond over 2 A.
+      * Diagnosis, 07:30 11-08 (`addon/runs/t2c_diag/diag.py`, read-only on the four `t2c.npz`): drift between the
+        halves per rung, I61 +0.6 to +3.7 se and positive at all 14 rungs (V70 6, I13 2, W45 1, L67 0 of 14); in
+        blocks of 200 sweeps each target ladder's top rung falls from an excess of 9-13 to 0-2 once, at sweeps
+        617-1766 (first open state), and seed 7's V70, W45 and L67 ladders never open (lowest excess 5.18, 1.36,
+        0.74). Not trunk sampling: in the pooled 10^5 the per-trunk open counts of I61, D21, E34, Q41 and Y59 are not
+        overdispersed (chi-square 82-105 on 99 degrees of freedom); four random trunks read I61 at 0.47 of the pool or
+        less with probability 0.22, but T2b and T2c, eight trunks, both read 0.44-0.47.
+- [ ] T2d, Boltz-2's exact plain samples bound the four core amides (user 11-08: "Propose next boltz job and submit it
+      for me"; Decision 9; rule fixed 07:55 11-08, before any of its data). The pooled plain 10^5 never opens V70, I13,
+      W45 or L67, whose experimental open fractions at 273 K are 1.24e-4, 6.9e-5, 8.9e-5 and 6.0e-5: its one-sided 95%
+      bound, 3.0e-5, sits only a factor of 2-4 under them. 5 x 10^5 more samples put the bound of an amide that never
+      opens at 5.0e-6 pooled (6.0e-6 alone), more than 10 times under every target. Exact sampling has no move to
+      bias it, so no calibration amide is needed; if the amides open, the same samples measure them.
+      Design. 500 runs of 1,000 plain `md` samples at seeds 113-612, one MSA trunk each (Phase 1's 10^5 used 13-112),
+      through `e1_rare.py --unguided` with Phase 1's settings (its 64 unguided samples matched the pooled flags in
+      61663101); `addon/t2d.sbatch` runs `e1_rare.py --check` first, then 25 seeds a job, each seed's backbones in
+      `s<seed>.npz`, resumable. 20 V100 jobs (seeds in blocks of 25), about 7-8 h each, about 150 V100-hours.
+      Flags on the Mac by Phase 1's pipeline (`flags/run_flags.sh`'s recipe), as the pooled 10^5's.
+      Rules (`addon/t2d_read.py`, written before the data):
+      0. Pooling: on every donor the union opens at least 10 times, the two-sided Fisher exact p of the new set's
+         count against the 10^5's above 0.05 divided by the number of those donors; otherwise the new set is read
+         alone, the failure reported.
+      1. Every sample counts (Phase 1's sets are unfiltered); a seed with fewer than 1,000 samples or a job whose
+         `--check` fails is not read.
+      2. Per target, k open samples of N: too stable by more than a decade if the one-sided 95% upper bound (exact
+         Poisson) is under experiment's open fraction / 10; too open by more than a decade if the one-sided 95% lower
+         bound is over 10 times experiment's; within a decade if the two-sided 95% interval (Garwood) lies inside
+         [experiment / 10, 10 x experiment]; otherwise unresolved at a decade.
+      Verdict. All four too stable: Boltz-2's own distribution, sampled exactly, lacks Ub psWT's four least stable
+      local openings by more than a decade; correcting them is Phase 2's add-on's job; reported, nothing submitted.
+      Any within a decade: T3 reads that amide's dG at plain resolution. Unresolved or too open: reported. No variant
+      (more seeds) is run on any outcome. Beside, not deciding: the calibration amides' frequencies new against old,
+      mean protected NHs, Phase 1's Ub psWT readout at the pooled 6 x 10^5 (resolved measured amides, the bound
+      RT ln N), C-N over 2 A and Rg, and T2c's beside estimates against the bounds.
+      * Checks before GPU time: (i) the code is unchanged (`e1_rare.py` `e4314698`, `sampler.py` `21df0b41`,
+        `opening.py` `2518d645`, equal on the cluster); each job's `--check` must pass. Boltz-2 subsamples the MSA
+        inside the trunk (`trunkv2.py`, `torch.randperm`) after `seed_everything(seed)`, as in `boltz predict`, so
+        each seed is its own trunk; the featurizer's own random state is fixed at 42 in both. (ii) `t2d_read.py`
+        on sets of known answer (`addon/runs/t2d_check/synth.py`): 5 x 10^5 Bernoulli draws at the pooled rates
+        pool (smallest p 0.40 against the limit 8.8e-4) and read all four too stable; with I61 tripled the set is
+        not pooled and read alone; L67 drawn at experiment's rate reads within a decade, V70 at 30 times
+        experiment's too open; the pooled 10^5's halves (seeds 13-62 against 63-112) pool (smallest p 0.064 against
+        1.2e-3). (iii) `--test-only` passed for the 20 jobs. Submitted 08:05 11-08 from `$B/addon` with `sbatch
+        --job-name=boltz_plain_t2d_ubqps_v100 --partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1
+        --constraint=v100 --time=12:00:00 t2d.sbatch FIRST LAST` (`t2d.sbatch` `a74f2da6`, `t2d_read.py` `6803192b`;
+        `addon/submitted.log`): **62607649-62607660**, seeds 113-412. The `gpu` QOS takes 12 submitted jobs a user
+        (`QOSMaxSubmitJobPerUserLimit`), so the last 8 blocks, seeds 413-612 by 25, go in as slots free (the watch).
+        A job that stops early is continued with its directory as OUT; finished seeds are kept. Four jobs stopped at
+        18:25-18:36 11-08 with their seeds written whole: midway3's epilog deletes every /tmp entry of the user when any
+        of the user's jobs on a node ends, so each finished job removed its neighbours' environments (`findings.md`
+        10.55). `t2d.sbatch` (`65da611b`) now extracts to the job's own `$SLURM_TMPDIR`; the code each seed runs is
+        unchanged. The four went back into their directories, with seeds 413-487, as 62625768-62625774, and the last
+        five blocks (seeds 488-612) as 62627802-62627806 at 19:40. 62607660, the last on the old script, stopped the same
+        way at 21:09 when 62607650 ended beside it, and went back as 62632705.
 - [ ] T3, the readout: dG and m-values for all three proteins against experiment and Upside FF2 (Table S14), and
       whether Boltz-2's own distribution holds an unfolded HEEH at all. At plain resolution these are Phase 1's
       readouts (Status): dG Spearman 0.74 on EHEE (FF2 0.61), 0.04 on HEEH (0.32), -0.21 on Ub psWT (0.43); m against
       HEEH's -0.18 (FF2 0.475), unresolved on EHEE and Ub psWT at 10^5; no unfolded HEEH in 10^4. At the ladder's
-      resolution, Ub psWT's after T2b passes.
+      resolution, Ub psWT's would have followed a T2b pass; T2b failed (11-07), and T2c failed its calibration (11-08).
 
 ## 5. Known risks and blockers
 

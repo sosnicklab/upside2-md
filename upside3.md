@@ -1366,7 +1366,8 @@ The energy's functional form stays spline tables; the change is in the objective
 **Steps** (user 10-28: "record the plannings. We will run it later"; none starts without the user's word).
 - [x] H1 (10-28): ubiquitin on the Peng-benchmark REMD; findings 5.7, `scratchpad/hdx_term_20261028/` (section 12).
 - [ ] H2: H1's readout on ff3.2's ubiquitin arms, once both hold a COMPLETE file. No new run.
-  * The arms are those of ff3.2's Peng validation, `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/ubiquitin_{native,denovo}_<ff3.2's name>`,
+  * The arms are those of ff3.2's Peng validation, `/beagle3/trsosnic/yinhan/ff3_benchmark/runs/ubiquitin_{native,denovo}_ff_3.2_p57_09`
+    (submitted 08:57 11-08; the first candidate `ff_3.2_w32_03`'s were deleted with its validation, user 11-08),
     and their replicas are kept until H2 is read. ff3.1's arms cannot serve: its native arm's replicas were deleted
     11-04 after scoring (ff3.1 is transitional, user 11-04).
   * H1's rules are kept unchanged, and H2 is read against H1's ff2.1.

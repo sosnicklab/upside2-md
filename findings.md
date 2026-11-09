@@ -5430,6 +5430,43 @@ whether its bias matters, was built and run instead. **A request for the next st
 with its cost and what it can decide; when every option looks weak, say so beside a recommended next run, and leave
 the choice to stop to the user.**
 
+### 10.53 A pass is stamped with the time its sacct ran (2026-11-06)
+
+The watch reads every job that left the queue since "WATCH_STATUS.md last pass minus 10 minutes", so the stamp must be
+the moment sacct was read. Twice on 11-06 it was not, and a job fell between two windows. Latest-pass lines were
+written for record updates (13:30, 13:40) that read no sacct: glpG's REMD block 1 (COMPLETED 13:11) and 27 Peng chunks
+fell between the last full read at 12:45 and the next window, and the block's read waited 3.5 h. Then a pass that read
+sacct at 22:47 was stamped 23:05, when its epoch read was written up; the next window began at 22:55, and ff3.2's gpW
+native arm (`[bench] COMPLETE` 22:50) was read two hours late. **A Latest-pass line is written only by a pass that
+read sacct, and it carries the time of that query, not the time the records were finished; a record update writes
+its own line.**
+
+### 10.54 A run with its own watch line still gets the procedure's per-step checks (2026-11-07)
+
+Asked "check if ff3.2 pass all the flags we set before", the reply graded the staged candidate (`ff_3.2_w32_03`)
+against its deployment tests; the user meant the run in training (`ff32_pcd57`). Reading that run against every flag
+found that the watch had never run "The watch" step 3 on it (`check_step.py`, the steric check): its line in the
+watch prompt named the log tail and the `free_final.npy` files, and the passes read only that line. The H-bond margin
+sat under the +0.10 line from epoch 1 to epoch 4 (lowest +0.060), which the rule says to report to the user, and the
+steric check flagged on its first run. **A run's own watch line adds to the procedure, never replaces it: every
+trained run gets step 3's checks each pass. When a force field has both a staged candidate and a run in training,
+answer for the run in training and put the candidate beside it.**
+
+### 10.55 On midway3, a job's /tmp files are deleted when any other job of ours on the node ends (2026-11-08)
+
+Four Boltz T2d jobs FAILED 127 (`.venv/bin/python: No such file or directory`) at the start of a seed, minutes after
+another of our jobs on the same node COMPLETED: 62607649 ended on midway3-0281 at 18:17, and 62607659 and 62607651
+stopped there at 18:25 and 18:31; 62607657 ended on 0279 at 18:33, and 62607658 and 62607656 stopped at 18:34 and
+18:36. The cause is RCC's epilog (`/software/slurm-current-el8-x86_64/etc/epilog` runs `clean-shmem`): at each job's
+end it removes that job's `/scratch/local/jobs/<id>`, then every /tmp entry owned by the job's user, whichever job
+made it. `t2d.sbatch`, like `t2c.sbatch` before it, extracted Boltz's venv to `/tmp/boltz_t2d_<id>`, so the first job
+to finish on a node took its neighbours' environments; the running seed kept its loaded interpreter and wrote whole,
+and the next one could not start. The prolog makes `/scratch/local/jobs/<id>` for each job and the task prolog
+exports it as `$SLURM_TMPDIR` and `$TMPDIR` (read in a running job's environment; on the V100 nodes it is the same
+894 GB disk as /tmp). With `t2d.sbatch` extracting there, three jobs on midway3-0280 ran on through the ends of two
+others on that node (19:09 and 19:12). **On midway3, a job's node-local files go in `$SLURM_TMPDIR`, never in a /tmp path of our own:
+the epilog deletes all of the user's /tmp at any one job's end.** midway2's epilog was not read.
+
 ---
 
 ## 11. Reference: the two glpG PDBs disagree about TM4

@@ -629,8 +629,9 @@ stay. Decisions:
 1. [x] mdCATH panel `mdc_ff21_released` (89 domains x 4 seeds) and the 44-domain panel `p44_ff21_released`.
 2. [x] TM against the fixed points (`tm_panel.py`): on the 44 domains released ff2.1 0.681, the control 0.650, no-BP
    0.623 (findings 1.37); on mdCATH 0.727, 0.702, 0.667 (remote_jobs.md §1 line 1).
-3. [ ] Peng's 30 remaining arms (scoring in progress, remote_jobs.md §1 line 1); compared against the step-37
-   `ff_2.1_ctrl38` and `ff_2.1_nobp` and against Peng's published FF2 (0.55 native, 0.42 de novo).
+3. [x] Peng, 32 of 32 scored (`checks/ff21_released_20261021/peng_ff21.txt`, DONE 10-29): mean TM at the bottom
+   rung, released ff2.1 / `ff_2.1_ctrl38` / `ff_2.1_nobp`, native 0.552 / 0.486 / 0.457, de novo 0.427 / 0.299 / 0.309,
+   against Peng's published FF2 0.55 and 0.42 (remote_jobs.md §1 line 1).
 4. [x] User 10-21: does the loss reach the other trained force fields? 44-domain panel at 0.015, every epoch end
    against `ff21_released` (`panel44_trajectory.py`): every run of this workflow folds 0.13-0.23 less, most of it in
    epoch 0 (findings 1.37).
@@ -1632,6 +1633,10 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     (49823717, 02:22 11-05, `checks/ff32_validate_20261104/tm_mdcath_*`): mean TM 0.739 against released ff2.1's
     0.727 (+0.012 [+0.006, +0.018] p 1.1e-04, higher on 62 of 89) and ff3.1's 0.731 (+0.008 [-0.000, +0.016] p
     0.023, higher on 53); TM > 0.5 level with both (0.967 against 0.972 and 0.974).
+    glpG on Upside 3, block 1 (49823754, read 16:45 11-06, `upside3_validation/glpg_ff32/glpg_ff32_block1.txt`): TM4's
+    DSSP helix at T 0.70 is 0.977 with no residue below 0.8, against ff3.1's 0.741 and Upside 2's ff3.0 0.96; TM1's
+    dihedral helix 0.985 (ff3.1 0.984). At T 0.79 TM4 0.918 (ff3.1 0.705) and TM1 0.948, its last quarter 0.870 (ff3.1
+    0.991). TM4 holds.
     **Peng interim, 12:20 11-06** (`checks/ff32_interim_20261106/peng_interim.txt`, job 49882604; the scorer's own
     method on every frame each ff3.2 arm had written in finished chunks, against released ff2.1's first frames up to
     the same count; it reproduces both BBA native jsons to every digit; not the verdict, which is `peng_ff32.txt`):
@@ -1639,6 +1644,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     -0.003). The losses sit in BBA (-0.056 native, -0.032 de novo), the WW domain (-0.065, -0.046) and cspA de novo
     (-0.079); the gains in ubiquitin (+0.077, +0.075) and NuG2 de novo (+0.074). BBA's mechanism is findings 1.39:
     the backbone burial scale fell from -0.301 to -0.136 over `w32_00`-`03` with nothing in the contrast to hold it.
+    **The validation was cleared 09:15 11-08 at the user's word ("you can clear the previous version of ff3.2's validation"; its successor `ff_3.2_p57_09` is under validation): the 8 unfinished de novo arms (0.45-0.90 of target) and the collector cancelled at 24 of 32 scored, so `peng_ff32.txt` is never written; deleted its Peng run directories (30 GB), its mdCATH runs `runs_mdcath/mdc_w32_03` (47 GB; all 356 TM series stay in `converge_20261020/tm_runs/mdc_w32_03`, which `ff_3.2_p57_09`'s TM job reads beside), glpG's `outputs/` (9.3 GB) and the two staged `ff_3.2_w32_03` copies; kept the 24 score jsons, the logs, the TM and glpG readouts, the 44-domain panel `runs/w32_03` and `ff3_selection/params/w32_03`.**
 12. [ ] **ff3.2 with persistent free chains** (user 11-06: "fix the ff3.2, train it and re-do the validations"; rule
     fixed 12:45 11-06, before any run). Why: every free replica restarts at the native each visit and the contrast
     takes its second half (4000 of 8000 time units at T 0.80-0.85), so the free ensemble never holds the non-native
@@ -1684,6 +1690,100 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       epochs 1, 3, 5, 7 and 9 (steps 16-80). The persistent chains get 9 revisits. About 2.5 times the 76-step run's
       CPU (4,560 protein visits against 1,824). The rule above stands with these numbers: (a) at epoch 1 against
       epoch 0; (b) folding at step 80 not below `w32_03`; the epoch chosen by item 7's rule among the five read.
+    - **Epoch 1, read 23:05 11-06** (step 16; panel `p57_01`; `checks/ff32_pcd_20261106/mech_a.py` -> `mech_a_p57_01.txt`).
+      (a) The mechanism passes: free replica 1's mean CA-RMSD, median over the 456 proteins, 2.414 A in epoch 0 and
+      2.736 A in epoch 1 (higher on 348 of 456; the restrained replica 1.323 and 1.315 A). Folding on the 44
+      (`paired_npz.py`, dt 0.015) 0.684: against released ff2.1's `ff21_released` 0.615, +0.069 [+0.034, +0.104] p
+      3.5e-04 (32 higher, 11 lower); against `w32_01`, the same epoch, +0.051 [+0.021, +0.083] p 9.8e-05; against
+      `w32_03` +0.040 [+0.009, +0.069] p 0.015. Unfolded shift +10.56 E_up, 0 of 16 negative (`w32_01` +6.35); 3g0m's
+      states beyond 15 A +29.2 E_up above native (`w32_01` +23.0). Loose-minus-native-like gap against released
+      ff2.1 -0.451 [-0.620, -0.285] over 27 domains (`w32_01` -0.925 over 31), through the same blocks (hydrophobe
+      H-bond coverage -0.259, rotamer -0.108; backbone environment coupling +0.279 the other way). Glycine L - R
+      (`gly_depths.py`) round 1 -0.896, round 2 -0.779 (ff32_basin -0.915, -0.829; released ff3.1 -0.781). Against
+      these, the backbone burial scale (`epoch_drift.py`, `checks/ff32_epochs_20261106/drift_ff32_pcd57.txt`) fell to
+      -0.174 at step 8 and -0.138 at step 16, the value ff32_basin reached only at step 76 (-0.136; BBA's mechanism,
+      findings 1.39), and its displacement keeps its direction (cosine +1.00 between epochs). Beside, not comparable
+      with ff32_basin's: free-replica Rg at T 1.1 0.985 of ff3.1's [0.970, 1.013]. Training continues; rule (b) is
+      read at step 80.
+    - **Epoch 3, read 08:00 11-07** (step 32; panel `p57_03`). Folding on the 44 0.687: against released ff2.1's 0.615
+      +0.072 [+0.026, +0.117] p 0.0018 (31 higher, 12 lower); against `w32_03`, the same epoch, 0.645, +0.042 [+0.001,
+      +0.086] p 0.061; against `p57_01` +0.003 [-0.037, +0.042] p 0.93. Unfolded shift +13.94 E_up, 0 of 16 negative
+      (`w32_03` +8.71); 3g0m's states beyond 15 A +43.8 E_up above native (`w32_03` +32.8). Loose-minus-native-like gap
+      against released ff2.1 -1.150 [-1.535, -0.794] over 28 domains (`w32_03` -1.717 over 32), through the same blocks
+      (hydrophobe H-bond coverage -0.566, rotamer -0.344, H-bond coverage -0.230, H-bond energy -0.213, side-chain
+      environment coupling -0.165; backbone environment coupling +0.417 the other way). Glycine L - R round 3 -0.765,
+      round 4 -0.770 (ff32_basin -0.774, -0.770; released ff3.1 -0.781). The backbone burial scale keeps falling:
+      -0.078 at step 24 and -0.053 at step 32, a sixth of ff2.1's -0.301 and well under ff32_basin's -0.136 at step 76,
+      its displacement in one direction (cosine +1.00 between epochs), and in epoch 3 the successive steps' contrasts
+      agree (cosine +0.75, against -0.43 to -0.50 in epochs 0-2). On the 44 the co-trained terms make up for it, as in
+      ff32_basin; in BBA it is the term the native needs (findings 1.39), which only item (c)'s Peng arms read. Beside:
+      free-replica Rg at T 1.1 0.935 of ff3.1's [0.909, 0.951]. Nothing is changed by the rule; training continues.
+    - **Epoch 5, read 16:00 11-07** (step 48; panel `p57_05`). Folding on the 44 0.715: against released ff2.1's 0.615
+      +0.099 [+0.044, +0.153] p 1.6e-04 (33 higher, 9 lower); against `w32_03` +0.070 [+0.028, +0.113] p 0.003; against
+      `p57_03` +0.028 [-0.010, +0.069] p 0.33. Unfolded shift +14.58 E_up, 0 of 16 negative; 3g0m's states beyond 15 A
+      +46.4 E_up above native. Gap against released ff2.1 -1.313 [-1.716, -0.858] over 29 domains, the same blocks
+      (hydrophobe H-bond coverage -0.594, rotamer -0.368, H-bond coverage -0.245, H-bond energy -0.204, side-chain
+      environment coupling -0.202; backbone environment coupling +0.459). Glycine L - R round 5 -0.804, round 6 -0.828,
+      moving back past released ff3.1's -0.781. The backbone burial scale -0.050 at step 40 and -0.035 at step 48, one
+      direction (cosine +1.00), the successive steps' contrasts alternating again (-0.25, -0.50). Beside: free-replica Rg
+      at T 1.1 against its own epoch 0 0.941 [0.894, 0.997] (ff31_nativefix has no epoch past 3).
+    - **Epoch 7, read 00:00 11-08** (step 64; panel `p57_07`). Folding on the 44 0.701: against released ff2.1's 0.615
+      +0.086 [+0.039, +0.131] p 2e-04 (33 higher, 10 lower); against `w32_03` +0.056 [+0.018, +0.095] p 0.002; against
+      `p57_05` -0.014 [-0.041, +0.012] p 0.5. Unfolded shift +13.48 E_up, 0 of 16 negative; 3g0m's states beyond 15 A
+      +45.1 E_up above native. Gap against released ff2.1 -1.660 [-2.096, -1.179] over 27 domains, the same blocks
+      (hydrophobe H-bond coverage -0.745, rotamer -0.521, H-bond coverage -0.363, H-bond energy -0.238, side-chain
+      environment coupling -0.233; backbone environment coupling +0.534). Glycine L - R round 7 -0.816, round 8 -0.837.
+      The backbone burial scale -0.050 at step 56 and -0.038 at step 64: its fall stopped in epoch 6, and successive
+      epochs' displacements now reverse (cosine -1.00 in epochs 6 and 7). Beside: free-replica Rg at T 1.1 against its
+      own epoch 0 0.933 (epoch 6) and 0.939 [0.885, 1.000] (epoch 7); H-bond margin +0.146 at step 65.
+    - **The watch's per-step flags, first read 22:10 11-07** (user: "check if ff3.2 pass all the flags we set
+      before"; remote_jobs.md "The watch" step 3, not run on this run before). `check_step.py` at each epoch end and
+      step 62: 57 of 57 proteins and 57 `free_final.npy` in every step, nothing non-finite, KE/1.5kT 0.996-1.015. The
+      H-bond margin E_other - E_alpha (start +0.192) +0.104 at step 8, +0.062 at 16, +0.060 at 24, +0.076 at 32,
+      +0.095 at 40, +0.108 at 48, +0.128 at 56, +0.139 at 62: **under the +0.10 line from epoch 1 to epoch 4**
+      (ff32_basin's lowest +0.098), above it since; the user was not notified until now. The backbone burial scale
+      -0.035 at step 48, -0.050 at 56, -0.044 at 62: its fall stopped in epoch 6. Sheet mean 0.161 -> 0.006. The steric
+      check (`checks/ff31_steric/steric_check.py`, `ff32_pcd57_epoch_07_minibatch_06.txt`): no coil map or training
+      residue above 2x NDRD, side-chain clash mean 1.002 of the start; **STERIC FLAG**, free non-glycine beta' + pPII'
+      0.0043 against steps 0-18's maximum 0.0042 (epoch means 0.0031 in epoch 0, 0.0035-0.0037 in epochs 3-7;
+      restrained 0.0038-0.0039 throughout). The check's steps 0-18 are ff3.1's NDRD epoch; here only steps 0-7 ran on
+      NDRD. By the rule the run trains on. Free glycine populations (helical in alpha_R 0.831 in epoch 0, 0.735 in epoch
+      6; left in alpha_L 0.900, 0.801) read persisted chains and are not comparable with ff32_basin's.
+    - **Step 80's build, written 05:50 11-08 before its data** (`checks/ff32_p57_validate_20261108/`, README there):
+      `ff32_epoch3_20261104`'s choice and `ff32_validate_20261104`'s validation, changed only in names, the source
+      check (`ff32_pcd57`), `mdc_w32_03` in place of `mdc_ff31nf` as the TM panel's beside reference, and glpG's
+      directory (`glpg_ff32_<epoch>`). `read.sh` runs the paired comparisons and `choose.py` into `summary.txt`. Rule
+      (b) named no consequence; written now: BELOW `w32_03` stops before any submission and the user decides. Dry run
+      with `p57_07` standing in for `p57_09` (`dryrun_p57_07_as_09/`): `choose.py` reproduces epoch 7's +0.086 and
+      +0.056 and chooses the full validation; `submit.sh plan` passes `--test-only` on the mdCATH panel, its TM job,
+      the 32 Peng arms and the collector. Peng arms `b_ff_3.2_<epoch>_<prot>_<kind>`, collector `p57_collect`, score
+      jobs `sc_ff32_p57_<arm>`, verdict `peng_p57.txt` against released ff2.1 alone; its beside against `w32_03`, written
+      only with `w32_03`'s 32 scored, will not be (that validation was cleared at 24 of 32, user 11-08).
+    - **Epoch 9, read 08:50 11-08** (step 80; panel `p57_09`). Folding on the 44 0.706: against released ff2.1's 0.615
+      +0.091 [+0.041, +0.141] p 8.6e-4 (32 higher, 11 lower); against `w32_03` +0.062 [+0.027, +0.098] p 0.0018; against
+      `p57_07` +0.005 [-0.026, +0.038] p 0.84. Unfolded shift +14.51 E_up, 0 of 16 negative; 3g0m's states beyond 15 A
+      +49.4 E_up above native. Gap against released ff2.1 -2.085 [-2.538, -1.623] over 28 domains, the same blocks
+      (hydrophobe H-bond coverage -0.775, rotamer -0.712, H-bond coverage -0.512, H-bond energy -0.267, side-chain
+      environment coupling -0.208; backbone environment coupling +0.478), the fifth read epoch in a row to widen it.
+      Glycine L - R round 9 -0.818, round 10 -0.837. The backbone burial scale -0.0108 at step 72 and -0.0176 at step
+      80, a seventeenth of ff2.1's -0.301 (within steps -0.0006 to -0.0235); it fell again in epoch 8 (cosine +1.00)
+      and reversed in epoch 9 (-1.00). Beside: free-replica Rg at T 1.1 against its own epoch 0 0.937 (epoch 8) and
+      0.919 [0.867, 0.981] (epoch 9).
+    - **The choice and the validation, 08:54-08:57 11-08** (`checks/ff32_p57_validate_20261108/summary.txt` by
+      `read.sh`): rule (b) passes, `p57_09` above `w32_03`; rule 1 keeps step 80 (`p57_05` +0.009 p 0.74, the other
+      epochs lower); rule 2, above released ff2.1, so item 11's full validation follows. `submit.sh plan` passed
+      `--test-only` on 35 jobs, then `apply`: `ff_3.2_p57_09` staged in the shared deployment and the Upside 3 tree
+      (md5-equal, not released); mdCATH panel `mdc_p57_09` 49955867 and its TM 49955868 (against `mdc_ff21_released`,
+      `mdc_w32_03` beside); Peng's 32 arms 49955869-49956007 and collector 49956008 (`peng_p57.txt`); glpG on Upside 3
+      prep 49956019 and REMD 49956024 (`upside3_validation/glpg_ff32_p57_09/`). Peng's BBA and WW arms read what the
+      44 do not: the burial scale near zero and the widest gap of any epoch are the mechanism of findings 1.39.
+    - **mdCATH TM, read 17:45 11-08** (item 10 (c); panel `mdc_p57_09` 49955867, dt 0.009, 356 runs, COMPLETED 16:17;
+      TM 49955868 16:43, `checks/ff32_p57_validate_20261108/tm_mdcath_*`): mean TM 0.745 against released ff2.1's
+      0.727 (+0.018 [+0.012, +0.025] p 2.9e-07, higher on 65 of 89), above it on each length and class subset (+0.016
+      to +0.023, every interval above 0); TM > 0.5 level (0.978 against 0.972, +0.006 [-0.009, +0.024]). Beside,
+      `w32_03`: +0.006 [+0.001, +0.012] p 0.037 (0.745 against 0.739, higher on 51), level on each subset; `w32_03`
+      itself was +0.012 [+0.006, +0.018] over released ff2.1. On mdCATH, ff3.2 is above released ff2.1. Peng and
+      glpG's TM4 are still owed.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the
@@ -1755,6 +1855,25 @@ in `scratchpad/bpmax_20261103/` (git-ignored) and in its own cluster tree, never
      fixed state per residue type, so the probability weighting itself buys nothing measurable here, while letting the
      state follow the environment does. All three retrained arms fold below released ff2.1 by the same margin, so that
      gap belongs to the retraining, not to the side-chain treatment.
+6. [ ] Peng's benchmark, the third test (user 11-06 21:15: "run the remaining validation for ff21_bpmax_dt009"). The
+   other arms' Peng runs are their step-37 releases, `ff_2.1_ctrl38` and `ff_2.1_nobp`, each md5-equal to its run's
+   `epoch_01_minibatch_18` extracted again (21:16 11-06), so this arm runs its own `epoch_01_minibatch_18`, released as
+   `ff_2.1_bpmax38` into the bpmax tree's `parameters/` only: under the shared deployment it would run as BP, so it is
+   kept where it cannot. The 32 arms run `bench_run.py` unchanged through `bench_bpmax.sbatch`, `bench.sbatch` with
+   the tree's `training/env.sh` in place of `env_shared.sh` (so the tree's `py/` writes `most_probable_state = 1`
+   and its `obj/upside` is the patched build), midway2 only; scored by `score.sbatch` as the others; files in
+   `/project/trsosnic/yinhan/checks/bpmax_peng_20261106/`. Native replicas are kept until every de novo arm is scored
+   (the scorer calibrates on them). The mode runs 1-2% hot by design (findings 1.38), so final frames read KE/1.5kT
+   up to about 1.04.
+   - **Rule, fixed before the data.** `compare_peng.py`'s reading, as for the other arms: mean TM-score at the
+     bottom rung, native and de novo starts apart, paired over the 16 proteins against `ff_2.1_ctrl38`, against
+     `ff_2.1_nobp` and against released ff2.1, with a 95% bootstrap interval over proteins and the Wilcoxon p. An
+     interval holding 0 reads level. The panels' result (level with the BP control, above the fixed state) holds on
+     Peng if this arm is level with `ff_2.1_ctrl38` and its interval against `ff_2.1_nobp` lies above 0 on either
+     start; otherwise Peng disagrees and is reported as such.
+   - Released and checked 21:19 11-06 (step 38 done; its `rama.dat` ff2.1's, as in the other two; a config built as
+     `bench_run.py` does carries the flag, 100 tu on the patched binary finite); `submit.sh plan` passed `--test-only`,
+     `apply` 21:20: 32 arms and the collector (remote_jobs.md §1 line 1).
 
 ## Known Errors / Blockers
 
