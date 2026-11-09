@@ -1248,13 +1248,14 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   Failure and fix: a cut to 16 GB (from T2d's 5.7 GB peak) ran out of memory on midway3-0283, whose job tmp is in
   RAM; back to 40 GB and resubmitted before any seed (findings 10.55). Watch cron `0afd5100` replaces `87e5ce00`. Files: diffusion_dynamics.md, remote_jobs.md; scratchpad/boltz_hdx/addon
   (nmr_domains.py, prep_nmr.py, nmr.sbatch, inputs/nmr_domains.tsv), flags/reference/*_experiment.csv.
-* **11-09 14:12-15:45, MacBook Pro: status pass, then the backbone term's loss and the DSE diagnosed** (not the
-  owner, no cron; plan.md Phase 38 item 13, findings 1.41). Status: every midway2 job since 07:39 COMPLETED, 9 Peng
-  arms COMPLETE with finite final frames; ff3.2's BBA native scored 0.388 mean TM (released ff2.1 0.416, `w32_03`
-  0.360). Boltz E2a 62687511 runs on a faulted GPU (midway3-0286 `2F:00.0`, "System is not in ready state"), its
-  resubmission the user's word. Diagnosis, read-only (`checks/dse_diag_20261109/`): without the DSE the contrast
-  alone takes the backbone solvation scale to zero in every epoch, persistent chains or not; the DSE path is the
-  SI's; its size follows the unfolded frames' residual H-bonds, not their Rg. A one-hour confirming run
-  (`dse_visits`) is proposed, not submitted; the user chose no training until the DSE is understood. Failure and fix:
-  an early reading of the term's sign called the free chains more buried; the engine's formula shows the term counts
-  exposed backbone, and the record states that. Files: findings.md 1.41, plan.md Phase 38 item 13, progress.md.
+* **11-09 14:12-15:55, MacBook Pro: status pass, Boltz's faulted GPU, the backbone term's loss and the DSE diagnosed**
+  (not the owner, no cron; plan.md Phase 38 item 13, findings 1.41). Status: every midway2 job since 07:39 COMPLETED,
+  9 Peng arms COMPLETE with finite final frames; ff3.2's BBA native scored 0.388 mean TM (released ff2.1 0.416,
+  `w32_03` 0.360). Boltz E2a 62687511 ran on midway3-0286's faulted GPU (`2F:00.0`, "System is not in ready state");
+  cancelled, its block rerun as 62715074, 0286 excluded from every E2a job, its directory kept as `*.faulted_gpu`.
+  Diagnosis, read-only (`checks/dse_diag_20261109/`): without the DSE the contrast alone takes the backbone solvation
+  scale to zero in every epoch, persistent chains or not; the DSE path is the SI's; its size follows the unfolded
+  frames' residual H-bonds, not their Rg. Its confirming run `dse_visits` (rule fixed first; smoke test passed)
+  submitted at the user's word; no training until it is read. Failure and fix: an early reading of the term's sign
+  called the free chains more buried; the engine's formula shows the term counts exposed backbone, and the record
+  states that. Files: findings.md 1.41, plan.md Phase 38 item 13, remote_jobs.md, progress.md.
