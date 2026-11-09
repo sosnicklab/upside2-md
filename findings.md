@@ -5467,6 +5467,12 @@ exports it as `$SLURM_TMPDIR` and `$TMPDIR` (read in a running job's environment
 others on that node (19:09 and 19:12). **On midway3, a job's node-local files go in `$SLURM_TMPDIR`, never in a /tmp path of our own:
 the epilog deletes all of the user's /tmp at any one job's end.** midway2's epilog was not read.
 
+* **Not every midway3 GPU node has a local disk** (11-09). On midway3-0283 (RTX 6000) `df $SLURM_TMPDIR` reports
+  `rootfs` 95G: the job directory is in RAM, so files extracted there count against the job's memory. A Boltz job
+  that unpacks its 7.8 GB venv there reached 14.0 GB MaxRSS and was killed at a 16 GB request; on the V100 nodes and
+  0285 (`/dev/sda1` 894G) the same job peaks at 5.7 GB. Size a memory request for the RAM-backed nodes: 40 GB is
+  2.9 times the 14.0 GB measured there.
+
 ---
 
 ## 11. Reference: the two glpG PDBs disagree about TM4

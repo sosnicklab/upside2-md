@@ -1240,10 +1240,11 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   md5-equal, pooled (5 x 10^5, each seed 1,000 finite unsteered samples) and flagged by Phase 1's pipeline;
   `t2d_read.py`: not pooled with the 10^5 (D52, p 1.4e-4), read alone; V70 too stable by more than a decade, I13,
   W45 and L67 unresolved at a decade. Nothing submitted. Files: remote_jobs.md, diffusion_dynamics.md.
-* **11-09 08:20-09:00, Mac Studio: Boltz E2a proposed and submitted** (user: "propose and run next BOltz job";
+* **11-09 08:25-08:50, Mac Studio: Boltz E2a proposed and submitted** (user: "propose and run next BOltz job";
   diffusion_dynamics.md Phase 2 E2a, Decision 10). Ferrari et al.'s HDX-NMR set (Zenodo, public) gives 11 new
   site-resolved domains of the add-on's class; plain Boltz-2 at 5 x 10^4 a domain tests whether its own order holds
   there, the add-on's premise, against Upside FF2's 0.45. Rule fixed before data; inputs, MSAs and `nmr.sbatch`
-  (`t2d.sbatch` with the input named) built; `--test-only` on 22; 12 submitted on RTX 6000 (V100s full), 10 owed;
-  watch cron `cf2b799d` replaces `87e5ce00`. Files: diffusion_dynamics.md, remote_jobs.md; scratchpad/boltz_hdx/addon
+  (`t2d.sbatch` with the input named) built; `--test-only` on 22; 12 submitted on RTX 6000 (V100s full), 10 owed.
+  Failure and fix: a cut to 16 GB (from T2d's 5.7 GB peak) ran out of memory on midway3-0283, whose job tmp is in
+  RAM; back to 40 GB and resubmitted before any seed (findings 10.55). Watch cron `0afd5100` replaces `87e5ce00`. Files: diffusion_dynamics.md, remote_jobs.md; scratchpad/boltz_hdx/addon
   (nmr_domains.py, prep_nmr.py, nmr.sbatch, inputs/nmr_domains.tsv), flags/reference/*_experiment.csv.

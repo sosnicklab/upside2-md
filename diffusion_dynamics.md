@@ -825,7 +825,7 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
         potential solution"): the 16,384 arms are not rerun and the Feynman-Kac sampler is dropped. The add-on's
         design (U_phi, the data, E2-E4) carries over to Phase 3's sampler.
 - [ ] E2a, Boltz-2's own order on the add-on's domain class (user 11-09: "propose and run next BOltz job"; Decision 10;
-      rule fixed 09:30 11-09, before any of its data). The add-on keeps Boltz-2's order inside each element (lambda_i
+      rule fixed 08:37 11-09, before any of its data). The add-on keeps Boltz-2's order inside each element (lambda_i
       shrunk toward zero) because that order is what ranks EHEE; Phase 1 tested it on three proteins (EHEE 0.74, HEEH
       0.04, Ub psWT -0.21). Ferrari et al.'s HDX-NMR set (Zenodo 10.5281/zenodo.14983481, `Dataset_4_HDXNMR.json`,
       CC BY 4.0, md5 `207a51dc`) gives per-position opening free energies for 13 domains of the library's class, 11 of
@@ -845,7 +845,8 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
       Rules (`addon/nmr_read.py`, written before the data):
       1. Every sample counts; a seed with fewer than 1,000 samples or a job whose `--check` fails is not read.
       2. Per domain, Phase 1's censored Spearman rho_d against the averaged per-position values over all measured
-         amides, Boltz-2 and experiment censored at the bound; dG = RT ln(p / (1 - p)) at 293 K.
+         amides, Boltz-2 and experiment censored at the bound; dG = RT ln(p / (1 - p)) at 293 K. A domain where
+         Boltz-2 leaves every measured amide at the bound has no order and counts as 0 (added 09:05, before data).
       3. Across domains, rho-bar is the mean over 9 families (a point mutant and its parent averaged as one family);
          its 95% interval by bootstrap over families, each domain's seeds resampled inside it as Phase 1's blocks.
       Verdict. Order holds: rho-bar at least 0.45, Upside FF2's mean Spearman over Peng's three (0.61, 0.43, 0.32), and
@@ -860,14 +861,21 @@ if strand 1 and D21 are also suppressed; HEEH 0.32 with its helix amides fixed a
       over 2 A and Rg.
       * Checks before GPU time: the code is T2d's (`e1_rare.py` `e4314698`, `sampler.py` `21df0b41`, `opening.py`
         `2518d645`, equal on the cluster); `nmr.sbatch` differs from `t2d.sbatch` only in the input's name and in
-        keeping the predict step's PDB; `--test-only` passed on all 22. The V100s were all taken at 08:40 with 25
+        keeping the predict step's PDB; `--test-only` passed on all 22. `nmr_read.py` (`cc8a0e77`) on sets of known
+        answer (`addon/runs/nmr_check/synth.py`, 50,000 independent samples a domain, output `nmr_check_out.txt`):
+        open fractions at experiment's values read +0.929 [+0.824, +0.949], order holds; permuted -0.017, reversed
+        -0.932, both fail; experiment plus noise of SD 1.2, 2.0 and 2.5 kcal/mol +0.643 and +0.499, holds, and
+        +0.444 [+0.330, +0.546], unresolved. The input steps run on hhh0012's predicted PDB (60 donors). Its beside
+        on Phase 1's existing sets: Boltz-2's EHEE 10^5 against Dataset_4's EHEE 0.773 (against Peng's 0.74), HEEH
+        10^4 0.009 (0.04); Dataset_4 against Peng's experiment, Spearman 0.975 over 15 EHEE amides, 0.661 over 19 HEEH. The V100s were all taken at 08:40 with 25
         jobs ahead, so E2a runs on the RTX 6000s, one GPU type for every domain: Phase 0 measured the RTX 6000 at the
-        V100's speed with the same bf16 kernels, and each job's `--check` runs on its own GPU. Memory 16 GB (T2d's
-        jobs peaked at 5.7 GB of 40). Submitted 08:43 11-09 from `$B/addon` with `sbatch
+        V100's speed with the same bf16 kernels, and each job's `--check` runs on its own GPU. Submitted 08:43 11-09 from `$B/addon` with `sbatch
         --job-name=boltz_plain_nmr_<name>_rtx6000 --partition=gpu --qos=gpu --account=pi-trsosnic --gres=gpu:1
-        --constraint=rtx6000 --time=12:00:00 nmr.sbatch NAME FIRST LAST` (`nmr.sbatch` `dc7e2216`;
-        `addon/submitted.log`): **62687144-62687170**, the 12 blocks of hhh0012, hhh0062, hhh0557, eehee0642,
-        eehee0871 and eehee0871m; the other 10 go in as the `gpu` QOS's 12-job limit frees (the watch).
+        --constraint=rtx6000 --time=12:00:00 nmr.sbatch NAME FIRST LAST` (`nmr.sbatch` `4a8cbbb5`;
+        `addon/submitted.log`): 62687144 and **62687506-62687516**, the 12 blocks of hhh0012, hhh0062, hhh0557,
+        eehee0642, eehee0871 and eehee0871m; the other 10 go in as the `gpu` QOS's 12-job limit frees (the watch).
+        A first submission at 16 GB (`dc7e2216`, from T2d's 5.7 GB peak) ran out of memory on midway3-0283, whose
+        `$SLURM_TMPDIR` is in RAM (findings 10.55); its jobs were cancelled before any seed and resubmitted at 40 GB.
 - [ ] E2, data (the data are public on Zenodo, findings 5.7, so no form is needed): a library pilot of about 200 domains (about 85 V100-hours; the
       full 600 about 250), N, CA and C only for `/beagle3`'s inodes; family leakage checked against the library's
       domain list (its Table S1).
