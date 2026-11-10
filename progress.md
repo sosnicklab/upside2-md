@@ -1259,3 +1259,21 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   submitted at the user's word; no training until it is read. Failure and fix: an early reading of the term's sign
   called the free chains more buried; the engine's formula shows the term counts exposed backbone, and the record
   states that. Files: findings.md 1.41, plan.md Phase 38 item 13, remote_jobs.md, progress.md.
+* **11-09 16:45-17:15, Mac Studio: the DSE run read** (user: "continue working on debug ff3.2"; plan.md Phase 38 item
+  13, findings 1.41; not the owner, no cron). Before the verdict: the worker reproduces `ff32_pcd57`'s `main_worker`
+  line for line, the reader implements the item's rule as written, and the 72 protein-visits are physical (Rg ladder
+  from the native's to the SARW's, persisted frames finite, bond spread equal to the trainer's own frames;
+  `checks/dse_diag_20261109/visits_sanity.py`). `dse_visits_read.txt`: verdict (c). h does not fall with persistence
+  (-0.016 [-0.054, +0.021]); the colder bracketing replica holds most residual H-bonds (0.315 against 0.075), but the
+  warmer alone balances the bb_env scale at 0.173 [0.042, 0.282], under 0.3. Nothing submitted. Then (user: "we have
+  peng's training at ~/Documents") `Train(1).zip`'s 18 trainer copies read: all membrane-potential training with
+  no DSE path, so the lambda of Peng's soluble run stays unknown. Files: findings.md 1.41, plan.md Phase 38 item
+  13, remote_jobs.md, progress.md.
+* **11-09 17:20-20:05, Mac Studio: λ's provenance, Peng's answer, ff3.3 built and submitted** (plan.md Phase 38
+  item 14, findings 1.41, 9v). The DSE is Peng's (the paper's main text and SI p. 4, λ 0.3 "empirically set");
+  Kleinmann's port has λ 0 in every commit, among local test settings, with Peng's original absent. Peng (via the
+  user): ff2.1 used 0.3 after a training that did not start from scratch; raise it 0.1 -> 0.2 -> 0.3. The user chose
+  the thirds schedule, a start from ff3.2 and the name ff3.3. Built `ff33_ramp57` (ff32_pcd57's step-80 checkpoint
+  moved, driver `dcc9896f`); static test, stub run and `--test-only` passed. Submitted the first link 50022816 and
+  the unfolded-state H-bond test on ff3.2 (50022814, 50022815). Files: plan.md, findings.md, remote_jobs.md,
+  progress.md; cluster `checks/ff33_ramp_20261109/`.

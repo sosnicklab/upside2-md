@@ -1824,7 +1824,52 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       interval containing 0.3 while the pooled set's lies under 0.3. The DSE then takes the SI's one replica near Tm.
       (c) neither: the residual H-bonds are ff2.1's own unfolded state at these temperatures, the cause is not
       located, and the next step is the user's.
-      Its jobs: remote_jobs.md §1 line 2.
+    - **Verdict (c), read 17:10 11-09** (`dse_visits_read.txt`; 50014859 and 50014860 COMPLETED, 72 of 72
+      protein-visits; findings 1.41). h does not fall over the visits (-0.016 [-0.054, +0.021]); the colder bracketing
+      replica holds most of the residual H-bonds (h 0.315 against 0.075), but the warmer alone still balances the bb_env
+      scale under 0.3 (0.173 [0.042, 0.282]). Released ff2.1 balances the backbone term at lambda 0.12-0.24 under this
+      trainer, so the DSE at 0.3 is the SI's objective acting on ff2.1's own unfolded ensemble, with no trainer defect
+      found. The next step is the user's; no training is submitted on it.
+14. [ ] **ff3.3: ff3.2 continued with the DSE raised gradually, 0.1 -> 0.2 -> 0.3** (Peng 11-09, relayed by the user;
+    the user 11-09 chose the schedule, the start, the name ff3.3, and both submissions after the checks). Peng: ff2.1
+    used 0.3, its training did not start from scratch, and it may have used a smaller lambda in the middle (findings
+    1.41). At ff2.1 the DSE balances at 0.12-0.24 under this trainer (item 13), so a constant 0.3 from step 0 takes
+    the whole pull in epoch 0 (the control fell from 0.615 to 0.390 folded). Files in
+    `/project/trsosnic/yinhan/checks/ff33_ramp_20261109/` (README).
+    - The run `ff33_ramp57` (tags `r33_EE`) resumes `ff32_pcd57`'s step-80 checkpoint (ff3.2, `ff_3.2_p57_09`): its
+      parameters, Adam state, Ramachandran round 10 and minibatch order, with epoch 9's persisted free frames, so
+      its epochs are 10-19 and its steps 80-160. The checkpoint is moved by rewriting its run paths only.
+    - The change: `ConDiv_pcd57.py` (`c0277e8d`) -> `ConDiv_ramp57.py`, `dse_weight` set by the epoch the worker
+      reads from its step directory (as `previous_visit` does): 0.1 in epochs 10-12, 0.2 in 13-15, 0.3 in 16-19, an
+      error outside them; each divergence file records its weight. The 0.3 stage is 4 epochs, 1,824 protein visits,
+      the SI's whole budget (76 steps of 24). Nothing else changes: basin wall, persistent chains, 57 a step, the
+      solver. Reads at epochs 11, 13, 15, 17, 19 (lambda 0.1, 0.2, 0.2, 0.3, 0.3): the 44-domain panel, the unfolded
+      shift, the gaps, and the hot replica's Rg against ff3.2's epoch 9 for the same protein (`rg_vs_start.py`).
+    - No lambda-0 continuation runs beside it (the user chose the start), so a difference from `p57_09` is the DSE
+      and 80 more steps together.
+    - The DSE's own readout: the unfolded state's residual H-bonds h at Tm (`dse_visits_worker.py`'s protocol, one
+      visit, item 13's 24 proteins) on a force field's files. First on `ff_3.2_p57_09`, read against released ff2.1's
+      visit 1 by a rule fixed now: the paired mean difference over the 24 (95% bootstrap interval) above 0 means
+      ff3.2's unfolded state keeps more residual H-bonds than ff2.1's; containing 0, no resolved difference; under
+      0, fewer.
+    - Rule for ff3.3, fixed before any data: (a) mechanism, the chosen epoch's h below `p57_09`'s (paired mean over
+      the 24, 95% bootstrap interval under 0); the backbone burial scale is read each epoch, never set. (b) Folding,
+      the chosen epoch not below released ff2.1 on the 44 (paired interval not wholly under 0); the epoch chosen by
+      item 7's rule between the two 0.3 epochs, 17 and 19, since ff2.1 ended at 0.3. (c) Item 12's full validation
+      (mdCATH TM, Peng's 32 arms, glpG on Upside 3) and h, against released ff2.1 with `p57_09` beside; the user
+      chooses between ff3.2 and ff3.3 on it. No variant of the schedule is tried on any outcome.
+    - Checks before any run, no test job: the driver differs from `c0277e8d` only by the schedule; the moved
+      checkpoint equal to `ff32_pcd57`'s step-80 one but for paths; the schedule's values on step directories; a
+      stub run of `after_training.sbatch`'s two branches; `--test-only` of the first link and the h test. About 40 h
+      at 798 CPUs a link, plus its panels.
+    - [x] Built and checked 20:00 11-09 (`build_ramp.log`, `static_test.log`, `stub_after.log`): the driver (`dcc9896f`)
+      differs from `c0277e8d` by the schedule alone; the moved checkpoint requests the source's globals, 1,836 path
+      strings moved and nothing else changed, resuming at epoch 10, minibatch 0, round 10; the schedule refuses
+      epochs 0, 9 and 20; the 456 persisted frames are byte-equal to ff3.2's; the stub takes every branch; both
+      submissions passed `--test-only`.
+    - [x] Submitted 20:03 11-09: the h test on `ff_3.2_p57_09` (50022814, readout 50022815) and ff3.3's first link
+      (50022816, to step 96). Jobs: remote_jobs.md §1 line 2.
+    - [ ] Read `unf_hb_ff_3.2_p57_09.txt` by the rule above; read each epoch (11, 13, 15, 17, 19) as item 12's.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the

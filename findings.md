@@ -2147,11 +2147,48 @@ the DSE first" (plan.md Phase 38 item 13). Read-only on existing files; scripts 
     -NSE / DSE and the DSE grows with h), so it shows the two readings agree, not a second test. The residual H-bonds
     are not helical in particular (residual fraction alpha 0.15, beta 0.13, other 0.20), follow neither the native's
     helix nor strand content (+0.08, -0.11), and are larger where the DSE draws from colder rungs (-0.42, p 0.039).
-- **So** the DSE's pull beyond ff2.1's balance comes from the third of proteins whose unfolded frames keep 15-30% of
-  the native's H-bond score above the SARW's, each pulled toward the SARW's none. Not located: whether those H-bonds
-  are ff2.1's unfolded state at those temperatures, the native start's memory (each step runs 8000 tu from the native
-  and reads its second half), or the colder of the two pooled replicas. The existing files keep the two replicas'
-  frames pooled and one visit per protein, so they cannot separate the three; the test is plan.md item 13's.
+- From the existing files, the DSE's pull beyond ff2.1's balance comes from the third of proteins whose unfolded
+  frames keep 15-30% of the native's H-bond score above the SARW's, each pulled toward the SARW's none. Those files
+  keep the two replicas' frames pooled and one visit per protein, so they cannot say whether the H-bonds are ff2.1's
+  unfolded state, the native start's memory or the colder pooled replica; hence the run below.
+- **The confirming run `dse_visits` (read 17:10 11-09, `dse_visits_read.txt`; rule fixed in plan.md item 13 before it
+  ran): verdict (c), neither cause holds.** Released ff2.1 on the same 24 proteins under `ff32_pcd57`'s protocol (its
+  `main_worker` reproduced line for line), three 8000 tu visits with the free replicas carried over and the force
+  field fixed; 72 of 72 protein-visits, every persisted frame finite, bond spread equal to the trainer's own frames.
+  - Not the native start's memory: h median 0.110 / 0.113 / 0.087 over visits 1-3, paired change visit 3 - visit 1
+    -0.016 [-0.054, +0.021]. The bb_env scale's balance rises 0.119 [0.027, 0.193] / 0.187 / 0.235 [0.058, 0.446], but
+    visit 3's interval is not above visit 1's value; E_alpha 0.202 to 0.336 [-0.030, 0.839], E_beta 0.048 to 0.080.
+  - Not the pooled colder replica alone: the colder bracketing replica's unfolded frames hold most of the residual
+    H-bonds (h median 0.315, the warmer's 0.075), and the warmer alone balances higher (bb_env 0.173 [0.042, 0.282],
+    E_alpha 0.314 [0.047, 0.526], E_beta 0.066 [-0.115, 0.244]), but its bb_env and E_beta intervals stay under 0.3.
+  - E_other's balance is negative in every set (visit 1 -0.338 [-0.892, +0.097]), not resolved from 0.
+- **So** the DSE is the SI's, acting on ff2.1's own unfolded ensemble near Tm, which keeps about a tenth of the
+  native's H-bond score above the SARW's and does not lose it over 24,000 tu of equilibration. Under this trainer
+  released ff2.1 balances the backbone term at lambda 0.12-0.24, so at the SI's 0.3 the DSE moves it away from ff2.1
+  as the objective is written; no defect was found in the trainer. The SI's single replica near Tm (the warmer of the
+  pair) would cut the excess pull, not remove it.
+- **Peng's answer** (11-09, relayed by the user): ff2.1 used lambda 0.3, he is sure; its training did not start from
+  scratch, and somewhere in the middle it may have used a smaller lambda; he suggests raising it gradually, 0.1 to
+  0.2 to 0.3. That fits the balance above: ff2.1 is the end of a path whose last stage ran at 0.3, not a fixed point
+  of 0.3, so a run started at 0.3 from it takes the whole pull at once (the control fell from 0.615 to 0.390 folded
+  in epoch 0, 1.37). The schedule is not in any code we hold: Kleinmann's port ran at 0 (9v), and the 18 trainer
+  copies of Peng's in `~/Documents/Train(1).zip`
+  (runs `CD-channel0`-`3`, `CD-channel-dimer3`, `old/CD-n0`, `n1`, `t0`, `x0`-`x2`, `old/cd1/model-m0`, `m1`;
+  `/home/pengxd/scratch/fit/memb/`) all train only the membrane potential on a fixed soluble `ff_2.2`. Each contrast
+  is the restrained native (1/3^2 on every residue) minus the single T 0.8 free replica (8 replicas 0.80-0.92,
+  1000-4000 tu, dt 0.01, frames after 10-30%). No copy has a DSE path, and `restart_from_last` (free replicas from
+  saved states) is False in all. `ConDiv.tar` is the FF1 Theano original of 9t.
+- **Who added the DSE, and what for** (user 11-09: "maybe DSE is something added by someone else other than Peng and
+  Jumper?"; read in the SI, `~/OneDrive - The University of Chicago/ct1c00960_si_001.pdf`). Peng's, in the FF2 paper
+  itself: "For the new FF2, we added a second objective related to training the DSE to be a self-avoiding random
+  walk" and "The value of lambda in is empirically set to 0.3" (SI p. 4). Jumper's FF1 ConDiv has none (9t). Its
+  stated purpose is the unfolded state's residual structure: FF2's backbone solvation term was added because it
+  "stabilizes the DSE", "important for minimizing the amount of residual structure", which "is essential for
+  accurate prediction of HDX and folding cooperativity" (SI p. 2), and Fig. S6 and S7 show FF1's DSE with
+  "unrealistically high levels of backbone H-bonds" against FF2's low ones. Without the DSE, that backbone scale
+  falls from -0.301 to -0.018 (above). ff3.2 has run with the DSE off since 11-01 (plan.md Phase 38 item 4), and no
+  test in its validation (mdCATH, Peng's TM, glpG's TM4) measures unfolded-state H-bonds, cooperativity or HDX
+  m-values.
 - Beside, deciding nothing: under persistent chains the T 1.1 replica compacts (0.919 of its own epoch 0 at epoch 9,
   `rg_check_ff32_pcd57.txt`), with the DSE off and the force field moving.
 
@@ -4859,7 +4896,11 @@ The only FF2 dual-target trainer is O. Kleinmann's Python 3 port of Peng's code,
 Peng's pristine file is not recoverable; `/home/pengxd` is unreadable). Everything else searched is FF1 or membrane:
 `~/Documents/ConDiv` (9t), `~/Documents/Train` = `Train(1).zip` (9u), `upside_version/upside-pxd/ConDiv` (2019, spline
 burial, no DSE). His port had drifted from the SI, all corrected in `training/ConDiv.py`: lambda = 0.0
-(`balance_target`), so his run never used the DSE objective; 6 free replicas up to T ~0.97 (SI: 12 from 0.8 to 1.1),
+(`balance_target`, in all five commits from 2025-08-03 to 12-16; rechecked 11-09), so his run never used the DSE
+objective (Peng, 11-09: ff2.1 used 0.3; 1.41); whether Peng's file had 0.0 is not shown: the first commit is already Python 3 (f-strings, `UPSIDE_HOME`)
+and sets 0.0 in one block with local test values (4 threads a protein, minibatch 4, 1000 tu), its `init_param`
+files carry Windows download markers, and neither its swap file, its notebook, `condiv.py` (single target) nor
+`training/pengxd/` (a protein list) holds another value or Peng's original; 6 free replicas up to T ~0.97 (SI: 12 from 0.8 to 1.1),
 1000 time units (SI: 8000), minibatch 21 (SI: 24); replica reweighting exponent `E*(T0-Ti)/Ti`, T0 times the correct
 `E*(1/Ti - 1/T0)`; a `dE < -200` clamp in place of a normalisation; and a guard that silently dropped the DSE term
 whenever the last free replica's final energy exceeded 1000. His 101-step run ended with the backbone scale flipped
