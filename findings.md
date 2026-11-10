@@ -2192,6 +2192,29 @@ the DSE first" (plan.md Phase 38 item 13). Read-only on existing files; scripts 
 - Beside, deciding nothing: under persistent chains the T 1.1 replica compacts (0.919 of its own epoch 0 at epoch 9,
   `rg_check_ff32_pcd57.txt`), with the DSE off and the force field moving.
 
+### 1.42 One scalar carries the DSE's folding loss, and ff2.1's burial edit is not why the trainer moves it (2026-11-10)
+
+User 11-10: "Assume DSE is not the problem ... find other cause", then "since ff2.1 further trained also has this sharp
+drop, and we are sure DSE=0.3 in ff2.1, there has to be something else". Files `checks/ff33_cause_20261110/` (README);
+plan.md Phase 38 items 15-16.
+- **The backbone burial scale alone carries ff3.3's loss.** With a negative scale the term rewards backbone that is
+  neither side-chain covered nor H-bonded (1.41), so a more negative scale makes every state with exposed backbone
+  cheaper, the unfolded state most (14.36 of ff3.3's -20.29 E_up unfolded shift at epoch 13). `r33_13` (0.547) with
+  `p57_09`'s `bb_env.dat` folds 0.682 (+0.135 [+0.086, +0.189]), level with `p57_09`; no other file put back is
+  resolved (side chain +0.031 [-0.001, +0.067]); `p57_09` with `r33_13`'s scale folds 0.580. The scale across runs:
+  ff2.1 -0.301; the control (DSE 0.3) -0.404 at epoch 0 (folds 0.390; its reset +0.081); DSE off -0.161 to -0.018;
+  ff3.3 -0.122, -0.255. The resume of ff3.3 is bitwise clean (`resume_eq.txt`).
+- **Not ff2.1's undocumented burial edit.** ff_2.0 and ff_2.1 differ only in `environment.h5` (with `coverage_param`,
+  untrained here; both added in Peng's commit `4ad9c768`, 2022-02-27). ConDiv from ff2.1 moves burial back toward
+  ff_2.0 (cosine +0.39 to +0.46, `undo_edit.txt`), but ff_2.0 folds level with ff2.1 (0.610 against 0.615) and, at the
+  control's own step with no update, feels the same push: scale +4.73 [t +3.80] against +6.50 [+5.32] (paired p
+  0.19), E_alpha -2.21 against -3.13 (p 0.22) (`fixedpoint_read.txt`). Neither is this trainer's fixed point.
+- **So the difference from Peng's training is the balance on this scalar.** ff2.1 holds -0.301 after Peng's 0.3
+  training; ours moves it past -0.40, the NSE pulling -47.68 against 0.3 DSE's +104.65 at step 0 (1.17). Ruled out:
+  the restrained/free replica swaps (both engines compute Hamiltonian-exchange energies), the step-0 side-chain table
+  (ff2.1's to float64 round-off), the SARW's backbone term by folding (`s32_00`, 1.37). Peng's FF2 trainer is not
+  public or readable (9v). The replica-resolved visit (plan.md item 16) measures which sampling choice sets it.
+
 ## 2. The hybrid model: what each side supplies
 
 ### 2.1 Replaced by design
@@ -4893,7 +4916,11 @@ term's covers only `scale` (9v). `Train(1).zip` (OneDrive) is Peng's 2022 membra
 
 The only FF2 dual-target trainer is O. Kleinmann's Python 3 port of Peng's code,
 `/project2/trsosnic/okleinmann/condiv/condiv2.py` (git history from 2025-08, first commit already his working copy, so
-Peng's pristine file is not recoverable; `/home/pengxd` is unreadable). Everything else searched is FF1 or membrane:
+Peng's pristine file is not recoverable; `/home/pengxd` is unreadable; rechecked 11-10: it and `/scratch/midway2/pengxd`
+are `drwx------`, and GitHub `pengxd` holds four forks (`upside-md`, `openmm`, `upside2-md` with four commits of
+examples, Python 3 and HDX, `PyAutoFEP`) and no trainer; ff_2.0 and ff_2.1 entered `sosnicklab/upside2-md` together in
+Peng's commit `4ad9c768` of 2022-02-27, so no history records the burial edit between them; `share/pengxd/ConDiv_ff1.5_for_Nabil`
+(2020) trains FF1's form; a sweep of 18,085 readable .py, .ipynb and archive files on `/project2`, `/beagle3`, `/project` and `/cds3` (`checks/peng_trainer_search_20261110/`) finds no other file with both ConDiv and DSE markers). Everything else searched is FF1 or membrane:
 `~/Documents/ConDiv` (9t), `~/Documents/Train` = `Train(1).zip` (9u), `upside_version/upside-pxd/ConDiv` (2019, spline
 burial, no DSE). His port had drifted from the SI, all corrected in `training/ConDiv.py`: lambda = 0.0
 (`balance_target`, in all five commits from 2025-08-03 to 12-16; rechecked 11-09), so his run never used the DSE

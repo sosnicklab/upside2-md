@@ -1277,3 +1277,17 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   moved, driver `dcc9896f`); static test, stub run and `--test-only` passed. Submitted the first link 50022816 and
   the unfolded-state H-bond test on ff3.2 (50022814, 50022815). Files: plan.md, findings.md, remote_jobs.md,
   progress.md; cluster `checks/ff33_ramp_20261109/`.
+* **11-10 13:35-16:10, MacBook Pro: status, Boltz E2a, and why our trainer pushes ff2.1 off** (not the owner, no
+  cron; plan.md Phase 38 items 15-16, findings 1.42, 9v). Both sockets opened with one-shot copies of the expect
+  scripts (the repo's re-send a rejected password). Status: every job since 15:00 11-09 COMPLETED; ff3.3's panels
+  fall with lambda (`r33_11` 0.627, `r33_13` 0.547); ff3.2's glpG TM4 read 0.773; 7 Peng arms COMPLETE. At the
+  user's word the 10 owed Boltz E2a blocks went in (62844278-62844287). Then, at the user's "assume DSE is not the
+  problem" and "there has to be something else": the resume is clean; the backbone burial scale alone carries ff3.3's
+  loss (7 reset panels); ff_2.0 (ff2.1 without its undocumented burial edit) folds level with ff2.1 and feels the same
+  push at the control's step (fixed-point test), so the edit is not the cause; the same scale carries the control's
+  drop from ff2.1 (-0.301 to -0.404 in epoch 0). Peng's FF2 trainer is not on GitHub or anywhere readable on the
+  clusters (sweep of 18,085 files). Submitted the replica-resolved visit (50045068, readout 50045069) to find which
+  sampling choice sets the scale's balance. Failures and fixes: a projection readout failed its own self-test
+  (replaced before any ff_2.0 data, the rule revised in the plan); the replica worker's first smoke test lost its
+  output to a cleanup-order bug (fixed, smoke passed). Files: plan.md, findings.md, remote_jobs.md, progress.md;
+  cluster `checks/ff33_cause_20261110/` (README), `checks/peng_trainer_search_20261110/`.

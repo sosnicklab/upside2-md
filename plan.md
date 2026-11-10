@@ -1782,8 +1782,13 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       0.727 (+0.018 [+0.012, +0.025] p 2.9e-07, higher on 65 of 89), above it on each length and class subset (+0.016
       to +0.023, every interval above 0); TM > 0.5 level (0.978 against 0.972, +0.006 [-0.009, +0.024]). Beside,
       `w32_03`: +0.006 [+0.001, +0.012] p 0.037 (0.745 against 0.739, higher on 51), level on each subset; `w32_03`
-      itself was +0.012 [+0.006, +0.018] over released ff2.1. On mdCATH, ff3.2 is above released ff2.1. Peng and
-      glpG's TM4 are still owed.
+      itself was +0.012 [+0.006, +0.018] over released ff2.1. On mdCATH, ff3.2 is above released ff2.1. Peng is
+      still owed (6 of 32 scored 11-10, each below released ff2.1 by 0.007-0.043 mean TM; no reading before DONE).
+    - **glpG's TM4, read 13:45 11-10** (REMD 49956024, one block, COMPLETED 00:26 11-10;
+      `upside3_validation/glpg_ff32_p57_09/glpg_ff32_p57_09_block1.txt`): at T 0.70 TM4 135-151 DSSP alpha 0.773
+      (halves 0.761 / 0.785), against `w32_03`'s 0.977, released ff3.1's 0.74 and ff3.0's 0.85. The loss is TM4's
+      N-terminal turn, 135-136 at 0.00 and 137-138 at 0.27-0.50, unwound from the block's first frame and not
+      spreading; 139-151 holds 0.952, TM1 0.993, KE/1.5kT 1.001 / 1.005, C-N 1.313 +- 0.120 A.
 13. [ ] **Why the DSE target costs folding** (user 11-09, after item 12's burial reading: "Diagnose the DSE first";
     no training until it is answered; read-only, `/project/trsosnic/yinhan/checks/dse_diag_20261109/`). Without the
     DSE the native-against-free contrast alone takes the backbone solvation scale from -0.301 to -0.018 over
@@ -1869,7 +1874,114 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       submissions passed `--test-only`.
     - [x] Submitted 20:03 11-09: the h test on `ff_3.2_p57_09` (50022814, readout 50022815) and ff3.3's first link
       (50022816, to step 96). Jobs: remote_jobs.md §1 line 2.
-    - [ ] Read `unf_hb_ff_3.2_p57_09.txt` by the rule above; read each epoch (11, 13, 15, 17, 19) as item 12's.
+    - [x] `unf_hb_ff_3.2_p57_09.txt` (50022815, 20:34 11-09), by the rule above: ff3.2's unfolded state keeps more
+      residual H-bonds than released ff2.1's, paired mean +0.112 [+0.038, +0.194], higher in 18 of 24 (per residue
+      +0.090 [+0.027, +0.161]).
+    - [ ] Read each epoch (11, 13, 15, 17, 19) as item 12's. Read 13:45 11-10 on the 44 domains (`paired_npz.py`):
+      `r33_11` (lambda 0.1) folds 0.627, level with released ff2.1's 0.615 (+0.011 [-0.035, +0.057]); `r33_13`
+      (0.2) 0.547, under released ff2.1 (-0.068 [-0.123, -0.018] p 0.009), `p57_09` (-0.159 [-0.217, -0.105]) and
+      `r33_11` (-0.079 [-0.126, -0.035]). Unfolded shift `p57_09` +14.51, `r33_11` +4.73, `r33_13` -5.79 (16 of 16
+      negative). Hot-replica Rg at T 1.1 against epoch 9: 1.07, 1.12, 1.12, 1.14 over epochs 10-13. The run goes
+      on to 160 under the fixed rule; epochs 15, 17, 19 still to read.
+15. [ ] **What else could cost ff3.3 its folding** (user 11-10: "Assume DSE is not the problem causing the folded
+    ratio in ff3.2, try to find other cause"). ff3.3 differs from `p57_09` by the DSE schedule and the steps after
+    80 together (item 14), so a cause other than the DSE has to lie in the continuation or in a block the DSE does
+    not drive. Files in `/project/trsosnic/yinhan/checks/ff33_cause_20261110/` (README).
+    - [x] The resume (`resume_eq.py`, read-only): ff33_ramp57's step-80 checkpoint equals ff32_pcd57's in every
+      parameter, Adam moment and rate (64 of 64 fields, NaN-aware), Ramachandran state and minibatch order by
+      protein; Adam's step count carries on (97 after step 96). No resume defect.
+    - [x] The moves step by step (`step_walk.py`, every checkpoint of both runs): the backbone burial scale fell
+      -0.276 to -0.018 over ff3.2's 80 steps and reversed at step 81, the first step with the DSE, to -0.255 at
+      step 112 (cosine of the move, steps 48-80 against 80-112, -1.00; rms 0.017 against 0.238); `dhb` reversed as
+      well (-1.00, 5x larger). The side-chain pair table kept ff3.2's direction at ff3.2's rate (+0.75; rms 0.108
+      against 0.099), the H-bond energies nearly so (+0.68), the burial terms turned (enve +0.21, envc -0.41,
+      1.6x larger).
+    - [x] **Read 15:45 11-10 (`resets_r33_13.txt`): the backbone burial scale alone carries the loss.** `r33_13`
+      (0.547) with `p57_09`'s `bb_env.dat` folds 0.682, +0.135 [+0.086, +0.189] p 1.7e-05, level with `p57_09`
+      (-0.024 [-0.058, +0.007]); with its side-chain file +0.031 [-0.001, +0.067], sheet +0.022, rama +0.006,
+      H-bond -0.007, burial -0.011, none resolved. `p57_09_bb33` (`p57_09` with `r33_13`'s scale -0.255) folds
+      0.580, -0.126 [-0.167, -0.089], so the scale's move alone is enough. The unfolded shift's split
+      (`shift_blocks_p57_09_r33_13.txt`) agrees: -20.29 E_up, of it the scale -14.36, burial -3.69, pair table
+      -2.47. By the rule, the loss is the DSE's route and no other block carries a resolved part. The same scalar
+      carries the control's: from ff2.1's -0.301 the DSE took it to -0.404 in epoch 0 (folds 0.390; its reset
+      `c9_00_bb21` +0.081), the DSE-off runs weaken it (`z32` -0.161 to -0.134, `p57_09` -0.018), ff3.3 restrengthens
+      it (-0.122, -0.255). Our trainer's DSE pushes the scale past ff2.1's own value, where Peng's 0.3 training left
+      it: at ff2.1 the NSE pulls -47.68 and 0.3 DSE +104.65 on it (findings 1.17), so Peng's NSE pulled about twice
+      ours there, or his DSE half. That balance on one scalar is the difference to find (item 16).
+    - Which block carries the loss: `r33_13` with one file put back to `p57_09`'s, as `resets_c9_00.txt`
+      (44-domain panel, dt 0.015, `paired_npz.py`), arms `r33_13_{bb,hb,env,rot,rama,sheet}57`, and beside them
+      `p57_09_bb33` (`p57_09` with `r33_13`'s `bb_env.dat`). Rule fixed before the data: a block carries the loss
+      if putting it back raises `r33_13`'s folded fraction with the paired 95% interval above 0. If only
+      `bb_env.dat` (the scale only the DSE moves) and `hbond.h5` do, the loss is the DSE's route and no other cause
+      is found in the blocks; if `sidechain.h5`, `environment.h5`, `rama.dat` or `sheet` does, that block's move is
+      the other cause to explain (the pair table's continues ff3.2's drift, the Ramachandran depths continue their
+      rounds). `p57_09_bb33` reads whether the scale's move alone is enough to cost folding.
+16. [ ] **Released ff2.1 is not a ConDiv output, so it need not be this objective's fixed point** (user 11-10: "since
+    ff2.1 further trained also has this sharp drop, and we are sure DSE=0.3 in ff2.1, there has to be something else
+    that cause this"). The argument holds only if ff2.1 is where a lambda 0.3 training stopped. Two records say it
+    is not quite: FF2's ConDiv ran a fixed budget, short of convergence on purpose (findings 1.36-1.37, Peng SI p. 4,
+    Jumper), and ff_2.0 -> ff_2.1 changed `environment.h5` alone, undocumented (findings near line 1109), including
+    `coverage_param`, the burial geometry no trainer of ours moves. Files in `checks/ff33_cause_20261110/`.
+    - [x] Does ConDiv undo the edit (`undo_edit.py`, read-only; `undo_edit.txt`)? The control's burial moves at
+      cosine +0.39 to +0.46 with the edit's reversal over its four epochs (random about 0.05 in these 460
+      values), 4-9% of the edit undone; the burial scale goes back in both the control (+0.30 to +0.42) and the
+      DSE-off run `z32` (+0.35 to +0.69), whose weights go the other way (-0.34 to -0.43). So the trainer's own
+      gradient at ff2.1 points partly back to ff2.0, DSE or not.
+    - [x] **Read 15:15 11-10 (`ff20_panel.txt`): ff_2.0 folds level with ff2.1**, 0.610 against 0.615 (-0.005
+      [-0.041, +0.031] p 0.9, 20 lower / 23 higher), mean Q 0.825 against 0.829; above the control's `c9_00`
+      (+0.221) and `c9_03` (+0.180). By the rule the edit is not the cause, as the fixed-point test below found.
+    - `ff20_released`: ff_2.0 (ff2.1 without the edit) on the 44-domain panel as `ff21_released` ran. Rule
+      fixed now: if it folds under released ff2.1 (paired interval wholly under 0), ff2.1's folding owes part to an
+      edit no ConDiv run made, and a ConDiv run continued from ff2.1 is expected to lose it whatever its lambda;
+      the next test is then one epoch of the control from ff_2.0 (the user's decision). If it folds level with
+      ff2.1, the edit is not the cause and the control from ff_2.0 is the test of the trainer itself.
+    - [x] **Read 14:59 11-10 (`fixedpoint_read.txt`): ff2.0 feels the same push as ff2.1.** Gradient at ff2.0 /
+      ff2.1 / ff2.1's stored step 0, mean over the 24 [t]: backbone burial scale +4.73 [+3.80] / +6.50 [+5.32] /
+      +4.96 [+4.12]; E_alpha -2.21 [-2.65] / -3.13 [-4.61] / -2.27 [-3.21]; E_beta -1.15 [-2.88] / -1.21 [-2.32] /
+      -1.16 [-2.42]; dhb -0.68 [-1.75] / -1.20 [-3.65] / -0.74 [-2.13]. Paired ff2.0 - ff2.1: scale -1.77 (p
+      0.19), E_alpha +0.93 (p 0.22), E_beta +0.05 (p 0.91), dhb +0.52 (p 0.16), none resolved; ff2.1 measured
+      twice differs by as much (+6.50 against +4.96). By the rule the edit is not what pushes ff2.1 off: ff_2.0,
+      the force field ConDiv presumably produced, is not this trainer's fixed point either, pushed the same way
+      on the backbone burial scale and the H-bond energies (at ff2.1 the scale's push is the DSE's: NSE -47.68
+      against 0.3 DSE +104.65, findings 1.17). Left: this trainer's estimate differs from Peng's, or FF2 stopped
+      short of its fixed point. Burial, side chain, sheet reported only (excess t^2 ff2.0 +0.76, +0.35, +0.52).
+    - [ ] **The replica-resolved visit** (user 11-10: "submit next run"; files in `checks/ff33_cause_20261110/`:
+      `replica_worker.py`, `replicas.sbatch`, `rep_read.py`, `rep_read.sbatch`): released ff2.1 at the control's
+      step (its trainer imported, simulation line for line: elastic-network native at T0, 12 free replicas
+      0.8-1.1, our SARW) on its minibatches 0-1, 48 proteins, one visit each, no update, every replica's mean
+      derivative kept apart, plus system 14, Peng's SARW (no backbone term; his `example/10.SelfAvoidRandomWalk`),
+      apart from the swaps. The readout gives lambda* = -sum NSE / sum DSE (the weight at which the trainer's push
+      vanishes) for the backbone burial scale and E_alpha, E_beta, E_other, dhb, with 95% bootstrap intervals over
+      proteins, for NSE {ours: replicas 1-3 reweighted to T0 and mixed 0.6/0.3/0.1; the SI's: the coldest alone;
+      each replica alone} by DSE {ours: both bracketing replicas pooled against our SARW; the colder alone; the
+      warmer alone; Peng's SARW; the SI text's Rg cutoff, 2/3 Rg_native + 1/3 Rg_SARW}. Rule fixed now: ff2.1 was
+      trained at 0.3, so the choice that reproduces Peng's trainer puts the scale's lambda* at 0.3. If ours lies
+      wholly under 0.3 and a variant's interval contains 0.3, that choice is the difference; if none does, these
+      sampling choices are not it, leaving the restraint form (ours an elastic network, Peng's copies 1/3^2 on
+      every residue), the start and anneal schedule, the visit length, or FF2 stopped short of its fixed point.
+      The smoke test 50045036 (one protein, 300 tu) ran the worker and the readout (functional only; deleted).
+    - The fixed-point test, in place of that epoch (user 11-10: "is there any faster test?"): one ConDiv step
+      without the parameter update, i.e. the control's own worker (`ff21_ctrl_dt009/run_output/ConDiv.py`
+      `8977d7f7`, every replica from the native) on the 24 proteins of the control's minibatch 0, once with
+      ff_2.0's five files and once with released ff2.1's, both on `$P`'s current engine (array `fixedpoint_ctrl`,
+      48 tasks, `fp_ctrl_task.py`), paired by protein. The control's stored step 0 (exactly ff2.1, to float64
+      round-off: `sidechain_step0_diff.txt`) ran on the engine before the angular-gradient fix, so it is a
+      cross-check of the new ff2.1 arm, not the pair. The reference direction u is the push that moved the control
+      off ff2.1: the mean contrast of its epoch-0 minibatches 1-18 (432 visits, none of minibatch 0's), each
+      component in units of its spread there. Readout revised twice before any ff_2.0 data, on the stored ff2.1
+      data alone: a reference direction fails (the control's own step 0 does not follow its epoch-average push:
+      burial -2.1; components with near-zero spread make the side chain -364 [-1068, +4]). The readout is
+      instead per parameter t = mean / se over the 24 proteins, no direction needed (`fp_read4.py`). On the
+      stored step 0 it finds ff2.1's push on the backbone burial scale (t +4.12) and the H-bond energies (E_alpha
+      -3.21, E_beta -2.42, dhb -2.13), and none resolved in burial, side chain or sheet (excess mean t^2 +0.13,
+      +0.34, -0.26 against a null of 0); on minibatch 1's other 24 proteins none at all (scale +0.97), so the
+      comparison is paired on the same proteins and has power only on those scalars. Rule: per scalar (scale,
+      E_alpha, E_beta, E_other, dhb), the paired difference ff2.0 - ff2.1 over the 24 by a t test; if the
+      scale's and E_alpha's pushes at ff2.0 are resolved smaller than at ff2.1 (p < 0.05, same sign) the edit
+      drives the push the trainer sees first; if they are level and resolved away from 0 at ff2.0, the edit is
+      not what pushes ff2.1 off, and the push is the DSE's terms at a point the trainer does not treat as its
+      fixed point. Burial, side chain and sheet: reported (excess t^2 with a sign-flip null), not read, since
+      one visit of 24 cannot resolve them.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the
