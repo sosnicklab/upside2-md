@@ -2211,9 +2211,83 @@ plan.md Phase 38 items 15-16.
   0.19), E_alpha -2.21 against -3.13 (p 0.22) (`fixedpoint_read.txt`). Neither is this trainer's fixed point.
 - **So the difference from Peng's training is the balance on this scalar.** ff2.1 holds -0.301 after Peng's 0.3
   training; ours moves it past -0.40, the NSE pulling -47.68 against 0.3 DSE's +104.65 at step 0 (1.17). Ruled out:
-  the restrained/free replica swaps (both engines compute Hamiltonian-exchange energies), the step-0 side-chain table
-  (ff2.1's to float64 round-off), the SARW's backbone term by folding (`s32_00`, 1.37). Peng's FF2 trainer is not
-  public or readable (9v). The replica-resolved visit (plan.md item 16) measures which sampling choice sets it.
+  a wrong restrained/free swap (both engines compute Hamiltonian-exchange energies), the step-0 side-chain table
+  (ff2.1's to float64 round-off), the SARW's backbone term by folding (`s32_00`, 1.37). Nor a group held fixed while
+  the DSE acts: the SI trains "all parameters ... simultaneously" (p. 4; main text p. 2, "essentially all", none
+  named as excepted), the DSE entering the same update (eq. S11), and Ref [2]'s only stage is fine-tuning's rate
+  cut, for every group (1.23). Peng's FF2 trainer is not public or readable (9v).
+- **No sampling choice of ours sets that balance** (`replicas_read.txt`, plan.md item 16: released ff2.1 at the
+  control's step, 48 proteins, every replica's derivative apart). Under the control's own protocol the scale balances
+  at lambda* +0.018 [-0.034, +0.071]: its NSE is -0.37 a protein against a DSE of +20.5, so at 0.3 the DSE is about
+  17 times the NSE, and the control's epoch-0 move (-0.301 to -0.404) is what the objective asks. The SI's coldest
+  replica, either bracketing replica alone, Peng's SARW and the SI text's cutoff each stay at +0.009 to +0.024. The
+  NSE is set by how far the free ensemble strays from the native: from each free replica alone it is -0.24 a protein
+  at T 0.80 and -7.2 at 0.87, whose balance alone is 0.35 (exploratory). At T 0.80 the free chain leaves the native
+  (Ca-RMSD 2.6 A against 1.0 A) but its NSE cancels by sign, the positive half being chains more compact than their
+  native. 1.17's -47.68 (about -2.0 a protein) came from the dt 0.015 trainer on other proteins.
+- **Not the swaps** (`noswap_read.txt`): with the restrained native out of them, as Peng's 2022 membrane copies
+  (`gen_swap_set(1, n)`; his 2019 soluble trainer and the port keep it in), the scale balances at +0.070 [+0.012,
+  +0.138]; the NSE grows by -0.89 a protein, nearly all at T 0.80, a tenth of what 0.3 needs. Nor the start (below).
+  Still open: the visit length, and the scale's rate (the port's 0.025 a step, 8% of its
+  value; Peng's unknown), which under Adam sets how far a consistently pushed scalar moves in 76 steps whatever the
+  balance. Not a difference: the restraint form (Peng's copies build the same random-pair network at 1/3^2).
+- **Code review (11-10, user: "without testing, by reviewing the training code"): one undocumented departure from
+  Peng's worker, on the DSE's own ensembles.** In the port's worker (`condiv2.py` 612-636, Peng's structure, with his
+  `# target 1 for native` / `# target 2 for unfolding`), the "unfolding target" configs are written before
+  `initial_structure` is set: the SARW and the hottest free replica (`configs[-2]`, full Hamiltonian, in the swap
+  ladder) start from `upside_config`'s `random_initial_config`, a random coil (uniform phi/psi, trans omega); only
+  "free simulations starting from native" get the native. Ours starts all 14 systems at the native (docstring line 45),
+  and its list of departures from the port does not name this. With a random coil at the top of the ladder each step,
+  unfolded configurations reach the replicas near Tm and the cold free replicas by swaps; from the native alone they
+  must unfold within the visit. Both effects go the way the balance needs: unfolded frames nearer the SARW (smaller
+  DSE; ours keep h 0.1-0.3 of the native's H-bond score, 1.41) and a free ensemble farther from the native (larger
+  NSE, which grows steeply with distance from the native, above). **Refuted for the balance by the coil-start visit**
+  (`checks/coilstart_20261110/coil_read.txt`, the replica-resolved visit with systems 12-14 from a fresh coil, 1.57 x
+  the native's Rg): the scale balances at +0.053 [-0.001, +0.120], E_alpha +0.037, E_beta +0.035, as from the native
+  start; the NSE and DSE changes are not resolved (-0.61 [-1.43, +0.19], -2.07 [-8.01, +2.87]). Everything else on the path was read and
+  agrees with the SI and the port: the engine's dE/dscale (`deriv[0] += out.x()`, side-chain and H-bond coverage
+  both), the `bb_env.dat` order, the anneal (0.05 T to T over 96-400 tu), exact Hamiltonian exchange with momentum
+  rescaling, Verlet evaluating every node (`integrator_level` acts only under `mv`), the contrast's signs and
+  minibatch sum, Adam's descent, and the T0 reweighting fix (the port's frame energy is the raw `engine.energy`).
+- **Second review (11-10, user: "another round of bug check for training code"; plan.md item 17): no new defect.**
+  Read on the code that ran (`$P` control driver `8977d7f7`, `$P/py`, `$P/src`; ff3.2's `c0277e8d` as a diff). The
+  solver is master's Adam line for line, its Nesterov lookahead zero (the `nesterov_temp__*` files are the current
+  parameters); the side-chain pack/unpack and its torch chain rule and regulariser are Jumper's original's; the
+  config writers copy every trained table verbatim; the H-bond energy, side-chain burial and backbone-scale
+  derivatives match their energies (compact_sigmoid's sharpness term included); the sheet finite difference's maps
+  lack the per-map constant shift, which cancels in every contrast; `integration_cycle(mom, dt)` is master's
+  kick-drift leapfrog, three steps a round, so 8000 tu is 296,296 rounds and 801 frames; the OU bias (ledger A149)
+  is 0.09% at the trainer's default tau 5; swaps exchange coordinates and momenta under Metropolis. In ff3.2's driver
+  the basin wall is upper-only (`wall_type` 1), the phi/psi atoms and k = T0/sigma^2 are right, the persistent
+  chains' bookkeeping holds, and `rama_basin.py`'s Newton step has the right sign and prior. Gaps already in the
+  ledger, fixed in Upside 3 only and so present in every `$P` run and in master (FF2's engine): `envw` trained without
+  the backbone term's share of its gradient (A29) and `hb` entries 4-11 with zero gradient (A30).
+- **The time step moves the balance a quarter of the way to 0.3, through the free ensemble** (plan.md Phase 38
+  item 18, read 11-10). The SI's 0.009 is stated for its simulations section; Kleinmann's port of Peng's soluble
+  trainer ran 0.015, Peng's membrane copies 0.01. The dt 0.015 visit (`checks/dt015_20261110/`: the dt 0.009 visit's
+  worker with only the time step changed, the same 48 proteins) balances the scale at +0.088 [+0.036, +0.151], a
+  paired change of +0.069 [+0.031, +0.110] from +0.018; no DSE variant reaches 0.3 (highest upper bound +0.207). The
+  change is in the NSE (mean -0.37 to -1.73; the coldest free replica's alone -0.24 to -1.61), the DSE nearly
+  unchanged (+20.5 to +19.7). KE/1.5kT is 1.006 (median) at 0.009 and 1.013-1.022 at 0.015, and the coldest
+  replica's NSE at 0.015 lies between replicas 1 and 2 at 0.009 (T 0.800, 0.823): consistent with the larger step
+  running the free replicas slightly hot, not shown. E_alpha's balance moves +0.109 [+0.007, +0.208] to +0.101;
+  E_beta's change does not resolve. No replica was destroyed: the longest C-N bond is 2.15 A, and 70 of 720 systems
+  pass 2 A, none of them the native or the coldest free replica, most the free replicas at T >= 0.98 and the SARWs
+  (the dt 0.009 visit kept no bond record to compare). 1.17's 0.14 at 0.015 mixed other differences. 1.21: 0.015
+  destroys about one free replica in 700 protein-steps, so it stays a diagnosis, not a setting to adopt.
+- **The drop is real in Peng's own metrics, so it is a training problem, not a metric artefact** (plan.md Phase 38
+  item 19; the user 11-11: folded fraction is not Peng's, so the drop "might be a real defect in training"). Released
+  ff2.1 on Peng's benchmark (16 proteins, his scorer, our pipeline) reproduces his FF2, native 0.552 and de novo
+  0.427 against 0.55 and 0.42. The same force field continued by our FF2 trainer at lambda 0.3 for 37 steps
+  (`ff21_ctrl_dt009`, `ff_2.1_ctrl38`) scores 0.486 native (-0.066 [-0.135, -0.015] p 0.004, lower in 13 of 16) and
+  0.299 de novo (-0.128 [-0.200, -0.065] p 6e-5, lower in 15 of 16), below Peng's FF1 (0.45 / 0.37); at its fixed
+  point mean TM falls -0.025 [-0.033, -0.018] on mdCATH and -0.031 [-0.044, -0.020] on the 44 domains, and already
+  at step 19 (`c9_00_tr` against `ff21_released_tr`, the 44 from the native) -0.038 [-0.047, -0.030] (42 of 44
+  lower) with Ca-RMSD +0.45 [+0.30, +0.63] A, where the folded fraction read -0.225. A trainer
+  that takes ff2.1 below FF1 within two epochs is not the one that made it at the same lambda, unless Peng stopped
+  within a few steps: so either our FF2 objective differs from his (in the DSE's weight or scale: with it off, ours
+  raises mdCATH TM, ff3.2 +0.018) or ff2.1 was never trained near its fixed point. His trainer is not readable
+  (9v), so the two are told apart only by tests such as items 16 and 18.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -4920,7 +4994,11 @@ Peng's pristine file is not recoverable; `/home/pengxd` is unreadable; rechecked
 are `drwx------`, and GitHub `pengxd` holds four forks (`upside-md`, `openmm`, `upside2-md` with four commits of
 examples, Python 3 and HDX, `PyAutoFEP`) and no trainer; ff_2.0 and ff_2.1 entered `sosnicklab/upside2-md` together in
 Peng's commit `4ad9c768` of 2022-02-27, so no history records the burial edit between them; `share/pengxd/ConDiv_ff1.5_for_Nabil`
-(2020) trains FF1's form; a sweep of 18,085 readable .py, .ipynb and archive files on `/project2`, `/beagle3`, `/project` and `/cds3` (`checks/peng_trainer_search_20261110/`) finds no other file with both ConDiv and DSE markers). Everything else searched is FF1 or membrane:
+(2020) trains FF1's form; a sweep of 18,085 readable .py, .ipynb and archive files on `/project2`, `/beagle3`, `/project` and `/cds3` (`checks/peng_trainer_search_20261110/`) finds no other file with both ConDiv and DSE markers; that sweep read archives by member name only, so on 11-10 the
+`.py`, `.ipynb` and `.sh` members of six of Peng's archives were extracted and searched by content
+(`checks/peng_trainer_search_20261110/archive_py/`: `upside2.tar.gz`, `upside2-md-email.zip`, `upside-hx`,
+`upside-md-aa-scale`, `FC/tutorial`, `zonganw/for_Xiangda/upside_20191017.tar.gz`), and none has a DSE path; the last
+holds a 2019 soluble trainer whose contrast is the restrained native minus free replica 1 alone). Everything else searched is FF1 or membrane:
 `~/Documents/ConDiv` (9t), `~/Documents/Train` = `Train(1).zip` (9u), `upside_version/upside-pxd/ConDiv` (2019, spline
 burial, no DSE). His port had drifted from the SI, all corrected in `training/ConDiv.py`: lambda = 0.0
 (`balance_target`, in all five commits from 2025-08-03 to 12-16; rechecked 11-09), so his run never used the DSE
@@ -5599,6 +5677,17 @@ the epilog deletes all of the user's /tmp at any one job's end.** midway2's epil
   that unpacks its 7.8 GB venv there reached 14.0 GB MaxRSS and was killed at a 16 GB request; on the V100 nodes and
   0285 (`/dev/sda1` 894G) the same job peaks at 5.7 GB. Size a memory request for the RAM-backed nodes: 40 GB is
   2.9 times the 14.0 GB measured there.
+
+### 10.56 An in-house screen is not the outcome a force field is judged on (2026-11-10)
+
+User 11-10, on learning that Peng's paper reports no folded fraction (it uses TM-score and Cα-RMSD from native and
+unfolded starts, H-bond cooperativity at Tm, and melting-curve ΔG against 13 mini-proteins): "Then we do not care about
+it at all. This means ff3.3 is still on the way, run its validation after the training." For three days the 44-domain
+folded fraction (ours: Q above the all-atom 5th percentile, from the native, at T 0.8) had been treated as the
+folding outcome: ff3.3's epoch choice and gate, and the "folding drop" diagnosis of the DSE, all rested on it, and it
+exaggerates differences (ff3.2's +0.091 there was +0.018 in mdCATH TM). **Before a decision rests on a metric, check
+that it is one the paper being reproduced or the group reports; an in-house screen may flag a problem, but the
+validation (mdCATH TM, Peng's 32 arms, glpG) decides, and a run is not stopped or chosen on the screen alone.**
 
 ---
 

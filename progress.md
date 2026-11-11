@@ -1291,3 +1291,82 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   (replaced before any ff_2.0 data, the rule revised in the plan); the replica worker's first smoke test lost its
   output to a cleanup-order bug (fixed, smoke passed). Files: plan.md, findings.md, remote_jobs.md, progress.md;
   cluster `checks/ff33_cause_20261110/` (README), `checks/peng_trainer_search_20261110/`.
+* **11-10 16:20-16:55: the replica-resolved visit read** (not the owner, no cron; plan.md Phase 38 item 16, findings
+  1.42). Reopened midway2's socket (one Duo push). Reviewed `replica_worker.py` against the control's `main_worker`
+  (same temperatures, anneal, swaps, reweighting, DSE selection). Fixed `rep_read.py` before the readout ran: a protein
+  with no unfolded frames under a DSE variant had been dropped from the NSE sum too (backup `.bak_nanprot_20261110`;
+  functional check on the finished pickles, values not read). 50045068 (48 of 48) and 50045069 COMPLETED 16:42.
+  Verdict by the rule: no sampling choice tested is the difference; the scale balances at +0.018 [-0.034, +0.071].
+  Exploratory `rep_explore.txt`: the NSE grows steeply with the free replica's temperature. Read Peng's `Train(1).zip`
+  copies and the port: restraint form the same (struck); Peng's 2022 membrane copies keep the native out of the swaps,
+  ours, the port's and his 2019 soluble trainer do not (a weak candidate, untested); no archive of Peng's holds a DSE
+  path (six searched by content); the scale's rate is the port's 0.025 a step, Peng's unknown. A first pair of
+  zsh wait loops never ran their ssh (no word splitting of `$S`); replaced by a bash loop. Files: plan.md,
+  findings.md, remote_jobs.md, progress.md; cluster `checks/ff33_cause_20261110/` (README, `rep_explore.py`,
+  `rep_explore.txt`), `WATCH_STATUS.md` record line.
+* **11-10 17:00-18:15: three candidates for the scale's balance tested, none is it** (plan.md Phase 38 item 16,
+  findings 1.42). Searched Peng's archives by content: no DSE path anywhere. The native-out-of-swaps visit (50045830):
+  +0.070 [+0.012, +0.138], not the difference. Code review of the whole path (engine derivative, config, anneal,
+  exchange, integrator levels, contrast, Adam) found one undocumented departure from Peng's worker: it starts the
+  hottest free replica and the SARW from a random coil, ours from the native. Its visit (50046185): +0.053 [-0.001,
+  +0.120], not the difference. Built `ff21_coilstart` (the control's epoch 0 with that start; driver diff, moved
+  checkpoint, static test, `--test-only`), link 50046188 R from 18:11, panel `cs_00` by item 16 (b)'s rule about
+  08:00-10:00 11-11. Failures and fixes: shell quoting of inline scripts (moved to piped files); the static test's
+  comparison helper (string arrays, the command-line record). Files: plan.md, findings.md, remote_jobs.md, progress.md;
+  cluster `checks/coilstart_20261110/` (README), `checks/ff33_cause_20261110/`.
+* **11-10 18:15-18:25: the control at Jumper's learning rate** (plan.md Phase 38 item 16 (c)). Jumper's FF1 factor is
+  0.25 (`ConDiv_original.py` 539-546), which gives the SI's FF2 rates; ours and the port's is 0.5. Built
+  `ff21_jumperlr` (driver one constant from the control's; checkpoint moved with both Adam rate fields halved, the
+  rest checked equal), link 50046810 PD, panels `jl_00`, `jl_01` by the item's rule. A first mover run failed its own
+  check (the copied solver shared the source's object); fixed with a deep copy before the change.
+* **11-10 18:30-21:20: watch, the SI on held parameters, and a second code review.** Watcher on `ff21_coilstart` and
+  `ff21_jumperlr` (both healthy, step 3 at 20:15); a 2cnj srun launch failure was the trainer's designed relaunch,
+  so that line left the watcher's error patterns. The SI and main text train all parameters together, with no frozen
+  group or stage (findings 1.42). Second review of the training code (plan.md item 17): no new defect; the known
+  ledger gaps A29 and A30 are master's; the time step is the one protocol difference not yet measured on the balance
+  (a dt 0.015 visit proposed, not started). Files: plan.md, findings.md, progress.md; scratch copies of the cluster
+  code in the session scratchpad `review2/`.
+* **11-10 21:20-21:40: the time step's visit** (plan.md Phase 38 item 18, user: "yes. proceed to test it"). Rule
+  fixed in plan.md first; `checks/dt015_20261110/` built (worker = the dt 0.009 visit's with `time_step` 0.015 and a
+  C-N bond record; readout paired against the dt 0.009 visit), checked by diff, bond indexing on natives and a dry
+  run of the readout (reproduces +0.018, change 0); one fix before submission (the verdict reused a fresh bootstrap).
+  Submitted array 50050586 and readout 50050587; added to the watcher. Files: plan.md, remote_jobs.md, progress.md;
+  cluster `checks/dt015_20261110/` (README), `checks/coilstart_20261110/watch_state.sh`.
+* **11-10 22:45: the time step's visit read** (plan.md Phase 38 item 18). 48 of 48 ran 21:39-22:38; by the rule
+  it moves the balance toward 0.3 but is not the whole difference: +0.088 [+0.036, +0.151] against +0.018, change
+  +0.069 [+0.031, +0.110], through the NSE. Health: KE/1.5kT 1.013-1.022 (1.006 at 0.009), no replica destroyed,
+  C-N bonds to 2.15 A. Files: plan.md, findings.md, remote_jobs.md, progress.md.
+* **11-10 23:00: ff3.3 epoch 15 read** (plan.md Phase 38 item 14). `r33_15` (lambda 0.2) folds 0.608: level with
+  released ff2.1, +0.061 over `r33_13`, -0.098 under `p57_09`; shift -1.56. The scale stayed near -0.24 through
+  epochs 14-15 and falls again under lambda 0.3 (-0.276 at step 131). Files: plan.md, remote_jobs.md, progress.md.
+* **11-10 23:00-23:25: folded fraction dropped; ff3.3's validation armed** (user: "Then we do not care about it at
+  all ... run its validation after the training", after Peng's paper was found to use TM-score, RMSD, H-bond
+  cooperativity and melting-curve dG, no folded fraction). Plan item 14's 44-domain gate and epoch choice removed;
+  the validated checkpoint is step 160. Built `checks/ff33_validate_20261110/` from ff3.2's validation (no gate,
+  h added, `mdc_p57_09` beside); dry run passed `--test-only` on 38 jobs; hourly waiter 50052248 submits it at
+  step 160. midway2 login2's /project writes hung intermittently (a copy and two log writes arrived empty; redone and
+  md5-checked). Lesson findings 10.56; memory `group-folding-metrics` updated. Files: plan.md, findings.md,
+  remote_jobs.md, progress.md.
+* **11-10 23:30-00:00: does the folded-fraction drop matter in Peng's metrics?** (plan.md Phase 38 item 19; user: "the
+  only metric we care about are Peng's and Jumper's metrices ... drop it"). Rule fixed first: TM-score and Ca-RMSD on
+  the five 44-domain panels with trajectories, `r33_13` vs `p57_09` deciding. Built `checks/fold_vs_tm_20261110/`
+  (`--test-only` passed), submitted 50052608; added to the watcher with ff3.3's waiter. The two ff2.1 runs keep
+  going until it reads. Files: plan.md, remote_jobs.md, progress.md.
+* **11-11 00:00-00:15: the drop is real in Peng's metrics** (plan.md Phase 38 item 19, user: the drop "might be a real
+  defect in training"). From records: ff2.1 continued by our trainer at lambda 0.3 (`ff_2.1_ctrl38`) loses on Peng's
+  benchmark, native -0.066 and de novo -0.128 TM against released ff2.1 (which reproduces his FF2), below FF1; and
+  TM on mdCATH and the 44 domains. `fold_vs_tm` 50052608 cancelled as redundant (4 min run, partial outputs not
+  results). The two ff2.1 checks are now read in TM; their references `ff21_released_tr`, `c9_00_tr` submitted
+  (50052737-8). Files: plan.md, findings.md, remote_jobs.md, progress.md.
+* **11-11 00:50-01:00: TM references ran.** `ff21_released_tr`, `c9_00_tr` COMPLETED 00:51 (176 of 176, parameter files
+  md5-equal to the originals'). Submitted `tm_refs` 50053390 (the control's epoch-0 drop in TM and RMSD; caches both
+  for `cs_00`, `jl_00`, `jl_01`); watcher restarted with it. Files: plan.md, remote_jobs.md, progress.md.
+* **11-11 01:10: `tm_refs` read** (50053390, 9 min). The control's epoch-0 drop in Peng's and Jumper's metrics: mean
+  TM -0.038 [-0.047, -0.030] (42 of 44 lower), Ca-RMSD +0.45 A (40 of 44 higher). References cached for `cs_00`,
+  `jl_00`, `jl_01`. Files: plan.md, findings.md, remote_jobs.md, progress.md.
+* **11-11 01:15-02:00: constrained DSE designed and recorded** (plan.md Phase 38 item 20; user: "what can we do to
+  improve it?", "record this in md file, expect to run this on another computer tomorrow afternoon"). Wrote
+  `constrained_dse.md` (design, rule, build and checks; copy `checks/dsecon_20261111/DESIGN.md`); measured ff2.1's h
+  on the 48 training proteins (`h_target.py`: 0.145 [0.116, 0.179]); found the trainer's divergence files keep only
+  the combined contrast, so the worker must record the three H-bond sums. CLAUDE.md gains a "run the constrained DSE
+  test" entry. Files: constrained_dse.md, plan.md, CLAUDE.md, remote_jobs.md, progress.md.

@@ -192,6 +192,9 @@ bash "$UPSIDE_HOME/example/16.MARTINI/<workflow>.sh"
 **"resume GPU jobs":** a session asked to resume the GPU work starts at `plan.md` Phase 35 "Resume here" and follows
 its steps in order; its jobs are `remote_jobs.md` line 5.
 
+**"run the constrained DSE test":** a session asked to run it starts at `constrained_dse.md` "Resume here" and
+follows its steps in order; its jobs go into `remote_jobs.md`.
+
 **"continue upside3 progress":** a session asked to continue the Upside 3 work starts at `plan.md` Phase 24
 "Resume here" and follows its checklist in order; the method is `upside3.md` 4.2, the defect ledger
 `findings.md` 3.14.
