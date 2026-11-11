@@ -1921,6 +1921,22 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       it (-0.122, -0.255). Our trainer's DSE pushes the scale past ff2.1's own value, where Peng's 0.3 training left
       it: at ff2.1 the NSE pulls -47.68 and 0.3 DSE +104.65 on it (findings 1.17), so Peng's NSE pulled about twice
       ours there, or his DSE half. That balance on one scalar is the difference to find (item 16).
+    - [x] **Re-read in TM-score and Ca-RMSD** (user 11-11: explain the defect "using only metrics we were using";
+      the reading above is folded fraction alone). Job `reset_tm` (`checks/fold_vs_tm_20261110/reset_tm.sbatch`, after
+      `tm_bc`), the same panels, rule fixed now before the data, in mean TM-score paired over the 44 (Ca-RMSD beside):
+      a block carries the loss if putting it back (`r33_13_<block>57` against `r33_13`) raises mean TM with the 95%
+      interval wholly above 0; the scale's move alone costs native stability if `p57_09_bb33` against `p57_09` is
+      wholly under 0; the loss itself is `r33_13` against `p57_09`; ff2.0's edit is a cause if `ff20_released`
+      against `ff21_released_tr` is wholly under 0. `r33_13_bb57` against `p57_09` reported beside.
+      **Read 14:30 11-11 (`reset_tm.txt`): in TM the backbone burial scale is the one block that carries a resolved
+      part of the loss.** The loss: `r33_13` against `p57_09` -0.024 [-0.037, -0.014] (36 of 44 lower; Ca-RMSD +0.25
+      [+0.11, +0.43] A). Put back one at a time: the scale +0.014 [+0.005, +0.023] (Ca-RMSD -0.13 [-0.25, -0.04] A);
+      H-bond -0.000 [-0.008, +0.007], burial -0.005 [-0.013, +0.003], pair table +0.008 [-0.000, +0.018], rama
+      +0.002, sheet +0.004, none resolved. The scale's move alone costs native stability: `p57_09_bb33` against
+      `p57_09` -0.017 [-0.026, -0.008] (Ca-RMSD +0.19 [+0.07, +0.33] A). ff2.0's edit is not a cause:
+      `ff20_released` against `ff21_released_tr` -0.004 [-0.009, +0.001]. Beside: `r33_13_bb57` against `p57_09`
+      -0.011 [-0.020, -0.003], so the scale is about 60% of ff3.3's TM loss and the rest is spread over blocks
+      none of which resolves alone (the pair table nearest), as the folded-fraction read found but less wholly.
     - Which block carries the loss: `r33_13` with one file put back to `p57_09`'s, as `resets_c9_00.txt`
       (44-domain panel, dt 0.015, `paired_npz.py`), arms `r33_13_{bb,hb,env,rot,rama,sheet}57`, and beside them
       `p57_09_bb33` (`p57_09` with `r33_13`'s `bb_env.dat`). Rule fixed before the data: a block carries the loss
@@ -2019,7 +2035,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
         the native's Rg (above 1.2 x in 45 of 48), 0-11 at it. The scale balances at +0.053 [-0.001, +0.120], E_alpha
         +0.037, E_beta +0.035, as from the native start (+0.018, -0.008, +0.050); paired NSE -0.61 [-1.43, +0.19], DSE
         -2.07 [-8.01, +2.87], neither resolved.
-      - [ ] (b) `ff21_coilstart`: ff2.1 continued exactly as the control `ff21_ctrl_dt009` (its driver `8977d7f7`,
+      - [x] (b) `ff21_coilstart`: ff2.1 continued exactly as the control `ff21_ctrl_dt009` (its driver `8977d7f7`,
         files, minibatch order and initial Adam state, the checkpoint moved by run paths only), the start changed,
         for epoch 0, the 19 steps where the control fell from 0.615 to 0.390. Built 17:20 11-10 (static test passed);
         link 50046188 R from 18:11. Its epoch-0 checkpoint on the 44-domain panel (`cs_00`, dt 0.015, as `c9_00` and
@@ -2032,6 +2048,10 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
         (findings 1.37), so a level-with-ff2.1 result decides, and a partial one would need the control rerun on this
         engine (the user's call). Beside: the backbone burial scale and E_alpha at step 19 (control -0.404, -1.877;
         ff2.1 -0.301, -1.961). (a) predicts no fix: the scale's and the H-bond energies' pushes do not change.
+        **Read 10:35 11-11 (`checks/fold_vs_tm_20261110/tm_bc.txt`, 50061363): the start does not fix the drop.**
+        `cs_00` mean TM 0.638 against released ff2.1's 0.682, -0.044 [-0.058, -0.032] (41 of 44 lower), against
+        `c9_00_tr`'s 0.644, -0.005 [-0.017, +0.005] (22 / 22); Ca-RMSD +0.52 [+0.29, +0.82] A and +0.07 [-0.10, +0.27] A.
+        Scale -0.391, E_alpha -1.892 at step 19.
     - [ ] **(c) `ff21_jumperlr`: the control at Jumper's learning rate** (user 11-10: "try Jumper's learning rate. He
       might just use the same learning rate as Jumper"; files in `checks/jumperlr_20261110/`, README; built 18:20
       11-10, the rates checked field by field in `build_jumperlr.log`; first link 50046810). Jumper's FF1
@@ -2048,7 +2068,12 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       FF2's first epoch; (2) at `jl_01`, against `c9_00` containing 0 means the rate sets only the speed and does not
       explain ff2.1 under lambda 0.3; wholly above 0 and not wholly under ff2.1 means it changes the outcome, not
       only the speed; wholly above 0 but wholly under ff2.1, partial. Same engine caveat as (b). Beside: the scale
-      and E_alpha at 19 and 38. A prior lead against it: the SI-rate twin `ff30_gdepth_si` (every group but rot at
+      and E_alpha at 19 and 38. **Part (1) read 10:35 11-11 (`tm_bc.txt`): Jumper's rate does not hold ff2.1
+      through the first epoch.** `jl_00` mean TM 0.653 against 0.682, -0.029 [-0.039, -0.019] (36 of 44 lower);
+      beside, against `c9_00_tr` +0.010 [+0.000, +0.019] (p 0.039), Ca-RMSD -0.23 [-0.44, -0.05] A. Its scale is the
+      control's (-0.403 against -0.404) with less TM lost, while E_alpha moved 0.053 against the control's 0.084: at
+      the ff2.1 start the scale alone is not the loss, as `resets_c9_00.txt` found (findings 1.37). Part (2) at
+      `jl_01` (step 38). A prior lead against it: the SI-rate twin `ff30_gdepth_si` (every group but rot at
       the SI's rate, from ff3.0's map) lost as much folding as its port-rate twin (findings 1.37, `ds_02` 0.406).
     - The fixed-point test, in place of that epoch (user 11-10: "is there any faster test?"): one ConDiv step
       without the parameter update, i.e. the control's own worker (`ff21_ctrl_dt009/run_output/ConDiv.py`
@@ -2135,7 +2160,91 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     dual ascent from 0 (eta 0.3, 5-step window); first test one epoch of ff2.1 (`ff21_dsecon`, panel `dc_00`) against
     `ff21_released_tr` and `c9_00_tr` in TM, rule fixed there.
     - [x] Designed and recorded 02:00 11-11; ff2.1's h measured (mean 0.145 [0.116, 0.179], 48 proteins).
-    - [ ] Build, checks, first link (the other computer, 11-11 afternoon); read `dc_00` at step 19.
+    - [x] **Rule amended 11-11 before any data** (user: "double check that it is not picking results", then "Yes"):
+      the first test can pass with the constraint never binding (it starts at ff2.1, on its own h), so a binding
+      criterion (lambda > 0 on at least 5 of steps 5-18) decides whether the constraint was tested; the h bound is
+      the controller's check, not evidence; the branches are exhaustive and ordered; `dc_00` is a screen; the
+      follow-up's rule (ff3.2 from step 80 to 160 under the rule, judged on mdCATH TM, Peng's TM and h against
+      released ff2.1, h_target on ff2.1's files) is written in `constrained_dse.md`; eta kept at 0.3.
+    - [x] Built and checked 11-11 (user: "go ahead and implement and test repaired training";
+      `checks/dsecon_20261111/`, README): the driver (`3150a435`) differs from `8977d7f7` by the rule and the h
+      record alone; the checkpoint moved 1,833 run paths and added lambda 0 and an empty h history, nothing else;
+      `static_test.log`: the driver's h on the 48 proteins 0.1448 (the target's), the update, the record, the 16
+      combinations of the rule and `dc_read.py` end to end on real files; pyflakes clean. The h sum is taken in
+      float64, as `h_target.py` takes it (a float32 sum differed by 5e-7, caught by the check).
+    - [ ] First link submitted 10:20 11-11 (remote_jobs.md); read `dc_read.txt` at step 19.
+    - [ ] **The follow-up `ff32_dsecon57`, built now, started by a gate** (user 11-11: Peng will try to find his
+      code, no guarantee; "Do our planned debug assuming he cannot find it"). ff3.2's `ff32_pcd57` step-80
+      checkpoint, driver `c0277e8d` with the screen's lambda rule (h_target read from `run_output/h_target.txt`),
+      steps 80-160 as `ff33_ramp57`, panels `dc32_EE` every second epoch as ff3.3's; rule in `constrained_dse.md`
+      "After the test". Files `checks/dsecon_k32_20261111/`. Steps:
+      - [x] target visit: released ff2.1 by the new driver's worker on the 114 proteins of minibatches 0-1, native
+        start, lambda 0; readout writes `h_target.txt` (mean, bootstrap interval; item 13's 24 beside). **Read 13:34
+        11-11: h_target 0.1394 [0.1189, 0.1630]**, 114 of 114 with an unfolded ensemble (median 0.100, range 0.033
+        to 0.747; minibatches 0.141 and 0.138); item 13's visit 0.137 on its 24 beside;
+      - [x] built 11:55 11-11 (`build_dsecon57.log`): driver `4fa75139` differs from `c0277e8d` by the rule and the h
+        record alone (78 diff lines, the screen's edits), checkpoint moved (1,836 paths, lambda 0, empty history,
+        epoch 10 minibatch 0), 456 persisted frames byte-equal; `static_test_k32.log` passed (h on the 48 proteins
+        0.1448, the update at two targets, the record, the protocol); pyflakes clean; `--test-only` of every job;
+      - [x] gate 50063731 (pass 1, hourly to 48): `dc_read.txt`'s VERDICT passes / partial / untested with TM CLASS
+        level -> first link to step 96 and the validation waiter; any other -> nothing, recorded. `dc_read.py` now
+        prints the TM CLASS line (the screen's checks rerun, passed). The first gate (50063673) FAILED on its first
+        pass: `set -eo pipefail` with `grep` on the not yet written `dc_read.txt` (findings 10.57); fixed and tested
+        end to end under its own shell options, 13 cases as the rule;
+      - [x] validation at 160 built as `ff33_validate_20261110` (`validate/`, `make_validate.py`; tag `dc32_19`, staged as
+        `ff_dsecon_dc32_19`; TM against released ff2.1 with `mdc_p57_09` and `mdc_r33_19` beside); dry run with
+        `r33_17` standing in passed `--test-only` on 38 jobs and created nothing.
+
+21. [x] **The Upside that trained FF2 against ours** (user 11-11: "did you test the NSE+lambda*DSE using upside3? Since
+    Peng were using upside2, you are suppose to use the upside version at that time to test it"; then "run the test that
+    cost least amount of time"). Every Phase 38 measurement ran on `$P`'s Upside 2 (findings 9v); Peng's FF2-era engine
+    is `share/pengxd/upside-v1.96` (2020-09) with `software/upside-ff2.0` (2021-08) beside it, Python 2 from
+    `software/Anaconda2-2019.10`. Test A, static parity (`checks/engine_parity_20261111/`): 1hyp, 3ffy, 1kng (the
+    control's inputs, released ff2.1, the ConDiv worker's configuration options); each toolchain writes the
+    configuration, each engine evaluates it at the native and at the native expanded 1.15x about its centroid: total
+    energy, forces, every node's output, and the parameter derivatives ConDiv reads (backbone burial, H-bond, burial,
+    side-chain pair, coverage). Rule, fixed before the data: all equal within float32 round-off (relative 1e-5) means
+    the static inputs to NSE and DSE are Peng's, and a different balance could only come from the dynamics (test B,
+    the lambda* visit on his engine); a term beyond round-off is named and put on the writer (configurations differ)
+    or the engine (same configuration, different value), and is test B's first suspect.
+    **Read 12:55 11-11 (`eval_diff.txt`, `cfg_diff.txt`): the static inputs to the balance are Peng's.** Our toolchain
+    against Peng's 2021 one (`upside-ff2.0`, which shipped ff2.1): the backbone burial scale's derivative (rel 1e-7), the
+    H-bond energies' (3e-7), burial (7e-7), coverage (1.5e-4) and total energy (3e-6) equal on all three proteins at
+    both points. Beyond round-off, both ours and deliberate, by our own builds before each patch: the side-chain pair
+    derivatives (54-100%), all of it the angular-gradient fix of 10-18 (findings 3.12; before it, 9e-6), and forces and
+    side-chain derivatives at 3-4e-4 in 3ffy only, the BP stopping fix of 09-30 (before it, 1.2e-5). Peng's 2020 and
+    2021 engines agree with each other (2e-5). Peng's 2020 writer (`upside-v1.96`) places the side-chain CB
+    differently (placement data up to 0.498), which moves side-chain burial by 5-18% and the total energy by 0.5-1.3%,
+    but neither the backbone burial nor the H-bond derivatives; the 2021 writer matches ours, as ff2.1's burial refit
+    of Dec 2020-Jan 2021 (findings 9v) would need. Cross runs fail at engine construction (node names changed), so
+    each engine is read on its own toolchain's configuration. By the rule, no static term that sets lambda* differs;
+    what is left for test B is the dynamics (integrator and thermostat code differ, `main.cpp` 779 lines,
+    `thermostat.cpp` 34), and the 2020 CB placement for anything trained on ff_2.0's writer.
+    - [ ] Test B in Python 3 (user 11-11: "can we run test B with python3?"): feasible, checked 13:10 11-11 in
+      `checks/engine_parity_20261111/` (`py3peng/`, `dyn/`). Our Python 3 `upside_engine.py` on Peng's 2021
+      `libupside.so` (with only his HDF5 1.10 library added to the path) reproduces his Python 2 evaluation bitwise,
+      PyTables in the same process; his binary runs a two-replica exchange (exit 0, KE/1.5kT 1.04, 1.00, finite);
+      files edited by our PyTables (HDF5 1.12) are read by his binary and library. Plan: `replica_worker.py` with
+      Peng's 2021 toolchain in three places only, the configuration by his Python 2 writer as a subprocess (the
+      restrained native by its own `--restraint-group` at 1/3^2), the simulation by his binary with his
+      `run_upside` flags, the derivatives by his library; ensembles, selection and the replicas pickle unchanged,
+      so `rep_read.py` reads lambda* as for ours.
+    - [ ] **Test B built 11-11 after the trading session** (user: "do it now, record in md file so I can resume it from
+      another computer"). Files `checks/engine_parity_20261111/testB/` (README): `replica_worker_peng.py` written from
+      `replica_worker.py` by `make_worker_peng.py` (asserted replacements); the configuration by Peng's own Python 2
+      `run_upside.upside_config` (`peng_config.py`, his kwargs; the restrained native by a second call with his
+      `restraint_groups` at 1/3^2); the replicas on his binary through our `run_upside` with `obj_dir` his (the two
+      functions differ by a print, diffed); energies and derivatives by his library (`py3peng/`). Released ff2.1
+      (`$P/parameters/ff_2.1`), the control's minibatches 0-1, 48 proteins, 8000 tu, as item 16's visit.
+      **Rule, fixed before the data:** Peng's lambda* on the backbone burial scale (the trainer's NSE mix and pooled
+      DSE), 95% bootstrap over the 48: wholly under 0.3, the engine is not the difference (left: the visit's start and
+      anneal, its length, the scale's rate, or FF2 stopping short of its fixed point); wholly above 0.3, the engine
+      moves the balance past 0.3; containing 0.3 and not ours' +0.018, the engine is the difference; containing both,
+      unresolved. H-bond energies' lambda*, the paired NSE and DSE (Peng - ours), KE/1.5kT, Ca-RMSD and Rg are beside
+      and decide nothing (`peng_vs_ours.py` -> `testB_read.txt`).
+      Steps: smoke (protein 0, 300 tu, both engines, `smoke_check.txt`) -> array 0-47 (afterok) -> readout (afterany);
+      job ids in `remote_jobs.md`. Resume: read `smoke_check.txt` (Peng's binary named, fields finite, KE/1.5kT and
+      restrained Ca-RMSD beside ours), then `testB_read.txt`'s VERDICT; record it here and in findings 9v.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the

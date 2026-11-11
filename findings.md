@@ -2192,18 +2192,30 @@ the DSE first" (plan.md Phase 38 item 13). Read-only on existing files; scripts 
 - Beside, deciding nothing: under persistent chains the T 1.1 replica compacts (0.919 of its own epoch 0 at epoch 9,
   `rg_check_ff32_pcd57.txt`), with the DSE off and the force field moving.
 
-### 1.42 One scalar carries the DSE's folding loss, and ff2.1's burial edit is not why the trainer moves it (2026-11-10)
+### 1.42 One scalar carries most of ff3.3's folding loss (from ff2.1 the loss is spread), and ff2.1's burial edit is not
+why the trainer moves it (2026-11-10; re-read in TM 11-11)
 
 User 11-10: "Assume DSE is not the problem ... find other cause", then "since ff2.1 further trained also has this sharp
 drop, and we are sure DSE=0.3 in ff2.1, there has to be something else". Files `checks/ff33_cause_20261110/` (README);
 plan.md Phase 38 items 15-16.
-- **The backbone burial scale alone carries ff3.3's loss.** With a negative scale the term rewards backbone that is
-  neither side-chain covered nor H-bonded (1.41), so a more negative scale makes every state with exposed backbone
-  cheaper, the unfolded state most (14.36 of ff3.3's -20.29 E_up unfolded shift at epoch 13). `r33_13` (0.547) with
-  `p57_09`'s `bb_env.dat` folds 0.682 (+0.135 [+0.086, +0.189]), level with `p57_09`; no other file put back is
-  resolved (side chain +0.031 [-0.001, +0.067]); `p57_09` with `r33_13`'s scale folds 0.580. The scale across runs:
+- **The backbone burial scale carries most of ff3.3's loss, and is the one block resolved** (TM, `reset_tm.txt`
+  11-11; the folded-fraction read of 11-10 had it carrying all). With a negative scale the term rewards backbone that
+  is neither side-chain covered nor H-bonded (1.41), so a more negative scale makes every state with exposed backbone
+  cheaper, the unfolded state most (14.36 of ff3.3's -20.29 E_up unfolded shift at epoch 13). The loss, `r33_13`
+  against `p57_09`: mean TM -0.024 [-0.037, -0.014], Ca-RMSD +0.25 [+0.11, +0.43] A. Putting `p57_09`'s `bb_env.dat`
+  back raises `r33_13` +0.014 [+0.005, +0.023] (about 60%; still -0.011 [-0.020, -0.003] under `p57_09`); no other
+  file put back is resolved (pair table +0.008 [-0.000, +0.018], the rest within +-0.005); `p57_09` with `r33_13`'s
+  scale loses -0.017 [-0.026, -0.008]. The scale across runs:
   ff2.1 -0.301; the control (DSE 0.3) -0.404 at epoch 0 (folds 0.390; its reset +0.081); DSE off -0.161 to -0.018;
   ff3.3 -0.122, -0.255. The resume of ff3.3 is bitwise clean (`resume_eq.txt`).
+- **From ff2.1 the scale is not the whole loss** (read 11-11 in TM, `fold_vs_tm_20261110/tm_bc.txt`). The scale
+  alone carries the loss only where ff3.3 continues ff3.2; continuing ff2.1, the control's resets (1.37,
+  `resets_c9_00.txt`, folded fraction, trajectories deleted) split it over the side-chain table, the backbone burial
+  and the H-bond file. In TM, Jumper's half rate (`jl_00`) reaches the control's scale (-0.403 against -0.404) and
+  loses less (-0.029 [-0.039, -0.019] against released ff2.1, the control -0.038), its E_alpha moved 0.053 against
+  0.084. The coil start (`cs_00`) loses as the control does (-0.044 [-0.058, -0.032]; against `c9_00_tr` -0.005
+  [-0.017, +0.005]). Both DSE-driven groups balance far under 0.3 at ff2.1 (the scale +0.018; E_alpha, E_beta, dhb
+  between -0.16 and +0.06), so 'the DSE's weight' describes the ff2.1 loss better than 'the burial scale'.
 - **Not ff2.1's undocumented burial edit.** ff_2.0 and ff_2.1 differ only in `environment.h5` (with `coverage_param`,
   untrained here; both added in Peng's commit `4ad9c768`, 2022-02-27). ConDiv from ff2.1 moves burial back toward
   ff_2.0 (cosine +0.39 to +0.46, `undo_edit.txt`), but ff_2.0 folds level with ff2.1 (0.610 against 0.615) and, at the
@@ -5011,6 +5023,46 @@ files carry Windows download markers, and neither its swap file, its notebook, `
 whenever the last free replica's final energy exceeded 1000. His 101-step run ended with the backbone scale flipped
 from -0.30 to +0.12; its negative PRO burial sharpness is ff2.1's own value (-0.28), not his drift.
 
+**The Upside that trained FF2, and our engine against it** (11-11, user: "you are suppose to use the upside version at
+that time to test it"). Every NSE/DSE measurement and training of Phase 38 ran on `$P`'s engine (every run's `env.sh`:
+`UPSIDE_HOME=$P`, binary `7136d99a`): our Upside 2 working copy (git `d69fbc8`, 2026-08) with the BP stopping fix
+(09-30), the H-bond class offsets (10-02, empty for ff2.1) and the angular-gradient fix (10-18). None ran on Upside 3,
+and none on Peng's engine. Peng's FF2-era engine is readable: `/project2/trsosnic/share/pengxd/upside-v1.96` (tree
+2020-09-25, binary 2020-10-28, the day before ff_2.0's earliest copy) and `/project2/trsosnic/software/upside-ff2.0`
+(2021-08; `hbond.cpp`, `rotamer.cpp`, `thermostat.cpp`, `main.cpp`, `rama_map_pot.cpp` byte-equal to v1.96's, only
+`environment.cpp` changed), with the group's Python 2 (`/project2/trsosnic/software/Anaconda2-2019.10`, 2.7.16, numpy
+1.16.5, PyTables 3.5.2); with `LD_LIBRARY_PATH` on that Anaconda's `lib` every library of v1.96's `libupside.so`
+resolves. Against `$P`: 18 C++ files differ (`main.cpp` 779 lines, `hbond.cpp` 304, `environment.cpp` 179 mostly added
+interaction types, `rama_map_pot.cpp` 88, `thermostat.cpp` 34, `rotamer.cpp` 24), the config writer is Python 2 (3,418
+lines differ). Checked equal: the backbone burial term's formula and the replica exchange's scheduling (one swap set
+per attempt, alternating, in both; Peng's 2022 release note's change predates v1.96). Not yet checked: energies, forces
+and the ConDiv parameter derivatives of one configuration under both; **checked 11-11 (plan.md item 21, test A,
+`checks/engine_parity_20261111/`): equal.** On 1hyp, 3ffy, 1kng at the native and an expanded native, our toolchain
+and Peng's 2021 one agree in total energy (3e-6), the backbone burial scale's derivative (1e-7), the H-bond
+energies' (3e-7), burial (7e-7) and coverage (1.5e-4); our build before its three patches agrees in everything,
+side-chain pair derivatives and forces included (9e-6, 3e-5). The two differences are our deliberate fixes: the
+angular-gradient fix (side-chain pair derivatives, 54-100%) and the BP stopping fix (3-4e-4, one protein). Peng's
+2020 writer places the CB differently (side-chain burial 5-18%, energy 0.5-1.3%), not the backbone burial or H-bond
+terms. So the balance lambda* ~ 0.02 is not a static artefact of our engine. **Peng's 2021 `ff_2.1` is not the released one**:
+`software/upside-ff2.0/parameters/ff_2.1` (2021-10-20) differs from the repository's ff_2.1 (commit `4ad9c768`,
+2022-02) in `environment.h5` (`center` up to 1.10; `coverage_param` up to 0.4, Peng's equal to ff_2.0's) and
+`sidechain.h5`; `bb_env.dat`, `hbond.h5`, `sheet`, `rama.dat`, `rama_reference.pkl` are byte-equal.
+
+**No FF2 training output survives where we can read** (11-11, user: "check on midway" for output to compute lambda*
+in Peng's normalization; `/project/trsosnic/yinhan/checks/peng_output_search_20261111/`, README). `output_search.sh`
+(50063211) over `/project2`, `/project`, `/beagle3` (our trees pruned) and the same find on `/cds3` from the login node:
+no ConDiv step directory, checkpoint or divergence file but Baxa's 2016-17 complex runs
+(`/cds3/trsosnic/project_old/condiv_collab2`, no DSE), which the script also finds as its positive control. What
+survives is the path's parameter sets: `upside_ff/ff_1.5` (2019-05), `upside_ff/ff_2.0beta` (2019-11, one H-bond value,
+no backbone term), ff_2.0 in its released form by 2020-09-26 (Tegan's copies, md5-equal), the burial refit that made
+ff2.1 (`pengxd/Data/training_set2/*/up_env2`, 2020-12-30 to 2021-01-12: side-chain coverage cutoff scanned -0.4 to 0.3
+and burial levels read from trajectories, so ff2.1's `environment.h5` is a refit from statistics after ConDiv), and
+`pengxd/source/upside2/parameters/ff_2.2` (by 2022-01, with `membrane.h5`; provenance undocumented): every trained
+group moved from ff2.1, the backbone scale -0.301 to -0.246 (against our trainer's push toward -0.40), E_alpha
+-1.961 to -1.831, E_beta -1.946 to -1.896, E_other -1.769 to -1.668, dhb -0.406 to -0.524, sheet up to 0.71. If ff_2.2
+is FF2 ConDiv continued from ff2.1, Peng's DSE pulled the scale far less against his NSE than ours does; its making is
+Peng's to tell. `/home/pengxd` and `/scratch/midway2/pengxd` stay owner-only.
+
 Engine limits shared by ff2.1's training: `BackboneSigmoidCoupling::get_param_deriv` computes only the `scale`
 derivative (the other three are commented out, in master too) and `HBondEnergy::get_param_deriv` only entries 0-3, so
 ff2.1's workflow never trained the backbone term's center, sharpness and hbond weight, nor the eight H-bond rama
@@ -5690,6 +5742,20 @@ that it is one the paper being reproduced or the group reports; an in-house scre
 validation (mdCATH TM, Peng's 32 arms, glpG) decides, and a run is not stopped or chosen on the screen alone.**
 
 ---
+
+### 10.57 A waiter's "not yet" case must survive its own shell options; a job id must be checked before it is used (2026-11-11)
+
+The constrained DSE's gate (`checks/dsecon_k32_20261111/gate.sbatch`) FAILED on its first pass in 2 s with exit 2:
+under `set -eo pipefail`, `V=$(grep ... dc_read.txt | tail -1)` on a file not yet written ends the script, in the one
+case a waiter exists for. Its parsing had been tested as a shell function without those options, which cannot see
+this. **Test a waiter as the scheduler runs it: the script itself, its own `set` options, fake `sbatch` and `squeue` on
+`PATH`, temporary paths by `sed`, every case including the missing file** (13 cases there). Make each absent-input case
+an explicit test (`[ -f ]`, `grep -q` in an `if`) rather than a pipeline whose status decides, and read `squeue` into a
+variable before `grep -q` on it (an early `grep -q` exit can SIGPIPE the writer and, under `pipefail`, turn a match
+into failure). The same hour, a command built the gate's next-pass id from that empty log: the empty variable gave
+`squeue -j` (every user's jobs) and `scancel` (refused, "No job identification provided"; nothing cancelled).
+**Before `scancel`, check the id is non-empty and that `squeue -j <id> -h -o '%u %j %T'` names our own job of the
+expected name**, as the replacement did.
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 

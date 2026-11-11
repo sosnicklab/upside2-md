@@ -1370,3 +1370,34 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   on the 48 training proteins (`h_target.py`: 0.145 [0.116, 0.179]); found the trainer's divergence files keep only
   the combined contrast, so the worker must record the three H-bond sums. CLAUDE.md gains a "run the constrained DSE
   test" entry. Files: constrained_dse.md, plan.md, CLAUDE.md, remote_jobs.md, progress.md.
+* **11-11 09:45-10:25: status pass, TM read submitted, constrained DSE amended, built and submitted** (user: "show me
+  remote job status", "Proceed with step 1", "double check that it is not picking results", "Yes, and go ahead and
+  implement and test repaired training"). Every job since 22:00 COMPLETED; `cs_00` 0.418 and `jl_00` 0.464 folded
+  (not read); `tm_bc` 50061363 reads both in TM (item 16 (b), (c)(1)), `r33_17` beside. The constrained DSE's rule
+  amended before any data (binding criterion, controller check, exhaustive branches, screen, follow-up rule); built
+  in `checks/dsecon_20261111/` (driver `3150a435`), every check passed after one fix (h summed in float64, as the
+  target); first link 50061538 submitted. Files: constrained_dse.md (+ cluster `DESIGN.md`), plan.md items 20,
+  remote_jobs.md, progress.md.
+* **11-11 11:45-12:20: the constrained DSE's follow-up built and gated** (user: Peng asked for his code, no guarantee;
+  "Do our planned debug assuming he cannot find it"). Searched midway for Peng's FF2 training output first (none
+  readable; findings 9v). Built `ff32_dsecon57` (ff3.2 from step 80 under the constraint) in
+  `checks/dsecon_k32_20261111/` as ff3.3 was built; checks passed; target visit 50063663 (114 proteins, released ff2.1)
+  with readout 50063672; gate 50063731 starts the run if the screen allows; the validation at 160 generated from
+  ff3.3's and dry-run (38 jobs). Faults found and fixed before they cost anything: a `r33_19` rename that would have
+  compared the follow-up with itself (caught by the diff), the first gate dying under `set -eo pipefail`
+  (findings 10.57). `dc_read.py` prints the TM class. Files: constrained_dse.md, plan.md item 20, findings 9v and
+  10.57, remote_jobs.md, memory.
+* **11-11 12:20-13:00: engine parity, test A** (user: "use the upside version at that time to test it", then "run the
+  test that cost least amount of time"; plan.md item 21). Found Peng's FF2-era engines (`upside-v1.96` 2020-09,
+  `upside-ff2.0` 2021-08) and Python 2 env; wrote the ConDiv configuration with each toolchain for 1hyp, 3ffy, 1kng;
+  evaluated each with each engine. The backbone burial and H-bond derivatives that set lambda* are Peng's to 1e-7;
+  the only differences are our two deliberate engine fixes (confirmed with our pre-patch builds) and Peng's 2020 CB
+  placement. Files: `checks/engine_parity_20261111/`, plan.md item 21, findings 9v.
+* **11-11 14:15-14:40: test B built and submitted; this morning's results read** (user, after the trading session: "do
+  it now, record in md file so I can resume it from another computer"). Test B (plan.md item 21, rule fixed before
+  the data): `replica_worker_peng.py` generated from item 16's worker with Peng's 2021 writer (his Python 2
+  `run_upside.upside_config`), binary (his and our `run_upside` differ by a print) and library; smoke 50066492 ->
+  array 50066493 -> readout 50066494. Read: the follow-up's target h 0.1394 [0.1189, 0.1630]; item 15's reset tests in
+  TM (the backbone burial scale the one resolved block, +0.014 of ff3.3's -0.024). Submitted `tm_jl01` for item 16
+  (c) part (2). Files: `checks/engine_parity_20261111/testB/`, `checks/fold_vs_tm_20261110/tm_jl01.sbatch`, plan.md
+  items 15, 20, 21, remote_jobs.md.

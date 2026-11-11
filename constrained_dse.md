@@ -2,20 +2,26 @@
 
 Repo plan.md Phase 38 item 20. User 11-11: "so let's say this is a design issue on training framework, what can we do
 to improve it?", then "record this in md file, expect to run this on another computer tomorrow afternoon". This file
-is the design and the run book; job ids go only into `remote_jobs.md`.
+is the design and the run book; job ids go only into `remote_jobs.md`. Amended 11-11 before any data, after a
+check that the design does not pick its result (user: "double check that it is not picking results", then "Yes"):
+the rule's branches are exhaustive and ordered, a binding criterion decides whether the constraint was tested at all,
+the h condition is the controller's check rather than evidence, `dc_00` is a screen, and the follow-up's rule is
+written here before it runs.
 
-## Resume here (the other computer, 11-11 afternoon)
+## Resume here (state 11-11 10:20)
 
-1. Read this file, then `remote_jobs.md` "Resume here" for what is running (ff3.3's last epochs and its validation
-   waiter, the two ff2.1 checks `ff21_coilstart` and `ff21_jumperlr` and their TM reads). This Mac's watcher is a
-   background loop of the session that wrote this file; it ends with that session, so start your own watch if the
-   user asks for one.
-2. Open the midway2 socket once (`expect scratchpad/mdw2_master.exp`, one Duo push, never in a loop).
-3. Build the test run as in "The test run" below, in `/project/trsosnic/yinhan/checks/dsecon_20261111/` (exists,
-   holding a copy of this file as `DESIGN.md`).
-4. Run the checks before submission (no test job), then submit the first link and record it in `remote_jobs.md`.
-5. At step 19, read the panel `dc_00` by the rule below, in TM-score and Ca-RMSD only (the folded fraction is not read,
-   user 11-10).
+1. **Built, checked and submitted 11-11** (user: "go ahead and implement and test repaired training"), in
+   `/project/trsosnic/yinhan/checks/dsecon_20261111/` (README; this file copied there as `DESIGN.md`, the version
+   before the amendments as `DESIGN.md.bak_pre_amend_20261111`). Run `$P/training/ff21_dsecon`, driver md5
+   `3150a435`, first link to step 19 in `remote_jobs.md`. The checks (`build_dsecon.log`, `static_test.log`) passed.
+2. Per step, the link log's `constraint h <= 0.145:` line and the step directory's `constraint.txt` carry lambda and h.
+3. At step 19 `after_training.sbatch` submits the panel `dc_00` and `dc_read.sbatch`; read `dc_read.txt`'s VERDICT
+   by the rule below, in TM-score and Ca-RMSD only (the folded fraction is not read, user 11-10).
+4. **The follow-up is built and gated** (user 11-11: "Do our planned debug assuming he cannot find it"), in
+   `/project/trsosnic/yinhan/checks/dsecon_k32_20261111/` (README): run `$P/training/ff32_dsecon57` (driver `4fa75139`),
+   its target visit (writes `run_output/h_target.txt`), the gate that reads `dc_read.txt` and starts the run with its
+   validation waiter if the rule allows, and the validation at step 160 (`validate/`, dry run passed). Job ids in
+   `remote_jobs.md`. If the gate stops, it records why in its `submitted.log`: report the screen's verdict to the user.
 
 ## Why: the measured problem
 
@@ -77,14 +83,21 @@ sets the next step's weight
 
     lambda_next = max(0, lambda + eta * (mean of the last 5 steps' h - h_target))
 
-- lambda_0 = 0 (constraint first; the NSE acts alone until h exceeds the target).
-- eta = 0.3 per unit h per step, fixed before the run: an excess of 0.05 (about half ff3.2's measured excess) raises
-  lambda by about 0.3 over one epoch of 19 steps, and the window's noise (per-protein spread about 0.12, so about 0.011
-  over 120 protein visits) moves it by about 0.003 a step. No variant of eta or the window is tried on any outcome.
+- lambda_0 = 0 (constraint first; the NSE acts alone until h exceeds the target). Until 5 steps exist the window
+  is the steps there are. A step with no protein holding an unfolded ensemble has no h: lambda is left unchanged,
+  and that step has no DSE term anyway.
+- eta = 0.3 per unit h per step, sized by signal against noise: an excess of 0.05 (about half ff3.2's measured
+  excess) moves lambda by 0.015 a step, while the window's noise (per-protein spread about 0.12, so about 0.011 over
+  120 protein visits) moves it by about 0.003. A sustained excess of 0.05 therefore takes lambda to about 0.3 within
+  an epoch, past the measured balance at ff2.1 (0.02-0.09), so a run can overshoot before h responds; the trace is
+  read with the verdict for that reason. eta was kept at 0.3 when the rule was amended (11-11, before any data). No
+  variant of eta or the window is tried on any outcome.
 - No upper cap on lambda (no arbitrary caps, CLAUDE.md); the max(0, .) is the KKT sign condition, not a guard.
 - The driver writes the step's lambda into the step directory (`dse_weight.txt`) before it launches the workers, and
   each worker reads it there, as `ConDiv_ramp57.py`'s `dse_weight_at` reads its schedule; each divergence file keeps
-  its weight, its h and its three S values.
+  its weight, its h and its three S values. After the update the driver writes `constraint.txt` in the step
+  directory (the weight it used, the step's h and its protein count, the window's h, the next weight), the record
+  the readout reads.
 
 ### What stays the same
 
@@ -106,8 +119,9 @@ epoch 0) is the rule. One epoch, steps 0-19, `$P/training/ff21_dsecon`.
 - `move_ckpt_ctrl.py` (copy from coilstart): the control's initial checkpoint into `ff21_dsecon`, run paths only, with
   lambda 0 and an empty h history added.
 - `build_dsecon.sh` and `after_training_ff21_dsecon.sbatch` (copy and edit coilstart's): at step 19, panel `dc_00`
-  (44 domains, dt 0.015, trajectories kept) and a TM read: `tm_panel.py domains runs dc_00 <ref> <C>/tm_runs "" 10 26`
-  from `ff3_selection/` with C = `checks/fold_vs_tm_20261110` (both references cached there), and `panel_rmsd.py`.
+  (44 domains, dt 0.015, trajectories kept) and `dc_read.sbatch`: `tm_panel.py domains runs dc_00 <ref> <C>/tm_runs ""
+  10 <n>` from `ff3_selection/` with C = `checks/fold_vs_tm_20261110` (both references cached there), `panel_rmsd.py`,
+  then `dc_read.py`, which applies the rule below mechanically and writes `dc_read.txt` ending in its VERDICT line.
 
 ### Checks before submission (no test job; findings 10.16)
 
@@ -117,20 +131,43 @@ epoch 0) is the rule. One epoch, steps 0-19, `$P/training/ff21_dsecon`.
 - The update function on a made-up h series: lambda stays 0 while the window is under 0.145; rises by 0.3 x excess a
   step above it; returns to 0, never below.
 - The moved checkpoint equals the control's but for paths and the two new fields; `--test-only` of the first link.
+- `dc_read.py`'s rule on every combination of the three tests (synthetic intervals and traces), and one dry run on
+  real files with `c9_00_tr` standing in for `dc_00`.
 
 ### Rule, fixed before the data (TM-score and Ca-RMSD only)
 
-At step 19, `dc_00` paired over the 44 domains:
-- **Passes**: mean TM against `ff21_released_tr` not wholly under 0, and the last 5 steps' mean h at most 0.179
-  (ff2.1's upper 95% bound). The constrained objective keeps ff2.1's native stability and its unfolded state.
-- **Partial**: mean TM wholly above `c9_00_tr` but wholly under `ff21_released_tr`: the rule removes part of the loss.
-- **Fails**: mean TM not wholly above `c9_00_tr`: the weight is not where the loss comes from; the search turns to the
-  NSE side or a code defect.
-- Reported beside, deciding nothing: Ca-RMSD for each pair, lambda and h at every step, the backbone burial scale per
-  step (the control's moved -0.301 to -0.404 by step 19).
-- **Read the lambda trace with the verdict.** If lambda stays 0 for all 19 steps, the run is the control with the DSE
-  off and h within ff2.1's level: a pass then says the DSE at 0.3 was pressure ff2.1 did not need over one epoch, and
-  the constraint itself is first tested where it binds, from ff3.2 (next section).
+At step 19, `dc_00` paired over the 44 domains, in mean TM-score: A = `dc_00` - `ff21_released_tr` and B = `dc_00` -
+`c9_00_tr`, each with its 95% bootstrap interval. Steps are numbered 0-18 by minibatch; w_k is the weight step k used.
+`dc_read.py` applies the three tests in order and prints one VERDICT.
+
+1. **The controller's check** (not evidence about the force field: the controller enforces it). Held if the window's
+   h after step 18 is at most 0.179, ff2.1's upper 95% bound. If not held, the TM class is reported and the verdict is
+   "constraint not held": the controller is diagnosed before the TM is read as a property of the objective.
+2. **Did the constraint bind?** Bound if w_k > 0 on at least 5 of the 14 steps 5-18, the steps whose weight comes
+   from a full window. Reported beside: the summed weight over the epoch against the control's 19 x 0.3 = 5.7.
+3. **The TM class**, exhaustive: *level* if A's interval is not wholly under 0; *partial* if A's is wholly under 0 and
+   B's wholly above 0; *none* if A's is wholly under 0 and B's is not wholly above 0.
+
+The verdicts, held and bound:
+- level: **passes**, the constrained weight keeps ff2.1's TM over one epoch with the constraint active;
+- partial: **partial**, the constraint removes part of the loss;
+- none: **fails**, the constraint as built (target 0.145, eta 0.3, window 5) does not prevent the loss; no variant of
+  it is tried on this outcome.
+
+Held but not bound, the run is the control with the DSE effectively off, so it says nothing about the constraint:
+- level: **constraint untested**, one epoch from ff2.1 with the DSE effectively off keeps ff2.1's TM; the
+  constraint's test is the follow-up below;
+- partial: **constraint untested**, with the DSE effectively off part of the loss remains: the DSE weight carries part
+  of it and the NSE side the rest;
+- none: **constraint untested**, with the DSE effectively off TM is not above the control: the loss is not the DSE
+  weight's; the search turns to the NSE side or a code defect.
+
+Reported beside, deciding nothing: Ca-RMSD for each pair, w_k and h at every step, the backbone burial scale and
+E_alpha at step 19 (the control's scale moved -0.301 to -0.404).
+
+`dc_00` is a screen: a pass or a partial decides only whether the follow-up runs. The claim that the fix works rests
+on the follow-up's validation, on suites that decided nothing in this search (the 44 domains have decided about 40
+panels since 10-31, the diagnosis of the burial scale among them).
 
 ### Cost and submission
 
@@ -141,12 +178,26 @@ is to run it on the other computer in the afternoon.
 
 ## After the test
 
-- **Pass or partial**: the same rule on ff3.2 (`ff32_pcd57` step 80, the driver `c0277e8d` with its persistent chains,
-  57 a step), where ff3.2's h is above the target so lambda engages. Its h_target is recomputed on those proteins
-  under that driver's protocol before the run; validated with the full suite (mdCATH TM, h, Peng's 32 arms, glpG),
-  against ff3.2 and ff3.3.
-- **Fail**: report to the user; the remaining leads are plan.md items 16-18 (`ff21_coilstart`, `ff21_jumperlr`, and
-  Peng's answers on how many steps at 0.3 made ff2.1 and whether his DSE term is normalized differently from the NSE).
+- **Pass, partial, or untested with level TM**: the follow-up, the user's go first. The same lambda rule on ff3.2:
+  `ff32_pcd57`'s step-80 checkpoint (`ff_3.2_p57_09`) with its driver `c0277e8d` (persistent chains, 57 a step), the
+  rule in place of its DSE weight, from step 80 to 160 as `ff33_ramp57` ran, so the two differ only in how the weight
+  is set (the 0.1/0.2/0.3 schedule against the constraint). ff3.2's h is above ff2.1's (+0.112), so the constraint
+  binds there. Its h_target is released ff2.1's files (`$P/parameters/ff_2.1`, never ff3.2's) visited once under
+  `c0277e8d`'s protocol, by the follow-up driver's own worker, on the 114 proteins of its first two minibatches (as
+  the screen's target took the control's first two), every system from the native, the mean over the proteins with
+  an unfolded ensemble, fixed before the run in `run_output/h_target.txt`, which the driver reads; item 13's
+  `dse_visits` values for released ff2.1 (24 proteins, same protocol) are reported beside it.
+- **Started without the user in the loop** (user 11-11, Peng asked for his code: "Do our planned debug assuming he
+  cannot find it"). A gate job reads `dc_read.txt` hourly: on a VERDICT of passes or partial, or untested with TM
+  class level, it submits the follow-up's first link; on any other verdict it submits nothing and records why.
+- **The follow-up's rule, written now (11-11, before any data).** At step 160, item 14's suite against released
+  ff2.1: mdCATH mean TM (89 domains), Peng's native and de novo mean TM (paired over the 16 proteins, his scorer), h
+  (item 13's 24 proteins, paired). It passes if each TM interval is not wholly under 0 and h's paired interval is not
+  wholly above 0. glpG's TM4 (block 1 on Upside 3), ff3.2 (`p57_09`) and ff3.3 (`r33_19`) are reported beside and
+  decide nothing; the user chooses among the force fields on these numbers. The 44-domain panels decide nothing.
+- **Fail, or untested with TM below ff2.1**: report to the user; the remaining leads are plan.md items 16-18
+  (`ff21_coilstart`, `ff21_jumperlr`, and Peng's answers on how many steps at 0.3 made ff2.1 and whether his DSE term
+  is normalized differently from the NSE).
 
 ## Other options considered, in order
 
