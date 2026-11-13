@@ -2320,18 +2320,33 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   -1.02, hydrophobe H-bond coverage -0.69; the other way H-bond energy +0.40 and H-bond coverage +0.38; backbone
   burial -0.08 (ff3.2's -2.49 is gone with the scale's restoration). By file: `sidechain.h5` (pair, coverage and
   hydrophobe tables) -1.87, `rama.dat` -1.56, `environment.h5` -1.02, `hbond.h5` +0.40, `bb_env.dat` -0.08.
-- So no single part fails BBA: the side-chain file and the Ramachandran maps carry about four fifths, the burial
-  file a quarter, H-bond a tenth back. Energies on fixed frames do not decide populations; the one-file swap on the
-  BBA arm is the causal test (plan.md item 24 step 2).
-- **The map alone does not break BBA** (read 17:59 11-12; Peng's BBA native scores, and the parameter files' md5s).
-  Released ff3.1 is ff2.1 with only `rama.dat` replaced (its other five files md5-equal to ff2.1's): BBA native 0.390
-  (ff2.1 0.416), median RMSD 3.03 A against 2.41, near-native; the 10-26 merge (also map only) 0.400, 2.79 A. The
-  outright loss (one helix, 7.6-7.7 A) comes only with the side-chain and burial files co-trained: ff3.2 `w32_03`
-  0.360 and ff3.3 0.366 (`p57_09` 0.388, 4.27 A; ff3.0 0.390, 3.31 A). glpG's TM4 at T 0.70 does not follow the
-  glycine depth either: map-only ff3.1 0.74 and the merge 0.42, all-term ff3.0 0.85, `w32_03` 0.98, `p57_09` 0.77, with
-  glycine alpha_L - alpha_R between -0.77 and -1.06 in all of them. So the conflict between BBA and TM4, as far as
-  these runs show, runs more through the co-trained side-chain and burial terms than through the glycine depth;
-  the one-file swaps on BBA decide it.
+- By energy on fixed frames the side-chain file and the maps carried about four fifths and the burial file a quarter.
+  The swaps below overturned that reading: fixed-frame energies do not decide populations.
+- **The swaps: ff3.3's Rama map is what loses BBA; its glycine rows alone are not** (read 08:40 11-13,
+  `swap_read_bba.txt`, job `reads1113` 50153796, the rule fixed 11-12). Cold replica (T 0.65) folded fraction, Ca RMSD
+  under 3 A, over t 200,016-1,267,301 for every arm: ff2.1 0.848, ff3.3 0.088, midpoint 0.468. ff3.3 with ff2.1's
+  whole map 0.520 (restores; GLY8 phi > 0 0.93, longest alpha_R run median 11); ff2.1 with ff3.3's map 0.424 (loses
+  half; sufficient by the rule); ff3.3 with ff2.1's glycine maps 0.190 (GLY8 phi > 0 0.20 -> 0.49, still a long
+  helix in half the frames), with ff2.1's `sidechain.h5` 0.159, with ff2.1's `environment.h5` 0.084 (none restores).
+  So the map carries BBA's loss, mostly through its non-glycine rows (the hairpin's GLN1-ALA4 and ARG9-PHE11 going
+  alpha_R, by the state read), with the glycine rows a part. Released ff3.1's map (map-only, BBA 0.390, 3.03 A) is an
+  earlier map than ff3.3's, so its near-native BBA said nothing about ff3.3's map: the user's reading of 11-12 ("the
+  updated Rama map cause BBA to be unstable") was right, and my pushback on ff3.1's numbers was wrong (10.61).
+- **The map moved toward alpha_R for nearly every residue during ff3.3's ramp** (`rama_offsets_round_10.npy` of
+  `ff32_pcd57`, ff3.2, and `_round_20.npy` of `ff33_ext57`, ff3.3 `r33_19`, md5 `d87fdc5a` equal to the staged
+  rama.dat; `scratchpad/bba/offsets_by_residue.py`; read 09:10 11-13). The mean offset alpha_R minus beta over each
+  central residue's maps (negative: alpha_R deeper) moved toward alpha_R by 0.11-0.40 nats in 18 of 19 non-glycine,
+  non-proline types (PHE +0.027 -> -0.360, TRP +0.088 -> -0.310, ARG +0.136 -> -0.200, ILE -0.188 -> -0.522, MET +0.219 ->
+  -0.114, THR -0.102 -> -0.348), glycine +0.07 the other way; the BBA hairpin's GLN, TYR, THR, LYS, ARG, PHE all end
+  negative. Offsets reach 0.6 nats against the prior widths (0.2 per map, 0.5 per residue, centred on NDRD), so the
+  existing prior does not bind. The map has no DSE term (`rama_basin.py`); a coherent shift while the DSE weight rose
+  fits Jumper's capacity warning (thesis p. 83: physics leaving the H-bond and side-chain terms is taken up by the
+  map), unproven.
+- **ff3.3's TM4 is worse than ff3.2's** (block 1, `upside3_validation/glpg_ff33_r33_19/glpg_ff33_r33_19_block1.txt`):
+  DSSP alpha 135-151 at T 0.70 0.555 (T 0.795 0.485), against `p57_09` 0.773, ff3.1 0.74, ff2.1 0.44; besides the
+  135-138 turn, the C-terminal half 144-151 unwinds (0.33-0.70). KE/1.5kT 1.001 protein, 1.005 lipid; C-N 1.311 +-
+  0.120 A. Across versions TM4 does not follow the glycine depth (merge 0.42, ff3.1 0.74, ff3.0 0.85, `w32_03` 0.98,
+  glycine alpha_L - alpha_R -0.77 to -1.06 in all).
 - **BBL, the same three files** (user 11-12: "check ff for what term is wrong for BBL"; `bbl_state_ff33.txt`,
   `bbl_decomp_ff33.txt`, job `bbl33`, read 23:52). Both helices (residues 9-18, 36-45, 0-based) stay at alpha_R
   0.98-1.00 under all three force fields; ff3.3 moves the loop 19-33 instead: ASN19 phi > 0 0.97 -> 0.69, LEU20 and
@@ -2343,6 +2358,19 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   `bb_env.dat` -0.01. The same three files as BBA, in about the same shares, with the hydrophobe table in place of
   the pair table as the largest node. The limitation: the non-native set is ff3.3's tail (365 of 13890 frames, TM
   median 0.29), and its typical frame sits at TM 0.3-0.5.
+- **The loss is not BBA's or BBL's alone** (Peng's scored native arms, read 01:05 11-13, mean TM minus released
+  ff2.1's). Map-only ff3.1 over 16: mean -0.010, 9 of 15 below (cspA -0.045, NTL9 -0.050, BBA -0.026, BBL -0.024).
+  ff3.2 `p57_09` over 16: mean -0.016, 13 of 16 below (sign test p 0.02): NuG2 -0.082, hyp -0.060, protein G -0.041,
+  protein L -0.039, WW -0.035, gpW -0.031, BBA -0.028; above, ubiquitin +0.094, alpha3d +0.020, lambda +0.006. The
+  same ff3.2 gains mdCATH +0.018. The losers are mostly hairpin, sheet or long-loop proteins; helical ones hold.
+  Single arms, so a few hundredths per arm is within noise; the sign count is the evidence.
+- **Against TM4, the reason for ff3.x** (user 11-13: the trainable glycine depth fixed TM4 and brought BBA and BBL).
+  On Upside 3, ff2.1 loses TM4 (3.15: 0.44 at T 0.70) and every trained map helps it: ff3.1 0.74, ff3.0 0.85,
+  `w32_03` 0.98, `p57_09` 0.77 (the 10-26 merge 0.42). Every ff3.x version also loses BBA (-0.026 to -0.056) and BBL
+  (-0.007 to -0.036), map-only ff3.1 included (-0.026, -0.024), so a trade-off runs through the map. It is not the
+  glycine L/R depth alone: TM4 spans 0.42-0.98 over versions whose glycine alpha_L - alpha_R all lie at -0.77 to
+  -1.06, and in both decompositions the glycine rows are a minority share. The swaps (above) put BBA's side of it in
+  the map's non-glycine rows more than its glycine rows, and not in the co-trained side-chain or burial files.
 
 ### 1.43 The weight stays at the SI's 0.3; the checkpoint is chosen by early stopping (2026-11-11)
 
@@ -5876,6 +5904,64 @@ you only look at training. Look at the ff and check what part of ff fail it." **
 protein, first find which part of the force field fails it, on that protein's own frames: what state it goes to, which
 energy terms favour that state over the native under the new parameters and not under the old, at which residues,
 and which file, swapped back alone, restores it. Change the training only after the failing term is located.**
+
+### 10.60 A term must not need the fold to be known: Upside folds de novo (2026-11-13)
+
+I proposed a glycine Rama term that "sees context" (burial, neighbour conformation, H-bond state) to hold TM4's
+glycines in alpha_R and hairpin-turn glycines at phi > 0. User 11-13: "we want upside to be able to fold de novo,
+meaning that it do not know whether a GLY residue is in a hairpin or a helix." A context read from the current frame
+is only the fold the chain has reached so far, so such a term rewards whatever is forming (BBA's hairpin, already
+helical, would push GLY8 further into alpha_R) and helps only near a native it cannot know. **Judge every proposed
+term by de novo folding: its energy may depend only on the sequence and the instantaneous conformation, and it must
+favour the native over the competing states the chain meets on the way from unfolded, not only near the native. The
+local map carries the residue's own energy given its neighbours' identities; whether a glycine ends in a helix or a
+turn must come from the non-local physics (H-bonds, packing, burial).**
+
+### 10.61 A result for one trained map does not transfer to another; fixed-frame energies do not decide populations (2026-11-13)
+
+User 11-12: "BBA is contradicting with glpG ... if we fix tm4, the updated Rama map cause BBA to be unstable". I
+pushed back with released ff3.1's map-only BBA (near-native) and the fixed-frame decomposition (side-chain file the
+largest share), and said the conflict ran through the co-trained side-chain and burial files. The one-file swaps
+(1.44) showed the user right: ff3.3's own map, on ff2.1's other files, loses half of BBA, and ff2.1's map restores it;
+the side-chain and burial swaps do nothing. ff3.1's map is an earlier map, and an energy split on fixed frames is not
+a population. **Do not argue against the user's mechanism from a different version's parameters or from fixed-frame
+energies; say which causal test decides it, and wait for it.**
+
+### 10.62 ff3.x is FF2's training, every parameter trained jointly, with the Rama map's depths made trainable (2026-11-13)
+
+User 11-13: "We want the 3.x only make Rama map trainable, and everything else to be the same", then "But we are
+suppose to train all parameters together, right? Check what jumper and Peng said." The sources (OneDrive PDFs):
+Jumper's thesis p. 42-43, "the only way to correctly parameterize a statistical potential is to jointly choose the
+parameters to optimize the resulting protein ensemble"; Peng et al. JCTC 2022 p. 551, "Balancing is achieved by
+simultaneously training essentially all parameters"; its SI, "all parameters can be optimized simultaneously",
+lambda 0.3, 456 proteins in 19 batches, 76 iterations (4 cycles), FF1's fine-tuning learning rate. Both trained a
+Rama term of very small capacity on fixed PDB maps (FF1 one sheet-mixing lambda, thesis eq. 4.11; FF2 one gamma per
+amino acid, SI eq. S2), and Jumper warns (thesis p. 83) "it is imperative to limit the capacity of the Ramachandran
+potential to avoid capturing protein physics that should be described in the hydrogen bonding and side chain
+interactions". I first read the user's words as map-only training and called ff3.1 (every other group held at
+ff2.1) the match; holding the other terms departs from joint training. The run that matches is `ff32_nativefix`
+(every group at the trainer's rates, every depth trainable, the SI's lambda, batches and steps), stopped 10-31 on its
+panel loss, which the control `c9` without any map change shares. ff3.2 and ff3.3 depart (lambda 0 then a ramp, 57 a
+step with persistent chains, 80-184 steps). **ff3.x changes FF2's training in one place, the map's trainable
+depths; every term trains jointly and every setting stays the SI's. Check each change against that, and when the
+definition is in doubt, read the sources before answering.**
+
+### 10.63 Every trained parameter gets both targets, the map's depths included (2026-11-13)
+
+`rama_basin.py` trained the depths on the NSE alone ("the SARW replica keeps the rama term, so it would compare the
+map with itself"). User 11-13: "We should allow rama map in the DSE." The SI applies dalpha = dalpha_NSE + lambda *
+dalpha_DSE to every parameter (eq. S11), FF2's own Rama parameters (the sheet terms) among them, and the reason given
+was wrong: the SARW target contains the map, but the unfolded ensemble differs from it through the H-bond, burial and
+side-chain terms, which is the residual structure the DSE exists to remove. Without it the map was free to take up
+the helix the DSE took out of the other terms (1.44, the offsets). **A parameter added to the training gets the
+SI's whole objective; leaving a target out is a departure to state and justify, not a default.**
+
+### 10.64 Before recommending a design, check whether it was tried (2026-11-13)
+
+I recommended training glycine's depths alone, citing ff3.0's TM4. User 11-13: "We tried only train GLY rama terms
+in ff3.0, and the validation shows it is significantly under ff2.1" (Peng natives -0.072, 14 of 16 below, 1.44's
+table, which I had in hand). **Before recommending a design, look up every earlier run of it and lead with its
+validation.**
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 

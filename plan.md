@@ -1420,13 +1420,13 @@ predecessors (Phase 30). Scripts and logs `/project/trsosnic/yinhan/checks/ff31_
    `logs_superseded/`, scores `score/ff_3.1.bak_pre_nativefix_20261031`, glpG `glpg_ff31.bak_pre_nativefix_20261031`;
    Mac repo `parameters/ff_3.1/rama.dat` replaced (old `rama.dat.bak_pre_nativefix_20261031`).
 3. [x] 16:50 10-31 (`submit.sh`, ids in `submitted.log`, remote_jobs.md §1 line 2).
-4. [ ] Read each as it ends. Panels read 23:40 10-31 (findings 1.34): 44 domains fold 0.631 against released
+4. [x] Read each as it ends. Panels read 23:40 10-31 (findings 1.34): 44 domains fold 0.631 against released
    ff2.1's 0.603 (+0.028 [-0.004, +0.059]), mdCATH 0.515 against 0.488 (+0.027 [+0.000, +0.053]), level with the
    merge; mean TM level with ff2.1 on both (+0.001 and +0.004, mdCATH read 01:30 11-01). glpG keeps TM4 through
    preparation (stage 7.0 DSSP mean 0.95; merge 0.36); REMD block 1 (read 07:30 11-02, findings 3.15) holds TM4 at
    DSSP 0.74 at T 0.70, between ff3.0's 0.85 and the merge's 0.42, falling within the block (halves 0.78 / 0.70) at
-   both ends of the helix. Open: Peng's 32 arms (2 scored; the 30 chains broken by midway2's fault restarted 12:18
-   11-02, remote_jobs.md §1 line 2).
+   both ends of the helix. Peng's collector was cancelled 13:48 11-13 at 23 of 32 scored (user 11-13: "cancel current ff3.1, 3.2 and 3.3 validations, since we know their training is flawed"),
+   so `peng_ff31.txt` is never written.
 
 ### Phase 38 - fix the all-term training's folding loss, then continue ff3.2 (STARTED 2026-10-31, user)
 User 10-31: "Fix the folding issue and continue working on ff3.2". The loss is measured (findings 1.37 "What the loss
@@ -1789,6 +1789,9 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       (halves 0.761 / 0.785), against `w32_03`'s 0.977, released ff3.1's 0.74 and ff3.0's 0.85. The loss is TM4's
       N-terminal turn, 135-136 at 0.00 and 137-138 at 0.27-0.50, unwound from the block's first frame and not
       spreading; 139-151 holds 0.952, TM1 0.993, KE/1.5kT 1.001 / 1.005, C-N 1.313 +- 0.120 A.
+    - **Cancelled 13:48 11-13** (user: "cancel current ff3.1, 3.2 and 3.3 validations, since we know their training is flawed"): Peng at 29 of 32 COMPLETE and 26
+      scored; the protein G, protein L and ubiquitin de novo arms and the collector cancelled, so `peng_p57.txt` is
+      never written.
 13. [ ] **Why the DSE target costs folding** (user 11-09, after item 12's burial reading: "Diagnose the DSE first";
     no training until it is answered; read-only, `/project/trsosnic/yinhan/checks/dse_diag_20261109/`). Without the
     DSE the native-against-free contrast alone takes the backbone solvation scale from -0.301 to -0.018 over
@@ -1866,7 +1869,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       against released ff2.1 with `p57_09` beside; the user chooses between ff3.2 and ff3.3 on it. The 44-domain
       panels still run (`after_training.sbatch` submits them, and its panel job extracts the files) and decide
       nothing. No variant of the schedule is tried on any outcome.
-    - [ ] The validation, `/project/trsosnic/yinhan/checks/ff33_validate_20261110/` (README): ff3.2's `submit.sh`
+    - [x] The validation, `/project/trsosnic/yinhan/checks/ff33_validate_20261110/` (README): ff3.2's `submit.sh`
       with the step-160 files, h added, and no gate; an hourly waiter submits it once the panel job has written
       `params/r33_19`. Built 23:20 11-10: `tm.sbatch` and `collect.sbatch` differ from ff3.2's only by paths, names and
       the ff3.2 reference; the h readout against ff3.2, run on ff3.2 against itself, reads +0.000 with its labels
@@ -1885,6 +1888,9 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       the panel lacks (findings 1.43); no reading before DONE.
       Second arm, 20:47 11-12: BBL native 0.421 (ff2.1 0.457, ff3.1 0.432, `w32_03` 0.428, `p57_09` 0.450), TM > 0.5
       in 0.097 of frames (ff2.1 0.250), median RMSD 5.55 A (4.78).
+      glpG block 1, 08:40 11-13: TM4 DSSP alpha 0.555 (ff3.2 0.773; findings 1.44). **Cancelled 13:48 11-13** (user:
+      "cancel current ff3.1, 3.2 and 3.3 validations, since we know their training is flawed"): Peng at 6 of 32 scored; the 26 running arms and the collector
+      cancelled, so `peng_r33.txt` is never written. The redo is item 25.
     - Checks before any run, no test job: the driver differs from `c0277e8d` only by the schedule; the moved
       checkpoint equal to `ff32_pcd57`'s step-80 one but for paths; the schedule's values on step directories; a
       stub run of `after_training.sbatch`'s two branches; `--test-only` of the first link and the h test. About 40 h
@@ -2398,7 +2404,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
         Training ended at step 192, 15:07 11-12; `r33_23`'s panel 50113397, its TM `tm_one` 50113404, `es_r33x` 50113402.
         The stopping rule against epoch 19, paired (read 15:14): epochs 20, 21, 22 at -2.4, -1.2, -2.7 standard errors,
         so not yet two consecutive past -2; epoch 23 decides it.
-      - [ ] **A second extension, if the rule allows** (user about 15:10 11-12: "maybe continue training a few more epoch to
+      - [x] **A second extension, if the rule allows** (user about 15:10 11-12: "maybe continue training a few more epoch to
         check if we can get anything better than 19"): `ff33_ext2_57` (`checks/ff33_ext2_20261112/`, README),
         epochs 24-27 at 0.3 from step 192, driver `fab8e02f` (the first extension's with the 0.3 stage to epoch 27),
         panels `r33_24`-`r33_27`, `es_r33y` over epochs 16-27. Built and checked 15:15 (`build_ext2.log`,
@@ -2407,7 +2413,8 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
         rule has fired (epochs 22-23), nothing is submitted and the user decides.
         **Read 16:05 11-12: the rule has fired.** `r33_23` 0.669 (against released ff2.1 -0.013 [-0.020, -0.006]),
         -0.0105 +- 0.0044 under epoch 19 (-2.4 standard errors), after epoch 22's -2.7: two consecutive epochs past
-        -2. `ff33_ext2_57` is not submitted (built, kept until the user decides). ff3.3's lambda-0.3 stage peaked at
+        -2. `ff33_ext2_57` was not submitted, and its run directory was deleted 08:43 11-13 (user: "delete the
+        extension"; scripts kept). ff3.3's lambda-0.3 stage peaked at
         epoch 19 (0.680) and declined in four epochs after it (0.671, 0.676, 0.668, 0.669).
         `es_r33x` (16:15, `es_r33x.txt`): CHOSEN `r33_19`, the checkpoint whose test suite already runs.
       - [x] **Does the panel predict the test suites** (user about 22:25 11-11: "also do your check on 44-domain"):
@@ -2452,13 +2459,21 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       against ff2.1: Rama -1.56 (glycine rows -0.90, others -0.66), side-chain pair -1.56, side-chain burial -1.02,
       hydrophobe coverage -0.69; H-bond +0.78 back; backbone burial -0.08. By file `sidechain.h5` -1.87, `rama.dat`
       -1.56, `environment.h5` -1.02. The hairpin's non-glycine residues flip to alpha_R too, not only GLY8.
-    - [ ] Step 2, causal (user about 18:05 11-12: "Run the test"): five force fields staged by
+    - [x] Step 2, causal (user about 18:05 11-12: "Run the test"): five force fields staged by
       `checks/ff33_bba_20261112/stage_swaps.sh` (md5s in `stage_swaps.log`), each Peng's BBA native arm by
       `bench.sbatch`: `ff_bba_33gly21` (ff3.3, glycine's Rama maps from ff2.1), `ff_bba_33sc21` (ff2.1's
       `sidechain.h5`), `ff_bba_33env21` (ff2.1's `environment.h5`), `ff_bba_33rama21` (ff2.1's map), `ff_bba_21rama33`
       (ff2.1 with ff3.3's map); jobs 50121759-50121763, submitted 18:11. Rule fixed before they ran (README there):
       the cold replica's folded fraction (RMSD < 3 A, T 0.65) over a common window, an arm restoring BBA if above
       the midpoint of ff2.1's and ff3.3's; read after the first chunk (about 10.5 h), Peng's TM at the end.
+      **Read 08:40 11-13 (findings 1.44): the map.** Folded fraction ff2.1 0.848, ff3.3 0.088 (midpoint 0.468);
+      ff3.3 + ff2.1's map 0.520 restores, ff2.1 + ff3.3's map 0.424 loses half; ff2.1's glycine maps 0.190,
+      `sidechain.h5` 0.159, `environment.h5` 0.084 do not. BBA's loss is in the map's non-glycine rows more than its
+      glycine rows. The arms run on to Peng's TM at the end.
+    - [ ] Step 2b (user 08:41 11-13: "Submit the run"): `ff_bba_33nongly21`, ff3.3 with ff2.1's map except its
+      central-glycine entries (ff3.3's), on BBA's native arm, 50153802 from 08:42. Rule in the README (step 2b),
+      fixed before it ran: restores if its folded fraction is above the midpoint of ff2.1's and ff3.3's over its
+      own completed window; read after the first chunk (about 19:15 11-13).
     - [x] **BBL, the same diagnosis** (user about 21:30 11-12: "check ff for what term is wrong for BBL"; ff3.3's BBL
       native 0.421 against ff2.1's 0.457, TM > 0.5 in 0.097 of frames against 0.250). findings 1.39's method
       generalised to any arm (`arm_common.py`, `arm_state.py`, `arm_decomp.py` in `checks/ff33_bba_20261112/`), frame
@@ -2466,7 +2481,33 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       (or its 400 lowest if fewer than 100). Job `bbl33` 50144448 -> `bbl_state_ff33.txt`, `bbl_decomp_ff33.txt`.
       **Read 23:52 11-12 (findings 1.44): the same three files as BBA.** Helices intact; the loop 19-33 leaves its
       native states. Toward non-native, -5.36 E_up against ff2.1: `sidechain.h5` -2.62 (hydrophobe coverage -2.17),
-      `rama.dat` -1.75 (glycine rows -0.71), `environment.h5` -1.04; H-bond +0.02. A BBL swap waits on BBA's read.
+      `rama.dat` -1.75 (glycine rows -0.71), `environment.h5` -1.04; H-bond +0.02.
+    - [ ] Step 3, BBL causal (user 00:46 11-13: "submit three BBL arms"): `ff_bba_33sc21`, `ff_bba_33rama21`,
+      `ff_bba_33env21` as Peng's BBL native arm, submitted 00:49 11-13. Rule fixed before they ran (README there,
+      step 3): the cold replica's TM > 0.5 fraction over a common window, restoring if above the midpoint of ff2.1's
+      and ff3.3's; not decisive if the references differ by under two block standard errors. Read after the first
+      chunk, Peng's TM at the end.
+25. [ ] **ff3.3 redone with the Rama map under the DSE: `ff33_dsemap57`** (user 11-13: "We should allow rama map in
+    the DSE" (findings 10.63); "start from ff3.2, where we trained all terms with lambda=0"; "there is a point in ff3.3
+    that we trained everyterms on lambda=0, then slowly increase lambda. start from there. I think the bug is the
+    lambda on rama map"; "restore the published rate. remove backbone angle restraint, and fix the temperature
+    mismatch"). Glycine-only depths are out, ff3.0 having tried them (10.64). `checks/ff33_dsemap_20261113/`, README.
+    - The run: ff3.3's start (ff32_pcd57 step 80) and schedule (lambda 0.1/0.2/0.3 over epochs 10-19, 57 a step,
+      persistent chains, contact wall), with four changes: the depths take lambda (p_unfolded - p_SARW) beside the
+      NSE's gap, gradient only; the SARW at the previous visit's Tm estimate (median 1.023 over the 456, range
+      0.911-1.084, against ff3.3's 1.1) and reweighted exactly to the unfolded rungs for every DSE field; no phi/psi
+      springs in the native replica; the side-chain rate the port's (0.0125 -> 0.125).
+    - [x] Built 10:44 11-13 (`build_dsemap.log`; driver `09326abe`, rama_basin `d27674c6`); static tests pass
+      (`static_test.log`: NSE path bitwise ff3.2's, weight-0 DSE rows change nothing, weight-lambda rows scale the
+      gradient, reweighting exact on Gaussian energies); stub of after_training passes (`stub_after.log`); first link
+      `--test-only` 798 CPUs.
+    - [x] Schedule (user 11-13: "run a few steps more from lambda=0, as we changed training setting, then we transit
+      to lambda=0.1, to 0.2, then to 0.3, like we did"): lambda 0 in epochs 10-11, then 0.1/0.2/0.3 over 12-14/15-17/
+      18-21, to step 176. Driver and after_training replaced in the unrun build (`update_schedule.log`, driver
+      `31f7f8f1`; the rebuild's delete was refused by the safety check), all checks passed again.
+    - [ ] First link 50156016 R 11:00 11-13 (steps 80-96). Panels `m33_10`-`m33_21`, two a link; `m33_10`/`m33_11`
+      show the new settings at lambda 0 against `p57_09`; at step 176 early stopping on the panels (item 23's rule),
+      ff3.3's `r33_EE` the comparison at equal lambda stages; then validation.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the

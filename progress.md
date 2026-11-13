@@ -1472,3 +1472,24 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
 * **11-12 23:52: BBL decomposition read** (job `bbl33`): ff3.3 keeps BBL's helices and moves its loop; the energy
   shift toward non-native (-5.36 E_up) is in the same three files as BBA's: sidechain.h5 -2.62 (hydrophobe coverage
   -2.17), rama.dat -1.75, environment.h5 -1.04. findings 1.44, plan.md item 24.
+* **11-13 00:49: BBL swap arms submitted** (user: "submit three BBL arms"): ff3.3 with ff2.1's sidechain.h5, map, or
+  environment.h5 on Peng's BBL native arm; rule (TM > 0.5 fraction, midpoint of ff2.1 and ff3.3) fixed before they ran.
+  `checks/ff33_bba_20261112/` README step 3, plan.md item 24 step 3.
+* **11-13 08:40: BBA swap test and ff3.3's TM4 read** (job `reads1113`, `swap_read.py`): ff2.1's map restores BBA
+  in ff3.3 (folded 0.520 against ff2.1 0.848, ff3.3 0.088), ff3.3's map loses half of it in ff2.1 (0.424); the
+  glycine-map, sidechain.h5 and environment.h5 swaps do not restore. ff3.3's glpG TM4 0.555 at T 0.70 (ff3.2 0.773,
+  ff2.1 0.44). ff3.3's BBA de novo 0.361 (ff2.1 0.411). findings 1.44, lesson 10.61; plan.md item 24 step 2.
+* **11-13 08:43: one more BBA swap arm, the extension deleted** (user: "Submit the run, and delete the extension").
+  `ff_bba_33nongly21` (ff3.3 with ff2.1's map except ff3.3's central-glycine entries; only coil/dimer_pot differs
+  between the libraries) submitted 50153802 with its rule fixed first; `ff33_ext2_57`'s run directory (296 MB, never
+  run) deleted, `ff33_ext57`'s checkpoint md5 unchanged. plan.md item 24 step 2b, item 23.
+* **11-13 10:45: `ff33_dsemap57` built, not submitted** (user: map in the DSE, start at ff3.3's lambda-0 point,
+  published side-chain rate, no phi/psi springs, SARW temperature fixed): trainer edits by `make_dsemap.py` on
+  ff3.3's driver and ff3.2's rama_basin; static tests and the after-training stub pass; first link --test-only.
+  findings 10.63-10.64; plan.md item 25.
+* **11-13 11:00: `ff33_dsemap57` running** (first link 50156016, steps 80-96 at lambda 0): the schedule now has two
+  lambda-0 epochs before ff3.3's ramp (user), to step 176; driver replaced in place before any job, checks re-passed.
+* **11-13 13:48: ff3.1, ff3.2 and ff3.3 validations cancelled** (user: their training is flawed): 32 jobs, the 26
+  running ff3.3 Peng arms, ff3.2's last 3 de novo arms and the three collectors; none resubmitted. Peng stopped at
+  6 (ff3.3), 26 (ff3.2) and 23 (ff3.1) of 32 scored; runs, scores and read-outs kept. Kept running: `ff33_dsemap57`,
+  the swap arms, bpmax. remote_jobs.md, plan.md Phase 37 item 4 and Phase 38 items 12, 14.
