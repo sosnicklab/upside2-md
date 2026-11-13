@@ -1872,6 +1872,19 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       the ff3.2 reference; the h readout against ff3.2, run on ff3.2 against itself, reads +0.000 with its labels
       right; a dry run with `r33_15` standing in passed `--test-only` on all 38 jobs and created nothing. Waiter
       submitted 23:23 (remote_jobs.md). Read when each lands: mdCATH TM, h, glpG block 1, Peng at DONE.
+      **h, read 15:30 11-11 (rule (a) met):** `unf_hb_ff_3.3_r33_19_vs_p57_09.txt`, ff3.3 keeps fewer residual
+      H-bonds than ff3.2, paired mean -0.109 [-0.197, -0.028] (higher in 5 of 24; medians 0.101 against 0.163);
+      against released ff2.1 (`../ff33_ramp_20261109/unf_hb_ff_3.3_r33_19.txt`) no resolved difference, +0.003
+      [-0.032, +0.042] (higher in 8 of 24). The DSE brought ff3.2's unfolded state back to ff2.1's.
+      **mdCATH TM, read 21:41 11-11** (`tm_mdcath_mdc_r33_19_vs_*.txt`, 89 domains): `r33_19` 0.721 against released
+      ff2.1's 0.727, -0.006 [-0.013, +0.000] p 0.085 (49 lower / 40 higher), not wholly under 0, so the rule's mdCATH
+      part holds; the 50-100 residue third -0.018 [-0.031, -0.006]. Against ff3.2 (`mdc_p57_09`, 0.745) -0.025 [-0.032,
+      -0.018] p 1e-9, lower in every length and class subset. Owed: glpG block 1 (about 06:00 11-13), Peng at DONE.
+      **Peng, first arm, 17:15 11-12**: BBA native 0.366 mean TM (released ff2.1 0.416, ff3.2 `p57_09` 0.388, `w32_03`
+      0.360), median CA-RMSD 7.61 A (ff2.1 2.41): one arm of 32, the one every ff3.x loses, and the kind of protein
+      the panel lacks (findings 1.43); no reading before DONE.
+      Second arm, 20:47 11-12: BBL native 0.421 (ff2.1 0.457, ff3.1 0.432, `w32_03` 0.428, `p57_09` 0.450), TM > 0.5
+      in 0.097 of frames (ff2.1 0.250), median RMSD 5.55 A (4.78).
     - Checks before any run, no test job: the driver differs from `c0277e8d` only by the schedule; the moved
       checkpoint equal to `ff32_pcd57`'s step-80 one but for paths; the schedule's values on step directories; a
       stub run of `after_training.sbatch`'s two branches; `--test-only` of the first link and the h test. About 40 h
@@ -2072,8 +2085,11 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       through the first epoch.** `jl_00` mean TM 0.653 against 0.682, -0.029 [-0.039, -0.019] (36 of 44 lower);
       beside, against `c9_00_tr` +0.010 [+0.000, +0.019] (p 0.039), Ca-RMSD -0.23 [-0.44, -0.05] A. Its scale is the
       control's (-0.403 against -0.404) with less TM lost, while E_alpha moved 0.053 against the control's 0.084: at
-      the ff2.1 start the scale alone is not the loss, as `resets_c9_00.txt` found (findings 1.37). Part (2) at
-      `jl_01` (step 38). A prior lead against it: the SI-rate twin `ff30_gdepth_si` (every group but rot at
+      the ff2.1 start the scale alone is not the loss, as `resets_c9_00.txt` found (findings 1.37). **Part (2) read
+      15:30 11-11 (`tm_jl01.txt`, 50066508): the rate sets only the speed and does not explain ff2.1 under lambda
+      0.3.** `jl_01` mean TM 0.646 against `c9_00_tr`'s 0.644, +0.002 [-0.009, +0.013] (24 / 20); against released
+      ff2.1 -0.036 [-0.047, -0.027] (40 of 44 lower), Ca-RMSD +0.41 [+0.23, +0.63] A. Scale -0.393, E_alpha -1.882
+      at step 38. A prior lead against it: the SI-rate twin `ff30_gdepth_si` (every group but rot at
       the SI's rate, from ff3.0's map) lost as much folding as its port-rate twin (findings 1.37, `ds_02` 0.406).
     - The fixed-point test, in place of that epoch (user 11-10: "is there any faster test?"): one ConDiv step
       without the parameter update, i.e. the control's own worker (`ff21_ctrl_dt009/run_output/ConDiv.py`
@@ -2172,7 +2188,24 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       `static_test.log`: the driver's h on the 48 proteins 0.1448 (the target's), the update, the record, the 16
       combinations of the rule and `dc_read.py` end to end on real files; pyflakes clean. The h sum is taken in
       float64, as `h_target.py` takes it (a float32 sum differed by 5e-7, caught by the check).
-    - [ ] First link submitted 10:20 11-11 (remote_jobs.md); read `dc_read.txt` at step 19.
+    - [x] First link submitted 10:20 11-11; **read 22:11 11-11 (`dc_read.txt`): VERDICT partial**, now a measurement only
+      (item 22). Constraint held (window h 0.144, bound 0.179) and bound (lambda > 0 on 14 of steps 5-18; summed weight
+      0.647 against the control's 5.7). `dc_00` mean TM 0.670: against released ff2.1 -0.012 [-0.020, -0.004] (31 of 44
+      lower; RMSD +0.07 [-0.02, +0.17] A), against the control `c9_00_tr` +0.026 [+0.015, +0.038] (RMSD -0.38 [-0.61,
+      -0.18] A). Scale -0.1915 (control -0.404, ff2.1 -0.301). So about two thirds of the control's one-epoch TM loss
+      is the weight's size and a third remains at a ninth of its DSE push, the scale moving the other way: no weight
+      between about 0.05 and 0.3 holds ff2.1 in place (findings 1.43).
+      **Interim at step 10, read 16:28 11-11, deciding nothing** (user: "check the fix we proposed for DSE, is it
+      working?"; `checks/dsecon_20261111/interim/interim_step10.txt`, against the control at the same steps, same start
+      and minibatches). The controller acts as designed: the weight rises from 0 by 0.002-0.009 a step to 0.038 at step
+      10 while the 5-step h sits 0.006-0.031 above 0.145 (mean step h 0.156; test 1 held so far, test 2's binding
+      already met on steps 5-10). Under it the NSE leads: the backbone burial scale weakens -0.301 -> -0.191 by step 5
+      and holds -0.19 to -0.20 since (control -0.40; the moves opposite, cosine -1.00), so its balance sits near lambda
+      0.03, as items 16-18 measured; dhb -0.406 -> -0.358 (control unmoved); the other blocks move as the control's at
+      1.0-1.1x, cosine +0.1 to +0.7. The free replica's Ca-RMSD on the same proteins at the same step is lower than the
+      control's: steps 1-10 -0.21 [-0.30, -0.11] A (higher in 87 of 240), step 0 (same parameters) -0.05 [-0.22,
+      +0.14]; restrained level. Beside: the scale's weakening is the direction of ff3.2's DSE-off runs, whose end
+      (-0.018) cost BBA in Peng's arms (findings 1.39); the 44-domain screen does not read that, the follow-up's Peng arms do.
     - [ ] **The follow-up `ff32_dsecon57`, built now, started by a gate** (user 11-11: Peng will try to find his
       code, no guarantee; "Do our planned debug assuming he cannot find it"). ff3.2's `ff32_pcd57` step-80
       checkpoint, driver `c0277e8d` with the screen's lambda rule (h_target read from `run_output/h_target.txt`),
@@ -2220,7 +2253,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     each engine is read on its own toolchain's configuration. By the rule, no static term that sets lambda* differs;
     what is left for test B is the dynamics (integrator and thermostat code differ, `main.cpp` 779 lines,
     `thermostat.cpp` 34), and the 2020 CB placement for anything trained on ff_2.0's writer.
-    - [ ] Test B in Python 3 (user 11-11: "can we run test B with python3?"): feasible, checked 13:10 11-11 in
+    - [x] Test B in Python 3 (user 11-11: "can we run test B with python3?"): feasible, checked 13:10 11-11 in
       `checks/engine_parity_20261111/` (`py3peng/`, `dyn/`). Our Python 3 `upside_engine.py` on Peng's 2021
       `libupside.so` (with only his HDF5 1.10 library added to the path) reproduces his Python 2 evaluation bitwise,
       PyTables in the same process; his binary runs a two-replica exchange (exit 0, KE/1.5kT 1.04, 1.00, finite);
@@ -2229,7 +2262,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       restrained native by its own `--restraint-group` at 1/3^2), the simulation by his binary with his
       `run_upside` flags, the derivatives by his library; ensembles, selection and the replicas pickle unchanged,
       so `rep_read.py` reads lambda* as for ours.
-    - [ ] **Test B built 11-11 after the trading session** (user: "do it now, record in md file so I can resume it from
+    - [x] **Test B built 11-11 after the trading session** (user: "do it now, record in md file so I can resume it from
       another computer"). Files `checks/engine_parity_20261111/testB/` (README): `replica_worker_peng.py` written from
       `replica_worker.py` by `make_worker_peng.py` (asserted replacements); the configuration by Peng's own Python 2
       `run_upside.upside_config` (`peng_config.py`, his kwargs; the restrained native by a second call with his
@@ -2245,6 +2278,195 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       Steps: smoke (protein 0, 300 tu, both engines, `smoke_check.txt`) -> array 0-47 (afterok) -> readout (afterany);
       job ids in `remote_jobs.md`. Resume: read `smoke_check.txt` (Peng's binary named, fields finite, KE/1.5kT and
       restrained Ca-RMSD beside ours), then `testB_read.txt`'s VERDICT; record it here and in findings 9v.
+      **Smoke PASS (50066492, 14:56 11-11):** Peng's binary named, every field finite, restrained Ca-RMSD 0.76 A
+      against ours' 0.74, the backbone burial scale's contrast +23.24 against +22.17. Its KE/1.5kT 0.56-0.59 on both
+      engines is the warm-up inside a 300 tu run's average; the array's 8000 tu visits on Peng's binary read
+      0.998-1.016 over all 15 systems (18 proteins checked 15:27).
+      **Read 16:20 11-11 (`testB_read.txt`; array 50066493 48 of 48, readout 50066494 COMPLETED): the engine is not
+      the difference.** On Peng's 2021 Upside the scale balances at +0.047 [+0.002, +0.100], wholly under 0.3 (ours
+      +0.018 [-0.033, +0.070]; paired +0.029 [-0.003, +0.062]); E_alpha +0.009, E_beta +0.075, dhb -0.047 (ours
+      -0.008, +0.050, -0.085). Health on both: KE/1.5kT 0.997-1.021, restrained Ca-RMSD 0.97 A, free 2.61 against 2.63
+      A (per protein the restrained values differ, median 0.013 A; the equal summaries are chance). Left by the rule:
+      the anneal, the visit length, or FF2 stopping short of its fixed point (the start and Jumper's rate are tested
+      in item 16, the time step in item 18). The next step is the user's.
+22. [ ] **ff3.4: ff3.2 trained on under the constrained DSE** (proposed about 16:35 11-11, user: "propose a ff3.4, with the
+    fixed training, start from ff3.2"; awaiting the user's go). ff3.4 is item 20's follow-up `ff32_dsecon57`, already
+    built (`checks/dsecon_k32_20261111/`, README); nothing new was built for it.
+    - Start: ff3.2 itself, `ff32_pcd57`'s step-80 checkpoint (`ff_3.2_p57_09`): parameters, Adam state, Ramachandran
+      round 10, minibatch order and epoch 9's persisted free frames, moved by run paths only, as ff3.3 started.
+    - Training: ff3.2's protocol (driver `c0277e8d`: every term trained, basin wall, persistent free chains, 57 proteins
+      a step) with one change, the DSE weight as the Lagrange multiplier of h <= 0.1394 (released ff2.1's h on this
+      run's first 114 proteins, `run_output/h_target.txt`), dual ascent from 0, eta 0.3, window 5 (driver `4fa75139`).
+      Steps 80-160 as ff3.3, so ff3.3 and ff3.4 differ only in how the weight is set (schedule 0.1/0.2/0.3 against the
+      constraint). About 40 h at 798 CPUs a link.
+    - Rule, fixed 11-11 before any data (`constrained_dse.md` "After the test"): at step 160, against released ff2.1,
+      mdCATH mean TM (89), Peng's native and de novo mean TM (16, paired), h (item 13's 24, paired); passes if each TM
+      interval is not wholly under 0 and h's not wholly above 0. glpG's TM4, ff3.2 and ff3.3 beside; the user chooses
+      among ff3.2, ff3.3 and ff3.4. The 44-domain panels (`dc32_EE`) decide nothing.
+    - Predictions, written before its data: ff3.2's h is above the target (+0.112 on the 24), so the constraint binds
+      from its first steps and the weight rises about 0.03 a step while that excess lasts, about 0.24 after one epoch
+      where ff3.3's schedule held 0.1 for three; h lags the parameters, so the weight can overshoot before h reaches
+      the target and then fall (the trace is read with the verdict; no variant of eta or the window is tried). The
+      backbone burial scale starts at -0.018 and should restrengthen (ff3.3 reached -0.276), read, never set.
+    - **Decided by the user 16:47 11-11**: "submit ff3.4 training now to save sometime. if the training repair validation
+      passes, we will use ff3.4 as the official version." (1) Named ff3.4, staged as `ff_3.4_dc32_19` (names only in
+      `validate/` and `make_validate.py`, the dry run repeated). (2) Started now, not by the gate: its first link and
+      validation waiter submitted by hand exactly as `gate.sbatch` would, the gate's pending pass cancelled. The screen
+      (`dc_read.txt`) still runs and is read by its rule; it no longer decides whether ff3.4 trains. Release: ff3.4
+      becomes the official force field if the repaired training passes its validation (the screen, then ff3.4's own
+      rule above at step 160); until then nothing goes into `parameters/`.
+    - [x] Submitted 16:47 11-11: first link 50067557 (`train_chain57.sbatch` to step 96; driver `4fa75139`, h_target
+      0.1394, both `--test-only` first), validation waiter 50067558 (`k32_wait`); gate pass 50067254 cancelled
+      (`submitted.log`). R from 16:47:57 on 29 nodes, resuming at step 80 (epoch 10, minibatch 0); insurance link
+      50067560 behind it; waiter pass 2 50067559 at 17:48. Step 160 about 10:00 11-13 at ff3.3's 41.6 h.
+    - **Step 80, read 17:40 11-11: the predicted rate was wrong.** Weight 0 used, step h 0.164 against 0.139, next
+      weight 0.0073 (prediction: about 0.03 a step from item 13's +0.112). On the same 57 proteins released ff2.1's h
+      (the target visit) is 0.141: paired +0.023 [-0.019, +0.058], median +0.047, higher in 42 of 57, so most proteins'
+      h is above ff2.1's but the mean excess, which the controller reads, is about a fifth of item 13's. The weight
+      should climb about as slowly as in the screen; overshoot is the smaller risk. Script
+      `checks/dsecon_k32_20261111/interim/h_pair_step80.py` (read-only).
+    - [x] Renamed 16:53-16:55 11-11: the validation stages `ff_3.4_dc32_19` (`make_validate.py`, which now writes each header
+      after the run-name replacements, so `submit.sh`'s comment names ff3.3's `mdc_r33_19` again; `validate/`
+      regenerated, its diff from the old scripts the name, the ff3.4 label and those two comments; backups
+      `*.bak_pre_ff34name_20261111`). Dry run `validate/dryrun_r33_17_as_19_ff34name/`: 38 of 38 `--test-only`, identical
+      to the morning's but for the name.
+    - **Rejected by the user 17:50 11-11 as a parameter twist** ("so you are essentially just twisting lambda to get a
+      result we want. What you really need to do is to fix the issue that caused the lambda misalign"; findings 10.58).
+      The constraint (items 20, 22) sets the DSE weight to meet a chosen h and leaves the cause in place; item 23
+      replaces it. Proposed to the user: cancel ff3.4 (50067557, insurance 50067560, waiter 50067559; checkpoints
+      kept), keep the screen `ff21_dsecon` only as a measurement (below), no release.
+    - **Deleted 00:12 11-12** (user: "delete ff3.4"): `ff32_dsecon57`'s run directory (39 GB without its hard-linked
+      inputs) and the target visit's files (`checks/dsecon_k32_20261111/target/`, 132 MB); kept the scripts, logs and
+      readouts there (`h_target_readout.txt`: 0.1394).
+23. [ ] **Early stopping on a validation set, chosen in TM-score and Ca-RMSD** (user 18:00 11-11: "i think the answer is
+    most likely Peng stopped early by picking a model with best result. As in Jumper's thesis or in Peng's paper also
+    said the training do not go to steady state. But we need to find a way to reliably do it, do make the model has
+    best validation score (TM score and RMSD), without testing so many stopping points"; proposed 18:05, awaiting the
+    user's go). This explains the weight without changing it: ff2.1 is a stopped point of FF2's path, not a balance
+    point of 0.3 (findings 1.23: a fixed 76-step budget, Jumper's early stopping as a regulariser), so a balance near
+    0.02-0.12 at ff2.1 is what continuing from it measures. The SI's settings stay as written.
+    - Three sets, fixed before any run: training (the 456); validation, which chooses the checkpoint (the 44-domain
+      native-start panel, `panel.py` at dt 0.015, scored by `tm_panel.py` and `panel_rmsd.py`, about one node-hour a
+      checkpoint against 120-290 node-hours an epoch of training); test, which judges it once (mdCATH 89 TM, Peng's 32
+      arms, glpG's TM4). Validation numbers of the chosen checkpoint are optimistic and are never reported as quality
+      (`~/Documents/mdfiles/chemistry/XiaoShanDian_AIDD.md` 6.5; findings 10.56).
+    - Rule: each epoch end, mean TM paired over the 44 against the run's start; the chosen checkpoint is the earliest
+      whose mean TM is within one paired standard error of the best seen (the one-standard-error rule, which prefers
+      less training), with Ca-RMSD not worse than the best's by more than one standard error. Stop when two
+      consecutive epochs lie more than two standard errors under the best, or at 76 steps.
+    - Before it is relied on, check the proxy (read-only): does the 44's TM order force fields as the test suites do?
+      Warning already in hand: ff3.2 (`p57_09`) is above released ff2.1 on the 44 and on mdCATH, while the first 6
+      of its 32 Peng arms scored below. If Peng's arms disagree with the native-start panel, the validation set needs
+      an unfolded-start part (small fast folders outside Peng's 16, folded from extended chains, in TM and RMSD).
+    - Consequence for runs from ff2.1 at the SI's 0.3: the validation falls from the first epoch (the control's step
+      19 -0.038 TM, Jumper's half rate -0.029 at 19 and -0.036 at 38), so the rule returns ff2.1 itself. If Peng's
+      peak was reached from an earlier start, a model above ff2.1 under the SI's settings has to start before the
+      peak: FF2's own start (Peng's to tell) or one we justify.
+    - Parked, not run: item 23's earlier lead (the balance at ff2.1 measured 0.12 on 24 proteins and 0.02 on 48, never
+      separated into proteins or protocol); the questions for Peng stand, with FF2's start first.
+    - **Decided by the user 18:06 11-11**: "since we settled the mismatch, stop ff3.4, and start a new ff3.4 with the
+      updated training workflow, or apply it in in-training ff3.3, make sure we have a trained ff with lambda=0.3, with
+      best ff performance possible." Both done; files `checks/early_stop_20261111/` (the rule, `select_epoch.py`) and
+      `checks/ff34_lam03_20261111/` (README each).
+      - [x] The constrained ff3.4 (`ff32_dsecon57`) cancelled 18:07:54 (link 50067557, insurance 50067560, waiter
+        50067693; checkpoints kept). The screen `ff21_dsecon` runs on as a measurement only.
+      - [x] **ff3.3 by the rule, read 19:51 11-11 (`es_r33.txt`): `r33_19` chosen, the end of training.** Candidates its
+        epochs at lambda 0.3 (panels `r33_16` 50067707, `r33_18` 50067708, `es_r33` 50067709; check passed: released
+        ff2.1 reads 0.6821 and 2.250 A). Mean TM 0.663 / 0.672 / 0.670 / 0.680 over epochs 16-19, each earlier one
+        more than one standard error under epoch 19 (-0.017 +- 0.006, -0.008 +- 0.005, -0.010 +- 0.006); RMSD 2.42 /
+        2.30 / 2.34 / 2.19 A. `r33_19` against released ff2.1: TM -0.003 [-0.011, +0.006], RMSD -0.06 [-0.17, +0.04] A,
+        level on the validation panel; against ff3.2 (`p57_09`) -0.018 [-0.027, -0.011], RMSD +0.12 [+0.06, +0.20] A.
+        Still rising at the budget's end: the stopping rule (two epochs more than two standard errors under the best)
+        never fired, so training on at 0.3 with an epoch panel is what the rule asks next (the user's call). Its test
+        suite is the one already running (`ff_3.3_r33_19`).
+        Its lambda 0.1 and 0.2 epochs read 23:49 (`tm_one` 50083986-87): `r33_11` 0.687 (+0.005 [-0.004, +0.013]
+        against released ff2.1), `r33_15` 0.681 (-0.001 [-0.009, +0.006]); with `r33_13` 0.674 each raise of the weight
+        costs TM and the stage recovers it (figure `checks/early_stop_20261111/ff33_curve.png`, script beside it).
+      - [ ] **ff3.3 extended at 0.3** (user about 22:25 11-11: "maybe extend ff3.3 a bit, as the score is still rising"):
+        `ff33_ext57` resumes ff3.3 after its epoch 19 (step 160; checkpoint moved by run paths, round-20 library, epoch
+        19's persisted frames) for 4 epochs, 32 steps, to 192; the driver is ff3.3's with the 0.3 stage of its schedule
+        run through epoch 23 (`make_ext.py`; ff3.3's refuses epoch 20 by design, and a run is not continued with
+        changed code in place). Panels `r33_20`-`r33_23` every epoch; at 192 `es_r33x` applies the rule to ff3.3's
+        epochs 16-23. Files `checks/ff33_ext_20261111/` (README). Built 22:37 (`build_ext.log`: driver `e5ec498c`, the
+        schedule 0.3 on epochs 16-23 and refusing 9 and 24; 1,836 paths moved; 456 persisted frames), stub of every
+        branch and `--test-only` passed; first link 50082451 submitted 22:37 (to step 176).
+        **Epochs 20-21 read 08:20 11-12** (`tm_r33_20.txt`, `tm_r33_21.txt`, deciding nothing; the rule reads at 192):
+        `r33_20` 0.671 (against released ff2.1 -0.011 [-0.019, -0.002]; RMSD 2.33 A), `r33_21` 0.676 (-0.006
+        [-0.013, +0.000]; 2.27 A); epoch 19 (0.680, 2.19 A) still the best of the 0.3 stage. Link 2 50096132 from 07:23.
+        Epoch 22 (panel by hand at its end 11:20, 50105729; `tm_one` 50105732) read 12:21: `r33_22` 0.668, against
+        released ff2.1 -0.014 [-0.022, -0.006]; three epochs after 19 all lower (0.671, 0.676, 0.668).
+        Training ended at step 192, 15:07 11-12; `r33_23`'s panel 50113397, its TM `tm_one` 50113404, `es_r33x` 50113402.
+        The stopping rule against epoch 19, paired (read 15:14): epochs 20, 21, 22 at -2.4, -1.2, -2.7 standard errors,
+        so not yet two consecutive past -2; epoch 23 decides it.
+      - [ ] **A second extension, if the rule allows** (user about 15:10 11-12: "maybe continue training a few more epoch to
+        check if we can get anything better than 19"): `ff33_ext2_57` (`checks/ff33_ext2_20261112/`, README),
+        epochs 24-27 at 0.3 from step 192, driver `fab8e02f` (the first extension's with the 0.3 stage to epoch 27),
+        panels `r33_24`-`r33_27`, `es_r33y` over epochs 16-27. Built and checked 15:15 (`build_ext2.log`,
+        `stub_after.log`, `--test-only`), not submitted. Rule for submitting, fixed before epoch 23's read: if
+        `r33_23` is not more than two standard errors under epoch 19 (the rule has not fired), submit; if it is, the
+        rule has fired (epochs 22-23), nothing is submitted and the user decides.
+        **Read 16:05 11-12: the rule has fired.** `r33_23` 0.669 (against released ff2.1 -0.013 [-0.020, -0.006]),
+        -0.0105 +- 0.0044 under epoch 19 (-2.4 standard errors), after epoch 22's -2.7: two consecutive epochs past
+        -2. `ff33_ext2_57` is not submitted (built, kept until the user decides). ff3.3's lambda-0.3 stage peaked at
+        epoch 19 (0.680) and declined in four epochs after it (0.671, 0.676, 0.668, 0.669).
+        `es_r33x` (16:15, `es_r33x.txt`): CHOSEN `r33_19`, the checkpoint whose test suite already runs.
+      - [x] **Does the panel predict the test suites** (user about 22:25 11-11: "also do your check on 44-domain"):
+        `proxy_check.py` (rule fixed before the comparison): each force field's paired TM difference from released
+        ff2.1 on the panel (its own protocol), on mdCATH and on Peng's native and de novo arms (those scored for the
+        same parameters); the panel predicts a suite unless some force field has resolved differences of opposite
+        sign on the two. Eight force fields on mdCATH (the three side-chain arms at step 76, both ff3.1s, `w32_03`,
+        `p57_09`, `r33_19`), four on Peng (both ff3.1s, `w32_03`, `p57_09`, partial arms). Job `es_proxy` 50082449 ->
+        `checks/early_stop_20261111/proxy_check.txt`. **Read 22:50 (findings 1.43): it predicts mdCATH (Spearman +0.98,
+        the differences nearly equal) and not Peng's native arms**, where every ff3.x sits 0.009-0.016 under ff2.1
+        while the panel reads it level or above; the rule does not fire (one force field resolved on both sides), the
+        offset is in all four; not size, not one temperature; carried by the small beta-containing proteins (NuG2,
+        protein G, WW, gpW, BBA), which neither panel contains. Open for the user: whether to add such proteins to the
+        validation set.
+      - [x] **ff3.4 = `ff34_lam03_57`** (tags `l34_EE`; cancelled, below): ff3.2's run `ff32_pcd57` from its own start with the DSE weight at
+        the SI's 0.3, nothing else changed: driver `548d8e37` (`c0277e8d` with the one line), initial checkpoint
+        ff32_pcd57's with 1,835 run paths moved (`compare_init`: no differing key, largest float difference 0;
+        minibatches and round-0 library equal), every term trained, basin wall, persistent chains, 57 a step, 80 steps.
+        Its after_training.sbatch panels both epochs of every 16-step link (with the unfolded shift, the gaps and the Rg
+        check as ff3.2's) and at step 80 submits `es_l34` (candidates `l34_00`-`l34_09`), which chooses the checkpoint;
+        the test suite then runs on that one. Stub of every branch passed (`stub_after.log`), `--test-only` passed;
+        first link 50067712 submitted 18:16 (to step 16). About 40 h of training.
+        Epoch 0's panel `l34_00` submitted by hand at its end (22:57, 50083534; the after_training skips a tag with a
+        `.submitted` marker), read early by `tm_one` 50083584 -> `checks/early_stop_20261111/tm_l34_00.txt`.
+        **Cancelled 23:56 11-11 and its files deleted** (user: "I don't care about ff3.4 now as it is not a proper
+        fix", then "cancel ff3.4, and free the disk space it occupies"): link 50067712 and successor 50067713 at step
+        9; deleted the run directory, the panel `l34_00` (runs, params, TM cache, peng_full configs); kept the build
+        scripts and logs in `checks/ff34_lam03_20261111/` and the text readouts. ff3.3 is the line carried on.
+
+24. [ ] **Which part of the force field fails BBA** (user 17:20 11-12: "we have been addressing this BBA problem for
+    several rounds and you failed all of them. I think it is because you only look at training. Look at the ff and
+    check what part of ff fail it"; findings 10.59). ff3.3 restored the backbone burial scale and still loses BBA
+    (Peng native 0.366, median RMSD 7.6 A, against ff2.1's 0.416 and 2.4), so findings 1.39's burial term is not the
+    whole cause; its decomposition of ff3.2 also gave the side-chain pair table -1.44 and the glycines' Rama maps
+    -0.92 E_up toward the all-helix state, with GLY8 (the hairpin's turn) moved from phi > 0 into alpha_R.
+    - [x] Step 1, read-only (`checks/ff33_bba_20261112/`, README; job `bba33` 50118977, after 50118975 and 50118976 failed on missing ff3.0 and ff3.1 trajectories): findings 1.39's scripts on ff3.3's
+      BBA arm beside ff2.1 and ff3.2 (ff3.0 and ff3.1 have no trajectories left): what state the chain goes to, per-residue states at T 0.65, and the
+      node decomposition of E(all-helix) - E(native-like) against ff2.1, the Rama node split into glycine rows and the
+      rest. Prediction written before the data: the burial node contributes little now; the glycine rows and the pair
+      table carry most of the rest.
+      **Read 17:47 11-12 (findings 1.44): spread over four parts, none dominant.** Toward all-helix, -4.12 E_up
+      against ff2.1: Rama -1.56 (glycine rows -0.90, others -0.66), side-chain pair -1.56, side-chain burial -1.02,
+      hydrophobe coverage -0.69; H-bond +0.78 back; backbone burial -0.08. By file `sidechain.h5` -1.87, `rama.dat`
+      -1.56, `environment.h5` -1.02. The hairpin's non-glycine residues flip to alpha_R too, not only GLY8.
+    - [ ] Step 2, causal (user about 18:05 11-12: "Run the test"): five force fields staged by
+      `checks/ff33_bba_20261112/stage_swaps.sh` (md5s in `stage_swaps.log`), each Peng's BBA native arm by
+      `bench.sbatch`: `ff_bba_33gly21` (ff3.3, glycine's Rama maps from ff2.1), `ff_bba_33sc21` (ff2.1's
+      `sidechain.h5`), `ff_bba_33env21` (ff2.1's `environment.h5`), `ff_bba_33rama21` (ff2.1's map), `ff_bba_21rama33`
+      (ff2.1 with ff3.3's map); jobs 50121759-50121763, submitted 18:11. Rule fixed before they ran (README there):
+      the cold replica's folded fraction (RMSD < 3 A, T 0.65) over a common window, an arm restoring BBA if above
+      the midpoint of ff2.1's and ff3.3's; read after the first chunk (about 10.5 h), Peng's TM at the end.
+    - [x] **BBL, the same diagnosis** (user about 21:30 11-12: "check ff for what term is wrong for BBL"; ff3.3's BBL
+      native 0.421 against ff2.1's 0.457, TM > 0.5 in 0.097 of frames against 0.250). findings 1.39's method
+      generalised to any arm (`arm_common.py`, `arm_state.py`, `arm_decomp.py` in `checks/ff33_bba_20261112/`), frame
+      sets fixed before the energies by Peng's TM: native-like TM > 0.5 (both arms), non-native ff3.3's TM < 0.3
+      (or its 400 lowest if fewer than 100). Job `bbl33` 50144448 -> `bbl_state_ff33.txt`, `bbl_decomp_ff33.txt`.
+      **Read 23:52 11-12 (findings 1.44): the same three files as BBA.** Helices intact; the loop 19-33 leaves its
+      native states. Toward non-native, -5.36 E_up against ff2.1: `sidechain.h5` -2.62 (hydrophobe coverage -2.17),
+      `rama.dat` -1.75 (glycine rows -0.71), `environment.h5` -1.04; H-bond +0.02. A BBL swap waits on BBA's read.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the

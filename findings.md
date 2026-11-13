@@ -2213,7 +2213,9 @@ plan.md Phase 38 items 15-16.
   `resets_c9_00.txt`, folded fraction, trajectories deleted) split it over the side-chain table, the backbone burial
   and the H-bond file. In TM, Jumper's half rate (`jl_00`) reaches the control's scale (-0.403 against -0.404) and
   loses less (-0.029 [-0.039, -0.019] against released ff2.1, the control -0.038), its E_alpha moved 0.053 against
-  0.084. The coil start (`cs_00`) loses as the control does (-0.044 [-0.058, -0.032]; against `c9_00_tr` -0.005
+  0.084. At step 38 (`jl_01`, the control's epoch 0 in rate x steps; `tm_jl01.txt`) it is level with the control's
+  step 19 (+0.002 [-0.009, +0.013]) and under released ff2.1 (-0.036 [-0.047, -0.027], 40 of 44 lower): the rate
+  sets only the speed of the loss. The coil start (`cs_00`) loses as the control does (-0.044 [-0.058, -0.032]; against `c9_00_tr` -0.005
   [-0.017, +0.005]). Both DSE-driven groups balance far under 0.3 at ff2.1 (the scale +0.018; E_alpha, E_beta, dhb
   between -0.16 and +0.06), so 'the DSE's weight' describes the ff2.1 loss better than 'the burial scale'.
 - **Not ff2.1's undocumented burial edit.** ff_2.0 and ff_2.1 differ only in `environment.h5` (with `coverage_param`,
@@ -2300,6 +2302,91 @@ plan.md Phase 38 items 15-16.
   within a few steps: so either our FF2 objective differs from his (in the DSE's weight or scale: with it off, ours
   raises mdCATH TM, ff3.2 +0.018) or ff2.1 was never trained near its fixed point. His trainer is not readable
   (9v), so the two are told apart only by tests such as items 16 and 18.
+
+### 1.44 Which parts of ff3.3 fail BBA (2026-11-12)
+
+User 11-12: "Look at the ff and check what part of ff fail it" (findings 10.59). findings 1.39's scripts on the Peng
+BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3.1's trajectories are gone),
+`checks/ff33_bba_20261112/` (README; job `bba33` 50118977).
+- **The state.** ff3.3's cold chain (T 0.65) leaves the native in the first time block (RMSD 7.92 A) and becomes one
+  helix: longest helical run median 26 residues, at least 20 in 62% of frames (ff3.2 0.36, ff2.1 0.02). Not the turn
+  glycine alone: GLY8 at phi > 0 0.31 (ff2.1 0.98, ff3.2 0.59), and the non-glycine hairpin residues go to alpha_R
+  0.66-0.78 (GLN1-ALA4, ARG9-PHE11, the helix cap ASN13; ff2.1 beta 0.91-0.98, ff3.2 alpha_R 0.37-0.48). The helix
+  14-24 is unchanged (alpha_R 1.00 in all three).
+- **The terms** (`bba_decomp_ff33.txt`: each node of ff3.3 moved alone onto ff2.1's config and back, on 800
+  native-like and 400 all-helix frames). E(all-helix) - E(native-like): ff2.1 -1.39, ff3.3 -5.51 E_up, change -4.12;
+  single nodes sum to -4.13, forward equals reverse within 0.02. Rama maps -1.56 (the glycines' rows -0.90, the other
+  residues' -0.66), side-chain pair table (`rotamer`) -1.56, side-chain burial (`sigmoid_coupling_environment`)
+  -1.02, hydrophobe H-bond coverage -0.69; the other way H-bond energy +0.40 and H-bond coverage +0.38; backbone
+  burial -0.08 (ff3.2's -2.49 is gone with the scale's restoration). By file: `sidechain.h5` (pair, coverage and
+  hydrophobe tables) -1.87, `rama.dat` -1.56, `environment.h5` -1.02, `hbond.h5` +0.40, `bb_env.dat` -0.08.
+- So no single part fails BBA: the side-chain file and the Ramachandran maps carry about four fifths, the burial
+  file a quarter, H-bond a tenth back. Energies on fixed frames do not decide populations; the one-file swap on the
+  BBA arm is the causal test (plan.md item 24 step 2).
+- **The map alone does not break BBA** (read 17:59 11-12; Peng's BBA native scores, and the parameter files' md5s).
+  Released ff3.1 is ff2.1 with only `rama.dat` replaced (its other five files md5-equal to ff2.1's): BBA native 0.390
+  (ff2.1 0.416), median RMSD 3.03 A against 2.41, near-native; the 10-26 merge (also map only) 0.400, 2.79 A. The
+  outright loss (one helix, 7.6-7.7 A) comes only with the side-chain and burial files co-trained: ff3.2 `w32_03`
+  0.360 and ff3.3 0.366 (`p57_09` 0.388, 4.27 A; ff3.0 0.390, 3.31 A). glpG's TM4 at T 0.70 does not follow the
+  glycine depth either: map-only ff3.1 0.74 and the merge 0.42, all-term ff3.0 0.85, `w32_03` 0.98, `p57_09` 0.77, with
+  glycine alpha_L - alpha_R between -0.77 and -1.06 in all of them. So the conflict between BBA and TM4, as far as
+  these runs show, runs more through the co-trained side-chain and burial terms than through the glycine depth;
+  the one-file swaps on BBA decide it.
+- **BBL, the same three files** (user 11-12: "check ff for what term is wrong for BBL"; `bbl_state_ff33.txt`,
+  `bbl_decomp_ff33.txt`, job `bbl33`, read 23:52). Both helices (residues 9-18, 36-45, 0-based) stay at alpha_R
+  0.98-1.00 under all three force fields; ff3.3 moves the loop 19-33 instead: ASN19 phi > 0 0.97 -> 0.69, LEU20 and
+  ASP21 beta 0.99, 0.96 -> 0.67, 0.73 (alpha_R 0.30, 0.26), ARG33 beta 0.86 -> 0.59, the glycines 27-32 losing
+  phi > 0 by 0.2. E(non-native, ff3.3's TM < 0.3) - E(native-like, TM > 0.5): ff2.1 +22.36, ff3.3 +17.00 E_up, change
+  -5.36; single nodes sum to -5.40, forward equals reverse within 0.04. Hydrophobe coverage -2.17, Rama -1.75
+  (glycine rows -0.71, others -1.04), side-chain burial -1.04, pair table -0.69; H-bond coverage +0.24, H-bond
+  energy +0.02. By file `sidechain.h5` -2.62, `rama.dat` -1.75, `environment.h5` -1.04, `hbond.h5` +0.02,
+  `bb_env.dat` -0.01. The same three files as BBA, in about the same shares, with the hydrophobe table in place of
+  the pair table as the largest node. The limitation: the non-native set is ff3.3's tail (365 of 13890 frames, TM
+  median 0.29), and its typical frame sits at TM 0.3-0.5.
+
+### 1.43 The weight stays at the SI's 0.3; the checkpoint is chosen by early stopping (2026-11-11)
+
+User 11-11: "i think the answer is most likely Peng stopped early by picking a model with best result. As in Jumper's
+thesis or in Peng's paper also said the training do not go to steady state." That settles 1.42's two readings for
+the user in favour of the second: ff2.1 is a stopped point of FF2's path (1.23: a fixed 76-step budget, Jumper's
+early stopping as a regulariser), so the balance near 0.02-0.12 measured at it says nothing against the SI's 0.3, and
+the weight is not changed by hand, schedule or controller (10.58). What must be made reliable is the stopping point.
+- **The method** (plan.md Phase 38 item 23, `checks/early_stop_20261111/`, rule fixed before any data): a validation
+  panel chooses, a test suite judges once. Validation is the 44-domain native-start panel in TM-score and Ca-RMSD,
+  about a node-hour a checkpoint against 120-290 node-hours an epoch of training, so every epoch can be scored; the
+  test is mdCATH TM, Peng's 32 arms and glpG. The chosen checkpoint is the earliest within one standard error of the
+  best mean TM (paired over the 44), its RMSD not worse by more than one; a run stops when two epochs lie more than
+  two standard errors under the best.
+- **ff3.3's lambda-0.3 epochs** (`es_r33.txt`, read 19:51): mean TM 0.663, 0.672, 0.670, 0.680 over epochs 16-19,
+  each earlier epoch more than one standard error under epoch 19, so `r33_19`, the end of training, is chosen. It is
+  level with released ff2.1 on the panel (-0.003 [-0.011, +0.006], RMSD -0.06 [-0.17, +0.04] A) and under ff3.2
+  (-0.018 [-0.027, -0.011]). The rise had not stopped when the budget ended.
+  Over the whole ramp (tm_r33_11.txt, tm_r33_15.txt, read 23:49): 0.698 (ff3.2, epoch 9), 0.687 (11, lambda 0.1),
+  0.674 and 0.681 (13 and 15, 0.2), then the 0.3 epochs; RMSD 2.07, 2.21, 2.32, 2.25 A. Each raise of the weight
+  costs TM at first and training recovers it within the stage, each stage ending at about released ff2.1's 0.682.
+  The extension's first two epochs at 0.3 (read 08:20 11-12): 0.671 and 0.676 (RMSD 2.33, 2.27 A), under epoch 19's
+  0.680; epoch 22 (12:21) 0.668 (released ff2.1 -0.014 [-0.022, -0.006]). The 0.3 stage peaked at epoch 19 so far,
+  as early stopping expects of a run past its best point. Epoch 23 (16:05) 0.669: epochs 22 and 23 lie -2.7 and -2.4
+  standard errors under epoch 19, so the stopping rule fired at the end of the extension.
+- **No weight holds ff2.1 in place** (the constrained screen `ff21_dsecon`, read 22:11 as a measurement, plan.md item
+  20): one epoch from ff2.1 at a weight rising 0 to 0.06 (summed 0.647, the control's 5.7) loses -0.012 [-0.020,
+  -0.004] TM on the panel (the control at 0.3 -0.038), while the backbone scale moves the other way (-0.19 against
+  the control's -0.40). The loss shrinks with the weight but does not vanish, as expected of a stopped point and not
+  of a balance point of any weight in that range.
+- **The panel and mdCATH agree on ff3.3** (read 21:41): against released ff2.1, panel -0.003 [-0.011, +0.006] and
+  mdCATH -0.006 [-0.013, +0.000]; against ff3.2, panel -0.018 and mdCATH -0.025 [-0.032, -0.018].
+- **The panel predicts mdCATH, not Peng's native arms** (`checks/early_stop_20261111/proxy_check.txt`, read 22:50;
+  each force field's paired TM difference from released ff2.1, the panel in its own protocol). mdCATH, 8 force fields:
+  the two differences nearly coincide (no-BP -0.057 and -0.060, ff3.2 `p57_09` +0.016 and +0.018; Spearman +0.98).
+  Peng's native arms, 4 force fields (both ff3.1s, `w32_03`, `p57_09`): the panel reads +0.001 to +0.016 and Peng
+  -0.009 to -0.016 (ff3.1's -0.010 [-0.020, -0.000] resolved; Spearman -0.40). The rule fixed before the comparison
+  (resolved opposite signs on one force field) does not fire, since only one of the eight is resolved on both sides,
+  but the offset is in every one. De novo: 7-10 arms each, too few. Not size: mdCATH's 50-100 residue third reads
+  +0.004 to +0.018 for the same four. Not one temperature: Peng's native arms are scored at their own bottom rung,
+  0.65 (BBA) to 0.95 (top7), around the panel's 0.8. The loss is spread over the small proteins with beta structure
+  (`p57_09` against ff2.1: NuG2 -0.082, protein G -0.041, WW -0.035, gpW -0.031, BBA -0.028; ubiquitin +0.094, alpha3D
+  +0.020), a kind of protein neither the 44 domains nor mdCATH contains (findings 1.39's BBA mechanism is one case).
+  So a checkpoint the panel chooses is mdCATH's choice, and not necessarily Peng's.
 
 ## 2. The hybrid model: what each side supplies
 
@@ -5043,7 +5130,12 @@ energies' (3e-7), burial (7e-7) and coverage (1.5e-4); our build before its thre
 side-chain pair derivatives and forces included (9e-6, 3e-5). The two differences are our deliberate fixes: the
 angular-gradient fix (side-chain pair derivatives, 54-100%) and the BP stopping fix (3-4e-4, one protein). Peng's
 2020 writer places the CB differently (side-chain burial 5-18%, energy 0.5-1.3%), not the backbone burial or H-bond
-terms. So the balance lambda* ~ 0.02 is not a static artefact of our engine. **Peng's 2021 `ff_2.1` is not the released one**:
+terms. So the balance lambda* ~ 0.02 is not a static artefact of our engine. **Nor a dynamic one** (test B, read 16:20
+11-11, `testB/testB_read.txt`): item 16's replica-resolved visit run on Peng's 2021 toolchain (his Python 2 writer
+and restraint network, his binary, his library), 48 proteins, balances the scale at +0.047 [+0.002, +0.100] against
+ours' +0.018 [-0.033, +0.070] (paired +0.029 [-0.003, +0.062]); NSE -0.99 against -0.37 a protein, DSE +21.1 against
++20.5. E_alpha, E_beta and dhb balance between -0.05 and +0.08 on both. Health equal: KE/1.5kT 0.998-1.021, restrained
+Ca-RMSD 0.97 A, free 2.61 A against 2.63. **Peng's 2021 `ff_2.1` is not the released one**:
 `software/upside-ff2.0/parameters/ff_2.1` (2021-10-20) differs from the repository's ff_2.1 (commit `4ad9c768`,
 2022-02) in `environment.h5` (`center` up to 1.10; `coverage_param` up to 0.4, Peng's equal to ff_2.0's) and
 `sidechain.h5`; `bb_env.dat`, `hbond.h5`, `sheet`, `rama.dat`, `rama_reference.pkl` are byte-equal.
@@ -5756,6 +5848,34 @@ into failure). The same hour, a command built the gate's next-pass id from that 
 `squeue -j` (every user's jobs) and `scancel` (refused, "No job identification provided"; nothing cancelled).
 **Before `scancel`, check the id is non-empty and that `squeue -j <id> -h -o '%u %j %T'` names our own job of the
 expected name**, as the replacement did.
+
+---
+
+### 10.58 A published setting that fails in our code is a defect to locate, not a dial to re-set (2026-11-11)
+
+The SI's DSE weight, 0.3, takes ff2.1 off its folding within one epoch of our trainer, because under it the native
+target balances the unfolded one near 0.02-0.12, not 0.3 (1.41, 1.42). After the engine was cleared (test A, test B)
+the cause was still unlocated, and I proposed and ran a controller that sets the weight to whatever holds the unfolded
+state's H-bonds at ff2.1's (`constrained_dse.md`, ff3.4). User 11-11: "so you are essentially just twisting lambda to
+get a result we want. What you really need to do is to fix the issue that caused the lambda misalign, instead of just
+twisting parameter to get a result we want." A rule that chooses a published hyperparameter to meet a chosen outcome
+is a parameter twist, however principled its form (a Lagrange multiplier here), and it leaves the defect in place.
+**When a paper's setting fails in our implementation, the work is to find why: our code against the paper, or the
+paper's premise (here, whether ff2.1 was ever a balance point of 0.3). No change to the setting, by hand, by schedule
+or by controller, is proposed until the cause is located.** Look first at the discrepancies in our own data on the
+quantity at issue (the balance at ff2.1 measured at 0.02 and at 0.12 on different proteins and protocols, never
+separated).
+
+### 10.59 When a force field fails a protein, diagnose the force field on that protein (2026-11-12)
+
+BBA's native has been lost by every ff3.x since ff3.1 (Peng native 0.36-0.39 against released ff2.1's 0.416), and
+each round explained it through the training (the backbone burial scale's fall, findings 1.39; the DSE's weight) and
+changed the training; ff3.3 restored the scale to near ff2.1's and still loses BBA (0.366, median RMSD 7.6 A). User
+11-12: "we have been addressing this BBA problem for several rounds and you failed all of them. I think it is because
+you only look at training. Look at the ff and check what part of ff fail it." **When a force field fails a specific
+protein, first find which part of the force field fails it, on that protein's own frames: what state it goes to, which
+energy terms favour that state over the native under the new parameters and not under the old, at which residues,
+and which file, swapped back alone, restores it. Change the training only after the failing term is located.**
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 

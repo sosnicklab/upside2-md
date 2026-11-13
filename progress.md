@@ -1401,3 +1401,74 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   TM (the backbone burial scale the one resolved block, +0.014 of ff3.3's -0.024). Submitted `tm_jl01` for item 16
   (c) part (2). Files: `checks/engine_parity_20261111/testB/`, `checks/fold_vs_tm_20261110/tm_jl01.sbatch`, plan.md
   items 15, 20, 21, remote_jobs.md.
+* **11-11 15:25-15:35: monitoring pass** (user: "connect to remote and monitor corresponding jobs"). midway2's socket
+  reopened (one Duo push); no job failed since 14:00. Test B's smoke passed (its KE/1.5kT 0.57 is a 300 tu run's
+  warm-up; the array's 8000 tu visits read 0.998-1.016 on Peng's binary), array at 19 of 48. Read: `jl_01` in TM, level
+  with the control's step 19, so Jumper's rate sets only the speed (plan.md item 16 (c), findings 1.42); ff3.3's h
+  -0.109 [-0.197, -0.028] under ff3.2's and level with ff2.1's (item 14 rule (a) met). `ff21_dsecon` at step 9, lambda
+  0.032 next. A read-only 10-min poller on the Mac reports changes. Files: plan.md items 14, 16, 21; findings 1.42;
+  remote_jobs.md.
+* **11-11 16:20: test B read** (plan.md item 21, findings 9v): on Peng's 2021 Upside the backbone burial scale balances at
+  lambda* +0.047 [+0.002, +0.100], under 0.3, as ours (+0.018): the engine is not the difference. Health equal on both
+  engines; the coinciding restrained-RMSD summaries checked per protein (they differ, median 0.013 A).
+* **11-11 16:28: interim read of the constrained DSE screen at step 10** (user: "check the fix we proposed for DSE, is
+  it working?"; plan.md item 20). Controller as designed (lambda 0 -> 0.038, h just above target, binding met); the
+  scale goes the NSE's way (-0.301 -> -0.19, control -0.40); free replica Ca-RMSD -0.21 [-0.30, -0.11] A against the
+  control on the same proteins and steps. Not the verdict (step 19). Files: `checks/dsecon_20261111/interim/`.
+* **11-11 16:35-16:56: ff3.4 proposed, named and submitted** (user: "propose a ff3.4, with the fixed training, start
+  from ff3.2", then "submit ff3.4 training now ... if the training repair validation passes, we will use ff3.4 as the
+  official version"). ff3.4 = `ff32_dsecon57` (plan.md Phase 38 item 22): first link 50067557 and validation waiter
+  50067558 submitted by hand as the gate would, gate cancelled; staged name renamed to `ff_3.4_dc32_19` (generator
+  fixed for a header comment), dry run 38 of 38 `--test-only`, identical to the morning's but for the name. Files:
+  `checks/dsecon_k32_20261111/` (README, `submitted.log`), plan.md item 22, remote_jobs.md, memory
+  `project_ff34_constrained_dse`.
+* **11-11 17:50-18:17: the constrained DSE rejected; early stopping adopted; new ff3.4 submitted** (user: "you are
+  essentially just twisting lambda", then "Peng stopped early by picking a model with best result", then "stop ff3.4,
+  and start a new ff3.4 with the updated training workflow, or apply it in in-training ff3.3 ... lambda=0.3, with best
+  ff performance possible"). Lesson findings 10.58. Constrained ff3.4 cancelled 18:07. Early-stopping rule (the
+  one-standard-error rule on the 44-domain panel in TM-score and Ca-RMSD) written before any data,
+  `checks/early_stop_20261111/`. ff3.3: panels r33_16 and r33_18 and the selection es_r33 submitted 18:11. New ff3.4
+  `ff34_lam03_57` = ff3.2's run at the SI's lambda 0.3 (driver one line from ff3.2's, checkpoint equal but paths,
+  stub of every branch, --test-only), first link 50067712 submitted 18:16. Files: plan.md item 23, remote_jobs.md,
+  memory `project_ff34_constrained_dse`.
+* **11-11 19:51: ff3.3's early stopping read** (`checks/early_stop_20261111/es_r33.txt`; the rule's check passed):
+  r33_19 chosen; validation TM rises 0.663 -> 0.680 over the lambda-0.3 epochs 16-19 and is level with released ff2.1
+  (-0.003 [-0.011, +0.006]), under ff3.2 (-0.018). The stopping rule never fired. plan.md item 23.
+* **11-11 21:41: ff3.3's mdCATH TM read**: r33_19 0.721 against released ff2.1's 0.727, -0.006 [-0.013, +0.000]
+  (not wholly under 0); against ff3.2 -0.025. Agrees with the validation panel's ranking (findings 1.43). plan.md item 14.
+* **11-11 22:11: the constrained screen read as a measurement** (`dc_read.txt`): partial; dc_00 TM -0.012 [-0.020,
+  -0.004] against released ff2.1, +0.026 against the control, at a ninth of the control's DSE push; no weight in
+  0.05-0.3 holds ff2.1 in place (findings 1.43). Its link finished; no job left on it.
+* **11-11 22:25-22:38: ff3.3 extended; the panel check submitted** (user: "maybe extend ff3.3 a bit, as the score is
+  still rising", "also do your check on 44-domain"). `ff33_ext57` (ff3.3 from step 160, its 0.3 stage to epoch 23;
+  build, stub and --test-only passed) first link 50082451; `es_proxy` 50082449 (the panel against mdCATH and Peng,
+  rule fixed before the comparison). Files `checks/ff33_ext_20261111/`, `checks/early_stop_20261111/`.
+* **11-11 22:50: the 44-domain panel checked against the test suites** (`proxy_check.txt`): it predicts mdCATH
+  (Spearman +0.98) but not Peng's native arms (every ff3.x 0.009-0.016 under ff2.1 there, level or above on the
+  panel), the loss carried by small beta-containing proteins the panel lacks. findings 1.43, plan.md item 23.
+* **11-11 23:49-23:57: ff3.3's whole curve; ff3.4 cancelled and deleted.** Epochs 11 and 15 scored (0.687, 0.681):
+  each raise of the DSE weight costs TM and the stage recovers it, each ending near released ff2.1; figure
+  `checks/early_stop_20261111/ff33_curve.png`. At the user's word ff3.4 (`ff34_lam03_57`) cancelled at step 9 and
+  its run directory and epoch-0 panel deleted; scripts, logs and text readouts kept. plan.md item 23.
+* **11-12 00:12: the rejected constrained ff3.4 deleted** (user: "delete ff3.4"): `ff32_dsecon57`'s run directory
+  (39 GB) and its target visit's files; scripts, logs and readouts kept. `/project` 824 GB available after both ff3.4
+  deletions (719 GB before them; GPFS showed the freed space a minute late).
+* **11-12 08:20: ff3.3 extension epochs 20-21 read early**: 0.671 and 0.676 TM (released ff2.1 0.682), RMSD 2.33 and
+  2.27 A; epoch 19 (0.680, 2.19 A) still the best at lambda 0.3. Link 2 running to step 192. plan.md item 23.
+* **11-12 12:21: ff3.3 extension epoch 22 read early**: 0.668 TM (released ff2.1 -0.014 [-0.022, -0.006]); epochs
+  20-22 all under epoch 19's 0.680. Epoch 23 and the selection at step 192 this evening. plan.md item 23.
+* **11-12 16:05: ff3.3's stopping rule fired**: epoch 23 0.669 TM, -2.4 SE under epoch 19 after epoch 22's -2.7. The
+  prepared second extension (`ff33_ext2_57`, epochs 24-27) not submitted, by the rule fixed before the read; the user
+  decides. plan.md item 23, findings 1.43.
+* **11-12 17:15: ff3.3's first Peng arm scored**: BBA native 0.366 TM against released ff2.1's 0.416 (RMSD median
+  7.6 A against 2.4), as `w32_03`; one of 32, no reading before DONE. plan.md item 14.
+* **11-12 17:47: which parts of ff3.3 fail BBA** (user: "Look at the ff and check what part of ff fail it"):
+  findings 1.39's decomposition on ff3.3's BBA arm; the push toward the all-helix state (-4.12 E_up) is spread over
+  the side-chain file (-1.87), the Rama maps (-1.56: glycine -0.90, others -0.66) and side-chain burial (-1.02); the
+  backbone burial term is no longer in it. findings 1.44, plan.md item 24.
+* **11-12 18:11: BBA swap test submitted** (user: "Run the test"): five BBA native arms on staged force fields,
+  ff3.3 with one part from ff2.1 (glycine maps, sidechain.h5, environment.h5, whole map) and ff2.1 with ff3.3's map;
+  rule fixed before they ran. `checks/ff33_bba_20261112/`, plan.md item 24.
+* **11-12 23:52: BBL decomposition read** (job `bbl33`): ff3.3 keeps BBL's helices and moves its loop; the energy
+  shift toward non-native (-5.36 E_up) is in the same three files as BBA's: sidechain.h5 -2.62 (hydrophobe coverage
+  -2.17), rama.dat -1.75, environment.h5 -1.04. findings 1.44, plan.md item 24.
