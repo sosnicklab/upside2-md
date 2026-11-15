@@ -1493,3 +1493,19 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   running ff3.3 Peng arms, ff3.2's last 3 de novo arms and the three collectors; none resubmitted. Peng stopped at
   6 (ff3.3), 26 (ff3.2) and 23 (ff3.1) of 32 scored; runs, scores and read-outs kept. Kept running: `ff33_dsemap57`,
   the swap arms, bpmax. remote_jobs.md, plan.md Phase 37 item 4 and Phase 38 items 12, 14.
+* **11-14 20:22: `ff33_sarwfix57` submitted** (user: "check if the DSE is properly fixed", then "fix them and re-do
+  the ff3.3 DSE training part"). The audit found the DSE code faithful but its SARW on the trained map, so the
+  depths' DSE rows had no gradient behind them and every DSE target moved with the map (findings 10.65). The fix: SARW
+  on ff2.1's own `rama.dat`, DSE curvature for the depths. The run resumes `ff33_dsemap57` at step 96 (end of its
+  lambda-0 epochs) to 176. Static tests, the after-job stub and `--test-only` pass. The old run stops at step 144,
+  after its panels `m33_16`, `m33_17`. plan.md Phase 38 items 25-26; `checks/ff33_sarwfix_20261114/`.
+* **11-15 06:05: `ff33_sarwfix57` first link and panels.** Steps 96-112 ran clean; the chain is on its second link.
+  The SARW still drifts with the map fixed, through `bbenve`, the backbone burial scale it keeps as FF2's code:
+  epoch 13 -0.0148 against the 0.015 limit (old run -0.0268). Panels `s33_12` 0.675, `s33_13` 0.685: no resolved
+  gain over `m33_12`, `m33_13` and below `p57_09`, so still wrong by the watch rule, after 8 and 16 steps of the
+  fix. midway2's master had no keepalive (the handbook said it did); `mdw2_master.exp` fixed, and
+  `scratchpad/mdw2_keepalive.sh` holds the open one. plan.md item 26, findings 10.65, remote_jobs.md §0.
+* **11-15 07:05: watch check 2 fails at epoch 14.** On steps 113-115 the SARW's alpha_R is -0.0254 [-0.0277,
+  -0.0229] against epoch 12 on the same proteins (limit 0.015; old run -0.039 on the same minibatches), with
+  `bbenve` at -0.031. The run is healthy and goes on; the decision is the user's. plan.md item 26,
+  `checks/ff33_sarwfix_20261114/monitor_sarwfix_e14_mb0-2.txt`.

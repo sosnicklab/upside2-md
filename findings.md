@@ -5963,6 +5963,57 @@ in ff3.0, and the validation shows it is significantly under ff2.1" (Peng native
 table, which I had in hand). **Before recommending a design, look up every earlier run of it and lead with its
 validation.**
 
+### 10.65 The DSE's SARW carries the trained map, so its target moves with the depths (2026-11-14)
+
+Audit of `ff33_dsemap57` at the user's request 11-14 ("check if the DSE is properly fixed, and if there are other
+bugs"; `checks/ff33_dsemap_20261113/audit_20261114/`). The code does what 10.63 asked. The DSE rows enter the depth
+step as `lambda T0 J^T (p_unfolded - p_SARW)` with no curvature. Signs, frame selection, indices and the SARW's exact
+reweighting to the unfolded rungs (ESS median 258-363 of 400 frames) are correct. The objective is not.
+- The SARW replica reads the round's trained library (all ff3.1-ff3.3 runs; `zero_for_sarw` leaves rama). In FF2 the
+  SARW carried the fixed NDRD map, because FF2 trained only the sheet mixing, and the port of Peng's trainer gives
+  even that no DSE (sheet derivatives only on the NSE frames, `mode >= 1`). With depths trainable, the DSE's reference
+  moves with them. In the redo, on the same proteins (each minibatch paired with epoch 12's), the SARW's alpha_R
+  population fell by 0.027 at epoch 13 and by 0.049 at epoch 17 (`checks/ff33_sarwfix_20261114/
+  monitor_redo_calibration.txt`); the SARW's temperature also fell (median 1.023 to 0.994), and that is not separated.
+- For a parameter the target ensemble also carries, the contrastive form is not the gradient of the DSE. With
+  P_unfolded proportional to P_SARW exp(-V_other/T), the true descent direction is
+  (p_U - p_S)/T + Cov_S(V_other, w)/T^2, which is zero to first order in V_other: the map shifts both ensembles alike.
+  The step applies only (p_U - p_S), a push the map cannot remove. The 11-13 reason, "it would compare the map with
+  itself", was right in substance.
+- Measured: the lambda-weighted DSE rows are 0.3-0.5 of the NSE's gradient norm. Summed by basin, they are the
+  largest systematic part: alpha_R +206 to +476, beta -100 to -225, pPII -127 to -294 per epoch. The NSE balances
+  them (alpha_R -195 to -348). By round 17 the beta and pPII depths average -0.20 and -0.22 (ff3.3 at round 17:
+  +0.09, +0.11). On the same proteins the free ensemble's alpha_R fell only 0.005-0.011 and the native replica's not
+  at all; the 0.52 -> 0.48 first read 11-14 compared different minibatches' proteins and was wrong.
+- Separate from this, and known since 1.29 (10-09): per-map depths do not transfer between proteins. The depth
+  step's own check removes none of the held-out proteins' map-level gap in any round (0.99-1.01, ff3.2, ff3.3 and the
+  redo), and gap power per read is the same on held-out and training proteins (ratio 1.1-1.2; a real signal would
+  give 1/8.7). Most of the 1,517 per-map depths move on sampling noise, held by the cross-validated prior; only the
+  basin-wide sums are systematic. That is the design 1.29 and 1.34 accepted, not a defect of this run.
+- The same structure, inherited from FF2's code and one scalar: the backbone burial scale (`bbenve`) gets a DSE
+  gradient although the SARW keeps that term (the port's `apply_param_scale` leaves `bb_scale` at 1). Measured 11-15
+  in `ff33_sarwfix57`, whose SARW map is fixed: on the same proteins (epoch 13 minibatch 0 against epoch 12's) the
+  SARW's alpha_R still fell 0.0200 +- 0.0024 (s.e.m., 47 of 56 proteins down; item 25's run on that minibatch
+  -0.037), not explained by the rungs' temperatures (correlation -0.15, the fit's intercept the whole change). Over
+  that epoch `bbenve` went 0.243 to 0.069; it turns at the first lambda > 0 epoch in every DSE run (ff3.3 -0.018 to
+  -0.172, item 25's +0.243 to +0.062, after +0.13 an epoch up at lambda 0), at about 0.17 an epoch against Adam's 0.2
+  ceiling, so its DSE push is one-signed. The sign fits: bb_env counts backbone H-bonds (hbond weight 2) though the
+  SARW's H-bond energy is zero, so a positive scale gives the SARW a hidden helix reward that the drop removes. The
+  sheet mixing, the other trained term the SARW keeps, moved rms 0.027. Over epoch 13's minibatches 0-4, each paired
+  change of the SARW's alpha_R over its 8 steps is 0.115-0.133 times that interval's change of `bbenve` (-0.174 to
+  -0.119, the SARW -0.020 to -0.015), while the sheet's mean change grows (+0.012 to +0.027): the SARW follows
+  `bbenve`. In minibatches 5-7 the ratio fell to 0.07-0.09 (SARW -0.008 to -0.007), where the SARW's temperature
+  also fell (median 1.023-1.053 to 0.994). Epoch 13's mean -0.0148 (95% [-0.0162, -0.0132]), item 25's -0.0268. A
+  controlled test (the SARW re-run with `bbenve` reset) is not done.
+- Fixed 11-14 in `ff33_sarwfix57` (user: "fix them and re-do the ff3.3 DSE training part"; plan.md Phase 38 item
+  26). The SARW config is written from ff2.1's own `rama.dat` (`996a607b`). The depths' DSE rows take their curvature
+  lambda (T0/T_u) Cov_unfolded, and carry a DSE flag in place of `wh == 0`. The static checks pass
+  (`checks/ff33_sarwfix_20261114/static_test.log`): the worker's SARW config differs from a free one only in the
+  five scaled arrays and the map; the NSE path is bitwise the redo's; the step is the Newton step of the stated
+  objective.
+**When a parameter is made trainable, check whether the DSE's SARW reference contains it. If it does, its DSE
+gradient is not contrastive, and the reference itself moves.**
+
 ## 11. Reference: the two glpG PDBs disagree about TM4
 
 `glpg_oriented.pdb` (crystal-derived, oriented post hoc) puts residues 135-140 at z = +2 to +9 A, splayed toward the

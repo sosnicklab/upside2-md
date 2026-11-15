@@ -2508,6 +2508,91 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     - [ ] First link 50156016 R 11:00 11-13 (steps 80-96). Panels `m33_10`-`m33_21`, two a link; `m33_10`/`m33_11`
       show the new settings at lambda 0 against `p57_09`; at step 176 early stopping on the panels (item 23's rule),
       ff3.3's `r33_EE` the comparison at equal lambda stages; then validation.
+    - [x] **Audit 11-14 (user: "check if the DSE is properly fixed, and if there are other bugs"; findings 10.65).**
+      The code does what this item asked. The design is wrong: the SARW reads the trained map, so the DSE's reference
+      moves with the depths, and their DSE rows push without a gradient behind them. Measured: beta and pPII depths
+      -0.20 and -0.22 by round 17, against ff3.3's +0.09 and +0.11. Fixed in item 26. The run stops at step 144
+      (`after_training.sbatch` END_STEP 144, backup `.bak_pre_stop144_20261114`), after its panels `m33_16`, `m33_17`.
+26. [ ] **ff3.3's DSE part redone with the SARW on ff2.1's map: `ff33_sarwfix57`** (user 11-14: "fix them and re-do
+    the ff3.3 DSE training part"; findings 10.65). `checks/ff33_sarwfix_20261114/`, README.
+    - The run: item 25's run resumed at its step 96, the end of its lambda-0 epochs 10-11 (the SARW acts only through
+      the DSE, so nothing changes at lambda 0), with lambda 0.1/0.2/0.3 over epochs 12-14/15-17/18-21 to step 176 and
+      every other setting item 25's. Two changes: the SARW replica's config is written from ff2.1's own `rama.dat`
+      (`996a607b`, FF2's reference); and the depths' DSE rows, now a true contrast, take their curvature
+      lambda (T0/T_u) Cov_unfolded. The sheet's missing DSE and the SARW's backbone burial stay as FF2's code had them
+      (10.62).
+    - [x] Built and checked 20:25 11-14: `build_sarwfix.log` (driver `72504bab`, rama_basin `b1a6c85a`, checkpoint
+      moved with 1,836 strings, solver and parameters equal); `static_test.log` ALL PASSED (the worker's SARW config is
+      ff2.1's map with the five scaled arrays, the NSE path bitwise item 25's, the curvature a Newton step of the
+      stated objective); `stub_after.log`; `--test-only`.
+    - [ ] Training: link 50191658 (steps 96-112) 20:22 11-14 to 04:57 11-15, no error line; link 50197041 (112-128)
+      R from 04:58. Panels `s33_12`-`s33_21`, two a link, against
+      released ff2.1, `p57_09`, `r33_(EE-2)` and item 25's `m33_EE` (the fix alone, epochs 12-17). At step 176,
+      early stopping on the panels (item 23's rule); then validation.
+    - **Watch rule** (user 11-14: "keep monitor the training, and let me know if it is still wrong"). Fixed 20:40
+      11-14, before any `s33` data, calibrated on item 25's run paired by proteins
+      (`checks/ff33_sarwfix_20261114/monitor_redo_calibration.txt`, `monitor_sarwfix.py`). Reported at once when a
+      check fails, and at each panel:
+      1. Health, every step: no error line or failed worker in the link's log; the chain goes on to 176; a DSE
+         target from at least 50 of 57 proteins; the SARW's reweighting ESS median at least 100 of 400 frames.
+      2. The fix: the SARW's alpha_R population, paired with epoch 12 on the same proteins, moves by at most 0.015 in
+         any epoch (item 25's run: -0.027 at epoch 13 to -0.049 at epoch 17). More means the reference still moves.
+      3. Each panel `s33_EE` is still wrong if its mean TM shows no resolved gain over the flawed run (the 95%
+         interval of `s33_EE - m33_EE` reaches 0; from epoch 18, `r33_(EE-2)` in its place) and a resolved loss
+         against ff3.2 (the interval of `s33_EE - p57_09` under 0). The unfolded shift and the gaps are reported
+         beside and decide nothing.
+    - Watch at step 112 (05:25 11-15; `checks/ff33_sarwfix_20261114/monitor_sarwfix_e13.txt`): health passes (no
+      error line, DSE target 56-57 of 57, ESS median 152-361). Check 2, epoch 13: the SARW's alpha_R -0.0148 against
+      epoch 12 on the same proteins (95% [-0.0162, -0.0132] over 455 protein pairs), inside 0.015 at the point, item
+      25's -0.0268; by minibatch -0.020 to -0.016 (0-4), -0.008 to -0.007 (5-7). The mover is `bbenve`, the backbone
+      burial scale the SARW keeps as FF2's code (findings 10.65), still falling (0.243 at step 96, about -0.01 at
+      112). The check is cumulative from epoch 12, so epoch 14 decides more. Reported to the user; the run goes on
+      unless the user stops it.
+    - **Check 2 fails at epoch 14** (07:05 11-15, steps 113-115; `monitor_sarwfix_e14_mb0-2.txt`): the SARW's alpha_R
+      against epoch 12, mb 0-2, -0.0254 [-0.0277, -0.0229] over 170 protein pairs (epoch 13 on the same minibatches
+      -0.0202; item 25's run -0.039 from the step means). `bbenve` -0.031 at step 115 (0.225 at step 97, -0.013 at
+      112), falling more slowly each epoch. Health passes (DSE target 57 of 57, ESS median 350-357). The reference
+      still moves, about 35% less than item 25's; the cause is `bbenve` by correlation only (findings 10.65).
+      Reported to the user; the run goes on unless the user decides otherwise.
+    - Check 3, panels read 06:05 11-15 (`checks/early_stop_20261111/tm_s33_<EE>.txt`): `s33_12` mean TM 0.675, minus
+      `m33_12` -0.002 [-0.010, +0.006], minus `p57_09` -0.023 [-0.036, -0.011]; `s33_13` 0.685, minus `m33_13` +0.005
+      [-0.002, +0.013] (CA-RMSD -0.076 [-0.150, -0.004] A), minus `p57_09` -0.013 [-0.023, -0.003], minus `r33_11`
+      -0.002 [-0.011, +0.008]. Both still wrong by the rule, after 8 and 16 steps of the fix. Beside: unfolded shift
+      +4.71, +4.73 E_up (`m33` +2.97, +3.89), loose gap -10.33, -8.76 (`m33` -9.77, -9.35). Reported to the user.
+    - Stopped at step 128 for item 27 (user 11-15, "fix the bug and re-run ff3.3 lambda training"): the run-dir
+      `after_training.sbatch`'s END_STEP set to 128, so panels `s33_14`, `s33_15` still land; resumable from its
+      step-128 checkpoint.
+27. [ ] **ff3.3's lambda part redone with the depths' exact derivative: `ff33_depthgrad57`** (user 11-15, "fix the
+    bug and re-run ff3.3 lambda training"; findings 10.66). `checks/ff33_depthgrad_20261115/`, README.
+    - The bug (audit 11-15): `rama_basin` takes a residue's dV/dc on a coil map's basin depth as a fixed share (1/2,
+      or 1 at a terminus) times the basin weight w_b. The engine's map is a mixture, left with right coil map and coil
+      with sheet, so the derivative is R_coil(x) r_slot(x) (w_b(x) - <w_b>_map), the coil and slot responsibilities
+      varying over (phi, psi). Measured on ff2.1's library at T0: the coil share is 1.00 in alpha_R and alpha_L, 0.62
+      in beta (10-90% 0.44-0.80), 0.89 in pPII, so every depth row (NSE and DSE) overstates beta about 1.6-fold and
+      the <w_b> term does not cancel. It shifts the update's fixed point, not only its step; ETA cannot absorb it.
+      Every ff3.x run with trainable depths has it.
+    - The fix (`rama_basin_depthgrad.py`, `ConDiv_depthgrad57.py` on `b1a6c85a` and `72504bab`): the worker forms,
+      per residue, the exact derivative grids of its Ramachandran potential on its two maps' six depths, from the
+      round's library and the step's sheet energies, evaluates them at every frame with the engine's own periodic
+      cubic spline, and records per ensemble the first moments (NSE free minus native, DSE unfolded minus SARW) and
+      the covariances the curvature uses (NSE at the free/native mixture, DSE at the unfolded ensemble). The update
+      keeps its form with these per-residue features in place of share times w_b; with share times an indicator it
+      reduces to the old one. Kept: everything else of `ff33_sarwfix57` (SARW on ff2.1's map; the backbone burial
+      term, `envw`'s missing backbone derivative and the sheet's missing DSE stay as FF2's code, findings 10.62,
+      10.66).
+    - Checks before any job: the reconstructed per-residue potential equals `read_weighted_maps`; the analytic
+      derivative equals a double-precision central difference of the library; the Python spline equals the engine's
+      Rama energy on real frames; an engine central difference on a depth equals the predicted change; with old-style
+      features the new update equals the old; weight-0 DSE rows change nothing; a synthetic softmax problem converges
+      to the stated objective's stationary point. Then one full worker locally (no allocation), the after-job stub
+      and `sbatch --test-only`.
+    - The run: `ff33_dsemap57`'s step-96 checkpoint (as item 26), lambda 0.1/0.2/0.3 over epochs 12-14/15-17/18-21 to
+      step 176, 16-step links. Panels `g33_EE` against released ff2.1, `p57_09`, `r33_(EE-2)`, `m33_EE` and
+      `s33_EE` (the comparison that isolates this fix, epochs 12-15).
+    - Watch rule, fixed before any `g33` data: (1) health as item 26; (2) each panel `g33_EE` is still wrong if its
+      mean TM shows no resolved gain over `s33_EE` (from epoch 16, `m33_EE`; from 18, `r33_(EE-2)`) and a resolved
+      loss against `p57_09`; (3) reported beside, deciding nothing: the SARW drift of item 26's check 2 (it cannot
+      pass while the SARW keeps FF2's trained backbone term), the depths' basin means, unfolded shift and gaps.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the
@@ -2579,7 +2664,7 @@ in `scratchpad/bpmax_20261103/` (git-ignored) and in its own cluster tree, never
      fixed state per residue type, so the probability weighting itself buys nothing measurable here, while letting the
      state follow the environment does. All three retrained arms fold below released ff2.1 by the same margin, so that
      gap belongs to the retraining, not to the side-chain treatment.
-6. [ ] Peng's benchmark, the third test (user 11-06 21:15: "run the remaining validation for ff21_bpmax_dt009"). The
+6. [x] Peng's benchmark, the third test (user 11-06 21:15: "run the remaining validation for ff21_bpmax_dt009"). The
    other arms' Peng runs are their step-37 releases, `ff_2.1_ctrl38` and `ff_2.1_nobp`, each md5-equal to its run's
    `epoch_01_minibatch_18` extracted again (21:16 11-06), so this arm runs its own `epoch_01_minibatch_18`, released as
    `ff_2.1_bpmax38` into the bpmax tree's `parameters/` only: under the shared deployment it would run as BP, so it is
@@ -2598,6 +2683,13 @@ in `scratchpad/bpmax_20261103/` (git-ignored) and in its own cluster tree, never
    - Released and checked 21:19 11-06 (step 38 done; its `rama.dat` ff2.1's, as in the other two; a config built as
      `bench_run.py` does carries the flag, 100 tu on the patched binary finite); `submit.sh plan` passed `--test-only`,
      `apply` 21:20: 32 arms and the collector (remote_jobs.md §1 line 1).
+   - **Read 11:00 11-14** (`peng_bpmax.txt` DONE 03:26 11-14, 32 of 32 scored; every arm's final frames finite):
+     **Peng disagrees.** Against `ff_2.1_ctrl38` the arm is level (native -0.011 [-0.049, +0.022] p 0.53, de novo
+     -0.012 [-0.038, +0.011] p 0.98), but against `ff_2.1_nobp` it is level too, not above (native +0.018 [-0.032,
+     +0.065] p 0.25, de novo -0.022 [-0.060, +0.018] p 0.27). Against released ff2.1 it is lower on both starts
+     (native 0.475 / 0.552, -0.078 [-0.157, -0.013] p 0.021; de novo 0.287 / 0.427, -0.140 [-0.216, -0.070]
+     p 0.00058); the other two step-37 arms' means sit below ff2.1's as well (ctrl38 0.486 / 0.299, nobp 0.457 /
+     0.309).
 
 ## Known Errors / Blockers
 
