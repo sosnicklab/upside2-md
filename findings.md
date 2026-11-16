@@ -2332,6 +2332,9 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   alpha_R, by the state read), with the glycine rows a part. Released ff3.1's map (map-only, BBA 0.390, 3.03 A) is an
   earlier map than ff3.3's, so its near-native BBA said nothing about ff3.3's map: the user's reading of 11-12 ("the
   updated Rama map cause BBA to be unstable") was right, and my pushback on ff3.1's numbers was wrong (10.61).
+  Under re-read 11-16: this read's window was wrong. Bench restarts each chunk's time at 0, and the frames were
+  masked by that time, so the references read three chunks against the swap arms' one. Both verdicts sat near the
+  midpoint, so they are open until `read_swaps_1116.txt` (plan.md item 24, owed reads).
 - **The map moved toward alpha_R for nearly every residue during ff3.3's ramp** (`rama_offsets_round_10.npy` of
   `ff32_pcd57`, ff3.2, and `_round_20.npy` of `ff33_ext57`, ff3.3 `r33_19`, md5 `d87fdc5a` equal to the staged
   rama.dat; `scratchpad/bba/offsets_by_residue.py`; read 09:10 11-13). The mean offset alpha_R minus beta over each
@@ -2371,6 +2374,27 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   glycine L/R depth alone: TM4 spans 0.42-0.98 over versions whose glycine alpha_L - alpha_R all lie at -0.77 to
   -1.06, and in both decompositions the glycine rows are a minority share. The swaps (above) put BBA's side of it in
   the map's non-glycine rows more than its glycine rows, and not in the co-trained side-chain or burial files.
+- **The DSE-part redos do not carry ff3.3's map defect** (user 11-16: "Do you see the problem of BBA and BBL
+  unfolding being resolved?"; `checks/ff33_bba_20261112/hairpin_offsets.py`, `gly_offsets.py` and their `.txt`, on
+  the rounds the panels read). Offset alpha_R minus beta on ff2.1's library (ff2.1 0; negative: alpha_R deeper),
+  mean over the maps BBA's hairpin non-glycines (1-7, 9-12) read: ff3.3 `r33_19` -0.228, `p57_09` +0.058, the ramp's
+  start (step 96) +0.048, `s33_15` +0.115, `g33_13`-`g33_15` +0.100, +0.085, +0.103, `b33_13` +0.090. BBL's loop
+  19-33: `r33_19` -0.077, the redos +0.12 to +0.17. GLY8's alpha_L minus alpha_R +0.48 to +0.57 (ff3.3 +0.85,
+  `p57_09` +0.84), beta' -0.44 to -0.47 (ff3.3 -0.27). So the map defect the swaps proved is absent in every redo, the
+  hairpin sitting on the extended side of ff2.1. That is necessary, not sufficient: `p57_09`'s hairpin map was on
+  that side too (+0.058), and its Peng BBA arm still lost to ff2.1 (-0.028), with `bbenve` at -0.018 against
+  ff2.1's -0.301 (1.39's mechanism). The redos' `bbenve` is between the two: -0.017 to -0.131 at the panels read;
+  ff3.3 `r33_19`'s is -0.294. So each known BBA loser carries one of the two defects (ff3.3 the map, `p57_09` the
+  burial scale), and the redos so far carry `p57_09`'s, their maps only +0.03 to +0.06 nats from its. The start
+  (step 96) already had the map at +0.048: what the redos remove is ff3.3's ramp dragging the map toward alpha_R.
+  `g33_14` and `g33_15` share the map (+0.085, +0.103) and differ in `bbenve` (-0.050, -0.131), so their Peng arms
+  would test 1.39's burial mechanism directly.
+**A failure the user names stays open until its own test reads it. Here that is BBA's and BBL's Peng arms, not the
+44-domain panel, which holds neither protein. Read every arm a rule was written for before starting the next fix.
+Before masking frames by time, check how the writer counts time across restarts.**
+  `peng_full`'s BBA and BBL rows (vs ff2.1, 12 A or more) +0.5 to +2.1 at lambda 0.1, -3.59 and -7.55 at `g33_15`
+  (`r33_19` -5.22, -6.39; `p57_09` +4.82, +10.83 while losing BBA), so they do not predict the arm. No Peng arm has
+  run on any redo, and neither protein is in the 44-domain panel.
 
 ### 1.43 The weight stays at the SI's 0.3; the checkpoint is chosen by early stopping (2026-11-11)
 
@@ -6049,6 +6073,10 @@ R_coil(x) [r_slot(x) (w_b(x) - <w_b>_map) - <.>_coil], with responsibilities tha
   `read_weighted_maps` to 1.6e-6, the analytic derivative a central difference to 7.5e-8, the Python spline the
   engine's Rama energy to 1.4e-7 relative; an engine central difference converges to the prediction as eps^2 in
   double precision (float32 rounding otherwise).
+- Effect, measured 11-16 (`ff33_depthgrad57` against `ff33_sarwfix57`, same start, epochs 12-15): none on the panels.
+  Mean TM `g33_EE - s33_EE` +0.006, +0.007, -0.000, -0.003, none resolved; `g33_15` flips the unfolded shift as
+  `s33_15` does (-5.47 against -5.63 E_up, 16 of 16 negative), at 0.671 below `p57_09` (-0.027 [-0.036, -0.018]) and
+  released ff2.1 (-0.011 [-0.020, -0.001]). The defect is real and fixed, but it does not cause the lambda-0.2 damage.
 - Found with it, not changed (FF2's code or design): `envw` (the 20 side-chain coverage weights) also enters the
   backbone burial term, which returns no weight derivative, so `envw`'s NSE and DSE gradients miss that path, in
   proportion to `bbenve` (the defect of 3.14, fixed in Upside 3's engine and trainer 10-19; the ConDiv tree runs the

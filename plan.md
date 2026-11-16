@@ -2487,6 +2487,20 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       step 3): the cold replica's TM > 0.5 fraction over a common window, restoring if above the midpoint of ff2.1's
       and ff3.3's; not decisive if the references differ by under two block standard errors. Read after the first
       chunk, Peng's TM at the end.
+    - [ ] Owed reads (found 08:10 11-16, user: "Did your debug target the cause of BBA and BBL unfolding?"): the
+      step 2b and step 3 arms finished their first chunks on 11-13 (50153802, 50151675-50151677 COMPLETED) and were
+      never read, while the DSE redos (items 25-29) went on judged only by the 44-domain panel, which holds neither
+      protein. Also, step 2's 11-13 read was wrong in its window: bench restarts each chunk's time at 0, and
+      `swap_read.py` masked frames by that time, so the references read chunks 1-3 against the swap arms' chunk 1.
+      Its verdicts (map 0.520 against midpoint 0.468; ff2.1 with ff3.3's map 0.424) were near the line, so they are
+      not taken as settled. `read_swaps_1116.py` (job `reads1116` 50207332) reads steps 2, 2b and 3 on cumulative
+      time (frames x 100, as `bench_run.py`), windows of 2.3 M (BBA) and 1.1 M (BBL) time units after burn-in;
+      BBL's cold replica is T 0.70 (BBA's 0.65), the same in all of its arms.
+    - [ ] Step 4 (user 11-16: "Ok. Submit them"; README step 4, rule fixed before the arms ran): the burial
+      scale by swap, `ff_bba_32bbenv21` (`p57_09` with ff2.1's `bb_env.dat`, scale -0.0176 -> -0.3014), and the
+      DSE redo as it is, `ff_3.3_g33_14`; each on BBA's and BBL's Peng native arms, 50207344-50207347 submitted
+      08:23 11-16. `p57_09`'s own BBA arm folds 0.308 against ff2.1's 0.849 (frames 2000-25000), so the swap can
+      decide. Read after the first chunk; the training change waits on steps 2-4.
 25. [ ] **ff3.3 redone with the Rama map under the DSE: `ff33_dsemap57`** (user 11-13: "We should allow rama map in
     the DSE" (findings 10.63); "start from ff3.2, where we trained all terms with lambda=0"; "there is a point in ff3.3
     that we trained everyterms on lambda=0, then slowly increase lambda. start from there. I think the bug is the
@@ -2572,7 +2586,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
     - Stopped at step 128 for item 27 (user 11-15, "fix the bug and re-run ff3.3 lambda training"): the run-dir
       `after_training.sbatch`'s END_STEP set to 128; its after job (13:33) panelled `s33_14`, `s33_15` and stopped.
       Resumable from its step-128 checkpoint.
-27. [ ] **ff3.3's lambda part redone with the depths' exact derivative: `ff33_depthgrad57`** (user 11-15, "fix the
+27. [x] **ff3.3's lambda part redone with the depths' exact derivative: `ff33_depthgrad57`** (user 11-15, "fix the
     bug and re-run ff3.3 lambda training"; findings 10.66). `checks/ff33_depthgrad_20261115/`, README.
     - The bug (audit 11-15): `rama_basin` takes a residue's dV/dc on a coil map's basin depth as a fixed share (1/2,
       or 1 at a terminus) times the basin weight w_b. The engine's map is a mixture, left with right coil map and coil
@@ -2617,7 +2631,28 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       describes depth modes 'all'/'data' where the run is 'pooled' (1442 deviations at 0.2, 75 shared at 0.5). Low
       risk: an in-place checkpoint write killed mid-write stops the chain loudly; a kill between the round update and
       the checkpoint repeats that round's `rama_rounds.txt` line.
-    - [ ] Training: first link 50200771 (steps 96-112) R from 10:35 11-15.
+    - [x] Training: links 50200771 (steps 96-112) and 50203249 (112-128, 19:13-03:45 11-16); stopped at 128 as planned
+      (after job 50204231, `training budget reached; stopped`).
+    - Watch at step 112 (panels landed 20:12 11-15, read 23:10; `tm_g33_<EE>.txt`, `peng_full_g33_<EE>.txt`,
+      `decomp2_g33_<EE>.txt`): health passes (no error line, DSE target 56-57 of 57, ESS median 124-366). Check 2:
+      `g33_12` mean TM 0.681, minus `s33_12` +0.006 [-0.000, +0.012], minus `p57_09` -0.017 [-0.028, -0.006]: still
+      wrong by the rule (at the edge). `g33_13` 0.692, minus `s33_13` +0.007 [-0.001, +0.015], minus `p57_09` -0.006
+      [-0.016, +0.004], so not still wrong; minus `m33_13` +0.012 [+0.004, +0.020], minus ff2.1 +0.010 [-0.001,
+      +0.021] (TM > 0.5 0.935 against 0.891, resolved; CA-RMSD -0.17 [-0.34, -0.03] A). Beside: unfolded shift +3.87
+      and +4.43 E_up, negative on 1 of 16 at both; loose gap (all blocks) -9.51 and -9.32 (`s33` -10.33, -8.76); the
+      SARW against epoch 12 -0.0158 (epoch 13) and -0.0200 (epoch 14, 7 steps), with `bbenve` 0.243 -> 0.060 (end of
+      12) -> -0.026 (13) -> -0.047 (step 119), slowing; the SARW's alpha_R 0.298 -> 0.266 as the term's scale nears 0.
+    - Watch at step 128 (panels landed 04:34-04:45 11-16, read 08:00): health passes at every step (no error line, DSE
+      target 57 of 57 after step 97). `g33_14` 0.694, minus `s33_14` -0.000 [-0.009, +0.008], minus `p57_09` -0.004
+      [-0.013, +0.005]: not still wrong. `g33_15` (lambda 0.2) 0.671, minus `s33_15` -0.003 [-0.013, +0.007], minus
+      `p57_09` -0.027 [-0.036, -0.018], minus released ff2.1 -0.011 [-0.020, -0.001]: still wrong, and below ff2.1.
+      Unfolded shift +9.42 then -5.47 E_up (negative on 1, then 16 of 16; `s33_15` -5.63, 16 of 16); loose gap -9.23,
+      -13.54 (`s33` -9.12, -12.74). `bbenve` -0.050 -> -0.131 over epoch 15; the SARW against epoch 12 -0.0189 at
+      epoch 14; Rg against ff32_pcd57 epoch 9 at T 1.1: 1.009, 1.055, 1.106, 1.159 (epochs 12-15).
+    - Result: the exact depth derivative changes no panel. `g33_EE - s33_EE` mean TM +0.006, +0.007, -0.000, -0.003
+      over epochs 12-15, none resolved, and epoch 15 flips the unfolded shift as `s33_15` did. The bug was real
+      (findings 10.66) but is not what drives the lambda-0.2 flip or the TM loss. `g33_12`-`g33_15` remain
+      `ff33_sisarw57`'s control.
     - The run: `ff33_dsemap57`'s step-96 checkpoint (as item 26), lambda 0.1/0.2/0.3 over epochs 12-14/15-17/18-21 to
       step 176, 16-step links. Panels `g33_EE` against released ff2.1, `p57_09`, `r33_(EE-2)`, `m33_EE` and
       `s33_EE` (the comparison that isolates this fix, epochs 12-15). At 176, item 23's rule over the lambda-0.3
@@ -2687,13 +2722,30 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       it exists, stop at 176); `--test-only`. One worker step on the Mac, 2xf6 (`local_worker_sisarw_2xf6.log`):
       every frame finite, DSE ensemble found, ESS 400, curvature PSD; SARW alpha_R 0.327 against 0.345 in
       `ff33_depthgrad57`'s local step (one protein, one sample).
-    - [ ] Training: first link 50203236 (steps 96-112) R from 19:01 11-15.
+    - [ ] Training: first link 50203236 (steps 96-112, 19:01-03:37 11-16); second link 50204222 (112-128) R from 03:38,
+      step 121 at 07:55, step 128 about 12:00 11-16.
     - Early read, step 97 (19:40 11-15; same 57 proteins and step-96 parameters in both runs, paired by protein): the
       SARW's alpha_R 0.267 against `ff33_depthgrad57`'s 0.298, -0.0305 [-0.0348, -0.0264], 52 of 54 lower (the local
       test's estimate of the term's part, -0.032). But `bbenve`'s summed gradient is unchanged (+481 against +453)
       and so is its step (0.2433 -> 0.2250 against 0.2255): its DSE push comes from the SARW being more exposed than
       the simulated unfolded state, which the term's removal does not change. If it holds, `bbenve` keeps falling
       and `b33_15` flips as well (item 28 puts the flip on `bbenve`). One step; the panels decide.
+    - Epoch 12, steps 97-103 (23:10 11-15, paired by protein with `ff33_depthgrad57`'s same steps): this run's SARW
+      alpha_R holds at 0.262-0.268 (minibatch means). Its gap to the depthgrad SARW closes from -0.031 to -0.011 as
+      that run's `bbenve` falls. The trained parameters follow the depthgrad run: `bbenve` 0.0773 against 0.0744 after
+      step 103, the unfolded alpha_R -0.016 at step 97 and -0.008 to +0.004 at steps 98-103, and the depths'
+      summed DSE gradient over the epoch aR +406, pPII -260 (depthgrad +396, -257). So far, removing the term changes
+      the reference and leaves the training's path almost unchanged. Check 2's first reading, step 105 (epoch 13 mb
+      0 against epoch 12 mb 0, 23:55): the SARW -0.0003 (depthgrad's same step about -0.022), the unfolded -0.138
+      (depthgrad about -0.151).
+    - Watch at step 112 (panels landed 04:25-04:38 11-16, read 08:00): (1) health passes (no error line in either link,
+      DSE target 55-57 of 57, ESS median 143-366). (2) The reference passes: the SARW's alpha_R against epoch 12 +0.0022
+      (epoch 13) and +0.0036 (epoch 14), against depthgrad's -0.0158 and -0.0189. (3) `b33_12` 0.679, minus `g33_12`
+      -0.002 [-0.010, +0.006], minus `p57_09` -0.019 [-0.029, -0.010]; `b33_13` 0.688, minus `g33_13` -0.004 [-0.012,
+      +0.004], minus `p57_09` -0.010 [-0.020, +0.001]. (4) Unfolded shift +3.34, +6.07 E_up (negative on 2, 1 of 16);
+      loose gap -9.29, -9.19; `bbenve` at the ends of epochs 12-14 0.064, -0.017, -0.035 (depthgrad 0.060, -0.026,
+      -0.050); the depths' DSE gradient by basin within 10% of depthgrad's. The decision is `b33_15` against
+      `g33_15`, which flipped (16 of 16).
     - Rule, fixed before any `b33` data: (1) health as item 26. (2) The reference: item 26's check 2 (the SARW's
       alpha_R against epoch 12 on the same proteins, at most 0.015 in any epoch), which `ff33_depthgrad57` fails
       (-0.019 over epoch 13's first five steps); here it should pass. (3) Each panel `b33_EE` against `g33_EE` (the
