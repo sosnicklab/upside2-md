@@ -2719,8 +2719,8 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       it exists, stop at 176); `--test-only`. One worker step on the Mac, 2xf6 (`local_worker_sisarw_2xf6.log`):
       every frame finite, DSE ensemble found, ESS 400, curvature PSD; SARW alpha_R 0.327 against 0.345 in
       `ff33_depthgrad57`'s local step (one protein, one sample).
-    - [ ] Training: first link 50203236 (steps 96-112, 19:01-03:37 11-16); second link 50204222 (112-128) R from 03:38,
-      step 121 at 07:55, step 128 about 12:00 11-16.
+    - [ ] Training: first link 50203236 (steps 96-112, 19:01-03:37 11-16), second link 50204222 (112-128, 03:38-12:08),
+      third link 50211269 from 12:10, step 144 about 21:00. Panels `b33_14` and `b33_15` R from 12:09.
     - Early read, step 97 (19:40 11-15; same 57 proteins and step-96 parameters in both runs, paired by protein): the
       SARW's alpha_R 0.267 against `ff33_depthgrad57`'s 0.298, -0.0305 [-0.0348, -0.0264], 52 of 54 lower (the local
       test's estimate of the term's part, -0.032). But `bbenve`'s summed gradient is unchanged (+481 against +453)
