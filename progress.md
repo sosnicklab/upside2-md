@@ -1541,3 +1541,17 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   User: "Ok. Proceed." `ff33_depthgrad57` now stops at step 128 (END_STEP edit, backup) as the control; the new run
   (one statement in `zero_for_sarw`) built and checked (static test, stub, `--test-only`, a local worker step) and its
   first link 50203236 submitted. Files: `checks/ff33_sisarw_20261115/`, plan.md, findings.md, remote_jobs.md.
+* **11-16 13:30: MacBook Pro disk reclaim** (user: "do a cleanup for the hard disk. cleanup scratch, edgar downloads
+  no longer needed"; the optional groups chosen by the user). Deleted: 700 trajectory files, 35.2 GB, by findings
+  10.25 (`.up` holding `/output`, each opened first; `.vtf`; GROMACS output) in `scratchpad/gpu_work` (old homes'
+  `regress_work`, `hyb_remd`), `bilayer_ref`, `hdx_term_20261028/data`, `glpg_gate_20261021`, `ddm_micelle`,
+  `upside3_audit` and `glpg_belt_20261021`, and the August preps in `example/16.MARTINI/outputs`; the superseded audit
+  fixture sets (`fixtures`, `fixtures_w1`-`w20`, `fixtures_hybrid`, `_w2`, `_w2c`, `_w3`; 5.5 GB); the Boltz sandbox
+  `boltz_hdx/addon/sandbox`; `.venv.bak_py311_20261026` (already dead: python@3.11 gone) and
+  `.venv.bak_py315_20261027`. Outside the repo: the EDGAR HTTP cache (`~/.edgar/_tcache`, 343,662 files, 91 GB, all
+  from builds committed to `edgar/fundamentals`), `~/Documents/inv-bak` (logs to `../inv/logs/inv-bak-logs.tar.gz`
+  first, checked byte for byte; nothing unpushed), the Hugging Face, ModelScope and codex-runtimes caches, and the
+  Homebrew and pip download caches. Kept: `idp_20261028` (B0, only copy), `polygly`, every `.npz`/`.npy`, config
+  `.up`, `fixtures_w21` and `fixtures_hybrid_w4`-`w6` (the sets `tests/` names), the Windows VM. Free 451 -> 602 GiB.
+  Manifests `scratchpad/CLEANUP_20261116_manifest.txt`, `scratchpad/CLEANUP_20261116_fixtures.txt`. The repo `.venv`,
+  the plotting venv and the inv and edgar venvs checked running after.
