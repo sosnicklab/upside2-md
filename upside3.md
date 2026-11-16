@@ -2334,14 +2334,14 @@ compiled with the engine's flags and `-Isrc -Isrc/include -I/opt/homebrew/includ
 * `f4_diag.py PAIR_INDEX...`, F4's false wells and the bounded F4b, with its logs `f4_diag.4.log` and
   `f4_diag.9.log`.
 
-`scratchpad/large_protein_20261019/` (the Mac Studio; 76 G with trajectories):
+`scratchpad/large_protein_20261019/` (the Mac Studio; 5 G, the `.up` trajectories deleted 11-15 for disk):
 
 | path | what |
 |---|---|
 | `sim/landscape.py`, `sim/common.py` | native, bulk and vectorial runs with quench |
 | `sim/analyze_landscape.py`; `analysis/{ss_check,hb_check,terms}.py` | Q, Rg, quench; helix, local and nonlocal Q; H-bonds; energy by term |
 | `analysis_T0{80,88,95}.txt`, `analysis/*_T0{80,88,95}.txt` | outputs |
-| `runs_T080`, `runs_T088`, `runs_T095` | trajectories |
+| `runs_T080`, `runs_T088`, `runs_T095` | run configs, logs and arrays (trajectories deleted 11-15; rerun `sim/landscape.py` to regenerate) |
 | `envfix/` | the 3.13 fix's builds (pre and fixed), `coverage_test.py`, `compare.py`, `fd_test.py`, `dyn_check.py`, `input_diff.py` |
 | `lit/review.md`, `code_audit/audit.md` | literature review, code audit |
 | `analysis/{buried_unpaired,burial_composition,longrange_burial,electrostatics,helix_to_strand,collapse_vs_helix}.py`, `analysis/*_T080.txt` | the term-by-term review (8.3.4); the first two need `analysis/eng_1019/`, the engine binding that matches the 10-19 `obj/` build |

@@ -1509,3 +1509,35 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   -0.0229] against epoch 12 on the same proteins (limit 0.015; old run -0.039 on the same minibatches), with
   `bbenve` at -0.031. The run is healthy and goes on; the decision is the user's. plan.md item 26,
   `checks/ff33_sarwfix_20261114/monitor_sarwfix_e14_mb0-2.txt`.
+* **11-15 10:35: the depth derivative fixed, ff3.3's lambda part re-run as `ff33_depthgrad57`** (user: "maybe look
+  for remaining bugs", then "fix the bug and re-run ff3.3 lambda training"). An audit (mine plus an independent read)
+  found the depth update took dV/dc as a fixed share, where the engine's map is a coil/sheet and left/right mixture
+  (coil share 0.62 in beta): fixed by exact per-frame derivatives (`rama_basin_depthgrad.py`, `ConDiv_depthgrad57.py`).
+  A local SARW test showed the reference drift is `bbenve`'s (98%); the user kept FF2's SARW. `ff33_sarwfix57` stops
+  at 128. Static test ALL PASSED, one full worker locally, stub, `--test-only`; first link 50200771. plan.md item 27,
+  findings 10.65-10.66, remote_jobs.md.
+* **11-15 14:40: `ff33_sarwfix57` done at step 128, last panels read.** A node failure at 13:01 in step 128 was
+  absorbed by the chain's insurance successor (resumed from step 127's checkpoint, clean). `s33_14` mean TM 0.694,
+  the first `s33` panel not resolved under `p57_09` (-0.004 [-0.014, +0.006]); `s33_15` 0.674, -0.024 [-0.038,
+  -0.010], wrong by check 3. Against `m33` within +-0.005 at every epoch: the SARW fix alone does not move the panel.
+  plan.md item 26, remote_jobs.md.
+* **11-15 16:05: the side-chain lead tested (plan.md item 28, findings 10.67).** No allocation: the unfolded shift
+  split by swapping one potential node at a time between checkpoints, on the Mac's md5-equal copy of the training
+  tree (endpoints within 0.009 E_up of the cluster's, null swaps exact). The lambda-0.2 flip is the backbone burial
+  scale (52-77% in all three runs, side-chain 13-33%): lead rejected there. At the DSE's onset the side-chain block
+  carries 49% at the published rate against 13% in ff3.3. The other busy local session (`inv-12`) reniced to 10
+  at the user's request. `scratchpad/sc_block_20261115/`, copied to `checks/sc_block_20261115/`.
+* **11-15 16:30: Mac Studio disk reclaim** (user: "Do some cleanup to free up the hard disk"; the groups chosen by the
+  user). Deleted: the 1,406 `.up` files holding trajectories (each opened first; config-only `.up` and every script,
+  log, table and text output kept) in `scratchpad/ff3_local_test` (retired TM4 test), `large_protein_20261019`
+  (upside3.md 8.3), `glpg_tm1`, `dt_test`, `tm4_hdx_local` and the ff3.0 glycine runs under `training/`; the
+  `.venv.bak_py311_20261027` backup; the uv, pip and Homebrew download caches. Free 168 -> 336 GiB. Manifest and log
+  `scratchpad/disk_reclaim_20261115/` (`manifest_up.tsv`, `delete.log`). The repo `.venv`, the plotting venv and
+  Homebrew checked working after.
+* **11-15 19:01: the SARW's backbone burial term removed, as the SI has it: `ff33_sisarw57`** (plan.md Phase 38 item
+  29). Asked whether training had more bugs, I found my own error: on 11-15 I recommended keeping the SARW's backbone
+  burial term as "FF2's code", but the SI, master's `apply_param_scale` and the user's 10-22 ruling (findings 3.14
+  A193) all remove it; only the ConDiv tree's port keeps it. Corrected in findings 10.65, plan items 26-27 and memory.
+  User: "Ok. Proceed." `ff33_depthgrad57` now stops at step 128 (END_STEP edit, backup) as the control; the new run
+  (one statement in `zero_for_sarw`) built and checked (static test, stub, `--test-only`, a local worker step) and its
+  first link 50203236 submitted. Files: `checks/ff33_sisarw_20261115/`, plan.md, findings.md, remote_jobs.md.

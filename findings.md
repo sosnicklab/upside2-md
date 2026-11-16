@@ -1069,8 +1069,8 @@ dropped for too few folded frames):
   near-degenerate with glycine's alpha_L depth (9e), so a map without the selection leaves the training data a
   second route to it.
 * **glpG TM4, local test: every count of 10-04 to 10-07 is invalid** (3.11): each run paired its force field with
-  the FF1-form ff_3.0's coverage tables. The record is kept only as such (Mac `runs_precov_20261007/`; cluster
-  `checks/r4_epochs/tm4_local/runs/`), and every reading drawn from it is withdrawn. The counting design stays
+  the FF1-form ff_3.0's coverage tables. The record is kept only as such (Mac `runs_precov_20261007/`, logs only since the trajectories were
+  deleted 11-15; cluster `checks/r4_epochs/tm4_local/runs/`), and every reading drawn from it is withdrawn. The counting design stays
   valid. TM4 is lost seed by seed: a seed either holds 0.95-1.00 or unwinds to 0.55-0.89, so a set reports how many
   seeds unwound (last-block TM4 below 0.90) and how many flipped (a TM4 glycine at phi > 0 in more than 0.25 of the
   last block), criteria fixed before the 12-seed runs. By Fisher's exact test, 3 seeds resolve only one in three
@@ -3073,8 +3073,8 @@ nodes, and its round trip checks them: md5 `70589119...`, in the Mac test, `$P/t
 must copy the cluster's script and re-patch before using it (remote_jobs.md "Resume here"; the cluster
 `tm4_local/README.txt`). A re-patched input differs from its pre-fix input only in the two tables (rotamer
 energy -121.74 at the seed frame, as predicted); `validate_ff.sh`'s method gate passes as before (worst
-3.6e-15). The pre-fix runs are kept as a record (`runs_precov_20261007/` on the Mac, `tm4_local/runs/` on the
-cluster); each rerun differs from its pre-fix twin only in the coverage tables.
+3.6e-15). The pre-fix runs are kept as a record (`runs_precov_20261007/` on the Mac, logs only after the 11-15 disk
+reclaim; `tm4_local/runs/` on the cluster); each rerun differs from its pre-fix twin only in the coverage tables.
 
 ### 3.12 The side-chain pair term's angular parameter gradient mixes the two residues (2026-10-18; FIXED)
 
@@ -3795,7 +3795,8 @@ old table, whose kicks turned out to open TM1 (4.10, 4.13); the missing cost bel
 
 ### 4.10 The TM1-middle kicks come from the side-chain/lipid table's sampling (local ff3.0, 2026-10-09)
 
-Mac Studio, `scratchpad/glpg_tm1/kick_ff30/` (scripts and outputs; plan.md Phase 13 step 2). The 600 x 12 table
+Mac Studio, `scratchpad/glpg_tm1/kick_ff30/` (scripts and text outputs; its trajectories deleted 11-15; plan.md
+Phase 13 step 2). The 600 x 12 table
 built here was itself replaced in Upside 3 (3.14 A76, A192).
 - **The probe.** A temporary read-only build (`scratchpad/glpg_tm1/src_probe`, `obj_probe/`; never in `src/`)
   records, after every derivative evaluation, the largest |dE/dx| over protein atoms 0-839 and keeps the last 120
@@ -5990,7 +5991,7 @@ reweighting to the unfolded rungs (ESS median 258-363 of 400 frames) are correct
   redo), and gap power per read is the same on held-out and training proteins (ratio 1.1-1.2; a real signal would
   give 1/8.7). Most of the 1,517 per-map depths move on sampling noise, held by the cross-validated prior; only the
   basin-wide sums are systematic. That is the design 1.29 and 1.34 accepted, not a defect of this run.
-- The same structure, inherited from FF2's code and one scalar: the backbone burial scale (`bbenve`) gets a DSE
+- The same structure, inherited from the port's code (not FF2's, below) and one scalar: the backbone burial scale (`bbenve`) gets a DSE
   gradient although the SARW keeps that term (the port's `apply_param_scale` leaves `bb_scale` at 1). Measured 11-15
   in `ff33_sarwfix57`, whose SARW map is fixed: on the same proteins (epoch 13 minibatch 0 against epoch 12's) the
   SARW's alpha_R still fell 0.0200 +- 0.0024 (s.e.m., 47 of 56 proteins down; item 25's run on that minibatch
@@ -6003,8 +6004,21 @@ reweighting to the unfolded rungs (ESS median 258-363 of 400 frames) are correct
   change of the SARW's alpha_R over its 8 steps is 0.115-0.133 times that interval's change of `bbenve` (-0.174 to
   -0.119, the SARW -0.020 to -0.015), while the sheet's mean change grows (+0.012 to +0.027): the SARW follows
   `bbenve`. In minibatches 5-7 the ratio fell to 0.07-0.09 (SARW -0.008 to -0.007), where the SARW's temperature
-  also fell (median 1.023-1.053 to 0.994). Epoch 13's mean -0.0148 (95% [-0.0162, -0.0132]), item 25's -0.0268. A
-  controlled test (the SARW re-run with `bbenve` reset) is not done.
+  also fell (median 1.023-1.053 to 0.994). Epoch 13's mean -0.0148 (95% [-0.0162, -0.0132]), item 25's -0.0268.
+  The controlled test (11-15, local, the training tree's engine; `checks/ff33_depthgrad_20261115/sarw_results.txt`):
+  the SARW alone on minibatch 0's 57 proteins under the step-96 and step-117 inputs moves alpha_R -0.0318 [-0.0364,
+  -0.0276] (56 of 57 down; Rg 32.1 to 34.7 A); `bbenve` alone set back to step 96 returns +0.0311 [+0.0274, +0.0347],
+  `envw` and the side-chain positions set back -0.0017 [-0.0050, +0.0018]. The SARW follows `bbenve`, causally. The
+  term counts H-bond partners by geometry (`hb_environment_coverage_hn/oc`, hbond weight 2) and side-chain coverage
+  with `envw`'s first 20 weights, through a compact sigmoid that is 1 exposed and 0 buried, so a positive scale is a
+  helix and compaction reward in a reference meant to have none. Kept in `ff33_depthgrad57` (user 11-15, "Depth fix
+  only"), on my recommendation that FF2's code and ff2.1's training keep it. That premise was wrong (found 17:50
+  11-15): the SI's SARW has no solvation terms; master's one scaling function, `apply_param_scale` (36af4f5,
+  2022-05-09, three months after the term entered master in d17c8be), scales this term with `env_scale`; and on
+  10-22 the user ruled "Follow the SI" on exactly this term (3.14 A193), so the repo's `training/ConDiv.py`
+  `zero_for_sarw` removes it. Only the ConDiv tree's copy (the port of Kleinmann's `condiv2.py`, whose `bb_scale` is
+  never passed) keeps it, and every ff3.x run reads that copy. Whether Peng's own run for ff2.1 kept it is not
+  established from any code we have.
 - Fixed 11-14 in `ff33_sarwfix57` (user: "fix them and re-do the ff3.3 DSE training part"; plan.md Phase 38 item
   26). The SARW config is written from ff2.1's own `rama.dat` (`996a607b`). The depths' DSE rows take their curvature
   lambda (T0/T_u) Cov_unfolded, and carry a DSE flag in place of `wh == 0`. The static checks pass
@@ -6012,7 +6026,63 @@ reweighting to the unfolded rungs (ESS median 258-363 of 400 frames) are correct
   five scaled arrays and the map; the NSE path is bitwise the redo's; the step is the Newton step of the stated
   objective.
 **When a parameter is made trainable, check whether the DSE's SARW reference contains it. If it does, its DSE
-gradient is not contrastive, and the reference itself moves.**
+gradient is not contrastive, and the reference itself moves. Before calling a behaviour "FF2's code", check the SI,
+master and the audit ledger (3.14); the ConDiv tree is a port and departs from both.**
+
+### 10.66 The depth update's derivative was a share, not the derivative of the engine's mixture (2026-11-15)
+
+Audit 11-15 (user: "maybe look for remaining bugs that caused the problem"), an independent read of the gradient path
+confirmed by measurement. `rama_basin` took a residue's dV/dc on a coil map's basin depth as a fixed share (1/2 each
+for an interior residue's two maps, 1 at a terminus) times w_b(phi,psi). The engine's potential is a mixture: the left
+and right coil maps by their library weights, then coil with sheet by the coil weight against the sheet weight times
+exp(-sheet energy) (`upside_config.read_rama_maps_and_weights`, `read_weighted_maps`). The derivative is
+R_coil(x) [r_slot(x) (w_b(x) - <w_b>_map) - <.>_coil], with responsibilities that vary over (phi, psi).
+- Measured on ff2.1's library with step 96's sheet energies, population-weighted at T0: the coil share is 1.00 in
+  alpha_R and alpha_L, 0.62 in beta (10-90% 0.44-0.80), 0.89 in pPII. Every depth row, NSE and DSE, overstated the
+  beta pull about 1.6-fold, and the <w_b> term does not cancel between ensembles because R_coil r_slot differs
+  between them. The update's fixed point moved (a weaker effective prior on beta and pPII, the depths that drifted
+  in item 25's run), not only its step; the docstring's "ETA < 1 also absorbs the coil/sheet mixture" was wrong, as a
+  basin-dependent factor is not a step size. Every ff3.x run with trainable depths has it.
+- Fixed in `ff33_depthgrad57` (plan.md Phase 38 item 27; user 11-15, "fix the bug and re-run ff3.3 lambda
+  training"): the worker forms the derivative grids exactly and evaluates them at every frame with the engine's
+  periodic cubic spline; the update reads the features' gaps and covariances. Checked: the reconstruction equals
+  `read_weighted_maps` to 1.6e-6, the analytic derivative a central difference to 7.5e-8, the Python spline the
+  engine's Rama energy to 1.4e-7 relative; an engine central difference converges to the prediction as eps^2 in
+  double precision (float32 rounding otherwise).
+- Found with it, not changed (FF2's code or design): `envw` (the 20 side-chain coverage weights) also enters the
+  backbone burial term, which returns no weight derivative, so `envw`'s NSE and DSE gradients miss that path, in
+  proportion to `bbenve` (the defect of 3.14, fixed in Upside 3's engine and trainer 10-19; the ConDiv tree runs the
+  pre-audit engine, as ff2.1's training did); the 534 side-chain placement coordinates get no gradient from `d_obj`,
+  as in ff2.1's training (`training/ConDiv.py`); the NSE depth curvature models only the free ensemble's response, though the native
+  replica (springs removed, item 25) reads the trained map too, which scales the step and the held-out diagnostic,
+  not the fixed point; the side-chain regulariser is 2.4 times weaker relative to the data than the SI's, from 57
+  proteins a step against 24 (since ff3.2). Checked and correct: swap sets (the SARW never swaps), Hamiltonian
+  exchange acceptance, the NSE and SARW reweighting, frame indices, the SARW's kept H-bond entries 4-11 (boundaries of
+  zeroed energies), pivot-move Hastings terms, signs, held-out handling.
+**A derivative taken by hand must be checked against a finite difference of the code that builds the energy. A
+mixture's component derivative is weighted by its responsibility, which a constant share replaces only where the
+component is alone.**
+
+### 10.67 The DSE's unfolded-shift flip is the backbone burial scale; the side-chain rate acts at the onset (2026-11-15)
+
+Test of the lead that the published side-chain rate (rot 0.125, item 25 and after; ff3.3 ran 0.0125) drives the
+DSE runs' damage (plan.md Phase 38 item 28; user 11-15, "Test it"). `peng_full.py`'s unfolded shift (released ff2.1's
+Peng REMD frames, unfolded minus native-most) split exactly by swapping one potential node at a time between two
+checkpoints' configs, on the Mac's md5-equal copy of the training tree (endpoints within 0.009 E_up of the cluster's
+per-protein values; the nodes add, remainder 0.00).
+- At the first lambda-0.2 epoch, where every DSE run's shift turns negative on all 16 proteins, the backbone burial
+  node carries 75% (`s33`), 52% (`m33`) and 77% (ff3.3's `r33`) of the change and the side-chain block 13%, 33%,
+  18%: by the rule fixed beforehand the side-chain lead is rejected there. The burial scale `bbenve` falls steadily
+  under the DSE (`m33` +0.243 at the end of lambda 0, -0.121 three epochs later; `r33` -0.122 to -0.255), the same
+  parameter that moves the SARW reference (10.65). The side-chain block swings from epoch to epoch instead.
+- At the DSE's onset the side-chain block does carry the change, at the published rate only: `m33_11` -> `m33_12`
+  -42.7 E_up, 49% from the side-chain block (pair table -12.3, hydrophobe -9.0); ff3.3's onset at the old rate -9.8,
+  13% from it. That epoch is also the panel's largest TM fall (0.700 -> 0.677). So the TM loss begins at lambda 0.1,
+  earlier than the shift's flip at 0.2 (the 15:40 reply to the user put the damage at 0.2: corrected here).
+- Energies on fixed frames rank which parameters moved the landscape; they do not show what costs TM. Settling that
+  needs panels with one file swapped.
+**Decompose before blaming a parameter group: a whole-force-field statistic splits exactly by swapping one potential
+node at a time between two configs, both directions, on fixed frames.**
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 
