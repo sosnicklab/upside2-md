@@ -2487,19 +2487,16 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       step 3): the cold replica's TM > 0.5 fraction over a common window, restoring if above the midpoint of ff2.1's
       and ff3.3's; not decisive if the references differ by under two block standard errors. Read after the first
       chunk, Peng's TM at the end.
-    - [ ] Owed reads (found 08:10 11-16, user: "Did your debug target the cause of BBA and BBL unfolding?"): the
-      step 2b and step 3 arms finished their first chunks on 11-13 (50153802, 50151675-50151677 COMPLETED) and were
-      never read, while the DSE redos (items 25-29) went on judged only by the 44-domain panel, which holds neither
-      protein. Also, step 2's 11-13 read was wrong in its window: bench restarts each chunk's time at 0, and
-      `swap_read.py` masked frames by that time, so the references read chunks 1-3 against the swap arms' chunk 1.
-      Its verdicts (map 0.520 against midpoint 0.468; ff2.1 with ff3.3's map 0.424) were near the line, so they are
-      not taken as settled. `read_swaps_1116.py` (job `reads1116` 50207332) reads steps 2, 2b and 3 on cumulative
-      time (frames x 100, as `bench_run.py`), windows of 2.3 M (BBA) and 1.1 M (BBL) time units after burn-in;
-      BBL's cold replica is T 0.70 (BBA's 0.65), the same in all of its arms.
+    - [x] Owed reads (found 08:10 11-16, user: "Did your debug target the cause of BBA and BBL unfolding?"): the
+      step 2b and step 3 arms had finished their first chunks on 11-13 unread, and step 2's 11-13 read masked frames
+      by bench's per-chunk time. Re-read 11-16 on cumulative time (`read_swaps_1116.py`, findings 1.44): BBA's 11-13
+      verdicts stand (ff3.3's map loses BBA, ff2.1's map restores it, 0.580 against midpoint 0.470), and ff2.1's
+      non-glycine rows alone restore it (0.518). BBL's read is not decisive: ff2.1 0.128 and ff3.3 0.118 by TM > 0.5,
+      block SE 0.048.
     - [ ] Step 4 (user 11-16: "Ok. Submit them"; README step 4, rule fixed before the arms ran): the burial
       scale by swap, `ff_bba_32bbenv21` (`p57_09` with ff2.1's `bb_env.dat`, scale -0.0176 -> -0.3014), and the
-      DSE redo as it is, `ff_3.3_g33_14`; each on BBA's and BBL's Peng native arms, 50207344-50207347 submitted
-      08:23 11-16. `p57_09`'s own BBA arm folds 0.308 against ff2.1's 0.849 (frames 2000-25000), so the swap can
+      DSE redo as it is, `ff_3.3_g33_14`; each on BBA's and BBL's Peng native arms, 50207344-50207347 running
+      from 08:24 11-16. `p57_09`'s own BBA arm folds 0.308 against ff2.1's 0.849 (frames 2000-25000), so the swap can
       decide. Read after the first chunk; the training change waits on steps 2-4.
 25. [ ] **ff3.3 redone with the Rama map under the DSE: `ff33_dsemap57`** (user 11-13: "We should allow rama map in
     the DSE" (findings 10.63); "start from ff3.2, where we trained all terms with lambda=0"; "there is a point in ff3.3

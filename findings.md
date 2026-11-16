@@ -2322,19 +2322,20 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   hydrophobe tables) -1.87, `rama.dat` -1.56, `environment.h5` -1.02, `hbond.h5` +0.40, `bb_env.dat` -0.08.
 - By energy on fixed frames the side-chain file and the maps carried about four fifths and the burial file a quarter.
   The swaps below overturned that reading: fixed-frame energies do not decide populations.
-- **The swaps: ff3.3's Rama map is what loses BBA; its glycine rows alone are not** (read 08:40 11-13,
-  `swap_read_bba.txt`, job `reads1113` 50153796, the rule fixed 11-12). Cold replica (T 0.65) folded fraction, Ca RMSD
-  under 3 A, over t 200,016-1,267,301 for every arm: ff2.1 0.848, ff3.3 0.088, midpoint 0.468. ff3.3 with ff2.1's
-  whole map 0.520 (restores; GLY8 phi > 0 0.93, longest alpha_R run median 11); ff2.1 with ff3.3's map 0.424 (loses
-  half; sufficient by the rule); ff3.3 with ff2.1's glycine maps 0.190 (GLY8 phi > 0 0.20 -> 0.49, still a long
-  helix in half the frames), with ff2.1's `sidechain.h5` 0.159, with ff2.1's `environment.h5` 0.084 (none restores).
-  So the map carries BBA's loss, mostly through its non-glycine rows (the hairpin's GLN1-ALA4 and ARG9-PHE11 going
-  alpha_R, by the state read), with the glycine rows a part. Released ff3.1's map (map-only, BBA 0.390, 3.03 A) is an
-  earlier map than ff3.3's, so its near-native BBA said nothing about ff3.3's map: the user's reading of 11-12 ("the
-  updated Rama map cause BBA to be unstable") was right, and my pushback on ff3.1's numbers was wrong (10.61).
-  Under re-read 11-16: this read's window was wrong. Bench restarts each chunk's time at 0, and the frames were
-  masked by that time, so the references read three chunks against the swap arms' one. Both verdicts sat near the
-  midpoint, so they are open until `read_swaps_1116.txt` (plan.md item 24, owed reads).
+- **The swaps: ff3.3's Rama map is what loses BBA, through its non-glycine rows** (re-read 11-16 on cumulative time,
+  `read_swaps_1116.txt`, the rules fixed 11-12 and 11-13). Bench restarts each chunk's time at 0, and the 11-13 read
+  (`swap_read.py`) masked frames by that time, so its references read three chunks against the swap arms' one; the
+  re-read counts frames x 100 time units, as `bench_run.py` does. Cold replica (T 0.65) folded fraction, Ca RMSD under
+  3 A, frames 2000-25361 (t 0.2-2.54 M) for every arm: ff2.1 0.848, ff3.3 0.093, midpoint 0.470. ff3.3 with ff2.1's
+  whole map 0.580 (restores; blocks 0.54 0.49 0.56 0.74; GLY8 phi > 0 0.96); with ff2.1's non-glycine rows and its
+  own glycine rows (`ff_bba_33nongly21`, step 2b) 0.518 (restores, one block SE above the line; GLY8 phi > 0 0.85);
+  ff2.1 with ff3.3's map 0.349 (loses BBA; sufficient by the rule); ff3.3 with ff2.1's glycine maps 0.280 (GLY8
+  phi > 0 0.23 -> 0.71), with ff2.1's `sidechain.h5` 0.219, with ff2.1's `environment.h5` 0.129 (none restores). The
+  11-13 verdicts stand, now about two block SE from the line. So the map carries BBA's loss, and its non-glycine rows
+  (the hairpin's GLN1-ALA4 and ARG9-PHE11 going alpha_R, by the state read) carry most of it: they give 0.518 of the
+  whole map's 0.580, the glycine rows 0.280. Released ff3.1's map (map-only, BBA 0.390, 3.03 A) is an earlier map
+  than ff3.3's, so its near-native BBA said nothing about ff3.3's map: the user's reading of 11-12 ("the updated Rama
+  map cause BBA to be unstable") was right, and my pushback on ff3.1's numbers was wrong (10.61).
 - **The map moved toward alpha_R for nearly every residue during ff3.3's ramp** (`rama_offsets_round_10.npy` of
   `ff32_pcd57`, ff3.2, and `_round_20.npy` of `ff33_ext57`, ff3.3 `r33_19`, md5 `d87fdc5a` equal to the staged
   rama.dat; `scratchpad/bba/offsets_by_residue.py`; read 09:10 11-13). The mean offset alpha_R minus beta over each
@@ -2361,6 +2362,15 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   `bb_env.dat` -0.01. The same three files as BBA, in about the same shares, with the hydrophobe table in place of
   the pair table as the largest node. The limitation: the non-native set is ff3.3's tail (365 of 13890 frames, TM
   median 0.29), and its typical frame sits at TM 0.3-0.5.
+- **BBL's swaps cannot be read: ff2.1 and ff3.3 do not differ on the fold measure** (step 3, `read_swaps_1116.txt`,
+  read 11:27 11-16, the rule fixed 11-13). Cold replica (T 0.70) TM-score > 0.5, frames 2000-12971 (t 0.2-1.30 M):
+  ff2.1 0.128, ff3.3 0.118, difference +0.010 against a block SE of 0.048 (mean TM 0.432, 0.414), so the rule's test
+  reads not decisive and no swap verdict stands. ff3.3's loop shifts reproduce (ASN19 phi > 0 0.96 -> 0.78, LEU20
+  beta 0.99 -> 0.78, ASP21 beta 0.97 -> 0.84) without a fold difference. Beside, ff3.3 with ff2.1's `sidechain.h5`
+  0.037, with ff2.1's map 0.163, and with ff2.1's `environment.h5` 0.423 (blocks 0.55 0.14 0.58 0.44, mean TM 0.469),
+  above both references, unexplained. BBL's loss so far is Peng's mean TM on single arms (-0.007 to -0.036 over the
+  ff3.x versions, below). Step 4's `g33_14` BBL read uses the same block test over a similar window, so it will
+  likely be not decisive too.
 - **The loss is not BBA's or BBL's alone** (Peng's scored native arms, read 01:05 11-13, mean TM minus released
   ff2.1's). Map-only ff3.1 over 16: mean -0.010, 9 of 15 below (cspA -0.045, NTL9 -0.050, BBA -0.026, BBL -0.024).
   ff3.2 `p57_09` over 16: mean -0.016, 13 of 16 below (sign test p 0.02): NuG2 -0.082, hyp -0.060, protein G -0.041,
@@ -5390,6 +5400,12 @@ Shell and ssh:
   Use `ast` (`node.lineno..node.end_lineno`), or `py_compile` after each bulk removal.
 
 Slurm and the two clusters:
+* **A job killed at its time limit can show near-zero `TotalCPU` in `sacct` (11-16)**: `reads1116` 50207332 read
+  1.3 s of CPU over 1:30 and an empty output, I called it a filesystem hang, and it had been TM-scoring all along
+  (the rerun read 44:57 of CPU in 45 min). Its output was empty because python buffers stdout into a file. Before
+  setting a limit, time the costliest step on a sample (`tmscore.tm_score` at step 2: about 0.2 s a 47-residue frame,
+  so 11k frames take 37 min), run analysis python with `-u`, and judge a hang by its output's progress, never by
+  `TotalCPU` after a kill.
 * **`sbatch --test-only` counts against the gpu QOS's 12-job limit (10-24)**; test a new job's shape when a slot is free.
 * **caslake rejects an `--exclude` naming midway2 nodes (10-05)**, so a self-resubmitting script that runs there passes
   its job's own `ExcNodeList` (`ff3_benchmark/bench.sbatch`). Check a shape on the other cluster with `--test-only`.
