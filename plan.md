@@ -2493,11 +2493,82 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       verdicts stand (ff3.3's map loses BBA, ff2.1's map restores it, 0.580 against midpoint 0.470), and ff2.1's
       non-glycine rows alone restore it (0.518). BBL's read is not decisive: ff2.1 0.128 and ff3.3 0.118 by TM > 0.5,
       block SE 0.048.
-    - [ ] Step 4 (user 11-16: "Ok. Submit them"; README step 4, rule fixed before the arms ran): the burial
+    - [x] Step 4 (user 11-16: "Ok. Submit them"; README step 4, rule fixed before the arms ran): the burial
       scale by swap, `ff_bba_32bbenv21` (`p57_09` with ff2.1's `bb_env.dat`, scale -0.0176 -> -0.3014), and the
-      DSE redo as it is, `ff_3.3_g33_14`; each on BBA's and BBL's Peng native arms, 50207344-50207347 running
-      from 08:24 11-16. `p57_09`'s own BBA arm folds 0.308 against ff2.1's 0.849 (frames 2000-25000), so the swap can
-      decide. Read after the first chunk; the training change waits on steps 2-4.
+      DSE redo as it is, `ff_3.3_g33_14`, on BBA's and BBL's Peng native arms. Read at the arms' end 10:46 11-17
+      (`read_step4_full_1117.txt`, findings 1.44; the first-chunk read of 19:21 11-16 agreed): `32bbenv21` restores
+      BBA (0.656 against midpoint 0.600, margin +2.2) and passes the BBL side check (0.223 against ff2.1's 0.152);
+      `g33_14` does not hold BBA (0.279 against 0.494, margin -4.5) and fails the BBL side check (0.031, +0.121, 3.3
+      SE). Peng's mean TM beside, BBA / BBL: `32bbenv21` 0.415 / 0.458, `g33_14` 0.397 / 0.393, ff2.1 0.416 / 0.457.
+      The training change waits on steps 2-5.
+    - [ ] Step 5 (user 11-16: "schedule the debug for BBL and BBA, and make sure the ff do not break TM4 in
+      glpG"; "Submit all now"; 5a-5c submitted 14:21, rules in README step 5). Every candidate force field also runs glpG on Upside 3 (`upside3_validation/
+      glpg_<ff>/run.py`, `glpg_ff33_r33_19`'s with the force field changed: prep, then REMD block 1, one 28-core
+      broadwl node, about 40 h; the prep's stage-7.0 TM4 is an early read in about 4 h). **TM4 rule, fixed before any
+      run:** block 1, T 0.70, DSSP alpha over 135-151; TM4 holds if the mean and the last quarter are both above the
+      midpoint of ff2.1's 0.44 and ff3.0's 0.85, 0.645 (on record: `p57_09` 0.773, ff3.1 0.74 hold; ff3.3 0.555
+      breaks).
+      - 5a, now: glpG on `ff_3.3_g33_14` (the redo, whose BBA and BBL arms run in step 4), `ff_bba_33nongly21` (ff3.3
+        with ff2.1's non-glycine rows, BBA restored 0.518) and `ff_bba_33rama21` (ff3.3 with ff2.1's whole map, BBA
+        0.580). If `33nongly21` holds TM4, one force field holds both, and non-glycine depths kept near ff2.1 fix
+        BBA without costing TM4; `33rama21` against it isolates the glycine rows' share of TM4. If both break, no
+        map swap on ff3.3's other files keeps both (ff3.3 itself breaks TM4), and TM4's loss lies in those files or
+        in ff3.3's non-glycine rows.
+      - [x] 5b: BBL over the arms' full length (frames 2000-20834), read 15:35 11-16 (`read_bbl_full_1116.txt`):
+        ff2.1 0.152, ff3.3 0.092, `p57_09` 0.285; ff2.1 minus ff3.3 +0.060, block SE 0.040, not decisive (findings
+        1.44). The swap arms stay at their first chunk.
+      - [x] 5b' (user 11-16: "Option 1"): the de novo BBL arms as a second sample, pooled with the native arms over
+        eight paired blocks (rule in README step 5, fixed 16:11), read 17:16 (`read_bbl_denovo_1116.txt`): ff2.1
+        0.173, ff3.3 0.133, +0.040 against SE 0.034, not decisive (findings 1.44).
+      - [x] Decided 17:40 11-16 (user: "if you think ff3.3 is already good enough on BBL, keep it as a side check,
+        and use BBA as the main debug toggle"; my read: ff3.3 is within noise of ff2.1 on BBL, a loss up to about
+        0.1 not excluded, not shown). BBA decides; its reference gap is 0.753, block SE 0.038. BBL is a side check
+        on every candidate's BBL arm against ff2.1's (fails at two block SE; catches about 0.08 or more), in place
+        of step 4's BBL midpoint verdict. Every BBA verdict carries its arm's margin in its own block SE, and one
+        within two is near the line, not built on until the arm runs further or a seed repeats it
+        (`33nongly21` +0.6 is). The three BBL swap arms stay at their first chunk, unread. Rules in README's last
+        section, fixed before step 4's and 5c's data.
+      - 5c: a BBA native arm on `ff_3.0` (glycine depth only; TM4 0.85 on Upside 3; its old BBA trajectories are
+        gone), read by step 2's rule. If it holds BBA, depths trained on glycine alone keep both. Completed groups read
+        11:43 11-17 (README): holds, 0.556 against 0.471, margin +1.1, near the line; re-read at its target (about
+        13:45) decides.
+      - [x] 5d: glpG on `ff_bba_32bbenv21`, the one step-4 force field that restores BBA. Its prep (19:23-23:37 11-16)
+        was bitwise `p57_09`'s: the hybrid has no implicit environment node, so `bb_env.dat` never enters it
+        (findings 10.68); block 1 cancelled after 2 min. TM4 is `p57_09`'s 0.773 by construction, so `p57_09` with
+        ff2.1's burial scale holds BBA, the BBL side check and TM4 together, and burial changes are free of TM4.
+    - [ ] Fast loop (user 11-16: Peng's validation takes weeks): BBA's native arm, read at its first chunk with the
+      margin rule, is the toggle; glpG TM4 next; Peng's 16 once, on the final candidate. A static gap (E(all-helix)
+      - E(native-like) on fixed frames, minutes) was calibrated on the 11 BBA arms read (user "ok."; rule fixed 19:43)
+      and does not screen (Spearman 0.74 against 0.8; findings 1.44), so the BBA arm is the first test, and BBA and
+      BBL arms from each panel checkpoint would watch a training run. Next training design
+      (not started, asked after the ff3.0 BBA read, about 00:50 11-17): the ff3.x definition from ff2.1, lambda 0.3
+      throughout, with the redos' fixes, which avoids both known BBA causes; 1.37's trainer loss is still open.
+    - [x] Full validation of `ff_bba_32bbenv21` submitted 00:29 11-17 (user: "If you find the good ff, run all
+      validations on it") and cancelled 01:02, all 36 jobs, at the user's word: it is ff3.2 with one file swapped, and
+      "the ideal result would be ff33 which have all parameters trained together" ("Cancel all of it").
+      `checks/bbenv21_validate_20261117/` keeps the scripts; no result was read.
+    - [ ] **The trainer, before any new ff3.3** (user 11-17: "Debug the trainer first"). ff2.1 retrained by it at
+      lambda 0.3 (`ff_2.1_ctrl38`) loses to released ff2.1 on Peng (native 0.486 against 0.552, 13 of 16; de novo
+      0.299 against 0.427, 15 of 16) and mdCATH (-0.025) with a strong burial scale (-0.367), so a trained ff3.3
+      would inherit that loss. The first step's gradient at released ff2.1 was measured 11-10/11 (items 15-18,
+      findings 1.42: the scale balances at +0.018 under the control's protocol; no code defect), so it is not rerun
+      (findings 10.69). Now the lead 1.42 left open, the visit length: 11-09's three visits with the free chains
+      carried over raised the scale's balance 0.119, 0.187, 0.235 [0.058, 0.446]; `checks/visitlen_20261117/` runs
+      twelve (rule in its README, fixed 01:05 11-17). [x] Read 10:36 11-17 (`visitlen_read.txt`): **(c) unresolved**.
+      The balance is flat after visit 3 (0.126-0.192 over visits 3-12; visit 1 0.132), pooled visits 10-12 0.180
+      [0.014, 0.359]: under 0.3 at the point, the interval reaching it, its lower end under visit 1. 11-09's rise to
+      0.235 by visit 3 is not repeated (0.168 here). The rule fixes no next step for (c); the user chooses.
+    - [ ] **Probe the training start `ff_bba_32bbenv21` before any ff3.x training** (user 11-17: "Probe the start
+      first", on the reading that the map is solved and training breaks the burial scale). The start is `p57_09`'s
+      map and files with ff2.1's burial scale: BBA 0.656 (restores), BBL side check passes, Peng BBA/BBL mean TM level
+      with ff2.1, TM4 `p57_09`'s 0.773. Measure one unupdated step of the training worker there, the native-contrast
+      and DSE parts kept apart per protein, for the burial scale, the H-bond groups and the map depths, and their
+      balance weights; the rule fixed in the probe's README before any data. ff3.x training (every parameter jointly,
+      lambda 0.3, the map inside the DSE) from this start only if the probe finds the push small, and only after
+      asking. `checks/startprobe_20261117/` (rule in its README, fixed 12:00 11-17): `ff33_sisarw57`'s worker, one
+      unupdated step from the native on minibatch 0 (57 proteins); the scale's push at 0.3 decides: (a) not resolved:
+      train, asked first; (b) it lowers the scale, as the control's did, or (c) raises it: reported, no training.
+      Static check passed 12:00; submitted 12:01.
 25. [ ] **ff3.3 redone with the Rama map under the DSE: `ff33_dsemap57`** (user 11-13: "We should allow rama map in
     the DSE" (findings 10.63); "start from ff3.2, where we trained all terms with lambda=0"; "there is a point in ff3.3
     that we trained everyterms on lambda=0, then slowly increase lambda. start from there. I think the bug is the
@@ -2696,7 +2767,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       The onset is also where the panel's TM falls most (`m33` 0.700 -> 0.677; ff3.3 0.698 -> 0.687 over two
       epochs). Not tested: whether either block costs TM. That needs panels with one file swapped (for example
       `m33_12` with `m33_11`'s `sidechain.h5`, `s33_15` with `s33_13`'s `bb_env.dat`), which use allocation.
-29. [ ] **ff3.3's lambda part with the SI's SARW: `ff33_sisarw57`** (user 11-15, "Ok. Proceed.", on the
+29. [x] **ff3.3's lambda part with the SI's SARW: `ff33_sisarw57`** (user 11-15, "Ok. Proceed.", on the
     recommendation that followed findings 10.65's correction). `checks/ff33_sisarw_20261115/`, README.
     - The change: the SARW replica's backbone burial term (`bb_sigmoid_coupling_environment`) is scaled to zero with
       its H-bond, side-chain burial and rotamer pair terms, as the SI ("without H-bonds, side chain and solvation
@@ -2719,8 +2790,8 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       it exists, stop at 176); `--test-only`. One worker step on the Mac, 2xf6 (`local_worker_sisarw_2xf6.log`):
       every frame finite, DSE ensemble found, ESS 400, curvature PSD; SARW alpha_R 0.327 against 0.345 in
       `ff33_depthgrad57`'s local step (one protein, one sample).
-    - [ ] Training: first link 50203236 (steps 96-112, 19:01-03:37 11-16), second link 50204222 (112-128, 03:38-12:08),
-      third link 50211269 from 12:10, step 144 about 21:00. Panels `b33_14` and `b33_15` R from 12:09.
+    - [x] Training: first link 50203236 (steps 96-112, 19:01-03:37 11-16), second link 50204222 (112-128, 03:38-12:08),
+      stopped at step 130 by the user 14:17 11-16 ("Stop now") after the lead was rejected.
     - Early read, step 97 (19:40 11-15; same 57 proteins and step-96 parameters in both runs, paired by protein): the
       SARW's alpha_R 0.267 against `ff33_depthgrad57`'s 0.298, -0.0305 [-0.0348, -0.0264], 52 of 54 lower (the local
       test's estimate of the term's part, -0.032). But `bbenve`'s summed gradient is unchanged (+481 against +453)
@@ -2743,6 +2814,12 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       loose gap -9.29, -9.19; `bbenve` at the ends of epochs 12-14 0.064, -0.017, -0.035 (depthgrad 0.060, -0.026,
       -0.050); the depths' DSE gradient by basin within 10% of depthgrad's. The decision is `b33_15` against
       `g33_15`, which flipped (16 of 16).
+    - Watch at step 128 (panels landed 13:12 11-16): (1) health passes. (2) The reference passes: +0.0042 over epoch
+      15's eight minibatches. (3) `b33_15`'s unfolded shift -2.26 E_up, negative on 14 of 16 (`g33_15` -5.47, 16 of
+      16): it flips, so **the lead is rejected** by the rule. Mean TM `b33_15` 0.683, minus `g33_15` +0.012 [+0.003,
+      +0.022] (a resolved gain), minus `p57_09` -0.015 [-0.024, -0.005], minus released ff2.1 +0.001; `b33_14` 0.691,
+      minus `g33_14` -0.003, minus `p57_09` -0.007 [-0.017, +0.002]. (4) `bbenve` -0.035, -0.109 (depthgrad -0.050,
+      -0.131); loose gap `b33_15` -11.0 (`g33_15` -13.5). Findings 10.65. The run trains on to 176 by the plan.
     - Rule, fixed before any `b33` data: (1) health as item 26. (2) The reference: item 26's check 2 (the SARW's
       alpha_R against epoch 12 on the same proteins, at most 0.015 in any epoch), which `ff33_depthgrad57` fails
       (-0.019 over epoch 13's first five steps); here it should pass. (3) Each panel `b33_EE` against `g33_EE` (the

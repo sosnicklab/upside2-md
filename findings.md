@@ -2242,7 +2242,12 @@ plan.md Phase 38 items 15-16.
 - **Not the swaps** (`noswap_read.txt`): with the restrained native out of them, as Peng's 2022 membrane copies
   (`gen_swap_set(1, n)`; his 2019 soluble trainer and the port keep it in), the scale balances at +0.070 [+0.012,
   +0.138]; the NSE grows by -0.89 a protein, nearly all at T 0.80, a tenth of what 0.3 needs. Nor the start (below).
-  Still open: the visit length, and the scale's rate (the port's 0.025 a step, 8% of its
+  **Visit length not resolved** (`checks/visitlen_20261117/visitlen_read.txt`, 11-17: released ff2.1 fixed, 12 visits
+  of 8000 tu with the free chains carried over, 24 proteins, ff32_pcd57's worker): the balance is flat after visit 3,
+  0.126-0.192 over visits 3-12 against 0.132 at visit 1; pooled visits 10-12 0.180 [0.014, 0.359], which neither
+  reaches 0.3 at the point nor excludes it. 11-09's three-visit rise (0.119, 0.187, 0.235) is not repeated (0.168 at
+  visit 3). This worker's visit 1 (0.132; 0.119 on 11-09) sits above the control-protocol measurement's +0.018
+  [-0.034, +0.071] on 48 proteins; what separates the two is not established. Still open: the scale's rate (the port's 0.025 a step, 8% of its
   value; Peng's unknown), which under Adam sets how far a consistently pushed scalar moves in 76 steps whatever the
   balance. Not a difference: the restraint form (Peng's copies build the same random-pair network at 1/3^2).
 - **Code review (11-10, user: "without testing, by reviewing the training code"): one undocumented departure from
@@ -2322,18 +2327,21 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   hydrophobe tables) -1.87, `rama.dat` -1.56, `environment.h5` -1.02, `hbond.h5` +0.40, `bb_env.dat` -0.08.
 - By energy on fixed frames the side-chain file and the maps carried about four fifths and the burial file a quarter.
   The swaps below overturned that reading: fixed-frame energies do not decide populations.
-- **The swaps: ff3.3's Rama map is what loses BBA, through its non-glycine rows** (re-read 11-16 on cumulative time,
+- **The swaps: ff3.3's Rama map is what loses BBA, its non-glycine rows likely most** (re-read 11-16 on cumulative time,
   `read_swaps_1116.txt`, the rules fixed 11-12 and 11-13). Bench restarts each chunk's time at 0, and the 11-13 read
   (`swap_read.py`) masked frames by that time, so its references read three chunks against the swap arms' one; the
   re-read counts frames x 100 time units, as `bench_run.py` does. Cold replica (T 0.65) folded fraction, Ca RMSD under
   3 A, frames 2000-25361 (t 0.2-2.54 M) for every arm: ff2.1 0.848, ff3.3 0.093, midpoint 0.470. ff3.3 with ff2.1's
   whole map 0.580 (restores; blocks 0.54 0.49 0.56 0.74; GLY8 phi > 0 0.96); with ff2.1's non-glycine rows and its
-  own glycine rows (`ff_bba_33nongly21`, step 2b) 0.518 (restores, one block SE above the line; GLY8 phi > 0 0.85);
+  own glycine rows (`ff_bba_33nongly21`, step 2b) 0.518 (restores by the rule, but 0.6 of its own block SE of 0.085
+  above the line, near it, not one SE as I first wrote; GLY8 phi > 0 0.85);
   ff2.1 with ff3.3's map 0.349 (loses BBA; sufficient by the rule); ff3.3 with ff2.1's glycine maps 0.280 (GLY8
   phi > 0 0.23 -> 0.71), with ff2.1's `sidechain.h5` 0.219, with ff2.1's `environment.h5` 0.129 (none restores). The
-  11-13 verdicts stand, now about two block SE from the line. So the map carries BBA's loss, and its non-glycine rows
-  (the hairpin's GLN1-ALA4 and ARG9-PHE11 going alpha_R, by the state read) carry most of it: they give 0.518 of the
-  whole map's 0.580, the glycine rows 0.280. Released ff3.1's map (map-only, BBA 0.390, 3.03 A) is an earlier map
+  11-13 verdicts stand, each about two or more of its own block SE from the line (whole map +2.1, ff2.1 with ff3.3's
+  map -1.9, glycine maps -1.9, `sidechain.h5` -5.5, `environment.h5` -7.5). Against ff2.1 minus ff3.3, 0.753 with
+  block SE 0.038, BBA is the toggle BBL is not. So the map carries BBA's loss, and the point estimates put most of
+  it in the non-glycine rows (the hairpin's GLN1-ALA4 and ARG9-PHE11 going alpha_R, by the state read): 0.518 of
+  the whole map's 0.580 against the glycine rows' 0.280, 1.8 SE apart, so not decisive. Released ff3.1's map (map-only, BBA 0.390, 3.03 A) is an earlier map
   than ff3.3's, so its near-native BBA said nothing about ff3.3's map: the user's reading of 11-12 ("the updated Rama
   map cause BBA to be unstable") was right, and my pushback on ff3.1's numbers was wrong (10.61).
 - **The map moved toward alpha_R for nearly every residue during ff3.3's ramp** (`rama_offsets_round_10.npy` of
@@ -2362,15 +2370,58 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   `bb_env.dat` -0.01. The same three files as BBA, in about the same shares, with the hydrophobe table in place of
   the pair table as the largest node. The limitation: the non-native set is ff3.3's tail (365 of 13890 frames, TM
   median 0.29), and its typical frame sits at TM 0.3-0.5.
-- **BBL's swaps cannot be read: ff2.1 and ff3.3 do not differ on the fold measure** (step 3, `read_swaps_1116.txt`,
-  read 11:27 11-16, the rule fixed 11-13). Cold replica (T 0.70) TM-score > 0.5, frames 2000-12971 (t 0.2-1.30 M):
-  ff2.1 0.128, ff3.3 0.118, difference +0.010 against a block SE of 0.048 (mean TM 0.432, 0.414), so the rule's test
-  reads not decisive and no swap verdict stands. ff3.3's loop shifts reproduce (ASN19 phi > 0 0.96 -> 0.78, LEU20
-  beta 0.99 -> 0.78, ASP21 beta 0.97 -> 0.84) without a fold difference. Beside, ff3.3 with ff2.1's `sidechain.h5`
-  0.037, with ff2.1's map 0.163, and with ff2.1's `environment.h5` 0.423 (blocks 0.55 0.14 0.58 0.44, mean TM 0.469),
-  above both references, unexplained. BBL's loss so far is Peng's mean TM on single arms (-0.007 to -0.036 over the
-  ff3.x versions, below). Step 4's `g33_14` BBL read uses the same block test over a similar window, so it will
-  likely be not decisive too.
+- **`p57_09`'s BBA loss needs its weak backbone burial scale: ff2.1's scale restores BBA; the DSE redo loses BBA and
+  BBL** (step 4 at the arms' end, `read_step4_full_1117.txt`, read 10:46 11-17 over the full window, BBA frames
+  2000-28931 (t 0.2-2.89 M), BBL 2000-20834; rules fixed 11-16 before the arms ran, the margin and the BBL side check
+  17:40; the first-chunk read of 19:21 11-16 agreed, except that `g33_14`'s BBA was then near the line). Cold replica
+  folded fraction: ff2.1 0.842, ff3.3 `r33_19` 0.145, `p57_09` 0.358 (blocks rising 0.21 0.13 0.46 0.64). `p57_09`
+  with ff2.1's `bb_env.dat` (`ff_bba_32bbenv21`, scale -0.018 -> -0.301, every other file `p57_09`'s) 0.656 against
+  the midpoint 0.600, margin +2.2 of its block SE: it restores BBA, and with it ff2.1's states (GLY8 phi > 0 0.57 ->
+  0.96, alpha_R runs of 20 or more 0.37 -> 0.00). So 1.39's mechanism, from an energy decomposition, holds by swap for
+  `p57_09`, and BBA has two separate causes in two force fields: ff3.3's map (its scale -0.294 is ff2.1's; its map
+  swap restores 0.580) and `p57_09`'s burial scale (its map near ff2.1's). `32bbenv21` passes the BBL side check
+  (0.223 against ff2.1's 0.152). The DSE redo `g33_14` (scale -0.050, map near ff2.1's) does not hold BBA, 0.279
+  against 0.494, margin -4.5, alpha_R runs of 20 or more in 0.25 of its frames; it fails the BBL side check, 0.031
+  against 0.152 (+0.121, 3.3 SE; mean TM 0.376), where `p57_09`, with a weaker scale still, folds BBL 0.285 over the
+  same window. So `g33_14`'s BBL loss is not the scale; its cause is open. Peng's mean TM (`score_arms_ff.py`, bottom
+  rung), BBA / BBL: ff2.1 0.416 / 0.457, ff3.3 0.366 / 0.421, `p57_09` 0.388 / 0.450, `32bbenv21` 0.415 / 0.458,
+  `g33_14` 0.397 / 0.393.
+- **A static all-helix gap does not screen BBA; the BBA arm stays the first test** (user 11-16: Peng's validation
+  takes weeks; `calib_gap_1116.txt`, rule fixed 19:43 before any gap). E(all-helix) - E(native-like) on one fixed
+  frame set (400 of ff2.1's native-like, 200 each of ff3.3's and `p57_09`'s all-helix frames), under each of the 11
+  read arms' configs: Spearman 0.74 against their folded fractions (rule 0.8; Pearson 0.81), ff2.1 above ff3.3 by
+  5.81 E_up (7.1 SE). Post hoc, deciding nothing: the two best folders sit above every other (ff2.1 +1.17,
+  `32bbenv21` +1.95, the rest -1.71 or lower) and ff3.3 is last (-4.64), but the middle is misordered: ff3.3 with
+  ff2.1's side chains -1.75 folds 0.219, with ff2.1's non-glycine rows -2.76 folds 0.518. One competitor state does
+  not carry the folded fraction. ff3.0's gap, -0.94, recorded before its arm's read, counts for nothing.
+- **ff3.0 holds BBA at its completed chunks, near the line** (step 5c, `read_step5c_1117.txt`, 11:43 11-17, frames
+  2000-26186): 0.556 against the midpoint 0.471 of ff2.1 0.844 and ff3.3 0.098, margin +1.1 of its block SE, blocks
+  falling 0.77 0.48 0.58 0.40; GLY8 phi > 0 0.88, alpha_R runs of 20 or more 0.06. Its map is ff2.1's NDRD with one
+  trained glycine depth pair and its burial scale -0.330, so neither BBA cause is present; it also keeps TM4 (0.85).
+  Nothing is built on it until the arm's end reads it by the same rule.
+- **BBL's loss is not measurable on the arms we have, so BBL is a side check and BBA the toggle (user 11-16): ff2.1
+  and ff3.3 do not differ decisively on the fold measure, native or de novo** (step 3, `read_swaps_1116.txt`, read 11:27 11-16; step 5b, `read_bbl_full_1116.txt`,
+  read 15:35; step 5b', `read_bbl_denovo_1116.txt`, read 17:16; rules fixed 11-13 and 11-16). Cold replica (T 0.70) TM-score > 0.5. Over frames 2000-12971 (t 0.2-1.30 M): ff2.1 0.128,
+  ff3.3 0.118, +0.010 against a block SE of 0.048. Over the arms' full length, frames 2000-20834 (t 0.2-2.08 M):
+  ff2.1 0.152 (blocks 0.178 0.109 0.095 0.225), ff3.3 0.092, `p57_09` 0.285 (blocks 0.492 0.278 0.253 0.117,
+  falling); ff2.1 minus ff3.3 +0.060 against 0.040 (1.5 SE), minus `p57_09` -0.134 against 0.088; mean TM 0.437,
+  0.403, 0.427. No swap verdict stands, and by step 5's rule none is read before seeds. ff3.3's loop shifts
+  reproduce at full length (ASN19 phi > 0 0.97 -> 0.75, LEU20 beta 0.98 -> 0.74, ASP21 beta 0.96 -> 0.80) without a
+  decisive fold difference. Beside, on the first window, ff3.3 with ff2.1's `sidechain.h5` 0.037, with ff2.1's map
+  0.163, and with ff2.1's `environment.h5` 0.423 (blocks 0.55 0.14 0.58 0.44, mean TM 0.469), above both
+  references, unexplained. Peng's mean TM on single arms is the other evidence for a loss (-0.007 to -0.036 over
+  the ff3.x versions, below). Step 4's `g33_14` BBL read uses the same block test over a shorter window, so it will
+  likely be not decisive too. The de novo arms as a second sample, frames 2000-40244 (t 0.2-4.02 M, the unfolded
+  start at TM 0.15-0.17): ff2.1 0.195, ff3.3 0.174, `p57_09` 0.250; ff2.1 minus ff3.3 +0.020 against 0.060.
+  Pooled with the native arms over eight paired blocks: ff2.1 0.173, ff3.3 0.133, +0.040 against 0.034 (1.2 SE);
+  `p57_09` 0.268, ff2.1 minus it -0.095 against 0.050 (1.9 SE). ff3.3's loop shift reproduces in the de novo arm
+  (ASN19 phi > 0 0.90 -> 0.66) without a fold difference. At this SE a loss of 0.04 needs about three times the
+  data to reach two SE, about four more native arms each of ff2.1 and ff3.3. The arms are independent samples
+  despite `bench_run.py`'s shared `--seed 1`: ff2.1's and ff3.3's native arms start identical and are 3.5 A Ca RMSD
+  apart one frame (100 time units) later, 4.0 A at frame 1000; the de novo arms start 9.6 A apart. Post hoc, deciding
+  nothing: over the native window's time (the de novo arms' first two blocks, t 0.2-2.1 M) the de novo gap is
+  +0.051 (0.182 against 0.131), the native's +0.060; the de novo arms close it over t 2.1-4.0 M (0.207 against
+  0.218, ff3.3's last block 0.287, the highest of its eight).
 - **The loss is not BBA's or BBL's alone** (Peng's scored native arms, read 01:05 11-13, mean TM minus released
   ff2.1's). Map-only ff3.1 over 16: mean -0.010, 9 of 15 below (cspA -0.045, NTL9 -0.050, BBA -0.026, BBL -0.024).
   ff3.2 `p57_09` over 16: mean -0.016, 13 of 16 below (sign test p 0.02): NuG2 -0.082, hyp -0.060, protein G -0.041,
@@ -2384,6 +2435,13 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   glycine L/R depth alone: TM4 spans 0.42-0.98 over versions whose glycine alpha_L - alpha_R all lie at -0.77 to
   -1.06, and in both decompositions the glycine rows are a minority share. The swaps (above) put BBA's side of it in
   the map's non-glycine rows more than its glycine rows, and not in the co-trained side-chain or burial files.
+  Step 5a's preps (read 19:10 11-16, `glpg_u3_prep_tm4.py`, `upside3_validation/glpg_<tag>/glpg_<tag>_prep_tm4.txt`),
+  stage 7.0's TM4 DSSP alpha, mean and last tenth of 401 frames, an early read beside block 1, deciding nothing:
+  `g33_14` 0.96, 1.00; `33nongly21` 0.82, 0.86; `33rama21` 0.81, 0.85; against ff3.3 `r33_19` 0.81, 0.55 (block 1
+  0.555), `p57_09` 0.88, 0.73 (0.773), ff3.0 0.88, 0.82 (0.85), ff2.1 0.85, 0.24 (0.44). The mean does not separate
+  the force fields that hold in block 1 from those that break; ff2.1's and ff3.3's fall over stage 7.0, the three
+  new ones' do not. The hybrid reads neither burial file (10.68): its config has no implicit environment node, so
+  the backbone burial scale cannot move TM4, and `ff_bba_32bbenv21`'s TM4 is `p57_09`'s 0.773 by construction.
 - **The DSE-part redos do not carry ff3.3's map defect** (user 11-16: "Do you see the problem of BBA and BBL
   unfolding being resolved?"; `checks/ff33_bba_20261112/hairpin_offsets.py`, `gly_offsets.py` and their `.txt`, on
   the rounds the panels read). Offset alpha_R minus beta on ff2.1's library (ff2.1 0; negative: alpha_R deeper),
@@ -6065,9 +6123,25 @@ reweighting to the unfolded rungs (ESS median 258-363 of 400 frames) are correct
   (`checks/ff33_sarwfix_20261114/static_test.log`): the worker's SARW config differs from a free one only in the
   five scaled arrays and the map; the NSE path is bitwise the redo's; the step is the Newton step of the stated
   objective.
+- **The SI's SARW stops the reference's drift but not the flip** (`ff33_sisarw57`, the backbone burial term scaled to
+  zero in the SARW, against `ff33_depthgrad57` from the same step 96; plan.md item 29, read 13:15 11-16). The SARW's
+  alpha_R against epoch 12, epochs 13-15: +0.0022, +0.0036, +0.0042 (depthgrad -0.016, -0.019). `bbenve` still
+  falls, -0.035 and -0.109 at the ends of epochs 14 and 15 (depthgrad -0.050, -0.131), since its DSE push comes from
+  the SARW being more exposed than the simulated unfolded state, which the term's removal does not change. Unfolded
+  shift `b33_14` +10.24 (0 of 16 negative), `b33_15` -2.26 E_up (14 of 16; `g33_15` -5.47, 16 of 16): a fall of 12.5
+  against depthgrad's 14.9, so the term is about a sixth of it. Loose gap `b33_15` -11.0 (`g33_15` -13.5). Mean TM
+  `b33_15` 0.683: minus `g33_15` +0.012 [+0.003, +0.022], minus `p57_09` -0.015 [-0.024, -0.005], minus released
+  ff2.1 +0.001 [-0.010, +0.013]; `b33_14` 0.691, minus `g33_14` -0.003, minus `p57_09` -0.007 [-0.017, +0.002]. By
+  the rule fixed beforehand the lead (the term drives the lambda-0.2 flip and the TM loss) is rejected: `b33_15`
+  flips. The term was a part, and the reference is now right; the flip stays with `bbenve`'s fall (10.67).
+  The run repeated 1.37's test of 11-01 (`s32_00`: the SI's SARW changes neither folding nor the unfolded
+  shift), which I did not weigh before recommending it on 11-15.
 **When a parameter is made trainable, check whether the DSE's SARW reference contains it. If it does, its DSE
 gradient is not contrastive, and the reference itself moves. Before calling a behaviour "FF2's code", check the SI,
-master and the audit ledger (3.14); the ConDiv tree is a port and departs from both.**
+master and the audit ledger (3.14); the ConDiv tree is a port and departs from both. Before proposing a run to
+test a lead, search findings for that lead: 1.37 had answered item 29's on 11-01, and the run cost a day of 57
+nodes to repeat it. A fixed defect is not a resolved problem; say which problem a fix is expected to move, and
+how likely, before it runs.**
 
 ### 10.66 The depth update's derivative was a share, not the derivative of the engine's mixture (2026-11-15)
 
@@ -6127,6 +6201,37 @@ per-protein values; the nodes add, remainder 0.00).
   needs panels with one file swapped.
 **Decompose before blaming a parameter group: a whole-force-field statistic splits exactly by swapping one potential
 node at a time between two configs, both directions, on fixed frames.**
+
+### 10.68 Check that a swapped file enters the validation before running it (2026-11-16)
+
+Step 5d ran glpG on `ff_bba_32bbenv21`, `p57_09` with ff2.1's `bb_env.dat`, to ask whether the burial scale keeps
+TM4. The hybrid glpG config has no implicit environment node (its 25 nodes are the backbone, Rama, H-bond energy,
+side-chain and MARTINI terms; the explicit dry-MARTINI environment replaces burial), so neither `bb_env.dat` nor
+`environment.h5` enters it: its stage-7.0 config equalled `glpg_ff32_p57_09`'s in all 89 potential datasets and its
+trajectory was bitwise `p57_09`'s over 401 frames. The prep cost 4 h of a 28-core node; block 1 was cancelled after
+2 min. So TM4 on Upside 3 cannot test, or be broken by, either burial file, and `32bbenv21`'s TM4 is `p57_09`'s
+0.773 by construction. **Before running a validation of a one-file swap, list the validation config's nodes and
+check that the swapped file enters one of them.**
+
+### 10.69 Search findings for the quantity before offering a measurement (2026-11-17)
+
+I offered to measure the first training step's gradient at released ff2.1 to find why the trainer moves it, and
+the user chose it ("Debug the trainer first"). Phase 38 items 15-18 had measured it on 11-10 and 11-11 (1.42): under
+the control's protocol the backbone burial scale balances at +0.018, so the DSE at 0.3 moves ff2.1 as the objective
+is written; two code reviews found no defect; sampling choices, swaps, the coil start and the time step leave the
+balance under 0.3. I found it only on starting, and turned to the lead 1.42 left open, the visit length
+(`checks/visitlen_20261117/`). 10.65's rule searched by the lead's name; this offer was a quantity. **Before offering
+a measurement, grep findings for the quantity it measures (here balance, fixed point, step 0) and lead with what is
+on record.**
+
+### 10.70 The Mac shell is zsh: a command held in a variable does not split into words (2026-11-17)
+
+The watcher for the ff3.0 BBA arm's first chunk held its ssh call in `X="ssh -o BatchMode=yes -S ..."` and ran
+`$X '...'`. zsh does not split an unquoted parameter, so `$X` named one nonexistent command, the ssh error went to
+`2>/dev/null`, the state stayed empty and the loop polled for six hours past the chunk's end (00:52 11-17) with no
+output; the snapshot it was to take before the successor started was never made. Found at 03:07 when its output file
+was still empty. **In a background watcher, write the ssh command out in full (as the other watchers do), and never
+send the call's stderr to /dev/null in the loop condition: an empty state must be told apart from a failed call.**
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 
