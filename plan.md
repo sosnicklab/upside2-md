@@ -2508,13 +2508,15 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       run:** block 1, T 0.70, DSSP alpha over 135-151; TM4 holds if the mean and the last quarter are both above the
       midpoint of ff2.1's 0.44 and ff3.0's 0.85, 0.645 (on record: `p57_09` 0.773, ff3.1 0.74 hold; ff3.3 0.555
       breaks).
-      - 5a, now: glpG on `ff_3.3_g33_14` (the redo, whose BBA and BBL arms run in step 4), `ff_bba_33nongly21` (ff3.3
-        with ff2.1's non-glycine rows, BBA restored 0.518) and `ff_bba_33rama21` (ff3.3 with ff2.1's whole map, BBA
-        0.580). If `33nongly21` holds TM4, one force field holds both, and non-glycine depths kept near ff2.1 fix
-        BBA without costing TM4; `33rama21` against it isolates the glycine rows' share of TM4. If both break, no
-        map swap on ff3.3's other files keeps both (ff3.3 itself breaks TM4), and TM4's loss lies in those files or
-        in ff3.3's non-glycine rows. `g33_14`'s block 1 was lost to a node failure at 12:11 11-17 and cancelled at
-        the user's word 17:09 (it already fails BBA and BBL, so its TM4 decides nothing); the other two are read.
+      - [x] 5a: glpG on `ff_bba_33nongly21` (ff3.3 with ff2.1's non-glycine rows, BBA restored 0.518) and
+        `ff_bba_33rama21` (ff3.3 with ff2.1's whole map, BBA 0.580). If `33nongly21` holds TM4, one force field
+        holds both, and non-glycine depths kept near ff2.1 fix BBA without costing TM4; `33rama21` against it
+        isolates the glycine rows' share of TM4. Block 1 read 06:31 11-18 (findings 1.44): `33nongly21` 0.747 / 0.773
+        (mean / last quarter) holds, `33rama21` 0.662 / 0.488 breaks. So the first case: ff3.3's non-glycine rows
+        cost TM4 and BBA, its glycine rows carry TM4, and `33nongly21` holds both, its BBA near the line (+0.6 block
+        SE, below), one block and one seed. What follows from it for `ff3x_bbenv21` is the user's. `g33_14`'s block 1
+        was lost to a node failure at 12:11 11-17 and cancelled at the user's word 17:09 (it already fails BBA and
+        BBL, so its TM4 decides nothing).
       - [x] 5b: BBL over the arms' full length (frames 2000-20834), read 15:35 11-16 (`read_bbl_full_1116.txt`):
         ff2.1 0.152, ff3.3 0.092, `p57_09` 0.285; ff2.1 minus ff3.3 +0.060, block SE 0.040, not decisive (findings
         1.44). The swap arms stay at their first chunk.

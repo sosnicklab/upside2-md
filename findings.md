@@ -2457,11 +2457,23 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   the map's non-glycine rows more than its glycine rows, and not in the co-trained side-chain or burial files.
   Step 5a's preps (read 19:10 11-16, `glpg_u3_prep_tm4.py`, `upside3_validation/glpg_<tag>/glpg_<tag>_prep_tm4.txt`),
   stage 7.0's TM4 DSSP alpha, mean and last tenth of 401 frames, an early read beside block 1, deciding nothing:
-  `g33_14` 0.96, 1.00; `33nongly21` 0.82, 0.86; `33rama21` 0.81, 0.85; against ff3.3 `r33_19` 0.81, 0.55 (block 1
-  0.555), `p57_09` 0.88, 0.73 (0.773), ff3.0 0.88, 0.82 (0.85), ff2.1 0.85, 0.24 (0.44). The mean does not separate
-  the force fields that hold in block 1 from those that break; ff2.1's and ff3.3's fall over stage 7.0, the three
-  new ones' do not. The hybrid reads neither burial file (10.68): its config has no implicit environment node, so
-  the backbone burial scale cannot move TM4, and `ff_bba_32bbenv21`'s TM4 is `p57_09`'s 0.773 by construction.
+  `g33_14` 0.96, 1.00; `33nongly21` 0.82, 0.86 (block 1 0.747); `33rama21` 0.81, 0.85 (0.662); against ff3.3
+  `r33_19` 0.81, 0.55 (0.555), `p57_09` 0.88, 0.73 (0.773), ff3.0 0.88, 0.82 (0.85), ff2.1 0.85, 0.24 (0.44).
+  Neither number separates the force fields that hold in block 1 from those that break: `33rama21` ends stage 7.0
+  at 0.85 and breaks in block 1. The hybrid reads neither burial file (10.68): its config has no implicit
+  environment node, so the backbone burial scale cannot move TM4, and `ff_bba_32bbenv21`'s TM4 is `p57_09`'s 0.773
+  by construction.
+- **ff3.3's glycine rows keep TM4 and its non-glycine rows break it** (step 5a, block 1 read 06:31 11-18,
+  `upside3_validation/glpg_<tag>/glpg_<tag>_block1.txt`; rule in README step 5). TM4 135-151 DSSP alpha at T 0.70,
+  mean / last quarter, against the line 0.645: `33nongly21` (ff3.3 with ff2.1's non-glycine rows) 0.747 / 0.773,
+  holds; `33rama21` (ff3.3 with ff2.1's whole map) 0.662 / 0.488, breaks (first half 0.730, second half 0.596; 139-144
+  unwind to 0.26-0.38); ff3.3 `r33_19` 0.555 / 0.570, breaks. The two swaps differ only in the glycine rows, and
+  ff3.3's own other files are in all three. So on ff3.3's other files, ff3.3's non-glycine rows cost TM4 (0.555
+  against 0.747) as they cost BBA (0.518 restored), and its glycine rows carry TM4 (0.747 against 0.662 / 0.488).
+  `33nongly21` is the one force field so far that holds both, with its BBA margin near the line (+0.6 block SE,
+  plan.md item 24), so that pairing stands only as far as its BBA does. One block and one seed each (206-207 frames,
+  t 0-2060); at T 0.795 the three do not separate (0.494, 0.517, 0.485). Health: KE/1.5kT protein 1.003, 1.005,
+  lipid 1.004, 1.004; peptide C-N 1.313 +- 0.119 and 1.312 +- 0.120 A, `r33_19`'s 1.311 +- 0.120.
 - **The DSE-part redos do not carry ff3.3's map defect** (user 11-16: "Do you see the problem of BBA and BBL
   unfolding being resolved?"; `checks/ff33_bba_20261112/hairpin_offsets.py`, `gly_offsets.py` and their `.txt`, on
   the rounds the panels read). Offset alpha_R minus beta on ff2.1's library (ff2.1 0; negative: alpha_R deeper),

@@ -1555,3 +1555,10 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   `.up`, `fixtures_w21` and `fixtures_hybrid_w4`-`w6` (the sets `tests/` names), the Windows VM. Free 451 -> 602 GiB.
   Manifests `scratchpad/CLEANUP_20261116_manifest.txt`, `scratchpad/CLEANUP_20261116_fixtures.txt`. The repo `.venv`,
   the plotting venv and the inv and edgar venvs checked running after.
+* **11-17 21:35, Mac Studio: Boltz E2 read, E3a submitted** (user: "check boltz job status, propose and submit next
+  step"; diffusion_dynamics.md Phase 2). E2's 10 pilot jobs had COMPLETED by 01:50 11-17 (the ledger still said PD).
+  Logs passed rule 1; 2,400 files pulled md5-equal to `scratchpad/boltz_hdx/addon/runs/lib/`; `lib_flags.sh` (12 min)
+  and `lib_read.py`: train W 0.572 [0.509, 0.633], WW 0.775 [0.690, 0.869] kcal/mol, not shown domain-specific, no
+  closer than the family prior; Boltz-2's sets too stable in every family. New `addon/trunk.py`, `addon/trunk.sbatch`
+  (Boltz-2's `s_trunk` at seeds 13-22, structure module skipped) for E3's features; 5 RTX 6000 jobs submitted 21:32
+  (`remote_jobs.md` line 4). Not run before GPU time (no Boltz weights on the Mac).
