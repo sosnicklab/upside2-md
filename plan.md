@@ -2590,13 +2590,19 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
         held-out set exact, native sites to summation rounding), start files equal `32bbenv21`'s (float tables to
         float64 rounding through the trainer's packing, 4.7e-16 at most), every group but `bbenve` equal to `pcd57`
         step 80, `bbenve` -0.3014; `--test-only` passed.
-      - [ ] Training: first link 50253704 submitted 20:24 11-17 (PD; remote_jobs.md job table). Then: the rules
-        for BBA, BBL and TM4 on its checkpoints, fixed before any read.
-    - [ ] **Read Peng's FF2 trainer in his midway directory** (user 11-17: access approved 11-18, "We can work on
-      these tomorrow"; findings 1.42 "Peng on the DSE"). Read-only. Find the DSE's two sets (which frames are
-      the unfolded set, the cutoff; the SARW's terms off, its temperature, rerun or fixed; reweighting), the
-      lambda schedule, the learning rate and the stopping step, and set each beside ours (`ff33_sisarw57`
-      `ConDiv.py` 4aa5c842). This replaces asking him the five questions drafted 11-17, where the code answers them.
+      - [ ] Training: first link 50253704 R from 00:54 11-18, successor 50264359 PD (remote_jobs.md job table).
+        Steps 0-25 healthy by 14:18 11-18. The backbone burial scale weakens steadily from ff2.1's -0.3014: -0.2743
+        after step 10, -0.2648 after 18, -0.2101 after 25, toward the redos' -0.017 to -0.131 that lost BBA and BBL
+        (findings 1.44). Owed: the rules for BBA, BBL and TM4 on its checkpoints, fixed before any read; whether it
+        goes on waits on item 30's epoch-0 verdict (11-18 evening).
+    - [x] **Read Peng's FF2 trainer in his midway directory** (user 11-17: access approved 11-18, "We can work on
+      these tomorrow"; findings 1.42 "Peng on the DSE"). Read 11-18 (findings 9x;
+      `checks/peng_home_20261118/`): one DSE trainer survives, `upside-t2.00/test/ConDiv.py` (2020-12-11), three
+      months after ff2.0, the port's parent. The DSE's two sets are ours, and so are the NSE and the 76-step budget.
+      It differs in the DSE weights (0.4, and 0.8 on bbenve, rot and hb, against our 0.3), the SARW (half the
+      side-chain burial; hottest rung, unreweighted; random start), the rates (bbenve 0.01 against 0.025, dhb
+      frozen), swaps (the restrained replica out) and 4000 tu. Reported to the user 11-18; `ff3x_bbenv21` runs on
+      unchanged until the user decides.
 25. [ ] **ff3.3 redone with the Rama map under the DSE: `ff33_dsemap57`** (user 11-13: "We should allow rama map in
     the DSE" (findings 10.63); "start from ff3.2, where we trained all terms with lambda=0"; "there is a point in ff3.3
     that we trained everyterms on lambda=0, then slowly increase lambda. start from there. I think the bug is the
@@ -2856,6 +2862,35 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       negative on most of Peng's 16 proteins while `g33_15`'s is, and `b33_15 - g33_15` mean TM is not a resolved
       loss; it is rejected if `b33_15` flips as `g33_15` does. (4) Beside, deciding nothing: `bbenve`, the depths'
       basin means, the gaps. At 176, item 23's rule over `b33_18`-`b33_21`.
+30. [ ] **ff2.1 continued by Peng's own trainer: `ff21_peng`** (user 11-18: "check Peng's setting on ff2.1 continued
+    training, to see if it still cliff down on a further training"; findings 9x). Peng's December 2020 file
+    (`checks/peng_home_20261118/src/ConDiv_t2.00_20201211.py`, `b8be5fc4`) run on his Python 2 (Anaconda2-2019.10)
+    and his `upside-v1.96` py and binary, frozen into `checks/peng_ff21_20261118/`. Four changes only:
+    `minibatch_size` 12 to 24 (his run script's 24 and 76 steps), `rp_path` to the frozen copy, the rama paths to our
+    md5-equal files, and srun's `--slurmd-debug=0` removed (a log level, root-only on Slurm 23.02). Start: released ff2.1 (the control's `init_param`) plus upside-ff2.0's all-zero `mid_nc.h5`,
+    which his loader needs (rate 0). The rest is his: per-group lambda 0.4 / 0.8, SARW at half the side-chain burial
+    on the hottest rung, 4000 tu at dt 0.015, his rates, swaps and reweighting, and the DSE-dropping rule (his code
+    under measurement; its firings counted from `Energy.pkl`). 456 proteins, 24 a step, one epoch a link, 76 steps;
+    panels `pg_00`-`pg_03` (44 domains, dt 0.015) and reads `pg_read_EE.txt` as `tm_jl01.sbatch`.
+    - **Rule, fixed 11-18 before any data** (mean TM on the 44 domains, paired 95% interval; `pg_00` is step 19):
+      (a) no cliff: `pg_00` against `ff21_released_tr` not wholly under 0, so Peng's setting holds ff2.1 through
+      FF2's first epoch and the cliff lies in where ours departs from his; (b) cliff: wholly under 0, and against
+      `c9_00_tr` not wholly above 0, so the settings do not explain it; (c) partial: wholly under released ff2.1
+      and wholly above `c9_00_tr`. `pg_01`-`pg_03` read the same way as a trajectory, deciding nothing beyond
+      (a)-(c). Beside: folded fraction, the scale and H-bond energies, workers 24 of 24, the rule's firings.
+    - Feeds the user's decision on `ff3x_bbenv21` (item 24): under (a), bisect the departures (SARW burial,
+      per-group lambda, the bbenve rate first) before proposing a restart from `ff_bba_32bbenv21`; under (b) or (c)
+      it goes on and its own checkpoint reads decide. It runs unchanged meanwhile.
+    - [x] Built 12:05 11-18 (`build_peng.log`; 19 minibatches of 24, none excluded); static check: every group equal
+      to ff2.1, the side-chain tables within 8e-5 through his pack/unpack. Smoke 50276631 (2 proteins, 800 tu):
+      15 finite fields each; the SARW config's side-chain burial scale 0.500 of the free one's, H-bond, backbone
+      burial, coverage, hydrophobe and rotamer 0, rama 1. The link's epoch-end submissions tested with a fake sbatch.
+    - [ ] First link 50276643 (12:17 11-18) cancelled at 13:18: its step 2 ran on 7 of 24 workers, Slurm refusing 17
+      launches ("Job credential expired"), which Peng's code skips. Restarted from step 1 as 50276901 (R from 13:18)
+      with `bin/srun` first on PATH, retrying a failed launch only (a worker that ran and failed stays failed), and
+      each link running to the next epoch end. Steps 0-6 done by 14:18, 24 of 24 each, 640-731 s a step; the
+      scale -0.3014 to -0.3449 after step 6 (our control's `c9_00` reached -0.404). `pg_read_00.txt` about 18:30-19:00
+      11-18, read by the rule; step 76 about 04:30 11-19 (remote_jobs.md "Resume 11-18 evening").
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the

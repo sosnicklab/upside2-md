@@ -1562,3 +1562,24 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   closer than the family prior; Boltz-2's sets too stable in every family. New `addon/trunk.py`, `addon/trunk.sbatch`
   (Boltz-2's `s_trunk` at seeds 13-22, structure module skipped) for E3's features; 5 RTX 6000 jobs submitted 21:32
   (`remote_jobs.md` line 4). Not run before GPU time (no Boltz weights on the Mac).
+* **11-18 11:00, MacBook Pro: status pass and Peng's trainer read** (user: "check remote job status", then "read
+  Peng's directory and check whether our understanding is correct"; not the owner, no cron). midway2 socket opened
+  (one Duo push); `ff3x_bbenv21` healthy through step 18, Boltz E3a's five trunk jobs `[done]` (214 of 214 npz).
+  Peng's home and scratch, readable from 11-18, inventoried (`checks/peng_home_20261118/`, README): one DSE trainer,
+  `upside-t2.00/test/ConDiv.py` (2020-12-11), compared with `331eab3d` (findings 9x; 9v and 1.42 amended; plan.md
+  item 24 checked). Nothing submitted or changed on the cluster beyond the new checks folder.
+* **11-18 12:20, MacBook Pro: `ff21_peng` started** (user: "check Peng's setting on ff2.1 continued training, to see
+  if it still cliff down on a further training"; "check if we need to re-do ff3.3 training from ff3.2 version that
+  worked on BBA, BBL and TM4"). Part 2 answered from the records: the version that passes all three is
+  `ff_bba_32bbenv21`, and `ff3x_bbenv21` is already ff3.3's training from it, so no separate re-do; it runs on until
+  part 1 reads. Part 1: Peng's own Python 2 trainer on his frozen `upside-v1.96`, from released ff2.1, four changes
+  (`checks/peng_ff21_20261118/`, README; plan.md Phase 38 item 30 with the rule fixed before data). Static check and
+  smoke step passed (the first smoke failed on srun's root-only `--slurmd-debug`, removed); epoch-end submissions
+  tested with a fake sbatch; first link 50276643 R from 12:17. Its step 2 lost 17 of 24 workers to Slurm's "Job
+  credential expired" (Peng's code skips them); at the user's word it was cancelled and resumed from step 1 as
+  50276901 (13:18), with a launch-only retry `srun` (tested on fake launch and worker failures).
+* **11-18 14:22, MacBook Pro: handoff** (user: "record everything in md file so I can resume on another computer").
+  remote_jobs.md "Resume 11-18 evening" replaces the finished "Resume 11-18"; header, job table (ff21_peng,
+  ff3x_bbenv21's scale trend, Boltz E3a done), plan.md items 24 and 30, findings 10.72 (srun launch faults; Peng's
+  code skips them) updated; the cluster's `WATCH_STATUS.md` got a record line; the five records synced to the
+  handoff bundle. State at 14:18: ff21_peng 7 steps done, ff3x_bbenv21 26, `/project` 433 G free.

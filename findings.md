@@ -2182,9 +2182,9 @@ the DSE first" (plan.md Phase 38 item 13). Read-only on existing files; scripts 
   in essence penalizes interactions; know which two sets the DSE contrasts; the wrong pair makes training unstable.)
   Against the record: the weight is too large for this trainer on the backbone burial scale (released ff2.1 balances
   it at lambda* 0.02-0.24, above), and the DSE's size tracks the residual H-bonds of the unfolded frames, most of
-  them in the colder bracketing replica, so the contrast penalizes interactions those frames keep. Our two sets
-  are the SI text's as we read it; Peng's own pair is not in any code we hold (9v), so the pair is the question
-  for him.
+  them in the colder bracketing replica, so the contrast penalizes interactions those frames keep. Peng's
+  December 2020 trainer (9x) contrasts the same two sets as ours; it differs in the SARW's Hamiltonian (half the
+  side-chain burial), temperature and start, and in per-group weights (0.4, and 0.8 on the backbone burial scale).
 - **Who added the DSE, and what for** (user 11-09: "maybe DSE is something added by someone else other than Peng and
   Jumper?"; read in the SI, `~/OneDrive - The University of Chicago/ct1c00960_si_001.pdf`). Peng's, in the FF2 paper
   itself: "For the new FF2, we added a second objective related to training the DSE to be a self-avoiding random
@@ -5242,8 +5242,8 @@ term's covers only `scale` (9v). `Train(1).zip` (OneDrive) is Peng's 2022 membra
 
 The only FF2 dual-target trainer is O. Kleinmann's Python 3 port of Peng's code,
 `/project2/trsosnic/okleinmann/condiv/condiv2.py` (git history from 2025-08, first commit already his working copy, so
-Peng's pristine file is not recoverable; `/home/pengxd` is unreadable; rechecked 11-10: it and `/scratch/midway2/pengxd`
-are `drwx------`, and GitHub `pengxd` holds four forks (`upside-md`, `openmm`, `upside2-md` with four commits of
+Peng's pristine file is not recoverable from it; `/home/pengxd` and `/scratch/midway2/pengxd`, `drwx------` to 11-17,
+became readable 11-18 and hold a December 2020 version of Peng's trainer (9x); GitHub `pengxd` holds four forks (`upside-md`, `openmm`, `upside2-md` with four commits of
 examples, Python 3 and HDX, `PyAutoFEP`) and no trainer; ff_2.0 and ff_2.1 entered `sosnicklab/upside2-md` together in
 Peng's commit `4ad9c768` of 2022-02-27, so no history records the burial edit between them; `share/pengxd/ConDiv_ff1.5_for_Nabil`
 (2020) trains FF1's form; a sweep of 18,085 readable .py, .ipynb and archive files on `/project2`, `/beagle3`, `/project` and `/cds3` (`checks/peng_trainer_search_20261110/`) finds no other file with both ConDiv and DSE markers; that sweep read archives by member name only, so on 11-10 the
@@ -5260,7 +5260,8 @@ files carry Windows download markers, and neither its swap file, its notebook, `
 `training/pengxd/` (a protein list) holds another value or Peng's original; 6 free replicas up to T ~0.97 (SI: 12 from 0.8 to 1.1),
 1000 time units (SI: 8000), minibatch 21 (SI: 24); replica reweighting exponent `E*(T0-Ti)/Ti`, T0 times the correct
 `E*(1/Ti - 1/T0)`; a `dE < -200` clamp in place of a normalisation; and a guard that silently dropped the DSE term
-whenever the last free replica's final energy exceeded 1000. His 101-step run ended with the backbone scale flipped
+whenever the last free replica's final energy exceeded 1000 (these last three are in Peng's own December 2020 trainer,
+9x). His 101-step run ended with the backbone scale flipped
 from -0.30 to +0.12; its negative PRO burial sharpness is ff2.1's own value (-0.28), not his drift.
 
 **The Upside that trained FF2, and our engine against it** (11-11, user: "you are suppose to use the upside version at
@@ -5326,6 +5327,59 @@ use two numbers over an epoch**: Adam utilisation (rms step / alpha; pure noise 
 the sign consistency of each cell's steps (noise 1/sqrt(n)). Utilisation at the noise floor with consistent signs
 (0.37-0.42 and 0.59-0.70 here) is a weak steady pull whose drift scales with alpha; at Track A's end both were at noise,
 and no step size would have helped.
+
+## 9x. Peng's own FF2-family trainer, and where ours departs from it (2026-11-18)
+
+`/home/pengxd` and `/scratch/midway2/pengxd` became readable on 11-18 (user 11-17: access approved). Inventory and
+copies: `/project/trsosnic/yinhan/checks/peng_home_20261118/` (README). Of 97 files there that name ConDiv, one has a
+DSE path: `software/source/upside-t2.00/test/ConDiv.py` (md5 `b8be5fc4`, 2020-12-11, Python 2, on `upside-v1.96/py`;
+byte-equal copies in `upside-t2.01/test/` and as `ConDiv/ConDiv_old.py`). Its run script (`test/ConDiv/srun.sh`,
+2020-12-14, run `model-test22`) runs 456 proteins in batches of 24 for 4 epochs, 76 steps. No run directory,
+checkpoint or divergence file survives (`.bash_history` holds a `rm -rf fit/`). The other December 2020 trainers
+(`ConDiv/new/`, `home/script/py/ConDiv/`, `ConDiv_bck.py`) contrast the native with an energy-minimised structure and
+have no DSE.
+
+**What it is.** Kleinmann's port (9v) descends from it: the same `Update` fields, temperature formula, NSE mix, swap
+sets, anneal schedule and guard. It is not the run that made ff2.0, which existed by 2020-09: its input set `param2` is
+a hand-set start (`bb_env.dat` -0.7, 2.0, 0.5, 1.5, and an `NC_pair` file), while `param0` (12-24) holds ff_2.0's
+`bb_env.dat`, `hbond.h5`, `sheet` and `environment.h5`. ff_2.0 and released ff_2.1 share `bb_env.dat`, `hbond.h5` and
+`sheet` byte for byte and differ only in `environment.h5` and `sidechain.h5`. It is Peng's trainer three months after
+ff2.0, the closest surviving relative of the code that trained FF2; what ff2.0's own run used is not shown.
+
+**Against `ff3x_bbenv21`'s trainer (`ConDiv.py` `331eab3d`):**
+- The same: the NSE (restrained native minus the three coldest free replicas reweighted to T0, mixed 0.6/0.3/0.1); the
+  DSE's unfolded set (the two free replicas bracketing the mean-Rg midpoint, frames with Rg above 0.67 Rg_coldest +
+  0.33 Rg_hottest, second half of the run); the DSE as <dV/da>_SARW - <dV/da>_unfolded, every derivative under the
+  free Hamiltonian; the sheet in the NSE only; a fixed Ramachandran library (`rama.dat` `996a607b`, our SARW's);
+  12 free replicas; 76 steps of 24; no rate decay and no convergence gate; global rate factor 0.5.
+- **The DSE weight is per group, and none is 0.3**: 0.4 by default (side-chain burial, coverage, hydrophobe) and 0.8
+  on the backbone burial scale, the rotamer pairs and the H-bond energies (`balance_target`, `_bb`, `_sc`, `_hb`).
+  Ours is 0.3 on every group (the SI; Peng 11-09 for ff2.1's last stage).
+- **The SARW keeps half the side-chain burial**: `apply_param_scale(hb_scale=0, env_scale=0.5, bb_scale=0,
+  rot_scale=0)` (`upside-v1.96/py/scale_params.py`) zeroes the H-bond energies and NC pair, the backbone burial, the
+  coverage, hydrophobe and rotamer pairs, and halves `sigmoid_coupling_environment.scale`. Ours zeroes the side-chain
+  burial too, as the SI's text reads ("without H-bonds, side chain and solvation terms"). The backbone burial at zero
+  agrees with `ff33_sisarw57`'s change (10.65).
+- The SARW runs at the hottest free temperature, unreweighted, from a random chain (`upside_config` without an initial
+  structure). Ours: at the previous visit's Tm estimate, reweighted to the unfolded rungs (user 11-13), from the native.
+- Swaps run among the 12 free replicas only (`gen_swap_set(1, 13)`; the port the same). Ours (`swap_table2d(13, 1)`)
+  also swaps the restrained replica with the coldest free one: tested 11-10 under the elastic network and not the
+  difference (1.42), untested under the basin wall.
+- Learning rates (times 0.5): bbenve 0.01 (ours 0.025), rot 0.25 (0.125), envs 0.005 (0.01), dhb 0, frozen (0.005);
+  enve, envc, envw, hb and sheet equal. Ours are the port's.
+- The reweighting exponent E(T0-Ti)/Ti, the dE < -200 clamp and the guard that drops the DSE when the hottest free
+  replica's last energy passes 1000 are Peng's own, not the port's drift; our fixes stay deliberate departures.
+- 4000 tu a step (the SI and ours 8000), time step 0.015 (ours 0.009), the ladder 0.85(1 + (150/N)^0.05 0.014 k)^2,
+  about 0.85 to 1.14 (the SI and ours 0.8 to 1.1, geometric), minibatches re-dealt every epoch (ours fixed for the
+  persistent chains), the native held by an elastic network at 1/3^2 (ours the basin wall). The file's own
+  `minibatch_size` is 12; its run script launches 24.
+
+Peng's question of 11-17 (1.42), which two sets the DSE contrasts, is answered by his code: ours are his. The DSE
+differs in the SARW's Hamiltonian (half the side-chain burial), temperature and start, and in the weights. The
+side-chain burial matters to the backbone scale through coverage: the scale's derivative counts backbone that side
+chains do not cover, so a SARW with half the burial should be more compact and give a smaller SARW-minus-unfolded gap
+on `bbenve`. Not measured; one unupdated step of the start probe (`checks/startprobe_20261117/`) with the SARW at
+`env_scale` 0.5 would measure it.
 
 ---
 
@@ -6273,6 +6327,18 @@ as 20:20-21:05 and 21:08, 40 minutes late, and a user decision got a time nothin
 the next session to the wrong log window and misorders events. **Before writing a time, read it: `date` on the
 Mac or the cluster, `sacct` Submit/Start/End, a log line or a file's mtime. A user's message carries no clock, so
 a decision is recorded by date alone unless a timed action pins it.**
+
+### 10.72 A trainer that skips a failed srun launch trains on a partial minibatch (2026-11-18)
+
+midway2's Slurm 23.02 refuses `srun --slurmd-debug` to anyone but root, and it can refuse a burst of step launches
+with "Job credential expired" / "Invalid job credential": in `ff21_peng`'s first link (50276643, 12:43 11-18) 17 of
+step 2's 24 launches failed on 10 of 15 nodes, while the other steps of the same job and `ff3x_bbenv21` launched
+cleanly. Peng's trainer prints `WORKER_FAIL`, skips the protein and updates from the rest, so that step trained on
+7 proteins without stopping; the run was restarted from step 1. Our trainer retries a failed launch twice; Peng's
+needs `checks/peng_ff21_20261118/bin/srun` first on PATH, which retries "Application launch failed" only and lets a
+worker that ran and failed stay failed. **Read the `WORKER_FAIL` count of every step before trusting a run of
+Peng's code, and keep a launch retry in front of any trainer that skips failures.** Disk: a Peng step holds about
+38 GB of run files while it runs (24 proteins x 14 replicas, deleted on success) and keeps 52 MB.
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 
