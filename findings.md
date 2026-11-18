@@ -5381,6 +5381,20 @@ chains do not cover, so a SARW with half the burial should be more compact and g
 on `bbenve`. Not measured; one unupdated step of the start probe (`checks/startprobe_20261117/`) with the SARW at
 `env_scale` 0.5 would measure it.
 
+**His random-chain starts sometimes never relax, and his guard catches only half of them** (`ff21_peng` steps 0-15,
+read 16:10 11-18). Systems 12 (the hottest free replica) and 13 (the SARW) start from `upside_config`'s random chain at
+2-6e3 E_up and normally relax within the run. In 3 of 768 such starts one did not: KE/1.5kT 106 (1wol, step 6,
+system 13), 126 (1id0, step 12, system 12) and 96 (4exo, step 14, system 13) for the whole 4000 tu, at 1e4-1e6 E_up
+from t = 0 (every other replica of those steps lies within 0.9-1.1). The guard `if energy[-2][0][-1] < 1000.` reads
+only system 12's last frame, so it dropped 1id0's DSE and kept 1wol's and 4exo's, whose SARW frames enter `dalpha2`
+at a free-FF energy median of 4.1e4 and 5.0e4 E_up (2quo's healthy SARW in step 14: 531). So these two DSE terms come
+from an overheated chain, not the SARW ensemble. Their weight in the update (each step sums the 24 contrasts; midway2
+`~/watch_probe/peng_contrast_probe.py`): 1wol lies inside its step's spread on every group (bbenve rank 8 of 24, 11% of the step's
+sum); 4exo is step 14's largest bbenve contrast (-21.6 against the others' median 4.7, maximum 15), 27% of the sum,
+toward a weaker scale, and the largest `hyd` and `nc`. Why the chain heats is not measured: the run files are deleted on
+success, so the frames are gone. A rerun of 4exo's step-14 worker at its seed 1876869367 with the files kept would
+localize it. Our trainer starts the SARW from the native, and `ff3x_bbenv21` shows none of this (every replica of steps 0-29 within KE/1.5kT 0.9-1.1).
+
 ---
 
 ## 10. Cluster and operational lessons

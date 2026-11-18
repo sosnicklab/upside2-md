@@ -2891,6 +2891,16 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       each link running to the next epoch end. Steps 0-6 done by 14:18, 24 of 24 each, 640-731 s a step; the
       scale -0.3014 to -0.3449 after step 6 (our control's `c9_00` reached -0.404). `pg_read_00.txt` about 18:30-19:00
       11-18, read by the rule; step 76 about 04:30 11-19 (remote_jobs.md "Resume 11-18 evening").
+    - **Purpose** (user 11-18 16:20): "we care about finding the source of 'cliff down' of accuracy for first step
+      after ff2.1. Once we find that, we can resolve the issue in current ff3.3 trainer, even if that means we start
+      using Peng's trainer and debug it and re-run everything." Adopting Peng's trainer is open; its defects (below,
+      and 9x's estimator details) would then be fixed as deliberate departures, each checked not to bring the cliff.
+    - [ ] 16:10 11-18: steps 1-15 at 24 of 24, the scale -0.3834. Three random-chain starts stuck hot (KE/1.5kT about
+      100), two of them the SARW with the DSE kept by Peng's guard (1wol step 6, 4exo step 14; findings 9x). Their
+      weight in epoch 0 is small: 1wol inside its step's spread on every group, 4exo the step's largest bbenve contrast
+      (27% of step 14's sum, toward a weaker scale; the scale moved 0.001 that step against 0.003-0.006 around it). So
+      `pg_00` is read as Peng's setting, with this named if the verdict lies near a boundary. Localizing the stuck
+      chain (4exo's worker at its seed, files kept) matters only if his trainer is adopted.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the

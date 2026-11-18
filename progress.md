@@ -1583,3 +1583,8 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   ff3x_bbenv21's scale trend, Boltz E3a done), plan.md items 24 and 30, findings 10.72 (srun launch faults; Peng's
   code skips them) updated; the cluster's `WATCH_STATUS.md` got a record line; the five records synced to the
   handoff bundle. State at 14:18: ff21_peng 7 steps done, ff3x_bbenv21 26, `/project` 433 G free.
+* **11-18 16:10, MacBook Pro: status pass** (user: "check remote job status, especially Peng validation and ff3.3
+  training"). Read only. ff21_peng steps 1-15 at 24 of 24, scale -0.3834; a KE survey of every replica found three
+  random-chain starts stuck at KE/1.5kT about 100, two of them SARW replicas whose DSE Peng's guard kept (findings 9x).
+  ff3x_bbenv21 steps 0-29 healthy, scale -0.1817 and still weakening. Files: remote_jobs.md (header, ff21_peng row),
+  findings.md 9x, plan.md item 30.
