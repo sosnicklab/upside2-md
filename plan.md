@@ -2513,7 +2513,8 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
         0.580). If `33nongly21` holds TM4, one force field holds both, and non-glycine depths kept near ff2.1 fix
         BBA without costing TM4; `33rama21` against it isolates the glycine rows' share of TM4. If both break, no
         map swap on ff3.3's other files keeps both (ff3.3 itself breaks TM4), and TM4's loss lies in those files or
-        in ff3.3's non-glycine rows.
+        in ff3.3's non-glycine rows. `g33_14`'s block 1 was lost to a node failure at 12:11 11-17 and cancelled at
+        the user's word 17:09 (it already fails BBA and BBL, so its TM4 decides nothing); the other two are read.
       - [x] 5b: BBL over the arms' full length (frames 2000-20834), read 15:35 11-16 (`read_bbl_full_1116.txt`):
         ff2.1 0.152, ff3.3 0.092, `p57_09` 0.285; ff2.1 minus ff3.3 +0.060, block SE 0.040, not decisive (findings
         1.44). The swap arms stay at their first chunk.
@@ -2528,10 +2529,10 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
         within two is near the line, not built on until the arm runs further or a seed repeats it
         (`33nongly21` +0.6 is). The three BBL swap arms stay at their first chunk, unread. Rules in README's last
         section, fixed before step 4's and 5c's data.
-      - 5c: a BBA native arm on `ff_3.0` (glycine depth only; TM4 0.85 on Upside 3; its old BBA trajectories are
-        gone), read by step 2's rule. If it holds BBA, depths trained on glycine alone keep both. Completed groups read
-        11:43 11-17 (README): holds, 0.556 against 0.471, margin +1.1, near the line; re-read at its target (about
-        13:45) decides.
+      - [x] 5c: a BBA native arm on `ff_3.0` (glycine depth only; TM4 0.85 on Upside 3; its old BBA trajectories are
+        gone), read by step 2's rule. If it holds BBA, depths trained on glycine alone keep both. Read at its target
+        17:43 11-17 (`read_step5c_full_1117.txt`, findings 1.44): holds, 0.531 against 0.494, margin +0.4, near the
+        line, so nothing is built on it.
       - [x] 5d: glpG on `ff_bba_32bbenv21`, the one step-4 force field that restores BBA. Its prep (19:23-23:37 11-16)
         was bitwise `p57_09`'s: the hybrid has no implicit environment node, so `bb_env.dat` never enters it
         (findings 10.68); block 1 cancelled after 2 min. TM4 is `p57_09`'s 0.773 by construction, so `p57_09` with
@@ -2558,7 +2559,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       The balance is flat after visit 3 (0.126-0.192 over visits 3-12; visit 1 0.132), pooled visits 10-12 0.180
       [0.014, 0.359]: under 0.3 at the point, the interval reaching it, its lower end under visit 1. 11-09's rise to
       0.235 by visit 3 is not repeated (0.168 here). The rule fixes no next step for (c); the user chooses.
-    - [ ] **Probe the training start `ff_bba_32bbenv21` before any ff3.x training** (user 11-17: "Probe the start
+    - [x] **Probe the training start `ff_bba_32bbenv21` before any ff3.x training** (user 11-17: "Probe the start
       first", on the reading that the map is solved and training breaks the burial scale). The start is `p57_09`'s
       map and files with ff2.1's burial scale: BBA 0.656 (restores), BBL side check passes, Peng BBA/BBL mean TM level
       with ff2.1, TM4 `p57_09`'s 0.773. Measure one unupdated step of the training worker there, the native-contrast
@@ -2568,7 +2569,32 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       asking. `checks/startprobe_20261117/` (rule in its README, fixed 12:00 11-17): `ff33_sisarw57`'s worker, one
       unupdated step from the native on minibatch 0 (57 proteins); the scale's push at 0.3 decides: (a) not resolved:
       train, asked first; (b) it lowers the scale, as the control's did, or (c) raises it: reported, no training.
-      Static check passed 12:00; submitted 12:01.
+      Static check passed 12:00; submitted 12:01. Read 18:14 11-17 (`probe_read.txt`, findings 1.42): **(a)**, push
+      -0.72 [-2.03, +0.64], lambda* 0.363 [0.254, 0.522]; `dhb` pushed. Training from here is proposed to the user,
+      not started; the user reads Peng's trainer first (next item).
+    - [ ] **ff3.x training from `ff_bba_32bbenv21`: `ff3x_bbenv21`** (user 11-17: "Build and start tonight",
+      after the probe's (a)). `ff33_sisarw57`'s trainer (`4aa5c842`; its worker unchanged, the one the probe ran:
+      the SI's SARW on ff2.1's map, the map's depths in the DSE with the exact derivative, the native-basin wall
+      (11-02), persistent free chains (11-06), the SARW at the previous visit's Tm, the side-chain rate restored)
+      with the run settings of the ff3.x definition: 24 proteins a step in 19 batches, 76 steps (4 epochs), lambda
+      0.3 throughout. Start: `32bbenv21`'s files (every group trained), the map depths `ff32_pcd57`'s round-10
+      offsets (`p57_09`'s map, `rama_round_00.dat` md5-equal to `99496a83`), Adam fresh. About 8,000 CPU-h. Checks
+      before submission, no allocation: the code differs from `4aa5c842` only in those settings; the expanded
+      start files equal `32bbenv21`'s; the depth state equals `pcd57`'s. BBA, BBL and TM4 on its checkpoints
+      (rules fixed before they are read); Peng's trainer read tomorrow may stop or change it.
+      - [x] Built and checked 20:20-20:23 11-17, no allocation (`checks/ff3x_bbenv21_20261117/`, `build_ff3x.log`):
+        driver `331eab3d` = `4aa5c842` but the four settings and two docstring bullets; 19 minibatches of 24;
+        `seed_start.py` (`78c494e7`): `rama_round_00.dat` md5 `99496a83`, depth state equal to `pcd57`'s (masks and
+        held-out set exact, native sites to summation rounding), start files equal `32bbenv21`'s (float tables to
+        float64 rounding through the trainer's packing, 4.7e-16 at most), every group but `bbenve` equal to `pcd57`
+        step 80, `bbenve` -0.3014; `--test-only` passed.
+      - [ ] Training: first link 50253704 submitted 20:24 11-17 (PD; remote_jobs.md job table). Then: the rules
+        for BBA, BBL and TM4 on its checkpoints, fixed before any read.
+    - [ ] **Read Peng's FF2 trainer in his midway directory** (user 11-17: access approved 11-18, "We can work on
+      these tomorrow"; findings 1.42 "Peng on the DSE"). Read-only. Find the DSE's two sets (which frames are
+      the unfolded set, the cutoff; the SARW's terms off, its temperature, rerun or fixed; reweighting), the
+      lambda schedule, the learning rate and the stopping step, and set each beside ours (`ff33_sisarw57`
+      `ConDiv.py` 4aa5c842). This replaces asking him the five questions drafted 11-17, where the code answers them.
 25. [ ] **ff3.3 redone with the Rama map under the DSE: `ff33_dsemap57`** (user 11-13: "We should allow rama map in
     the DSE" (findings 10.63); "start from ff3.2, where we trained all terms with lambda=0"; "there is a point in ff3.3
     that we trained everyterms on lambda=0, then slowly increase lambda. start from there. I think the bug is the

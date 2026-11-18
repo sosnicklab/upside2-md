@@ -2178,6 +2178,13 @@ the DSE first" (plan.md Phase 38 item 13). Read-only on existing files; scripts 
   is the restrained native (1/3^2 on every residue) minus the single T 0.8 free replica (8 replicas 0.80-0.92,
   1000-4000 tu, dt 0.01, frames after 10-30%). No copy has a DSE path, and `restart_from_last` (free replicas from
   saved states) is False in all. `ConDiv.tar` is the FF1 Theano original of 9t.
+- **Peng on the DSE** (11-17, relayed by the user): "DSE的权重太大的话，会造成这样的结果，毕竟它本质上是在惩罚相互作用。DSE对抗训练的两个set是谁也要搞清楚。对抗错了就会导致不稳定。" (Too large a DSE weight gives this result, since it
+  in essence penalizes interactions; know which two sets the DSE contrasts; the wrong pair makes training unstable.)
+  Against the record: the weight is too large for this trainer on the backbone burial scale (released ff2.1 balances
+  it at lambda* 0.02-0.24, above), and the DSE's size tracks the residual H-bonds of the unfolded frames, most of
+  them in the colder bracketing replica, so the contrast penalizes interactions those frames keep. Our two sets
+  are the SI text's as we read it; Peng's own pair is not in any code we hold (9v), so the pair is the question
+  for him.
 - **Who added the DSE, and what for** (user 11-09: "maybe DSE is something added by someone else other than Peng and
   Jumper?"; read in the SI, `~/OneDrive - The University of Chicago/ct1c00960_si_001.pdf`). Peng's, in the FF2 paper
   itself: "For the new FF2, we added a second objective related to training the DSE to be a self-avoiding random
@@ -2250,6 +2257,17 @@ plan.md Phase 38 items 15-16.
   [-0.034, +0.071] on 48 proteins; what separates the two is not established. Still open: the scale's rate (the port's 0.025 a step, 8% of its
   value; Peng's unknown), which under Adam sets how far a consistently pushed scalar moves in 76 steps whatever the
   balance. Not a difference: the restraint form (Peng's copies build the same random-pair network at 1/3^2).
+- **At `ff_bba_32bbenv21` the burial scale balances near 0.3** (start probe, `checks/startprobe_20261117/
+  probe_read.txt`, read 18:14 11-17; rule fixed 12:00 before any data; `ff33_sisarw57`'s worker, one unupdated step
+  from the native, minibatch 0's 57 proteins, all 57 with a DSE, no task errors). Push at 0.3 -0.72 a protein
+  [-2.03, +0.64], positive in 24 of 57: verdict (a), no resolved push; lambda* +0.363 [+0.254, +0.522] (NSE -4.16,
+  DSE +11.46 a protein). H-bond groups beside, none resolved: E_alpha lambda* 0.40 [0.26, 0.60], E_beta 0.20 [0.12,
+  0.32], E_other 0.43 [0.12, 0.78]; `dhb` is pushed (lowered; +0.58 [+0.27, +0.89], lambda* 0.80). Released ff2.1
+  under the control's protocol balanced the scale at +0.018 with an NSE of -0.37 a protein; here the NSE is about
+  eleven times larger and the DSE about half. What separates the two (the start's map and files, the SI's SARW, the
+  proteins) is not established. Map depth gaps beside, deciding nothing: non-glycine alpha_R NSE -0.70 against
+  DSE +2.63, pPII +0.40 against -2.30. Limits: one visit from the native; Adam's first step is about the rate
+  whatever the push, so (a) leaves the scale's direction open, not its step small.
 - **Code review (11-10, user: "without testing, by reviewing the training code"): one undocumented departure from
   Peng's worker, on the DSE's own ensembles.** In the port's worker (`condiv2.py` 612-636, Peng's structure, with his
   `# target 1 for native` / `# target 2 for unfolding`), the "unfolding target" configs are written before
@@ -2394,11 +2412,13 @@ BBA native arms (released ff2.1, ff3.2 `p57_09`, ff3.3 `r33_19`; ff3.0's and ff3
   `32bbenv21` +1.95, the rest -1.71 or lower) and ff3.3 is last (-4.64), but the middle is misordered: ff3.3 with
   ff2.1's side chains -1.75 folds 0.219, with ff2.1's non-glycine rows -2.76 folds 0.518. One competitor state does
   not carry the folded fraction. ff3.0's gap, -0.94, recorded before its arm's read, counts for nothing.
-- **ff3.0 holds BBA at its completed chunks, near the line** (step 5c, `read_step5c_1117.txt`, 11:43 11-17, frames
-  2000-26186): 0.556 against the midpoint 0.471 of ff2.1 0.844 and ff3.3 0.098, margin +1.1 of its block SE, blocks
-  falling 0.77 0.48 0.58 0.40; GLY8 phi > 0 0.88, alpha_R runs of 20 or more 0.06. Its map is ff2.1's NDRD with one
-  trained glycine depth pair and its burial scale -0.330, so neither BBA cause is present; it also keeps TM4 (0.85).
-  Nothing is built on it until the arm's end reads it by the same rule.
+- **ff3.0 holds BBA by the rule at the arm's end, near the line** (step 5c, `read_step5c_full_1117.txt`, read 17:43
+  11-17, frames 2000-28931 at the 2,893,100 target; last chunk healthy, KE/1.5kT 1.000-1.008): 0.531 against the
+  midpoint 0.494 of ff2.1 0.842 and ff3.3 0.145 (decisive, +0.696 against SE 0.062), margin +0.4 of its block SE
+  0.101; blocks 0.76 0.49 0.60 0.28, the last under the midpoint; `p57_09` 0.358 beside. GLY8 phi > 0 0.84, alpha_R
+  runs of 20 or more 0.11 (ff3.3 0.66). Its map is ff2.1's NDRD with one trained glycine depth pair and its burial
+  scale -0.330, so neither BBA cause is present, and it keeps TM4 (0.85); its BBA is too close to the line to build
+  on. The 11:43 read of its completed chunks (0.556, margin +1.1) is superseded.
 - **BBL's loss is not measurable on the arms we have, so BBL is a side check and BBA the toggle (user 11-16): ff2.1
   and ff3.3 do not differ decisively on the fold measure, native or de novo** (step 3, `read_swaps_1116.txt`, read 11:27 11-16; step 5b, `read_bbl_full_1116.txt`,
   read 15:35; step 5b', `read_bbl_denovo_1116.txt`, read 17:16; rules fixed 11-13 and 11-16). Cold replica (T 0.70) TM-score > 0.5. Over frames 2000-12971 (t 0.2-1.30 M): ff2.1 0.128,
@@ -6232,6 +6252,15 @@ The watcher for the ff3.0 BBA arm's first chunk held its ssh call in `X="ssh -o 
 output; the snapshot it was to take before the successor started was never made. Found at 03:07 when its output file
 was still empty. **In a background watcher, write the ssh command out in full (as the other watchers do), and never
 send the call's stderr to /dev/null in the loop condition: an empty state must be told apart from a failed call.**
+
+### 10.71 Every clock time in the records comes from a clock (2026-11-17)
+
+Twice on 11-17 times went into plan.md, remote_jobs.md and READMEs from the thread's sense of time. A read done
+at 10:46 was recorded as 11:20. `ff3x_bbenv21`'s build (20:20-20:23) and its submission (20:24:02) were recorded
+as 20:20-21:05 and 21:08, 40 minutes late, and a user decision got a time nothing recorded. A wrong time sends
+the next session to the wrong log window and misorders events. **Before writing a time, read it: `date` on the
+Mac or the cluster, `sacct` Submit/Start/End, a log line or a file's mtime. A user's message carries no clock, so
+a decision is recorded by date alone unless a timed action pins it.**
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 
