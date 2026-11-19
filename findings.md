@@ -1928,6 +1928,8 @@ pooled, paired against released ff2.1's 0.615 (`checks/ff21_released_20261021/pa
       replica (1.0 A): 1.5-3 A +0.7 to +1.0 (what the cold free replicas sample, raised as the target asks), 3-7 A
       -0.7 to -0.8, unfolded +6.2. 3g0m's own target raises its 3-6 A states (+18 to +19 per unit step, plain or
       sign; `grad_profile_3g0m.txt`), so the lowering comes from the sum over the training set, not from Adam.
+      Residues at lattice or other environment contacts carry no more of it than free-surface ones, and the core the
+      most (1.45).
     - *Mechanism.* The positive phase is pinned to the crystal (distance restraint near 1.0 A plus 20 deg phi/psi
       springs) and the negative phase is replicas 1-3 (T 0.80-0.85) reweighted to T0, which stay near native in
       8000 tu. The contrast is "crystal over near-native fluctuations", which each protein answers with more packing
@@ -2539,6 +2541,42 @@ the weight is not changed by hand, schedule or controller (10.58). What must be 
   (`p57_09` against ff2.1: NuG2 -0.082, protein G -0.041, WW -0.035, gpW -0.031, BBA -0.028; ubiquitin +0.094, alpha3D
   +0.020), a kind of protein neither the 44 domains nor mdCATH contains (findings 1.39's BBA mechanism is one case).
   So a checkpoint the panel chooses is mdCATH's choice, and not necessarily Peng's.
+
+### 1.45 The crystal advantage is not carried by the crystal environment (2026-11-18)
+
+Question (plan.md Phase 40; user 11-18, after Becker et al., Nat Chem 18:1221, 2026, where GB1's buried Tyr3 and
+Tyr45 flip about 1000x slower in the crystal than in solution). 1.37 found that the trained change makes the crystal
+cheaper than native-like panel frames. Do the residues held by an environment the panel run lacks (other copies in
+the lattice, other chains, the rest of the chain, ligands) carry that advantage?
+
+- **The data, for the record** (RCSB, 11-18). The 456 training natives are 407 X-ray (median 1.61 A, worst 2.6 A),
+  48 solution NMR and one listed as powder diffraction (2O2W); 455 deposit a single chain, and the trainer treats all
+  of them alike. The 44-domain panel has 7 NMR domains (1neq, 1z1v, 2dkz, 2dl0, 2e8o, 2hbp, 2htj).
+- **Method.** Per residue of the 29 X-ray panel domains: a lattice contact is a heavy atom within 4.0 A of another
+  copy in the crystal, an entry contact within 4.0 A of the deposited model outside the domain, exposed is relative
+  SASA >= 0.20 in the isolated domain. The side-chain part of crystal_view.py's advantage is split by residue through
+  the rotamer node's `rotamer_free_energy` (each BP edge half to each residue). The split reproduces crystal_view's
+  per-domain values (largest difference 0.005, printed to 0.01). Side chains carry -1.047 of `w32_00`'s -1.759 E_up
+  (`z32_00` -2.367 of -3.791, `p57_09` -1.627 of -2.911).
+- **Result, by the rule fixed before the data: the lattice is not a driver.** Exposed lattice-contact residues minus
+  exposed free-surface residues, `w32_00` over 22 domains: +0.0046 E_up per residue [-0.0073, +0.0162], Wilcoxon
+  p 0.54, an excess of +0.07 E_up per domain against the side-chain total -1.02. `z32_00` +0.0038 [-0.0104, +0.0177],
+  `p57_09` +0.0096 [-0.0317, +0.0563]. Entry contacts read the same (`w32_00` +0.0070 [-0.0049, +0.0181]).
+- **Where the advantage sits.** Pooled per residue, buried residues carry the most (`w32_00`: buried -0.021, free
+  surface -0.016, lattice only -0.016, entry only -0.010 E_up; `z32_00` -0.052, -0.031, -0.035, -0.030). The NMR
+  domains carry more per residue than the X-ray ones, where a lattice effect predicts less (`w32_00` -0.039 against
+  -0.024, difference -0.015 [-0.029, -0.001], Mann-Whitney p 0.06; `z32_00` and `p57_09` in the same direction, their
+  intervals reaching 0). `w32_00`'s per-domain totals were seen before the rule was written, not split by method.
+  So the advantage is the contrast of one deposited, packed, static structure against a thermal ensemble, the
+  mechanism of 1.37, and lattice contacts add nothing measurable to it.
+- **Not tested.** The lattice contacts of the 456 training natives inside the training gradient, and cryo-cooling,
+  which acts on every residue rather than on contacts. The concentration in the core fits a static-structure effect
+  of either kind; this reading does not separate them.
+- **Tool lesson.** gemmi 0.7.5's `ContactSearch` with `Ignore.SameAsu` drops contacts with copies related by a pure
+  lattice translation (P1 3eth: 0 against 11). `NeighborSearch` with `UnitCell.find_nearest_pbc_image(...).same_asu()`
+  agreed with an explicit enumeration of operations and translations on 29 of 29 domains.
+- Files: Mac `scratchpad/xtal_contacts_20261118/` (README, `read.txt`), cluster `checks/xtal_contacts_20261118/`
+  (job 50278156, 5 min).
 
 ## 2. The hybrid model: what each side supplies
 
@@ -5385,8 +5423,9 @@ on `bbenve`. Not measured; one unupdated step of the start probe (`checks/startp
 read 16:10 11-18). Systems 12 (the hottest free replica) and 13 (the SARW) start from `upside_config`'s random chain at
 2-6e3 E_up and normally relax within the run. In 3 of 768 such starts one did not: KE/1.5kT 106 (1wol, step 6,
 system 13), 126 (1id0, step 12, system 12) and 96 (4exo, step 14, system 13) for the whole 4000 tu, at 1e4-1e6 E_up
-from t = 0 (every other replica of those steps lies within 0.9-1.1). The guard `if energy[-2][0][-1] < 1000.` reads
-only system 12's last frame, so it dropped 1id0's DSE and kept 1wol's and 4exo's, whose SARW frames enter `dalpha2`
+from t = 0 (every other replica of those steps lies within 0.9-1.1). Epoch 1 had one more in 672 starts by step 32
+(read 00:41 11-19): 3f5r, step 32, system 12, KE/1.5kT 498 at 1e4-6e5 E_up from t = 0, Rg 16 to 37-45 A. The guard
+`if energy[-2][0][-1] < 1000.` reads only system 12's last frame, so it dropped 1id0's and 3f5r's DSE and kept 1wol's and 4exo's, whose SARW frames enter `dalpha2`
 at a free-FF energy median of 4.1e4 and 5.0e4 E_up (2quo's healthy SARW in step 14: 531). So these two DSE terms come
 from an overheated chain, not the SARW ensemble. Their weight in the update (each step sums the 24 contrasts; midway2
 `~/watch_probe/peng_contrast_probe.py`): 1wol lies inside its step's spread on every group (bbenve rank 8 of 24, 11% of the step's
@@ -5394,6 +5433,19 @@ sum); 4exo is step 14's largest bbenve contrast (-21.6 against the others' media
 toward a weaker scale, and the largest `hyd` and `nc`. Why the chain heats is not measured: the run files are deleted on
 success, so the frames are gone. A rerun of 4exo's step-14 worker at its seed 1876869367 with the files kept would
 localize it. Our trainer starts the SARW from the native, and `ff3x_bbenv21` shows none of this (every replica of steps 0-29 within KE/1.5kT 0.9-1.1).
+
+**His own trainer cliffs too: verdict (b)** (`checks/peng_ff21_20261118/pg_read_00.txt`, read 22:01 11-18, plan.md
+Phase 38 item 30's rule fixed before data). After FF2's first epoch from released ff2.1 (19 steps of 24, every step 24
+of 24 workers, the DSE dropped once, 1id0 step 12), `pg_00`'s mean TM on the 44 domains (dt 0.015, 4 seeds, frames
+after 2000) is 0.642 against released ff2.1's 0.682, -0.040 [-0.054, -0.027] (33 of 44 lower, p 1.8e-6), and against
+our control `c9_00` 0.644, -0.002 [-0.014, +0.012] (p 0.58). Ca-RMSD agrees: +0.37 [+0.21, +0.54] A against
+released, -0.08 [-0.28, +0.10] A against `c9_00`. So Peng's trainer at his settings loses what ours loses, and the
+departures listed above (SARW burial, per-group lambda, rates, start, temperatures, dt) do not explain the cliff;
+it lies in what the two trainers share, run from released ff2.1. Not near a boundary, so the three stuck replicas
+do not bear on it. Both move the same groups the same way in epoch 0: the burial scale from -0.3014 to -0.3914 (his)
+and -0.4044 (ours), the helix H-bond energy from -1.961 to -1.819 and -1.877, the sheet one from -1.946 to -1.852 and
+-1.866; only ours moves `dhb` (-0.4058 to -0.4169, his unchanged). Which shared element makes the cliff is not
+measured. The Q-based folded fraction (0.472 against released 0.615 and `c9_00` 0.390) decides nothing.
 
 ---
 
@@ -6353,6 +6405,16 @@ needs `checks/peng_ff21_20261118/bin/srun` first on PATH, which retries "Applica
 worker that ran and failed stay failed. **Read the `WORKER_FAIL` count of every step before trusting a run of
 Peng's code, and keep a launch retry in front of any trainer that skips failures.** Disk: a Peng step holds about
 38 GB of run files while it runs (24 proteins x 14 replicas, deleted on success) and keeps 52 MB.
+
+### 10.73 Judge a training run by the user's end criterion, not by its distance from a released checkpoint (2026-11-19)
+
+After `ff21_peng`'s verdict (b) I called the first-epoch loss from ff2.1 an issue for `ff3x_bbenv21` and proposed a
+test for its source. The user (01:16 11-19): "I would assume Peng was trying out lambda and picked a best result. As
+long as the ff3.3 is outperforming ff2.1 in accuracy, while keep BBA, BBL, and TM4 stable, I don't care too much
+about the cliff drop." A released force field can be the best of several runs, so continuing training from it is
+expected to lose some accuracy at first, and that loss is not a defect to chase. **Ask what the run must achieve
+(here: TM above released ff2.1 with BBA, BBL and TM4 held) and measure its checkpoints against that, choosing the
+best epoch that passes; propose a mechanism study only when the end criterion fails.**
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 

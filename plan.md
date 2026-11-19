@@ -2593,8 +2593,20 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       - [ ] Training: first link 50253704 R from 00:54 11-18, successor 50264359 PD (remote_jobs.md job table).
         Steps 0-25 healthy by 14:18 11-18. The backbone burial scale weakens steadily from ff2.1's -0.3014: -0.2743
         after step 10, -0.2648 after 18, -0.2101 after 25, toward the redos' -0.017 to -0.131 that lost BBA and BBL
-        (findings 1.44). Owed: the rules for BBA, BBL and TM4 on its checkpoints, fixed before any read; whether it
-        goes on waits on item 30's epoch-0 verdict (11-18 evening).
+        (findings 1.44). It goes on (item 30's verdict (b)). **Success criterion** (user 01:16 11-19, who calls this
+        run ff3.3: "As long as the ff3.3 is outperforming ff2.1 in accuracy, while keep BBA, BBL, and TM4 stable, I
+        don't care too much about the cliff drop"; the user assumes Peng tried lambdas and kept the best). Checkpoint
+        panels approved by the user 10:55 11-19 ("proceed"), on epochs 0-2 (steps 19, 38, 57); the rule is in
+        `checks/ff3x_bbenv21_20261117/README.md`, "Checkpoint rule", fixed before any panel ran. Per checkpoint
+        `x3_EE` (epoch EE's last step): the 44-domain panel and its read against `ff21_released_tr`; force field
+        `ff_3.3_x3_EE` staged in both trees; BBA and BBL Peng native arms against the start's (`ff_bba_32bbenv21`);
+        glpG TM4 block 1.
+        - [x] Rule written into the README 11:05 11-19, then `submit_ckpt.sh 00` and `01` 11:07 (`--test-only` passed;
+          jobs in remote_jobs.md). Both extracts carry the link log's burial scale (-0.2648, -0.1919), and every file
+          differs from the start's.
+        - [ ] `submit_ckpt.sh 02` once `epoch_02_minibatch_18/checkpoint.pkl` exists (about 12:15 11-19).
+        - [ ] Reads by the rule: panels about 4-5 h after submission, arms at their target, TM4 at block 1's end.
+        - [ ] Step 76's checkpoint (`x3_03`) by the same rule, asked at the run's end.
     - [x] **Read Peng's FF2 trainer in his midway directory** (user 11-17: access approved 11-18, "We can work on
       these tomorrow"; findings 1.42 "Peng on the DSE"). Read 11-18 (findings 9x;
       `checks/peng_home_20261118/`): one DSE trainer survives, `upside-t2.00/test/ConDiv.py` (2020-12-11), three
@@ -2862,7 +2874,7 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       negative on most of Peng's 16 proteins while `g33_15`'s is, and `b33_15 - g33_15` mean TM is not a resolved
       loss; it is rejected if `b33_15` flips as `g33_15` does. (4) Beside, deciding nothing: `bbenve`, the depths'
       basin means, the gaps. At 176, item 23's rule over `b33_18`-`b33_21`.
-30. [ ] **ff2.1 continued by Peng's own trainer: `ff21_peng`** (user 11-18: "check Peng's setting on ff2.1 continued
+30. [x] **ff2.1 continued by Peng's own trainer: `ff21_peng`** (user 11-18: "check Peng's setting on ff2.1 continued
     training, to see if it still cliff down on a further training"; findings 9x). Peng's December 2020 file
     (`checks/peng_home_20261118/src/ConDiv_t2.00_20201211.py`, `b8be5fc4`) run on his Python 2 (Anaconda2-2019.10)
     and his `upside-v1.96` py and binary, frozen into `checks/peng_ff21_20261118/`. Four changes only:
@@ -2890,8 +2902,8 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       with `bin/srun` first on PATH, retrying a failed launch only (a worker that ran and failed stays failed), and
       each link running to the next epoch end. Steps 0-6 done by 14:18, 24 of 24 each, 640-731 s a step; the
       scale -0.3014 to -0.3449 after step 6 (our control's `c9_00` reached -0.404). Epoch 0 ended 16:35 (steps 0-18 at 24 of 24, the
-      scale -0.3914); its panel `pg_00` waits in a full queue, so `pg_read_00.txt` about 09:00 11-19, read by the
-      rule (remote_jobs.md "Resume 11-18 evening").
+      scale -0.3914); its panel `pg_00` ran 20:33 to before 21:18 and `pg_read_00.txt` was DONE 22:00
+      11-18 (verdict below).
     - **Purpose** (user 11-18 16:20): "we care about finding the source of 'cliff down' of accuracy for first step
       after ff2.1. Once we find that, we can resolve the issue in current ff3.3 trainer, even if that means we start
       using Peng's trainer and debug it and re-run everything." Adopting Peng's trainer is open; its defects (below,
@@ -2902,6 +2914,17 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       (27% of step 14's sum, toward a weaker scale; the scale moved 0.001 that step against 0.003-0.006 around it). So
       `pg_00` is read as Peng's setting, with this named if the verdict lies near a boundary. Localizing the stuck
       chain (4exo's worker at its seed, files kept) matters only if his trainer is adopted.
+    - [x] **Verdict (b), cliff** (`pg_read_00.txt`, DONE 22:00 11-18; findings 9x): `pg_00` minus `ff21_released_tr`
+      mean TM -0.040 [-0.054, -0.027], wholly under 0; minus `c9_00_tr` -0.002 [-0.014, +0.012], not wholly above 0.
+      Not near a boundary. Peng's trainer at his settings cliffs as ours does, so the cliff lies in what both share, run
+      from released ff2.1; which shared element is not measured. By this item's rule `ff3x_bbenv21` goes on and its
+      own checkpoint reads decide (item 24). The chain continues unchanged: `pg_01`-`pg_03` are read as a trajectory.
+      The next step toward the source is the user's.
+    - User 01:16 11-19: "I would assume Peng was trying out lambda and picked a best result ... I don't care too much
+      about the cliff drop". The search for the cliff's source stops; `ff3x_bbenv21` is judged by item 24's success
+      criterion. The user then cancelled the chain ("cancel Peng's chain"): link 50277873 stopped 01:20 11-19 in step
+      35, before epoch 1's end, so no `pg_01`; 32.3 G of its run files freed (manifest in `checks/peng_ff21_20261118/`).
+      Item closed with verdict (b).
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the
@@ -2999,6 +3022,52 @@ in `scratchpad/bpmax_20261103/` (git-ignored) and in its own cluster tree, never
      (native 0.475 / 0.552, -0.078 [-0.157, -0.013] p 0.021; de novo 0.287 / 0.427, -0.140 [-0.216, -0.070]
      p 0.00058); the other two step-37 arms' means sit below ff2.1's as well (ctrl38 0.486 / 0.299, nobp 0.457 /
      0.309).
+
+### Phase 40 - does the crystal environment carry the crystal advantage (DONE 2026-11-18: no; findings 1.45)
+
+Question (user 11-18, after Becker et al., Nat Chem 2026, GB1 ring flips about 1000x slower in the crystal; "proceed
+as you suggested"). The trained change from released ff2.1 makes the CATH crystal cheaper than native-like panel frames
+(item 8 of Phase 38; `w32_00` -1.759 E_up on 32 domains, `z32_00` -3.791 on 36). Is that advantage carried by
+residues whose crystal conformation is held by an environment the panel run lacks: other copies in the lattice,
+other chains, other domains of the chain, ligands? Diagnostic only, read-only on the cluster: ff3.x, `ff3x_bbenv21`
+and the basin wall do not change on any outcome. Local `scratchpad/xtal_contacts_20261118/`, cluster
+`checks/xtal_contacts_20261118/` (README).
+
+1. [x] **Flags** (Mac, `flags.py`, gemmi 0.7.5 in the repo `.venv`). Per residue of each panel domain, mapped by chain
+   and author number from the domain's `.chi` with the residue name checked; waters and hydrogens removed, first
+   altloc kept:
+   * lattice contact: a heavy atom within 4.0 A of a heavy atom of another copy in the crystal, any symmetry image or
+     lattice translation but the deposited model itself, which includes interfaces that crystal symmetry generates.
+     First written with gemmi's `ContactSearch` and `Ignore.SameAsu`, which drops pure lattice translations (P1 3eth
+     0 against 11); replaced by `NeighborSearch` with `find_nearest_pbc_image(...).same_asu()` before any
+     per-residue data were read, and checked against an explicit enumeration (`check_lattice.py`, 29 of 29 agree);
+   * entry contact: within 4.0 A of a non-water atom of the deposited model outside the domain (other chains, the
+     rest of the chain, ligands);
+   * exposed: relative SASA >= 0.20 in the isolated domain (Biopython Shrake-Rupley, Tien 2013 maximum ASA).
+2. [x] **Per-residue split** (`xtal_split.py`, job 50278156, 5 min). crystal_view.py's domain loop, frames, stride and
+   frame rule unchanged. Per residue, the rotamer node's `rotamer_free_energy` (the BP free energy, each edge split
+   half to each residue; `probe_order.py`: one entry per residue in residue order), d_i = (TAG - REF at the crystal)
+   - mean over the native-like frames. The per-domain whole-Hamiltonian values equal crystal_view's (largest
+   difference 0.005, printed to 0.01). Side chains carry -1.047 of `w32_00`'s -1.759 E_up.
+3. [x] **NMR against X-ray** from crystal_view's per-domain lines: the panel's 7 NMR domains (1neq, 1z1v, 2dkz, 2dl0,
+   2e8o, 2hbp, 2htj), all in `w32_00`'s 32.
+- **Read 19:40 11-18** (`analyze.py`, `read.txt`; findings 1.45): **the lattice is not a driver.** `w32_00`, 22
+  domains: D +0.0046 E_up per residue [-0.0073, +0.0162], Wilcoxon p 0.54, excess +0.07 E_up per domain against the
+  side-chain total -1.02; `z32_00` and `p57_09` and the entry contacts read the same. Buried residues carry the most,
+  and the NMR domains more per residue than the X-ray ones (-0.039 against -0.024). The phase stops, as its rule says;
+  nothing changes in ff3.x or in Upside 3's plan.
+- **Rule, fixed 11-18 before the flags and the per-residue data.**
+  * Primary, `w32_00`, X-ray domains with at least 3 residues in each group: D = mean d over exposed residues with a
+    lattice contact and no entry contact, minus mean d over exposed residues with no contact of either kind; mean
+    over domains, 95% bootstrap interval over domains (2000), Wilcoxon p. The lattice carries part of the advantage
+    if the interval lies below 0; otherwise it is not a driver, recorded, and the phase stops. The size is reported
+    as the excess per domain, sum over those residues of (d_i - the free-surface mean), against the side-chain total.
+  * Secondary, reported, decide nothing: entry contacts the same way; `z32_00` and `p57_09` the same way; NMR
+    against X-ray as the crystal advantage per residue (difference of means, bootstrap interval, Mann-Whitney p),
+    where the lattice reading predicts the NMR domains less negative. `w32_00`'s per-domain totals were seen (a format
+    check) before this rule was written, not split by method.
+  * If the lattice is a driver: a findings entry, carried into Upside 3's side-chain design (Phase 36, the rotamer
+    1-body item of upside3.md), not into ff3.x.
 
 ## Known Errors / Blockers
 

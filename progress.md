@@ -1588,3 +1588,26 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   random-chain starts stuck at KE/1.5kT about 100, two of them SARW replicas whose DSE Peng's guard kept (findings 9x).
   ff3x_bbenv21 steps 0-29 healthy, scale -0.1817 and still weakening. Files: remote_jobs.md (header, ff21_peng row),
   findings.md 9x, plan.md item 30.
+* **11-18 18:50-19:45, Mac Studio: Phase 40, the crystal environment and the crystal advantage** (user: questions
+  on Becker et al., Nat Chem 2026, then "proceed as you suggested"; not the watch owner, no cron). Training natives
+  counted on RCSB (407 X-ray, 48 NMR, 1 powder). Per-residue lattice, entry and exposure flags for the 36 panel
+  domains (gemmi in the repo `.venv`; `ContactSearch` replaced after it dropped translation copies, enumeration check
+  29 of 29); job 50278156 split crystal_view's advantage by residue (reproduces crystal_view to 0.005). Read by the
+  rule: the lattice is not a driver; the core carries most, NMR domains more than X-ray. Files: plan.md Phase 40,
+  findings.md 1.45 (and a pointer in 1.37), remote_jobs.md (row added, deleted on completion); scripts and outputs in
+  `scratchpad/xtal_contacts_20261118/` and `checks/xtal_contacts_20261118/`. Nothing else on the cluster changed.
+* **11-18 18:11 to 11-19 01:23, Mac Studio: Peng validation and watch** (user: "continue working on Peng
+  validation", "keep connected and monitor the progress"; watch cron `867f5ea5`). midway2 reopened on login2
+  (login1 hangs after the password; `scratchpad/mdw2_login2.exp`). `pg_read_00.txt` read 22:01 by plan.md item 30's
+  rule: verdict (b), cliff (findings 9x). A fourth stuck random-chain start, 3f5r step 32, its DSE dropped by Peng's
+  guard. The user (01:16 11-19) set ff3.x's success criterion (TM above released ff2.1, BBA, BBL and TM4 held; the
+  cliff does not count; findings 10.73, plan.md item 24), then had Peng's chain cancelled (01:20, step 35) and its run
+  files deleted (32.3 G, manifest on the cluster). ff3x_bbenv21 runs on, step 42, scale -0.1660. Files: remote_jobs.md,
+  plan.md items 24 and 30, findings.md 9x and 10.73.
+* **11-19 11:05-11:08, Mac Studio: ff3x_bbenv21 checkpoint panels** (user 10:55: "proceed"). The checkpoint rule on
+  the user's criterion written into `checks/ff3x_bbenv21_20261117/README.md` (fixed 11:05, before any panel ran; the
+  old README kept as `README.md.bak_pre_rule_20261119`). New there: `submit_ckpt.sh EE` (extract with the run's own
+  `expand_param`, burial scale checked against the link log, md5-checked staging in both trees, `--test-only`, then
+  submission) and `x3_read.sbatch` (pg_read.sbatch's TM and Ca-RMSD read against `ff21_released_tr`). Epochs 0 and 1
+  (`x3_00`, `x3_01`) submitted 11:07: panel and read, BBA and BBL native arms, glpG prep and block 1; all R by 11:08.
+  Epoch 2's at its checkpoint. Files: plan.md item 24, remote_jobs.md (job row, resume step 3, header).
