@@ -2889,8 +2889,9 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       launches ("Job credential expired"), which Peng's code skips. Restarted from step 1 as 50276901 (R from 13:18)
       with `bin/srun` first on PATH, retrying a failed launch only (a worker that ran and failed stays failed), and
       each link running to the next epoch end. Steps 0-6 done by 14:18, 24 of 24 each, 640-731 s a step; the
-      scale -0.3014 to -0.3449 after step 6 (our control's `c9_00` reached -0.404). `pg_read_00.txt` about 18:30-19:00
-      11-18, read by the rule; step 76 about 04:30 11-19 (remote_jobs.md "Resume 11-18 evening").
+      scale -0.3014 to -0.3449 after step 6 (our control's `c9_00` reached -0.404). Epoch 0 ended 16:35 (steps 0-18 at 24 of 24, the
+      scale -0.3914); its panel `pg_00` waits in a full queue, so `pg_read_00.txt` about 09:00 11-19, read by the
+      rule (remote_jobs.md "Resume 11-18 evening").
     - **Purpose** (user 11-18 16:20): "we care about finding the source of 'cliff down' of accuracy for first step
       after ff2.1. Once we find that, we can resolve the issue in current ff3.3 trainer, even if that means we start
       using Peng's trainer and debug it and re-run everything." Adopting Peng's trainer is open; its defects (below,
