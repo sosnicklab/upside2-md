@@ -333,7 +333,7 @@ S1's gate is in section 3.
 
 | item | what | blocks | where |
 |---|---|---|---|
-| U1 | the cluster binaries set flush-to-zero and denormals-are-zero in every process that loads the library (`set_fast_math`); the proposed fix is `-ffast-math` on compile lines only, checked by a regress compare of two midway2 builds | to be decided before S2's training build, so every Upside 3 training shares one build | plan.md Phase 24 item 2b |
+| U1 | DONE 11-22 (findings 3.14 A241): `-ffast-math` on compile lines only, so no cluster build sets flush-to-zero; two midway2 builds compared, 0 of 4064 regress arrays differ | every Upside 3 training shares the U1 build | plan.md Phase 41 |
 | U2 | `sse2neon.h` is an unpinned Homebrew header whose defaults set the Mac's `_mm_rcp_ps` accuracy | Mac builds' reproducibility | same |
 | U4 | the g-JF round evaluates the forces once more than it needs, about 20% of a hybrid's cost; skipping it needs to know that nothing moved the coordinates since the last evaluation | performance only; after correctness work | same || cluster tree | the Upside 3 tree carries A231, A234 and A235; A236 (`dihedral_spring`) and A237 are local only | S2 | `remote_jobs.md` |
 | BBA | 6.3 E_up in `backbone_pairs` on one random start | S1's gate if it bears on the de novo gap | 4.4 |
@@ -428,7 +428,8 @@ S1's gate is in section 3.
 ### 5.4 The Upside 3 training tree
 
 **State.**
-* No Upside 3 training tree exists.
+* The Upside 3 training tree is `/project/trsosnic/yinhan/upside3-train` (11-22, plan.md Phase 41): the Mac's
+  engine at A240 built with U1 (libupside.so `7630ed8e`), no git tree, the trainer in its `training/`.
 * Every ConDiv run is in `$P/training/`. `$P/obj` is the pre-audit build plus only the 3.12 fix (md5
   `7136d99a`/`3d9c6366`; `remote_jobs.md` 0b), so every training so far, Phase 33's included, ran on the pre-audit
   engine.

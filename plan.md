@@ -42,6 +42,17 @@ ff2.1 holds TM4 (findings 4.15). TM4 HDX is closed (user, 10-23; Phase 16).
 
 ## Architecture and Key Decisions
 
+**A force field is released only from one complete training run** (user 11-21: "eventually you need to run the
+entire training process. You cannot train and swap and publish it"). Swapped or mixed files (`ff_sw_*`) are
+diagnostics that locate a cause; a fix goes into the trainer, and the candidate is that retrain's checkpoint, read
+by the checkpoint rule and the full validation.
+
+**Success criterion, relaxed** (user 11-22: "If it is about the same accuracy as ff2.1 it is acceptable"): test 1 for
+the next run is no worse than released ff2.1 (the 44-domain mean TM difference interval not wholly below 0), with
+BBA, BBL and TM4 held as before. **Staged training is within ff3.x** (user 11-22: "Train all parameter jointly does
+not need to be start from the 1st step. Even Jumper himself trained SC first then everything else"): groups may be
+held for a stage if a later stage trains everything jointly.
+
 **Trainer.** `training/ConDiv.py` is O. Kleinmann's Python 3 port of Peng's FF2 dual-target trainer,
 restored to the SI (findings 9v). Per protein and step it runs:
 - one native-restrained replica, 12 free replicas at T 0.8 to 1.1 and one SARW replica;
@@ -2604,9 +2615,21 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
         - [x] Rule written into the README 11:05 11-19, then `submit_ckpt.sh 00` and `01` 11:07 (`--test-only` passed;
           jobs in remote_jobs.md). Both extracts carry the link log's burial scale (-0.2648, -0.1919), and every file
           differs from the start's.
-        - [ ] `submit_ckpt.sh 02` once `epoch_02_minibatch_18/checkpoint.pkl` exists (about 12:15 11-19).
-        - [ ] Reads by the rule: panels about 4-5 h after submission, arms at their target, TM4 at block 1's end.
-        - [ ] Step 76's checkpoint (`x3_03`) by the same rule, asked at the run's end.
+        - [x] `submit_ckpt.sh 02` 12:51 11-19 (scale -0.1866).
+        - [x] Test 1 (44-domain panel against released ff2.1) read 12:08-18:49 11-19: **fails for `x3_00`, `x3_01`,
+          `x3_02` and `x3_s62`**, mean TM 0.628, 0.630, 0.641, 0.655 against 0.682 (-0.054, -0.052, -0.041, -0.027, each
+          interval wholly below 0), Ca-RMSD 0.2-0.5 A worse. The loss is the size of item 30's cliff and narrows with
+          the steps.
+        - [x] Step 62's checkpoint added (user 17:40 11-19, "Add a checkpoint"), after the burial scale reached -0.1253,
+          inside the range of the redos that lost BBA and BBL: `x3_s62`, the same four tests, `submit_ckpt.sh s62`
+          17:46 (the script now takes `sNN` for step NN; mapping checked against the three epoch-end extracts).
+        - [ ] Tests 2-4 by the rule: arms at their target (about 20-30 h), TM4 at block 1's end (about 35 h).
+        - [x] Training complete 03:06 11-20 (step 75, 24 of 24, burial scale -0.1918, Rama round 4). Step 76's
+          checkpoint `x3_03` submitted 03:07 by `submit_ckpt.sh 03` (user 02:47 11-20: "yes. submit the validation
+          once training is complete"). **Test 1 fails** (`x3_read_03.txt` 04:09): mean TM 0.648 against 0.682, -0.034
+          [-0.045, -0.023], 36 of 44 lower, Ca-RMSD +0.25 [+0.12, +0.38] A. Over the run 0.628, 0.630, 0.641, 0.655,
+          0.648 (steps 18, 37, 56, 62, 75): no checkpoint beats released ff2.1; the last two agree within their
+          intervals. Tests 2-4 as above.
     - [x] **Read Peng's FF2 trainer in his midway directory** (user 11-17: access approved 11-18, "We can work on
       these tomorrow"; findings 1.42 "Peng on the DSE"). Read 11-18 (findings 9x;
       `checks/peng_home_20261118/`): one DSE trainer survives, `upside-t2.00/test/ConDiv.py` (2020-12-11), three
@@ -2925,6 +2948,242 @@ target moves. Fix the cause in the training, never by a temperature or by freezi
       criterion. The user then cancelled the chain ("cancel Peng's chain"): link 50277873 stopped 01:20 11-19 in step
       35, before epoch 1's end, so no `pg_01`; 32.3 G of its run files freed (manifest in `checks/peng_ff21_20261118/`).
       Item closed with verdict (b).
+31. [ ] **A second ff3.3 line at Peng's training settings: `ff3p_bbenv21`** (user 11-19 evening: "do another line of
+    training, use Peng's original settings (steps and others), and start from ff3.2 where it makes BBA, BBL and TM4
+    correct"; then "Make rama map trainable, and script should based on our version, but training setting should be
+    the same as Peng's"; submit once the checks pass; all four checkpoint tests at every epoch end). Runs beside
+    `ff3x_bbenv21` (item 24), which goes on unchanged. `checks/ff3p_bbenv21_20261119/` (README), run
+    `$P/training/ff3p_bbenv21/`, checkpoint tags `xp_EE`.
+    - Trainer: `ff3x_bbenv21`'s `ConDiv.py` (`331eab3d`), the Rama depths trainable as there. Start the same:
+      `ff_bba_32bbenv21`'s files, `seed_start.py` putting `p57_09`'s depths in the initial checkpoint, Adam fresh.
+    - Peng's settings (his `ConDiv_t2.00_20201211.py`, findings 9x): DSE weight 0.4 a group and 0.8 on `bbenve`,
+      `rot`, `hb`, `dhb`; his learning rates (`envs` 0.01, `bbenve` 0.02, `rot` 0.50, `dhb` 0, the rest equal, times
+      0.5); his side-chain regulariser scale (`n_prot` x 0.01, 100 times ours; not in 9x's list, found 11-19); 4000 tu
+      a step; his ladder 0.85(1 + (150/N)^0.05 0.014 k)^2 per protein; the native replica on an elastic network at 1/3^2;
+      free replicas from the native every visit; minibatches re-dealt every epoch; swaps among the 12 free replicas;
+      the SARW at the hottest rung with half the side-chain burial (H-bond, backbone burial, coverage, hydrophobe,
+      rotamer pairs off); 24 a step, 76 steps.
+    - Kept from ours, each a measured defect or a forbidden guard in his: dt 0.009 (at 0.015 our engine ran 1-2% hot
+      and destroyed 0.14% of replicas, findings 1.21); exact reweighting, the SARW's included, to the unfolded rungs (his
+      exponent wrong, his dE -200 clamp); no DSE-dropping guard; the SARW from the native (his random starts stuck
+      hot in 4 of 1,440, 9x); the SARW on ff2.1's map. The depths' DSE rows take 0.4, his default group weight.
+    - [x] Build and checks, login node (README there): `ConDiv.py` `7b6ca523`, its diff against `331eab3d` only these
+      changes; `initialize` (456, 19 of 24, 46 held out); `seed_start.py` asserts; `check_configs.py` passed (ladder,
+      elastic network at rest at the native, SARW scales and map, native starts, swap sets, weights, rates,
+      regulariser); a two-step sandbox with Slurm off the PATH passed through an epoch end; `--test-only` passed. The
+      first build's restraint call was wrong (`upside_config` has none; `advanced_config` as `ff21_ctrl_dt009`), fixed
+      and rebuilt. Submitted 21:25 11-19, first link 50281597 (`remote_jobs.md`).
+    - [ ] Checkpoint tests at each epoch end by `ff3x_bbenv21`'s README rule, all four, tags `xp_00`-`xp_03`,
+      submitted by the watch. `xp_00` (step 18, burial scale -0.3708) submitted 02:41 11-20; **test 1 fails** like
+      `x3_00` (`xp_read_00.txt` 04:04): mean TM 0.632 against 0.682, -0.050 [-0.063, -0.038], 40 of 44 lower, Ca-RMSD
+      +0.41 [+0.27, +0.55] A (`x3_00` -0.054 [-0.066, -0.043]). Peng's settings give the same epoch-0 drop. `xp_01` (step 37,
+      -0.3562) submitted 07:33 11-20; **test 1 fails** (`xp_read_01.txt` 08:56): 0.643, -0.039 [-0.051, -0.027], 39 of 44
+      lower, Ca-RMSD +0.29 [+0.15, +0.43] A, against `x3_01`'s -0.052 at the same epoch. `xp_02` (step 56, -0.3590)
+      submitted 11:46 11-20; **test 1 fails** (`xp_read_02.txt` 12:47): 0.634, -0.048 [-0.062, -0.035], 41 of 44 lower,
+      Ca-RMSD +0.47 [+0.25, +0.73] A. Over epochs 0-2: -0.050, -0.039, -0.048, no trend within the CIs.
+      Training ended 16:32 11-20 at step 76 (link 2 exit 0, step 75 24 of 24); `xp_03` (step 75, -0.3436) submitted 16:34 11-20;
+      **test 1 fails, the line's worst** (`xp_read_03.txt` 00:51 11-21): 0.619, -0.064 [-0.078, -0.050], 42 of 44 lower,
+      Ca-RMSD +0.62 [+0.40, +0.87] A. Over epochs 0-3: -0.050, -0.039, -0.048, -0.064.
+32. [ ] **Full validation of both ff3.3 lines' last checkpoints** (user 16:40 11-20, after both runs ended: "run the
+    full validation for both. put BBA, BBL and TM4 at top so we read their results first"): `ff_3.3_x3_03`
+    (`ff3x_bbenv21`, step 75) and `ff_3.3_xp_03` (`ff3p_bbenv21`, step 75), already staged md5-equal in both trees.
+    The suite is item 24's for `ff_bba_32bbenv21` (`checks/bbenv21_validate_20261117/`): Peng's 32 arms and their
+    collector, the mdCATH panel (89 domains, dt 0.009) with its TM against released ff2.1 (`mdc_p57_09` beside), h (24
+    proteins) against released ff2.1 and ff3.2; glpG TM4 is each checkpoint's block 1, already running. Read order
+    BBA, BBL, TM4 first: the BBA and BBL arms go in first, the collector writes their four rows at the top of its file
+    on every pass, and the checkpoint rule's tests 2-4 (`checks/ff3x_bbenv21_20261117/README.md`) are read for them
+    before the rest. `checks/ff33_fullval_20261120/` (README, `submit.sh plan|apply`).
+    - [x] Built 17:09 11-20 (`submit.sh` from `bbenv21_validate`'s with both tags, BBA and BBL first; `collect.sbatch` writes the
+      BBA and BBL rows on top every pass; `tm.sbatch`, `unf_hb_vs_p57.sbatch` with only the paths changed); `submit.sh plan`
+      passed `--test-only` on all 72 jobs; applied 17:10 (60 arms, 2 collectors, 2 mdCATH panels and TM, 2 h arrays and
+      4 reads; `remote_jobs.md`).
+    - [x] The tests 2-3 reader `read_bba_bbl.py TAG...` (`read_step4_full_1117.py`'s method against the start's arms;
+      `read_bba_bbl.sbatch OUT TAG...`), written 17:12 11-20; run on the complete arms of `x3_00`-`x3_02` (50285416,
+      `read_bba_bbl_x3_00-02.txt` DONE 01:07 11-21). Its health step reads `output/kinetic` as per atom, as the bench
+      files store it; every replica of the six arms finite, Ca-Ca 3.15-4.66 A, KE/1.5kT 0.997-1.011. It reproduces the
+      references (start 0.656 and 0.223, ff2.1 0.842 and 0.152). **`ff3x_bbenv21` loses BBL from epoch 0 and BBA from
+      epoch 1:** BBA folded `x3_00` 0.699 (holds), `x3_01` 0.013 (fails, +0.643 at block SE 0.029), `x3_02` 0.116 (fails,
+      +0.540, SE 0.060); BBL TM > 0.5 `x3_00` 0.066, `x3_01` 0.033, `x3_02` 0.013, each failing against the start's 0.223
+      and below ff2.1's 0.152.
+    - [x] TM4 of `x3_01` (block 1 ended 02:34 11-21 at its 126,900 s limit, 208 frames t 0-2070; `glpg_u3_block1.py`
+      on `run.0.up` `output`, T 0.70, read on the login node to stdout): DSSP alpha 135-151 mean 0.476, last quarter
+      0.464, **test 4 fails** (0.645; the start's 0.773 beside); KE/1.5kT 1.003, C-N as the Upside 3 ff2.1 run's.
+      `x3_02`'s (ended 04:18 11-21, 212 frames t 0-2110, the same way): mean 0.788, last quarter 0.867, **holds**. One run
+      each gives no noise estimate, so `x3_01` failing and `x3_02` holding is not a trend. `x3_s62`'s (ended 09:17
+      11-21, 212 frames t 0-2110): mean 0.564, last quarter 0.536, **fails**, the C-terminal 146-151 unwound (0.00-0.18)
+      as in ff3.3 `r33_19` (1.44); KE/1.5kT 1.003, C-N 1.312 +- 0.119 A.
+    - [x] h (both arrays and reads COMPLETED 00:45-00:58 11-21): `x3_03` -0.050 [-0.081, -0.024] against released ff2.1
+      (fewer residual H-bonds; -0.163 against `p57_09`), `xp_03` -0.006 [-0.037, +0.032] (-0.118 against `p57_09`);
+      neither interval wholly above 0, so h holds for both.
+    - [x] mdCATH TM of `xp_03` (panel COMPLETED 03:50, TM 04:21 11-21): -0.059 [-0.070, -0.049] against released ff2.1, 79 of
+      89 lower (-0.078 against `p57_09`): wholly under 0, so **`xp_03` fails the full validation** as it failed test 1.
+    - [x] mdCATH TM of `x3_03` (panel COMPLETED 04:35, TM 05:04 11-21): -0.033 [-0.043, -0.023] against released ff2.1, 66 of
+      89 lower (-0.051 against `p57_09`): wholly under 0, so **`x3_03` fails the full validation** as it failed test 1.
+    - [x] Tests 2-3 of `x3_s62` and `x3_03` (reader 50286621, `read_bba_bbl_x3_s62_x3_03.txt` DONE 06:14 11-21; every
+      replica finite, Ca-Ca 3.29-4.69 A, KE/1.5kT 0.999-1.009): BBA folded `x3_s62` 0.189 (fails, +0.467 at block SE
+      0.040), `x3_03` 0.034 (fails, +0.622, SE 0.027); BBL TM > 0.5 0.010 and 0.005, both fail (start 0.223, ff2.1
+      0.152). Over `x3_00`, `x3_01`, `x3_02`, `x3_s62`, `x3_03`: BBA 0.699, 0.013, 0.116, 0.189, 0.034; BBL 0.066, 0.033,
+      0.013, 0.010, 0.005. `x3_03` fails tests 1-3 and mdCATH.
+    - [x] Interim tests 2-3 of `xp_00`-`xp_03` (user 08:40 11-21: "Does Peng setting training fail BBA and BBL?"):
+      `read_bba_bbl_interim.py` (`read_bba_bbl.py` with a running arm cut to its completed chunks, the window to that
+      length). BBA (login node, `interim_bba_xp_0831.txt`): `xp_00` 0.171, its arm COMPLETE, so this is its test 2:
+      **fails** (+0.485 at block SE 0.097; blocks 0.18 0.04 0.03 0.43); `xp_01` 0.539 holds (+0.085, SE 0.043) and
+      `xp_02` 0.835 holds (-0.208) over 1.28-1.30 M of 2.89 M tu; `xp_03` 0.000 fails over 0.64 M. BBL (50287168,
+      `interim_bbl_xp.txt` DONE 09:20, over 0.89-1.13 M of 2.08 M tu): TM > 0.5 `xp_00` 0.026 fails (+0.181, SE 0.054),
+      `xp_01` 0.395 and `xp_02` 0.627 hold (above the start's 0.22 and ff2.1's 0.14 over the same windows), `xp_03`
+      0.053 fails. BBA and BBL go together: lost at `xp_00`, held at `xp_01`-`xp_02`, lost at `xp_03`.
+    - [ ] Tests 2-3 of `xp_00`-`xp_03` as their arms complete; TM4 of each block 1 as it ends; Peng's arms (collector).
+      `x3_03` TM4 (block 1 COMPLETED 18:32 11-21, 207 frames; `checks/ff33_bbabbl_20261121/tm4/tm4_x3_03.txt`): DSSP
+      alpha 135-151 mean 0.267, last quarter 0.184, **test 4 fails**, the lowest read (ff2.1 0.44); so `x3_03` fails
+      all four. TM4 on the ff3.x line: 0.476, 0.788, 0.564 (`s62`), 0.267 against the start's 0.773.
+      `xp_01` TM4 (block 1 COMPLETED 23:03 11-21, 204 frames; `tm4/tm4_xp_01.txt`): mean 0.224, last quarter 0.271,
+      **test 4 fails** (TM1 0.90 and the other helices 0.83-0.98 hold), though its BBA and BBL hold. `xp_00` full (50287884, `read_bba_bbl_xp_00.txt`, 12:53
+      11-21; arms healthy, KE 0.996-1.007): **BBA fails** 0.171 against the start's 0.656 (+0.485, SE 0.097);
+      **BBL fails** 0.030 against 0.223 (+0.193, SE 0.036), below ff2.1's 0.152 too (+0.122, SE 0.020).
+      `xp_00` TM4 (block 1 COMPLETED 18:07 11-21, 215 frames t 0-2140; `tm4_xp_00.txt` in the ff3p checks): DSSP
+      alpha 135-151 mean 0.592, last quarter 0.568, **test 4 fails** (0.645; start 0.773), 149-151 unwound
+      (0.00-0.06) as in `x3_s62`; KE/1.5kT 1.003, C-N 1.315 +- 0.119 A. So `xp_00` fails all four tests.
+      `xp_02` full (50288108, `read_bba_bbl_xp_02.txt`, 14:57; KE 1.002-1.007): **BBA holds** 0.819 against the
+      start's 0.656 (-0.163, SE 0.053; ff2.1 0.842); **BBL holds** 0.543 against 0.223 (-0.321, SE 0.040), above
+      ff2.1's 0.152 (mean TM 0.492). Test 1 failed (0.634). `x3_00` TM4 (block 1 COMPLETED 12:03 11-22 after its two
+      node failures, 208 frames; `tm4/tm4_x3_00.txt`): mean 0.596, last quarter 0.509, **test 4 fails**; `xp_03` TM4 (12:11,
+      221 frames): mean 0.836, last quarter 0.776, **test 4 holds**, the one Peng checkpoint that does (it fails tests
+      1-3). TM4 (block 1 COMPLETED 03:14 11-22, 212 frames;
+      `tm4/tm4_xp_02.txt`): mean 0.377, last quarter 0.320, **test 4 fails** (139-151 partly helical, 0.25-0.63; TM1
+      0.86, the other helices 0.93-0.96), so TM4 is lost at every Peng checkpoint read, BBA and BBL held or not.
+      `xp_01` full (50288111, `read_bba_bbl_xp_01.txt`, 15:02; KE 1.002-1.008): **BBA holds** 0.622 against 0.656
+      (+0.035, SE 0.026); **BBL holds** 0.300 against 0.223 (-0.077, SE 0.097), its blocks falling 0.401 0.494 0.160
+      0.145, the last two under the start's. Test 1 failed (0.643). So full reads: lost at `xp_00`, held at `xp_01`
+      and `xp_02`, lost at `xp_03`; BBA and BBL together. `xp_03` full (50288535, `read_bba_bbl_xp_03.txt`, 20:53;
+      KE 0.997-1.007): **BBA fails** 0.085 against 0.656 (+0.571, SE 0.048); **BBL fails** 0.029 against 0.223 (+0.194,
+      SE 0.039), below ff2.1's 0.152.
+
+33. [ ] **Why both ff3.3 lines lose BBA and BBL, and whether the design or the training can change it** (user 11-21:
+    "Check why BBA and BBL fails and if we could improve ff design or training process"). Files
+    `checks/ff33_bbabbl_20261121/` (README). Method: item 24's (findings 1.44, 10.67), whose tools are reused
+    unchanged: the map offsets on the residues each protein reads, the cold chain's state per residue
+    (`arm_state.py`), the exact split by node of E(non-native) - E(native-like) on fixed frames (`arm_decomp.py`), and
+    only then one-file swap arms, the one test that decides (fixed-frame energies rank nodes, they do not decide
+    populations; 1.44).
+    - [x] Map offsets, both lines round by round (`map_offsets.txt`, login node). The ff3.x line's map does not move
+      BBA's hairpin toward alpha_R (aR - beta +0.058 at the start, +0.044 / +0.039 / +0.045 / +0.062 at `x3_00`-`x3_03`;
+      ff3.3 `r33_19`, which lost BBA by its map, -0.228) and moves BBL's loop slightly away from it (+0.060 -> +0.098).
+      Peng's line moves the hairpin toward alpha_R every round (+0.011, -0.036, -0.074, -0.079), BBL's loop too (+0.036
+      -> -0.030), and most residue types with it. Backbone burial scale: start -0.301; `x3_00` -0.265 (BBA holds),
+      `x3_01` -0.192, then -0.187 / -0.125 (`x3_s62`) / -0.192; Peng's line -0.371 / -0.356 / -0.359 / -0.344.
+    - Prediction, written before the state and split reads: on the ff3.x line BBA's loss at `x3_01` (BBA 0.699 at
+      `x3_00` to 0.013) is carried mainly by the backbone burial node, as in `p57_09` (1.39, 1.44), since its map did
+      not move the hairpin; on Peng's line `xp_00`'s by the Rama rows and the side-chain nodes, since its scale is
+      stronger than the start's. BBL's loss from `x3_00` is not predicted (1.44: the side-chain file, the map and the
+      burial file in about equal shares).
+    - [x] Parameter moves (`param_moves.txt`) and the burial contrast per step (`bb_contrast_<run>.txt`, findings
+      1.41's script; the stored contrast is NSE + lambda DSE combined, so the two are not separable from the files).
+      Peng's line moves the side-chain tables 2-3 times as far (pair, hydrophobe, coverage 0.27-0.28 of their norm
+      from the start at `xp_00`, 0.40-0.44 at `xp_03`; the ff3.x line 0.10-0.11 and 0.17-0.20), each epoch's step
+      (0.11-0.17) well above the net growth from the start (0.03-0.09): much of it a walk, not a drift. The ff3.x
+      line's scale weakens under mostly negative summed contrasts in epochs 1-3 (as 1.41's NSE pull); Peng's line
+      (DSE 0.8 on `bbenve`, rate 0.01) strengthens it in epoch 0 and then drifts back slowly.
+    - BBA splits in (10:12 11-21; E(non-native) - E(native-like), single nodes forward, reverse within 0.1): the
+      **side-chain file carries most of it on both lines, and the prediction for the ff3.x line is wrong**. `x3_00` ->
+      `x3_01` -7.94 E_up: hydrophobe coverage -3.49, pair table -1.60, H-bond coverage -1.12 (the side-chain file -6.21),
+      backbone burial -1.06, H-bond energy -0.51, Rama -0.24. Start -> `x3_01` -12.46: side-chain file -7.58, side-chain
+      burial -2.19, backbone burial -1.45, H-bond energy -0.87, Rama -0.47. Start -> `xp_00` -11.21: hydrophobe -6.05,
+      pair -6.04, H-bond coverage -1.23 (-13.32), Rama -0.53; backbone burial +0.96 and H-bond energy +1.60 the other
+      way. Fixed-frame energies rank nodes and do not decide (1.44, where they pointed at the side-chain file and the
+      swap found the map), so the side-chain file is the first swap to run, not a verdict.
+    - [x] State and split reads (`diag.sbatch` 50287386, COMPLETED 10:57 11-21; `bba_decomp.py`'s all-helix split on
+      the login node, `helix_splits.sh`): findings 1.46. BBA's hairpin goes helix (1.39's state); BBL's loop 19-33
+      rearranges. The side-chain file carries the most in all nine splits (BBL about all, the ff3.x line's BBA 55-78%,
+      Peng's line's more than all), its hydrophobe coverage table the largest node in eight; backbone burial 13-17% on
+      the ff3.x line and against on Peng's; the Rama node -0.2 to -0.9. Ranks, not a verdict.
+    - [x] **Swap arms (1)-(3), user 11:25 11-21** ("(1)+(2) ff3.x swaps, (3) Peng-line swap"; (4) the averaged run
+      and the TM4 split declined): `ff_sw_x303_scst`, `ff_sw_st_scx303`, `ff_sw_xp03_scst` by `stage_submit_swaps.sh`;
+      the rule fixed in the README before submission. In glpG's hybrid config `sidechain.h5` enters only the pair
+      table (no coverage node; 3 of 89 datasets differ start to `x3_03` / `xp_03`: H-bond energy, Rama, pair table),
+      so the TM4 blocks test the pair table alone. Staged and submitted 11:27-11:28 11-21 (`stage_swaps.log`: every
+      file md5-equal to its intended source in both trees); all six arms and both preps R at once; the arms' configs
+      carry the donor's five side-chain nodes and the base's others (`arm_config_check.txt`; the check first listed
+      three and flagged the two placement nodes, which come from `sidechain.h5`'s untrained placements, equal across
+      the files to 2.2e-16; the check's list was fixed, not the staging). glpG preps COMPLETED 15:38 11-21, blocks R;
+      prep configs as intended (`glpg_nodes_*_sw_*.txt`: each swap differs from the start only in H-bond energy and
+      Rama, from its base only in the rotamer pair table). Verdicts: BBA and BBL arms about 14:00-15:00 11-22, TM4
+      blocks about 03:20 11-23. Reader `read_swaps_bbabbl.py bba|bbl final|early` (`read_swaps_bbabbl.sbatch`), the
+      README rule's metric and midpoints; logic checked on finished arms (`x3_02` as a stand-in reproduced 0.656,
+      0.034, 0.116, 0.842). Early read at the user's "Proceed to early read" (11-21 evening): chunk 1 ended 21:58
+      (BBA 1.24-1.27 M tu, BBL 0.88 M), all six resubmitted; read 50288593 COMPLETED 22:18 (`swap_read_early_*.txt`),
+      deciding nothing. BBA (window to 1.24-1.27 M; start 0.62): (1) 0.404 against midpoint 0.328, +1.2 SE, restores,
+      blocks falling 0.51 0.53 0.31 0.27; (2) 0.255 against 0.326, -0.9 SE, loses, near the line; (3) 0.541 against
+      0.312, +8.2 SE, restores. BBL (window to 0.88 M; start 0.22): (1) 0.679 against 0.115, +5.6 SE, above the start
+      and ff2.1 (0.145); (2) 0.000, loses; (3) 0.274 against 0.142, +1.6 SE, restores. So far the side-chain file is
+      necessary and sufficient for the ff3.x line's BBL loss and necessary for Peng's line's BBA and BBL; on the ff3.x
+      line's BBA it carries part (swap (1) at 0.40 against the start's 0.62), the rest with `x3_03`'s other files.
+      Final read (50289959, 15:15 11-22, full arms; findings 1.46): BBA (1) 0.432 restores, (2) 0.227 loses, (3) 0.531
+      restores; BBL (1) 0.767, (2) 0.001, (3) 0.377, the same verdicts as the early read. The Upside 3 retrain holds the
+      side chains in its first epoch and trains them 10x slower after (Phase 41). TM4 (blocks ran to their limit,
+      217 and 215 frames, then run.py's `block_count` write FAILED on a full /beagle3 02:54-02:55 11-23; read 05:33,
+      `tm4/tm4_sw_*.txt`; findings 1.46): (1) mean 0.626, last quarter 0.428, fails (`x3_03` 0.267, start 0.773), so
+      the pair table lifts TM4 but is not the whole loss; (3) 0.702 / 0.601, fails by the last quarter, near the
+      line (`xp_03` 0.836 / 0.776), within the 0.3 swing of one run.
+    - [x] **Does the side-chain fix repair TM4?** (user 11-21 evening: "check if current fix can repair TM4, if not,
+      whether we should add new fix and re-run training"). Not until the swap blocks end (t 230 of 2110 at 18:30).
+      Read-only so far (`checks/ff33_bbabbl_20261121/tm4/`): the loss is TM4's alone (in `x3_03` TM1 0.96 and the
+      other helices 0.90-0.94 hold), so not every helix's H-bond; the unwinding moves along TM4 between runs
+      (`x3_01` 135-138, `x3_s62` and `xp_00` 146-151, `x3_03` all of it). `tm4_offsets.txt`: TM4's glycines 135,
+      142, 148 lose the start's alpha_R preference over alpha_L on both lines, c[aR] - c[aL] mean -0.524 (ff2.1 0) to
+      -0.301 (`x3_03`) and -0.315 (`xp_03`), monotone, so the training undoes about 40% of the glycine fix at TM4;
+      the non-glycine rows barely move (x3) or move toward alpha_R (xp). Not sufficient alone: `x3_02` (-0.312) holds
+      at 0.788 and `x3_03` (-0.301) fails at 0.267. H-bond energies weaken along both lines (E_alpha -1.906 ->
+      -1.752, -1.594). glpG differs from the start in three arrays only, so a swap of each decides; proposed to the
+      user: `x3_03` with the start's `rama.dat` and with the start's `hbond.h5`, TM4 block 1 each, beside the pair
+      table's swap. Retraining waits for those and the BBA/BBL swaps.
+    - [x] **TM4 swaps, user 11-21 evening** ("Add 2 TM4 swaps now"): `ff_sw_x303_ramast`, `ff_sw_x303_hbst` by
+      `stage_submit_tm4swaps.sh` (`stage_tm4swaps.log`: every file md5-equal to its intended source in both trees);
+      rule in the README "TM4 swaps", fixed before submission: test 4 on block 1, a pass means that array of
+      `x3_03` is necessary for its TM4 loss. Submitted 19:46 11-21; `ramast` prep COMPLETED 23:50, block R; `hbst` prep
+      FAILED 23:53 on a full /beagle3 (1003G free again by 00:31), resubmitted 00:34 11-22 (50288785-50288786). Blocks
+      end about 11-23 12:00 (`ramast`) and 11-23 16:30 (`hbst`). **`ramast` passes test 4** (block COMPLETED 11:07
+      11-23, read 11:32, `tm4/tm4_sw_x303_ramast.txt`; findings 1.46): mean 0.795, last quarter 0.743 (start 0.773,
+      `x3_03` 0.267), so `x3_03`'s trained library is necessary for its TM4 loss. The retrain `ff3x_u3` moves TM4's
+      glycine rows the same way (`tm4/tm4_offsets_u3.txt`: aR-aL -0.524 -> -0.336 at `u3_03`). A second run with
+      the map's fix held is proposed to the user once `hbst` and `ramashst` are read (about 16:05). Read 16:32
+      (findings 1.46): `hbst` 0.858 / 0.903 passes above the start, `ramashst` 0.668 / 0.624 fails by the last
+      quarter near the line; every trained array of `x3_03` carries part of the loss, the H-bond file the most. The
+      retrain weakens its H-bond energies one way too, at `x3_02`'s level by `u3_04`. Proposed to the user after the read.
+      Check after the `ramast` prep (00:45 11-22): it differs from `x3_03` in `rama_pot` alone, but that table is built
+      from `rama.dat` with the trained `sheet` mixing, which `ramast` keeps from `x3_03`; at TM4 its table is near the
+      start's (RMS 0.03-0.07 against 0.11-0.22), so it tests the library, glycine rows included, not the whole Rama
+      potential (README). `ff_sw_x303_ramashst` (`rama.dat` + `sheet` from the start) submitted 00:44 11-22 at the
+      user's "submit now" (prep 50288792, block 50288793; TM4 about 11-23 17:00).
+    - [ ] **Accuracy panels of (1) and (3), user 11-21, before 14:47** ("Yes", after asking whether training with the
+      side-chain parameters held fixed would work: likely for BBA, BBL and TM4 by the splits, with the swap arms as
+      the test, but the training lowered mdCATH accuracy from `p57_09`, whose `sidechain.h5` the start carries,
+      -0.051 / -0.078, and whether the side-chain moves cost that is unmeasured). `stage_submit_acc.sh`: the swap
+      files md5-equal into `ff3_selection/params/sw_x303_scst`, `sw_xp03_scst` (five files the base's, `sidechain.h5`
+      the start's `db0deb89`), each the 44-domain panel and `acc_read.sbatch` against its base, released ff2.1 and
+      `p57_09`. Rule (README "Accuracy panels", fixed before either ran): S - K's 95% interval wholly above 0, the
+      side-chain moves cost accuracy; wholly below, they gained it; covering 0, no effect measured. Submitted
+      14:47 11-21, both panels R at once; reads about 16:00.
+      (3) read 16:06 (`acc_read_sw_xp03_scst.txt`, 176 runs at dt 0.015): `sw_xp03_scst` 0.666 against `xp_03`'s
+      0.619, +0.047 [+0.031, +0.065], 39 of 44 higher, Ca-RMSD -0.49 [-0.72, -0.29] A: **wholly above 0, so on Peng's
+      line the trained side-chain moves cost accuracy**. Beside: against released ff2.1 -0.016 [-0.027, -0.005] (test 1
+      still fails), against `p57_09` (0.698) -0.032 [-0.048, -0.018]. The start itself has no 44-domain panel.
+      (1) read 16:15 (`acc_read_sw_x303_scst.txt`): `sw_x303_scst` 0.690 against `x3_03`'s 0.648, +0.042 [+0.030,
+      +0.058], 37 of 44 higher, Ca-RMSD -0.35 [-0.51, -0.21] A: **wholly above 0, the same on the ff3.x line**.
+      Beside: against released ff2.1 +0.008 [-0.002, +0.019], 22 / 22 (level, test 1 not passed: not wholly above
+      0), against `p57_09` -0.008 [-0.019, +0.003]. So the trained side-chain moves cost 0.04-0.05 mean TM on both
+      lines, and with the start's file the ff3.x line's other trained files land level with ff2.1 and `p57_09`:
+      they neither gained nor lost measurably. A frozen-side-chain run is so expected to avoid the loss but not to
+      beat ff2.1 (a swap is not a run trained with the file fixed; BBA, BBL and TM4 by the swap arms).
+    - [x] **Proposal to the user (11:20 11-21).** Swap force fields staged as item 24 step 2
+      (`stage_swaps.sh`'s pattern, md5 table, 10.68's check), each run as Peng's BBA and BBL native arms
+      (`bench.sbatch`) and, where marked, glpG TM4 block 1 (`run.py`): (1) `x3_03` with the start's `sidechain.h5`
+      (+TM4; is the file necessary on the ff3.x line?); (2) the start with `x3_03`'s `sidechain.h5` (sufficient?);
+      (3) `xp_03` with the start's `sidechain.h5` (+TM4; necessary on Peng's line?); (4) Peng's line's epoch 3 averaged
+      over its 19 steps (round 4's map is fixed within the epoch, so only the per-step files average) with all four
+      checkpoint tests (+TM4, +the 44-domain panel; does damping the walk hold BBA and BBL, and accuracy?). Rule, as
+      item 24's: an arm restores if its folded fraction (BBA) or TM > 0.5 fraction (BBL) over the common window is
+      above the midpoint of the start's and the checkpoint's; (2) is sufficient if below it; TM4 by test 4.
+      Cost about 8 arms x 14 CPUs x 1 day and 3 blocks x 28 CPUs x 40 h.
 
 ### Phase 39 - the most-probable-state side chain: BP picks one state per residue (STARTED 2026-11-03, user)
 User 11-03, the PI's request: after BP gives each residue's state probabilities (e.g. 50 / 30 / 20%), keep only the
@@ -3069,7 +3328,125 @@ and the basin wall do not change on any outcome. Local `scratchpad/xtal_contacts
   * If the lattice is a driver: a findings entry, carried into Upside 3's side-chain design (Phase 36, the rotamer
     1-body item of upside3.md), not into ff3.x.
 
+### Phase 41 - every training and validation on Upside 3 (STARTED 2026-11-22, user)
+
+User 11-22: "Update so everything runs on upside 3, both training and validation." Why: ff3.3 was trained, and tested
+for accuracy, BBA and BBL, on the pre-audit Upside 2 builds, and tested for TM4 on an Upside 3 tree 9 ledger entries
+old (Known Errors; findings 10.74).
+
+**Decisions.**
+* **One Upside 3 source state, two trees built alike.** The Mac working tree at the current ledger (A240) is sent by
+  rsync to the validation tree `/beagle3/trsosnic/yinhan/upside3` (both clusters, as now) and to a new ConDiv
+  training tree `/project/trsosnic/yinhan/upside3-train` (midway2). There are two trees because a campaign reads its
+  tree for days and no tree changes under a running job. Their builds must give bitwise-equal `tests/regress.py`
+  records on the same fixtures.
+* **The validation tree is synced only after the seven glpG blocks reading it end** (the last about 16:05 11-23).
+* **The checkpoint rule's numbers are measured again on Upside 3.** Today's are Upside 2's (the start's BBA 0.656
+  and BBL 0.223, ff2.1's TM 0.682) and, for TM4, Upside 3 at A231 (the start's 0.773, ff2.1's 0.44). The new ones,
+  from ff2.1 and the start on the A240 build, are fixed before the retrain's first checkpoint is read.
+* **The Upside 2 trees (`$P`, the shared deployment) stay as the record of the runs made on them**; no new job uses
+  them.
+* **The training code stays out of the Upside 3 git repo** (user 11-22: "Keep the training code out of upside 3
+  git"). The repo gives the training tree its engine only (`src py parameters cmake tests`); the trainer, its helpers
+  and the run scripts live in the training tree's `training/`, which is no git tree.
+* **The Upside 3 retrain carries the earlier trainings' findings** (user 11-22: "Make sure you put in our findings from
+  our previous training: which file to use as start, training step restriction, etc"; my first proposal, ff3.x
+  unchanged, was set aside, findings 10.75). The start ff_bba_32bbenv21 with p57_09's map (the one force field that held
+  BBA, BBL and glpG TM4 together); the side chains held in epoch 0, then trained jointly at 10x below the published
+  rate ("Hold 1 epoch, then 10x smaller"; findings 1.46, 1.17, 1.40); 57 proteins a step, 8 an epoch, 10 epochs ("57 a
+  step"); lambda 0.3; each epoch end judged by the checkpoint rule, the earliest passing epoch the result, epoch 0's end
+  the fallback. Started at once, before the TM4 swaps ("current one surely do not work").
+
+**Steps.**
+1. [x] The user's decisions (11-22): U1 (`upside3.md` 4.5) is the compile-only fix, `-ffast-math` on compile lines
+   only, so the library stops setting flush-to-zero in every process that loads it (the trainer's numpy included);
+   the Upside 2 full validation stops (its 54 Peng arms and 2 collectors cancelled 10:33); the checkpoint rule's
+   references run first, ff2.1's mdCATH panel and 32 Peng arms only for a candidate.
+2. [x] The training tree `/project/trsosnic/yinhan/upside3-train` (11-22): the Mac's `src py parameters cmake tests` at
+   A240 and the fixtures' PDBs, built on midway2 (GCC 10.1) with U1: upside `17d672a0`, libupside.so `7630ed8e`, no
+   `set_fast_math` (ledger A241). Against the same source built with the old flags, `regress.py compare` over the 28
+   audit fixtures: 0 of 4064 arrays differ. `node_fd.py` on chig, chig_rama and chig_envw400: 126 checks, one
+   borderline (chig_rama, the rotamer node's hydrophobe-coverage derivative, 1.1% off with the difference 1.3 times
+   the FD noise); the same config passes all 42 on the Mac build, so x86 arithmetic (reciprocal approximations, as
+   U2) is the likely cause, in every cluster build; open, not a blocker. A Mac-midway2 bitwise compare is not
+   possible (two architectures), so none was made. `.venv` from python/3.9.18 (numpy 1.23.5, scipy 1.13.1, tables
+   3.8.0, h5py 3.14.0, no torch); `training/env.sh` midway2 only, no fallback to the shared deployment.
+3. [x] The trainer and the run, outside git (11-22; `checks/ff3x_u3_20261122/`, README): ff3x_bbenv21's `ConDiv.py`
+   (`331eab3d`) with the four changes the audited Python needs (A199, A204: the regulariser in numpy, the side-chain
+   latent without its 86 rotscalar coordinates, no zero look-ahead) and the findings above: `rot_alpha_schedule`
+   (0 in epoch 0, then 0.0125), 57 a step, 10 epochs; with A29's backbone read (step 7), `ff99f70b` ( checked on a copy of the start state: in epoch 0 an
+   Adam step leaves the side-chain latent bitwise unchanged, from epoch 1 it moves at 0.0125). `rama_basin.py`,
+   `pdb_list`, the seed step and the chain script (57 tasks, 8 steps an epoch, job `condiv-u3`) ff3x_bbenv21's. The run
+   `training/ff3x_u3`, built and seeded (`build_ff3x_u3.log`): ff_bba_32bbenv21's five files dataset by dataset,
+   p57_09's map (`99496a83`), 456 proteins, the side-chain latent packed to residual 2e-30, ff32_pcd57's 8 batches of 57
+   in its order. The training inputs stay FF2's, converted by the pre-audit `PDB_to_initial_structure.py` (A106, A107,
+   A117 not applied; same data).
+4. [x] The validation tree (11-23): the Mac's tree sent by rsync at 16:36, after the last glpG block ended 16:06, without
+   `--delete` (the staged force fields stay; replaced files in `bak_a231/`); `src py cmake tests` equal the training
+   tree's; built into `obj_a241` (upside `4aaa2a5a`, libupside.so `51fabcb2`); its regress record on the 28 fixtures
+   equals the training tree's (50295142, 0 of 4064 arrays differ, the same log); installed 18:20 (`obj/*.bak_a231`
+   keep the A231 build). The first sync copied 39 excluded files (findings 10.70), removed by its log's list.
+5. [ ] Validation tools on Upside 3, new scripts beside the Upside 2 ones, each shape `--test-only` first:
+   the 44-domain and mdCATH panels (`ff3_selection/panel.py` under `env_upside3.sh`, its config writer checked against
+   the Upside 3 `upside_config` on the login node); the Peng arms (`upside3_validation/peng`'s bench); glpG
+   (`run.py`, already Upside 3); the checkpoint reads pointed at the Upside 3 references.
+6. [ ] References on the A240 build: ff2.1 and the start on the 44-domain panel, the BBA and BBL native arms and glpG
+   TM4; ff2.1's mdCATH panel and 32 Peng arms when a candidate reaches full validation. Measured costs on the Upside 2
+   runs: a 44-domain panel about 45 min on 28 CPUs, an mdCATH panel about 6 h, a Peng arm 3-7 days on 14 CPUs, a glpG
+   block 35 h on 28 CPUs.
+7. [ ] The retrain `ff3x_u3` (11-22). The first link 50289605 (R 11:08:55) FAILED 11:41: all 57 workers stopped after
+   the simulation at the backbone burial node's parameter derivative, read at the pre-audit 4 parameters where Upside
+   3 has 24 (its 4 and the 20 burial weights, A29); my interface check compared the Python modules and not the
+   engine's parameter layout (findings 10.76). Its retry 50289606 cancelled 11:45. Fixed as the audited trainer
+   (the weight derivative added to `envw`'s), tested on the login node on one protein at 600 time units through the
+   worker, the master's update and the epoch end; the run rebuilt and resubmitted 14:38 as 50289964 (PD). Each epoch
+   end (8 steps) judged by the rule with the Upside 3 numbers once steps 4-6 are done (tags `u3_EE`); the TM4 swaps'
+   reads (11-23) may add H-bond or glycine holds to a second run.
+7b. [ ] **The DSE reference bug (found 11-23; user: "a bug we need to address ... DSE is using an old version of ff to
+   train new one"; findings 1.46, 10.78).** Since 11-14 the SARW reads ff2.1's `rama.dat` (`996a607b`) while the model
+   reads the round's library, so every DSE row compares the trained model's unfolded state with a coil of ff2.1; on
+   glycine the DSE rows undo the fix in all 48 steps of `ff3x_u3` (alpha_L -294, the NSE +104). In `ff3x_u3` and both
+   ff3.3 lines. The repair, in the training tree's trainer (outside git):
+   - the SARW config is the step's own force field (the round's library and sheet, every current file) with only
+     the SI's terms removed (`zero_for_sarw`, as now);
+   - for the parameters the SARW also carries (the map's depths and the sheet mixing), the DSE step is the derivative
+     of KL(SARW || unfolded): (p_U - p_S)/T + Cov_S(V_other, w)/T^2 (10.65), V_other the removed terms' energy
+     evaluated on the SARW's frames; the contrastive form stays for the parameters the SARW does not carry;
+   - checks before any job: the SARW config equals the free one but for the zeroed terms (the map included); the
+     depth DSE derivative against a finite difference of KL by reweighting one protein's SARW frames; one protein
+     through a full step on the login node (10.76).
+   - the depths' prior centred on the run's start offsets (p57_09's), not on offset 0 = ff2.1's map: the audit
+     (findings 1.46) found it carries 0.65-1.18 of the per-map deviations' data pull each round toward ff2.1;
+   - decided by the user 21:11 11-23: `ff3x_u3` cancelled now (50290706 and successor 50296274, 21:12; epochs
+     0-5 kept, `u3_00`-`u3_05`), and the restart carries the repair with option 3's two changes (a relaxation visit
+     before the first update; parameter averaging in the trainer).
+   - [x] Built and submitted 21:58 11-23 at the user's "write the repaired trainer and submit it now" as `ff3x_u3r`
+     (`checks/ff3x_u3r_20261123/`, README; trainer `25884f93`, `rama_basin.py` `a63f2d6d`): relaxation visit 50296674,
+     first link 50296675 afterok. Login-node test (1brz, relaxation and two one-protein epochs; `test/check_test.txt`):
+     the SARW config differs from the free one only in the zeroed arrays; the depth DSE derivative equals a finite
+     difference of KL to 3.4e-8; the worker's record reproduced; epoch 0 starts at the relaxed frames; the average and
+     the prior centre as designed. At 101 SARW frames the reference term is noisy (rms 0.13 against the contrast's
+     0.07); read in the run by glycine's summed DSE rows per round, against ff3x_u3's one-signed -294 / +105.
+8. [ ] Records: CLAUDE.md ("Shared Upside Deployment", the training tree), `upside3.md` 5.4, `remote_jobs.md`.
+
 ## Known Errors / Blockers
+
+* **ff3.3 was trained and mostly validated on the pre-audit Upside 2 engine, not Upside 3** (checked 11-22 at the
+  user's "double check your training and validation should be on upside3"). Measured from each job's env file and
+  binary md5:
+  * both training lines (`ff3x_bbenv21`, `ff3p_bbenv21`) and the 44-domain and mdCATH panels use `$P/obj`, the
+    pre-audit build plus the 3.12 angle fix only (libupside.so `3d9c6366`, 10-18), with `$P`'s pre-audit trainer;
+  * the Peng arms (tests 2-3, the full validation's 32 arms, the side-chain swap arms) use the shared deployment
+    (`env_shared.sh`, pre-audit, `ed6648d8`, 09-26);
+  * only glpG TM4 runs on Upside 3 (`/beagle3/trsosnic/yinhan/upside3`, `0a4b83d3`, built 10-22), and that tree is
+    the Mac working tree at A231 (Python to A235): it lacks A236-A240, of which A238 and A240 (the H-bond occupancy)
+    change results, and 73 `src` files differ from the Mac's.
+
+  So ff3.3's force fields were trained by one engine and their TM4 read by another. The retrain that the swaps point
+  to needs an Upside 3 training tree first (`upside3.md` 5.4: none exists; the audited trainer refuses older
+  checkpoints, so the campaign starts fresh). It also needs the Upside 3 tree synced to the current ledger and its
+  references rerun on Upside 3. ff2.1's Peng arms exist on Upside 3 at A231 (`upside3_validation/peng`); the 44-domain
+  and mdCATH panels have no Upside 3 reference yet. Proposed to the user 11-22, nothing built.
 
 * **Upside 3 protein runs do not conserve energy without the thermostat** (11-02, Phase 35 item 11's V2 drift;
   findings 11g): 1ubq at T 0.85 with ff2.1 and with ff3.1, 4 copies x 5000 tu, gains about 90 E_up of total energy

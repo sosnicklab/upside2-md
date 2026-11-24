@@ -1611,3 +1611,43 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   submission) and `x3_read.sbatch` (pg_read.sbatch's TM and Ca-RMSD read against `ff21_released_tr`). Epochs 0 and 1
   (`x3_00`, `x3_01`) submitted 11:07: panel and read, BBA and BBL native arms, glpG prep and block 1; all R by 11:08.
   Epoch 2's at its checkpoint. Files: plan.md item 24, remote_jobs.md (job row, resume step 3, header).
+* **11-19 12:51-18:49, Mac Studio: ff3x_bbenv21 checkpoint reads.** `x3_02` submitted 12:51 by `submit_ckpt.sh 02`;
+  step 62's checkpoint `x3_s62` added at the user's "Add a checkpoint" (`submit_ckpt.sh` generalized to `<EE | sNN>`).
+  Test 1 fails for all four, narrowing: mean TM 0.628, 0.630, 0.641, 0.655 against released ff2.1's 0.682. The burial
+  scale weakened to -0.1253 at step 62 and back to -0.153 by step 67. Files: plan.md item 24, remote_jobs.md.
+* **11-19 20:55-21:25, Mac Studio: a second ff3.3 line at Peng's settings, `ff3p_bbenv21`** (user: Peng's settings,
+  start from ff3.2 where BBA, BBL and TM4 hold, our trainer with the Rama depths trainable). `ff3x_bbenv21`'s
+  `ConDiv.py` rewritten to his settings (per-group DSE, rates, regulariser, 4000 tu, ladder, elastic network, native
+  starts, re-deal, free-only swaps, SARW), dt 0.009 and our fixes kept. The first build used a restraint call the
+  wrapper lacks (fixed, rebuilt); the static check's own faults (NaN compare, `%f` spring constant) fixed in the check.
+  Static check and a two-step login-node sandbox passed; first link 50281597 submitted 21:25. New: `findings.md` 9x
+  (his regulariser 100 times ours), 10.70 (zsh loops go in bash files). Watch cron now `96e06b53`, both lines.
+  Files: plan.md item 31, remote_jobs.md, findings.md, `checks/ff3p_bbenv21_20261119/`.
+* **11-19 21:25 to 11-20 03:07, Mac Studio: watch of both ff3.3 lines.** `ff3p_bbenv21` started at once (21:25), about
+  15 min a step at 4000 tu; burial scale strengthening, -0.3708 at epoch 0's end; `xp_00` submitted 02:41 by the watch.
+  `ff3x_bbenv21` training complete 03:06 (step 75, scale -0.1918, recovered from -0.119 at step 63); `x3_03` submitted
+  03:07 at the user's go. Checked at the user's question: both trainers use per-group Adam rates (four groups differ);
+  only the DSE weight is uniform in ours (0.3) and per-group in Peng's (0.4/0.8). Watch cron now `449045d9`.
+  Files: plan.md item 24, remote_jobs.md.
+* **11-20 03:07 to 17:15, Mac Studio: watch to both trainings' end, then the full validation.** Test 1 failed for
+  every Peng-settings checkpoint read (`xp_00`-`xp_02`: -0.050, -0.039, -0.048 against released ff2.1), as for every
+  ff3.x one. `ff3p_bbenv21` ended 16:32 (step 75, scale -0.3436); `xp_03` submitted 16:34 by the watch. midway2-0328
+  ran two of two arms at about 0.45 speed (reported; the exclusion is the user's call). At the user's "run the full
+  validation for both. put BBA, BBL and TM4 at top": `checks/ff33_fullval_20261120/` built from `bbenv21_validate`'s
+  suite for `x3_03` and `xp_03` (Peng's 30 more arms each with BBA and BBL first, collectors with the BBA and BBL rows
+  on top, mdCATH panels and TM, h), `--test-only` on all 72, applied 17:10; the tests 2-3 reader `read_bba_bbl.py`
+  written and submitted on `x3_00`-`x3_02`. Files: plan.md items 31-32, remote_jobs.md, that directory.
+* **11-22 15:31 to 11-23 18:20, Mac Studio: watch of the Upside 3 retrain, the TM4 swaps, Phase 41 step 4.** `ff3x_u3`
+  ran epochs 0-4 (40 steps, 57 of 57 each; a cluster NODE_FAIL 20:56 11-22 cost one step's 25 min); its backbone
+  burial scale weakened to -0.1324 and recovered. The TM4 swaps of `x3_03`: H-bond file 0.858 and Rama library 0.795
+  pass, whole Rama 0.668 and pair table 0.626 fail by the last quarter; two blocks ended FAILED on a full /beagle3 at
+  their last write with trajectories complete. The validation tree synced to A240 + U1 and installed after a regress
+  compare equal to the training tree's. Files: findings.md 1.46 and 10.70, plan.md items 33 and Phase 41,
+  remote_jobs.md, `checks/ff33_bbabbl_20261121/tm4/`, `checks/valtree_a241_20261123/`.
+* **11-23 18:31 to 21:58, Mac Studio: the DSE reference bug and the repaired retrain.** At the user's challenge
+  (start file or ff design?), the records showed the training's own direction is the problem; the glycine split of
+  `ff3x_u3`'s depth updates put the glycine erosion on the DSE rows, and the user named it a bug: the SARW ran ff2.1's
+  map. The audit found a second instance (the depth prior centred on ff2.1's map). `ff3x_u3` cancelled 21:12; the
+  repaired trainer with option 3 written, tested on the login node (six checks pass) and submitted 21:58 as
+  `ff3x_u3r`. Files: findings.md 1.46, 10.64, 10.77, 10.78; plan.md Phase 41 item 7b; remote_jobs.md;
+  `checks/ff3x_u3_20261122/gly_dse_20261123/`, `checks/ff3x_u3r_20261123/`.

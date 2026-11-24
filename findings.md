@@ -2578,6 +2578,131 @@ the lattice, other chains, the rest of the chain, ligands) carry that advantage?
 - Files: Mac `scratchpad/xtal_contacts_20261118/` (README, `read.txt`), cluster `checks/xtal_contacts_20261118/`
   (job 50278156, 5 min).
 
+### 1.46 Both ff3.3 lines lose BBA and BBL by the side-chain file, by energy split, and accuracy by it, by swap (2026-11-21; BBA and BBL swaps running)
+
+User 11-21: "Check why BBA and BBL fails and if we could improve ff design or training process" (plan.md Phase 38
+item 33). Files `checks/ff33_bbabbl_20261121/` (README); 1.44's tools unchanged, on the complete Peng arms of
+`ff3x_bbenv21` (`x3_*`) and `ff3p_bbenv21` (`xp_*`), both from `ff_bba_32bbenv21` (BBA 0.656, BBL 0.223).
+- **The state is 1.39's again.** BBA's hairpin (1-13, GLY8 included) goes alpha_R 0.92-0.98 at `x3_01` and `x3_03`,
+  0.67-0.90 at `xp_00`: one helix, Rg 12.2 A at `x3_01`. BBL keeps both helices; its loop 19-33 rearranges (at `x3_00`
+  ALA22-SER23 alpha_R 0.92 -> 0.33, ILE25 and LYS26 to alpha_R).
+- **The map does not carry it on the ff3.x line.** Its depth offsets on BBA's hairpin stay at the start's (aR - beta
+  +0.058, then +0.044 / +0.039 / +0.045 / +0.062 at `x3_00`-`x3_03`; ff3.3 `r33_19` -0.228) and BBL's loop moves away
+  from alpha_R. On Peng's line the hairpin moves toward alpha_R every round (+0.011 to -0.079), and BBA and BBL still
+  flip together between checkpoints (lost at `xp_00` and `xp_03`, held at `xp_01`-`xp_02`), which that drift does not
+  follow.
+- **The side-chain file carries the most in every split** (E(non-native) - E(native-like), single nodes, forward equal
+  to reverse within 0.1; nine splits, tail frames TM < 0.3 and BBA's all-helix frames): `sidechain.h5`'s hydrophobe
+  coverage, pair and H-bond coverage tables 55-78% of the change on the ff3.x line's BBA (`x3_00` -> `x3_01` all-helix
+  -5.21 of -6.97, the backbone burial -1.20), about all of BBL's (start -> `x3_00` -11.87 of -11.69; -> `x3_03` -32.73
+  of -32.46), and more than all on Peng's line (start -> `xp_00` all-helix -10.80 of -7.70, the burial +1.07 and the
+  H-bond energy +1.97 against). The hydrophobe coverage table is the largest node in eight of the nine. The Rama node
+  is -0.2 to -0.9 in each.
+- **Peng's settings move those tables 2-3 times as far** (`param_moves.txt`: 0.27-0.28 of their norm at `xp_00`
+  against 0.10-0.11), each epoch's step (0.11-0.17) above the net growth from the start (0.03-0.09).
+- **My prediction was wrong**: written before the splits, it put the ff3.x line's BBA loss on the backbone burial scale
+  (-0.265 at `x3_00`, holding, to -0.192 at `x3_01`); the burial node is 13-17% of that epoch's change.
+- Fixed-frame splits rank nodes and do not decide populations (1.44: they pointed at the side-chain file and the swap
+  found the map). The side-chain file is the first swap to run.
+- **The swaps decide it for BBL and most of BBA** (final read 15:15 11-22, full arms, README rule fixed before they
+  ran; `swap_read_final_{bba,bbl}.txt`). BBA folded at T 0.65 (start 0.656, ff2.1 0.842): `x3_03` with the start's
+  `sidechain.h5` 0.432 against `x3_03`'s 0.034, restores (+1.4 block SE past the midpoint); the start with `x3_03`'s
+  0.227, loses (-2.2); `xp_03` with the start's 0.531 against 0.085, restores (+1.9). BBL TM > 0.5 at T 0.70 (start
+  0.223, ff2.1 0.152): 0.767 against 0.005, restores, above the start; 0.001, loses; 0.377 against 0.029, restores. So
+  the trained side-chain file is necessary and sufficient for BBL's loss on both lines, sufficient to lose BBA, and
+  carries most of BBA's loss; `x3_03`'s other files keep BBA at 0.432 of the start's 0.656.
+- **The start's side-chain file does not repair TM4** (glpG block 1 of each swap, `glpg_u3_block1.py` on run.0, T 0.70,
+  read 05:33 11-23; `checks/ff33_bbabbl_20261121/tm4/tm4_sw_*.txt`; test 4 needs mean and last quarter above 0.645).
+  In glpG's hybrid `sidechain.h5` enters only the pair table. `x3_03` with the start's: TM4 135-151 DSSP alpha mean
+  0.626, last quarter 0.428, against `x3_03`'s 0.267 / 0.184 and the start's 0.773, so it fails; the pair table
+  lifts TM4 but is not the whole loss (146-151 at 0.44-0.54). `xp_03` with the start's: 0.702 / 0.601, failing by
+  the last quarter, near the line, against `xp_03`'s own 0.836 / 0.776; one run each, and adjacent checkpoints
+  swing 0.3, so it is not a measured loss. The Rama and H-bond swaps of `x3_03` decide the rest.
+- **`x3_03`'s trained Rama library is necessary for its TM4 loss** (`ff_sw_x303_ramast`, `x3_03` with the start's
+  `rama.dat` under `x3_03`'s `sheet` mixing; block 1 COMPLETED 11:07 11-23, 217 frames, read 11:32,
+  `tm4/tm4_sw_x303_ramast.txt`): TM4 DSSP alpha mean 0.795, last quarter 0.743, passing test 4, at the start's
+  0.773 (`x3_03` 0.267); TM1 0.96. The library carries the glycine rows whose alpha_R preference over alpha_L the
+  training halves at TM4 (G135, G142, G148; `tm4_offsets.txt`), and its other rows; which rows carry the loss is
+  not measured. One run; 0.15 above the line against a 0.3 swing between adjacent checkpoints.
+- **The Upside 3 retrain moves those rows the same way** (`tm4/tm4_offsets_u3.txt`, 11:33 11-23): TM4 glycine
+  c[aR] - c[aL] -0.524 at the start, -0.419, -0.376, -0.395, -0.336 at `u3_00`-`u3_03`, against `x3_00`-`x3_03`'s
+  -0.422, -0.367, -0.312, -0.301; holding the side chains did not hold the map. That number alone does not
+  decide TM4 (`x3_02` at -0.312 held, `x3_03` at -0.301 failed); `u3`'s TM4 is read by test 4 on its checkpoints.
+- **All three of `x3_03`'s trained arrays carry part of its TM4 loss; the H-bond file the most** (the four TM4 swaps,
+  each block 1 at T 0.70, read 11:32 and 16:32 11-23, `tm4/tm4_sw_x303_*.txt`; `x3_03` 0.267 / 0.184, the start
+  0.773). With the start's `hbond.h5` 0.858 / 0.903, passing above the start; `rama.dat` 0.795 / 0.743, passing;
+  `rama.dat` and `sheet` (the whole Rama potential) 0.668 / 0.624, failing by the last quarter near the line;
+  the side-chain pair table 0.626 / 0.428, failing. Each swap lifts TM4 by 0.36-0.59 from `x3_03`, so the loss is
+  the sum of the three trained changes, not one array's. The two Rama swaps differ by less than one run's 0.3 swing.
+- **The Upside 3 retrain weakens the H-bond energies the same way, more slowly per epoch** (its link logs' `hb` line,
+  11-23). After each epoch [E1 E2 E3], dhb: `u3_00` [-1.890 -1.796 -1.796] -0.374, `u3_02` [-1.852 -1.720 -1.681]
+  -0.449, `u3_04` [-1.818 -1.690 -1.557] -0.509; `x3_00` [-1.879 -1.781 -1.762] -0.388, `x3_02` [-1.801 -1.695
+  -1.556] -0.507, `x3_03` [-1.752 -1.680 -1.504] -0.557 (after step 0 [-1.896 -1.836 -1.758/-1.778]). Both see 456
+  proteins an epoch; `u3` takes 8 Adam steps to `x3`'s 19, so `u3_04` sits at `x3_02`, which held TM4 (0.788).
+- **The DSE rows, not the native data, undo the glycine fix** (`checks/ff3x_u3_20261122/gly_dse_20261123/`,
+  `gly_dse_split.py` on `ff3x_u3`'s 48 `rama_step.npz`, read 21:05 11-23). Summed over glycine's 39 pooled maps, the
+  DSE rows (lambda 0.3 applied) raise alpha_R and lower alpha_L in every one of the 48 steps, +105 and -294 in all;
+  the NSE rows are mixed in sign and net the other way, -68 and +104, toward the fix, as from ff3.0's map on 10-21
+  (1.29's sequel: "the data point to ff3.0's glycine map"). Mechanism (10.65): since 11-14 the SARW runs on ff2.1's
+  fixed `rama.dat`, so the DSE's depth term is minimal where the unfolded glycines populate their basins as a random
+  coil on ff2.1's map would; ff2.1's glycine rows carry the PDB selection that the glycine fix removed (ff2.1 biases
+  every glpG glycine toward alpha_L by 0.47-1.23 E_up). The reference's map, not the DSE weight, pulls glycine back.
+  **This is a bug, introduced 11-14 (10.78)**: the DSE trains the new force field against a random coil of the old one
+  (the SARW reads `parameters/common/rama.dat`, `996a607b`; the model the round's library), in every run since
+  `ff33_sarwfix57`, `ff3x_bbenv21`, `ff3p_bbenv21` and the running `ff3x_u3` included. It touches every DSE row, not
+  only the depths: each compares the trained model's unfolded state with a coil sampled on ff2.1's map. How much of
+  the H-bond weakening it carries is not measured.
+- **Audit for the same class (user 11-23: "double check if there is any similar bugs in the training"), `ff3x_u3`'s
+  trainer (`ff99f70b`, `rama_basin.py` `d24d3dca`).** A second instance: the depths' Gaussian prior is centred on
+  offset 0, ff2.1's map, while the run starts from p57_09's depths (`depth_prior_split.py`, same directory). Each
+  round the prior's part of the per-map deviations' update is 1.18, 0.83, 0.75, 0.71, 0.65, 0.73 of the data's,
+  and the per-map data are mostly sampling noise (1.29, 10.65), so the prior is their consistent force: the
+  offsets' rms fell 0.269 -> 0.106 (alpha_R) in four rounds, toward ff2.1's map. On the shared offsets the prior
+  is 4-6% of the data, so glycine's erosion is the DSE rows' (above). Checked and not of this class: the worker's
+  force field is the step's in every file (side chains, environment and the burial node's 20 weights, which
+  `upside_config` takes from the current `environment.h5`, its 4 parameters, H-bond, sheet, the round's library);
+  datasets copied from the start's files are untrained (placements, rotamer library); every <dV/dtheta> is
+  evaluated under the free Hamiltonian and the depth grids from the round's library; `rama_reference.pkl` is the
+  fixed alanine-chain reference state of the model (Jumper thesis 4.3), the same in every replica; the side-chain
+  regulariser's target is a fixed repulsive core, not a parameter set. By design, re-sampled under the current
+  parameters: the persistent chains' starts and the SARW's temperature come from the previous visit.
+- **The trained side-chain moves also cost accuracy, on both lines** (44-domain panels of the swaps, rule fixed before
+  they ran, `checks/ff33_bbabbl_20261121/acc_read_sw_*.txt`, 16:06-16:15 11-21). Each final checkpoint with the
+  start's `sidechain.h5`, against itself: `x3_03` 0.648 -> 0.690, +0.042 [+0.030, +0.058]; `xp_03` 0.619 -> 0.666,
+  +0.047 [+0.031, +0.065]; Ca-RMSD -0.35 and -0.49 A. With the start's file, `x3_03`'s other files are level with
+  released ff2.1 (+0.008 [-0.002, +0.019]) and `p57_09` (0.698; -0.008 [-0.019, +0.003]); `xp_03`'s stay under
+  both (-0.016, -0.032). So the side-chain training is where the accuracy went, and the ff3.x line's other
+  trained files did not gain any; this agrees with our trainer's ff2.1 retrain losing to released ff2.1 (plan.md
+  Phase 38, `ff_2.1_ctrl38`). A swap is a post-hoc mix, not a run trained with the file fixed.
+- **On both lines the side-chain tables random-walk; the H-bond energies drift** (`epoch_cosines.txt`, 11-22, 1.40's
+  measure; user 11-22: Jumper said more proteins in each step is better). Cosines between successive epochs'
+  displacements: pair, coverage and hydrophobe tables +0.0 to +0.3 on both lines, each epoch's step 7.5-8.6% of the
+  table on the x3 line (11-16% on Peng's), and about 0 against epoch 0's; the H-bond energies +0.86 to +0.98, one
+  way; the Rama offsets and environment mixed. ff3.2 (57 a step, the side-chain rate 10x smaller) drifted its pair
+  table one way, +0.70 to +0.80, at about 1% an epoch (1.40). Both lines ran the side-chain rate at the published
+  0.125 (the docstring, restored 11-13), not 10x smaller as I told the user 11-22; corrected. The Adam step
+  (`rotamer_parameter_estimation.AdamSolver`, beta1 0.8, beta2 0.96) has no decay, so minibatch noise is never
+  averaged out: Jumper's thesis (ch. 3 p. 68) argues for small minibatches (38 of 12) only "as long as the parameter
+  step sizes decrease appropriately", and his side-chain training used minibatches of 256 proteins (ch. 2 p. 34).
+  Adam is Jumper's own choice (ch. 2 p. 34, ch. 3 p. 68), and every trainer here (Peng's December 2020 file,
+  Kleinmann's port, ours) uses Upside's `AdamSolver` at a constant rate. Peng's file carries the decay
+  `alpha * 1/(1 + 0.5 epoch)` commented out (`ConDiv_t2.00_20201211.py` lines 704-707), so FF2 ran it constant too.
+  Jumper's own trainer (`~/Documents/ConDiv.tar`, `ConDiv_original.py`, the copy kept in Peng's tree) is the same: Adam
+  at a constant rate, the side-chain `rot` rate 0.5 x 0.25 = 0.125 (ours), minibatches of 12, and the same decay
+  lines commented out (441-444). So the published protocol itself random-walks the side-chain table; FF1's and FF2's
+  released sets are chosen points of such walks, and the stopping step chose them.
+- **Interim structure read of both last checkpoints' Peng arms** (11-22, user: "do you find any clear misfold/unfold
+  in validation run?"; `checks/ff33_fullval_20261120/interim_struct/interim_struct_1122_1014.txt`; cold rung over each
+  arm's completed chunks, ff2.1's same arm cut to the same frames; all on the shared Upside 2 engine; cspA not read).
+  Peng's `xp_03` **unfolds**: at the cold rung alpha3d, homeodomain, NuG2 and proteinG lose the native (TM 0.22-0.30
+  against ff2.1's 0.54-0.79, Rg 1.7-2.1 times native, 63-81% of frames expanded), and alpha3d, homeodomain and top7
+  never fold de novo (TM 0.13-0.14 against 0.52-0.57, every frame expanded); proteinB, top7, ubiquitin and proteinL
+  native hold. The ff3.x line's `x3_03` **misfolds**: its chains stay compact (Rg 0.88-1.02 of native) but wrong more
+  often than ff2.1's: BBA at 6.1 A median Ca-RMSD against 2.4 (Rg 0.88), compact frames with TM < 0.35 in NuG2,
+  proteinG, proteinL, WW, lambda and ubiquitin de novo 45-97% against 6-71%; it loses part of NuG2, proteinG,
+  proteinL and hyp native (TM > 0.5 46-68% against 64-100%) and unfolds only top7 de novo (61% expanded). It beats
+  ff2.1 on lambda native (TM > 0.5 85% against 2%) and gpW de novo.
+
 ## 2. The hybrid model: what each side supplies
 
 ### 2.1 Replaced by design
@@ -3554,6 +3679,7 @@ Effects on ff2.1 are not measured (upside3.md 1.1).
 | A238 | `hbond.cpp` `HBondEnergy::compute_value`; `device_hbond.cu` | yes | a residue whose H-bond count is exactly zero was skipped, so its donor's and acceptor's occupancy took sensitivity 0 instead of the residue's energy per H-bond, the derivative of an energy linear in the count; a count one ulp above zero on one backend and zero on the other flipped it (found by the device port, findings 11g) | forces inconsistent with the energy by about 1e-6 at such residues | the skip removed (user 10-29: "fix the issue"); reproducer `scratchpad/gpu_work/a238_repro.py` on 1dfn's backbone config: every site's sensitivity now equals the energy per H-bond recomputed from the rama angles (max difference 1.4e-7, was 1.96 at the zero-count sites); node_fd on 1dfn and chig_hbond passes hbond_energy; regress moves only the static forces (24 arrays, relative RMS change at most 8.5e-9) and the dynamics after them |
 | A239 | `martini_brownian.cpp` `apply_langevin_step`; `device_engine.cu` `DeviceDynamics::langevin_cycle` | no | the g-JF position update was written x + (b dt/m) p + (b dt^2/2m) f + (b dt/2m) beta, and a compiler that keeps that order (nvcc; clang on the Mac for z) adds the force term to x + (b dt/m) p, a value on the coordinate's grid, alone: below half an ulp of a coordinate tens of A from the origin (47% of 1rkl 7.0's lipid coordinates, which reach 176 A) it rounds away, against the force, so the bath heats; gcc on broadwl had reassociated it to (x + A) + (B + C), where the noise dithers it (findings 11g) | the GPUs' lipid bath 0.35% hot (KE 4.5 SE, potential +24 E_up) in the hybrid's V2; the Mac's CPU build heats z the same way | written x + (b dt/m)(p + dt/2 f + beta/2), one rounding at the coordinate under any compiler; reproducer `scratchpad/gpu_work/deadzone_repro.py` on 1rkl 7.0's 10-tu frame: energy gained per lipid atom and inner step 5.7e-7 E_up in source order (5.3e-7 makes 0.35%), 8.8e-9 +- 1e-8 in gcc's, 4.2e-9 +- 8.7e-9 in the new form; the K80 with the step summed first (build g7a, 16 seeds x 4 systems at T 0.80, no exchange): lipid KE/1.5kT 1.00523 against the CPU's 1.00513 (+0.1 SE), was 1.00932; regress moves only the hybrid fixtures' dynamics (12 of 4260 arrays: kinetic, pos, potential of 1rkl 7.0 and 7.1, frame 0 equal); V2 of the hybrid on the fixed build g7b (REMD, 16 CPU, 16 K80, 8 V100 seeds): Bonferroni 1 on both GPUs |
 | A240 | `hbond_interaction.h` `ProteinHBondInteraction::compute_edge`; `hbond.cpp` `ProteinHBond::compute_value`; `device_hbond.cu`; `Float4.h` (`log1pf`) | yes | a donor's or acceptor's H-bond occupancy, 1 - prod(1-hb) over its pairs, was formed as -logf(1-hb) per pair and 1-expf(-s) over the pairs; both subtractions round to the float grid below 1, so an occupancy kept only whole steps of 2^-24 (6e-8): a weak bond (hb ~ 1e-6) had a few to a few hundred levels, and one below half a step read 0 (found by the device port's V1 at scale, findings 11g) | an occupancy error up to about 3e-8, about 1e-7 E_up of H-bond energy; between backends one ulp of `expf` moved a weak bond a whole step (1.7% of BBA's hbond_energy at its hottest native frame), and a weak-bond energy was flat under coordinate moves, so V1 had no rounding scale there | -log1pf(-hb) and -expm1f(-s) on the CPU and the device (user 11-02: "fix the bug you find"); reproducer `scratchpad/gpu_work/a240_repro.py` on BBA's and NTL9's frame 3 (`configs/v1x/`): before, every occupancy below 1e-3 on the 2^-24 grid (BBA 56 and 1 steps) and hbond_energy unchanged by 4-ulp moves; after, none on the grid, the moves change it by 1e-9 to 3e-8, every occupancy within 0.49 step of before; node_fd on 1dfn and chig_hbond passes hbond_energy; regress (`dev13_record.npz` to `dev14_record.npz`, MacBook Pro; dev13 equal to `dev12_record.npz`) moves 835 of 4260 arrays, every static one reachable from protein_hbond (`a240_regress_check.py`), protein_hbond by at most 7.6e-8, the largest static change 2.3e-5 E_up (1ubq's rotamer energy, of 68), every trajectory's frame 0 equal; V1 on the host backend passes BBA and NTL9 at both tolerances and the 14 standard configs; V1 on the V100 with build g8a passes every quantity of the 32 Peng configs at both tolerances (62096441) and of the 14 standard configs (62096444), 11-02 (plan.md Phase 35 item 11); g8a installed in the GPU tree 17:22 11-02 |
+| A241 | `src/CMakeLists_Other.txt` (cluster builds) | no | `-ffast-math` sat in `CMAKE_CXX_FLAGS`, which CMake also puts on the link line, where GCC before 13 adds `crtfastmath.o`: every process that loaded `libupside.so` (the trainer's numpy included) and every `upside` run had flush-to-zero and denormals-are-zero set (upside3.md 4.5, U1) | `nm` found `set_fast_math` in the binary and the library of every cluster build (10-22, again 11-22) | `-ffast-math -fno-finite-math-only` moved to `add_compile_options` for C++ only (user 11-22: the compile-only fix); midway2 GCC 10.1 builds of the A240 source with the old and the new flags (`checks/u1_20261122/`): `set_fast_math` gone from both objects, the compile lines unchanged, `tests/regress.py compare` over the 28 audit fixtures 0 of 4064 arrays differ (nodes, forces, parameter derivatives, seeded dynamics) |
 
 Deliberately not changed: the H-bond radial cutoff of 3.5 A truncates the factor at 3.4e-4, which is below the
 1e-4-scale energy noise BP already carries. Moving it to 4.0 A would cut the jump to 6e-6, at about 1.5x the
@@ -5405,6 +5531,9 @@ ff2.0, the closest surviving relative of the code that trained FF2; what ff2.0's
   difference (1.42), untested under the basin wall.
 - Learning rates (times 0.5): bbenve 0.01 (ours 0.025), rot 0.25 (0.125), envs 0.005 (0.01), dhb 0, frozen (0.005);
   enve, envc, envw, hb and sheet equal. Ours are the port's.
+- The side-chain regulariser is 100 times stronger in his: `run_minibatch(..., state['n_prot']*.01, ...)` passes
+  `reg_scale` 4.56, which divides the Student-t priors on the rotamer, coverage and hydrophobe tables; ours passes
+  `n_prot`, 456. Found 11-19 while building `ff3p_bbenv21` (plan.md Phase 38 item 31), which takes his.
 - The reweighting exponent E(T0-Ti)/Ti, the dE < -200 clamp and the guard that drops the DSE when the hottest free
   replica's last energy passes 1000 are Peng's own, not the port's drift; our fixes stay deliberate departures.
 - 4000 tu a step (the SI and ours 8000), time step 0.015 (ours 0.009), the ladder 0.85(1 + (150/N)^0.05 0.014 k)^2,
@@ -6213,6 +6342,9 @@ I recommended training glycine's depths alone, citing ff3.0's TM4. User 11-13: "
 in ff3.0, and the validation shows it is significantly under ff2.1" (Peng natives -0.072, 14 of 16 below, 1.44's
 table, which I had in hand). **Before recommending a design, look up every earlier run of it and lead with its
 validation.**
+On 11-23 I listed "a glycine term that sees context, for example whether it sits in a helix" as a design option
+again, the term 10.60 ruled out (Upside folds de novo), and persistent chains as untried while every trainer
+since ff3.2 has them (10.77). **Search the lessons (10.x) for each option's mechanism before listing it.**
 
 ### 10.65 The DSE's SARW carries the trained map, so its target moves with the depths (2026-11-14)
 
@@ -6384,6 +6516,19 @@ The watcher for the ff3.0 BBA arm's first chunk held its ssh call in `X="ssh -o 
 output; the snapshot it was to take before the successor started was never made. Found at 03:07 when its output file
 was still empty. **In a background watcher, write the ssh command out in full (as the other watchers do), and never
 send the call's stderr to /dev/null in the loop condition: an empty state must be told apart from a failed call.**
+The same zsh rule broke two waits on 11-19 (`set -- $out` left the whole reply in `$1`; one exited as an error, one as
+done while the build still ran). **A loop for the Bash tool goes in a bash script file run as `bash <file>`, reading
+the reply with `read -r a b c <<< "$out"`, and the remote side prints a fixed first word to tell a reply from a
+failure.** `pgrep -f` from an ssh command also matches the command's own shell when its text contains the pattern.
+On 11-20 a read-file wait reported `xp_read_00.txt` DONE while the file did not exist: `grep -c` on a missing file
+prints nothing, so the next field (the queue count, 1) was read as the DONE count. **Every remote field prints a
+value in every state (`if [ -f F ]; then grep -c ...; else echo 0; fi`), and the loop stops if it reads fewer
+fields than it asked for.**
+On 11-23 the validation tree's sync held its rsync excludes in `X="--exclude=.git ... --exclude=__pycache__"`; zsh
+passed `$X` as one pattern that matched nothing, and the sync copied 39 files it was to leave out (`*.bak*` force
+fields, `__pycache__`) and two `.DS_Store`; found in the itemized log, removed by that log's list and restored from
+the backup directory. **Write rsync options out in full on the command line, or as a bash array in a bash script;
+read the itemized log of every sync before building on it.**
 
 ### 10.71 Every clock time in the records comes from a clock (2026-11-17)
 
@@ -6415,6 +6560,70 @@ about the cliff drop." A released force field can be the best of several runs, s
 expected to lose some accuracy at first, and that loss is not a defect to chase. **Ask what the run must achieve
 (here: TM above released ff2.1 with BBA, BBL and TM4 held) and measure its checkpoints against that, choosing the
 best epoch that passes; propose a mechanism study only when the end criterion fails.**
+
+### 10.74 Check the engine of every training and validation job, not only its force field (2026-11-22)
+
+The user asked to double check that the training and validation are on Upside 3. They were not: both ff3.3 training
+lines, the 44-domain and mdCATH panels and every Peng arm ran on the pre-audit Upside 2 builds (`$P/obj` and the
+shared deployment), and only glpG TM4 ran on the Upside 3 tree, itself 9 ledger entries behind the Mac. I had reported
+these runs for days without checking which engine each job loaded. **Before a training or validation is submitted,
+and when reading its results, name the engine each job uses (its env file, its binary's md5) and check it against the
+intended one (Upside 3 for every Upside 3 force field, the tree synced to the current ledger). Comparisons across
+jobs hold only within one engine.**
+
+### 10.75 A retrain carries what the earlier trainings established (2026-11-22)
+
+Moving training to Upside 3, I proposed retraining ff3.x unchanged first, to see whether its losses recur on the new
+engine. The user: "Make sure you put in our findings from our previous training: which file to use as start, training
+step restriction, etc", and started it at once ("current one surely do not work"). A run known to fail is not worth
+its 798 CPUs as a baseline. **When a training is rebuilt (new engine, new tree), list the decisions and findings of the
+earlier runs that bear on it (start file, groups held or rate-limited, batch, budget, stopping) from plan.md's Key
+Decisions, the findings and the memories, and propose the run with them in; an unchanged rerun only when the user
+asks for one.**
+
+### 10.76 A ported trainer runs one full step on one protein before it is given a cluster (2026-11-22)
+
+I ported ff3x_bbenv21's trainer to Upside 3 by comparing its calls with the audited Python modules, checked that it
+parsed, initialised and staged its side-chain rate on a copy of the state, and submitted 798 CPUs. All 57 workers
+failed 32 minutes in: the backbone burial node has 24 parameters on Upside 3 (A29) and the worker asked for the
+pre-audit 4. The interface I compared was the Python one; the engine's parameter layouts are an interface too. The
+retry cost another 798 CPUs until I cancelled it, and the run lost three hours. A login-node run of one protein at 600
+time units through `run_minibatch` (workers local) took 80 seconds and found it. **Before a trainer runs on a new
+engine or after any change, run one full step on one small protein on the login node (worker, master update, epoch
+end), and compare every `get_param_deriv` shape with the audited trainer's.**
+
+### 10.77 A start file and a stopping step are a workaround for the objective's direction, not a fix (2026-11-23)
+
+The user asked why I treat the training's losses as a start-file problem and not a force-field design one, since a
+training run long enough should reach the correct potential whatever its start. I had presented the retrain's
+choices (start ff_bba_32bbenv21, side chains held then 10x slower, the earliest passing checkpoint) as the remedy.
+The records say the training's own direction is the problem: from released ff2.1 Peng's trainer and ours both lose
+0.040 mean TM in epoch 0 and move the same groups the same way (9x); the DSE term's SARW reference has no H-bonds, so
+its gradient can only weaken them (1.23), and that weakening is the largest part of `x3_03`'s TM4 loss (1.46); a
+per-type glycine map's fixed point favours alpha_L whatever the start (1.14); the side-chain tables random-walk at
+their fixed point under Adam (1.17). Neither published FF2 nor FF1 was trained to convergence (1.23: Jumper, CD "peak
+accuracy before fully converging"). **Present a start file or a stopping step as a workaround for where the
+objective leads, name the terms that move one way and the mechanism of each, and put the root-cause options
+(objective, functional form, optimizer) beside it for the user to choose.**
+In the same answer I offered persistent contrastive divergence as an untried remedy; every trainer since ff3.2
+(`ff32_pcd57`, 11-06), the running `ff3x_u3` included, already persists the free chains (its docstring and
+`free_final.npy`). **Before listing a remedy, read the running trainer's docstring and code for it.**
+
+### 10.78 A reference ensemble must be the force field being trained; fixing its gradient, not its parameters (2026-11-23)
+
+On 11-14 (10.65) the depths' DSE rows were wrong because the SARW carried the trained map and the step used the
+contrastive form, which is not the DSE's gradient for a parameter both ensembles carry. I fixed it by giving the SARW
+ff2.1's map. The user, shown on 11-23 that the DSE rows undo the glycine fix in every step: "This sounds like a bug we
+need to address instead of a fix, that DSE is using an old version of ff to train new one." I had called the repair
+a fix. The SI's SARW is the model without its H-bond, side-chain and solvation terms, so its local terms must be the
+force field being trained; the 11-14 change made every DSE row compare the new model's unfolded state with a coil of
+the old one. The right repair of 10.65 was the gradient: for a parameter the reference also carries, the derivative of
+KL(SARW || unfolded), (p_U - p_S)/T + Cov_S(V_other, w)/T^2. **A reference or target ensemble is built from the
+current parameters with only the terms its definition removes; when its dependence on a trained parameter makes the
+contrastive step wrong, derive the step, never pin the reference to older parameters. When a measured pull is the
+objective acting against a stale input, call it a bug.**
+The audit the user asked for found the same in the depths' prior: centred on ff2.1's map while the run starts from
+p57_09's (1.46). **A regulariser is centred on the run's own start unless its definition says otherwise.**
 
 ## 11. Reference: the two glpG PDBs disagree about TM4
 
