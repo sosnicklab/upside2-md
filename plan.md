@@ -3386,14 +3386,30 @@ old (Known Errors; findings 10.74).
    tree's; built into `obj_a241` (upside `4aaa2a5a`, libupside.so `51fabcb2`); its regress record on the 28 fixtures
    equals the training tree's (50295142, 0 of 4064 arrays differ, the same log); installed 18:20 (`obj/*.bak_a231`
    keep the A231 build). The first sync copied 39 excluded files (findings 10.70), removed by its log's list.
-5. [ ] Validation tools on Upside 3, new scripts beside the Upside 2 ones, each shape `--test-only` first:
-   the 44-domain and mdCATH panels (`ff3_selection/panel.py` under `env_upside3.sh`, its config writer checked against
-   the Upside 3 `upside_config` on the login node); the Peng arms (`upside3_validation/peng`'s bench); glpG
-   (`run.py`, already Upside 3); the checkpoint reads pointed at the Upside 3 references.
-6. [ ] References on the A240 build: ff2.1 and the start on the 44-domain panel, the BBA and BBL native arms and glpG
-   TM4; ff2.1's mdCATH panel and 32 Peng arms when a candidate reaches full validation. Measured costs on the Upside 2
-   runs: a 44-domain panel about 45 min on 28 CPUs, an mdCATH panel about 6 h, a Peng arm 3-7 days on 14 CPUs, a glpG
-   block 35 h on 28 CPUs.
+5. [ ] Validation tools on Upside 3, new scripts beside the Upside 2 ones, each shape `--test-only` first (11-23,
+   `checks/u3ref_20261123/`, README). The protocol of each test is the Upside 2 rule's; only the engine changes.
+   Done 22:24 11-23 for the runs: the panel's config check passes (given the trainer's working files, 1rlw's config
+   is bitwise equal to the trainer's; the staged start differs from them only in four `sidechain.h5` arrays by at
+   most 4.6e-16 relative, the trainer's latent round trip; `_analyze`'s engine angle check holds on Upside 3); the
+   bench preflight passes on A241. The reads (`read_t1.sbatch`, `read_bba_bbl_u3.sbatch`, its code paths run on A231 arms) and `submit_ckpt_ur.sh EE` written 22:33; the watch submits each epoch's four tests at its end (user 22:36 11-23, "run the watch run"; about 1,700 CPU-hours a checkpoint); tests 2-4 are read by hand.
+   - Test 1: `ff3_selection/panel_u3.sbatch`, `panel.py run` under `env_upside3.sh` (dt 0.015, 4 seeds); Upside 3
+     tags in the same `runs/` root under their own names (`u3_ff21`, `u3_start`, `ur_EE`), so `tm_panel.py` and
+     `panel_rmsd.py` read them unchanged. `panel.py` imports `rama_basin` at the top, used only by `select`; the
+     Upside 2 tree's `training/` is appended to `PYTHONPATH` for it, after the Upside 3 `py/`. Its config writer is
+     checked on the login node: 1bm8 written by the panel's options with the start's files must equal, array by
+     array, `ff3x_u3r`'s `relax_minibatch_00/1bm8.base.up` from the trainer.
+   - Tests 2-3: `upside3_validation/peng_a241/`, the `peng` bench with its base directory changed (A231's `peng/`
+     runs stay as their record); a reader of its own for the BBA and BBL native arms.
+   - Test 4: `upside3_validation/glpg_<tag>/run.py`, `glpg_ff33_r33_19`'s with only `force_field` changed;
+     `glpg/glpg_u3_block1.py`.
+   - The mdCATH panel and the 32 Peng arms only for a candidate (step 1).
+6. [ ] References on the A241 build (the U1 build of A240, installed 18:20 11-23), the start = the staged
+   `ff_bba_32bbenv21`, md5-equal to `ff3x_u3r`'s `init_param` plus `rama_round_00.dat`: ff2.1 and the start on the
+   44-domain panel, the BBA and BBL native arms and glpG TM4. Costs: a 44-domain panel about 45 min on 28 CPUs; a BBA
+   or BBL native arm about 25 h on 14 CPUs (Upside 3 at A231: 32 and 23 time units/s); a glpG prep plus block about
+   36 h on 28 CPUs. p57_09's arms (the BBA midpoint side check) are not rerun. Submitted 22:24 11-23
+   (`submit_refs.sh`; ids in remote_jobs.md), all running by 22:25. Test 1's references read 23:29 (`read_t1_u3_start.txt`): mean TM ff2.1 0.676 (Upside 2 0.682), the start 0.676, start minus ff2.1 +0.000
+   [-0.008, +0.009], Ca-RMSD -0.009 [-0.158, +0.116] A; the start passes test 1 on Upside 3.
 7. [ ] The retrain `ff3x_u3` (11-22). The first link 50289605 (R 11:08:55) FAILED 11:41: all 57 workers stopped after
    the simulation at the backbone burial node's parameter derivative, read at the pre-audit 4 parameters where Upside
    3 has 24 (its 4 and the 20 burial weights, A29); my interface check compared the Python modules and not the

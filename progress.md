@@ -1651,3 +1651,10 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   repaired trainer with option 3 written, tested on the login node (six checks pass) and submitted 21:58 as
   `ff3x_u3r`. Files: findings.md 1.46, 10.64, 10.77, 10.78; plan.md Phase 41 item 7b; remote_jobs.md;
   `checks/ff3x_u3_20261122/gly_dse_20261123/`, `checks/ff3x_u3r_20261123/`.
+* **11-23 22:10-22:35, Mac Studio (session `upside2-md-2b`): watch taken over, the Upside 3 references submitted.**
+  The background session `67ed33` (cron `449045d9`) stopped at the user's "kill the other session in this repo"; the
+  watch is cron `0019c692`, its probe `scratchpad/ff3x_watch.sh` now the retrain and the references only. Plan.md
+  Phase 41 steps 5-6: `ff3_selection/panel_u3.sbatch` (its config writer bitwise equal to the trainer's on 1rlw given
+  the same files), `upside3_validation/peng_a241/` (preflight passes on A241), glpG `glpg_a241_*`; ff2.1's and the
+  start's panels, BBA and BBL native arms and glpG TM4 submitted 22:24. `checks/ff3x_u3r_20261123/gly_dse_split.py`
+  reproduces ff3x_u3's glycine totals. Files: plan.md Phase 41, remote_jobs.md, `checks/u3ref_20261123/`.

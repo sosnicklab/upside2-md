@@ -5831,6 +5831,10 @@ Testing and run hygiene:
   and one `--duration`.
 * Check the units and axis directions of any workflow figure before showing it (the `_DG_Hbond.png` scale, 3.7, the
   ESS-censoring confusion and `_Tm_curve.png`'s inverted hydrogen-bond axis were found while building one poster).
+* **Stamp a watch record with the clock, never a rounded or estimated time (11-23, 11-24)**: three passes of the
+  ff3x_u3r watch wrote times 5-15 min off (22:45 and 22:50 for 22:36 and 22:37; 05:30 for a pass that ran 05:24-05:26),
+  and the next pass's SINCE, taken from that line, then lay in the future (sacct refused the window). Take the time
+  from `date` in the pass's first command and write that one.
 
 ### 10.15 A results slide states the comparison, not the bookkeeping (2026-10-05)
 
