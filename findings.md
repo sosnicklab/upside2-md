@@ -6067,7 +6067,25 @@ passed its 1,268,000-file soft quota by 10-27 (IFree 125,183) with the watch rea
 **Read `quota` on the midway3 login node (soft quota, limit, grace for `/beagle3` and `/project`) at every watch
 pass, and report any group over a soft quota with the grace left.** `quota`'s usage count can lag `df -i` by up to an
 hour: after the 11-03 08:12 deletion `df -i` read 1,163,475 at once while `quota` read the old 1,254,102 until after
-08:26 and matched by 09:26. So `df -i` gives current usage and `quota` gives the limits and grace.
+08:26 and matched by 09:26. So `df -i` gives current usage and `quota` gives the limits and grace. **From midway2,
+`mmlsquota -j beagle3-trsosnic --block-size auto beagle3_cap` gives the same for `/beagle3`** (the device name, not the
+mount; blocks 4.57 T against a 5 T soft quota and 5.5 T limit, files 670,195 against 1,268,000 and 1,394,800, at
+11:36 11-24), so the watch reads it every pass (`scratchpad/ff3x_watch.sh`); `df` reports free space against the 5.5 T
+limit, which overstates the room by the 0.5 T above the soft quota.
+**An unexplained transient ENOSPC on `/beagle3` (11-21, 11-24 twice).** Three glpG preps died on `OSError: [Errno 28]
+No space left on device` creating a new file in stage 7.0, 3.4-4.1 h in (`glpg_sw_x303_hbst` 23:53 11-21 at the stage
+7.0 VTF; `glpg_ff33_ur_00` 11:03 11-24 at `logs/stage_7.0.log`; `glpg_ff33_ur_02` 21:35 11-24 at the stage 7.0 VTF,
+after production had finished with KE/1.5kT 1.000), while the fileset had 910-930 G to its limit, 410-430 G to its
+soft quota and half its files free (`df -i` 49% at 21:40), the whole `beagle3_cap` 460 T, no group job on midway2
+ended near any of the times, and every other writer (Peng arms, REMD blocks, appending to open files) went on; only the
+failed prep's log among ours carries the error. Each prep's earlier file creations (stages 6.0-6.6, the 7.0 checkpoint)
+succeeded, and four preps on the same tree in the same days completed. A block or inode limit of the fileset does not
+explain it at the measured usage; a full storage pool under the fileset would, and is not visible to a user
+(`mmlsfileset` refuses: not the fileset owner). The cause is not established; a group job on midway3 or the beagle3
+cluster is not visible from midway2, and RCC can say which pool returned ENOSPC. Remedy each time: keep the run as
+`<run>.failed_nospace_<date>`, put the same `run.py` (md5-checked) in a fresh directory, resubmit; rerunning in place
+would submit block 1 from a seed whose stage 7.0 never ran, or whose solvation gate never ran when the VTF failed,
+because `run.py` tests only that the seed file exists.
 
 ### 10.40 A reference run is valid only if it carries every fix the run it judges carries (2026-10-26)
 
