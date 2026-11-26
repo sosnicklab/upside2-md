@@ -1034,6 +1034,20 @@ control ff_2.1_ctrl38 on held-out proteins; detail in `$P/training/ff21_nobp_dt0
   -1.854). On the fixed engine no-BP read +0.289 to +0.357 over steps 38-75. Whether the high margin (left-handed
   natives, glycine alpha_L and some Asn/Asp, pay more per H-bond) is part of no-BP's mdCATH loss is not tested; the
   margin has not predicted helix populations or panel folding before (1.15, the panels above, 1.24).
+- **The three arms' DSE reference is the step's own force field; ff3.3's stale-reference bug is absent** (user
+  11-24: did these runs make ff3.3's mistake of a DSE on an older force field, 10.78; read only). `ff21_nobp_dt009`,
+  `ff21_ctrl_dt009` and `ff21_bpmax_dt009` (1.38) each ran their `run_output/ConDiv.py`, md5 `8977d7f7`, last edited
+  10-06, before the 11-14 change that put the SARW on ff2.1's map. Each worker writes one config from the step's
+  files, copies it to all 14 systems and scales only the SARW's H-bond, side-chain burial and pair terms to zero;
+  the map is a fixed input, each run's `upside_input/rama.dat` md5-equal to ff2.1's `common/rama.dat` (`996a607b`),
+  read by the model and the SARW alike; no depth is trained, so there is no depth prior. Two departures from the SI
+  are shared with every ff3.3 line before `ff33_sisarw57`, the same in all three arms: the SARW keeps the backbone
+  burial term (A193), at these arms' negative scale (ff2.1's -0.301 to about -0.35 in the control, -0.37 in bpmax,
+  -0.28 in no-BP at the last step) an exposure reward, not 10.65's helix reward; and the sheet mixing takes no DSE
+  row (derivative on the native and free frames only), as in `ff3x_u3r`, although plan.md Phase 41 step 7b lists
+  the sheet for the KL form. The arms ran on the pre-audit Upside 2 engine. Upside 3 changes BP itself (A34, A95)
+  and the side-chain parameter derivatives (A98, A99), which reach the BP arms and not no-BP's single state, so the
+  verdict is Upside 2's and does not transfer to Upside 3 without its own runs.
 
 ### 1.22 Round 4 after one epoch: the panels lose folding as round 3's did (2026-10-06)
 
@@ -2703,6 +2717,142 @@ item 33). Files `checks/ff33_bbabbl_20261121/` (README); 1.44's tools unchanged,
   proteinL and hyp native (TM > 0.5 46-68% against 64-100%) and unfolds only top7 de novo (61% expanded). It beats
   ff2.1 on lambda native (TM > 0.5 85% against 2%) and gpW de novo.
 
+### 1.47 The Upside 3 retrain splits the helix and sheet H-bond energies, pushed by proteins without native sheet (2026-11-25)
+
+User 11-25, on BBA's recurring loss: "we might need a ff design change"; "ok. proceed" with the per-protein read
+(`checks/ff3x_u3r_20261123/hb_contrast_by_ss.py`, md5 `8771841e`, output `hb_contrast_by_ss.txt`).
+- **The drift.** ff3x_u3r strengthens E_alpha (ff2.1 -1.961, start -1.906, -2.101 at epoch 4 step 3) and weakens
+  E_beta (-1.946, -1.846, -1.558): a helical H-bond beats a sheet one by 0.54 E_up against ff2.1's 0.015. Neither
+  earlier ff3.x line split them (`x3_03` 0.07, both weaker); BBA's failure is its hairpin going helix.
+- **The record does not separate NSE from DSE.** Each divergence file keeps the contrast NSE + lambda DSE summed per
+  field; only the Rama depths keep their parts (`rama_step.npz`). An exact split needs the worker rerun with the parts
+  recorded; future trainers should record both parts for every field.
+- **Which proteins push** (37 steps, 456 proteins, each protein's mean contrast; Adam steps against the summed
+  contrast, so + strengthens; native classes from Rama runs of the native structure, a proxy for DSSP). The minibatch
+  sum weakens E_beta in 35 of 37 steps and strengthens E_alpha in 27 (from epoch 1). E_beta: all-alpha proteins (60,
+  native sheet 0.02) -1.26 each, 98% of them weakening; alpha/beta (261) -0.88, 74%; all-beta (78) +0.77, only 40%
+  weakening, against the rest; Spearman of the push with native sheet fraction +0.26. E_alpha: carried by the
+  alpha/beta class (+0.96 each, 1.09 of the total), not by all-alpha proteins (+0.26) nor tied to native helix
+  (Spearman +0.02); all-beta proteins push it weaker (-0.41).
+- **Reading.** The sheet H-bond is weakened by proteins whose native has little or no sheet: their sampled
+  ensembles hold sheet-type H-bonds that the native or the SARW lacks, and one global E_beta pays for it in every
+  real sheet, as in BBA's hairpin; the sheet-rich minority pushes back and loses 4 to 1 by count. Whether those
+  H-bonds sit in the free ensembles (NSE) or in the unfolded ensemble against an H-bond-free SARW (DSE) is not
+  separated here, and the remedies differ: a context-dependent H-bond form or the training set's composition for the
+  first, an H-bond-carrying DSE reference for the second (1.23). The DSE part can only weaken both energies
+  (n_SARW <= n_unfolded), so E_alpha's net strengthening is the NSE's.
+- **The first checkpoint already loses BBL** (`checks/u3ref_20261123/read_bba_bbl_ur_00.txt`, `_refs.txt`; full arms,
+  window 2000 frames to the target, four blocks; 09:39 11-25). BBA folded (cold replica, Ca-RMSD < 3 A): ff2.1 0.755,
+  the start 0.585, `ur_00` 0.495; start minus `ur_00` +0.090 at block SE 0.087, so test 2 holds by the start's own
+  noise, and `ur_00` sits 0.260 below ff2.1 (SE 0.050). BBL TM > 0.5: ff2.1 0.257, the start 0.451, `ur_00` 0.282;
+  start minus `ur_00` +0.169 at SE 0.060, **test 3 fails**, `ur_00` back at ff2.1's level (-0.025, SE 0.029). On
+  Upside 3 the start already trails ff2.1 at BBA (-0.170, SE 0.053) and leads it at BBL (+0.194, SE 0.057).
+  **`ur_01` holds tests 2 and 3 by the rule, with BBL falling** (`read_bba_bbl_ur_01.txt`, 18:48 11-25; every arm
+  healthy, KE/1.5kT 0.996-1.013). BBA 0.470, start minus `ur_01` +0.115 at SE 0.092, holds (ff2.1 minus `ur_01`
+  +0.285, SE 0.063). BBL 0.247, start minus `ur_01` +0.204 at SE 0.118, holds at 1.7 SE (ff2.1 minus `ur_01` +0.010).
+  But BBL's four blocks are 0.373, 0.378, 0.236 and 0.000, so its last quarter has lost BBL. The block SE that lets
+  it hold is inflated by that fall: a trend within the arm widens the test's noise.
+  **`ur_02` holds tests 2 and 3** (`read_bba_bbl_ur_02.txt`, 04:52 11-26; every arm healthy). BBA 0.661, above the start's
+  0.585 (start minus `ur_02` -0.076, SE 0.085), and ff2.1 minus `ur_02` +0.094 at SE 0.050 also passes. BBL 0.244 at
+  ff2.1's level (+0.012), start minus `ur_02` +0.206 at SE 0.140, holds at 1.5 SE. BBL's blocks swing 0.389, 0.005,
+  0.061, 0.523, so here too the block SE that lets it hold is wide.
+  **`ur_03` loses BBA: test 2 fails** (`read_bba_bbl_ur_03.txt`, 05:45 11-26; every arm healthy, KE/1.5kT 0.999-1.010).
+  BBA folded 0.010 (blocks 0.028, 0.009, 0.003, 0.002; Ca-RMSD median 7.96 A), against `ur_02`'s 0.661, the start's
+  0.585 and ff2.1's 0.755: start minus `ur_03` +0.575 at SE 0.078. BBL 0.219 holds by the rule (+0.231, SE 0.152)
+  but falls through its blocks, 0.541, 0.189, 0.110, 0.036. So `ur_03`, the most accurate checkpoint on test 1 (mean
+  TM 0.693), does not hold BBA. Between `ur_02` and `ur_03` E_beta weakened -1.700 -> -1.623, E_alpha strengthened
+  -2.001 -> -2.062 and the burial scale rose -0.102 -> -0.059. BBA is a beta-beta-alpha fold, and the split traced
+  E_beta's weakening to the DSE. Which change unfolds BBA is not measured; one arm per checkpoint.
+  **Test 1 by epoch** (mean TM on the 44 domains; ff2.1 0.676): `ur_00`-`ur_07` 0.683, 0.687, 0.690, 0.693, 0.687,
+  0.692, 0.690, 0.679, every one passing. `ur_07` falls back to ff2.1's level (+0.003 [-0.008, +0.015], 23 domains
+  lower and 21 higher) in the epoch where the averaged backbone burial scale moved from +0.014 to +0.052, the
+  largest move since epoch 2. Whether the scale's rise causes the fall is not measured. `ur_08` stays there: 0.680
+  (+0.004 [-0.008, +0.018]; 25 domains lower, 19 higher), its averaged scale +0.053, and the last checkpoint `ur_09`
+  ends at it: 0.675 (-0.001 [-0.010, +0.009]; 25 domains lower, 19 higher; TM > 0.5 0.891 against 0.874), its scale
+  +0.052, E_alpha -2.047, E_beta -1.479.
+  Test 4's ff2.1 reference on Upside 3 (`glpg_a241_ff21` block 1, run.0, T 0.70, 212 frames; 16:30 11-25): TM4 135-151
+  DSSP alpha mean 0.880, last quarter 0.892. One run: ff2.1's TM4 goes both ways across runs (3.15's Upside 3 run lost
+  it, 0.44 in block 1 to 0.05 by block 4, on the tree before A236-A241; 9 of 12 Upside 2 seeds unwound on the old
+  table, 0 of 12 on the fixed one, 4.15). Whether 0.44 -> 0.88 is the engine fixes or run-to-run chance is not
+  measured, and test 4's one block per checkpoint cannot separate a checkpoint from that spread (10.79).
+  The start's (`glpg_a241_bba_32bbenv21`, block 1 COMPLETED 16:40 11-25): mean 0.777, last quarter 0.755. Why each
+  run is one draw: 3.16.
+  **`ur_00` fails test 4 on its draw** (`glpg_ff33_ur_00` block 1 COMPLETED 03:01 11-26, moved to `/project`; read
+  03:05): TM4 135-151 DSSP alpha mean 0.429, last quarter 0.484, against the bar 0.645, the start's 0.777 and
+  ff2.1's 0.880 / 0.44 (its two runs). Its release ended at 0.53 (residues 135-136 and 139-144 lost). In block 1,
+  48 walkers unwound and 27 came back: 17 of the 17 that never flipped a glycine, and 9 of the 27 that flipped one
+  while unwound (`tm4_trap.py`). One draw, so this is the run's number, not the force field's (10.79).
+  **`ur_01` fails test 4 too** (block 1 COMPLETED 03:54 11-26, moved to `/project`; read 03:58): mean 0.392, last
+  quarter 0.332. Its release also ended at 0.53 (135-138 and 144-147 lost). 47 walkers unwound and 31 came back
+  (29 of the 32 that never flipped a glycine), yet no walker is helical at the block's end: here TM4 also re-opens
+  without a glycine flip. With test 4 failing, `ur_01` fails the rule although tests 1-3 hold.
+  At `ur_00` the H-bond energies have hardly moved (E_alpha -1.923, E_beta -1.828; the start -1.906, -1.846; the
+  split 0.095 against 0.060), so **the helix/sheet split is not what loses BBL at epoch 0**; it grows later (0.17,
+  0.30, 0.44 at `ur_01`-`ur_03`). What has moved by `ur_00` is the backbone burial scale (-0.301 -> -0.235; -0.188,
+  -0.102, -0.059 after), with the Rama depths and the other groups. The design question is therefore wider than
+  E_beta; the split rerun (plan.md Phase 41 step 9) reads every field's NSE and DSE, the burial terms included.
+- **The split: the two drifts have different sources** (`checks/ff3x_u3r_20261123/nse_dse_split/`, `read.txt`,
+  `read_burial.txt`; 16 proteins at `ur_03`, one visit each as their epoch 4 visit; contrast = NSE + 0.3 DSE checked
+  exactly in every file). **E_beta**: -7.6 = NSE +2.7 + lambda DSE -10.3. The DSE weakens it in all 16, by its form:
+  the SARW holds 0.1-0.2 H-bonds of each type, the unfolded ensembles 1.1-4.4 sheet-type and 0.5-13.5 helix-type,
+  so 0.3 (n_SARW - n_unfolded) < 0 for every H-bond energy. The NSE weakens E_beta only in the all-alpha proteins
+  (4 of 4: their free ensembles hold more sheet-type H-bonds than their natives, e.g. 10.6 against 8.8), strengthens
+  it in the all-beta (4 of 4), mixed in alpha/beta. **E_alpha**: NSE +18.1 against DSE -17.6, the natives holding 1-4
+  more helix H-bonds than the free ensembles. So the same DSE drag hits both; helix's NSE answers it and sheet's
+  does not. Weighted to the training set's class sizes, E_beta per protein: NSE +0.22, lambda DSE -0.65.
+  **The backbone burial scale**: -4.4 = NSE -44.3 + lambda DSE +39.9. The NSE moves the scale toward 0 in 15 of 16,
+  the free ensembles burying the backbone more than the natives (dV/dscale free > native in 15 of 16, e.g. 55.1
+  against 49.1); the DSE pushes back (SARW more buried than unfolded in all 16) but less (weighted per protein NSE
+  -2.76, DSE +2.60). **Reading**: the H-bond split is the objective's (an H-bond-free SARW reference against
+  unfolded ensembles that keep a few H-bonds; 1.23's H-bond-carrying reference is its remedy), the burial scale's
+  fall is the native-side data or form (the near-native free ensembles over-bury), and that is the drift present at
+  `ur_00`, where BBL is already lost. Limits: one visit a protein (rerun and run-mean contrasts differ by up to 3 per
+  protein, e.g. 1soy's E_beta +2.27 against -0.56), 2-6 proteins a class, one force field.
+
+### 1.48 What fails in ff3x_u3r's checkpoints, term by term (2026-11-26; plan.md Phase 44)
+
+User 11-26: "find out what caused them, and propose a next round of training that will fix them". Read-only, in
+`checks/ff3x_u3r_20261123/diagnose_20261126/`. `stability_terms.py` and `panel_stability.py` evaluate each pair of
+checkpoints on the same cold-replica or panel frames, ablating each leaf node in turn, and give per term
+ddE = <dE>(folded) - <dE>(unfolded). That is first order, so it gives each term's direction, not its full size.
+`hb_split_bba.py` splits the H-bond term by type. `param_traj.py`, `split_groups.py` (the 16-protein NSE / DSE
+split at `ur_03`, every group), `panel_by_class.py` and `gly_tm4_maps.py` cover the rest.
+* **BBA collapses into a helical misfold through the H-bond energies.** `ur_02` -> `ur_03` (0.670 -> 0.009 folded):
+  ddE +2.02 (SE 0.48), of which the H-bond term carries +1.67 (SE 0.42), backbone burial +0.50 and side chains +0.43.
+  Split by type (exact, +1.677): E_alpha's strengthening (-2.001 -> -2.062) +1.06, because unfolded BBA frames carry
+  33.9 alpha H-bonds against the native's 16.4; E_beta's weakening (-1.700 -> -1.623) +0.39 (7.6 against 2.5);
+  E_bias +0.23. The misfold has more H-bonds in all (36.4 against 24.0), so any H-bond strengthening favours it,
+  whether by type or in common. BBA was marginal at `ur_02`, so a 0.06-0.08 change per type flipped it.
+* **Where the H-bond drift comes from** (`split_groups.txt`): over the 16 proteins, hb NSE +18.9 and lambda DSE
+  -28.5. E_alpha's strengthening is the NSE's (helical proteins' free ensembles under-form helix). E_beta's weakening
+  is the DSE's: the SARW has no H-bond term and holds 0.1-0.2 H-bonds against the unfolded ensembles' 1-13 alpha and
+  1-4 beta, so KL(SARW || unfolded) keeps weakening H-bond energies until unfolded states hold none (no zero above
+  E = 0). E_beta weakened in 35 of 37 steps (`hb_contrast_by_ss.txt`).
+* **The sheet mixing drifts on the NSE alone.** The `sheet` energies have no DSE row. They rose by 10-20% an epoch,
+  139% from the start by `ur_08`, nearly uniformly over residue types. That lowers every type's beta propensity, on
+  top of E_beta.
+* **The panel trades sheet for helix.** From ff2.1 to `ur_03`, test 1's gain is helical: all-alpha domains +0.040,
+  alpha/beta +0.012, all-beta -0.004. The per-domain change correlates with strand fraction at Spearman -0.39
+  (p 0.008). In the beta domain 1xovA03 the H-bond change costs the native +2.16 (SE 0.22), made up by burial (-2.41),
+  side chains (-1.72) and the map (-1.06).
+* **`ur_07`'s fall is in helical domains, through the side chains.** From `ur_06` to `ur_07`, all-alpha domains fell
+  -0.032, with 9 of 10 lower. In 2au3A04 (0.966 -> 0.606 folded), ddE +0.24: side chains +0.23, backbone burial +0.10.
+  In 2e8oA01, +0.19: side chains +0.10, side-chain burial +0.09. The environment weights had moved 23% from the start
+  and their sharpness 26%. The backbone burial scale's rise (+0.014 -> +0.052) is not the main term here.
+* **BBL.** ff2.1 -> start (0.251 -> 0.459): ddE -1.73, nearly all from side chains (-2.23, SE 0.25). That is the start's
+  side-chain file, which costs BBA +1.27 (SE 0.18) at the same step. Start -> `ur_00` (0.459 -> 0.278): first-order
+  ddE -0.38 (SE 0.19), so the parameter change does not explain the drop. It is beyond this estimate, or partly
+  sampling in a marginal fold (the start's blocks span 0.33-0.53). Later epochs: small mixed changes, with the
+  H-bond term leaning against the fold (+0.18, +0.27).
+* **TM4.** Each run's test 4 is one release draw (3.16). In every force field read, the map favours alpha_L over
+  alpha_R at TM4's glycines, dG(L-R) at T 0.70 of -1.42 / -1.21 / -1.45 E_up in ff2.1 (G136 / 143 / 149); the
+  non-glycine residues sit at about +2.1. The retrain narrows it (G143 -0.56 at the start -> -0.16 at `ur_04`) but
+  never reverses it, which leaves the lock of 3.16 open.
+* **The common thread: a handful of high-leverage parameters drift far.** Adam steps every parameter at a similar
+  nominal rate. The 12 H-bond numbers, 4 backbone burial numbers, 20 sheet energies and the 80 environment scalars
+  each touch every protein, against 21,600 pair-table entries that each touch a few. Their drifts are monotonic over
+  the run, and each failure traces to one of them.
+
 ## 2. The hybrid model: what each side supplies
 
 ### 2.1 Replaced by design
@@ -3797,6 +3947,83 @@ retrained term.
     +- 0.031 SE (seed 1 alone -0.108), beyond the seed spread. alpha3d de novo: 0.433 (sd 0.064) against 0.519 (sd
     0.091), -0.086 +- 0.064, within it. top7's gap is not run-to-run noise, and the energy change at fixed coordinates
     does not explain it (above); its cause is not established.
+
+### 3.16 Each glpG run's TM4 is one draw, set by its one release trajectory (2026-11-25; plan.md Phase 43)
+
+User 11-25: "We assumed that this is a rama map issue, and it looks like something heavily depends on random seeds."
+Read-only, `/project/trsosnic/yinhan/checks/tm4_seed_20261125/` (`tm4_seed.py`; `tm4_seed.txt`, `tm4_seed_2.txt`,
+`twins.txt`), 27 Upside 3 glpG runs; TM4 is DSSP alpha of 135-151, as test 4 reads it.
+* **No seed varies between our runs, and the runs are reproducible.** Every run has `prep_seed 2026` and `randomseed 1`.
+  Three twin pairs (one force field, engine and seed: `ur_02`, `ur_00`, `sw_x303_hbst` and their failed copies) are
+  bitwise equal at every stage, stage 7.0's 401 frames included. So the run-to-run differences come from the force
+  field or the engine changing one chaotic trajectory: any change acts as a new draw. Upside 3 has never run two seeds
+  of one force field in glpG.
+* **Every run starts to unwind TM4 within 2-51 tu of the release.** Stage 7.0 (t 918-1098, 180 tu at T 0.8647; 3.15's
+  "540 time units" was wrong) is the first stage in which the protein moves. Each run's first frame below 0.8 falls at
+  t 920-969, and the lost residues are the two ends: 135-138 (GLY136) and 146-151 (GLY149), 139-144 in a few runs.
+  By stage 7.0's last tenth, TM4 ranges from 0.18 to 0.96 across runs.
+* **That one trajectory sets block 1.** All 48 replicas start from its last frame. Over 22 runs, TM4 at rung 0 over
+  block 1 against stage 7.0's last tenth gives r 0.80. Examples: ff2.1 0.41 -> 0.44 (the 10-23 engine) and 0.87 ->
+  0.88 (A241); `xp_01` 0.18 -> 0.22; `xp_03` 0.77 -> 0.84. 10 of the 22 fall below test 4's 0.645.
+* **The REMD does sample both states, slowly.** In block 1 of the 16 runs whose files were kept, 13-48 walkers unwind
+  (a frame at or below 0.4), and 0-27 of those come back to 0.8 or above. Only 8-16 walkers visit rung 0 in a block.
+  The one four-block run (ff2.1, the 10-23 engine) keeps falling: 0.44, 0.26, 0.14, 0.05, with 23 of 48 walkers
+  coming back in block 1 and 1-2 in each later block. One block of about 2100 tu does not forget the start.
+* **What follows.** Every TM4 number since 10-26 is one draw per force field, conditioned on one release trajectory.
+  That includes 3.15's "ff3.1 (map only) loses TM4, ff3.0 holds", which put the cause outside the map, and each
+  checkpoint's test 4. One draw neither supports nor rules out the Rama map. The spread of release outcomes for one
+  force field, and TM4's equilibrium once the start is forgotten, are not measured.
+* **What TM4's loss is, and what it is not** (user: "can you find out what exactly caused TM4 to be unstable?";
+  `tm4_onset.py` (`onset_all.txt`), `tm4_force.py` with `tm4_force_read.py` (`force2_read.txt`, `force2/`),
+  `tm4_geom.py` (`geom.txt`), same directory; 30 runs, every stage 7.0 frame and block 1's rung 0 where kept).
+  - The loss is i -> i+4 H-bonds breaking while every residue of the span keeps helical phi/psi. The first break is at an
+    end, 146 -> 150 or 134-136 -> 138-140, in 24 of 28 runs. No glycine has phi > 0 before any first break. No i+5 bond
+    forms, so it is no pi or 3-10 conversion. Backbone KE is 0.97 over the first 20 tu.
+  - TM4 breaks along its whole length more than any other glpG helix, middle included. Spans broken at stage 7.0: TM4
+    N-end 0.32, middle 0.13, C-end 0.44; every other helix's groups 0.01-0.17. At rung 0: 0.54, 0.37, 0.52 against
+    0.02-0.31.
+  - Intact TM4 is a normal helix. Its Upside H-bond scores are 0.75-0.80 (others 0.71-0.84), and its O...N, rise, bond
+    stretch and phi/psi are inside the other helices' ranges. The backbone's stretch is Upside's own:
+    `Spring_bond` 48 E_up/A^2 gives a C-N sd of 0.121 A at T 0.70, as measured.
+  - Per-term forces (each leaf node ablated, F_full - F_without; the leaves sum to the total exactly): only the H-bond
+    term holds a span closed, about +1.1 to +5.0 E_up of work to open one. The steric wall `backbone_pairs` and the
+    springs act on every helix alike. MARTINI (lipid), rotamer (side chains with the side-chain/lipid table), and the
+    Rama map push TM4's spans no harder than other helices' (TM4 -0.16 to +0.32 E_up; others -1.85 to +0.96).
+  - Depth is not it. TM4's N-end sits at the midplane (+0.6 A), but so does 82-91's C-end (-0.4 A), which breaks
+    0.05 / 0.08. TM4's C-end, at -15 A near the interface, breaks most.
+  - **So no local term opens TM4.** Neither the glycine map's handedness nor the lipids nor the side chains nor depth
+    makes its spans open; what makes the loss last is the next bullet.
+  - **A TM4 glycine at phi > 0 keeps TM4 open** (user 11-25: "Let's say it is rama map, and under some random seeds it
+    causes TM4 unfold"; `tm4_trap.py`, `trap.txt`; 19 runs' REMD blocks, every walker followed over all 48 rungs; a
+    flip is a glycine's phi above 0 for 20 tu).
+    - On rung 0, 9 of the 10 runs with TM4 at 0.60 or below hold a glycine at phi > 0 in 30% or more of frames
+      (G136 1.00 in `xp_01` and `x3_01`, G149 0.98 in `xp_00`). 1 of the 7 runs at 0.75 or above does (`p57_09`, G136
+      0.60). TM4's other residues stay at phi > 0 in at most 0.22.
+    - Of the 521 walkers that unwound (TM4 at or below 0.4) with no glycine flipped before: 262 flipped a glycine while
+      unwound, and 15 came back to 0.8 (6%, median 225 tu); 259 never flipped, and 209 came back (81%, median 70 tu).
+      Another 315 walkers had a glycine flipped already, and 48 of them came back. In `x3_01`, `x3_s62`, `xp_00` and
+      `xp_01` every unwound walker had flipped first: the REMD start frame carried the flip.
+    - The difference survives two controls. By how far TM4 unwound before any flip: back 0.01 against 0.34
+      (lowest TM4 0-0.1), 0.17 against 0.85 (0.2-0.3) and 0.03 against 0.97 (0.3-0.4). By landmark, so that time
+      spent unwound does not count as a flip: among walkers still unwound 20 / 50 / 100 tu after unwinding, those
+      already flipped come back in 0.03 / 0.05 / 0.06, the others in 0.48 / 0.41 / 0.36.
+    - **So the fray is the trigger and the glycine is the lock.** TM4 frays with its glycines helical, as any helix
+      end does, and usually heals. If a glycine crosses to the map's phi > 0 region while TM4 is frayed, TM4 does not
+      re-form within a block. Whether that happens in the one release trajectory decides the run, and any change of
+      force field, engine or seed redraws it. This is the Rama map's part, acting after the opening. It is a
+      correlation in the walkers' histories; the test is an intervention on the three glycines' maps, with replicate
+      seeds on one build and one machine (plan.md Phase 43).
+  - **Hybrid coupling or ff2.1's core?** Neither is established. Stock Upside's implicit membrane holding TM4 closed
+    (`implicit_79HIS_src{,2,3,4}`) is no reference: that model is trained on about 40 proteins (user 11-25, 10.80).
+    The reference is physics and experiment (4.12). A backbone H-bond broken in the hydrocarbon core costs 4-5
+    kcal/mol (6.3-9 E_up), against about 0.4 (about 0.6 E_up) at the interface. The hybrid charges 1.96 E_up anywhere,
+    and MARTINI's helix-typed BB adds nothing (4.7). TM4's two ends then differ:
+    - the N-end, at the midplane (+0.6 A), opens with its groups unpartnered (Upside's scores 0.53 / 0.54 over all
+      frames). There the hybrid undercharges each broken bond by about 4-7 E_up. That meets 4.14's condition for
+      reopening the backbone-environment cost (a fixed-table run opening a TM helix in the core with unpaired groups);
+    - the C-end, at -15 A near the interface, frays most. There the physical cost is about the hybrid's, so the
+      undercharge does not explain it. Whether experiment shows 148-151 frayed is the HDX question (5.x).
+    82-91's C-end, also at the midplane, holds (0.05 / 0.08), so the undercharge is not sufficient alone.
 
 ## 4. What the hybrid gets wrong, and what is still open
 
@@ -5737,6 +5964,12 @@ Shell and ssh:
   hid ff3.2.1's NODE_FAIL for four hours. Sweep from the last recorded pass (`sacct -S <last pass>`).
 * Removing Python functions programmatically: a "def line -> next column-0 line" scan mis-cuts multi-line signatures.
   Use `ast` (`node.lineno..node.end_lineno`), or `py_compile` after each bulk removal.
+* **Never name a helper after a standard-library module in a directory that goes on `sys.path` (11-25)**: the NSE /
+  DSE split's `select.py` sat beside `ConDiv_split.py`, which puts its own directory first, so `import socket` ->
+  `selectors` -> `import select` loaded it and every worker died at import ("partially initialized module
+  'selectors'"), three array tasks in 12 s. Name helpers by their job (`pick_proteins.py`), and before submitting a
+  worker run it once on the login node up to its first real step (`runpy.run_path(..., run_name="not_main")` under
+  the job's environment).
 
 Slurm and the two clusters:
 * **A job killed at its time limit can show near-zero `TotalCPU` in `sacct` (11-16)**: `reads1116` 50207332 read
@@ -6072,20 +6305,41 @@ hour: after the 11-03 08:12 deletion `df -i` read 1,163,475 at once while `quota
 mount; blocks 4.57 T against a 5 T soft quota and 5.5 T limit, files 670,195 against 1,268,000 and 1,394,800, at
 11:36 11-24), so the watch reads it every pass (`scratchpad/ff3x_watch.sh`); `df` reports free space against the 5.5 T
 limit, which overstates the room by the 0.5 T above the soft quota.
-**An unexplained transient ENOSPC on `/beagle3` (11-21, 11-24 twice).** Three glpG preps died on `OSError: [Errno 28]
-No space left on device` creating a new file in stage 7.0, 3.4-4.1 h in (`glpg_sw_x303_hbst` 23:53 11-21 at the stage
-7.0 VTF; `glpg_ff33_ur_00` 11:03 11-24 at `logs/stage_7.0.log`; `glpg_ff33_ur_02` 21:35 11-24 at the stage 7.0 VTF,
-after production had finished with KE/1.5kT 1.000), while the fileset had 910-930 G to its limit, 410-430 G to its
-soft quota and half its files free (`df -i` 49% at 21:40), the whole `beagle3_cap` 460 T, no group job on midway2
-ended near any of the times, and every other writer (Peng arms, REMD blocks, appending to open files) went on; only the
-failed prep's log among ours carries the error. Each prep's earlier file creations (stages 6.0-6.6, the 7.0 checkpoint)
-succeeded, and four preps on the same tree in the same days completed. A block or inode limit of the fileset does not
-explain it at the measured usage; a full storage pool under the fileset would, and is not visible to a user
-(`mmlsfileset` refuses: not the fileset owner). The cause is not established; a group job on midway3 or the beagle3
-cluster is not visible from midway2, and RCC can say which pool returned ENOSPC. Remedy each time: keep the run as
-`<run>.failed_nospace_<date>`, put the same `run.py` (md5-checked) in a fresh directory, resubmit; rerunning in place
-would submit block 1 from a seed whose stage 7.0 never ran, or whose solvation gate never ran when the VTF failed,
-because `run.py` tests only that the seed file exists.
+**ENOSPC on `/beagle3` at file creation: the whole filesystem is out of inodes (11-21, 11-24).** Four jobs died on
+`OSError: [Errno 28] No space left on device`, each while creating a new file: three glpG preps in stage 7.0, 3.4-4.1 h
+in (`glpg_sw_x303_hbst` 23:53 11-21 at the stage 7.0 VTF; `glpg_ff33_ur_00` 11:03 11-24 at `logs/stage_7.0.log`;
+`glpg_ff33_ur_02` 21:35 11-24 at the stage 7.0 VTF, after production had finished with KE/1.5kT 1.000), and the ff2.1
+BBA reference arm 23:32 11-24 at its few-byte `COMPLETE` marker, after its trajectory had reached its target; writing
+that marker by hand failed the same way at 23:47 and 23:49. No write to an already open file failed. **The cause,
+measured 23:48-23:50 11-24: `df -i /beagle3` reads 99,999,743 of 100,000,768 inodes used, 1,025 free, flat over a
+minute while every creation failed.** The fileset's own numbers hid it (blocks 4.59 T of a 5 T soft quota, files
+670,714 of 1,394,800, `df -i /beagle3/trsosnic` 49%): every fileset on `beagle3_cap` draws new inodes from the one
+filesystem table, so a creation fails whenever other users have it full, and succeeds again when someone deletes.
+This reverses the rule for blocks (check the fileset, never `df` on the mount point): **for inodes the mount point's
+`df -i` is the check**, and the watch reads it every pass. `/project` had 84.8 M inodes free (91% used) and our
+fileset 236,695 (80%). Only RCC can raise the table or find who filled it. Our whole `/beagle3` area holds about 133 K files, so cleanup
+only buys headroom: deleting our 3,229 `__pycache__` folders (compiled caches, which Python rebuilds from source; no data)
+freed 40,804 inodes at 00:06 11-25 (1,025 -> 41,829). Of the 456 used in the next six minutes, 450 were our own jobs
+rebuilding those caches (47 folders, 403 files by 00:12) and about 6 other users', so the table had stopped filling. Remedy for a glpG prep once creation works:
+keep the run as `<run>.failed_nospace_<date>`, put the same `run.py` (md5-checked) in a fresh directory, resubmit;
+rerunning in place would submit block 1 from a seed whose stage 7.0 never ran, or whose solvation gate never ran
+when the VTF failed, because `run.py` tests only that the seed file exists. For a Peng arm that failed at its
+`COMPLETE` marker the trajectory is whole: write the marker by hand with the time units `bench_run.py` would write;
+do not rerun `bench_run.py`, which first renames each replica's `/output` to `output_previous_N` and so breaks
+`read_bba_bbl_u3.py`'s health check (`h["output"]`). The table kept emptying (206 K free at 03:24 11-25, 150 K at
+09:09, about 9,600 an hour; over 11 min from 09:09 the table lost 1,270 while our fileset gained 8, and a checkpoint's
+arms and glpG run hold about 130 files), so from `ur_04`
+new arms and glpG runs write to `/project/trsosnic/yinhan/upside3_validation/` (user 11-25; plan.md Phase 41 step 10). The
+drain came back at 12:24-13:26 11-25: 151,950 -> 42,563 free, about 100 K an hour (1,849 in 64 s at 13:26), while
+the group fileset stayed at 631,033 files and our own area holds about 93 K (`upside2-md/` 54 K, `ff3_benchmark/` 11 K,
+`upside3/` 10 K), so cleanup cannot keep pace; only RCC can find the consumer.
+**Lesson (user correction, 13:50 11-25: "Just stop using beagle3, moving failed jobs in it somewhere else. I have
+stated this several times and you refuse to do this every time").** Three times I answered "stop running jobs on it"
+with a partial step (a cleanup; new runs only) and a question, leaving the running jobs where the failures came from.
+When the user says to stop using a resource, move everything off it in the same turn, running jobs included, by the
+safe means (here: SIGTERM, which Upside flushes on; md5-checked copies; renames instead of deletes; resume from the
+written frames), and report what moved. Hold back only what cannot move without destroying work, say what it would
+cost, and move it the moment it can.
 
 ### 10.40 A reference run is valid only if it carries every fix the run it judges carries (2026-10-26)
 
@@ -6647,6 +6901,14 @@ objective acting against a stale input, call it a bug.**
 The audit the user asked for found the same in the depths' prior: centred on ff2.1's map while the run starts from
 p57_09's (1.46). **A regulariser is centred on the run's own start unless its definition says otherwise.**
 
+### 10.79 One trajectory does not show a helix is stable (2026-11-25)
+
+User correction. I reported ff2.1's glpG TM4 as holding "well above the bar" from one REMD block's cold rung (0.880);
+the user: "in some trajectories it is unstable and in others it is stable". The record agreed with the user: 3.15's
+Upside 3 ff2.1 run lost TM4 (0.44 to 0.05 over four blocks) and 4.15's old-table seeds unwound 9 of 12. **A read of
+one run is reported as that run's number, beside the spread of every earlier run of the same force field and system,
+and never as the force field's property; a pass/fail bar applied to one run is reported with that spread.**
+
 ## 11. Reference: the two glpG PDBs disagree about TM4
 
 `glpg_oriented.pdb` (crystal-derived, oriented post hoc) puts residues 135-140 at z = +2 to +9 A, splayed toward the
@@ -6743,6 +7005,14 @@ H4 72-78. From the first diagnosis, on the retired ff3.0 (`ff3_benchmark/scoring
   alpha_L (H0 C-cap), 35 M-G-M alpha_L (H1 C-cap), 37 M-G-Q beta/pPII, 40 S-G-V and 42 V-G-A alpha_R inside H2, 47 N-G-I
   alpha_L (H2 C-cap).
 
+
+### 10.80 Another model is not the reference (2026-11-25)
+
+User correction. I leaned toward the hybrid as TM4's cause because stock Upside's implicit membrane holds TM4 closed.
+The user: "Don't assume the implicit membrane model is completely correct. It is only trained with ~40 proteins."
+**Agreement or disagreement between two models shows where they differ, not which is right. Judge a model against
+experiment or measured physics (here findings 4.12's transfer free energies, the crystal structures, HDX), and treat a
+model trained on a few systems as one more model.**
 ### Wild type against G46A/G48A under ff_2.1 (2026-10-01/02)
 
 `ff3_benchmark/pdb/lambda.pdb` is byte-identical (md5 c85500a3) to Peng's

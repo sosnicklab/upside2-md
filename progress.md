@@ -1658,3 +1658,67 @@ technical findings live in `findings.md`; technical direction lives in `plan.md`
   the same files), `upside3_validation/peng_a241/` (preflight passes on A241), glpG `glpg_a241_*`; ff2.1's and the
   start's panels, BBA and BBL native arms and glpG TM4 submitted 22:24. `checks/ff3x_u3r_20261123/gly_dse_split.py`
   reproduces ff3x_u3's glycine totals. Files: plan.md Phase 41, remote_jobs.md, `checks/u3ref_20261123/`.
+* **11-24, Mac Studio: DSE audit of the three side-chain arms (read only).** User: did the deterministic,
+  probabilistic and most-probable-state trainings make ff3.3's mistake of a DSE on an older force field? No: all
+  three ran trainer `8977d7f7` (10-06), whose SARW is the step's own config with the SI's terms zeroed, on ff2.1's
+  fixed map (`996a607b`). They share A193 (backbone burial term kept in the SARW) and the sheet's missing DSE row with
+  the pre-`ff33_sisarw57` ff3.3 lines, and ran on pre-audit Upside 2, whose BP (A34, A95) and side-chain derivatives
+  (A98, A99) Upside 3 changes. No rerun submitted; the Upside 3 rerun is the user's decision. Files: findings.md 1.21.
+* **11-24 23:00 to 11-25 00:31, Mac Studio: the three side-chain arms on Upside 3 (plan.md Phase 42).** User: "yes.
+  rerun them all". Trainer `deb7240d` = the October `8977d7f7` plus the Upside 3 interface and the SI's SARW; ctrl and
+  nobp built in the training tree, bpmax in a new tree `upside3-bpmax` whose engine patch (rewritten for Upside 3 by a
+  fork) passed BP-mode bitwise parity and max-mode reference and FD checks. Each arm passed its login-node test;
+  submitted 50302858, 50302859, 50302910; released ff2.1's two dt 0.009 panels running. Files: plan.md Phase 42,
+  remote_jobs.md §1 line 1, `checks/sc_u3_20261124/`.
+* **11-25 09:05-09:26, Mac Studio: the user's three go-aheads ("Do all as suggested").** (1) New checkpoint test
+  runs on `/project` from `ur_04` (`/project/trsosnic/yinhan/upside3_validation/`; bench copies differing only in their
+  root; `submit_ckpt_ur.sh`, `read_bba_bbl_u3.py` and the watch probe read both roots), checked by a dry staging of
+  epoch 03 with `sbatch` stubbed, nothing submitted. (2) Tests 2-3 reads of the references (50303967) and `ur_00`
+  (50303968). (3) The NSE / DSE split rerun at `ur_03`, 16 proteins (array 50304046;
+  `checks/ff3x_u3r_20261123/nse_dse_split/`). Files: plan.md Phase 41 steps 9-10, findings.md 10.39, remote_jobs.md,
+  `scratchpad/ff3x_watch.sh`, `checks/u3ref_20261123/` (README, backups `*.bak_pre_project_20261125`).
+* **11-25 11:04, Mac Studio: the NSE / DSE split read** (`checks/ff3x_u3r_20261123/nse_dse_split/`, 16 proteins at
+  `ur_03`): E_beta's weakening comes from the DSE (an H-bond-free SARW reference), the backbone burial scale's fall
+  from the NSE. Tasks 0-2 had first failed at import (a helper named `select.py`), renamed and resubmitted. Files:
+  findings.md 1.47 and 10.14, plan.md Phase 41 step 9, remote_jobs.md.
+* **11-25 13:50-14:20, Mac Studio: off /beagle3 (user: "Just stop using beagle3").** The six running Peng arm chunks
+  cancelled (Upside flushes on SIGTERM), all twelve arms copied to `/project` and md5-checked, the /beagle3 runs
+  renamed, the six resumed from the `/project` bench; force-field staging moved to `/project` from `ur_05`
+  (`submit_ckpt_ur.sh`, `read_t1.sbatch`, `bench_run.py`; dry staging passed); the finished ff2.1 glpG run being
+  copied. Files: `checks/u3ref_20261123/move_arms.sh`, `move_glpg.sh`, backups `*.bak_pre_projectparams_20261125`;
+  plan.md Phase 41 step 10, findings.md 10.39 (lesson), remote_jobs.md.
+* **11-25 16:00-17:00, Mac Studio: why glpG TM4 changes from run to run (plan.md Phase 43; user).** The reference reads:
+  ff2.1 0.880 and the start 0.777 / 0.755, both at block 1, both above test 4's bar; ff2.1's run is one of two
+  ff2.1 runs, the other at 0.44 (findings 10.79, a user correction). `tm4_seed.py` read 27 runs: twin runs are bitwise
+  equal, every run starts to unwind TM4 within 51 tu of the protein's release, and the release trajectory sets block 1
+  (r 0.80). The start's glpG run moved to `/project` (97 files md5-equal). Files: findings.md 3.16, 10.79;
+  `checks/tm4_seed_20261125/`.
+* **11-25 17:00-18:10, Mac Studio: what drives TM4's loss (plan.md Phase 43 step 3; user).** Read-only over 30 glpG
+  runs: onset, per-term forces on every helix's spans (each leaf node ablated; on the Mac's stock build, since
+  midway2 gave no start before 11-27), and helix geometry with Upside's H-bond scores. TM4 frays end-first with its
+  dihedrals helical, and breaks more than any other glpG helix along its whole length. No glycine flip, no local
+  term, no strain and no depth effect explains it. ur_01's BBL resumed on `/project` at 2,018,100. Files:
+  findings.md 3.16; `checks/tm4_seed_20261125/` (`tm4_onset.py`, `tm4_force.py`, `tm4_force_read.py`, `tm4_geom.py`,
+  outputs).
+* **11-25 18:00-18:20, Mac Studio: the glycine lock (plan.md Phase 43; user: "Let's say it is rama map").**
+  `tm4_trap.py` over 19 runs' REMD blocks: a TM4 glycine at phi > 0 keeps TM4 from re-forming (6% back against 81%),
+  under depth and landmark controls. So the fray is the trigger and the glycine flip is the lock. Records: findings 3.16
+  and 10.80 (lesson: the implicit membrane model is no reference, user); memory `implicit-membrane-not-reference`.
+  ur_03's arms resumed on `/project` at 1,883,400 and 1,200,100; ur_05's BBA started fresh from the `/project`
+  staging (its H-bond parameters ur_05's).
+* **11-26 05:30-09:00, Mac Studio: why ff3x_u3r's checkpoints fail (plan.md Phase 44; user).** Read-only. Per-term
+  stability on BBA, BBL and panel frames (each leaf node ablated), the NSE / DSE split for every group, the
+  parameter trajectory, test 1 by native class, TM4's glycine maps. BBA's collapse traces to the H-bond drift (E_alpha
+  +, E_beta -, bias +), helical domains' fall at `ur_07` to the side-chain terms, and TM4 to an alpha_L-favouring
+  glycine map plus a one-draw test. A proposal (priors on the high-leverage groups, DSE rows only for terms its
+  reference carries, balanced glycine depths, replicate test 4) awaits the user. Files: findings.md 1.48,
+  `checks/ff3x_u3r_20261123/diagnose_20261126/`.
+* **11-26 09:00-10:40, Mac Studio and midway2 login node: ff3x_u3p built and tested (plan.md Phase 44 step 6;
+  user: "Approve the design. Make it").** The trainer is ff3x_u3r's with the Adam-trained groups on the NSE alone (DSE
+  rows recorded), Gaussian priors on the start for the H-bond energies and bias, sheet mixing, backbone burial and the
+  environment scalars (widths from the relaxation visit by `set_priors.py`), and central glycine's coil maps balanced
+  alpha_L = alpha_R by `seed_u3p.py`. Checkpoint tests 2-3 add a last-half window, test 4 runs four seeded releases.
+  The one-protein login-node test (1brz, relaxation visit plus two epochs) passes all six checks. Check 1 first
+  failed because it subtracted in float64 what the trainer stores in float32; it now compares exactly in the stored
+  precision. midway2 nodes 0144 and 0177 added to the exclusion law. Files: `checks/ff3x_u3p_20261126/` (README,
+  scripts, `test/check.txt`), `slurm/midway2.args` and its README row.

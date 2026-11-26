@@ -3444,8 +3444,197 @@ old (Known Errors; findings 10.74).
      the prior centre as designed. At 101 SARW frames the reference term is noisy (rms 0.13 against the contrast's
      0.07); read in the run by glycine's summed DSE rows per round, against ff3x_u3's one-signed -294 / +105.
 8. [ ] Records: CLAUDE.md ("Shared Upside Deployment", the training tree), `upside3.md` 5.4, `remote_jobs.md`.
+9. [ ] BBA's recurring loss and a force-field design change (user 11-25: "we might need a ff design change to
+   accomendate for failures like BBA"; findings 1.47).
+   - [x] Per-protein H-bond contrast by native class (`checks/ff3x_u3r_20261123/hb_contrast_by_ss.txt`): proteins
+     without native sheet weaken E_beta, the sheet-rich minority pushes back; NSE and DSE not separated.
+   - [x] The worker rerun at `ur_03` on 16 proteins with both parts recorded, in a sandbox copy (user 09:15 11-25,
+     "Do all as suggested"); decides objective (DSE reference) against form or data (NSE). Submitted 09:25 11-25 as
+     array 50304046 (`checks/ff3x_u3r_20261123/nse_dse_split/`, README): the run's worker plus the record of `nse`,
+     `dse` and the four ensemble means, each protein as its epoch 4 visit with ur_03's files; 4 all-alpha, 6
+     alpha/beta, 4 all-beta, 2 other, each its class's typical E_beta push. Read: per class, the hb[0:3] NSE and
+     lambda DSE, and the ensembles' H-bond counts (dV/dE_k). Done 11:04 11-25 (findings 1.47): E_beta's weakening is
+     the DSE's (an H-bond-free SARW against unfolded ensembles that keep a few H-bonds; NSE +2.7, lambda DSE -10.3),
+     the burial scale's fall the NSE's (free ensembles over-bury; NSE -44.3, lambda DSE +39.9). The design options
+     for the user: an H-bond-carrying DSE reference (findings 1.23) for the first; the native-side data or the burial
+     form for the second.
+   - [ ] The next trainer records NSE and DSE separately for every field.
+   - [ ] Read `ur_00`/`ur_01` tests 2-4 first: an early checkpoint passing all four can release while the design
+     question goes to the converged model. Tests 2-3 read 09:40 11-25 (user): `ur_00` holds test 2 and fails test 3
+     (BBL 0.282 against the start's 0.451), so it does not pass; with its H-bond energies hardly moved, the BBL loss
+     at epoch 0 is not the helix/sheet split (findings 1.47). `ur_01`-`ur_03`'s reads when their arms end (about 14:00,
+     19:00, 23:50 11-25); test 4 for `ur_00` at its glpG block's end (about 03:45 11-26).
+10. [x] New test runs on `/project` from `ur_04` on (user 09:15 11-25, "Do all as suggested"; findings 10.39: the whole
+   `/beagle3` inode table runs out and every file creation there fails). Arms and glpG runs go to
+   `/project/trsosnic/yinhan/upside3_validation/` (`peng_a241/` with copies of `bench_run.py` and `bench.sbatch`
+   whose root is the only change; `glpg_ff33_ur_EE/`, whose `run.py` writes beside itself). Running jobs finish
+   where they are. The force field is still staged in the Upside 3 tree (7 files an epoch), which every job reads.
+   `submit_ckpt_ur.sh` refuses a tag found in either root; `read_bba_bbl_u3.py` and the watch probe read both.
+   Checked 09:25 11-25 by diffs, `bash -n`, and a dry staging of epoch 03 in a sandbox with `sbatch` stubbed
+   (`--test-only` passed through): refused on `/beagle3`'s `ur_03` runs; with that check emptied, the whole path ran,
+   nothing submitted (`checks/u3ref_20261123/README.md`). First used by `ur_04`.
+   User 13:50 11-25, "Just stop using beagle3, moving failed jobs in it somewhere else": every Peng arm moved to
+   `/project` by 14:16 (`move_arms.sh`: the six running chunks cancelled, Upside flushing on SIGTERM; copies
+   md5-checked; `/beagle3` runs renamed `*.moved_to_project_20261125`; the six resumed from the `/project` bench), the
+   force field staged on `/project` from `ur_05` (dry staging passed), finished glpG runs copied by `move_glpg.sh`. Left
+   on `/beagle3`: the five glpG blocks mid-block (a block cannot resume; each moves at its end), and the Upside 3 tree,
+   which every job reads for its code and `ur_00`-`ur_04`'s force fields (reads create no files).
+
+### Phase 42 - the three side-chain arms retrained on Upside 3 (STARTED 2026-11-24, user)
+
+User 11-24: "yes. rerun them all", after the audit (findings 1.21, last bullet): the three arms carry no stale DSE
+reference, but they ran on pre-audit Upside 2, and Upside 3 changes BP (A34, A95) and the side-chain parameter
+derivatives (A98, A99). The question is upside3.md's S3: on Upside 3, does the deterministic side chain still fold
+worse than BP, and is the most-probable-state side chain still level with BP?
+
+**Decisions.**
+* **The October protocol, three changes only.** Trainer `8977d7f7`'s: from released ff2.1 (the deterministic arm with
+  its single-state `sidechain.h5`, `ea06bbf0`), ff2.1's fixed map (`996a607b`), 24 proteins a step, 19 steps an
+  epoch, the control's minibatch order, lambda 0.3, the port's rates (rot 0.0125), native starts, the SARW at the
+  hottest rung, 76 steps, then the convergence gate and one more epoch while it fails, up to step 114. The changes:
+  - the engine, Upside 3 from step 0 (the training tree's A241 build; the angular-gradient fix is in it, so no engine
+    switch at step 38);
+  - the trainer's Upside 3 interface, as `ff3x_u3` made it (A29, A199, A204);
+  - the SARW as the SI defines it, its backbone burial term zeroed with the others (A193; user 10-22, "Follow the
+    SI"). The sheet keeps no DSE row, as in every earlier run.
+* **Runs.** `ff21_ctrl_u3`, BP (the probabilistic side chain); `ff21_nobp_u3`, one fixed state per residue type (the
+  deterministic side chain); `ff21_bpmax_u3`, BP's most probable state per residue (the most-probable-state side
+  chain). The first two in the training tree `/project/trsosnic/yinhan/upside3-train/training/`, whose `src`, `py`
+  and `obj` do not change (`ff3x_u3r` runs from them). The third in its own tree `/project/trsosnic/yinhan/upside3-bpmax`:
+  the training tree's `src`, `py` and `parameters`, `rotamer.cpp` patched and `write_rotamer` setting
+  `most_probable_state = 1`, its `.venv` the training tree's, built on midway2 as that tree was. The patch stays out of
+  git (user 11-03), in `scratchpad/bpmax_u3_20261124/` and that tree.
+* **Checks before any job.** The trainer differs from `8977d7f7` only by the three changes; the SARW config equals the
+  free one but for the zeroed arrays; one full step of one small protein on the login node for each arm (10.76). The
+  bpmax engine as on Upside 2 (findings 1.38): in BP mode bitwise the stock build's (energy, forces, parameter
+  derivatives, a short trajectory); in max mode its energy equals the chosen states' energy rebuilt independently, and
+  its forces and parameter derivatives agree with central differences.
+* **Validation at each fixed point, Phase 26's.** The 44-domain and mdCATH panels at dt 0.009 on Upside 3 (the
+  validation tree for two arms, the bpmax tree for the third), released ff2.1 on both beside them, mean TM-score
+  paired by `tm_panel.py`. Peng's benchmark is decided after the panels (about 32 arms of 14 CPUs for days each).
+* **Cost.** About 14,000 CPU-hours an arm at Upside 2's speed (336 CPUs, about 42 h), beside `ff3x_u3r`.
+
+**Steps.** Files in `/project/trsosnic/yinhan/checks/sc_u3_20261124/` (README).
+1. [x] Trainer `deb7240d` (the October file with the three changes and nothing else, by exact replacement); the October
+   `train_chain.sbatch` and `convergence_gate.py`, unchanged, in the tree's `training/`; `after_gate.sh` and
+   `panel_dt009_u3.sbatch` for the panels.
+2. [x] `ff21_ctrl_u3` and `ff21_nobp_u3` built 23:22-23:26 11-24 (`build_<arm>.log`): init_param, upside_input and
+   pdb_list md5-equal to the October runs'; the start written back equals them dataset by dataset; every group but the
+   side-chain latent equals the October control's step-0 parameters exactly (latent 31,334 against 31,420, A204);
+   rates and minibatch order the October control's.
+3. [x] The bpmax engine (11-24/25; `scratchpad/bpmax_u3_20261124/`, git-ignored, and `checks/sc_u3_20261124/bpmax/`):
+   `rotamer_bpmax_u3.patch` (`366e4639`) rewritten against Upside 3's `rotamer.cpp` (edges read through
+   `edge_indices1/2`, as `fill_holders` does; the selected energy sums each raw edge once, A123's folding living only
+   in the BP holders; `make_device` refuses the mode, so a GPU run cannot silently run BP) and
+   `upside_config_bpmax_u3.patch` (`8f78fc89`, `most_probable_state = 1`). Mac, 1aba, 1a62, 1afh: BP mode bitwise the
+   stock build's in energy, every node's output, forces and the six derivatives ConDiv reads; max mode equals a
+   reduced single-bead config on the stock engine (energy 1e-4, forces and derivatives below 1e-7 relative); forces
+   and parameter derivatives against central differences at held states as BP's; 1.0-1.8% hot under the thermostat
+   (Upside 2: 0.8-2.4%). Tree `/project/trsosnic/yinhan/upside3-bpmax` (the training tree's 185 files, two patched;
+   `.venv` the training tree's), built on midway2 login1 with the training tree's flags: upside `349bcaa3`,
+   libupside.so `987b89db`; in BP mode bitwise the training tree's build on 1aba and 1a62 (40 arrays, a 30-tu
+   trajectory). `ff21_bpmax_u3` built and seeded as the other two (`build_bpmax_arm.log`).
+4. [x] Login-node test, ctrl and nobp (1brz, two one-protein epochs at 2000 tu; `test/check_<arm>.txt`, CHECKS PASS):
+   the SARW config differs from the free one only in the zeroed H-bond, burial (side-chain and backbone), coverage,
+   hydrophobe and pair arrays, each zero; the worker reads the step's files; nobp's beads are all n_rot 1, ctrl's 1, 3
+   and 6; every trajectory finite; the update moves exactly the groups with a non-zero rate; two epochs end. Two
+   checker faults fixed on the way (a NaN pad in `backbone_pairs/ref_pos`, glycine's absent CB, read as a difference;
+   the empty `hbg` group expected to move). bpmax the same 00:13 11-25, `most_probable_state = 1` on all 14 systems.
+5. [ ] Training (remote_jobs.md §1 line 1). nobp reached 76 ~09:55 11-26 and its gate CONVERGED; ctrl and bpmax in
+   their last links. The last links' wall limits were cut to 1.5 times their work (user "ok", 11-26) so they backfill.
+6. [x] Released ff2.1 on both panels at dt 0.009 on Upside 3, `p44u3_ff21` and `mdcu3_ff21`, complete 06:02 11-25.
+7. [ ] Read: TM paired between the arms and against released ff2.1 (`checks/sc_u3_20261124/tm.sbatch`, outputs
+   `tm_<panel>_<tag>_vs_<ref>.txt` there). 44 domains so far: ff2.1 on Upside 3 equals ff2.1 on Upside 2 (0.679 /
+   0.681, -0.001 [-0.009, +0.007], p 0.51); nobp on Upside 3 equals October's nobp (0.620 / 0.623, -0.004 [-0.011,
+   +0.004], p 0.57) and stays below ff2.1 on Upside 3 (-0.060 [-0.074, -0.045], p 1.7e-10, 41 of 44 lower; October
+   -0.057). Its sheet mean ended 0.0003 against October's 0.0505 (16 of 20 types lower, at most 0.16), with no effect
+   on this panel. Owed: mdCATH for nobp, then ctrl and bpmax on both panels.
+8. [ ] Records: findings 1.21, upside3.md 7.1, remote_jobs.md.
+
+### Phase 43 - why glpG TM4's fate changes from run to run (STARTED 2026-11-25, user)
+
+User 11-25, shown ff2.1's TM4 at 0.88 in `glpg_a241_ff21` against 0.44 -> 0.05 in the 10-23 ff2.1 run (findings
+10.79): "let's investigate what is wrong here. We assumed that this is a rama map issue, and it looks like something
+heavily depends on random seeds."
+
+**What the runs share.** Every glpG run uses `prep_seed 2026` and `randomseed 1`, prepares one stage 7.0 trajectory at
+T 0.8647 (the first stage in which the protein moves) and starts all 48 REMD replicas from its last frame. Only 8-16
+of the 48 walkers visit rung 0 in a block. So each run may be one sample of TM4, whatever the replica count.
+
+**Hypotheses, each with its measure** (`/project/trsosnic/yinhan/checks/tm4_seed_20261125/tm4_seed.py`, read-only):
+* H1, the preparation's one trajectory decides TM4 and the REMD keeps it: TM4 at stage 7.0's last frame against block
+  1's rung 0, over every run.
+* H2, runs are not reproducible (same force field, engine and seeds, different trajectories): the twin pairs
+  (`ur_02`, `ur_00`, `sw_x303_hbst` and their failed copies) stage by stage.
+* H3, TM4 is marginal and the REMD samples both states: walkers that unwind and come back within a block.
+* H4, a defect at release: the residue and event at onset (glycine phi, C-N, contacts), read only if H1-H3 point there.
+
+**Steps.**
+1. [x] `tm4_seed.py` over 27 glpG runs (login node, about 20 s a run; checked on `glpg_a241_ff21`: rung 0 0.88 as
+   `glpg_u3_block1.py`) and five twin comparisons (`tm4_seed.txt`, `tm4_seed_2.txt`, `twins.txt`; findings 3.16).
+   H2 is ruled out: the runs are bitwise reproducible. H1 holds: the release trajectory sets block 1, r 0.80 over
+   22 runs. H3 holds in part: walkers unwind and come back within a block, too slowly to forget the start.
+2. [x] Reported 11-25.
+3. [x] H4 (user: "can you find out what exactly caused TM4 to be unstable?"), read-only on the 30 runs: the onset
+   (`tm4_onset.py`), each potential term's force on every helix's i -> i+4 spans (`tm4_force.py`, run on the Mac's
+   stock build of the A241 source, since midway2 offered no start before 11-27; the build agrees with the cluster's
+   on a glpG frame), and helix geometry with Upside's H-bond scores (`tm4_geom.py`). Findings 3.16: no local term,
+   no glycine flip, no geometric strain and no depth effect singles out TM4; its broken state is favoured.
+4. [ ] Next, for the user: (a) read-only, TM4's collective motion when it frays (tilt, slide, packing against its
+   neighbours); (b) the intervention: about 16 seeds per arm from one stage 7.0 start, on one build and one machine
+   (same seed, settings and machine reproduce bitwise, findings 3.16): ff2.1 as is, and ff2.1 with only TM4's three
+   glycines' own maps changed at phi > 0, a diagnostic and not a release (memory: fix the map itself, maps
+   independent); measured by how often a glycine flips and locks TM4 (`tm4_trap.py`, findings 3.16); (c) TM4's
+   equilibrium from independent
+   starts; (d) against experiment, not another model (findings 10.80): TM4's N-end opens at the midplane with its
+   groups unpartnered, where the hybrid undercharges a broken H-bond by about 4-7 E_up against the measured cost
+   (findings 4.12). That meets 4.14's condition for reopening the backbone-environment cost, and the decision is the
+   user's. TM4's C-end is judged against glpG's HDX. The slim copies in
+   `checks/tm4_seed_20261125/slim/` (5.3 G) go when this phase ends.
+
+### Phase 44 - what fails or degrades in ff3x_u3r's checkpoints, and the next training (STARTED 2026-11-26, user)
+
+User 11-26: "can we look at these failed ones, and the onces that got worse, and find out what caused them, and propose
+a next round of training that will fix them? Even a ff re-design is OK for me."
+
+**What fails** (findings 1.47): `ur_00` BBL and TM4, `ur_01` TM4, `ur_03` BBA (0.010 from `ur_02`'s 0.661); BBL at or
+below ff2.1's level from `ur_00` and falling within arms; test 1 down to ff2.1's level at `ur_07`-`ur_08`.
+
+**Steps** (read-only until the proposal is approved; files in `checks/ff3x_u3r_20261123/diagnose_20261126/`):
+1. [x] Per-term stability on the BBA and BBL arms (`stability_terms.py`, `hb_split_bba.py`), findings 1.48: BBA's
+   collapse is the H-bond energies' drift; BBL's epoch-0 drop is not explained to first order.
+2. [x] Parameter trajectory (`param_traj.py`) and every group's NSE / DSE split (`split_groups.py`): the H-bond
+   drift is NSE (E_alpha) plus DSE (E_beta); sheet mixing drifts 139% on the NSE alone.
+3. [x] Test 1 by native class (`panel_by_class.py`) and per term on panel domains (`panel_stability.py`): the gain
+   is helical at sheet's cost; `ur_07`'s fall is in helical domains, through the side-chain terms.
+4. [x] TM4's glycine maps (`gly_tm4_maps.py`): alpha_L favoured in every force field.
+5. [x] Proposal, approved 11-26 ("Approve the design. Make it, and wait for TM4 to see whether we use ur_02 as our
+   starting ff."). The causes are in the objective, so they are fixed there (lesson 10.77):
+   - (a) Priors centred on the start for the high-leverage groups, as the depth prior already is: H-bond energies
+     and bias, sheet mixing, backbone burial, the environment scalars. Widths come from the tolerances measured
+     (BBA flipped at 0.06-0.08 E_up per H-bond type).
+   - (b) The DSE acts only on parameters its reference carries (the map depths). Its rows for terms the SARW lacks
+     (H-bond, burial, side chains) push those terms to vanish from unfolded states, with no zero above 0.
+   - (c) Glycine's depths start at a balanced alpha_L = alpha_R, with the push probed first (memory
+     `probe-balanced-start`).
+   - (d) Test 4 over 4 release seeds per checkpoint; tests 2-3 also read the arm's last half.
+   - (e) Probes before any run: one step's gradients by group at the start under (a)-(c), then a 2-epoch pilot with
+     the tests, then the full 80 steps.
+6. [ ] The run, `ff3x_u3p` (`/project/trsosnic/yinhan/checks/ff3x_u3p_20261126/`, its README; run dir
+   `upside3-train/training/ff3x_u3p`): ff3x_u3r's trainer with (a)-(c), the checkpoint tests with (d).
+   - [x] Built; the one-protein login-node test (relaxation visit plus two epochs, `check.txt`) passes all six
+     checks: contrast = native - free exactly with the DSE rows recorded, each step = param + Adam(data + prior) to
+     0, priors fixed, depths on their DSE, glycine balanced to 2e-7, averaged files written.
+   - [ ] START: `ur02` if `ur_02` passes test 4 (block 1 of `glpg_ff33_ur_02`, about 15:40 11-26), else `start`.
+   - [ ] Build the run dir from START, delete the test build `training/ff3x_u3p_test_ur02`, submit the relaxation
+     visit (the probe of (e)).
+   - [ ] `set_priors.py`: report the widths and glycine's push to the user before any training link.
+   - [ ] The pilot: the chain to 16 steps (2 epochs), `up_00` and `up_01` through tests 1-3; then the full 80.
 
 ## Known Errors / Blockers
+
+* **Pending job, not started (user 11-25):** a JCTC article on the Rama map story, released with Upside 3 once
+  the ff3.x training and its validation are done; start only when the user asks (memory `rama-map-jctc-paper`).
 
 * **ff3.3 was trained and mostly validated on the pre-audit Upside 2 engine, not Upside 3** (checked 11-22 at the
   user's "double check your training and validation should be on upside3"). Measured from each job's env file and
